@@ -417,7 +417,6 @@ public class SnowflakeBasicDataSourceTest {
 
     Properties props = dataSource.getProperties();
     assertEquals("my_pat_token_value", props.getProperty("token"));
-    // setToken does not auto-promote authenticator (SNOW-3595091).
     assertNull(props.getProperty("authenticator"));
   }
 
@@ -431,21 +430,30 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void shouldSetPasscodeStorePropertyAndNotTouchAuthenticator() {
+  public void shouldSetPatStoreAuthenticatorAndToken() {
+    dataSource.setPat("my_pat_token_value");
+
+    Properties props = dataSource.getProperties();
+    assertEquals("PROGRAMMATIC_ACCESS_TOKEN", props.getProperty("authenticator"));
+    assertEquals("my_pat_token_value", props.getProperty("token"));
+  }
+
+  @Test
+  public void shouldSetPasscodeStorePropertyAndPromoteAuthenticator() {
     dataSource.setPasscode("123456");
 
     Properties props = dataSource.getProperties();
     assertEquals("123456", props.getProperty("passcode"));
-    assertNull(props.getProperty("authenticator"));
+    assertEquals("USERNAME_PASSWORD_MFA", props.getProperty("authenticator"));
   }
 
   @Test
-  public void shouldSetPasscodeInPasswordTrueStorePropertyAndNotTouchAuthenticator() {
+  public void shouldSetPasscodeInPasswordTrueStorePropertyAndPromoteAuthenticator() {
     dataSource.setPasscodeInPassword(true);
 
     Properties props = dataSource.getProperties();
     assertEquals("true", props.getProperty("passcodeInPassword"));
-    assertNull(props.getProperty("authenticator"));
+    assertEquals("USERNAME_PASSWORD_MFA", props.getProperty("authenticator"));
   }
 
   @Test
@@ -458,21 +466,21 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void shouldSetClientStoreTemporaryCredentialTrueStoreProperty() {
+  public void shouldSetClientStoreTemporaryCredentialTrueStorePropertyAndPromoteAuthenticator() {
     dataSource.setClientStoreTemporaryCredential(true);
 
     Properties props = dataSource.getProperties();
     assertEquals("true", props.getProperty("clientStoreTemporaryCredential"));
-    assertNull(props.getProperty("authenticator"));
+    assertEquals("EXTERNALBROWSER", props.getProperty("authenticator"));
   }
 
   @Test
-  public void shouldSetClientStoreTemporaryCredentialFalseStoreProperty() {
+  public void shouldSetClientStoreTemporaryCredentialFalseStorePropertyAndPromoteAuthenticator() {
     dataSource.setClientStoreTemporaryCredential(false);
 
     Properties props = dataSource.getProperties();
     assertEquals("false", props.getProperty("clientStoreTemporaryCredential"));
-    assertNull(props.getProperty("authenticator"));
+    assertEquals("EXTERNALBROWSER", props.getProperty("authenticator"));
   }
 
   @Test
@@ -495,6 +503,7 @@ public class SnowflakeBasicDataSourceTest {
     assertEquals("http://127.0.0.1:8080/callback", props.getProperty("oauth_redirect_uri"));
     assertEquals("session:role:my_role", props.getProperty("oauth_scope"));
     assertEquals("true", props.getProperty("oauth_enable_single_use_refresh_tokens"));
+    assertEquals("OAUTH_AUTHORIZATION_CODE", props.getProperty("authenticator"));
   }
 
   static Stream<Arguments> legacyDataSourceSetterProperties() {
@@ -588,7 +597,7 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  void shouldSetPrivateKeyStoreBase64AndNotTouchAuthenticator() throws Exception {
+  void shouldSetPrivateKeyStoreBase64AndPromoteAuthenticator() throws Exception {
     PrivateKey privateKey = generateRsaPrivateKey();
     String expectedBase64 = Base64.getEncoder().encodeToString(privateKey.getEncoded());
 
@@ -596,20 +605,17 @@ public class SnowflakeBasicDataSourceTest {
 
     Properties props = dataSource.getProperties();
     assertEquals(expectedBase64, props.getProperty("private_key"));
-    // Reference 4.3.1 stored the PrivateKey object and promoted authenticator=SNOWFLAKE_JWT; the
-    // universal driver stores a base64 string and does not auto-promote authenticator
-    // (SNOW-3595091).
-    assertNull(props.getProperty("authenticator"));
+    assertEquals("SNOWFLAKE_JWT", props.getProperty("authenticator"));
   }
 
   @Test
-  void shouldSetPrivateKeyFileStoreLocationAndPasswordAndNotTouchAuthenticator() {
+  void shouldSetPrivateKeyFileStoreLocationAndPasswordAndPromoteAuthenticator() {
     dataSource.setPrivateKeyFile("/keys/rsa_key.p8", "secret");
 
     Properties props = dataSource.getProperties();
     assertEquals("/keys/rsa_key.p8", props.getProperty("private_key_file"));
     assertEquals("secret", props.getProperty("private_key_password"));
-    assertNull(props.getProperty("authenticator"));
+    assertEquals("SNOWFLAKE_JWT", props.getProperty("authenticator"));
   }
 
   @Test
@@ -639,13 +645,13 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  void shouldSetPrivateKeyBase64StoreValueAndPasswordAndNotTouchAuthenticator() {
+  void shouldSetPrivateKeyBase64StoreValueAndPasswordAndPromoteAuthenticator() {
     dataSource.setPrivateKeyBase64("BASE64KEY", "secret");
 
     Properties props = dataSource.getProperties();
     assertEquals("BASE64KEY", props.getProperty("private_key"));
     assertEquals("secret", props.getProperty("private_key_password"));
-    assertNull(props.getProperty("authenticator"));
+    assertEquals("SNOWFLAKE_JWT", props.getProperty("authenticator"));
   }
 
   @Test
@@ -660,14 +666,12 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  void shouldSetBrowserResponseTimeoutAndNotTouchAuthenticator() {
+  void shouldSetBrowserResponseTimeoutAndPromoteAuthenticator() {
     dataSource.setBrowserResponseTimeout(60);
 
     Properties props = dataSource.getProperties();
     assertEquals("60", props.getProperty("browser_response_timeout"));
-    // Reference 4.3.1 promoted authenticator=EXTERNALBROWSER; universal driver does not
-    // auto-promote authenticator (SNOW-3595091).
-    assertNull(props.getProperty("authenticator"));
+    assertEquals("EXTERNALBROWSER", props.getProperty("authenticator"));
   }
 
   @Test

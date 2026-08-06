@@ -864,6 +864,8 @@ pub struct MethodOptions {
     pub uninterpreted_option: ::prost::alloc::vec::Vec<UninterpretedOption>,
     #[prost(string, optional, tag = "412312")]
     pub method_error: ::core::option::Option<String>,
+    #[prost(bool, optional, tag = "412313")]
+    pub async_first: ::core::option::Option<bool>,
 }
 /// Nested message and enum types in `MethodOptions`.
 pub mod method_options {

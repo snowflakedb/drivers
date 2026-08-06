@@ -163,6 +163,10 @@ jobs:
       - name: Compile library unit tests without protobuf feature
         run: cargo test --no-run --lib --package sf_core --no-default-features --features fips
 
+      - name: Clean up python_bridge artifacts from target
+        if: always()
+        run: cargo clean --package python_bridge 2>/dev/null || true
+
       - name: Save Rust cache
         if: always()
         # timeout-minutes is enforced here because it isn't supported on
@@ -353,6 +357,10 @@ jobs:
       # instrumented binaries. This is the single biggest win for keeping the
       # coverage cache under the 6 GB cap.
 
+      - name: Clean up python_bridge artifacts from target
+        if: always()
+        run: cargo clean --package python_bridge 2>/dev/null || true
+
       - name: Save Rust cache
         if: always()
         # timeout-minutes is enforced here because it isn't supported on
@@ -378,7 +386,7 @@ jobs:
   # builder/printenv.bat calls vcvarsall.bat x64, overriding ARM64 toolchain env.
   # Workaround: do not enable fips on this lane.
   # Upstream issue: https://github.com/aws/aws-lc-rs/issues/1057
-  # Repro job: https://github.com/snowflakedb/universal-driver/actions/runs/22779459689/job/66081199710
+  # Repro job: https://github.com/snowflakedb/drivers/actions/runs/22779459689/job/66081199710
   # TODO: re-enable --all-features after fix.
   # The test suite is identical with and without fips — no tests are gated
   # behind cfg(feature = "fips"). Only the linked TLS crypto backend differs
@@ -588,6 +596,11 @@ jobs:
           path: C:\vcpkg\installed\arm64-windows-static-md
           key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
+      - name: Clean up python_bridge artifacts from target
+        if: always()
+        shell: bash
+        run: cargo clean --package python_bridge 2>/dev/null || true
+
       - name: Save Rust cache
         if: always()
         # timeout-minutes is enforced here because it isn't supported on
@@ -746,6 +759,14 @@ jobs:
           name: rust-core-flaky-tests-windows-x86
           path: target/nextest/ci-flaky/junit.xml
           if-no-files-found: warn
+
+      # python_bridge is a workspace member but not needed by sf_core tests.
+      # Its PyO3 dependency tree adds ~3-4 GB to target/, pushing past the
+      # 6 GB cache cap. Strip it before save (same pattern as _build-python-wheels.yml).
+      - name: Clean up python_bridge artifacts from target
+        if: always()
+        shell: bash
+        run: cargo clean --package python_bridge 2>/dev/null || true
 
       - name: Save Rust cache
         if: always()

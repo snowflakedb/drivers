@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_metric_column(csv_path: Path) -> Optional[str]:
-    """Return 'fetch_s' for SELECT tests or 'query_s' for PUT/GET tests."""
+    """Return primary metric column: fetch_s for SELECT, query_s for PUT/GET, e2e_s for cold-start."""
     try:
         with open(csv_path, "r") as f:
             header = f.readline()
@@ -28,6 +28,8 @@ def _detect_metric_column(csv_path: Path) -> Optional[str]:
             return "fetch_s"
         if "query_s" in header:
             return "query_s"
+        if "e2e_s" in header:
+            return "e2e_s"
     except Exception as e:
         logger.debug(f"Failed to detect metric column from {csv_path}: {e}")
     return None

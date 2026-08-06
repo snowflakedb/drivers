@@ -586,3 +586,58 @@ class TestLegacySkipFilePermissionsCheck:
         with pytest.warns(DeprecationWarning):
             config = ConnectionConfig.from_kwargs(skip_file_permissions_check=True)
         assert "skip_file_permissions_check" not in config._extra
+
+
+class TestLegacyNetworkAndSocketTimeout:
+    """Tests for the legacy network_timeout / socket_timeout connection kwargs."""
+
+    def test_network_timeout_fans_out_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="network_timeout"):
+            config = ConnectionConfig.from_kwargs(network_timeout=45)
+        assert config.query_timeout == 45
+        assert config.request_timeout == 45
+
+    def test_socket_timeout_fans_out_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="socket_timeout"):
+            config = ConnectionConfig.from_kwargs(socket_timeout=30)
+        assert config.connect_timeout == 30
+        assert config.retry_timeout == 30
+
+    def test_explicit_new_param_wins_over_network_timeout(self):
+        with pytest.warns(DeprecationWarning, match="network_timeout"):
+            config = ConnectionConfig.from_kwargs(network_timeout=45, request_timeout=60)
+        assert config.query_timeout == 45
+        assert config.request_timeout == 60
+
+    def test_explicit_new_param_wins_over_socket_timeout(self):
+        with pytest.warns(DeprecationWarning, match="socket_timeout"):
+            config = ConnectionConfig.from_kwargs(socket_timeout=30, connect_timeout=10)
+        assert config.connect_timeout == 10
+        assert config.retry_timeout == 30
+
+    def test_network_timeout_not_forwarded_to_extra(self):
+        with pytest.warns(DeprecationWarning, match="network_timeout"):
+            config = ConnectionConfig.from_kwargs(network_timeout=45)
+        assert "network_timeout" not in config._extra
+
+    def test_socket_timeout_not_forwarded_to_extra(self):
+        with pytest.warns(DeprecationWarning, match="socket_timeout"):
+            config = ConnectionConfig.from_kwargs(socket_timeout=30)
+        assert "socket_timeout" not in config._extra
+
+    def test_both_legacy_params_together_emit_two_warnings(self):
+        with pytest.warns(DeprecationWarning) as record:
+            config = ConnectionConfig.from_kwargs(network_timeout=45, socket_timeout=30)
+        messages = [str(w.message) for w in record]
+        assert any("network_timeout" in m for m in messages)
+        assert any("socket_timeout" in m for m in messages)
+        assert config.query_timeout == 45
+        assert config.request_timeout == 45
+        assert config.connect_timeout == 30
+        assert config.retry_timeout == 30
+
+    def test_network_timeout_explicit_query_timeout_wins(self):
+        with pytest.warns(DeprecationWarning, match="network_timeout"):
+            config = ConnectionConfig.from_kwargs(network_timeout=45, query_timeout=60)
+        assert config.query_timeout == 60
+        assert config.request_timeout == 45

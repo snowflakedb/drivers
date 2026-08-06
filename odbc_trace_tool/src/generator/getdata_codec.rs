@@ -205,6 +205,68 @@ fn timestamp_capture_lines(key: &str) -> Vec<String> {
     ]
 }
 
+/// Lines emitted after a successful narrow `SQLGetData` in capture mode.
+pub fn char_capture_lines(seq: u64) -> Vec<String> {
+    let key = format!("\"{seq}\"");
+    vec![
+        "{".to_string(),
+        "  if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {".to_string(),
+        "    if (ind == SQL_NULL_DATA) {".to_string(),
+        format!("      captured_values[{key}] = picojson::value();"),
+        "    } else {".to_string(),
+        "      const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());"
+            .to_string(),
+        "      picojson::object fields;".to_string(),
+        "      fields[\"value\"] = picojson::value(std::string(buf.data(), n));".to_string(),
+        "      fields[\"ind\"] = picojson::value(static_cast<double>(ind));".to_string(),
+        format!(
+            "      picojson::object wrap; wrap[\"{}\"] = picojson::value(fields);",
+            tags::CHAR
+        ),
+        format!("      captured_values[{key}] = picojson::value(wrap);"),
+        "    }".to_string(),
+        "  } else {".to_string(),
+        format!("    captured_values[{key}] = picojson::value();"),
+        "  }".to_string(),
+        "}".to_string(),
+    ]
+}
+
+/// Lines emitted after a successful wide `SQLGetData` in capture mode.
+pub fn wchar_capture_lines(seq: u64) -> Vec<String> {
+    let key = format!("\"{seq}\"");
+    vec![
+        "{".to_string(),
+        "  if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {".to_string(),
+        "    if (ind == SQL_NULL_DATA) {".to_string(),
+        format!("      captured_values[{key}] = picojson::value();"),
+        "    } else {".to_string(),
+        "      const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());"
+            .to_string(),
+        "      std::string hex;".to_string(),
+        "      hex.reserve(n * 2);".to_string(),
+        "      for (size_t i = 0; i < n; ++i) {".to_string(),
+        "        char tmp[3];".to_string(),
+        "        std::snprintf(tmp, sizeof(tmp), \"%02x\", static_cast<unsigned char>(buf[i]));"
+            .to_string(),
+        "        hex += tmp;".to_string(),
+        "      }".to_string(),
+        "      picojson::object fields;".to_string(),
+        "      fields[\"hex\"] = picojson::value(hex);".to_string(),
+        "      fields[\"ind\"] = picojson::value(static_cast<double>(ind));".to_string(),
+        format!(
+            "      picojson::object wrap; wrap[\"{}\"] = picojson::value(fields);",
+            tags::WCHAR
+        ),
+        format!("      captured_values[{key}] = picojson::value(wrap);"),
+        "    }".to_string(),
+        "  } else {".to_string(),
+        format!("    captured_values[{key}] = picojson::value();"),
+        "  }".to_string(),
+        "}".to_string(),
+    ]
+}
+
 /// Lines asserting a persisted [`CapturedValue`] against `buf`/`ind`.
 pub fn captured_assert_lines(target_type: &str, captured: &CapturedValue) -> Vec<String> {
     match captured {
@@ -248,6 +310,15 @@ pub fn captured_assert_lines(target_type: &str, captured: &CapturedValue) -> Vec
             format!("CHECK(_ts->minute == {minute});"),
             format!("CHECK(_ts->second == {second});"),
             format!("CHECK(_ts->fraction == {fraction});"),
+        ],
+        // Narrow Char captures always hydrate into `GetData.value` before
+        // generation, so this arm is unreachable for Char. WChar reaches here
+        // only when live UTF-16 hex failed to decode — emit a visible skip so
+        // the assertion gap is not silent (same idea as the CP_ACP `?` path).
+        CapturedValue::Char(_) => vec![],
+        CapturedValue::WChar(_) => vec![
+            "// SQL_C_WCHAR value not pinned: live UTF-16 capture failed to decode;".to_string(),
+            "// value assertion skipped.".to_string(),
         ],
     }
 }

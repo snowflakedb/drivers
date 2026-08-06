@@ -475,6 +475,15 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         # - Client-side binding (pyformat/format)
         # - Dict parameters (server-side doesn't support named binding)
         if paramstyle.is_client_side() or isinstance(first_params, dict):
+            if paramstyle.is_client_side():
+                # INSERT with client-side binding: rewrite into a single
+                # multi-row INSERT to avoid one HTTP request per row.
+                rewritten = self._rewrite_multirow_insert(operation, seq_of_parameters)
+                if rewritten is not None:
+                    # Values were already interpolated and escaped by
+                    # ClientSideBindingConverter.interpolate_query — no further binding needed.
+                    self.execute(rewritten)
+                    return
             self._executemany_per_row(operation, seq_of_parameters, _force_qmark_paramstyle)
             return
 

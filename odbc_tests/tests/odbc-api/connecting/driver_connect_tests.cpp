@@ -503,32 +503,43 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Connection with additi
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture,
-                 "SQLDriverConnect: 01S00 - Invalid connection string attribute (unrecognized keyword)",
+                 "SQLDriverConnect: Unrecognized connection string keyword (old driver: 01S00, new driver: no warning)",
                  "[odbc-api][driverconnect][dsn][integration]") {
-  // The new driver forwards unrecognized connection-string keywords to the
-  //   server as session parameters rather than ignoring them, so it does not
-  //   (yet) emit the 01S00 warning. Revisit once 01S00 is sourced from a
-  //   server-side "parameter not applied" signal rather than local unknown-ness.
-  //   Tracked: SNOW-3765949.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
-  // Per ODBC spec, unrecognized keywords return SQL_SUCCESS_WITH_INFO with 01S00
   const std::string connStr = "DSN=" + dsn_name() + ";INVALIDKEY=abc";
 
   SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                    SQL_DRIVER_NOPROMPT);
-  REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
 
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
-  OLD_IODBC_ONLY("BD#61") {
-    // The old driver under iODBC reports SQL_SUCCESS_WITH_INFO for the
-    //   unrecognized keyword but doesn't post the 01S00 diagnostic record
-    //   on the DBC handle the way the new driver does.
-    (void)records;
+  auto has_01S00 = [&records]() {
+    for (const auto& r : records) {
+      if (r.sqlState == "01S00") return true;
+    }
+    return false;
+  };
+
+  // The unrecognized keyword does not prevent the connection: the old driver's 01S00 and
+  //   the new driver's 01004 OutConnectionString info are both SQL_SUCCESS_WITH_INFO, not
+  //   errors, so the connection opens on both.
+  REQUIRE(SQL_SUCCEEDED(ret));
+
+  NEW_DRIVER_ONLY("BD#106") {
+    // BD#106: the new driver forwards unrecognized connection-string keywords to the
+    //   server as session parameters rather than rejecting them locally, so it does not
+    //   post the 01S00 warning. SNOW-3831223 will source 01S00 from a server-side
+    //   "parameter not applied" signal, reaching parity with the old driver.
+    REQUIRE_FALSE(has_01S00());
   }
-  else {
-    REQUIRE(!records.empty());
-    REQUIRE(records[0].sqlState == "01S00");
+  OLD_DRIVER_ONLY("BD#106") {
+    OLD_IODBC_ONLY("BD#61") {
+      // The old driver under iODBC reports SQL_SUCCESS_WITH_INFO for the unrecognized
+      //   keyword but doesn't post the 01S00 diagnostic record on the DBC handle.
+      (void)records;
+    }
+    else {
+      // Per ODBC spec, the old driver flags the unrecognized keyword with 01S00.
+      REQUIRE(has_01S00());
+    }
   }
 
   ret = SQLDisconnect(dbc_handle());

@@ -13,7 +13,7 @@ allowed_file_extensions:
 rules:
   - id: ud-log-core-uses-tracing-not-stdio
     rule: |
-      **OBJECTIVE**: The core emits all logs through the `tracing` ecosystem and never writes to stdout/stderr directly, so the host application stays in control of output. See `doc/logging/logging-architecture.md` § "stdout / stderr" and the `log` crate note.
+      **OBJECTIVE**: The core emits all logs through the `tracing` ecosystem and never writes to stdout/stderr directly, so the host application stays in control of output. See `docs/logging/logging-architecture.md` § "stdout / stderr" and the `log` crate note.
 
       **REQUIREMENT** (core — `sf_core/src` and the Rust bridges):
       1. Emit logs via `tracing` macros (`trace!`/`debug!`/`info!`/`warn!`/`error!`). Do NOT use the `log` crate (`log::info!`, etc.) — `log` is not part of the pipeline.
@@ -38,7 +38,7 @@ rules:
 
   - id: ud-log-no-revealed-sensitive-in-macro
     rule: |
-      **OBJECTIVE**: The Rust mechanism for keeping secrets out of logs — never feed a revealed `SensitiveString` into a `tracing` macro, and rely on its redacting `Debug`/`Display` everywhere else. This is the core-side enforcement of `ud-log-never-log-secrets` (general). See `doc/logging/logging-guidelines.md` § "What to never log" / "Object serialization".
+      **OBJECTIVE**: The Rust mechanism for keeping secrets out of logs — never feed a revealed `SensitiveString` into a `tracing` macro, and rely on its redacting `Debug`/`Display` everywhere else. This is the core-side enforcement of `ud-log-never-log-secrets` (general). See `docs/logging/logging-guidelines.md` § "What to never log" / "Object serialization".
 
       **REQUIREMENT**:
       1. Never call `.reveal()` (or otherwise unwrap `SensitiveString` / `Sensitive<_>`) inside the argument list of a `tracing` macro.

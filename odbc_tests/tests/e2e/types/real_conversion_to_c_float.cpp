@@ -4,6 +4,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cmath>
 #include <optional>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "TestTable.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
+#include "test_setup.hpp"
 
 // ============================================================================
 // Explicit C type conversions from FLOAT columns
@@ -44,8 +46,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit SQL_C_FLOAT", "[e2e][types][r
   CHECK_THAT(val, Catch::Matchers::WithinRel(123.5f));
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "REAL precision - Snowflake FLOAT has ~15 significant digits",
-                 "[e2e][types][real][flaky]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL precision - Arrow preserves all 15 significant digits of a FLOAT",
+                 "[e2e][types][real]") {
+  // The 15-significant-digit guarantee holds for Arrow, which carries raw
+  // IEEE-754 doubles. JSON sends a shorter decimal representation — only about
+  // 9 significant digits survive for a value of this magnitude — so the claim
+  // in this test's name is Arrow-specific. The test below pins the JSON side.
+  SKIP_FOR_JSON_RESULT_SET("JSON preserves only ~9 significant digits for a value of this magnitude");
+
   // Given A Snowflake connection
 
   // When FLOAT value with 15 significant digits is fetched as SQL_C_DOUBLE
@@ -54,6 +62,29 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL precision - Snowflake FLOAT has ~15 si
 
   // Then The value matches within relative tolerance
   CHECK_THAT(val, Catch::Matchers::WithinRel(1.23456789012345));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL precision - JSON preserves only ~9 significant digits of a FLOAT",
+                 "[e2e][types][real]") {
+  RUN_ONLY_FOR_JSON_RESULT_SET("Arrow carries raw IEEE-754 doubles, so all 15 digits survive there");
+
+  // Given A Snowflake connection
+
+  // When FLOAT value with 15 significant digits is fetched as SQL_C_DOUBLE over JSON
+  //
+  // The server truncates the decimal representation to roughly 9 significant
+  // digits at this magnitude, so 1.23456789012345 arrives as "1.23456789".
+  // The cap is not a fixed digit count — large-magnitude values keep about 15
+  // — but it is always below the 17 digits an f64 needs to round-trip.
+  auto stmt = conn.execute_fetch("SELECT 1.23456789012345::FLOAT");
+  double val = check_no_truncation<SQL_C_DOUBLE>(stmt, 1);
+
+  // Then Only the leading ~9 significant digits survive
+  CHECK(val == 1.23456789);
+
+  // And The original value is not recoverable — the loss is ~1e-10 relative,
+  // orders of magnitude coarser than f64 precision
+  CHECK(std::abs(val - 1.23456789012345) > 1e-12);
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "REAL negative zero", "[e2e][types][real]") {

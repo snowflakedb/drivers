@@ -48,7 +48,6 @@ public class CoreLoggerTest {
     boolean enabled = true;
     Integer fallbackLevel;
     String fallbackMessage;
-    Boolean fallbackMasked;
 
     @Override
     public boolean isDebugEnabled() {
@@ -71,29 +70,28 @@ public class CoreLoggerTest {
     }
 
     @Override
-    public void debug(String msg, boolean isMasked) {
-      record(WIRE_DEBUG, msg, isMasked);
+    public void debug(String msg) {
+      record(WIRE_DEBUG, msg);
     }
 
     @Override
-    public void error(String msg, boolean isMasked) {
-      record(WIRE_ERROR, msg, isMasked);
+    public void error(String msg) {
+      record(WIRE_ERROR, msg);
     }
 
     @Override
-    public void info(String msg, boolean isMasked) {
-      record(WIRE_INFO, msg, isMasked);
+    public void info(String msg) {
+      record(WIRE_INFO, msg);
     }
 
     @Override
-    public void warn(String msg, boolean isMasked) {
-      record(WIRE_WARN, msg, isMasked);
+    public void warn(String msg) {
+      record(WIRE_WARN, msg);
     }
 
-    private void record(int level, String msg, boolean isMasked) {
+    private void record(int level, String msg) {
       fallbackLevel = level;
       fallbackMessage = msg;
-      fallbackMasked = isMasked;
     }
 
     @Override
@@ -170,7 +168,6 @@ public class CoreLoggerTest {
     assertEquals(1, sink.calls.get());
     assertEquals(WIRE_WARN, delegate.fallbackLevel);
     assertEquals("early message", delegate.fallbackMessage);
-    assertFalse(delegate.fallbackMasked);
   }
 
   @Test
@@ -200,18 +197,6 @@ public class CoreLoggerTest {
 
     assertEquals(0, sink.calls.get());
     assertNull(delegate.fallbackLevel);
-  }
-
-  @Test
-  public void shouldMaskSecretsBeforeSendingToCore() {
-    RecordingSink sink = new RecordingSink(CoreLoggingBridge.CORE_DELIVERED);
-    RecordingDelegate delegate = new RecordingDelegate();
-    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> false);
-
-    logger.error("password=TopSecret123", true);
-
-    assertTrue(sink.message.contains("password=****"));
-    assertFalse(sink.message.contains("TopSecret123"));
   }
 
   @Test

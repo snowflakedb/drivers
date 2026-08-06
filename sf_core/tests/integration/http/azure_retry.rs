@@ -5,10 +5,12 @@ use sf_core::config::retry::RetryPolicy;
 // Shared zero-backoff Azure test policy (the base put/get policy; the per-attempt
 // policy is derived from it via `azure_403_fastfail_policy`). Aliased so call
 // sites read `test_policy(..)`.
-use sf_core::file_manager::internal::azure_test_retry_policy as test_policy;
+use sf_core::file_manager::internal::{
+    FakeStageInfoRefresher, azure_test_retry_policy as test_policy,
+};
 use sf_core::file_manager::{
     AzureDownloadError, CloudCredentials, DownloadData, EncryptionMaterial, LocationType,
-    MultipartParams, StageInfo, download_files,
+    MultipartParams, StageInfo, StageInfoRefresher, download_files,
 };
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
@@ -37,6 +39,7 @@ fn azure_stage(mock_uri: &str) -> StageInfo {
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
         crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
         storage_account: Some("test".to_string()),
     }
 }
@@ -81,7 +84,7 @@ async fn azure_download_success_returns_data_and_metadata() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await;
 
@@ -127,7 +130,7 @@ async fn azure_download_403_is_not_inline_retried() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await;
 
@@ -172,7 +175,7 @@ async fn azure_download_404_is_not_retried() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await;
 
@@ -208,7 +211,7 @@ async fn azure_download_503_is_retried_then_succeeds() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await;
 
@@ -243,7 +246,7 @@ async fn azure_error_response_redacts_sas_token() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await;
 
@@ -287,6 +290,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
         crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
         storage_account: Some("test".to_string()),
     };
 
@@ -294,7 +298,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await;
 
@@ -328,7 +332,7 @@ async fn azure_download_with_wrong_creds_type_fails() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await;
 
@@ -352,7 +356,7 @@ async fn azure_download_with_missing_storage_account_fails() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await;
 
@@ -390,7 +394,7 @@ async fn azure_download_persistent_403_with_no_refresher_terminates() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await;
 
@@ -404,6 +408,58 @@ async fn azure_download_persistent_403_with_no_refresher_terminates() {
             }
         ),
         "terminal error must be AzureHttp 403 (no recovery loop, no inline retry, no panic); got: {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------
+// 403 on GET WITH a refresher: refresh the SAS and re-drive the GET
+// (recovery sibling of the no-refresher terminal case above; backs the
+//  "refresh SAS and re-drive the GET once on 403" contract)
+// ---------------------------------------------------------------
+
+#[tokio::test]
+async fn azure_download_403_refreshes_sas_and_redrives_the_get() {
+    let server = MockServer::start().await;
+
+    // 403 while the stale SAS is presented; 200 + bytes once the refreshed SAS arrives.
+    Mock::given(method("GET"))
+        .respond_with(|req: &Request| {
+            if req.url.as_str().contains("refreshed-fresh-sig") {
+                azure_response_headers()
+            } else {
+                ResponseTemplate::new(403).set_body_string(
+                    "<?xml version=\"1.0\"?><Error><Code>AuthenticationFailed</Code>\
+                     <Message>Server failed to authenticate the request.</Message></Error>",
+                )
+            }
+        })
+        .mount(&server)
+        .await;
+
+    let stage = azure_stage(&server.uri());
+    let refresher = FakeStageInfoRefresher::new(stage.creds.clone());
+    refresher.arm_rotation(CloudCredentials::Azure {
+        sas_token: SensitiveString::from("sv=2021-08-06&sig=refreshed-fresh-sig&se=2099-01-01"),
+    });
+
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        Some(&refresher as &dyn StageInfoRefresher),
+    )
+    .await;
+
+    let response = result.expect("a GET 403 must refresh the SAS and re-drive the download");
+    assert_eq!(
+        response.data, b"encrypted-data",
+        "the re-driven GET must return the served bytes carried by the refreshed SAS"
+    );
+    assert_eq!(response.digest, Some("test-digest".to_string()));
+    assert_eq!(
+        refresher.refresh_call_count(),
+        1,
+        "exactly one refresh for the single GET 403"
     );
 }
 
@@ -473,6 +529,7 @@ async fn azure_git_stage_download_succeeds_without_sfcdigest() {
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
+        get_fastfail: true,
     };
 
     let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)

@@ -170,6 +170,26 @@ def _extract_error_detail(driver_exception: Any) -> str | None:
     return None
 
 
+def _extract_invalid_parameter_info(driver_exception: Any) -> tuple[str, int | None] | None:
+    """Return ``(parameter, validation_code)`` for an InvalidParameterValue error, or ``None``.
+
+    ``validation_code`` is the raw sf_core ``ValidationCode`` enum value (see
+    ``protobuf_gen.database_driver_v1_pb2.ValidationCode``), carried on the wire only when
+    the error originated from connection-config validation (``validate_settings`` in the
+    Rust core); ``None`` for InvalidParameterValue errors from other sources.
+    """
+    error = getattr(driver_exception, "error", None)
+    if error is None or error.WhichOneof("error_type") != "invalid_parameter_value":
+        return None
+    inner = error.invalid_parameter_value
+    # `code` is `optional ValidationCode`; HasField("code") is only True when the
+    # Rust side explicitly sets a concrete code. validate_settings never assigns
+    # VALIDATION_CODE_UNSPECIFIED (0), so _get_optional_int can't currently return
+    # 0 for a "real" code here — if that ever changes, this would need to treat
+    # 0 as unset too.
+    return inner.parameter, _get_optional_int(inner, "code")
+
+
 def _append_detail(base: str, detail: str) -> str:
     """Append *detail* to *base* with `. ` separator, avoiding double punctuation."""
     if not base:
@@ -246,7 +266,19 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     # originated from a query execution attempt.
     request_id = _get_optional_str(driver_exc, "request_id")
 
-    return exc_class(message, errno=errno, sqlstate=sqlstate, sfqid=sfqid, request_id=request_id)
+    # Structured attributes for InvalidParameterValue errors (e.g. connection-config
+    # validation failures), so callers can discriminate without matching message text.
+    parameter, validation_code = _extract_invalid_parameter_info(driver_exc) or (None, None)
+
+    return exc_class(
+        message,
+        errno=errno,
+        sqlstate=sqlstate,
+        sfqid=sfqid,
+        request_id=request_id,
+        parameter=parameter,
+        validation_code=validation_code,
+    )
 
 
 def _get_optional_int(msg: Any, field: str) -> int | None:

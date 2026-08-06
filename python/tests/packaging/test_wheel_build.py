@@ -86,10 +86,25 @@ class TestWheelPackaging:
         with zipfile.ZipFile(wheel_path, "r") as whl:
             names = whl.namelist()
 
-            core_lib_suffixes = (".so", ".dll", ".dylib")
-            core_files = [n for n in names if "_core/" in n and any(n.endswith(s) for s in core_lib_suffixes)]
+            # Version-tagged PyO3 extension, e.g. sf_core_python.cpython-313-*.so / .cp313-*.pyd.
+            core_files = [
+                n
+                for n in names
+                if "_core/" in n and "sf_core_python" in n and n.endswith((".so", ".pyd", ".dll", ".dylib"))
+            ]
             assert core_files, (
-                f"sf_core native library not found in wheel. Wheel _core contents: {[n for n in names if '_core' in n]}"
+                f"sf_core_python extension not found in wheel. "
+                f"Wheel _core contents: {[n for n in names if '_core' in n]}"
+            )
+            # Exactly one ABI-tagged binary per wheel.
+            assert len(core_files) == 1, (
+                f"Expected exactly one sf_core_python binary in the wheel, found {len(core_files)}: {core_files}"
+            )
+
+            stub_files = [n for n in names if n.endswith("sf_core_python.pyi")]
+            assert stub_files, (
+                f"sf_core_python.pyi stub not found in wheel. "
+                f"Wheel _core contents: {[n for n in names if '_core' in n]}"
             )
 
             pb2_files = [n for n in names if n.endswith("_pb2.py")]

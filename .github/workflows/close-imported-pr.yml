@@ -1,6 +1,6 @@
 name: Close imported PRs
 
-# Operates on the MIRROR repo (snowflake-eng/universal-driver). Triggers when the outbound mirror
+# Operates on the MIRROR repo (snowflake-eng/drivers). Triggers when the outbound mirror
 # pushes a replayed squash-merge to main, scans the new commit messages
 # for `Imported-From-Mirror-PR` / `Imported-From-Mirror-SHA` trailers
 # (written by copy.bara.sky's `import` workflow via metadata.expose_label),
@@ -40,13 +40,13 @@ jobs:
     # also exists on the internal repo. The trailer scan / PR lookup
     # only makes sense on the mirror side; treat everything else as a
     # no-op. Update this list when the destination flips to
-    # snowflakedb/universal-driver.
+    # snowflakedb/drivers.
     #
     # Gate 2 — actor guard. Only pushes from the outbound mirror carry
     # the trailers. Skip direct human pushes. Replace `mirror-bot` with
     # the actual login or app slug used to push from the outbound job.
     if: >-
-      github.repository == 'snowflake-eng/universal-driver'
+      github.repository == 'snowflake-eng/drivers'
       && (github.event_name == 'workflow_dispatch' || github.actor == 'sfc-gh-drivers-sa')
     runs-on: ubuntu-latest
     steps:

@@ -1,7 +1,7 @@
 # Security sign-off gate
 
 Merging to `main` (or a `release/*` branch) puts a change on the public
-mirror at `snowflakedb/universal-driver` on the next Copybara run. Merge is
+mirror at `snowflakedb/drivers` on the next Copybara run. Merge is
 therefore effectively publication, and a change that needs pre-disclosure
 review has to be held until someone has explicitly cleared it for the
 public.
@@ -13,7 +13,8 @@ That hold is the `security-signoff` gate, implemented by
 ## How it works
 
 1. A PR that may need security scrutiny gets the
-   `security-signoff-required` label.
+   `security-signoff-required` label — from a human, or from the keyword net
+   in `.github/workflows/security-label.yml`.
 2. On PR and review events, `.github/workflows/security-signoff.yml`
    evaluates the PR and publishes a `security-signoff` **commit status**.
 3. The status is **success** when the label is absent, or when a security
@@ -39,6 +40,27 @@ repo-wide "dismiss stale reviews".
 `.github/security-partners.yml` is always read from the PR's
 **base** branch, never the head, so a pull request cannot edit the list that
 governs its own sign-off.
+
+
+## How the label gets applied
+
+Two independent sources, and the gate treats them identically — it only cares
+whether the label is present.
+
+- **The keyword net.** `.github/workflows/security-label.yml` scans each PR's
+  title and body against the action's built-in `keywords.yml` and adds the
+  label on a match. It is **add-only**, so it never strips a label someone
+  applied deliberately, and **fail-open**: a false positive costs one extra
+  partner review, while a miss risks premature disclosure, so the net favours
+  recall. An unnecessary label is cheap to remove by hand.
+- **A human.** Anyone can add the label to escalate a PR the net missed.
+
+There is deliberately no *path*-based net in `.github/labeler.yml`:
+`.github/workflows/labeler.yml` runs `actions/labeler` with
+`sync-labels: true`, which removes any configured label as soon as its globs
+stop matching — it would strip this label out from under a reviewer on the
+next push. Adding one would require a second labeler invocation with
+`sync-labels: false` and its own config file.
 
 
 ## How to use it
@@ -127,8 +149,10 @@ so on `release/*` the merge-group job never fires and is inert.
 **The label is the gate.** Everything above assumes the PR carries
 `security-signoff-required`. A change that needs disclosure review but never
 gets labeled is not gated at all, and no branch-protection setting changes
-that. This is the likeliest way the gate fails to fire, and it deserves more
-attention than any of the mechanical gaps below.
+that. The keyword net raises recall, but it matches on how the PR is worded, so
+a change described in neutral terms still slips through. This is the likeliest
+way the gate fails to fire, and it deserves more attention than any of the
+mechanical gaps below.
 
 **Bypass actors can merge past a red status.** Both rulesets grant bypass to
 repository role id 5 — `bypass_mode: pull_request` on "Protect main", `always`
@@ -149,23 +173,24 @@ only ever operates upstream of the outbound sync.
 
 ## Why these files are not mirrored
 
-`.github/workflows/security-signoff.yml` and `.github/security-partners.yml`
-both have explicit `EXCLUDED_PATHS` entries in `ci/mirroring/copy.bara.sky`.
-The workflow `uses:` an org-internal action the public org cannot resolve, and
+`.github/workflows/security-signoff.yml`,
+`.github/workflows/security-label.yml`, and `.github/security-partners.yml` all
+have explicit `EXCLUDED_PATHS` entries in `ci/mirroring/copy.bara.sky`. The
+workflows `uses:` an org-internal action the public org cannot resolve, and
 fork PRs on a public repo get a read-only token that cannot post commit
 statuses — so the gate cannot function there and would only produce a failing
 job on every PR. Publishing the roster would also advertise exactly who can
 authorize a disclosure.
 
-Neither file is moved below a `NOMIRROR/` directory, even though that would
-exclude it automatically: GitHub only reads workflows from
+None of them is moved below a `NOMIRROR/` directory, even though that would
+exclude them automatically: GitHub only reads workflows from
 `.github/workflows/*.yml`, and the action expects the roster at its default
-path. Listing both explicitly keeps every file belonging to the gate in one
+path. Listing them together keeps every file belonging to the gate in one
 reviewable place in the denylist.
 
 Neither of the mirror's automatic safety nets would have caught that action
 reference on its own. The outbound `verify_match` guard matches only the
-literal `snowflake-eng/universal-driver`, and
+literal `snowflake-eng/drivers`, and
 `.ai/review/universal-driver-mirror-privacy.yaml` lists `.github` and `ci`
 under `excluded_folders`, so the ArcticOwl reviewer never inspects workflow
 or Copybara files. Both exclusions above are therefore load-bearing rather
@@ -175,6 +200,7 @@ than belt-and-braces.
 ## Files involved
 
 - `.github/workflows/security-signoff.yml` — the gate; publishes the status.
+- `.github/workflows/security-label.yml` — the keyword net; adds the label.
 - `.github/security-partners.yml` — the roster.
 - `ci/mirroring/copy.bara.sky` — mirror exclusions.
 - `.ai/review/universal-driver-security-disclosure.yaml` — the ArcticOwl
@@ -209,3 +235,12 @@ publishes a verdict that nothing enforces.
   clear it. Branches cut from `main` afterwards inherit it.
 - **Test the revoke-after-queueing case** from "Known limits" above — one
   throwaway PR settles it.
+- **Tune the keyword net.** Watch what it labels over the first few weeks. If
+  it misses changes whose title and body say nothing security-relevant, the
+  next levers are `scan-diff: 'true'` (scan the diff too — higher recall,
+  noisier) and `keyword-patterns` for repo-specific additions; both extend the
+  shared net and neither can remove an entry from it. A path-based net is the
+  other option, with the `sync-labels` caveat in "How the label gets applied".
+- **Close the mirror-guard gap** described above, by broadening the
+  outbound `verify_match` from `snowflake-eng/drivers` to any
+  `snowflake-eng/` reference.

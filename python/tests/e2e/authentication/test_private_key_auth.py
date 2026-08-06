@@ -11,6 +11,7 @@ from ...compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from ...private_key_helper import (
     get_private_key_from_parameters,
     get_private_key_password,
+    get_private_key_pem_from_parameters,
     get_test_private_key_path,
 )
 from .auth_helpers import verify_login_error, verify_simple_query_execution
@@ -31,19 +32,18 @@ class TestPrivateKeyAuthentication:
 
     def test_should_authenticate_using_unencrypted_private_key_file(self, connection_factory):
         # Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
-        private_key_path = get_private_key_from_parameters()
+        private_key_pem = get_private_key_pem_from_parameters()
         private_key_password = get_private_key_password()
 
         if not private_key_password:
             pytest.skip("No private key password configured; cannot create unencrypted key for test")
 
         # Decrypt the key and write as unencrypted PEM
-        with open(private_key_path, "rb") as f:
-            key = serialization.load_pem_private_key(
-                f.read(),
-                password=private_key_password.encode(),
-                backend=default_backend(),
-            )
+        key = serialization.load_pem_private_key(
+            private_key_pem.encode(),
+            password=private_key_password.encode(),
+            backend=default_backend(),
+        )
         unencrypted_pem = key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -78,23 +78,43 @@ class TestPrivateKeyAuthentication:
         # Then There is error returned
         verify_login_error(exception, keywords=["jwt"])
 
-    def test_should_authenticate_using_private_key_as_bytes(self, connection_factory):
-        # Given Authentication is set to JWT and private key is provided as bytes
-        private_key_path = get_private_key_from_parameters()
+    def test_should_authenticate_using_private_key_as_pem_string(self, connection_factory):
+        # Given Authentication is set to JWT and private key is provided as plaintext PEM
+        if OLD_DRIVER_ONLY("BD#5"):
+            pytest.skip("plaintext PEM as private_key string is exercised on the universal driver")
+
+        private_key_pem = get_private_key_pem_from_parameters()
         private_key_password = get_private_key_password()
 
-        # Load the private key from file and convert to bytes
-        with open(private_key_path, "rb") as key_file:
-            private_key_bytes = serialization.load_pem_private_key(
-                key_file.read(),
-                password=private_key_password.encode() if private_key_password else None,
-                backend=default_backend(),
-            )
-            private_key_der = private_key_bytes.private_bytes(
-                encoding=serialization.Encoding.DER,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            )
+        kwargs = {
+            "authenticator": "SNOWFLAKE_JWT",
+            "private_key": private_key_pem,
+        }
+        if private_key_password:
+            kwargs["private_key_password"] = private_key_password
+
+        # When Trying to Connect
+        connection = connection_factory(**kwargs)
+
+        # Then Login is successful and simple query can be executed
+        with connection:
+            verify_simple_query_execution(connection)
+
+    def test_should_authenticate_using_private_key_as_bytes(self, connection_factory):
+        # Given Authentication is set to JWT and private key is provided as bytes
+        private_key_pem = get_private_key_pem_from_parameters()
+        private_key_password = get_private_key_password()
+
+        private_key_bytes = serialization.load_pem_private_key(
+            private_key_pem.encode(),
+            password=private_key_password.encode() if private_key_password else None,
+            backend=default_backend(),
+        )
+        private_key_der = private_key_bytes.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
 
         # When Trying to Connect
         connection = create_jwt_connection_with_private_key(connection_factory, private_key_der)
@@ -105,22 +125,20 @@ class TestPrivateKeyAuthentication:
 
     def test_should_authenticate_using_private_key_as_base64_string(self, connection_factory):
         # Given Authentication is set to JWT and private key is provided as base64-encoded string
-        private_key_path = get_private_key_from_parameters()
+        private_key_pem = get_private_key_pem_from_parameters()
         private_key_password = get_private_key_password()
 
-        # Load the private key from file and convert to base64-encoded string
-        with open(private_key_path, "rb") as key_file:
-            private_key_bytes = serialization.load_pem_private_key(
-                key_file.read(),
-                password=private_key_password.encode() if private_key_password else None,
-                backend=default_backend(),
-            )
-            private_key_der = private_key_bytes.private_bytes(
-                encoding=serialization.Encoding.DER,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            )
-            private_key_str = base64.b64encode(private_key_der).decode()
+        private_key_bytes = serialization.load_pem_private_key(
+            private_key_pem.encode(),
+            password=private_key_password.encode() if private_key_password else None,
+            backend=default_backend(),
+        )
+        private_key_der = private_key_bytes.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        private_key_str = base64.b64encode(private_key_der).decode()
 
         # When Trying to Connect
         connection = create_jwt_connection_with_private_key(connection_factory, private_key_str)
@@ -131,16 +149,14 @@ class TestPrivateKeyAuthentication:
 
     def test_should_authenticate_using_private_key_as_rsaprivatekey_object(self, connection_factory):
         # Given Authentication is set to JWT and private key is provided as RSAPrivateKey object
-        private_key_path = get_private_key_from_parameters()
+        private_key_pem = get_private_key_pem_from_parameters()
         private_key_password = get_private_key_password()
 
-        # Load the private key from file as RSAPrivateKey object
-        with open(private_key_path, "rb") as key_file:
-            private_key_obj = serialization.load_pem_private_key(
-                key_file.read(),
-                password=private_key_password.encode() if private_key_password else None,
-                backend=default_backend(),
-            )
+        private_key_obj = serialization.load_pem_private_key(
+            private_key_pem.encode(),
+            password=private_key_password.encode() if private_key_password else None,
+            backend=default_backend(),
+        )
 
         # When Trying to Connect
         connection = create_jwt_connection_with_private_key(connection_factory, private_key_obj)
@@ -176,7 +192,7 @@ def create_jwt_connection_with_private_key(connection_factory, private_key):
         connection_factory: Factory function to create connection
         private_key: Private key in one of the supported formats:
                      - bytes (DER format)
-                     - str (base64-encoded DER)
+                     - str (plaintext PEM or base64-encoded DER)
                      - RSAPrivateKey object
 
     Returns:

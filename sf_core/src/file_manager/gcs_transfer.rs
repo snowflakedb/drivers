@@ -9,14 +9,13 @@ use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::log_foreign_error;
 use crate::refresh::{Refresher, execute_with_refresh};
-use crate::sensitive::SensitiveString;
 use bytes::Bytes;
 use reqwest::{Method, StatusCode};
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
@@ -67,19 +66,13 @@ pub async fn upload_to_gcs_or_skip(
     skip_upload_on_content_match: bool,
     multipart: MultipartParams,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let using_presigned_url = stage_info.presigned_url.is_some();
     let has_refresher = refresher.is_some();
 
-    // Tell the refresher which destination file is uploading so a per-file URL
-    // refresh re-issues the PUT SQL rewritten for *this* file (multi-file glob
-    // PUT). `filename` is the dst object name (incl. compression suffix).
-    if let Some(r) = refresher.as_deref_mut() {
-        r.notify_current_upload_file(filename.to_string());
-    }
     // With a refresher, 400 is removed from the wire-level retry list — we
     // handle it reactively here by rotating the URL. Without a refresher,
     // the injected policy keeps the legacy 400-retry-with-same-URL fallback.
@@ -91,9 +84,7 @@ pub async fn upload_to_gcs_or_skip(
 
     // Two-strike URL-refresh model. `make_attempt` is a factory that captures
     // `base` (the stage-info for this strike) so the attempt body is written
-    // once and called twice with different bases. `Option<&mut dyn Trait>`
-    // reborrows prevent extracting the two-strike orchestration into a shared
-    // async helper across sequential awaits, so it stays inline here.
+    // once and called twice with different bases.
     let make_attempt = |base: &StageInfo| {
         let base = base.clone();
         let prepared = prepared.clone();
@@ -167,7 +158,7 @@ pub async fn upload_to_gcs_or_skip(
     };
 
     let first = run_gcs_with_token_refresh(
-        refresher.as_deref_mut(),
+        refresher,
         stage_info,
         |e| gcs_upload_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info),
@@ -189,13 +180,13 @@ pub async fn upload_to_gcs_or_skip(
 
     tracing::warn!("GCS PUT returned 400 in presigned mode; refreshing per-file URL and retrying");
     let refreshed_stage_info = {
-        let Some(r) = refresher.as_mut() else {
+        let Some(r) = refresher else {
             // Invariant: needs_url_refresh is only true when has_refresher
             // is true, so refresher must be Some here.
             unreachable!("refresher is Some: needs_url_refresh requires has_refresher");
         };
-        match r.refresh_url().await {
-            Ok(()) => {}
+        match r.refresh_url(Some(filename)).await {
+            Ok(_) => {}
             Err(StageInfoRefreshError::PresignedUrlRefreshSkipped { .. }) => {
                 // The PUT command had no parseable file:// path to rewrite for
                 // this file, so a per-file URL refresh wasn't possible. Fail
@@ -212,7 +203,7 @@ pub async fn upload_to_gcs_or_skip(
     };
 
     let second = run_gcs_with_token_refresh(
-        refresher.as_deref_mut(),
+        refresher,
         &refreshed_stage_info,
         |e| gcs_upload_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(&refreshed_stage_info),
@@ -276,7 +267,7 @@ async fn gcs_get_with_refresh(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<reqwest::Response, GcsDownloadError> {
     let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -338,7 +329,7 @@ async fn gcs_get_with_refresh(
     };
 
     let first = run_gcs_with_token_refresh(
-        refresher.as_deref_mut(),
+        refresher,
         stage_info,
         |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info, initial_per_file_url.clone()),
@@ -367,12 +358,12 @@ async fn gcs_get_with_refresh(
             "GCS GET returned 400 in presigned mode; refreshing per-file URL and retrying"
         );
         let (refreshed_stage_info, refreshed_per_file_url) = {
-            let Some(r) = refresher.as_mut() else {
+            let Some(r) = refresher else {
                 // Invariant: needs_url_refresh is only true when has_refresher
                 // is true, so refresher must be Some here.
                 unreachable!("refresher is Some: needs_url_refresh requires has_refresher");
             };
-            r.refresh_url()
+            r.refresh_url(None)
                 .await
                 .context(gcs_download_error::StageInfoRefreshSnafu)?;
             let snap = r.cache().snapshot();
@@ -394,7 +385,7 @@ async fn gcs_get_with_refresh(
         };
 
         let second = run_gcs_with_token_refresh(
-            refresher.as_deref_mut(),
+            refresher,
             &refreshed_stage_info,
             |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
             make_attempt(&refreshed_stage_info, refreshed_per_file_url),
@@ -428,7 +419,7 @@ pub async fn download_from_gcs(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<DownloadResponse, GcsDownloadError> {
     let response = gcs_get_with_refresh(
         stage_info,
@@ -1147,6 +1138,10 @@ fn create_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client, GcsReque
     let builder = crate::tls::client::configure_tls_builder(
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
+        // Honour the connection's explicit proxy (proxy_host/proxy_port/no_proxy)
+        // and its use_proxy_env env-detection policy for GCS transfers — the same
+        // logic the GS/REST client uses.
+        Some(&stage_info.proxy_config),
         stage_info.crl_worker.clone(),
     )
     .map_err(|e| {
@@ -1302,7 +1297,7 @@ pub async fn download_from_gcs_streaming(
     policy: &RetryPolicy,
     per_file_index: usize,
     multipart: MultipartParams,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
@@ -1353,7 +1348,7 @@ pub(super) async fn gcs_get_streaming(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
     let response = gcs_get_with_refresh(
         stage_info,
@@ -1453,7 +1448,7 @@ async fn gcs_try_ranged_download(
     filename: &str,
     policy: &RetryPolicy,
     multipart: MultipartParams,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<Option<CloudStreamingDownload>, GcsDownloadError> {
@@ -1491,7 +1486,7 @@ async fn gcs_try_ranged_download(
     };
 
     run_gcs_with_token_refresh(
-        refresher.as_deref_mut(),
+        refresher,
         stage_info,
         |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info),
@@ -1686,16 +1681,13 @@ fn map_gcs_request_error_for_attempt<E: From<GcsRequestError>>(
 /// shared cache and asking it to rotate when GCS returns 401.
 ///
 /// Tracks the last bearer token handed out so a refresh that doesn't
-/// actually rotate (refresher inside its 10-min coalescing window — bit-for-bit
-/// identical to libsfclient's `m_lastRefreshTokenSec` at
-/// `FileTransferAgent.cpp:412`) reports `Ok(false)` and the helper propagates
-/// the original error rather than spinning. The bearer comparison goes through
-/// `SensitiveString`'s `reveal` boundary only here; the comparison result is a
-/// plain `bool` and the strings themselves don't escape.
+/// Forwards `refresh` to the shared `StageInfoRefresher` coordinator, which
+/// handles coalescing and single-flight. The generation-based return value
+/// encodes whether a real rotation occurred.
 struct GcsTokenRefresher<'a, E, W> {
-    refresher: &'a mut dyn StageInfoRefresher,
-    last_seen_token: Option<SensitiveString>,
+    refresher: &'a dyn StageInfoRefresher,
     map_refresh_err: W,
+    observed: Instant,
     _marker: PhantomData<fn() -> E>,
 }
 
@@ -1703,12 +1695,10 @@ impl<'a, E, W> GcsTokenRefresher<'a, E, W>
 where
     W: Fn(StageInfoRefreshError) -> E,
 {
-    fn new(refresher: &'a mut dyn StageInfoRefresher, map_refresh_err: W) -> Self {
-        let last_seen_token =
-            gcs_bearer_token(&refresher.cache().snapshot().creds).map(SensitiveString::from);
+    fn new(refresher: &'a dyn StageInfoRefresher, map_refresh_err: W) -> Self {
         Self {
+            observed: refresher.cache().cached_at(),
             refresher,
-            last_seen_token,
             map_refresh_err,
             _marker: PhantomData,
         }
@@ -1738,34 +1728,15 @@ where
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, GcsAttemptError<E>>> {
         Box::pin(async move {
             tracing::info!("GCS hit 401; refreshing stage info (creds)");
-            self.refresher
-                .refresh()
+            let new_gen = self
+                .refresher
+                .refresh(self.observed)
                 .await
                 .map_err(|e| GcsAttemptError::Other((self.map_refresh_err)(e)))?;
-            let new = self.refresher.cache().snapshot();
-            let new_token = gcs_bearer_token(&new.creds).map(SensitiveString::from);
-            if new_token.as_ref().map(|s| s.reveal().as_str())
-                == self.last_seen_token.as_ref().map(|s| s.reveal().as_str())
-            {
-                // Refresher coalesced or returned the same bearer — retrying
-                // would loop, so decline further rotations.
-                return Ok(false);
-            }
-            self.last_seen_token = new_token;
-            Ok(true)
+            let advanced = new_gen > self.observed;
+            self.observed = new_gen;
+            Ok(advanced)
         })
-    }
-}
-
-/// Returns the bearer string from GCS credentials, or None for non-GCS
-/// variants. Used as the rotation marker; a different bearer implies a
-/// fresh GS rotation. Mirrors `aws_key_id` in `s3_transfer.rs`.
-fn gcs_bearer_token(creds: &CloudCredentials) -> Option<&str> {
-    match creds {
-        CloudCredentials::Gcs {
-            gcs_access_token: Some(t),
-        } => Some(t.reveal().as_str()),
-        _ => None,
     }
 }
 
@@ -1778,14 +1749,13 @@ fn gcs_bearer_token(creds: &CloudCredentials) -> Option<&str> {
 /// `initial_stage_info` seeds the snapshot handed to the first `attempt`
 /// invocation in the no-refresher branch, so the legacy path keeps reading
 /// the caller's original creds and presigned_url.
-async fn run_gcs_with_token_refresh<'r, 'd, F, Fut, T, E>(
-    refresher: Option<&'r mut (dyn StageInfoRefresher + 'd)>,
+async fn run_gcs_with_token_refresh<F, Fut, T, E>(
+    refresher: Option<&dyn StageInfoRefresher>,
     initial_stage_info: &StageInfo,
     map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
     attempt: F,
 ) -> Result<T, E>
 where
-    'd: 'r,
     F: Fn(super::types::StageInfoSnapshot) -> Fut,
     Fut: Future<Output = Result<T, GcsAttemptError<E>>>,
     E: Send + From<GcsRequestError>,
@@ -2131,7 +2101,7 @@ mod tests {
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
     use crate::config::retry::Jitter;
-    use crate::file_manager::types::{RefreshFuture, StageInfoCache, StageInfoSnapshot};
+    use crate::file_manager::types::{StageInfoCache, StageInfoSnapshot};
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
 
@@ -2162,6 +2132,7 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         }
     }
@@ -2781,12 +2752,17 @@ mod tests {
     }
 
     impl super::super::types::StageInfoRefresher for NoopRefresher {
-        fn refresh(&mut self) -> super::super::types::RefreshFuture<'_> {
-            Box::pin(async { Ok(()) })
+        fn refresh(&self, _observed: std::time::Instant) -> super::super::types::RefreshFuture<'_> {
+            // Noop: no rotation performed, so the generation is unchanged.
+            let new_gen = self.cache.cached_at();
+            Box::pin(async move { Ok(new_gen) })
         }
 
-        fn refresh_url(&mut self) -> RefreshFuture<'_> {
-            Box::pin(async { Ok(()) })
+        fn refresh_url(
+            &self,
+            _current_upload_file: Option<&str>,
+        ) -> super::super::types::RefreshFuture<'_> {
+            Box::pin(async move { Ok(std::time::Instant::now()) })
         }
 
         fn cache(&self) -> &StageInfoCache {
@@ -2801,10 +2777,10 @@ mod tests {
         // by the outer 400-refresh loop) and 403 (access denied, not
         // recoverable by cred rotation) must not trigger the creds refresh
         // loop.
-        let mut noop = NoopRefresher::with_token("tok");
+        let noop = NoopRefresher::with_token("tok");
         // Use unit type as E to isolate the should_refresh logic from error
         // conversions — the check dispatches only on the enum variant.
-        let r: GcsTokenRefresher<'_, (), _> = GcsTokenRefresher::new(&mut noop, |_| ());
+        let r: GcsTokenRefresher<'_, (), _> = GcsTokenRefresher::new(&noop, |_| ());
 
         assert!(
             r.should_refresh(&GcsAttemptError::TokenExpired),
@@ -3084,7 +3060,7 @@ mod tests {
             false,
             always_multipart(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("resumable upload should succeed against the mock");
@@ -3163,7 +3139,7 @@ mod tests {
             false,
             always_multipart(),
             &test_policy(false, 1),
-            &mut None,
+            None,
         )
         .await;
         assert!(
@@ -3204,7 +3180,7 @@ mod tests {
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             0,
             always_multipart(),
-            &mut None,
+            None,
             false,
             cloud_http::CloudSpillTarget::Temp(spill.path()),
         )
@@ -3249,7 +3225,7 @@ mod tests {
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             0,
             always_multipart(),
-            &mut None,
+            None,
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
@@ -3301,7 +3277,7 @@ mod tests {
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             0,
             always_multipart(),
-            &mut None,
+            None,
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
@@ -3339,7 +3315,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3372,7 +3348,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3400,7 +3376,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3427,7 +3403,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3454,7 +3430,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3477,7 +3453,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3510,7 +3486,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3541,7 +3517,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3579,7 +3555,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3620,7 +3596,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3657,7 +3633,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();

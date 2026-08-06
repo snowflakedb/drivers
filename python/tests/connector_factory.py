@@ -12,10 +12,14 @@ from typing import Any
 
 from snowflake import connector
 
-from .compatibility import IS_UNIVERSAL_DRIVER, is_new_driver, is_old_driver
+from .compatibility import IS_UNIVERSAL_DRIVER, is_new_driver
 from .config import get_test_parameters
 from .connector_types import ConnectorType
-from .private_key_helper import get_private_key_from_parameters, get_private_key_password
+from .private_key_helper import (
+    get_private_key_from_parameters,
+    get_private_key_password,
+    get_private_key_pem_from_parameters,
+)
 
 
 class ConnectorAdapter(ABC):
@@ -91,11 +95,15 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
         "role": test_params.get("SNOWFLAKE_TEST_ROLE"),
     }
 
-    # Use JWT authentication by default (unless custom private_key_file or authenticator is
-    # provided). uSUT (local Snowflake test instance) only provisions password credentials for the
-    # test user — no RSA key is registered — so fall back to password auth when
-    # SNOWFLAKE_TEST_IS_USUT is set.
-    if "private_key_file" not in override_params and "authenticator" not in override_params:
+    # Use JWT authentication by default (unless custom private_key / private_key_file
+    # or authenticator is provided). uSUT (local Snowflake test instance) only provisions
+    # password credentials for the test user — no RSA key is registered — so fall back to
+    # password auth when SNOWFLAKE_TEST_IS_USUT is set.
+    if (
+        "private_key" not in override_params
+        and "private_key_file" not in override_params
+        and "authenticator" not in override_params
+    ):
         if test_params.get("SNOWFLAKE_TEST_IS_USUT"):
             connection_params["password"] = test_params.get("SNOWFLAKE_TEST_PASSWORD")
         else:
@@ -136,16 +144,21 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
 def setup_default_jwt_auth(connection_params: dict[str, Any]) -> None:
     """Set up default JWT authentication using encrypted private key from environment.
 
+    New driver: pass PEM via ``private_key`` (core accepts plaintext PEM).
+    Old driver: keep ``private_key_file`` (may materialize a tempfile from contents).
+
     Args:
         connection_params: Dictionary to populate with JWT auth parameters
     """
     connection_params["authenticator"] = "SNOWFLAKE_JWT"
-    private_key_path = get_private_key_from_parameters()
-    connection_params["private_key_file"] = private_key_path
-
     private_key_pwd = get_private_key_password()
-    if private_key_pwd:
-        if is_old_driver():
-            connection_params["private_key_file_pwd"] = private_key_pwd
-        elif is_new_driver():
+
+    if is_new_driver():
+        connection_params["private_key"] = get_private_key_pem_from_parameters()
+        if private_key_pwd:
             connection_params["private_key_password"] = private_key_pwd
+        return
+
+    connection_params["private_key_file"] = get_private_key_from_parameters()
+    if private_key_pwd:
+        connection_params["private_key_file_pwd"] = private_key_pwd

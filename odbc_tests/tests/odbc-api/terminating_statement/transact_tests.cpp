@@ -451,7 +451,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture,
 }
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLTransact: Environment handle skips disconnected connections",
-                 "[odbc-api][transact][terminating_statement]") {
+                 "[odbc-api][transact][terminating_statement][flaky]") {
   ExtraConnectedDbc extra(env_handle(), dsn_name());
   Schema::use_temp_session_schema(extra.dbc());
   const std::string table = generate_unique_table_name("TRANSACT_ENV_SKIP");

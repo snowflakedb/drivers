@@ -199,7 +199,7 @@ pipeline {
                     try {
                       sh label: 'ODBC VPN E2E tests', script: '''
                         set +x
-                        cargo build
+                        cargo build --package odbc
                         source /opt/rh/gcc-toolset-11/enable
                         cd odbc_tests
                         mkdir -p cmake-build

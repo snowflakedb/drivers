@@ -863,3 +863,76 @@ behavior_differences:
     description: |
       GCS now honors the opt-in skip_upload_on_content_match flag like S3 and Azure instead of skipping
       matching content unconditionally, restoring legacy parity for the default PUT OVERWRITE=TRUE path.
+
+  48:
+    name: "Connecting with WIF-only params set but authenticator != WORKLOAD_IDENTITY now fails; legacy silently ignored"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Verified in snowflakedb/snowflake-jdbc: SFSessionProperty declares workloadIdentityProvider /
+      workloadIdentityEntraResource / workloadIdentityImpersonationPath optional, and SFSession.open()
+      copies all three into SFLoginInput unconditionally, regardless of authenticator — so
+      authenticator=snowflake with workloadIdentityProvider=AWS connects and the WIF props are never
+      read. (The lone WIF guard, checkAwsExternalIdEnabled, gates a different property,
+      workloadIdentityAwsExternalId, and no-ops unless authenticator=WORKLOAD_IDENTITY.) The universal
+      driver's sf_core::validate_settings rejects any of the three params under a non-WIF authenticator
+      (ConflictingParameters, Error). Allowed as a bugfix: it matches legacy snowflake-connector-python's
+      long-standing rejection (ProgrammingError errno=251017) and enforces it uniformly across wrappers;
+      no JDBC caller relies on the params being silently ignored.
+  49:
+    name: "workload_identity_impersonation_path with provider=OIDC now fails; legacy silently ignored it"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Verified in snowflakedb/snowflake-jdbc: OidcIdentityAttestationCreator.createAttestation() only
+      reads the token, never workloadIdentityImpersonationPath, so that param is silently discarded
+      today. Legacy snowflake-connector-python/nodejs/.NET all reject this combination client-side;
+      legacy JDBC never did. sf_core::validate_settings now rejects it uniformly (ConflictingParameters,
+      Error). Unlike entry 48, this is a genuine new rejection for JDBC, not a relocated one — allowed as
+      a bugfix since silently accepting a no-op param combination is itself a latent bug.
+
+  50:
+    name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure/GCS `encryptiondata` JSON: legacy snowflake-jdbc hardcodes
+      `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"` on both clouds.
+    new_driver_behavior: |
+      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
+      self-identification, not an oversight. Confirmed no reader anywhere consumes this value:
+      not the four legacy drivers' decrypt paths, not UD's own, and not GS's own server-side
+      parser, which validates several sibling fields but never reads `EncryptionLibrary`. GS's
+      own internal C++ encryption library independently emits `"OpenSSL 1.0.1e-fips"` rather
+      than `"Java 5.3.0"` on its GCS path --
+      the same self-identify-honestly pattern UD follows. Kept deliberately: matching
+      "Java 5.3.0" would misidentify which implementation produced the blob, valuable for
+      diagnostics during the mixed-fleet rollout period.
+
+  51:
+    name: "secondary_roles connection parameter is now accepted (no legacy JDBC equivalent)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Legacy snowflake-jdbc's `SFSessionProperty` enum has no `secondary_roles` (or similarly named)
+      property. A user relying on secondary-role activation must either rely on the user's
+      `DEFAULT_SECONDARY_ROLES` setting or run `USE SECONDARY ROLES` after connecting.
+    new_driver_behavior: |
+      Because `secondary_roles` is registered as a shared `sf_core` connection parameter (added for
+      Python parity with snowflake-connector-python#2750 / SNOW-2853586), and JDBC forwards unrecognized
+      connection properties/URL parameters through unfiltered, a JDBC caller can now also set
+      `secondary_roles=ALL` or `secondary_roles=NONE` to control secondary-role activation at login,
+      sent as `SECONDARY_ROLES` in the login-request body. This is a net-new, opt-in capability with no
+      legacy JDBC counterpart — not a fix of a prior gap — so it is filed as `allowed`, not `fixed`.

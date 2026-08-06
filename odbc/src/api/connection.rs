@@ -6,7 +6,7 @@ use crate::api::encoding::{
 };
 use crate::api::error::Required;
 use crate::api::error::{
-    AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, DisconnectedSnafu,
+    AsyncInProgressSnafu, AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, DisconnectedSnafu,
     InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCatalogNameSnafu,
     InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidPortSnafu,
     InvalidTransactionOperationCodeSnafu, InvalidTransactionStateSnafu, NullPointerSnafu,
@@ -126,6 +126,11 @@ fn normalize_connection_string_option(
         "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
             Some(("private_key_password".to_owned(), value.into()))
         }
+        // Legacy ODBC's `SecondaryRoles` connection attribute has no separator to
+        // preserve once the connection-string parser uppercases the key, so it
+        // collapses to `SECONDARYROLES` and would otherwise never match the
+        // shared `secondary_roles` parameter.
+        "SECONDARYROLES" => Some(("secondary_roles".to_owned(), value.into())),
         // Forward other keys (e.g. SERVER, UID, SSL) for `sf_core` alias resolution; do not
         // pre-canonicalize here to avoid duplicate seed keys.
         _ => Some((upper, value.into())),
@@ -1012,6 +1017,38 @@ pub fn end_tran(connection_handle: sql::Handle, completion_type: sql::SmallInt) 
     commit_or_rollback(&dbc, op)
 }
 
+/// `SQLCancelHandle` on a connection handle.
+///
+/// Per the ODBC 3.8 Diagnostics table, returns HY010 when any associated
+/// statement is asynchronously executing or mid data-at-execution. Otherwise
+/// this is a no-op: neither driver supports cancelable connection-level async
+/// operations, so with no child statement busy there is nothing to cancel.
+pub fn cancel_handle(connection_handle: sql::Handle) -> OdbcResult<()> {
+    let dbc = conn_from_handle(connection_handle)?;
+    // Hold `connection` across the child-statement scan (same pattern as
+    // `commit_or_rollback`). `statement::execute` / `exec_direct` take
+    // `connection` before `stmt.inner` when transitioning into async or
+    // data-at-execution, so keeping it locked here closes the race where a
+    // statement goes busy between cloning `child_statements` and the per-stmt
+    // check — which would otherwise let us return Ok(()) instead of HY010.
+    // Lock order remains `connection` -> `stmt.inner`.
+    let connection = dbc.connection.lock();
+    let child_ids: Vec<HandleId> = connection.child_statements.clone();
+    let g = global().context(OdbcRuntimeSnafu)?;
+    for &child_id in &child_ids {
+        if let Ok(stmt_guard) = g.stmt_registry.get(child_id) {
+            let inner = stmt_guard.inner.lock();
+            if inner.state.as_ref().is_async_executing() {
+                return AsyncInProgressSnafu.fail();
+            }
+            if inner.state.as_ref().is_need_data() {
+                return InvalidDuringDaeSnafu.fail();
+            }
+        }
+    }
+    Ok(())
+}
+
 /// End the current transaction on every connection owned by an environment
 /// (`SQLEndTran` with `SQL_HANDLE_ENV`). Per the ODBC spec this attempts to
 /// commit/rollback every connection owned by the environment, so we keep going
@@ -1155,9 +1192,17 @@ pub fn set_connect_attr<E: OdbcEncoding>(
         None if ConnectionAttribute::is_snowflake_custom(attribute) => {
             return UnknownAttributeSnafu { attribute }.fail();
         }
+        // Mirror get_connect_attr: setting a valid-but-unsupported ODBC connection
+        // attribute returns HYC00 (optional feature not implemented), while an
+        // identifier outside the ODBC-defined connection range — e.g. the ODBC 2.x
+        // statement attributes SQL_ATTR_QUERY_TIMEOUT (0) / SQL_ATTR_MAX_ROWS (1)
+        // set on a connection handle — returns HY092. Keeps set and get consistent.
+        None if ConnectionAttribute::is_known_odbc(attribute) => {
+            tracing::warn!("set_connect_attr: unsupported ODBC attribute {attribute}");
+            return UnsupportedAttributeSnafu { attribute }.fail();
+        }
         None => {
-            tracing::debug!("set_connect_attr: ignoring standard attribute {attribute}");
-            return Ok(());
+            return UnknownAttributeSnafu { attribute }.fail();
         }
     };
 
@@ -2281,12 +2326,7 @@ impl OdbcFunction {
     fn is_supported(self) -> bool {
         !matches!(
             self,
-            Self::BulkOperations
-                | Self::DataSources
-                | Self::Drivers
-                | Self::ParamOptions
-                | Self::SetPos
-                | Self::SetScrollOptions
+            Self::BulkOperations | Self::DataSources | Self::Drivers | Self::SetPos
         )
     }
 
@@ -2465,6 +2505,19 @@ mod tests {
             Some("42")
         );
         assert!(!options.contains_key("LOGIN_TIMEOUT"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_secondary_roles() {
+        // The connection-string parser uppercases keys with no separator preserved,
+        // so `SecondaryRoles=None;` arrives here as `SECONDARYROLES`.
+        let options = normalize_connection_string_options(HashMap::from([(
+            "SECONDARYROLES".to_owned(),
+            "None".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "secondary_roles"), Some("None"));
+        assert!(!options.contains_key("SECONDARYROLES"));
     }
 
     #[test]
@@ -3042,6 +3095,62 @@ mod tests {
         )]));
 
         assert_eq!(config_string(&options, "QUERY_TAG"), Some("from-odbc"));
+    }
+
+    /// Connection diagnostic params (SNOW-3864169) have no explicit mapping in
+    /// `normalize_connection_string_option`, so they fall through to the
+    /// generic uppercase passthrough — same path as `QUERY_TAG` above. This
+    /// pins that they survive normalization unmodified rather than being
+    /// dropped.
+    #[test]
+    fn normalize_connection_string_options_forwards_connection_diag_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("ENABLE_CONNECTION_DIAG".to_owned(), "true".to_owned()),
+            (
+                "CONNECTION_DIAG_LOG_PATH".to_owned(),
+                "/var/log/sfdiag".to_owned(),
+            ),
+            (
+                "CONNECTION_DIAG_ALLOWLIST_PATH".to_owned(),
+                "/var/snowflake/allowlist.json".to_owned(),
+            ),
+        ]));
+
+        assert_eq!(
+            config_string(&options, "ENABLE_CONNECTION_DIAG"),
+            Some("true")
+        );
+        assert_eq!(
+            config_string(&options, "CONNECTION_DIAG_LOG_PATH"),
+            Some("/var/log/sfdiag")
+        );
+        assert_eq!(
+            config_string(&options, "CONNECTION_DIAG_ALLOWLIST_PATH"),
+            Some("/var/snowflake/allowlist.json")
+        );
+    }
+
+    /// Wiring guard: the uppercase keys forwarded above must actually be
+    /// resolvable by `sf_core::config::param_registry` to their canonical
+    /// lowercase names, or the connection-string surface would silently drop
+    /// connection diagnostics on connect (the params would never reach
+    /// `ConnectionConfig::build`).
+    #[test]
+    fn connection_diag_keys_resolve_via_sf_core_param_registry() {
+        let registry = sf_core::config::param_registry::registry();
+        for (key, expected_canonical) in [
+            ("ENABLE_CONNECTION_DIAG", "enable_connection_diag"),
+            ("CONNECTION_DIAG_LOG_PATH", "connection_diag_log_path"),
+            (
+                "CONNECTION_DIAG_ALLOWLIST_PATH",
+                "connection_diag_allowlist_path",
+            ),
+        ] {
+            let resolved = registry
+                .resolve(key)
+                .unwrap_or_else(|| panic!("sf_core param_registry does not know {key}"));
+            assert_eq!(resolved.canonical_name, expected_canonical);
+        }
     }
 
     #[test]

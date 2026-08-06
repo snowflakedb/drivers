@@ -53,6 +53,7 @@ COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
 COPY proto_generator/ ./proto_generator/
 COPY odbc_trace_tool/ ./odbc_trace_tool/
+COPY python_bridge/ ./python_bridge/
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 3: Build sf_core and ODBC
@@ -94,7 +95,7 @@ COPY error_trace/src/ ./error_trace/src/
 COPY error_trace_derive/src/ ./error_trace_derive/src/
 COPY odbc_trace_tool/src/ ./odbc_trace_tool/src/
 
-# Build sf_core (with perf_timing instrumentation for performance tests)
+# Build sf_core (with perf_timing instrumentation for performance tests).
 RUN cargo build --release --package sf_core --features perf_timing && \
     cp target/release/libsf_core.so /workdir/libsf_core.so
 

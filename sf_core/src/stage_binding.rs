@@ -9,9 +9,7 @@ use crate::config::retry::RetryPolicy;
 use crate::file_manager;
 use crate::file_manager::upload_in_memory_file;
 use crate::rest::snowflake::query_response::{Data, QueryResponseError, Response};
-use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, RestError, snowflake_query_with_client,
-};
+use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
 use crate::sensitive::SensitiveString;
 
 pub const BIND_STAGE_NAME: &str = "SYSTEM$BIND";
@@ -165,9 +163,10 @@ async fn ensure_stage(
         ctx.query_parameters.clone(),
         ctx.session_token.reveal(),
         query_input,
-        ctx.retry_policy,
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions {
+            retry_policy: ctx.retry_policy.clone(),
+            ..Default::default()
+        },
     )
     .await;
 
@@ -208,9 +207,10 @@ async fn issue_put_query(
         ctx.query_parameters.clone(),
         ctx.session_token.reveal(),
         query_input,
-        ctx.retry_policy,
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions {
+            retry_policy: ctx.retry_policy.clone(),
+            ..Default::default()
+        },
     )
     .await
     .context(PutQuerySnafu)
@@ -221,9 +221,13 @@ async fn upload_blob(
     csv_bytes: &[u8],
     data: &Data,
 ) -> Result<(), StageBindingError> {
-    let single = data
+    let mut single = data
         .to_bind_stage_upload_data(ctx.use_s3_regional_url_session_param)
         .context(MalformedPutResponseSnafu)?;
+
+    // This path builds `StageInfo` outside `perform_put_get_transfer`, so copy
+    // the connection's proxy settings onto it explicitly.
+    single.stage_info.proxy_config = ctx.query_parameters.client_info.proxy_config.clone();
 
     // No `StageInfoRefresher` is needed here: CSV binding payloads are small
     // (a few KB at most) and upload in well under the storage-credential
@@ -231,11 +235,11 @@ async fn upload_blob(
     // is therefore not a realistic concern, unlike the large-file PUT/GET path
     // where files can run for minutes.
     //
-    // Note: this internal path builds `StageInfo` outside
-    // `perform_put_get_transfer`, so the storage client uses the default TLS
-    // version window rather than the connection's narrowed one (see
-    // adr/tls_version_enforcement_implementation_notes.md, "Known gaps").
-    upload_in_memory_file(csv_bytes.to_vec(), single, ctx.put_get_policy, &mut None)
+    // Note: this path still uses the default TLS version window rather than the
+    // connection's narrowed one (see
+    // adr/tls_version_enforcement_implementation_notes.md, "Known gaps"); only
+    // the proxy settings are threaded here.
+    upload_in_memory_file(csv_bytes.to_vec(), single, ctx.put_get_policy, None)
         .await
         .context(UploadSnafu)?;
     Ok(())

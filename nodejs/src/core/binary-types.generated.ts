@@ -8,9 +8,13 @@ export declare class Connection {
   constructor(options: Record<string, string>)
   connect(): Promise<void>
   execute(query: string): Promise<Statement>
+  getQueryResult(queryId: string): Promise<Statement>
+  destroy(): Promise<void>
 }
 
 export declare class Statement {
-  getNextRow(): Promise<Record<string, number> | null>
+  getNextRow(): Promise<Array<unknown> | null>
+  getQueryId(): string
+  getNumRows(): number | null
   close(): void
 }

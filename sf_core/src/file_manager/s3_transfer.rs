@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::marker::PhantomData;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio_stream::wrappers::ReceiverStream;
 
 // AWS SDK imports
@@ -97,7 +97,7 @@ pub(super) async fn upload_to_s3_or_skip(
     skip_upload_on_content_match: bool,
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, UploadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -206,15 +206,10 @@ enum S3AttemptError<E> {
 /// error variant locally rather than via a blanket
 /// `From<StageInfoRefreshError>` impl on `UploadFileError` /
 /// `DownloadFileError`, which would lose location info.
-///
-/// Tracks the last AWS key id handed out so a refresh that doesn't
-/// actually rotate (refresher inside its coalescing window) reports
-/// `Ok(false)` and the helper propagates the original error rather than
-/// spinning.
 struct S3StsRefresher<'a, E, W> {
-    refresher: &'a mut dyn StageInfoRefresher,
-    last_seen_key: Option<String>,
+    refresher: &'a dyn StageInfoRefresher,
     map_refresh_err: W,
+    observed: Instant,
     _marker: PhantomData<fn() -> E>,
 }
 
@@ -222,14 +217,10 @@ impl<'a, E, W> S3StsRefresher<'a, E, W>
 where
     W: Fn(StageInfoRefreshError) -> E,
 {
-    fn new(
-        refresher: &'a mut dyn StageInfoRefresher,
-        initial: &CloudCredentials,
-        map_refresh_err: W,
-    ) -> Self {
+    fn new(refresher: &'a dyn StageInfoRefresher, map_refresh_err: W) -> Self {
         Self {
+            observed: refresher.cache().cached_at(),
             refresher,
-            last_seen_key: aws_key_id(initial).map(str::to_string),
             map_refresh_err,
             _marker: PhantomData,
         }
@@ -256,19 +247,14 @@ where
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, S3AttemptError<E>>> {
         Box::pin(async move {
             tracing::info!("S3 hit ExpiredToken; refreshing stage credentials");
-            self.refresher
-                .refresh()
+            let new_gen = self
+                .refresher
+                .refresh(self.observed)
                 .await
                 .map_err(|e| S3AttemptError::Other((self.map_refresh_err)(e)))?;
-            let new = self.refresher.cache().snapshot().creds;
-            let new_key = aws_key_id(&new).map(str::to_string);
-            if new_key == self.last_seen_key {
-                // Refresher coalesced or returned the same creds — retrying
-                // would loop, so decline further rotations.
-                return Ok(false);
-            }
-            self.last_seen_key = new_key;
-            Ok(true)
+            let advanced = new_gen > self.observed;
+            self.observed = new_gen;
+            Ok(advanced)
         })
     }
 }
@@ -283,7 +269,7 @@ where
 /// instrumentation at the boundary so source locations land on the
 /// operation's own error variants rather than on this helper.
 async fn run_s3_with_sts_refresh<F, Fut, T, E>(
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     initial_creds: &CloudCredentials,
     map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
     map_sts_err: impl FnOnce(aws_sdk_s3::Error) -> E,
@@ -294,9 +280,9 @@ where
     Fut: Future<Output = Result<T, S3AttemptError<E>>>,
     E: Send,
 {
-    let outcome = match refresher.as_deref_mut() {
+    let outcome = match refresher {
         Some(r) => {
-            let mut sts_refresher = S3StsRefresher::new(r, initial_creds, map_refresh_err);
+            let mut sts_refresher = S3StsRefresher::new(r, map_refresh_err);
             execute_with_refresh(&mut sts_refresher, attempt).await
         }
         None => attempt(initial_creds.clone()).await,
@@ -308,8 +294,9 @@ where
 }
 
 /// Returns the AWS key id from S3 credentials, or None for non-S3 variants.
-/// Used as the rotation marker; a different key id implies a fresh STS
-/// rotation from GS.
+/// Used as the rotation marker in tests; a different key id implies a fresh
+/// STS rotation from GS.
+#[cfg(test)]
 fn aws_key_id(creds: &CloudCredentials) -> Option<&str> {
     match creds {
         CloudCredentials::S3 { aws_key_id, .. } => Some(aws_key_id.as_str()),
@@ -967,7 +954,7 @@ pub(super) async fn download_from_s3(
     filename: &str,
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<S3Download, DownloadFileError> {
@@ -1082,7 +1069,7 @@ pub(super) async fn download_from_s3_streaming(
     stage_info: &StageInfo,
     filename: &str,
     base_policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<S3StreamingDownload, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -1407,14 +1394,14 @@ async fn create_s3_client(
     stage_info: &StageInfo,
     provider_name: &'static str,
     policy: &RetryPolicy,
-) -> Result<S3Client, S3CredentialError> {
+) -> Result<S3Client, CreateS3ClientError> {
     let super::types::CloudCredentials::S3 {
         ref aws_key_id,
         ref aws_secret_key,
         ref aws_token,
     } = stage_info.creds
     else {
-        return Err(S3CredentialError);
+        return Err(CreateS3ClientError::MissingCredentials);
     };
 
     let credentials = Credentials::new(
@@ -1425,17 +1412,26 @@ async fn create_s3_client(
         provider_name,
     );
 
-    let mut loader = aws_config::defaults(BehaviorVersion::latest())
+    // Build the HTTP client over the same reqwest transport Azure/GCS use, so S3
+    // honours the connection's full TLS policy (version window, CRL, custom root
+    // store) and proxy handling (explicit proxy, `no_proxy`, `use_proxy_env`)
+    // through one shared implementation. Fails the build on a bad custom root
+    // store or CRL verifier, matching Azure/GCS.
+    let http_client = crate::tls::aws_http_client::build_s3_reqwest_client(
+        &stage_info.tls_config,
+        Some(&stage_info.proxy_config),
+        stage_info.crl_worker.clone(),
+    )
+    .map_err(CreateS3ClientError::HttpClient)?;
+
+    let loader = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(credentials)
         .region(Region::new(stage_info.region.clone()))
         .retry_config(to_aws_retry_config(policy))
-        .timeout_config(to_aws_timeout_config(policy));
-    // Always inject our hyper/rustls client so S3 connections honour the
-    // connection's full TLS policy (version window, CRL, custom root store).
-    loader = loader.http_client(crate::tls::aws_http_client::tls_configured_aws_http_client(
-        &stage_info.tls_config,
-        stage_info.crl_worker.clone(),
-    ));
+        .timeout_config(to_aws_timeout_config(policy))
+        .http_client(crate::tls::aws_http_client::reqwest_aws_http_client(
+            http_client,
+        ));
     let config = loader.load().await;
 
     let accelerate = resolve_acceleration(stage_info, &config).await;
@@ -1581,19 +1577,39 @@ fn regional_s3_endpoint(region: &str) -> String {
     format!("https://s3.{region}.{suffix}")
 }
 
-/// Error returned when `create_s3_client` is called with non-S3 credentials.
+/// Error returned when `create_s3_client` cannot produce an `S3Client`: the stage
+/// carries non-S3 credentials, or the TLS/proxy-configured HTTP client failed to
+/// build (mirroring Azure/GCS, which also surface a `configure_tls_builder`
+/// failure rather than silently continuing).
 #[derive(Debug)]
-struct S3CredentialError;
+enum CreateS3ClientError {
+    MissingCredentials,
+    HttpClient(crate::tls::error::TlsError),
+}
 
-impl From<S3CredentialError> for UploadFileError {
-    fn from(_: S3CredentialError) -> Self {
-        upload_file_error::MissingS3CredentialsSnafu.build()
+impl From<CreateS3ClientError> for UploadFileError {
+    fn from(err: CreateS3ClientError) -> Self {
+        match err {
+            CreateS3ClientError::MissingCredentials => {
+                upload_file_error::MissingS3CredentialsSnafu.build()
+            }
+            CreateS3ClientError::HttpClient(source) => {
+                upload_file_error::HttpClientBuildSnafu.into_error(source)
+            }
+        }
     }
 }
 
-impl From<S3CredentialError> for DownloadFileError {
-    fn from(_: S3CredentialError) -> Self {
-        download_file_error::MissingS3CredentialsSnafu.build()
+impl From<CreateS3ClientError> for DownloadFileError {
+    fn from(err: CreateS3ClientError) -> Self {
+        match err {
+            CreateS3ClientError::MissingCredentials => {
+                download_file_error::MissingS3CredentialsSnafu.build()
+            }
+            CreateS3ClientError::HttpClient(source) => {
+                download_file_error::HttpClientBuildSnafu.into_error(source)
+            }
+        }
     }
 }
 
@@ -1665,6 +1681,13 @@ pub enum UploadFileError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to build the S3 HTTP client"))]
+    HttpClientBuild {
+        #[snafu(source(from(crate::tls::error::TlsError, Box::new)))]
+        source: Box<crate::tls::error::TlsError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
     StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
@@ -1719,6 +1742,13 @@ pub enum DownloadFileError {
     },
     #[snafu(display("Missing S3 credentials"))]
     MissingS3Credentials {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to build the S3 HTTP client"))]
+    HttpClientBuild {
+        #[snafu(source(from(crate::tls::error::TlsError, Box::new)))]
+        source: Box<crate::tls::error::TlsError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -1875,6 +1905,7 @@ mod tests {
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
         }
     }
 
@@ -2113,19 +2144,24 @@ mod tests {
     }
 
     impl StageInfoRefresher for FakeRefresher {
-        fn refresh(&mut self) -> super::super::types::RefreshFuture<'_> {
+        fn refresh(&self, observed: std::time::Instant) -> super::super::types::RefreshFuture<'_> {
             self.refresh_calls.fetch_add(1, AtomicOrdering::SeqCst);
             let next = self.next_creds.lock().unwrap().take();
             if let Some(c) = next {
                 self.cache.store(StageInfoSnapshot::creds_only(c));
+                // Real coordinator's contract: return the post-store generation.
+                let new_gen = self.cache.cached_at();
+                return Box::pin(async move { Ok(new_gen) });
             }
-            Box::pin(async { Ok::<(), StageInfoRefreshError>(()) })
+            Box::pin(async move { Ok(observed) })
         }
 
-        fn refresh_url(&mut self) -> super::super::types::RefreshFuture<'_> {
-            // S3 tests never trigger URL refresh; share the same path so the
-            // trait is satisfied. Production GCS tests provide a dedicated fake.
-            self.refresh()
+        fn refresh_url(
+            &self,
+            _current_upload_file: Option<&str>,
+        ) -> super::super::types::RefreshFuture<'_> {
+            // S3 tests never trigger URL refresh; satisfy the trait minimally.
+            Box::pin(async { Ok(std::time::Instant::now()) })
         }
 
         fn cache(&self) -> &StageInfoCache {
@@ -2141,14 +2177,13 @@ mod tests {
 
     #[tokio::test]
     async fn s3_sts_refresher_refresh_returns_true_when_creds_rotate() {
-        let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
+        let fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
-        let initial = s3_creds("AKIA1");
-        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
+        let mut sts_refresher = S3StsRefresher::new(&fake, identity_map);
 
         let rotated = sts_refresher.refresh().await.unwrap();
 
-        assert!(rotated);
+        assert!(rotated, "rotation must return true");
         assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(
             aws_key_id(&fake.cache().snapshot().creds),
@@ -2159,39 +2194,32 @@ mod tests {
 
     #[tokio::test]
     async fn s3_sts_refresher_refresh_returns_false_when_creds_unchanged() {
-        // FakeRefresher with no `arm()` leaves the cache holding the
-        // initial creds — simulating a hit inside the refresher's
-        // coalescing window. The S3StsRefresher must report Ok(false) so
-        // the generic helper propagates the original error rather than
-        // spinning.
-        let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
-        let initial = s3_creds("AKIA1");
-        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
+        // FakeRefresher with no `arm()` leaves the cache holding the initial
+        // creds — simulating a coalesced peer. S3StsRefresher must return
+        // Ok(false) so execute_with_refresh propagates the original error.
+        let fake = FakeRefresher::new(s3_creds("AKIA1"));
+        let mut sts_refresher = S3StsRefresher::new(&fake, identity_map);
 
         let rotated = sts_refresher.refresh().await.unwrap();
 
-        assert!(
-            !rotated,
-            "unchanged creds → S3StsRefresher declines further rotations"
-        );
+        assert!(!rotated, "unchanged creds → false (no rotation)");
         assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn s3_sts_refresher_refresh_tracks_last_seen_key_across_rotations() {
-        // After a successful rotation, last_seen_key is updated. A
-        // subsequent unchanged refresh against the new key should still
-        // report Ok(false) — confirming the marker followed the rotation.
-        let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
+    async fn s3_sts_refresher_refresh_returns_true_on_second_rotation() {
+        // Two successive rotations: both must return true.
+        let fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
-        let initial = s3_creds("AKIA1");
-        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
+        let mut sts_refresher = S3StsRefresher::new(&fake, identity_map);
 
-        assert!(sts_refresher.refresh().await.unwrap()); // AKIA1 -> AKIA2
-        // Cache still holds AKIA2; arming nothing means refresh() leaves
-        // it as-is. S3StsRefresher must see "no rotation" against AKIA2
-        // (not AKIA1).
-        assert!(!sts_refresher.refresh().await.unwrap());
+        let rotated1 = sts_refresher.refresh().await.unwrap();
+        assert!(rotated1, "first rotation returns true");
+
+        // Arm a second rotation.
+        fake.arm(s3_creds("AKIA3"));
+        let rotated2 = sts_refresher.refresh().await.unwrap();
+        assert!(rotated2, "second rotation returns true");
     }
 
     // The SigV4 payload hash is set inside aws-sigv4 and only appears on the
@@ -2223,6 +2251,7 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         };
 
@@ -2235,7 +2264,7 @@ mod tests {
             false,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2311,6 +2340,7 @@ mod tests {
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
         };
 
         tokio::time::timeout(
@@ -2327,7 +2357,7 @@ mod tests {
                 false,
                 &base_policy(),
                 MultipartParams::default(),
-                &mut None,
+                None,
             ),
         )
         .await
@@ -2414,6 +2444,7 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         };
 
@@ -2432,7 +2463,7 @@ mod tests {
             false,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("encrypted S3 upload should succeed against the mock");
@@ -2499,7 +2530,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2532,7 +2563,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2559,7 +2590,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2587,7 +2618,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2609,7 +2640,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2633,7 +2664,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2667,7 +2698,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2718,7 +2749,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             always_multipart(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2856,6 +2887,7 @@ mod tests {
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
         }
     }
 
@@ -2921,7 +2953,7 @@ mod tests {
             false,
             &base_policy(),
             always_multipart(),
-            &mut None,
+            None,
         )
         .await
         .expect("multipart upload should succeed against the mock");
@@ -2983,7 +3015,7 @@ mod tests {
             false,
             &base_policy_with_attempts(1), // single attempt: fail fast, no SDK retry storm
             always_multipart(),
-            &mut None,
+            None,
         )
         .await;
 
@@ -3027,7 +3059,7 @@ mod tests {
             "f.dat",
             &base_policy(),
             always_multipart(),
-            &mut None,
+            None,
             false,
             cloud_http::CloudSpillTarget::Temp(spill.path()),
         )
@@ -3080,7 +3112,7 @@ mod tests {
             "f.dat",
             &base_policy(),
             always_multipart(),
-            &mut None,
+            None,
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
@@ -3130,7 +3162,7 @@ mod tests {
             "f.dat",
             &base_policy_with_attempts(1), // single attempt: fail fast
             always_multipart(),
-            &mut None,
+            None,
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )

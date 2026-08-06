@@ -6,4 +6,5 @@ class TestType(str, Enum):
     """Enum for test types"""
     SELECT = "select"
     PUT_GET = "put_get"
+    COLD_START = "cold_start"
 

@@ -44,6 +44,7 @@ EXPORTS
     SQLNumResultCols
     SQLDescribeParam
     SQLParamData
+    SQLParamOptions
     SQLPrepareW
     SQLPutData
     SQLRowCount
@@ -52,6 +53,7 @@ EXPORTS
     SQLSetDescFieldW
     SQLSetDescRec
     SQLSetEnvAttr
+    SQLSetScrollOptions
     SQLSetStmtAttrW
     SQLTablesW
     SQLTransact

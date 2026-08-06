@@ -239,6 +239,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
             crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
             storage_account: None,
         },
         encryption_material: Some(material),
@@ -253,7 +254,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
         data,
         &RetryPolicy::put_get(&ParamStore::new()),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -447,6 +448,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_s3_regional_url: false,
                 tls_config: sf_core::tls::config::TlsConfig::default(),
                 crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+                proxy_config: sf_core::tls::config::ProxyConfig::default(),
                 storage_account: None,
             };
             sf_core::file_manager::internal::download_from_gcs_streaming(
@@ -461,7 +463,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 ),
                 0,
                 MultipartParams::default(),
-                &mut None,
+                None,
                 false,
                 sf_core::file_manager::internal::CloudSpillTarget::Temp(
                     std::env::temp_dir().as_path(),
@@ -488,6 +490,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_s3_regional_url: false,
                 tls_config: sf_core::tls::config::TlsConfig::default(),
                 crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+                proxy_config: sf_core::tls::config::ProxyConfig::default(),
                 storage_account: Some("mystorageaccount".to_string()),
             };
             sf_core::file_manager::internal::download_from_azure_streaming(
@@ -504,7 +507,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 sf_core::file_manager::internal::CloudSpillTarget::Temp(
                     std::env::temp_dir().as_path(),
                 ),
-                &mut None,
+                None,
             )
             .await
             .expect("Azure streaming download must succeed")
@@ -638,6 +641,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
         crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
         storage_account: None,
     };
 
@@ -657,7 +661,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
             ),
             0,
             MultipartParams::default(),
-            &mut None,
+            None,
             false,
             sf_core::file_manager::internal::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
         ),
@@ -771,6 +775,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
             crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
             storage_account: None,
         },
         Cloud::Gcs => StageInfo {
@@ -788,6 +793,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
             crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
             storage_account: None,
         },
         Cloud::Azure => StageInfo {
@@ -805,6 +811,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
             crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
             storage_account: Some("mystorageaccount".to_string()),
         },
     }
@@ -880,7 +887,7 @@ async fn open_download_stream_cse_roundtrip_for(cloud: Cloud) {
         // GCS reads its presigned URL from the stage; no per-file override.
         None,
         &zero_backoff_test_retry_policy(),
-        &mut None,
+        None,
         Some(material),
         false,
     )
@@ -922,7 +929,10 @@ struct CountingSasRefresher {
 }
 
 impl sf_core::file_manager::types::StageInfoRefresher for CountingSasRefresher {
-    fn refresh(&mut self) -> sf_core::file_manager::types::RefreshFuture<'_> {
+    fn refresh(
+        &self,
+        _observed: std::time::Instant,
+    ) -> sf_core::file_manager::types::RefreshFuture<'_> {
         let calls = self.calls.clone();
         let cache = self.cache.clone();
         let fresh = self.fresh.clone();
@@ -931,12 +941,15 @@ impl sf_core::file_manager::types::StageInfoRefresher for CountingSasRefresher {
             cache.store(sf_core::file_manager::types::StageInfoSnapshot::creds_only(
                 fresh,
             ));
-            Ok(())
+            Ok(cache.cached_at())
         })
     }
 
-    fn refresh_url(&mut self) -> sf_core::file_manager::types::RefreshFuture<'_> {
-        Box::pin(async { Ok(()) })
+    fn refresh_url(
+        &self,
+        _current_upload_file: Option<&str>,
+    ) -> sf_core::file_manager::types::RefreshFuture<'_> {
+        Box::pin(async { Ok(std::time::Instant::now()) })
     }
 
     fn cache(&self) -> &sf_core::file_manager::types::StageInfoCache {
@@ -980,7 +993,7 @@ async fn open_download_stream_for_stage_azure_refreshes_sas_on_403() {
         .await;
 
     let stage = cloud_stage(Cloud::Azure, server.uri());
-    let mut refresher = CountingSasRefresher {
+    let refresher = CountingSasRefresher {
         cache: StageInfoCache::new_with_creds(stage.creds.clone()),
         calls: Arc::new(AtomicU32::new(0)),
         fresh: CloudCredentials::Azure {
@@ -988,14 +1001,13 @@ async fn open_download_stream_for_stage_azure_refreshes_sas_on_403() {
         },
     };
     let calls = refresher.calls.clone();
-    let mut refresher_dyn: Option<&mut dyn StageInfoRefresher> = Some(&mut refresher);
 
     let opened = open_download_stream_for_stage(
         &stage,
         Cloud::Azure.src_location(),
         None,
         &zero_backoff_test_retry_policy(),
-        &mut refresher_dyn,
+        Some(&refresher as &dyn StageInfoRefresher),
         None,
         false,
     )
@@ -1043,7 +1055,7 @@ async fn s3_open_download_stream_gunzip_only_roundtrip() {
         &stage,
         "gzip-object",
         &zero_backoff_test_retry_policy(),
-        &mut None,
+        None,
         None,
         true,
     )
@@ -1081,7 +1093,7 @@ async fn s3_open_download_stream_mid_body_disconnect_surfaces_error() {
             &stage,
             "disconnect-object",
             &zero_backoff_test_retry_policy(),
-            &mut None,
+            None,
             None,
             false,
         ),
@@ -1130,7 +1142,7 @@ async fn dispatch_raw_roundtrip_for(
         src_location,
         per_file_presigned_url,
         &zero_backoff_test_retry_policy(),
-        &mut None,
+        None,
         None,
         false,
     )
@@ -1227,7 +1239,7 @@ async fn open_gcs_download_stream_per_file_presigned_url_takes_precedence() {
         "gcs-object",
         Some(&format!("{}/gcs-object", server.uri())),
         &zero_backoff_test_retry_policy(),
-        &mut None,
+        None,
         None,
         false,
     )
@@ -1263,7 +1275,7 @@ async fn abort_stops_a_hanging_download_for(cloud: Cloud) {
             "object",
             stage.presigned_url.as_deref(),
             &zero_backoff_test_retry_policy(),
-            &mut None,
+            None,
             None,
             false,
         ),

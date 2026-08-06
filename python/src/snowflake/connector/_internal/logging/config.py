@@ -108,7 +108,7 @@ def _get_connector_stdlib_logger() -> logging.Logger:
 def _get_sf_core_stdlib_logger() -> logging.Logger:
     """Return the stdlib logger that receives core-originated FFI callback events.
 
-    Internal — used by :mod:`~.api_client.c_api._init` callback dispatch only.
+    Internal — used by :mod:`~.api_client` callback dispatch only.
     Wrapper code should use :func:`logging.get_logger` instead.
     """
     return _sf_core_logger
@@ -124,7 +124,7 @@ class LoggingConfiguration:
 
     @classmethod
     def initialize(cls, *, troubleshooting_enabled: bool) -> LoggingConfiguration:
-        """Create the process-wide instance. Call once after ``sf_core_init``."""
+        """Create the process-wide instance. Call once after ``sf_core_python.init``."""
         if cls._instance is None:
             cls._instance = cls(troubleshooting_enabled=troubleshooting_enabled)
         return cls._instance

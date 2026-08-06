@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::fs;
 use std::path::PathBuf;
 
-use base64::{Engine as _, engine::general_purpose};
-use openssl::pkey::PKey;
 use snafu::OptionExt;
 use url::Url;
 
+use super::private_key::{has_private_key_params, read_private_key};
 use crate::config::ParamStore;
 use crate::config::param_names::*;
 use crate::config::rest_parameters::{
@@ -15,10 +13,9 @@ use crate::config::rest_parameters::{
     NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
     WifProvider, WorkloadIdentityConfig,
 };
-use crate::config::settings::{Setting, Settings};
+use crate::config::settings::Settings;
 use crate::config::{
-    ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
-    ValidationSnafu,
+    ConfigError, InvalidParameterValueSnafu, MissingParameterSnafu, ValidationSnafu,
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::config::{ProxyConfig, TlsConfig, TlsVersion};
@@ -37,6 +34,8 @@ pub struct ConnectionConfig {
     pub proxy: ProxyConfig,
     pub disable_parallel_user_prompt: bool,
     pub diagnostic: DiagnosticConfig,
+    /// Secondary-roles activation mode sent at login (e.g. `ALL` or `NONE`).
+    pub secondary_roles: Option<String>,
 }
 
 /// Configuration for SnowCD-style connectivity diagnostics.
@@ -139,6 +138,7 @@ pub enum ValidationCode {
     UnknownParameter,
     DeprecatedParameter,
     ConflictingParameters,
+    ConflictingWifParameters,
 }
 
 #[derive(Debug, Clone)]
@@ -157,107 +157,6 @@ impl fmt::Display for ValidationIssue {
             self.severity, self.parameter, self.message
         )
     }
-}
-
-// ---------------------------------------------------------------------------
-// Private key helpers (mirrored from rest_parameters.rs)
-// ---------------------------------------------------------------------------
-
-fn der_to_pem(der_bytes: &[u8]) -> Result<String, ConfigError> {
-    let pkey = PKey::private_key_from_der(der_bytes).map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: String::from(PRIVATE_KEY),
-            value: "(binary data)".to_string(),
-            explanation: format!("Could not parse DER private key: {e}"),
-        }
-        .build()
-    })?;
-
-    let pem_bytes = pkey.private_key_to_pem_pkcs8().map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: String::from(PRIVATE_KEY),
-            value: "(binary data)".to_string(),
-            explanation: format!("Could not convert private key to PEM: {e}"),
-        }
-        .build()
-    })?;
-
-    String::from_utf8(pem_bytes).map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: String::from(PRIVATE_KEY),
-            value: "(binary data)".to_string(),
-            explanation: format!("PEM output is not valid UTF-8: {e}"),
-        }
-        .build()
-    })
-}
-
-fn read_private_key(settings: &ParamStore) -> Result<String, ConfigError> {
-    let has_private_key = settings.get(PRIVATE_KEY).is_some();
-    let has_private_key_file = settings.get_string(PRIVATE_KEY_FILE).is_some();
-
-    if has_private_key && has_private_key_file {
-        return ConflictingParametersSnafu {
-            explanation:
-                "Both 'private_key' and 'private_key_file' are set. Please provide only one."
-                    .to_string(),
-        }
-        .fail();
-    }
-
-    // Bytes (DER from Python)
-    if let Some(Setting::Bytes(private_key_bytes)) = settings.get(PRIVATE_KEY) {
-        return der_to_pem(private_key_bytes);
-    }
-
-    // String (base64-encoded)
-    if let Some(private_key_base64) = settings.get_string(PRIVATE_KEY) {
-        let private_key_bytes = general_purpose::STANDARD
-            .decode(&private_key_base64)
-            .map_err(|e| {
-                InvalidParameterValueSnafu {
-                    parameter: String::from(PRIVATE_KEY),
-                    value: "(redacted)".to_string(),
-                    explanation: format!("Could not decode base64 private key: {e}"),
-                }
-                .build()
-            })?;
-
-        if private_key_bytes.starts_with(b"-----BEGIN") {
-            return String::from_utf8(private_key_bytes).map_err(|e| {
-                InvalidParameterValueSnafu {
-                    parameter: String::from(PRIVATE_KEY),
-                    value: "(redacted)".to_string(),
-                    explanation: format!("Private key is not valid UTF-8: {e}"),
-                }
-                .build()
-            });
-        }
-
-        return der_to_pem(&private_key_bytes);
-    }
-
-    // File path
-    if let Some(private_key_file) = settings.get_string(PRIVATE_KEY_FILE) {
-        let private_key = fs::read_to_string(&private_key_file).map_err(|e| {
-            InvalidParameterValueSnafu {
-                parameter: String::from(PRIVATE_KEY_FILE),
-                value: private_key_file,
-                explanation: format!("Could not read private key file: {e}"),
-            }
-            .build()
-        })?;
-        return Ok(private_key);
-    }
-
-    MissingParameterSnafu {
-        parameter: "private_key or private_key_file".to_string(),
-    }
-    .fail()
-}
-
-fn has_private_key_params(settings: &ParamStore) -> bool {
-    settings.get(PRIVATE_KEY).is_some() || settings.get_string(PRIVATE_KEY_FILE).is_some()
 }
 
 fn non_empty_string(settings: &ParamStore, key: crate::config::ParamKey) -> Option<String> {
@@ -367,7 +266,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            private_key_pem: SensitiveString::from(read_private_key(settings)?),
+            private_key_pem: read_private_key(settings)?,
             passphrase: settings.get_sensitive_string(PRIVATE_KEY_PASSWORD),
         });
     }
@@ -583,6 +482,7 @@ impl ConnectionConfig {
             } else {
                 DiagnosticConfig::Disabled
             },
+            secondary_roles: settings.get_string(SECONDARY_ROLES),
         })
     }
 }
@@ -705,6 +605,7 @@ impl LoginParameters {
             schema: config.session.schema.clone(),
             warehouse: config.session.warehouse.clone(),
             role: config.session.role.clone(),
+            secondary_roles: config.secondary_roles.clone(),
             client_info,
             session_parameters,
             spcs_token,
@@ -1009,6 +910,25 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                     code: ValidationCode::MissingRequired,
                 });
             }
+            // impersonation_path is unsupported for OIDC: OIDC has no notion of
+            // impersonation the way cloud-metadata-based attestation does. Matches
+            // legacy snowflake-connector-python/Node.js/.NET, which all reject this
+            // client-side; JDBC/Go/C/PHP previously ignored it silently.
+            if let Some(provider_str) = settings.get_string(WORKLOAD_IDENTITY_PROVIDER)
+                && WifProvider::parse_str(&provider_str) == Some(WifProvider::Oidc)
+                && settings
+                    .get_string(WORKLOAD_IDENTITY_IMPERSONATION_PATH)
+                    .is_some_and(|s| !s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: WORKLOAD_IDENTITY_IMPERSONATION_PATH.into(),
+                    message: "workload_identity_impersonation_path is currently only supported \
+                              for GCP, AWS, and AZURE"
+                        .into(),
+                    code: ValidationCode::ConflictingWifParameters,
+                });
+            }
             // Azure impersonation is single-hop: exactly one SP client_id allowed
             if let Some(provider_str) = settings.get_string(WORKLOAD_IDENTITY_PROVIDER)
                 && WifProvider::parse_str(&provider_str) == Some(WifProvider::Azure)
@@ -1167,6 +1087,26 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         });
     }
 
+    // --- ConflictingParameters: WIF-only params require WORKLOAD_IDENTITY ---
+    if !matches!(auth_upper.as_str(), "WORKLOAD_IDENTITY") {
+        for param in [
+            WORKLOAD_IDENTITY_PROVIDER,
+            WORKLOAD_IDENTITY_ENTRA_RESOURCE,
+            WORKLOAD_IDENTITY_IMPERSONATION_PATH,
+        ] {
+            if non_empty_string(settings, param).is_some() {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: param.into(),
+                    message: format!(
+                        "{param} was set but authenticator was not set to WORKLOAD_IDENTITY"
+                    ),
+                    code: ValidationCode::ConflictingWifParameters,
+                });
+            }
+        }
+    }
+
     // --- UnknownParameter: keys not in ParamRegistry ---
     let registry = crate::config::param_registry::registry();
     for key in settings.keys() {
@@ -1190,6 +1130,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::settings::Setting;
     use crate::crl::config::CertRevocationCheckMode;
 
     fn settings_from(pairs: &[(&str, Setting)]) -> ParamStore {
@@ -1836,6 +1777,87 @@ mod tests {
             !err_msg.contains("Invalid authenticator"),
             "Should recognize 'snowflake_jwt' (lowercase): {err_msg}"
         );
+    }
+
+    #[test]
+    fn build_jwt_auth_accepts_plaintext_pem_private_key() {
+        // Leading whitespace is ignored when detecting PEM (trim_start).
+        let pem = "\n  -----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIFake\n-----END ENCRYPTED PRIVATE KEY-----\n";
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("authenticator", Setting::String("SNOWFLAKE_JWT".into())),
+            ("private_key", Setting::String(pem.into())),
+            ("private_key_password", Setting::String("secret".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Jwt {
+                private_key_pem,
+                passphrase,
+                ..
+            } => {
+                assert_eq!(private_key_pem.reveal(), pem);
+                assert_eq!(
+                    passphrase.as_ref().map(|p| p.reveal().as_str()),
+                    Some("secret")
+                );
+            }
+            other => panic!("Expected Jwt auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_jwt_auth_accepts_base64_encoded_pem_private_key() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let pem = "-----BEGIN PRIVATE KEY-----\nMIIFake\n-----END PRIVATE KEY-----\n";
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("authenticator", Setting::String("SNOWFLAKE_JWT".into())),
+            (
+                "private_key",
+                Setting::String(STANDARD.encode(pem.as_bytes())),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Jwt {
+                private_key_pem, ..
+            } => {
+                assert_eq!(private_key_pem.reveal(), pem);
+            }
+            other => panic!("Expected Jwt auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_jwt_auth_rejects_invalid_base64_private_key_string() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("authenticator", Setting::String("SNOWFLAKE_JWT".into())),
+            ("private_key", Setting::String("not-valid-base64!!!".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let err = ConnectionConfig::build(&settings).unwrap_err();
+        match err {
+            ConfigError::InvalidParameterValue {
+                ref parameter,
+                ref explanation,
+                ..
+            } => {
+                assert_eq!(parameter, "private_key");
+                assert!(
+                    explanation.contains("Could not decode base64 private key"),
+                    "Expected base64 decode explanation, got: {explanation}"
+                );
+            }
+            other => panic!("Expected InvalidParameterValue, got: {other}"),
+        }
     }
 
     #[test]
@@ -2759,6 +2781,43 @@ mod tests {
     }
 
     #[test]
+    fn validate_wif_oidc_with_impersonation_path_emits_error() {
+        let mut pairs = wif_base_settings("OIDC");
+        pairs.push(("token", Setting::String("my-oidc-jwt".into())));
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String("sa@project.iam.gserviceaccount.com".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_impersonation_path"
+                    && i.severity == ValidationSeverity::Error
+                    && i.code == ValidationCode::ConflictingWifParameters
+            }),
+            "Expected ConflictingWifParameters error for impersonation_path with OIDC, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_aws_with_impersonation_path_no_conflict() {
+        let mut pairs = wif_base_settings("AWS");
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String("arn:aws:iam::123:role/A".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues
+                .iter()
+                .all(|i| i.parameter != "workload_identity_impersonation_path"),
+            "AWS + impersonation_path should not conflict, got: {issues:?}"
+        );
+    }
+
+    #[test]
     fn validate_wif_user_not_required() {
         let settings = settings_from(&wif_base_settings("AWS"));
         let issues = validate_settings(&settings);
@@ -2999,6 +3058,116 @@ mod tests {
                 .iter()
                 .any(|i| i.parameter == "workload_identity_impersonation_path"),
             "Azure without impersonation should pass, got: {issues:?}"
+        );
+    }
+
+    // ── WIF cross-param guard: WIF-only params require WORKLOAD_IDENTITY ──
+
+    #[test]
+    fn validate_wif_provider_with_non_wif_auth_emits_error() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("authenticator", Setting::String("snowflake".into())),
+            ("workload_identity_provider", Setting::String("aws".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_provider"
+                    && i.code == ValidationCode::ConflictingWifParameters
+                    && i.severity == ValidationSeverity::Error
+            }),
+            "Expected ConflictingWifParameters warning for workload_identity_provider, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_entra_resource_with_non_wif_auth_emits_error() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            (
+                "workload_identity_entra_resource",
+                Setting::String("https://resource.example.com".into()),
+            ),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_entra_resource"
+                    && i.code == ValidationCode::ConflictingWifParameters
+            }),
+            "Expected ConflictingWifParameters for workload_identity_entra_resource, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_impersonation_path_with_non_wif_auth_emits_error() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            (
+                "workload_identity_impersonation_path",
+                Setting::String("arn:aws:iam::123:role/A".into()),
+            ),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_impersonation_path"
+                    && i.code == ValidationCode::ConflictingWifParameters
+            }),
+            "Expected ConflictingWifParameters for workload_identity_impersonation_path, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_params_absent_authenticator_emits_error() {
+        // absent authenticator defaults to non-WIF → guard must fire
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("workload_identity_provider", Setting::String("gcp".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_provider"
+                    && i.code == ValidationCode::ConflictingWifParameters
+            }),
+            "Expected ConflictingWifParameters when authenticator absent, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_params_with_wif_auth_no_conflict_error() {
+        // WIF params + WORKLOAD_IDENTITY auth → no ConflictingWifParameters
+        let mut pairs = wif_base_settings("AWS");
+        pairs.push((
+            "workload_identity_entra_resource",
+            Setting::String("https://resource.example.com".into()),
+        ));
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String("arn:aws:iam::123:role/A".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.code == ValidationCode::ConflictingWifParameters
+                    && [
+                        "workload_identity_provider",
+                        "workload_identity_entra_resource",
+                        "workload_identity_impersonation_path"
+                    ]
+                    .contains(&i.parameter.as_str())),
+            "WIF params with WORKLOAD_IDENTITY auth should not emit ConflictingWifParameters, got: {issues:?}"
         );
     }
 }

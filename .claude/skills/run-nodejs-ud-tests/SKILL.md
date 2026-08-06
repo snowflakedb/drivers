@@ -25,10 +25,21 @@ All commands run from the **repo root** unless stated otherwise.
 
 ## Step 1 — Credentials (required for e2e tests only)
 
-Unit tests do not need credentials. For e2e: ensure `parameters.json` exists
-at the repo root and `PARAMETER_PATH` is exported. Full setup procedure:
+Unit tests do not need credentials. For e2e, decode credentials **once** (test
+scripts never decode):
+
+```bash
+cd nodejs
+npm run creds:decode
+```
+
+Equivalent from the repo root: `./scripts/decode_secrets.sh`. Full setup
+procedure (passphrase / 1Password / manual `parameters.json`):
 
 @.claude/rules/ud-credentials.md
+
+E2E helpers resolve credentials from repo-root `parameters.json` by default
+(or `PARAMETER_PATH` if set). Env vars (`SNOWFLAKE_TEST_*`) remain a fallback.
 
 ---
 
@@ -89,7 +100,7 @@ npm run test:unit -- --watch
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `PARAMETER_PATH` | Yes (e2e only) | Path to `parameters.json`; falls back to `../parameters.json` |
+| `PARAMETER_PATH` | No (helpers default to repo-root `parameters.json`) | Override path to credentials file |
 | `SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER` | No | Set `1` to run e2e tests via `snowflake-sdk` (old driver) |
 
 ---
@@ -109,11 +120,17 @@ npm run test:unit -- --watch
 
 Run `npm install` in the `nodejs/` directory.
 
-### E2E test connection failures
+### Missing test parameter / E2E connection failures
 
-Verify `parameters.json` exists and `PARAMETER_PATH` is set correctly.
-The test utility reads `PARAMETER_PATH` env var, falling back to
-`../parameters.json` relative to `nodejs/`.
+Decode credentials once (do **not** expect `test:e2e` to decode):
+
+```bash
+cd nodejs && npm run creds:decode
+```
+
+Or from repo root: `./scripts/decode_secrets.sh`. Confirm `parameters.json`
+exists at the repo root, or set `PARAMETER_PATH` / the specific
+`SNOWFLAKE_TEST_*` env var.
 
 ### New driver e2e tests are all skipped
 

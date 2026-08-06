@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Instant;
 
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
@@ -209,6 +210,7 @@ fn gcs_stage(endpoint: &str) -> StageInfo {
         storage_account: None,
         tls_config: sf_core::tls::config::TlsConfig::default(),
         crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
     }
 }
 
@@ -251,10 +253,9 @@ async fn should_upload_and_download_via_gcs_multipart_roundtrip() {
         skip_upload_on_content_match: false,
         multipart,
     };
-    let upload_result =
-        upload_single_file(upload, &RetryPolicy::put_get(&ParamStore::new()), &mut None)
-            .await
-            .expect("upload should succeed");
+    let upload_result = upload_single_file(upload, &RetryPolicy::put_get(&ParamStore::new()), None)
+        .await
+        .expect("upload should succeed");
     assert_eq!(upload_result.status, "UPLOADED");
 
     assert_eq!(
@@ -312,14 +313,9 @@ async fn should_upload_and_download_via_gcs_multipart_roundtrip() {
         multipart,
         unsafe_file_write: false,
     };
-    download_single_file(
-        download,
-        &RetryPolicy::put_get(&ParamStore::new()),
-        0,
-        &mut None,
-    )
-    .await
-    .expect("download should succeed");
+    download_single_file(download, &RetryPolicy::put_get(&ParamStore::new()), 0, None)
+        .await
+        .expect("download should succeed");
 
     assert!(
         state.head_calls.load(Ordering::Relaxed) >= 1,
@@ -384,7 +380,7 @@ async fn should_retry_gcs_resumable_initiation_on_transient_5xx() {
     let upload_result = upload_single_file(
         upload,
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut None,
+        None,
     )
     .await
     .expect("upload should succeed after the initiate POST retries past the transient 503");
@@ -429,7 +425,7 @@ impl GcsChunkFakeRefresher {
 }
 
 impl StageInfoRefresher for GcsChunkFakeRefresher {
-    fn refresh(&mut self) -> RefreshFuture<'_> {
+    fn refresh(&self, _observed: Instant) -> RefreshFuture<'_> {
         self.refresh_calls.fetch_add(1, Ordering::Relaxed);
         self.cache.store(StageInfoSnapshot {
             creds: CloudCredentials::Gcs {
@@ -438,10 +434,11 @@ impl StageInfoRefresher for GcsChunkFakeRefresher {
             presigned_url: None,
             presigned_urls: None,
         });
-        Box::pin(async { Ok(()) })
+        let new_gen = self.cache.cached_at();
+        Box::pin(async move { Ok(new_gen) })
     }
 
-    fn refresh_url(&mut self) -> RefreshFuture<'_> {
+    fn refresh_url(&self, _current_upload_file: Option<&str>) -> RefreshFuture<'_> {
         unreachable!(
             "the GCS access-token resumable-upload path only calls refresh(), never refresh_url()"
         );
@@ -488,7 +485,7 @@ async fn should_reinitiate_gcs_resumable_session_after_401_mid_chunk() {
         gcs_access_token: Some(SensitiveString::from("stale-token")),
     };
 
-    let mut fake = GcsChunkFakeRefresher::new("stale-token", "fresh-token");
+    let fake = GcsChunkFakeRefresher::new("stale-token", "fresh-token");
 
     let multipart = MultipartParams::from_server(Some(THRESHOLD_BYTES), Some(4));
     let upload = SingleUploadData {
@@ -504,11 +501,11 @@ async fn should_reinitiate_gcs_resumable_session_after_401_mid_chunk() {
         skip_upload_on_content_match: false,
         multipart,
     };
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let upload_result = upload_single_file(
         upload,
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await
     .expect("401 mid-chunk should trigger a full re-initiate via token refresh and then succeed");

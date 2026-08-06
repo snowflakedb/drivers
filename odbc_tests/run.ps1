@@ -19,7 +19,7 @@ if ($vcpkgRoot) {
 }
 
 try {
-    cargo build
+    cargo build --package odbc
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 }
 finally {

@@ -25,6 +25,12 @@ if (fs.existsSync(PARAMETER_PATH)) {
   }
 }
 
+/**
+ * Reads a test parameter from parameters.json (`testconnection`) or process.env.
+ * Returns `undefined` when the value is missing. Callers that need credentials
+ * must decode once via `npm run creds:decode` (from nodejs/) or
+ * `./scripts/decode_secrets.sh` (from the repo root).
+ */
 export default function getTestParameter(key: string): string | undefined {
   const value = parametersFromFile[key];
   if (Array.isArray(value)) {

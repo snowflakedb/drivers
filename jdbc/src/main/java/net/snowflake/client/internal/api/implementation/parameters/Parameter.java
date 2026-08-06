@@ -32,7 +32,9 @@ public enum Parameter implements Property {
   ENABLE_PATTERN_SEARCH("enablePatternSearch", "true"),
   STRINGS_QUOTED_FOR_COLUMN_DEF("STRINGS_QUOTED_FOR_COLUMN_DEF", "false"),
   VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT("VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT", "16777216"),
-  TRACING("tracing", "");
+  LOG_QUERY_TEXT("log_query_text", "false"),
+  TRACING("tracing", ""),
+  SECONDARY_ROLES("secondary_roles", "");
 
   private final String key;
   private final String defaultVal;

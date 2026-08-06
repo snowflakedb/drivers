@@ -15,9 +15,12 @@ use crate::file_manager::{
 };
 use crate::query_types::RowType;
 use crate::rest;
+use crate::utils::sync::MutexRecoverExt;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
+use futures::FutureExt as _;
+use futures::future::{BoxFuture, Shared};
 use reqwest::Client;
 use rest::snowflake::query_response::{self, QueryResponseError, RowsetData};
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
@@ -55,26 +58,11 @@ pub struct StageInfoRefreshContext {
     pub conn: Arc<Mutex<Connection>>,
 }
 
-/// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
-///
-/// `retry_policy` is the base put/get retry policy (built from connection
-/// params at the dispatch site); cloud-specific code clones and tweaks it.
+/// Executes a PUT/GET file transfer, returning the results as a `RowsetData`.
 ///
 /// When `stage_info_refresh_context` is `Some`, recoverable stage-info-expiry
-/// errors during a file transfer trigger a re-issue of the original PUT/GET
-/// SQL to obtain a fresh `StageInfoSnapshot` (creds + presigned URLs) and the
-/// operation is retried. Specifically:
-/// - S3: AWS `ExpiredToken` → creds refresh (coalesced, 10-min window)
-/// - GCS 401: bearer expired → creds refresh (coalesced, 10-min window)
-/// - GCS 400: presigned URL expired → URL refresh (per-file, no coalesce)
-///
-/// Non-PUT/GET callers pass `None`.
-///
-/// `use_s3_regional_url_session_param` is the resolved value of the
-/// `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` session parameter (read at the
-/// dispatch site via `read_use_s3_regional_url_session_param`). When `true`,
-/// it ORs into the S3 regional-URL decision, matching the Python connector,
-/// JDBC, and libsnowflakeclient behavior.
+/// errors re-issue the original PUT/GET SQL for a fresh `StageInfoSnapshot` and
+/// retry the operation; non-PUT/GET callers pass `None`.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn perform_put_get_transfer(
     command: &str,
@@ -84,20 +72,23 @@ pub(super) async fn perform_put_get_transfer(
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     skip_upload_on_content_match: bool,
+    put_fastfail: bool,
+    get_fastfail: bool,
     unsafe_file_write: bool,
     tls_config: crate::tls::config::TlsConfig,
+    proxy_config: crate::tls::config::ProxyConfig,
     crl_worker: crate::crl::worker::SharedCrlWorker,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
     let initial_snapshot = data
         .stage_info_snapshot()
         .context(FileTransferPreparationSnafu)?;
-    let mut refresher = stage_info_refresh_context
+    let refresher = stage_info_refresh_context
         .zip(initial_snapshot)
         .map(|(ctx, initial)| SnowflakeStageInfoRefresher::new(ctx, initial));
     let refresher_handle = refresher
-        .as_mut()
-        .map(|r| r as &mut dyn file_manager::StageInfoRefresher);
+        .as_ref()
+        .map(|r| r as &dyn file_manager::StageInfoRefresher);
 
     match command {
         "UPLOAD" => {
@@ -107,13 +98,19 @@ pub(super) async fn perform_put_get_transfer(
                     wrapper_presets.legacy_odbc_compression_autodetect,
                     skip_upload_on_content_match,
                     use_s3_regional_url_session_param,
+                    put_fastfail,
                 )
                 .context(FileTransferPreparationSnafu)?;
             file_upload_data.stage_info.tls_config = tls_config.clone();
+            file_upload_data.stage_info.proxy_config = proxy_config.clone();
             file_upload_data.stage_info.crl_worker = crl_worker.clone();
-            let upload_results = upload_files(&file_upload_data, retry_policy, refresher_handle)
-                .await
-                .context(FileUploadSnafu)?;
+            let upload_results = upload_files(
+                &file_upload_data,
+                retry_policy,
+                refresher_handle.as_ref().copied(),
+            )
+            .await
+            .context(FileUploadSnafu)?;
             Ok(RowsetData::Upload(upload_results))
         }
         "DOWNLOAD" => {
@@ -122,6 +119,7 @@ pub(super) async fn perform_put_get_transfer(
                     &wrapper_presets.put_get_resultset_flavor,
                     use_s3_regional_url_session_param,
                     unsafe_file_write,
+                    get_fastfail,
                 )
                 .map_err(|e| {
                     if e.to_string().contains("source locations") {
@@ -131,11 +129,15 @@ pub(super) async fn perform_put_get_transfer(
                     }
                 })?;
             file_download_data.stage_info.tls_config = tls_config;
+            file_download_data.stage_info.proxy_config = proxy_config;
             file_download_data.stage_info.crl_worker = crl_worker;
-            let download_results =
-                download_files(file_download_data, retry_policy, refresher_handle)
-                    .await
-                    .context(FileDownloadSnafu)?;
+            let download_results = download_files(
+                file_download_data,
+                retry_policy,
+                refresher_handle.as_ref().copied(),
+            )
+            .await
+            .context(FileDownloadSnafu)?;
             Ok(RowsetData::Download(download_results))
         }
         _ => UnsupportedCommandSnafu {
@@ -150,9 +152,8 @@ pub(super) async fn perform_put_get_transfer(
 /// stage described by a GS PUT response, returning a single-row
 /// `RowsetData::Upload`. Mirrors the UPLOAD arm of [`perform_put_get_transfer`]
 /// but sources the data from `payload` instead of expanding a local glob —
-/// backs `connection_upload_stream` and the chunked
-/// `connection_upload_stream_{begin,chunk,finish}` RPCs (JDBC `uploadStream`,
-/// Python `file_stream`).
+/// backs the chunked `connection_upload_stream_{begin,chunk,finish}` RPCs
+/// (JDBC `uploadStream`, Python `file_stream`).
 ///
 /// The destination filename is the basename of the PUT command's `file://`
 /// token (echoed back by GS as `src_location_pattern`); auto-compress,
@@ -164,9 +165,10 @@ pub(super) async fn build_and_upload_stream(
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     put_get_policy: &RetryPolicy,
+    proxy_config: crate::tls::config::ProxyConfig,
     payload: ByteSource,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
-    let upload_data = data
+    let mut upload_data = data
         .to_file_upload_data(
             wrapper_presets.put_get_resultset_flavor.clone(),
             wrapper_presets.legacy_odbc_compression_autodetect,
@@ -174,6 +176,10 @@ pub(super) async fn build_and_upload_stream(
             // kwarg to opt into it and always uploads the supplied source.
             false,
             use_s3_regional_url_session_param,
+            // Single-file, in-memory PUT: it builds one `SingleUploadData` and
+            // never enters the `upload_files` batch loop, so `put_fastfail` is
+            // inert here — seed it from the wrapper preset for consistency.
+            wrapper_presets.put_get_fastfail_default,
         )
         .context(FileTransferPreparationSnafu)?;
 
@@ -188,12 +194,16 @@ pub(super) async fn build_and_upload_stream(
     let initial_snapshot = data
         .stage_info_snapshot()
         .context(FileTransferPreparationSnafu)?;
-    let mut refresher = stage_info_refresh_context
+    let refresher = stage_info_refresh_context
         .zip(initial_snapshot)
         .map(|(ctx, initial)| SnowflakeStageInfoRefresher::new(ctx, initial));
-    let mut refresher_handle = refresher
-        .as_mut()
-        .map(|r| r as &mut dyn file_manager::StageInfoRefresher);
+    let refresher_handle = refresher
+        .as_ref()
+        .map(|r| r as &dyn file_manager::StageInfoRefresher);
+
+    // Streaming PUT builds `StageInfo` outside `perform_put_get_transfer`, so
+    // copy the connection's proxy settings onto it explicitly.
+    upload_data.stage_info.proxy_config = proxy_config;
 
     let single = SingleUploadData {
         // `upload_prepared_source` reads from `source` (below), not this
@@ -216,15 +226,15 @@ pub(super) async fn build_and_upload_stream(
         multipart: upload_data.multipart,
     };
 
-    let result = upload_prepared_source(payload, single, put_get_policy, &mut refresher_handle)
+    let result = upload_prepared_source(payload, single, put_get_policy, refresher_handle)
         .await
         .context(FileUploadSnafu)?;
 
     Ok(RowsetData::Upload(vec![result]))
 }
 
-/// Builds the stage-info refresher used by `connection_download_stream`.
-/// Exposed so `stream_transfer.rs` can drive a streaming GET with the same
+/// Builds the stage-info refresher used by `download_stream_begin`. Exposed
+/// so `stream_transfer.rs` can drive a streaming GET with the same
 /// cred/URL-refresh machinery as the file-path path, without re-exposing the
 /// private `SnowflakeStageInfoRefresher` type.
 pub(super) fn stream_stage_info_refresher(
@@ -245,38 +255,39 @@ pub(super) fn stream_stage_info_refresher(
 /// expiries to the first-refreshed URL.
 const REFRESH_COALESCE_WINDOW: Duration = Duration::from_secs(10 * 60);
 
-/// Refreshes stage info (creds + presigned URLs) by re-executing the
-/// original PUT/GET SQL against Snowflake GS, matching Python's
-/// `StorageCredential.update` and ODBC's `FileTransferAgent::renewToken`. GS
-/// returns a brand-new `stageInfo` per query — we take the full
-/// `StageInfoSnapshot` (creds + presignedUrl + presignedUrls[]) and write it
-/// into the shared `StageInfoCache` so every in-flight transfer in the
-/// batch picks the fresh values up on its next attempt.
-///
-/// The refresh re-issues the PUT/GET SQL through `RefreshContext::execute_with_refresh`
-/// — if the session token has itself expired by the time we reach this point
-/// (e.g. a long batch upload), the 390112 detection from PR #1137 transparently
-/// renews the session before retrying the SQL.
-///
-/// Two entry points share the same fetch logic but differ in coalescing:
-/// - [`refresh`](file_manager::StageInfoRefresher::refresh) gates on the
-///   10-minute window (matches libsfclient's `m_lastRefreshTokenSec`); used
-///   for token-style expiries (S3 STS, GCS 401) where a burst of expirations
-///   across files should collapse to a single SQL re-issue.
-/// - [`refresh_url`](file_manager::StageInfoRefresher::refresh_url) bypasses
-///   the window; used for GCS 400 per-file URL expiry where each call may
-///   need to fetch a fresh `presignedUrls[]` slot. The call site
-///   (`gcs_transfer.rs`) enforces a two-strike guard to prevent looping.
+/// A single in-flight GS stage-info refresh, cloned by all coalescing callers so
+/// N concurrent 403/STS-expiry callers collapse into one GS fetch.
+type InflightRefresh = Shared<BoxFuture<'static, Result<Instant, StageInfoRefreshError>>>;
+
+/// Injectable fetch (re-executes the PUT/GET SQL and stores the result).
+/// Production defaults to `fetch_and_store`; coordinator tests substitute a
+/// counting stub via `new_with_fetch_fn` so the single-flight leader path is
+/// driven by tests without a live GS call.
+type StageInfoFetchFn = Arc<
+    dyn Fn(
+            StageInfoRefreshContext,
+            StageInfoCache,
+        ) -> BoxFuture<'static, Result<Instant, StageInfoRefreshError>>
+        + Send
+        + Sync,
+>;
+
+/// Refreshes stage info by re-executing the original PUT/GET SQL against GS and
+/// storing the fresh `StageInfoSnapshot` in the shared cache. Single-flight
+/// coordinator: N concurrent 403 callers on the same generation share one GS
+/// fetch. (`refresh_url` bypasses the window for GCS per-file URL expiry.)
 struct SnowflakeStageInfoRefresher {
     ctx: StageInfoRefreshContext,
     cache: StageInfoCache,
-    last_refresh_at: Option<Instant>,
-    /// Destination object name of the file currently being uploaded, set by
-    /// `upload_to_gcs_or_skip` via `notify_current_upload_file` before a
-    /// per-file URL refresh. `refresh_url` rewrites the PUT SQL to target this
-    /// file so GS returns its presigned URL (multi-file glob PUT). `None` for
-    /// GET, where the call site re-picks `presignedUrls[per_file_index]`.
-    current_upload_file: Option<String>,
+    last_refresh_at: std::sync::Mutex<Option<Instant>>,
+    /// In-flight fetch shared across concurrent 403/STS-expiry callers. Only
+    /// the "leader" (the first caller that wins the `inflight` lock while the
+    /// slot is empty) starts the actual GS fetch; every "follower" clones the
+    /// `Shared` future and awaits it alongside the leader.
+    inflight: tokio::sync::Mutex<Option<InflightRefresh>>,
+    /// Injectable fetch implementation. Production uses `fetch_and_store`;
+    /// tests may substitute a fake via `new_with_fetch_fn`.
+    fetch_fn: StageInfoFetchFn,
 }
 
 impl SnowflakeStageInfoRefresher {
@@ -284,8 +295,32 @@ impl SnowflakeStageInfoRefresher {
         Self {
             ctx,
             cache: StageInfoCache::new(initial),
-            last_refresh_at: None,
-            current_upload_file: None,
+            last_refresh_at: std::sync::Mutex::new(None),
+            inflight: tokio::sync::Mutex::new(None),
+            fetch_fn: Arc::new(|ctx, cache| fetch_and_store(ctx, cache).boxed()),
+        }
+    }
+
+    /// Test-only constructor that injects a custom fetch function instead of
+    /// calling the real GS endpoint.
+    #[cfg(test)]
+    fn new_with_fetch_fn(
+        ctx: StageInfoRefreshContext,
+        initial: StageInfoSnapshot,
+        fetch_fn: impl Fn(
+            StageInfoRefreshContext,
+            StageInfoCache,
+        ) -> BoxFuture<'static, Result<Instant, StageInfoRefreshError>>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self {
+            ctx,
+            cache: StageInfoCache::new(initial),
+            last_refresh_at: std::sync::Mutex::new(None),
+            inflight: tokio::sync::Mutex::new(None),
+            fetch_fn: Arc::new(fetch_fn),
         }
     }
 }
@@ -293,36 +328,110 @@ impl SnowflakeStageInfoRefresher {
 /// Returns `true` if a refresh recorded at `last` is still considered fresh
 /// at `now` and a new fetch should be coalesced. Extracted so the
 /// time-window logic can be unit-tested without a real `Instant::now()`.
-fn should_coalesce(last: Option<Instant>, now: Instant) -> bool {
+fn within_coalesce_window(last: Option<Instant>, now: Instant) -> bool {
     last.is_some_and(|at| now.saturating_duration_since(at) < REFRESH_COALESCE_WINDOW)
 }
 
+/// Fetches fresh stage info from GS and stores it in `cache`. Returns the new
+/// `cache.cached_at()` generation. Used as the leader's work unit in the
+/// single-flight coordinator.
+async fn fetch_and_store(
+    ctx: StageInfoRefreshContext,
+    cache: StageInfoCache,
+) -> Result<Instant, StageInfoRefreshError> {
+    let snapshot = fetch_fresh_stage_info(&ctx).await?;
+    cache.store(snapshot);
+    Ok(cache.cached_at())
+}
+
 impl file_manager::StageInfoRefresher for SnowflakeStageInfoRefresher {
-    fn refresh(&mut self) -> file_manager::RefreshFuture<'_> {
+    fn refresh(&self, observed: Instant) -> file_manager::RefreshFuture<'_> {
         Box::pin(async move {
-            // Coalesce rapid-fire refreshes: if we already fetched within
-            // the window, the cache still holds the result — nothing to do.
-            if should_coalesce(self.last_refresh_at, Instant::now()) {
-                tracing::debug!("Stage info refresh coalesced; cache holds recent snapshot");
-                return Ok(());
+            // Fast path: cache already holds a newer generation.
+            let cur = self.cache.cached_at();
+            if cur > observed {
+                return Ok(cur);
             }
 
-            tracing::info!("Refreshing stage info by re-executing PUT/GET SQL");
-            let snapshot = fetch_fresh_stage_info(&self.ctx).await?;
-            self.cache.store(snapshot);
-            self.last_refresh_at = Some(Instant::now());
-            Ok(())
+            // Acquire the inflight slot. Double-check under the lock.
+            let mut inflight_slot = self.inflight.lock().await;
+            let cur = self.cache.cached_at();
+            if cur > observed {
+                return Ok(cur);
+            }
+
+            let fut: Shared<BoxFuture<'static, Result<Instant, StageInfoRefreshError>>> =
+                match &*inflight_slot {
+                    Some(f) => {
+                        // Follower: join the in-flight fetch started by the leader.
+                        // Do NOT re-check the coalescing window — the leader already
+                        // decided a fetch was needed.
+                        f.clone()
+                    }
+                    None => {
+                        // Leader: decide whether to fetch or coalesce.
+                        let last = *self.last_refresh_at.lock_recover();
+                        // Final generation re-check: another task may have stored a
+                        // new generation between the double-check above and acquiring
+                        // the last_refresh_at lock.
+                        let cur = self.cache.cached_at();
+                        if cur > observed {
+                            return Ok(cur);
+                        }
+                        if within_coalesce_window(last, Instant::now()) {
+                            // Sequential within-window terminal: the cache is still
+                            // considered fresh; tell the caller the refresh was a
+                            // no-op by returning the current (unchanged) generation.
+                            tracing::debug!(
+                                "Stage info refresh coalesced; cache holds recent snapshot"
+                            );
+                            return Ok(observed);
+                        }
+                        tracing::info!("Refreshing stage info by re-executing PUT/GET SQL");
+                        let shared = (self.fetch_fn)(self.ctx.clone(), self.cache.clone()).shared();
+                        *inflight_slot = Some(shared.clone());
+                        shared
+                    }
+                };
+
+            // Drop the inflight lock BEFORE awaiting — never hold a lock
+            // across an .await (liveness: the leader's future must be able to
+            // complete even while followers are already awaiting it).
+            drop(inflight_slot);
+
+            let refresh_result = fut.clone().await;
+
+            // Re-acquire the inflight slot to clear it. Stamp the coalesce
+            // window BEFORE clearing the slot, inside the still-held critical
+            // section, so a straggler that observes the cleared slot also sees
+            // the fresh timestamp and coalesces instead of launching a second
+            // GS fetch. Only stamp on success (a failed refresh must re-fetch).
+            let mut inflight_slot = self.inflight.lock().await;
+            if refresh_result.is_ok() {
+                *self.last_refresh_at.lock_recover() = Some(Instant::now());
+            }
+            if let Some(ref slot_fut) = *inflight_slot
+                && Shared::ptr_eq(slot_fut, &fut)
+            {
+                *inflight_slot = None;
+            }
+            drop(inflight_slot);
+
+            refresh_result
         })
     }
 
-    fn refresh_url(&mut self) -> file_manager::RefreshFuture<'_> {
+    fn refresh_url(&self, current_upload_file: Option<&str>) -> file_manager::RefreshFuture<'_> {
+        // `current_upload_file` is a `&str` borrow; we must own the value
+        // inside the async block (which is `'_` but moves into a Box::pin).
+        let current_upload_file = current_upload_file.map(str::to_string);
         Box::pin(async move {
             // For a PUT, re-issue the SQL rewritten to target the single file
             // currently uploading so GS returns *that* file's presigned URL —
             // re-issuing the original glob SQL would return the first matched
             // file's URL and misroute the upload. For a GET, the call site
             // re-picks `presignedUrls[per_file_index]`, so re-issue unchanged.
-            let sql = match self.current_upload_file.as_deref() {
+            let sql = match current_upload_file.as_deref() {
                 Some(dst) => match rewrite_put_command_for_file(&self.ctx.sql, dst) {
                     Some(rewritten) => rewritten,
                     // PUT command with no parseable `file://` token: refuse to
@@ -335,40 +444,30 @@ impl file_manager::StageInfoRefresher for SnowflakeStageInfoRefresher {
                 },
                 None => self.ctx.sql.clone(),
             };
-            // Per-file URL refresh: bypass the coalescing window. Each file
-            // may carry a distinct per-object presigned URL, so collapsing
-            // refresh calls would lock subsequent files to a stale URL. The
-            // GCS call site enforces a two-strike guard.
+            // Per-file URL refresh: bypass the coalescing window and the
+            // single-flight gate. Each file may carry a distinct per-object
+            // presigned URL, so collapsing refresh calls would lock subsequent
+            // files to a stale URL. The GCS call site enforces a two-strike guard.
             tracing::info!(
                 "Refreshing stage info (presigned URLs) by re-executing PUT/GET SQL — \
                  bypassing 10-min coalesce window for per-file URL expiry"
             );
             let snapshot = fetch_fresh_stage_info_with_sql(&self.ctx, &sql).await?;
             self.cache.store(snapshot);
-            // Update `last_refresh_at` so a subsequent token-style refresh
-            // honors the window — the snapshot we just wrote carries fresh
-            // creds too. (Cred + URL refresh share the same underlying SQL,
-            // so this isn't double-spending against GS.)
-            self.last_refresh_at = Some(Instant::now());
-            Ok(())
+            // Stamp last_refresh_at so a subsequent token-style refresh honors
+            // the window — the snapshot we just wrote carries fresh creds too.
+            *self.last_refresh_at.lock_recover() = Some(Instant::now());
+            Ok(self.cache.cached_at())
         })
     }
 
     fn cache(&self) -> &StageInfoCache {
         &self.cache
     }
-
-    fn notify_current_upload_file(&mut self, dst_file_name: String) {
-        self.current_upload_file = Some(dst_file_name);
-    }
 }
 
-/// Extracts the local file path token from a PUT command: everything after the
-/// `file://` prefix, ending at the closing quote (if the path is quoted) or at
-/// the first space / newline / `;` (otherwise). Returns `None` when there is no
-/// `file://` (e.g. a GET command) or the token is empty/malformed. Mirrors
-/// libsfclient `getLocalFilePathFromCommand` and Python
-/// `_get_local_file_path_from_put_command`.
+/// Extracts the local `file://` path token from a PUT command; returns `None`
+/// for a GET command or empty/malformed input.
 fn local_file_path_from_put_command(sql: &str) -> Option<&str> {
     const FILE_PROTOCOL: &str = "file://";
     let proto_idx = sql.find(FILE_PROTOCOL)?;
@@ -401,15 +500,9 @@ async fn fetch_fresh_stage_info(
     fetch_fresh_stage_info_with_sql(ctx, &ctx.sql).await
 }
 
-/// Re-issues `sql` through `RefreshContext::execute_with_refresh` and extracts
-/// the full `stageInfo` snapshot (creds + presignedUrl + presignedUrls[]) from
-/// the response. Going through `execute_with_refresh` means a session-token
-/// expiry mid-batch is healed transparently by session-renewal logic before
-/// the SQL is retried.
-///
-/// `sql` is usually `ctx.sql`, but the per-file URL refresh path passes a
-/// command rewritten for a single destination file (see
-/// `rewrite_put_command_for_file`) so GS returns that file's presigned URL.
+/// Re-issues `sql` via `RefreshContext::execute_with_refresh` and extracts the
+/// fresh `stageInfo` snapshot from the response. `sql` is usually `ctx.sql`; the
+/// per-file URL-refresh path passes a command rewritten for one destination file.
 async fn fetch_fresh_stage_info_with_sql(
     ctx: &StageInfoRefreshContext,
     sql: &str,
@@ -443,9 +536,7 @@ async fn fetch_fresh_stage_info_with_sql(
                     query_parameters,
                     session_token.reveal(),
                     query_input,
-                    &crate::config::retry::RetryPolicy::default(),
-                    rest::snowflake::QueryExecutionMode::Blocking,
-                    None,
+                    rest::snowflake::QueryOptions::default(),
                 )
                 .await
             }
@@ -857,6 +948,81 @@ pub enum ReadBatchesError {
     },
 }
 
+/// Test-only building block for the coordinator tests (in this module) and for
+/// other modules' tests that drive the REAL single-flight coordinator. Only the
+/// injected `fetch_fn` runs, so `sql`/`query_parameters` are never consumed —
+/// stub them with minimal valid values.
+#[cfg(test)]
+fn stub_ctx() -> StageInfoRefreshContext {
+    use crate::config::rest_parameters::{ClientInfo, QueryParameters};
+    use crate::crl::config::CrlConfig;
+    use crate::tls::config::TlsConfig;
+    StageInfoRefreshContext {
+        sql: "PUT file://x @s".into(),
+        query_parameters: QueryParameters {
+            server_url: "https://stub.example.com".into(),
+            client_info: ClientInfo {
+                client_app_id: "stub".into(),
+                application: "stub".into(),
+                version: "0.0.0".into(),
+                os: "linux".into(),
+                os_version: "0".into(),
+                ocsp_mode: None,
+                runtime_name: None,
+                runtime_version: None,
+                compiler: None,
+                crl_config: CrlConfig::default(),
+                tls_config: TlsConfig::default(),
+                proxy_config: Default::default(),
+                platforms: Vec::new(),
+                os_details: None,
+            },
+            log_max_query_length: 100,
+            log_query_text: false,
+            log_query_parameters: false,
+        },
+        conn: Arc::new(Mutex::new(Connection::new())),
+    }
+}
+
+/// A real [`SnowflakeStageInfoRefresher`] whose GS fetch is stubbed to store
+/// `on_fetch` and count invocations. Returns `(refresher, fetch_call_counter)`.
+///
+/// Exposed `pub(crate)` (test-only) so `file_manager::azure_transfer` tests can
+/// drive the REAL single-flight coordinator — proving N concurrent block 403s
+/// collapse into exactly one GS fetch — without rebuilding a
+/// `StageInfoRefreshContext` or reaching the private coordinator type directly.
+#[cfg(test)]
+pub(crate) fn test_counting_coordinator(
+    initial: file_manager::StageInfoSnapshot,
+    on_fetch: file_manager::StageInfoSnapshot,
+) -> (
+    impl file_manager::StageInfoRefresher,
+    std::sync::Arc<std::sync::atomic::AtomicU32>,
+) {
+    use std::sync::atomic::Ordering;
+    let counter = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let counter_in = counter.clone();
+    let refresher =
+        SnowflakeStageInfoRefresher::new_with_fetch_fn(stub_ctx(), initial, move |_ctx, cache| {
+            let counter = counter_in.clone();
+            let on_fetch = on_fetch.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                // Brief simulated GS round-trip: hold the cache on the stale
+                // snapshot long enough that all concurrent callers observe it,
+                // fail, and coalesce onto this single fetch before it stores the
+                // fresh snapshot (otherwise a fast leader could rotate the cache
+                // before a peer even reads it).
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                cache.store(on_fetch);
+                Ok(cache.cached_at())
+            }
+            .boxed()
+        });
+    (refresher, counter)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1033,7 +1199,7 @@ mod tests {
 
     // --- Stage-creds coalescing window ---
     //
-    // The coalescing decision is extracted as `should_coalesce(last, now)`
+    // The coalescing decision is extracted as `within_coalesce_window(last, now)`
     // so we can drive it with synthetic Instants instead of the real clock.
     // These tests pin the boundary at REFRESH_COALESCE_WINDOW (10 min) and
     // verify both edges.
@@ -1041,7 +1207,7 @@ mod tests {
     #[test]
     fn should_coalesce_returns_false_before_first_refresh() {
         let now = Instant::now();
-        assert!(!should_coalesce(None, now));
+        assert!(!within_coalesce_window(None, now));
     }
 
     #[test]
@@ -1049,7 +1215,7 @@ mod tests {
         let last = Instant::now();
         // Just inside the window — anything < REFRESH_COALESCE_WINDOW.
         let now = last + REFRESH_COALESCE_WINDOW - Duration::from_secs(1);
-        assert!(should_coalesce(Some(last), now));
+        assert!(within_coalesce_window(Some(last), now));
     }
 
     #[test]
@@ -1059,14 +1225,14 @@ mod tests {
         // comparison, this catches it.
         let last = Instant::now();
         let now = last + REFRESH_COALESCE_WINDOW;
-        assert!(!should_coalesce(Some(last), now));
+        assert!(!within_coalesce_window(Some(last), now));
     }
 
     #[test]
     fn should_coalesce_returns_false_past_window() {
         let last = Instant::now();
         let now = last + REFRESH_COALESCE_WINDOW + Duration::from_secs(1);
-        assert!(!should_coalesce(Some(last), now));
+        assert!(!within_coalesce_window(Some(last), now));
     }
 
     #[test]
@@ -1076,7 +1242,7 @@ mod tests {
         // that mint Instants by hand; in production Instants are monotonic).
         let last = Instant::now();
         let now = last - Duration::from_millis(0); // same instant
-        assert!(should_coalesce(Some(last), now));
+        assert!(within_coalesce_window(Some(last), now));
     }
 
     #[test]
@@ -1167,6 +1333,254 @@ mod tests {
         assert_eq!(
             rewrite_put_command_for_file("GET @stage", "part-01.csv.gz"),
             None
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Single-flight coordinator concurrency tests.
+    // These use `new_with_fetch_fn` to inject a fake fetch so no real
+    // GS connection is needed.
+    // -------------------------------------------------------------------
+
+    fn stub_snapshot() -> file_manager::StageInfoSnapshot {
+        file_manager::StageInfoSnapshot {
+            creds: file_manager::CloudCredentials::Gcs {
+                gcs_access_token: None,
+            },
+            presigned_url: None,
+            presigned_urls: None,
+        }
+    }
+
+    /// N concurrent callers that all observe the same `observed` generation
+    /// must each receive the same `Ok(new_gen)` result — and the fetch function
+    /// must be invoked exactly once (single-flight).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_coalesce_n_concurrent_refresh_callers_into_one_fetch() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let fetch_calls = Arc::new(AtomicU32::new(0));
+        let fetch_calls2 = fetch_calls.clone();
+
+        let refresher = Arc::new(SnowflakeStageInfoRefresher::new_with_fetch_fn(
+            stub_ctx(),
+            stub_snapshot(),
+            move |_ctx, cache| {
+                let calls = fetch_calls2.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    // Simulate a brief async fetch.
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    cache.store(file_manager::StageInfoSnapshot {
+                        creds: file_manager::CloudCredentials::Gcs {
+                            gcs_access_token: None,
+                        },
+                        presigned_url: None,
+                        presigned_urls: None,
+                    });
+                    Ok(cache.cached_at())
+                }
+                .boxed()
+            },
+        ));
+
+        let observed = Instant::now();
+        // Spawn 5 concurrent callers, all observing the same `observed`.
+        let handles: Vec<_> = (0..5)
+            .map(|_| {
+                let r = refresher.clone();
+                tokio::spawn(async move {
+                    file_manager::StageInfoRefresher::refresh(r.as_ref(), observed).await
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = futures::future::join_all(handles).await;
+        let gens: Vec<Instant> = results
+            .into_iter()
+            .map(|h| h.expect("task panicked").expect("refresh failed"))
+            .collect();
+
+        // All callers must receive the same generation.
+        let first = gens[0];
+        for g in &gens {
+            assert_eq!(
+                *g, first,
+                "all concurrent callers must share the same generation"
+            );
+        }
+        // The fetch must have been called exactly once.
+        assert_eq!(
+            fetch_calls.load(Ordering::SeqCst),
+            1,
+            "single-flight: fetch must fire exactly once for N concurrent callers"
+        );
+        // The returned generation must be strictly after observed.
+        assert!(
+            first > observed,
+            "new generation must be strictly after observed"
+        );
+    }
+
+    /// A second `refresh()` call that arrives after the first completes and
+    /// within the 10-min coalescing window must return the cached generation
+    /// without re-fetching (terminal within-window coalesce).
+    #[tokio::test]
+    async fn should_coalesce_sequential_refresh_within_window() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let fetch_calls = Arc::new(AtomicU32::new(0));
+        let fetch_calls2 = fetch_calls.clone();
+
+        let refresher = SnowflakeStageInfoRefresher::new_with_fetch_fn(
+            stub_ctx(),
+            stub_snapshot(),
+            move |_ctx, cache| {
+                let calls = fetch_calls2.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    cache.store(file_manager::StageInfoSnapshot {
+                        creds: file_manager::CloudCredentials::Gcs {
+                            gcs_access_token: None,
+                        },
+                        presigned_url: None,
+                        presigned_urls: None,
+                    });
+                    Ok(cache.cached_at())
+                }
+                .boxed()
+            },
+        );
+
+        let observed1 = Instant::now();
+        // First call — goes through to the fetch.
+        let new_gen1 = file_manager::StageInfoRefresher::refresh(&refresher, observed1)
+            .await
+            .expect("first refresh failed");
+        assert!(
+            new_gen1 > observed1,
+            "first refresh must advance generation"
+        );
+        assert_eq!(fetch_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // Second call with observed = new_gen1 — coalesced because last_refresh_at
+        // is now set and within the window. Pass new_gen1 (not observed1) so the
+        // cache's cached_at equals observed rather than exceeding it; the fast path
+        // would short-circuit if we passed observed1 (cache already > observed1).
+        let new_gen2 = file_manager::StageInfoRefresher::refresh(&refresher, new_gen1)
+            .await
+            .expect("second refresh failed");
+        assert_eq!(
+            new_gen2, new_gen1,
+            "within-window sequential call must return the cached generation unchanged (coalesced)"
+        );
+        assert_eq!(
+            fetch_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "no second fetch within the coalescing window"
+        );
+    }
+
+    /// A fetch that fails must propagate the error to all concurrent waiters.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_propagate_fetch_failure_to_all_concurrent_waiters() {
+        let refresher = Arc::new(SnowflakeStageInfoRefresher::new_with_fetch_fn(
+            stub_ctx(),
+            stub_snapshot(),
+            |_ctx, _cache| {
+                async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    Err(StageInfoRefreshError::ServerRejected {
+                        message: "injected failure".into(),
+                        location: snafu::Location::default(),
+                    })
+                }
+                .boxed()
+            },
+        ));
+
+        let observed = Instant::now();
+        let handles: Vec<_> = (0..3)
+            .map(|_| {
+                let r = refresher.clone();
+                tokio::spawn(async move {
+                    file_manager::StageInfoRefresher::refresh(r.as_ref(), observed).await
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = futures::future::join_all(handles).await;
+        for result in results {
+            let err = result
+                .expect("task panicked")
+                .expect_err("fetch failure must propagate");
+            assert!(
+                matches!(err, StageInfoRefreshError::ServerRejected { .. }),
+                "all waiters must receive the error variant, got: {err:?}"
+            );
+        }
+    }
+
+    /// A failed refresh must NOT stamp the coalesce window: the error
+    /// propagates, and a subsequent `refresh()` performs a fresh fetch (does
+    /// not coalesce onto the failed attempt) and can succeed.
+    #[tokio::test]
+    async fn should_refetch_after_failed_refresh_without_coalescing() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let fetch_calls = Arc::new(AtomicU32::new(0));
+        let fetch_calls2 = fetch_calls.clone();
+
+        let refresher = SnowflakeStageInfoRefresher::new_with_fetch_fn(
+            stub_ctx(),
+            stub_snapshot(),
+            move |_ctx, cache| {
+                let calls = fetch_calls2.clone();
+                async move {
+                    // First attempt fails; every later attempt succeeds.
+                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Err(StageInfoRefreshError::ServerRejected {
+                            message: "injected first-attempt failure".into(),
+                            location: snafu::Location::default(),
+                        });
+                    }
+                    cache.store(file_manager::StageInfoSnapshot {
+                        creds: file_manager::CloudCredentials::Gcs {
+                            gcs_access_token: None,
+                        },
+                        presigned_url: None,
+                        presigned_urls: None,
+                    });
+                    Ok(cache.cached_at())
+                }
+                .boxed()
+            },
+        );
+
+        let observed = Instant::now();
+
+        // First refresh fails and surfaces the error.
+        let err = file_manager::StageInfoRefresher::refresh(&refresher, observed)
+            .await
+            .expect_err("first refresh must surface the injected failure");
+        assert!(
+            matches!(err, StageInfoRefreshError::ServerRejected { .. }),
+            "first refresh must surface the injected failure, got: {err:?}"
+        );
+
+        // Second refresh must re-fetch (the failed attempt left the window
+        // unstamped) and succeed.
+        let new_gen = file_manager::StageInfoRefresher::refresh(&refresher, observed)
+            .await
+            .expect("second refresh must re-fetch and succeed");
+        assert!(
+            new_gen > observed,
+            "successful re-fetch must advance the generation"
+        );
+        assert_eq!(
+            fetch_calls.load(Ordering::SeqCst),
+            2,
+            "failed refresh must not stamp the window; the second call must re-fetch"
         );
     }
 }

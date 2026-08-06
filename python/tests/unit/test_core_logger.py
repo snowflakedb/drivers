@@ -14,7 +14,7 @@ from snowflake.connector._internal.logging.config import LoggingConfiguration
 from snowflake.connector._internal.logging.core_logger import CoreLogger
 
 
-_SEND = "snowflake.connector._internal.logging.core_logger.sf_core_log_event"
+_SEND = "snowflake.connector._internal.logging.core_logger.sf_core_python.log_event"
 
 
 class TestCoreLogger:
@@ -179,16 +179,16 @@ class TestNativeExtensionLogger:
 
 class TestLoggerCallbackDispatch:
     def test_wrapper_logger_name_dispatched_to_module_logger(self, caplog: pytest.LogCaptureFixture) -> None:
-        from snowflake.connector._internal.api_client.c_api._init import logger_callback
+        from snowflake.connector._internal.api_client import _logger_callback
 
         with caplog.at_level(logging.INFO):
-            logger_callback(
+            _logger_callback(
                 2,
-                b"wrapper originated",
-                b"cursor.py",
+                "wrapper originated",
+                "cursor.py",
                 10,
-                b"execute",
-                b"snowflake.connector.cursor._base",
+                "execute",
+                "snowflake.connector.cursor._base",
             )
         matching = [r for r in caplog.records if r.message == "wrapper originated"]
         assert len(matching) == 1
@@ -197,16 +197,16 @@ class TestLoggerCallbackDispatch:
         assert matching[0].funcName == "execute"
 
     def test_empty_logger_name_dispatched_to_sf_core_logger(self, caplog: pytest.LogCaptureFixture) -> None:
-        from snowflake.connector._internal.api_client.c_api._init import logger_callback
+        from snowflake.connector._internal.api_client import _logger_callback
 
         with caplog.at_level(logging.DEBUG, logger="snowflake.connector._core"):
-            logger_callback(
+            _logger_callback(
                 3,
-                b"core originated",
-                b"http_client.rs",
+                "core originated",
+                "http_client.rs",
                 42,
-                b"execute_request",
-                b"",
+                "execute_request",
+                "",
             )
         matching = [r for r in caplog.records if r.message == "core originated"]
         assert len(matching) == 1
@@ -214,10 +214,10 @@ class TestLoggerCallbackDispatch:
 
     def test_level_finer_than_debug_is_delivered_as_debug(self, caplog: pytest.LogCaptureFixture) -> None:
         """Core wire levels 3+ (including legacy TRACE=4) map to stdlib DEBUG."""
-        from snowflake.connector._internal.api_client.c_api._init import logger_callback
+        from snowflake.connector._internal.api_client import _logger_callback
 
         with caplog.at_level(logging.DEBUG, logger="snowflake.connector._core"):
-            result = logger_callback(4, b"trace level event", b"detail.rs", 1, b"trace_fn", b"")
+            result = _logger_callback(4, "trace level event", "detail.rs", 1, "trace_fn", "")
         assert result == 0
         matching = [r for r in caplog.records if r.message == "trace level event"]
         assert len(matching) == 1

@@ -1,6 +1,6 @@
 # Copybara config: two workflows.
 #
-# 1. `mirror`  — outbound: snowflake-eng/universal-driver -> snowflakedb/universal-driver
+# 1. `mirror`  — outbound: snowflake-eng/drivers -> snowflakedb/drivers
 #                (ITERATIVE, direct push, denylist filter + internal-marker guards)
 #                Runs daily via .github/workflows/mirror.yml.
 #
@@ -9,8 +9,8 @@
 #                before merge. Runs on demand via
 #                .github/workflows/mirror-inbound.yml.
 #
-SOURCE_REPO = "https://github.com/snowflake-eng/universal-driver"
-MIRROR_REPO = "https://github.com/snowflakedb/universal-driver"
+SOURCE_REPO = "https://github.com/snowflake-eng/drivers"
+MIRROR_REPO = "https://github.com/snowflakedb/drivers"
 
 load("import_paths", "IMPORT_FILE_GLOBS", "IMPORT_AS_DRAFT")
 
@@ -63,13 +63,14 @@ EXCLUDED_PATHS = NOMIRROR_PATHS + [
     # CODEOWNERS. Re-include + scrub to a public team if external-review routing
     # is ever wanted.
     ".github/CODEOWNERS",
-    # Pre-disclosure sign-off gate: the workflow `uses:` an org-internal action
-    # the public org cannot resolve, and the roster names who can authorize a
-    # disclosure. Listed explicitly rather than moved below a NOMIRROR/
-    # directory because GitHub only reads workflows from .github/workflows/ and
-    # the action expects its default roster path.
+    # Pre-disclosure sign-off gate: the workflows `uses:` an org-internal
+    # action the public org cannot resolve, and the roster names who can
+    # authorize a disclosure. Listed explicitly rather than moved below a
+    # NOMIRROR/ directory because GitHub only reads workflows from
+    # .github/workflows/ and the action expects its default roster path.
     # See NOMIRROR/security-signoff.md.
     ".github/workflows/security-signoff.yml",
+    ".github/workflows/security-label.yml",
     ".github/security-partners.yml",
     # Internal bug-regression tracking: Jira ticket catalogs, analysis status
     # annotations, and the generated HTML report.
@@ -129,8 +130,8 @@ core.workflow(
         core.transform(
             [
                 core.replace(
-                    before = "snowflake-eng/universal-driver",
-                    after = "snowflakedb/universal-driver",
+                    before = "snowflake-eng/drivers",
+                    after = "snowflakedb/drivers",
                 ),
                 # Scrub the internal 1Password vault name from the local-dev
                 # fallback in scripts/decode_secrets.sh (and encode_secrets.sh).
@@ -156,7 +157,7 @@ core.workflow(
         # The mirror workflow itself is excluded because it legitimately
         # names the source repository.
         core.verify_match(
-            regex = "snowflake-eng/universal-driver",
+            regex = "snowflake-eng/drivers",
             paths = glob(["**"], exclude = [".github/workflows/mirror*"]),
             verify_no_match = True,
         ),

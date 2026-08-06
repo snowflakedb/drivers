@@ -53,6 +53,7 @@ class SnowflakeDataSourceReferenceParityTest {
                   "setAuthenticator",
                   "setToken",
                   "setOauthToken",
+                  "setPat",
                   "setPrivateKey",
                   "setPrivateKeyFile",
                   "setPrivateKeyBase64",

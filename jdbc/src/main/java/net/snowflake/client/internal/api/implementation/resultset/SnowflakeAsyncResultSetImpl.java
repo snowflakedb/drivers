@@ -155,7 +155,8 @@ public class SnowflakeAsyncResultSetImpl implements InternalAsyncResultSet {
     // Non-mutating async view: original async query ID and ASYNC query type
     // (which suppresses catalog/schema/table names).
     return new DecoratedSnowflakeResultSetMetaDataImpl(
-        SnowflakeResultSetMetaDataImpl.toAsync(metaData, queryID));
+        SnowflakeResultSetMetaDataImpl.toAsync(metaData, queryID),
+        snowflakeConnection.getTelemetry());
   }
 
   @Override

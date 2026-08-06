@@ -1,5 +1,6 @@
 use crate::api::CDataType;
 use crate::api::TimestampSubtype;
+use crate::api::diagnostic::WithDiagnosticInfo;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, ArrowBatchConcatSnafu, ArrowBatchReadSnafu,
@@ -1179,12 +1180,10 @@ fn apply_execute_response(
                 .required("ResultSet handle is required")?;
             let query_id = descriptor.query_id.clone();
             let stream = fetch_stream_and_release(rs_handle)?;
-            let execute_state = create_execute_state_from_stream(
-                stream,
-                descriptor.statement_type_id,
-                descriptor.rows_affected,
-                origin,
-            )?;
+            let statement_type_id = descriptor.statement_type_id;
+            let rows_affected = descriptor.rows_affected;
+            let execute_state =
+                create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
             let is_zero_dml = matches!(
                 &execute_state,
                 StatementState::DmlExecuted {
@@ -1192,6 +1191,9 @@ fn apply_execute_response(
                     ..
                 }
             );
+            // Populate SQL_DIAG_ROW_COUNT / SQL_DIAG_DYNAMIC_FUNCTION(CODE).
+            stmt.get_diag_info_mut()
+                .set_execution_info(statement_type_id, rows_affected);
             set_state(stmt, execute_state);
             stmt.last_query_id = Some(query_id).filter(|s| !s.is_empty());
             if is_zero_dml {
@@ -2510,6 +2512,117 @@ pub fn set_stmt_attr(
             }
         }
     }
+}
+
+/// ODBC 2.x thin wrapper. Maps the `crowKeyset`/`fConcurrency`/`crowRowset`
+/// triple to the equivalent `SQL_ATTR_*` statement-attribute writes:
+///
+/// - `SQL_ATTR_CURSOR_TYPE` (6) — derived from `crowKeyset`
+/// - `SQL_ATTR_CONCURRENCY` (7) — = `fConcurrency`
+/// - `SQL_ATTR_KEYSET_SIZE` (8) — = `crowKeyset` when it is a positive keyset
+///   size (i.e. not one of the `SQL_SCROLL_*` sentinel values)
+/// - `SQL_ATTR_ROW_ARRAY_SIZE` (27) — = `crowRowset`
+pub fn set_scroll_options(
+    statement_handle: sql::Handle,
+    f_concurrency: sql::USmallInt,
+    crow_keyset: sql::Len,
+    crow_rowset: sql::USmallInt,
+    warnings: &mut crate::conversion::warning::Warnings,
+) -> OdbcResult<()> {
+    use crate::api::StmtAttr;
+
+    // Map crowKeyset to SQL_ATTR_CURSOR_TYPE.
+    // SQL_SCROLL_FORWARD_ONLY  (0)  → SQL_CURSOR_FORWARD_ONLY  (0)
+    // SQL_SCROLL_KEYSET_DRIVEN (-1) → SQL_CURSOR_KEYSET_DRIVEN (1)
+    // SQL_SCROLL_DYNAMIC       (-2) → SQL_CURSOR_DYNAMIC       (2)
+    // SQL_SCROLL_STATIC        (-3) → SQL_CURSOR_STATIC        (3)
+    // positive value                → SQL_CURSOR_KEYSET_DRIVEN (1),
+    //                                 keyset_size = crowKeyset
+    let cursor_type: sql::ULen = match crow_keyset {
+        0 => 0,
+        -1 => 1,
+        -2 => 2,
+        -3 => 3,
+        k if k > 0 => 1,
+        _ => {
+            return InvalidAttributeValueSnafu {
+                attribute: StmtAttr::CursorType as i32,
+                value: crow_keyset as i64,
+            }
+            .fail();
+        }
+    };
+
+    // SQL_ATTR_CURSOR_TYPE
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::CursorType as sql::Integer,
+        cursor_type as sql::Pointer,
+        sql::NTS as sql::Integer,
+        warnings,
+    )?;
+
+    // SQL_ATTR_CONCURRENCY
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::Concurrency as sql::Integer,
+        sql::ULen::from(f_concurrency) as sql::Pointer,
+        sql::NTS as sql::Integer,
+        warnings,
+    )?;
+
+    // SQL_ATTR_KEYSET_SIZE — only when a positive keyset size was given
+    if crow_keyset > 0 {
+        set_stmt_attr(
+            statement_handle,
+            StmtAttr::KeysetSize as sql::Integer,
+            crow_keyset as sql::ULen as sql::Pointer,
+            sql::NTS as sql::Integer,
+            warnings,
+        )?;
+    }
+
+    // SQL_ATTR_ROW_ARRAY_SIZE
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::RowArraySize as sql::Integer,
+        sql::ULen::from(crow_rowset) as sql::Pointer,
+        sql::NTS as sql::Integer,
+        warnings,
+    )
+}
+
+/// ODBC 2.x thin wrapper: sets `SQL_ATTR_PARAMSET_SIZE` and
+/// `SQL_ATTR_PARAMS_PROCESSED_PTR` on behalf of `SQLParamOptions`.
+///
+/// Per the ODBC 3.x spec, `SQLParamOptions` is deprecated and superseded by
+/// `SQLSetStmtAttr`; this function preserves the attribute semantics by
+/// delegating to [`set_stmt_attr`] for each of the two attributes.
+pub fn set_param_options(
+    statement_handle: sql::Handle,
+    crow: sql::ULen,
+    pi_row: *mut sql::ULen,
+    warnings: &mut crate::conversion::warning::Warnings,
+) -> OdbcResult<()> {
+    tracing::debug!("set_param_options: statement_handle={statement_handle:?}");
+    let _exit = ApiExitLogDebug("SQLParamOptions");
+
+    use crate::api::StmtAttr;
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::ParamsetSize as sql::Integer,
+        crow as sql::Pointer,
+        0,
+        warnings,
+    )?;
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::ParamsProcessedPtr as sql::Integer,
+        pi_row as sql::Pointer,
+        0,
+        warnings,
+    )?;
+    Ok(())
 }
 
 /// Get a statement attribute value

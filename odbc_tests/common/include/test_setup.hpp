@@ -42,6 +42,28 @@ inline int current_pid() { return getpid(); }
     }                                                      \
   } while (0)
 
+/**
+ * Macro to run a test ONLY when QUERY_RESULT_FORMAT=JSON is set.
+ * The inverse of SKIP_FOR_JSON_RESULT_SET — use this to pin JSON-specific
+ * behavior that differs from Arrow, so the coverage dropped by a
+ * SKIP_FOR_JSON_RESULT_SET is asserted somewhere rather than lost.
+ *
+ * Note: an unset or empty QUERY_RESULT_FORMAT means Arrow (the default), so
+ * such a test is skipped there too.
+ *
+ * Usage:
+ *   TEST_CASE("test name", "[tag]") {
+ *     RUN_ONLY_FOR_JSON_RESULT_SET("JSON truncates DOUBLE to ~15 significant digits");
+ *     // test code
+ *   }
+ */
+#define RUN_ONLY_FOR_JSON_RESULT_SET(reason)               \
+  do {                                                     \
+    if (test_utils::get_query_result_format() != "JSON") { \
+      SKIP("Runs only for JSON result format: " reason);   \
+    }                                                      \
+  } while (0)
+
 inline picojson::object get_test_parameters(const std::string& connection_name) {
   // Loads the base section from PARAMETER_PATH, then overlays testconnection-odbc when present.
   const char* parameter_path_env_value = std::getenv("PARAMETER_PATH");

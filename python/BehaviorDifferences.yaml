@@ -413,7 +413,7 @@ behavior_differences:
       `proxy_host`/`proxy_port`/`proxy_user`/`proxy_password`/`no_proxy`
       kwargs, and the legacy ODBC `PROXY=[scheme://][user:pass@]host[:port]`
       URL form. When both are set, individual fields override URL components
-      per-field. See (snowflake-eng/universal-driver#29).
+      per-field. See (snowflake-eng/drivers#29).
 
   32:
     name: "Azure Blob PUT does not set Content-Encoding header"
@@ -768,3 +768,145 @@ behavior_differences:
       GCS honors the opt-in `_skip_upload_on_content_match` cursor kwarg like S3 and Azure.
       With the flag off (the default), a content-matching `PUT ... OVERWRITE=TRUE` re-uploads,
       matching legacy Python; the content-match skip fires only when the caller opts in.
+
+  45:
+    name: "login_timeout, network_timeout, and socket_timeout connection getters are now implemented"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `login_timeout` defaulted to 120 s but `conn.login_timeout` returned `None`
+      when no value was explicitly set (the 120 s budget was applied internally by
+      AuthByPlugin, never written back to the connection object).
+      `network_timeout` was a single wall-clock budget covering all non-login,
+      non-query HTTP operations (retries, metadata calls, etc.); it defaulted to
+      `None` (no cap) and `conn.network_timeout` returned `None` when unset.
+      `socket_timeout` was a per-attempt read-inactivity timeout passed as the scalar
+      `timeout=` to `requests.Session.request`; it resets on every received byte, so
+      a slow-but-active response (e.g. a large result download) never trips it.
+      All three getters raised `NotImplementedError` in earlier universal-driver
+      builds; `network_timeout` and `socket_timeout` as kwargs were silently
+      forwarded to Rust as unrecognised parameters with no effect.
+    new_driver_behavior: |
+      `login_timeout` reads back `config.login_timeout`, which defaults to 120.
+      `conn.login_timeout` now returns `120` instead of `None` when no explicit
+      value is set. Code guarding on `if conn.login_timeout is None` will evaluate
+      differently (lower impact since the effective budget was already 120 s).
+
+      `network_timeout` and `socket_timeout` are accepted as deprecated kwargs and
+      emit a `DeprecationWarning` pointing callers at the split params.
+      `network_timeout` fans out to both `query_timeout` and `request_timeout`
+      (unless the caller sets one of those explicitly, which wins).
+      `socket_timeout` fans out to both `connect_timeout` and `retry_timeout`
+      (same explicit-wins rule).
+
+      `conn.network_timeout` returns `request_timeout`, which defaults to 120.
+      `conn.network_timeout` now returns `120` instead of `None` when unset.
+      Code guarding on `if conn.network_timeout is None` will evaluate differently.
+
+      `conn.socket_timeout` returns `retry_timeout`, which defaults to `None`.
+
+      Semantic shift for `socket_timeout`: the legacy value was a per-attempt
+      read-inactivity timeout that reset on received bytes; `retry_timeout` becomes
+      reqwest's hard wall-clock cap on the entire HTTP attempt including body
+      download. A caller who set `socket_timeout=30` to guard against stalled
+      sockets will now see active chunk downloads aborted at 30 s. This is the best
+      available mapping — the universal driver has no per-inactivity parameter.
+
+      Previously all three getters raised `NotImplementedError`.
+
+  47:
+    name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure/GCS `encryptiondata` JSON: `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"`,
+      hardcoded on every cloud, including Python itself.
+    new_driver_behavior: |
+      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
+      self-identification, not an oversight. Confirmed no reader anywhere consumes this value:
+      not the four legacy drivers' decrypt paths, not UD's own, and not GS's own server-side
+      parser, which validates several sibling fields (throws on a bad `EncryptionMode` or
+      `EncryptionAlgorithm`) but never reads `EncryptionLibrary`. GS's own internal C++
+      encryption library independently emits `"OpenSSL 1.0.1e-fips"` rather than `"Java 5.3.0"`
+      on its GCS path -- the same
+      self-identify-honestly pattern UD follows, not a UD-only quirk. Kept deliberately: matching
+      "Java 5.3.0" would misidentify which implementation produced the blob, which has real
+      diagnostic value during the mixed-fleet rollout period when legacy and universal drivers
+      both write objects into the same stages.
+
+  46:
+    name: "Azure EncryptionAgent.EncryptionAlgorithm stays 256; Python-Azure emits 128"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure `encryptiondata` JSON: `EncryptionAgent.EncryptionAlgorithm = "AES_CBC_128"`;
+      `WrappedContentKey.Algorithm = "AES_CBC_256"` in the same blob (self-inconsistent).
+      Origin: commit 4455b4e1 (2017-10-26) introduced both fields self-consistently at 128-bit
+      (`A128KW` + `AES_CBC_128`). Commit 07309aaf (2017-11-03) changed only
+      `WrappedContentKey.Algorithm` to `AES_CBC_256`, without updating the sibling field.
+      No commit, comment, or test treats this as deliberate; `git log -S "AES_CBC_128" --all`
+      shows no revisits since 2017. JDBC had the same class of incomplete edit one week later
+      (cf776907, 2017-11-10), but its `EncryptionAgent` was already 256, so no visible split
+      resulted there.
+    new_driver_behavior: |
+      UD emits `256` for both fields on Azure, matching JDBC-Azure, ODBC-Azure, and GCS.
+      Source-confirmed (Python/JDBC/ODBC): no decrypt path reads this field's value. Python/JDBC
+      deserialize via JSON parsers that never look up `EncryptionAgent`; ODBC's Azure reader
+      slices substrings between the literal delimiters `","Algorithm"` and
+      `","KeyWrappingMetadata"`, keyed on field names, not values. Cross-driver decryption is
+      therefore unaffected either way. Not changed to match Python's `128`: that value is an
+      unrevisited 2017 editing miss, not an intentional legacy behavior, and matching it would
+      newly diverge UD from JDBC/ODBC/GCS. Both fields are static labels in every driver,
+      disconnected from the real per-file cipher (follows QSMK length; recorded separately in
+      `matdesc.keySize`).
+
+  48:
+    name: "Error exposes structured parameter and validation_code attributes on validation failures"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The legacy connector's `Error` class carries only the message, `errno`, `sqlstate`,
+      `sfqid`, and `query`. There is no attribute identifying which connection parameter
+      failed validation, and no structured code for the validation rule that fired — callers
+      can only substring-match the error message.
+    new_driver_behavior: |
+      `Error` (and its subclasses) additionally expose `parameter` (the offending config
+      parameter name) and `validation_code` (the structured sf_core `ValidationCode` enum
+      value) when the error originated from a connection-config validation failure. Both
+      default to `None` for errors from any other source, so existing callers are unaffected.
+
+  49:
+    name: "Connection.telemetry_enabled restored; matches legacy AND semantics"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `Connection.telemetry_enabled` is a cached attribute: an AND of a local client-side
+      flag (default `True`, settable via the property, never sent to the server) and a
+      server-side flag last updated from the `CLIENT_TELEMETRY_ENABLED` session parameter
+      whenever the server sent one (default disabled until confirmed). Both halves gate
+      whether the driver flushes its batched telemetry queue.
+    new_driver_behavior: |
+      `Connection.telemetry_enabled` returns the same AND (client flag default `True`,
+      never sent to the server; server half read from `CLIENT_TELEMETRY_ENABLED`, absent
+      treated as disabled). Both halves also gate the wrapper's own per-call telemetry RPCs,
+      matching legacy's gating exactly. Two residual, non-observable differences: (1) each
+      read issues an FFI call to the Rust core to fetch the live session parameter rather
+      than returning a cached value — the same tradeoff every other session-parameter-backed
+      property in the universal driver already makes (e.g. `autocommit`); (2) legacy's
+      batched-queue flush model has no analog, since the universal driver sends each
+      telemetry event immediately via RPC.
