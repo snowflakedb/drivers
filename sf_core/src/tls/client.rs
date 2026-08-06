@@ -175,16 +175,26 @@ pub(crate) fn apply_reqwest_tls_versions_window(
         .max_tls_version(versions.max.to_reqwest())
 }
 
-/// Apply `tls_config` to a reqwest `ClientBuilder` and return the configured
-/// builder without calling `.build()`. Call sites can chain additional options
-/// (e.g. `.no_gzip()`, `.timeout()`) before the final `.build()`.
+/// Apply `tls_config` and an optional explicit `proxy` to a reqwest
+/// `ClientBuilder`, returning the configured builder without calling
+/// `.build()`. Call sites can chain additional options (e.g. `.no_gzip()`,
+/// `.timeout()`) before the final `.build()`.
 ///
-/// For the default `TlsConfig` this is a no-op: the original builder is returned unchanged.
+/// `proxy` is threaded through [`apply_proxy_to_builder`] — the same helper the
+/// GS/REST client uses — so the storage clients honour `proxy_host`/
+/// `proxy_port`/`no_proxy`/`use_proxy_env` identically. Passing `None` leaves
+/// reqwest's env-var proxy auto-detection in effect (the historical
+/// storage-client behaviour).
+///
+/// For the default `TlsConfig` and `proxy = None` this is a no-op: the original
+/// builder is returned unchanged.
 pub(crate) fn configure_tls_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
+    proxy: Option<&ProxyConfig>,
     crl_worker: SharedCrlWorker,
 ) -> Result<ClientBuilder, TlsError> {
+    let builder = apply_proxy_to_builder(builder, proxy)?;
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
         return Ok(apply_reqwest_tls_versions(builder, tls_config)
@@ -404,9 +414,29 @@ fn configure_http_client(
         .pool_max_idle_per_host(32)
         .tcp_keepalive(Some(Duration::from_secs(60)));
 
-    // No ProxyConfig → preserve historical behaviour (reqwest auto-detects
-    // HTTP_PROXY etc.). All connection paths now construct one explicitly,
-    // but tests/bins may still pass `None`.
+    apply_proxy_to_builder(builder, proxy)
+}
+
+/// Apply the driver's [`ProxyConfig`] to a reqwest [`ClientBuilder`].
+///
+/// Single source of truth for this translation — shared by the GS/REST
+/// client ([`configure_http_client`]) and the S3/GCS/Azure storage clients
+/// ([`configure_tls_builder`]).
+///
+/// Semantics:
+/// - `None` → the builder is returned unchanged, preserving reqwest's default
+///   `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env-var auto-detection. Tests/bins
+///   may still pass `None`.
+/// - explicit `host` → an all-schemes proxy is applied; reqwest's `.proxy()`
+///   call disables env auto-detection (matches JDBC/Go/Node precedence:
+///   connection params > env vars).
+/// - no `host`, `use_proxy_env = true`, not explicitly disabled → the builder
+///   is returned unchanged so env vars keep working (legacy POSIX behaviour).
+/// - otherwise → `.no_proxy()` suppresses reqwest's env auto-detection.
+pub(crate) fn apply_proxy_to_builder(
+    builder: ClientBuilder,
+    proxy: Option<&ProxyConfig>,
+) -> Result<ClientBuilder, TlsError> {
     let Some(proxy) = proxy else {
         return Ok(builder);
     };

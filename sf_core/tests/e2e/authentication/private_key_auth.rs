@@ -9,7 +9,37 @@ use tempfile::TempDir;
 #[test]
 fn should_authenticate_using_private_file_with_password() {
     //Given Authentication is set to JWT and private file with password is provided
-    let client = SnowflakeTestClient::with_default_jwt_auth_params();
+    let mut client = SnowflakeTestClient::with_default_params();
+    client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+
+    let temp_key_file = private_key_helper::get_private_key_from_parameters(&client.parameters)
+        .expect("Failed to create private key file");
+    client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+    if let Some(password) = &client.parameters.private_key_password {
+        client.set_connection_option("private_key_password", password);
+    }
+    client.set_temp_key_file(temp_key_file);
+
+    //When Trying to Connect
+    let result = client.connect();
+
+    //Then Login is successful and simple query can be executed
+    client.verify_simple_query(result);
+}
+
+#[test]
+fn should_authenticate_using_private_key_as_pem_string() {
+    //Given Authentication is set to JWT and private key is provided as plaintext PEM
+    let client = SnowflakeTestClient::with_default_params();
+    client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+
+    let private_key_pem =
+        private_key_helper::get_private_key_pem_from_parameters(&client.parameters)
+            .expect("Failed to read private key");
+    client.set_connection_option("private_key", &private_key_pem);
+    if let Some(password) = &client.parameters.private_key_password {
+        client.set_connection_option("private_key_password", password);
+    }
 
     //When Trying to Connect
     let result = client.connect();

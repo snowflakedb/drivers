@@ -128,8 +128,215 @@ jobs:
           name: odbc-driver-${{ matrix.name }}
           path: ${{ matrix.cargo_target && format('target/{0}/debug', matrix.cargo_target) || 'target/debug' }}/${{ matrix.driver_lib }}
 
+  build_odbc_tests_cpp:
+    needs: [load-odbc-matrix]
+    if: ${{ contains(needs.load-odbc-matrix.outputs.build-matrix, 'vcpkg_triplet') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,  name: "Windows x64",  msvc_arch: amd64, vcpkg_triplet: x64-windows  }
+          - { os: windows-latest,  name: "Windows x86",  msvc_arch: x86,   vcpkg_triplet: x86-windows   }
+          - { os: windows-11-arm,  name: "Windows ARM64", msvc_arch: arm64, vcpkg_triplet: arm64-windows }
+    runs-on: ${{ matrix.os }}
+    name: build_odbc_tests_cpp (${{ matrix.name }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
+
+      - name: Restore test dependencies cache
+        id: test-deps-cache-cpp
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: test-deps
+          key-suffix: ${{ matrix.msvc_arch }}-unixodbc
+
+      - name: Restore ccache
+        id: ccache-cpp
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: ccache
+          key-suffix: ${{ matrix.msvc_arch }}-unixodbc
+
+      - name: Capture vcpkg version
+        uses: ./.github/actions/vcpkg-version
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache-cpp
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: vcpkg
+          key-suffix: ${{ matrix.vcpkg_triplet }}
+
+      - name: Install build prerequisites
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
+            & $command
+            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
+          }
+
+          Invoke-Checked "pip install cmake" { python -m pip install "cmake>=4.0.3" }
+          $cmakePath = (Get-Command cmake.exe).Source | Split-Path
+          echo "CMAKE_DIR=$cmakePath" >> $env:GITHUB_ENV
+          cmake --version
+
+          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
+          New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
+
+          $triplet = "${{ matrix.vcpkg_triplet }}"
+          if ("${{ matrix.msvc_arch }}" -eq "arm64") {
+            cmd /c "`"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 && vcpkg install zlib:$triplet"
+            if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
+          } else {
+            Invoke-Checked "vcpkg install" { vcpkg install zlib:$triplet }
+          }
+
+      - name: Setup MSVC environment
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: ${{ matrix.msvc_arch }}
+          restore-cmake-dir: 'true'
+
+      - name: Build cmake-build tree
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
+            & $command
+            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
+          }
+          function Invoke-CmakeBuildWithRetry {
+            param(
+              [bool]$UseNinja,
+              [int]$Parallelism,
+              [int]$MaxAttempts = 3
+            )
+            $buildLog = Join-Path $env:RUNNER_TEMP "odbc-cpp-build.log"
+            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+              Write-Host "build_odbc_tests_cpp: cmake --build attempt $attempt/$MaxAttempts (parallel=$Parallelism)"
+              if ($UseNinja) {
+                cmake --build cmake-build --parallel $Parallelism 2>&1 | Tee-Object -FilePath $buildLog
+              } else {
+                cmake --build cmake-build --config Debug --parallel $Parallelism 2>&1 | Tee-Object -FilePath $buildLog
+              }
+              if ($LASTEXITCODE -eq 0) { return }
+
+              $logText = Get-Content $buildLog -Raw
+              $retryable = $logText -match 'being used by another process' `
+                -or $logText -match 'ninja: build stopped'
+              if (-not $retryable -or $attempt -eq $MaxAttempts) {
+                throw "cmake --build failed with exit code $LASTEXITCODE (attempt $attempt/$MaxAttempts). See $buildLog"
+              }
+              Write-Host "Retryable Windows build failure detected; waiting before retry..."
+              Start-Sleep -Seconds (15 * $attempt)
+            }
+          }
+
+          $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+          # Catch2 POST_BUILD discovery writes *_tests.cmake during link; high
+          # parallelism on Windows ARM64 intermittently hits file-lock races.
+          $parallelism = if ("${{ matrix.msvc_arch }}" -eq "arm64") {
+            [Math]::Min(8, $NPROC)
+          } else {
+            $NPROC
+          }
+          Push-Location odbc_tests
+          try {
+            $useNinja = (Get-Command ninja.exe -ErrorAction SilentlyContinue) `
+                   -and (Get-Command cl.exe -ErrorAction SilentlyContinue)
+
+            $cmakeArgs = @("-B", "cmake-build", "-D", "DRIVER_TYPE=NEW")
+            if ($useNinja) {
+                $cmakeArgs += @("-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug")
+                Write-Host "build_odbc_tests_cpp: using Ninja generator"
+            } else {
+                Write-Host "build_odbc_tests_cpp: using default generator (MSBuild)"
+            }
+            if (Get-Command ccache -ErrorAction SilentlyContinue) {
+                $cmakeArgs += @("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache", "-DCMAKE_C_COMPILER_LAUNCHER=ccache")
+                $cmakeArgs += "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded"
+            }
+            if ($env:VCPKG_INSTALLATION_ROOT) {
+                $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+            }
+            if (Get-Command lld-link.exe -ErrorAction SilentlyContinue) {
+                $cmakeArgs += "-DCMAKE_LINKER_TYPE=LLD"
+            }
+            Invoke-Checked "cmake configure" { cmake @cmakeArgs . }
+
+            if (Get-Command ccache -ErrorAction SilentlyContinue) {
+                $ccacheConf = Join-Path $env:CCACHE_DIR "ccache.conf"
+                Set-Content -Path $ccacheConf -Value "depend_mode = true"
+                Write-Host "=== ccache stats BEFORE build ==="
+                ccache --show-stats
+            }
+
+            Invoke-CmakeBuildWithRetry -UseNinja $useNinja -Parallelism $parallelism
+
+            if (Get-Command ccache -ErrorAction SilentlyContinue) {
+                Write-Host "=== ccache stats AFTER build ==="
+                ccache --show-stats
+            }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Upload C++ test harness artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: odbc-tests-cpp-${{ matrix.vcpkg_triplet }}
+          path: |
+            odbc_tests/cmake-build/**/*.exe
+            odbc_tests/cmake-build/**/*.dll
+            odbc_tests/cmake-build/**/*.cmake
+            odbc_tests/cmake-build/CMakeCache.txt
+            odbc_tests/cmake-build/build.ninja
+            odbc_tests/cmake-build/.ninja_deps
+            odbc_tests/cmake-build/.ninja_log
+            odbc_tests/cmake-build/DartConfiguration.tcl
+          if-no-files-found: error
+
+      - name: Save test dependencies cache
+        if: always()
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: test-deps
+          key-suffix: ${{ matrix.msvc_arch }}-unixodbc
+          cache-hit: ${{ steps.test-deps-cache-cpp.outputs.cache-hit }}
+
+      - name: Save ccache
+        if: always()
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: ccache
+          key-suffix: ${{ matrix.msvc_arch }}-unixodbc
+          cache-hit: ${{ steps.ccache-cpp.outputs.cache-hit }}
+
+      - name: Save vcpkg binary cache
+        if: always()
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: vcpkg
+          key-suffix: ${{ matrix.vcpkg_triplet }}
+          cache-hit: ${{ steps.vcpkg-cache-cpp.outputs.cache-hit }}
+
   odbc_tests:
-    needs: [build_odbc_driver, load-odbc-matrix]
+    needs: [build_odbc_driver, build_odbc_tests_cpp, load-odbc-matrix]
     strategy:
       fail-fast: false
       matrix:
@@ -154,8 +361,18 @@ jobs:
         if: runner.os != 'Windows'
         run: chmod +x target/debug/${{ matrix.driver_lib }}
 
+      # upload-artifact strips the common ancestor (odbc_tests/cmake-build/) from
+      # paths, so download into that directory to restore the layout run_tests expects.
+      - name: Download C++ test harness (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@v4
+        with:
+          name: odbc-tests-cpp-${{ matrix.vcpkg_triplet }}
+          path: odbc_tests/cmake-build
+
       - name: Restore test dependencies cache
         id: test-deps-cache
+        if: runner.os != 'Windows'
         uses: ./.github/actions/build-cache
         with:
           mode: restore
@@ -164,24 +381,12 @@ jobs:
 
       - name: Restore ccache
         id: ccache
+        if: runner.os != 'Windows'
         uses: ./.github/actions/build-cache
         with:
           mode: restore
           kind: ccache
           key-suffix: ${{ matrix.msvc_arch || 'default' }}-${{ matrix.driver_manager || 'unixodbc' }}
-
-      - name: Capture vcpkg version (Windows)
-        if: runner.os == 'Windows'
-        uses: ./.github/actions/vcpkg-version
-
-      - name: Restore vcpkg binary cache (Windows)
-        if: runner.os == 'Windows'
-        id: vcpkg-cache
-        uses: ./.github/actions/build-cache
-        with:
-          mode: restore
-          kind: vcpkg
-          key-suffix: ${{ matrix.vcpkg_triplet }}
 
       - name: Restore Homebrew cache (macOS)
         if: runner.os == 'macOS'
@@ -234,7 +439,10 @@ jobs:
           brew install unixodbc libiodbc ccache ninja
           echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
 
-      - name: Install dependencies (Windows)
+      # C++ harness was pre-built by build_odbc_tests_cpp; only cmake (for ctest)
+      # and MSVC env setup are needed here.  ccache, vcpkg, and the full build
+      # toolchain are no longer required in this job for Windows.
+      - name: Install cmake (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -243,25 +451,10 @@ jobs:
             & $command
             if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
           }
-
-          # install 4.0+ via pip (official Kitware wheel)
           Invoke-Checked "pip install cmake" { python -m pip install "cmake>=4.0.3" }
           $cmakePath = (Get-Command cmake.exe).Source | Split-Path
           echo "CMAKE_DIR=$cmakePath" >> $env:GITHUB_ENV
           cmake --version
-
-          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
-          New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
-
-          $triplet = "${{ matrix.vcpkg_triplet }}"
-          if ("${{ matrix.msvc_arch }}" -eq "arm64") {
-            # ARM64 vcpkg builds require the ARM64 MSVC toolchain environment
-            cmd /c "`"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 && vcpkg install zlib:$triplet"
-            if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
-          } else {
-            Invoke-Checked "vcpkg install" { vcpkg install zlib:$triplet }
-          }
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
@@ -274,6 +467,9 @@ jobs:
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
         shell: bash
 
       - name: Build and run ODBC tests (Unix)
@@ -291,6 +487,11 @@ jobs:
           ./scripts/odbc/run_tests_unix.sh -LE "flaky|long_running|requires_no_mfa" $REPEAT_ARGS \
             --output-junit "${{ github.workspace }}/odbc-junit.xml"
 
+      # Bypasses run_tests_unix.sh, so iODBC env must be re-exported here.
+      # Without SF_RUNNING_IODBC_TEST_SUITE, UnixConfigInstallation skips
+      # ODBCINSTINI and iODBC dlopens the SnowflakeDriver_* alias literally
+      # (IM003) — see reference workflow flaky/cleanup steps for the same fix.
+      # SF_ODBC_INI reuses the UTF-32 ini materialised by the gating run above.
       - name: Run flaky ODBC tests (Unix)
         if: runner.os != 'Windows'
         continue-on-error: true
@@ -301,8 +502,10 @@ jobs:
           DRIVER_TYPE: NEW
           DRIVER_MANAGER: ${{ matrix.driver_manager || 'unixodbc' }}
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
+          SF_RUNNING_IODBC_TEST_SUITE: ${{ matrix.driver_manager == 'iodbc' && '1' || '' }}
+          SF_ODBC_INI: ${{ matrix.driver_manager == 'iodbc' && format('{0}/odbc_tests/cmake-build/sf.odbc.ini', github.workspace) || '' }}
 
-      - name: Build and run ODBC tests (Windows)
+      - name: Run ODBC tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -312,7 +515,7 @@ jobs:
           $env:DRIVER_TYPE = "NEW"
           $env:QUERY_RESULT_FORMAT = "${{ matrix.result_format == 'json' && 'JSON' || '' }}"
           $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
-          .\scripts\odbc\run_tests_windows.ps1 -LE "flaky|long_running|requires_no_mfa" @repeatArgs `
+          .\scripts\odbc\run_tests_windows.ps1 -SkipBuild -LE "flaky|long_running|requires_no_mfa" @repeatArgs `
             --output-junit "${{ github.workspace }}/odbc-junit.xml"
 
       - name: Run flaky ODBC tests (Windows)
@@ -359,8 +562,9 @@ jobs:
       # matrix cells finish near-simultaneously, GHA returns a benign "Unable to reserve cache"
       # warning for the late writers. That's acceptable; it's better than losing save-on-failure,
       # which the combined actions/cache@v5 does NOT support (save-always was removed in v5).
+      # Windows caches (test-deps, ccache) are saved by build_odbc_tests_cpp; skip here.
       - name: Save test dependencies cache
-        if: always()
+        if: always() && runner.os != 'Windows'
         timeout-minutes: 10
         uses: ./.github/actions/build-cache
         with:
@@ -370,7 +574,7 @@ jobs:
           cache-hit: ${{ steps.test-deps-cache.outputs.cache-hit }}
 
       - name: Save ccache
-        if: always()
+        if: always() && runner.os != 'Windows'
         timeout-minutes: 10
         uses: ./.github/actions/build-cache
         with:
@@ -378,16 +582,6 @@ jobs:
           kind: ccache
           key-suffix: ${{ matrix.msvc_arch || 'default' }}-${{ matrix.driver_manager || 'unixodbc' }}
           cache-hit: ${{ steps.ccache.outputs.cache-hit }}
-
-      - name: Save vcpkg binary cache (Windows)
-        if: always() && runner.os == 'Windows'
-        timeout-minutes: 10
-        uses: ./.github/actions/build-cache
-        with:
-          mode: save
-          kind: vcpkg
-          key-suffix: ${{ matrix.vcpkg_triplet }}
-          cache-hit: ${{ steps.vcpkg-cache.outputs.cache-hit }}
 
       - name: Save Homebrew cache (macOS)
         if: always() && runner.os == 'macOS'
@@ -417,6 +611,9 @@ jobs:
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
         shell: bash
 
       - name: Cleanup test PATs

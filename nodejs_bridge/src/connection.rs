@@ -1,6 +1,6 @@
+use crate::DRIVER;
 use crate::error::to_napi_err;
 use crate::statement::Statement;
-use crate::{DRIVER, RUNTIME};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity;
@@ -26,28 +26,27 @@ impl Connection {
             .map(|(k, v)| (k.clone(), Setting::String(v.clone())))
             .collect();
 
-        RUNTIME
-            .block_on(async {
-                DRIVER
-                    .connection_set_options(conn_handle, converted_options, false)
-                    .await?;
-                DRIVER
-                    .set_wrapper_identity(
-                        conn_handle,
-                        WrapperIdentity {
-                            // TODO: pass this from nodejs (function arguments)
-                            driver_name: "nodejs".to_string(),
-                            driver_version: "0.1.0".to_string(),
-                            language_runtime: "nodejs".to_string(),
-                            language_version: "24.0.0".to_string(),
-                            language_compiler: None,
-                        },
-                    )
-                    .await?;
-                Ok::<_, ApiError>(())
-            })
-            // TODO: must release connection on any error
-            .map_err(to_napi_err)?;
+        block_on(async {
+            DRIVER
+                .connection_set_options(conn_handle, converted_options, false)
+                .await?;
+            DRIVER
+                .set_wrapper_identity(
+                    conn_handle,
+                    WrapperIdentity {
+                        // TODO: pass this from nodejs (function arguments)
+                        driver_name: "nodejs".to_string(),
+                        driver_version: "0.1.0".to_string(),
+                        language_runtime: "nodejs".to_string(),
+                        language_version: "24.0.0".to_string(),
+                        language_compiler: None,
+                    },
+                )
+                .await?;
+            Ok::<_, ApiError>(())
+        })
+        // TODO: must release connection on any error
+        .map_err(to_napi_err)?;
 
         Ok(Self {
             handle: conn_handle,
@@ -63,6 +62,20 @@ impl Connection {
             .connection_init(self.handle, Handle { id: 0, magic: 0 })
             .await
             .map_err(to_napi_err)
+    }
+
+    async fn statement_from_result(&self, result: ExecuteQueryResult) -> Result<Statement> {
+        let (result_set_handle, descriptor) = match result {
+            ExecuteQueryResult::Single(rs) => (rs.handle, rs.descriptor),
+            ExecuteQueryResult::Multi { .. } => {
+                return Err(to_napi_err("multi-statement results are not supported yet"));
+            }
+        };
+        let batch_reader = DRIVER
+            .result_set_get_stream(result_set_handle)
+            .await
+            .map_err(to_napi_err)?;
+        Ok(Statement::new(result_set_handle, descriptor, batch_reader))
     }
 
     #[napi]
@@ -82,19 +95,29 @@ impl Connection {
             .await
             .map_err(to_napi_err)?;
 
-        let result_set_handle = match result {
-            ExecuteQueryResult::Single(rs) => rs.handle,
-            ExecuteQueryResult::Multi { .. } => {
-                let _ = DRIVER.statement_release(stmt_handle);
-                return Err(to_napi_err("multi-statement results are not supported yet"));
-            }
-        };
+        let _ = DRIVER.statement_release(stmt_handle);
 
-        let batch_reader = DRIVER
-            .result_set_get_stream(result_set_handle)
+        self.statement_from_result(result).await
+    }
+
+    #[napi]
+    pub async fn get_query_result(&self, query_id: String) -> Result<Statement> {
+        let result = DRIVER
+            .connection_get_query_result(self.handle, query_id)
             .await
             .map_err(to_napi_err)?;
+        self.statement_from_result(result).await
+    }
 
-        Ok(Statement::new(stmt_handle, result_set_handle, batch_reader))
+    #[napi]
+    pub async fn destroy(&self) -> Result<()> {
+        DRIVER
+            .connection_close(self.handle)
+            .await
+            .map_err(to_napi_err)?;
+        DRIVER
+            .connection_release(self.handle)
+            .map_err(to_napi_err)?;
+        Ok(())
     }
 }

@@ -13,6 +13,8 @@ members = [
     "error_trace",
     "error_trace_derive",
     "odbc_trace_tool",
+    "python_bridge",
+    "python_bridge/stub_gen",
 ]
 resolver = "2"
 

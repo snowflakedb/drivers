@@ -14,6 +14,7 @@
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
+#include "test_setup.hpp"
 
 TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit integer conversions truncate fractional part",
                  "[e2e][types][real][conversion][c_integer]") {
@@ -54,7 +55,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit integer conversions - negativ
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit SQL_C_SBIGINT with large values",
-                 "[e2e][types][real][conversion][c_integer][flaky]") {
+                 "[e2e][types][real][conversion][c_integer]") {
+  // JSON caps the decimal representation of DOUBLE well below full f64
+  // fidelity, so 2^53 comes back as 9007199254740990 — two less than it went
+  // in. The test below pins that JSON behavior.
+  SKIP_FOR_JSON_RESULT_SET("JSON truncates DOUBLE below f64 fidelity, so 2^53 does not survive exactly");
+
   // Given A Snowflake connection is established
 
   // When The largest integer exactly representable as f64 (2^53) is fetched as SQL_C_SBIGINT
@@ -62,6 +68,24 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit SQL_C_SBIGINT with large valu
 
   // Then The value 9007199254740992 is returned without truncation
   CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 9007199254740992LL);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_SBIGINT loses the low digits of 2^53 in JSON",
+                 "[e2e][types][real][conversion][c_integer]") {
+  RUN_ONLY_FOR_JSON_RESULT_SET("Arrow carries exact IEEE-754 doubles, so 2^53 survives there");
+
+  // Given A Snowflake connection is established
+
+  // When 2^53 is fetched as SQL_C_SBIGINT over JSON
+  //
+  // The server sends DOUBLE as a decimal string with fewer significant digits
+  // than an f64 carries, so 9007199254740992 arrives as "9.00719925474099e+15".
+  // The conversion to SQL_C_SBIGINT is exact — the digits were already gone on
+  // the wire, so no truncation is reported.
+  auto stmt = conn.execute_fetch("SELECT 9007199254740992::FLOAT");
+
+  // Then The value is off by 2, and reported as an exact conversion
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 9007199254740990LL);
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "REAL fractional truncation returns 01S07",

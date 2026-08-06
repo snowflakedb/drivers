@@ -96,9 +96,11 @@ Feature: OAuth Authentication
   # single Gherkin definition validates the Rust, ODBC, Python, and JDBC test
   # methods. The Authorization Code happy path additionally requires a
   # real OS browser; in ODBC, Python, and JDBC we gate it behind
-  # SNOWFLAKE_OAUTH_E2E_BROWSER=1. The cached-access-token short-circuit
-  # scenario depends on the OS keyring helper that lives in sf_core only
-  # -- the wrappers do not implement it.
+  # SNOWFLAKE_OAUTH_E2E_BROWSER=1. The @core_e2e-only cached-access-token
+  # short-circuit scenario pre-seeds the OS keyring directly (no browser leg)
+  # and therefore cannot run in the wrappers. The two-connection token caching
+  # scenario below uses the normal browser flow for the first connection and
+  # is tagged @core_e2e @odbc_e2e @python_e2e @jdbc_e2e.
   # ===========================================================================
 
   @core_e2e @odbc_e2e @python_e2e @jdbc_e2e
@@ -123,6 +125,12 @@ Feature: OAuth Authentication
   Scenario: oauth should short circuit authorization code flow with cached access token
     Given Authentication is set to OAUTH_AUTHORIZATION_CODE and a valid OAuth access token is pre-seeded in the OS keyring under the (host, user, OAUTH_ACCESS_TOKEN) cache key. The host is derived from `oauth_token_request_url` — falling back to the Snowflake server URL — exactly like `host_from_token_url` in production code (prefers IdP token URL host, falls back to Snowflake host).
     When Trying to Connect — should NOT spawn a browser; the pre-seeded access token must satisfy the AC short-circuit.
+    Then Login is successful and a simple query can be executed
+
+  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e
+  Scenario: oauth should reuse cached access token without browser interaction
+    Given Authentication is set to OAUTH_AUTHORIZATION_CODE with client_store_temporary_credential=true and a token has been cached from a previous browser authentication
+    When Trying to Connect without browser interaction
     Then Login is successful and a simple query can be executed
 
   @core_e2e @odbc_e2e @python_e2e @jdbc_e2e

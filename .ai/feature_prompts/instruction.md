@@ -12,7 +12,7 @@ Implement TIMESTAMP_NTZ type support in the Python wrapper of the Universal Driv
 
 Two files must be committed and treated as **permanent documentation** of the feature, not just test artefacts:
 
-1. **Design document** — `doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md`
+1. **Design document** — `docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md`
    The authoritative specification for what TIMESTAMP_NTZ is, how it behaves, how the driver handles it, and what the tests cover and why. Written before implementation, refined throughout, committed alongside code.
 
 2. **Gherkin feature file** — `tests/definitions/shared/types/timestamp_ntz.feature`
@@ -28,7 +28,7 @@ These rules are non-negotiable and apply to every agent at every step. No agent 
 
 ### Rule 1 — "Out of scope" must be declared in the design document before it is cited
 
-If any agent claims something is out of scope during review, implementation, or any feedback loop, it **must cite the exact entry in the "Out of scope" section of `doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md`** that covers the claim. Citing a section that does not exist, paraphrasing, or reasoning by analogy is not sufficient.
+If any agent claims something is out of scope during review, implementation, or any feedback loop, it **must cite the exact entry in the "Out of scope" section of `docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md`** that covers the claim. Citing a section that does not exist, paraphrasing, or reasoning by analogy is not sufficient.
 
 If the scope question is not listed in the design document:
 1. It is **assumed in scope** until proven otherwise.
@@ -39,7 +39,7 @@ An agent that cites "out of scope" without a matching design document entry must
 
 ### Rule 2 — The design document may only grow more specific, never less
 
-Any edit to `doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` must be an **addition or a clarification**. The following edits are forbidden:
+Any edit to `docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` must be an **addition or a clarification**. The following edits are forbidden:
 
 - Removing a scenario from the scenario plan
 - Weakening a requirement (e.g. changing "must" to "should", removing a specific assertion, making a description vaguer)
@@ -65,7 +65,7 @@ TIMESTAMP_LTZ is already fully implemented and serves as the exact template:
 - Gherkin definition: `tests/definitions/shared/types/timestamp_ltz.feature`
 - Python tests: `python/tests/e2e/types/test_timestamp_ltz.py`
 - Shared test utilities: `python/tests/e2e/types/utils.py`
-- Design doc pattern: `doc/ai/feature-descriptions/` (use LTZ's structure as the model)
+- Design doc pattern: `docs/ai/feature-descriptions/` (use LTZ's structure as the model)
 
 **Key difference — NTZ vs LTZ:**
 
@@ -147,7 +147,7 @@ Both should find and pass the existing LTZ tests. If either command fails due to
 
 **Agents: 4 × in parallel — Agents A and B are snowflake-driver-expert; Agents C and D are general-purpose**
 
-Launch these four subagents simultaneously. As each result arrives, write its findings into `doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` — the document grows progressively throughout this step. Do not wait until all four finish before writing; update the doc after each agent returns.
+Launch these four subagents simultaneously. As each result arrives, write its findings into `docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` — the document grows progressively throughout this step. Do not wait until all four finish before writing; update the doc after each agent returns.
 
 **Agent A — snowflake-driver-expert: universal driver NTZ source**
 Investigate how TIMESTAMP_NTZ is handled in the Python wrapper source:
@@ -180,7 +180,7 @@ Fetch https://docs.snowflake.com/en/developer-guide/python-connector/python-conn
 
 #### 1a. Write the design document
 
-Once all four agents have returned, write a complete first draft of `doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md`. The document must cover:
+Once all four agents have returned, write a complete first draft of `docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md`. The document must cover:
 
 - **What TIMESTAMP_NTZ is** — Snowflake semantics, storage format, precision, synonyms
 - **Python return type** — naive datetime, tzinfo=None; with file:line evidence from the driver source and old driver
@@ -202,7 +202,7 @@ Before proceeding to step 2, the design document must be free of vague terms, am
 ```
 REPEAT:
   1. Launch 1 general-purpose agent and instruct it:
-     "Read doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md.
+     "Read docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md.
 
       Integrity check first: has any scenario been removed from the
       scenario plan since the document was first written? Has any
@@ -229,7 +229,7 @@ REPEAT:
 UNTIL: the general-purpose agent finds no unclear points and no integrity violations
 ```
 
-**[COMMIT]** `doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` once the loop exits. Message: `doc: write TIMESTAMP_NTZ design document — clarity loop clean`
+**[COMMIT]** `docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` once the loop exits. Message: `doc: write TIMESTAMP_NTZ design document — clarity loop clean`
 
 ---
 
@@ -255,7 +255,7 @@ Changes from LTZ:
 
 After creating the feature file, update the design document to reference the feature file and mark the scenario plan as "implemented in Gherkin."
 
-**[COMMIT]** `tests/definitions/shared/types/timestamp_ntz.feature` + `doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` together. Message: `test: add timestamp_ntz Gherkin feature definition`
+**[COMMIT]** `tests/definitions/shared/types/timestamp_ntz.feature` + `docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` together. Message: `test: add timestamp_ntz Gherkin feature definition`
 
 #### 2a. Gherkin quality loop
 
@@ -409,7 +409,7 @@ Each iteration of this loop uses **two independent clean-code-reviewer agents ru
 
 **Reviewer A** — proposes improvements
 Launch `/home/fpawlowski/.claude/agents/temp/clean-code-reviewer.md` and instruct:
-> "First: check whether any agent has cited something as out of scope without a matching entry in the design document's Out of scope section, or has edited `doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` to remove, weaken, or vague-ify any requirement or scenario. If you find either, report it as a critical issue before any code review findings — it must be reverted.
+> "First: check whether any agent has cited something as out of scope without a matching entry in the design document's Out of scope section, or has edited `docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` to remove, weaken, or vague-ify any requirement or scenario. If you find either, report it as a critical issue before any code review findings — it must be reverted.
 > Then: review `python/tests/e2e/types/test_timestamp_ntz.py` and `tests/definitions/shared/types/timestamp_ntz.feature`. List every improvement you can find — naming inconsistencies with sibling type tests, DRY violations, magic values that should be named constants, misleading comments, unnecessary complexity, or anything that would not pass code review. Be specific: quote the exact code and explain what the improvement is."
 
 **Reviewer B** — challenges each proposed improvement
@@ -433,7 +433,7 @@ Launch a second, independent instance of `/home/fpawlowski/.claude/agents/temp/c
 
 The task is complete only when all of the following are true:
 
-- [ ] `doc/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` is complete, committed, and has no vague claims (step 1b loop clean)
+- [ ] `docs/ai/feature-descriptions/datatypes/timestamp/timestamp-ntz-design.md` is complete, committed, and has no vague claims (step 1b loop clean)
 - [ ] No scenario has been removed from the design doc's scenario plan since the first draft
 - [ ] Every "Out of scope" entry in the design doc has an explicit justification (not added retroactively to avoid work)
 - [ ] `tests/definitions/shared/types/timestamp_ntz.feature` is committed and every scenario traces to the design document

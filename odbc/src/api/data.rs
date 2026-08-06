@@ -293,19 +293,25 @@ pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResu
         return DisconnectedSnafu.fail();
     }
     let numeric_settings = conn.numeric_settings;
-    fetch_impl(&guard, &numeric_settings, warnings)
+    fetch_impl(&guard, &numeric_settings, warnings, None)
 }
 
 fn fetch_impl(
     guard: &crate::api::handle_registry::HandleGuard<crate::api::Statement>,
     numeric_settings: &NumericSettings,
     warnings: &mut Warnings,
+    // `SQLExtendedFetch` passes `Some(SQL_ROWSET_SIZE)`; `SQLFetch`/`SQLFetchScroll`
+    // pass `None` and use the ARD `SQL_DESC_ARRAY_SIZE` (`SQL_ATTR_ROW_ARRAY_SIZE`).
+    // The two rowset counts are kept separate per the ODBC spec — extended fetch
+    // never reads or writes the ARD array size.
+    rowset_override: Option<sql::ULen>,
 ) -> OdbcResult<()> {
     let mut inner = guard.inner.lock();
     inner.get_data_state = None;
 
-    let (array_size, bind_type, bind_offset_ptr) =
-        inner.with_active_ard(|ard| (ard.array_size.max(1), ard.bind_type, ard.bind_offset_ptr));
+    let (ard_array_size, bind_type, bind_offset_ptr) =
+        inner.with_active_ard(|ard| (ard.array_size, ard.bind_type, ard.bind_offset_ptr));
+    let array_size = rowset_override.unwrap_or(ard_array_size).max(1);
     let row_status_ptr = inner.ird.array_status_ptr;
     let rows_fetched_ptr = inner.ird.rows_processed_ptr;
     let bind_offset = if !bind_offset_ptr.is_null() {
@@ -628,14 +634,19 @@ pub fn extended_fetch(
         }
     }
 
-    {
+    // SQL_ROWSET_SIZE (9) drives the SQLExtendedFetch rowset. It is passed to
+    // fetch_impl directly rather than written into the ARD SQL_DESC_ARRAY_SIZE,
+    // so SQL_ATTR_ROW_ARRAY_SIZE (27) — which drives SQLFetch/SQLFetchScroll —
+    // is never clobbered and survives SQLFreeStmt(SQL_CLOSE). Read it in the
+    // same lock scope that stamps the IRD pointers to avoid re-locking.
+    let rowset_size = {
         let mut inner = guard.inner.lock();
         inner.used_extended_fetch = true;
         inner.ird.rows_processed_ptr = row_count_ptr;
         inner.ird.array_status_ptr = row_status_ptr;
-    }
-
-    fetch_impl(&guard, &numeric_settings, warnings)
+        inner.rowset_size
+    };
+    fetch_impl(&guard, &numeric_settings, warnings, Some(rowset_size))
 }
 
 fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus) {

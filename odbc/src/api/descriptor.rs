@@ -1346,6 +1346,12 @@ fn get_ipd_field<E: OdbcEncoding>(
                 }
                 Ok(())
             }
+            DescField::Length => {
+                unsafe {
+                    std::ptr::write_unaligned(value_ptr as *mut sql::ULen, record.column_size);
+                }
+                Ok(())
+            }
             DescField::Scale => {
                 unsafe {
                     std::ptr::write_unaligned(
@@ -1436,7 +1442,11 @@ fn set_ipd_field<E: OdbcEncoding>(
                 record.sql_data_type = sql::SqlDataType(raw_type);
                 Ok(())
             }
-            DescField::Precision => {
+            DescField::Precision | DescField::Length => {
+                // SQL_DESC_PRECISION and SQL_DESC_LENGTH both express the column
+                // size for an IPD record.  For numeric types the application uses
+                // SQL_DESC_PRECISION; for character/binary types it uses
+                // SQL_DESC_LENGTH — both land in `column_size`.
                 record.column_size = value_ptr as sql::ULen;
                 Ok(())
             }

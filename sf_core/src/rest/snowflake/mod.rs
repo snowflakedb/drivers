@@ -49,6 +49,7 @@ use crate::tls::client::create_tls_client_with_proxy;
 use crate::tls::error::TlsError;
 use crate::token_cache::{CacheKey, TokenCache, TokenType, normalize_identifier, normalize_url};
 use reqwest::{self, Method, StatusCode, header};
+use serde::de::Deserialize as _;
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{Location, OptionExt, ResultExt, Snafu};
@@ -79,6 +80,13 @@ async fn request_text_with_retry(
 }
 
 // ─── Snowflake GS protocol error codes ───────────────────────────────────────
+/// GS error code returned when a running query has been canceled (server-side
+/// abort, statement timeout, or `SQLCancel`). The query-request / result
+/// response carries this code so the ODBC wrapper can classify the failure as a
+/// cancellation (ODBC `HY008`) rather than a generic error — see
+/// `odbc/src/api/error.rs`. Matches the reference driver's
+/// `Statement::S_QUERY_CANCELED`.
+pub const QUERY_CANCELED: i32 = 604;
 /// GS error code returned when a session no longer exists on the server.
 /// Logout callers treat this as success — the goal (an invalidated session) is achieved.
 pub const SESSION_GONE: i32 = 390111;
@@ -216,10 +224,35 @@ struct TokenRequestData {
     validity: Option<std::time::Duration>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum QueryExecutionMode {
+    #[default]
     Blocking,
     Async,
+}
+
+/// Rarely-varied knobs for a single query execution.
+///
+/// Every field defaults to the common case — default retry policy, blocking
+/// (sync) execution, and a freshly-minted `requestId` — so the overwhelming
+/// majority of callers pass `QueryOptions::default()`. Only the
+/// statement-execute path overrides these (to run async and/or pre-register a
+/// `requestId` for cross-thread cancel), which it does with struct-update
+/// syntax: `QueryOptions { request_id: Some(id), ..Default::default() }`.
+#[derive(Clone, Debug, Default)]
+pub struct QueryOptions {
+    /// HTTP-level retry policy. Defaults to [`RetryPolicy::default`].
+    pub retry_policy: RetryPolicy,
+    /// Sync (blocking) vs. async execution. Defaults to
+    /// [`QueryExecutionMode::Blocking`].
+    pub execution_mode: QueryExecutionMode,
+    /// Caller-supplied `requestId`. `None` mints a fresh id inside the query
+    /// function — the right choice for callers that don't need to know it in
+    /// advance. The statement-execute path passes `Some(id)` so it can store
+    /// `{request_id, sql_text}` on the statement *before* the query-request is
+    /// sent, letting a cross-thread `statement_cancel` abort the running query
+    /// by that same `requestId`.
+    pub request_id: Option<uuid::Uuid>,
 }
 
 #[derive(Clone)]
@@ -534,6 +567,12 @@ pub async fn auth_request_data(
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
     data.spcs_token = login_parameters.spcs_token.clone();
+
+    if let Some(secondary_roles) = login_parameters.secondary_roles.as_deref()
+        && !secondary_roles.is_empty()
+    {
+        data.secondary_roles = Some(secondary_roles.to_uppercase());
+    }
 
     if let Some(params) = session_parameters {
         let json_params = params
@@ -1533,33 +1572,27 @@ pub async fn snowflake_query<'a>(
     query_parameters: QueryParameters,
     session_token: impl AsRef<str>,
     query_input: QueryInput<'a>,
-    execution_mode: QueryExecutionMode,
+    options: QueryOptions,
     crl_worker: SharedCrlWorker,
 ) -> Result<query_response::Response, RestError> {
     let client = build_tls_http_client(&query_parameters.client_info, crl_worker)?;
-    let policy = RetryPolicy::default();
     snowflake_query_with_client(
         &client,
         query_parameters,
         session_token,
         query_input,
-        &policy,
-        execution_mode,
-        None,
+        options,
     )
     .await
 }
 
-/// Execute a query, optionally under a caller-supplied `requestId`.
+/// Execute a query with a caller-supplied HTTP client and [`QueryOptions`].
 ///
-/// `request_id: None` mints a fresh id here — the right choice for every
-/// caller that doesn't need to know it in advance. The statement execute path
-/// passes `Some(id)` so it can store `{request_id, sql_text}` on the statement
-/// *before* the query-request is sent, letting a cross-thread
-/// `statement_cancel` abort the running query by that same `requestId`.
-#[allow(clippy::too_many_arguments)]
+/// See [`QueryOptions`] for the rarely-varied knobs (retry policy, execution
+/// mode, caller-supplied `requestId`); every field defaults to the common
+/// case, so most callers pass `QueryOptions::default()`.
 #[tracing::instrument(
-    skip(client, query_parameters, session_token, query_input),
+    skip(client, query_parameters, session_token, query_input, options),
     fields(sql)
 )]
 pub async fn snowflake_query_with_client<'a>(
@@ -1567,10 +1600,13 @@ pub async fn snowflake_query_with_client<'a>(
     query_parameters: QueryParameters,
     session_token: impl AsRef<str>,
     query_input: QueryInput<'a>,
-    retry_policy: &RetryPolicy,
-    execution_mode: QueryExecutionMode,
-    request_id: Option<uuid::Uuid>,
+    options: QueryOptions,
 ) -> Result<query_response::Response, RestError> {
+    let QueryOptions {
+        retry_policy,
+        execution_mode,
+        request_id,
+    } = options;
     let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
     let session_token = session_token.as_ref();
 
@@ -1581,7 +1617,7 @@ pub async fn snowflake_query_with_client<'a>(
             &query_parameters,
             session_token,
             query_input,
-            retry_policy,
+            &retry_policy,
             request_id,
         )
         .await;
@@ -1593,7 +1629,7 @@ pub async fn snowflake_query_with_client<'a>(
         &query_parameters,
         session_token,
         &query_input,
-        retry_policy,
+        &retry_policy,
         request_id,
     )
     .await
@@ -1719,9 +1755,11 @@ async fn execute_sync_with_retry<'a>(
 
 /// Map a Snowflake query response into a `Result`, converting
 /// `response.success == false` into `RestError::QueryFailed` with
-/// the server's message, error code, SQL state, and query ID.
+/// the server's message, error code, SQL state, query ID, and the
+/// client-generated `request_id` used for the submission (when known).
 fn into_query_result(
     response: query_response::Response,
+    request_id: Option<Uuid>,
 ) -> Result<query_response::Response, RestError> {
     if !response.success {
         let message = response
@@ -1736,6 +1774,7 @@ fn into_query_result(
             code,
             sql_state,
             query_id,
+            request_id,
         }
         .fail();
     }
@@ -1860,7 +1899,7 @@ async fn execute_sync_query<'a>(
         query_response
     };
 
-    into_query_result(query_response)
+    into_query_result(query_response, Some(request_id))
 }
 
 /// New blocking facade that uses the async engine under the hood.
@@ -1924,7 +1963,7 @@ pub async fn snowflake_get_query_result(
         query_id: Some(uuid),
     })?;
 
-    into_query_result(query_response)
+    into_query_result(query_response, None)
 }
 
 /// Result of a query status check via the monitoring endpoint.
@@ -2000,6 +2039,7 @@ pub async fn get_query_status(
             code,
             sql_state: None::<String>,
             query_id: Some(query_id.to_owned()),
+            request_id: None,
         }
         .fail();
     }
@@ -2258,14 +2298,27 @@ pub async fn snowflake_cancel_query(
 /// single-flight `RefreshContext` refresh path — without each caller having
 /// to re-implement that check.
 #[derive(Debug, serde::Deserialize)]
+#[serde(bound(deserialize = "T: serde::de::Deserialize<'de> + Default"))]
 pub struct SnowflakeResponse<T> {
     pub success: bool,
     #[serde(default)]
     pub code: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
-    #[serde(default)]
+    /// GS sends an explicit `"data": null` for some responses (e.g.
+    /// ROLLBACK/COMMIT with no active transaction); absent and explicit-null
+    /// collapse to `T::default()`, matching how the Python and Node drivers
+    /// handle it.
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub data: T,
+}
+
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 pub(crate) async fn read_response_json<T>(
@@ -2494,6 +2547,8 @@ pub enum RestError {
         sql_state: Option<String>,
         /// Snowflake Query ID associated with the failed query.
         query_id: Option<String>,
+        /// Client-generated `requestId` sent on the query submission request.
+        request_id: Option<Uuid>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -2657,6 +2712,7 @@ mod tests {
             schema: None,
             warehouse: None,
             role: None,
+            secondary_roles: None,
             client_info: test_client_info(),
             session_parameters: None,
             spcs_token: None,
@@ -2807,7 +2863,7 @@ mod tests {
                 }
             }));
 
-            match into_query_result(resp) {
+            match into_query_result(resp, None) {
                 Ok(r) => assert!(r.success),
                 Err(e) => panic!("expected Ok, got {:?}", e),
             }
@@ -2827,18 +2883,21 @@ mod tests {
                 }
             }));
 
-            match into_query_result(resp) {
+            let request_id = Uuid::new_v4();
+            match into_query_result(resp, Some(request_id)) {
                 Err(RestError::QueryFailed {
                     message,
                     code,
                     sql_state,
                     query_id,
+                    request_id: rid,
                     ..
                 }) => {
                     assert_eq!(message, "SQL compilation error");
                     assert_eq!(code, Some(1003));
                     assert_eq!(sql_state, Some("42000".to_owned()));
                     assert_eq!(query_id, Some("01abc-def-12345".to_owned()));
+                    assert_eq!(rid, Some(request_id));
                 }
                 Err(other) => panic!("expected QueryFailed, got {:?}", other),
                 Ok(_) => panic!("expected Err, got Ok"),
@@ -2855,18 +2914,20 @@ mod tests {
                 }
             }));
 
-            match into_query_result(resp) {
+            match into_query_result(resp, None) {
                 Err(RestError::QueryFailed {
                     message,
                     code,
                     sql_state,
                     query_id,
+                    request_id,
                     ..
                 }) => {
                     assert_eq!(message, "Unknown error");
                     assert_eq!(code, None);
                     assert_eq!(sql_state, None);
                     assert_eq!(query_id, None);
+                    assert_eq!(request_id, None);
                 }
                 Err(other) => panic!("expected QueryFailed, got {:?}", other),
                 Ok(_) => panic!("expected Err, got Ok"),
@@ -3122,6 +3183,83 @@ mod tests {
             data.authenticator.as_deref(),
             Some("PROGRAMMATIC_ACCESS_TOKEN")
         );
+    }
+
+    #[test]
+    fn secondary_roles_is_uppercased_in_auth_body() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        for (input, expected) in [
+            ("ALL", "ALL"),
+            ("all", "ALL"),
+            ("All", "ALL"),
+            ("NONE", "NONE"),
+            ("none", "NONE"),
+            ("None", "NONE"),
+            ("DEFAULT", "DEFAULT"),
+            ("default", "DEFAULT"),
+        ] {
+            let login_params = LoginParameters {
+                secondary_roles: Some(input.to_string()),
+                ..test_login_params()
+            };
+            let data = rt
+                .block_on(auth_request_data(
+                    &client,
+                    &login_params,
+                    None,
+                    None,
+                    None,
+                    &RetryPolicy::default(),
+                ))
+                .unwrap();
+            assert_eq!(
+                data.secondary_roles.as_deref(),
+                Some(expected),
+                "input {input:?} should uppercase to {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn secondary_roles_omitted_when_not_specified() {
+        let login_params = test_login_params();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
+            .unwrap();
+
+        assert_eq!(data.secondary_roles, None);
+    }
+
+    #[test]
+    fn secondary_roles_omitted_when_empty_string() {
+        let login_params = LoginParameters {
+            secondary_roles: Some(String::new()),
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
+            .unwrap();
+
+        assert_eq!(data.secondary_roles, None);
     }
 
     mod send_login_request_retry_tests {

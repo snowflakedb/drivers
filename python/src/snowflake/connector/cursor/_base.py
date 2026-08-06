@@ -6,9 +6,9 @@ import abc
 import logging
 
 from collections.abc import Callable, Iterator, Sequence
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, BinaryIO, overload
 
-from .._internal.api_client.client_api import core_driver
+from .._internal.api_client.client_api import CHUNK_SIZE, core_driver
 from .._internal.arrow_context import ArrowConverterContext
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
@@ -49,6 +49,7 @@ from .._internal.statement_utils import statement
 from .._internal.utils import _resolve_alias
 from ..errors import NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
+from ._chunked_download_reader import _ChunkedDownloadReader
 from ._result_set_wrapper import _ResultSetWrapper
 
 
@@ -189,6 +190,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         params: Sequence[Any] | dict[str, Any] | None = None,
         _force_qmark_paramstyle: bool = False,
         _statement_params: dict[str, str] | None = None,
+        file_stream: BinaryIO | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -203,11 +205,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 For format paramstyle: sequence (%s)
             num_statements (int, optional): Number of statements in a multistatement query.
             _skip_upload_on_content_match (bool, optional): On PUT, skip
-                re-upload when the remote ``x-ms-meta-sfcdigest`` matches the
-                locally-computed SHA-256. Opt-in optimization for racing
-                concurrent uploaders; only meaningful with ``OVERWRITE=TRUE``.
-                Underscore-prefixed for parity with the legacy
-                Python-connector kwarg name.
+                re-upload when the remote stored digest metadata (S3
+                ``x-amz-meta-sfc-digest`` / Azure ``x-ms-meta-sfcdigest`` / GCS
+                ``x-goog-meta-sfc-digest``) matches the locally-computed
+                SHA-256. Opt-in optimization for racing concurrent uploaders;
+                only meaningful with ``OVERWRITE=TRUE``. Underscore-prefixed
+                for parity with the legacy Python-connector kwarg name.
             params: Legacy alias for ``parameters`` (kwarg-only). Cannot be
                 supplied together with ``parameters``.
             _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
@@ -217,6 +220,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 sent to Snowflake with this query only. Never persisted on the
                 cursor; forwarded as query-request parameters, so they tag only
                 this query without mutating session state.
+            file_stream: When set, ``operation`` must be a PUT statement with
+                a ``file://`` path (only the basename is used as the
+                destination filename). Its contents come from this stream
+                instead of disk, forwarded to the core driver in chunks so
+                the whole payload is never buffered in the wrapper. Non-PUT
+                ``operation`` raises ProgrammingError.
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
 
@@ -235,6 +244,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             _is_put_get,
             statement_parameters=statement_parameters,
             _force_qmark_paramstyle=_force_qmark_paramstyle,
+            file_stream=file_stream,
             **kwargs,
         )
 
@@ -246,9 +256,15 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         *,
         statement_parameters: dict[str, Any] | None = None,
         _force_qmark_paramstyle: bool = False,
+        file_stream: BinaryIO | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
+        if file_stream is not None:
+            self._execute_upload_stream(operation, file_stream)
+            self._rownumber = -1
+            return self
+
         if logger.is_enabled_for(logging.INFO) and self._connection.config.log_query_text:
             logger.info("query: [%s]", self._format_query_for_log(operation))
 
@@ -269,6 +285,55 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
+
+    def _execute_upload_stream(self, query: str, file_stream: BinaryIO) -> None:
+        """Chunked streaming PUT: feed *file_stream* to the core driver in bounded chunks.
+
+        Bytes cross the RPC boundary via begin/chunk/finish, bounding wrapper
+        memory to one chunk. A failure after begin aborts the session
+        server-side before re-raising.
+        """
+        upload_handle = core_driver.upload_stream_begin(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+            sql=query,
+        ).upload_handle
+        try:
+            while chunk := file_stream.read(CHUNK_SIZE):
+                core_driver.upload_stream_chunk(upload_handle, chunk)
+            finish_response = core_driver.upload_stream_finish(upload_handle)
+        except BaseException:
+            try:
+                core_driver.upload_stream_abort(upload_handle)
+            except Exception:
+                logger.debug("upload_stream_abort during cleanup failed; propagating original error", exc_info=True)
+            raise
+        self._apply_result_set(finish_response, query)  # type: ignore[arg-type]
+
+    @api_telemetry
+    @requires_open
+    def download_stream(self, stage_location: str, decompress: bool = False) -> BinaryIO:
+        """Return a lazily-read binary stream for a stage file (chunked, bounded memory).
+
+        Splits *stage_location* into stage name and filename on the last ``/``
+        and opens via the Begin RPC. Nothing happens until you read; each read
+        pulls one chunk. Close the stream (or use ``with``) to release the
+        download session early.
+        """
+        logger.info("download_stream: entry")
+        try:
+            stage_name, sep, source_filename = stage_location.rpartition("/")
+            if not sep:
+                # No "/": treat the whole string as the stage name, no filename.
+                stage_name, source_filename = stage_location, ""
+            begin = core_driver.download_stream_begin(
+                conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+                stage_name=stage_name,
+                source_filename=source_filename,
+                decompress=decompress,
+            )
+            return _ChunkedDownloadReader(begin.download_handle)  # type: ignore[return-value]
+        finally:
+            logger.info("download_stream: exit")
 
     def _apply_statement_parameters(
         self,
@@ -410,6 +475,15 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         # - Client-side binding (pyformat/format)
         # - Dict parameters (server-side doesn't support named binding)
         if paramstyle.is_client_side() or isinstance(first_params, dict):
+            if paramstyle.is_client_side():
+                # INSERT with client-side binding: rewrite into a single
+                # multi-row INSERT to avoid one HTTP request per row.
+                rewritten = self._rewrite_multirow_insert(operation, seq_of_parameters)
+                if rewritten is not None:
+                    # Values were already interpolated and escaped by
+                    # ClientSideBindingConverter.interpolate_query — no further binding needed.
+                    self.execute(rewritten)
+                    return
             self._executemany_per_row(operation, seq_of_parameters, _force_qmark_paramstyle)
             return
 

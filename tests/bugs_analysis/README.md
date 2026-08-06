@@ -4,7 +4,7 @@ This directory contains curated catalogs of bugs fixed in the original Snowflake
 drivers, used to track UD regression coverage.
 
 > **Not mirrored.** This directory is excluded from the public mirror
-> (`snowflakedb/universal-driver`) via the Copybara denylist in
+> (`snowflakedb/drivers`) via the Copybara denylist in
 > `ci/mirroring/copy.bara.sky`.
 
 ## Files

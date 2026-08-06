@@ -2,7 +2,7 @@ package net.snowflake.client.api.exception;
 
 import java.sql.SQLException;
 import lombok.Getter;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
+import net.snowflake.client.internal.unicore.ServiceException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1;
 
 @Getter
@@ -39,13 +39,12 @@ public class SnowflakeSQLException extends SQLException {
     this.queryId = error.hasQueryId() ? error.getQueryId() : null;
   }
 
-  public static SnowflakeSQLException fromServiceException(
-      DatabaseDriverService.ServiceException exception) {
-    DatabaseDriverV1.DriverException error = exception.error;
-    if (error == null) {
-      return new SnowflakeSQLException(exception.getMessage(), exception);
+  public static SnowflakeSQLException fromServiceException(ServiceException exception) {
+    if (exception.error instanceof DatabaseDriverV1.DriverException) {
+      return new SnowflakeSQLException(
+          (DatabaseDriverV1.DriverException) exception.error, exception);
     }
-    return new SnowflakeSQLException(error, exception);
+    return new SnowflakeSQLException(exception.getMessage(), exception);
   }
 
   /**

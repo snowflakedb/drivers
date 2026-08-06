@@ -67,6 +67,7 @@ pub mod param_names {
     pub const SCHEMA: ParamKey = ParamKey("schema");
     pub const WAREHOUSE: ParamKey = ParamKey("warehouse");
     pub const ROLE: ParamKey = ParamKey("role");
+    pub const SECONDARY_ROLES: ParamKey = ParamKey("secondary_roles");
     pub const CONNECTION_NAME: ParamKey = ParamKey("connection_name");
     pub const CUSTOM_ROOT_STORE_PATH: ParamKey = ParamKey("custom_root_store_path");
     pub const VERIFY_HOSTNAME: ParamKey = ParamKey("verify_hostname");
@@ -94,6 +95,8 @@ pub mod param_names {
     pub const MULTI_STATEMENT_COUNT: ParamKey = ParamKey("multi_statement_count");
     pub const QUERY_TAG: ParamKey = ParamKey("query_tag");
     pub const SKIP_UPLOAD_ON_CONTENT_MATCH: ParamKey = ParamKey("skip_upload_on_content_match");
+    pub const PUT_FASTFAIL: ParamKey = ParamKey("put_fastfail");
+    pub const GET_FASTFAIL: ParamKey = ParamKey("get_fastfail");
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
@@ -890,6 +893,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: true,
         mutable_after_connect: true,
     },
+    ParamDef {
+        canonical_name: param_names::SECONDARY_ROLES.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Secondary-roles activation mode sent at login (e.g. ALL or NONE)",
+        deprecated_by: None,
+        scopes: &[ParamScope::Connection],
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
     // ── TLS ─────────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CUSTOM_ROOT_STORE_PATH.as_str(),
@@ -1598,9 +1615,49 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::Never,
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
-        description: "Skip re-uploading a PUT blob when the remote x-ms-meta-sfcdigest header equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
+        description: "Skip re-uploading a PUT object when the remote stored digest (S3 x-amz-meta-sfc-digest / Azure x-ms-meta-sfcdigest / GCS x-goog-meta-sfc-digest) equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
         deprecated_by: None,
         scopes: &[ParamScope::Statement],
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::PUT_FASTFAIL.as_str(),
+        aliases: &["PUT_FASTFAIL"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        // No registry default: unset must resolve to `None` so the dispatch
+        // site can fall back to `WrapperPresets::put_get_fastfail_default`
+        // (true for Python/JDBC, false for ODBC) instead of a fixed value.
+        default: None,
+        sensitive: false,
+        description: "Controls whether a PUT batch stops at the first failing file (true, fail-fast) or attempts every file and reports failures as ERROR-status rows in the result set (false, collect-all). Defaults to the active wrapper's preset when unset. Mirrors old ODBC's PUT_FASTFAIL connection attribute. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
+        deprecated_by: None,
+        scopes: &[
+            ParamScope::Connection,
+            ParamScope::Session,
+            ParamScope::Statement,
+        ],
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::GET_FASTFAIL.as_str(),
+        aliases: &["GET_FASTFAIL"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        // See PUT_FASTFAIL above: `None` is load-bearing, not an oversight.
+        default: None,
+        sensitive: false,
+        description: "Controls whether a GET batch stops at the first failing file (true, fail-fast) or attempts every file and reports failures as ERROR-status rows in the result set (false, collect-all). Defaults to the active wrapper's preset when unset. Mirrors old ODBC's GET_FASTFAIL connection attribute. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
+        deprecated_by: None,
+        scopes: &[
+            ParamScope::Connection,
+            ParamScope::Session,
+            ParamScope::Statement,
+        ],
         used_at_connect: false,
         mutable_after_connect: true,
     },
@@ -2375,6 +2432,18 @@ mod tests {
             assert!(d.used_at_connect, "key {key}");
             assert!(d.mutable_after_connect, "key {key}");
         }
+    }
+
+    #[test]
+    fn secondary_roles_is_connection_scoped_and_immutable_after_connect() {
+        let r = registry();
+        let d = r
+            .resolve("secondary_roles")
+            .expect("expected registry entry for secondary_roles");
+        assert_eq!(d.scopes, &[ParamScope::Connection]);
+        assert!(d.used_at_connect);
+        assert!(!d.mutable_after_connect);
+        assert_eq!(d.value_type, ValueType::String);
     }
 
     #[test]

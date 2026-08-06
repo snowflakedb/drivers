@@ -34,9 +34,7 @@ use super::global_state::DatabaseDriverV1;
 use super::like_pattern;
 use crate::chunks::PrefetchConfig;
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, RestError, snowflake_query_with_client,
-};
+use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
 
 // ---------------------------------------------------------------------------
 // Depth constants (public — used by wrapper to map SQLTables special cases)
@@ -609,9 +607,10 @@ async fn execute_show(
                 query_parameters,
                 token.reveal(),
                 query_input,
-                &retry_policy,
-                QueryExecutionMode::Blocking,
-                None,
+                QueryOptions {
+                    retry_policy,
+                    ..Default::default()
+                },
             )
             .await
         }
@@ -1521,6 +1520,7 @@ mod tests {
             code: Some(3001),
             sql_state: Some("42501".to_string()),
             query_id: None,
+            request_id: None,
             location: snafu::Location::new("test", 1, 1),
         });
         assert!(map_execute_show_error(err, "SHOW TABLES", false).is_err());
@@ -1534,6 +1534,7 @@ mod tests {
             code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: None,
+            request_id: None,
             location: snafu::Location::new("test", 1, 1),
         });
         assert!(

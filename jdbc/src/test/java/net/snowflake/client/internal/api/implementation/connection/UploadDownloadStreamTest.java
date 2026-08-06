@@ -1,15 +1,21 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,19 +25,26 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.Properties;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
 import net.snowflake.client.api.connection.UploadStreamConfig;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamBeginResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamChunkResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamAbortResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamBeginResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamFinishResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.UploadStreamHandle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -41,9 +54,14 @@ import org.mockito.ArgumentCaptor;
  * SnowflakeConnectionImpl#downloadStream}.
  *
  * <p>The tests exercise the JDBC wiring: PUT SQL is synthesized on the Java side from the
- * structured uploadStream parameters, the resulting SQL plus the byte payload are forwarded to
- * {@code coreDriverApi.connectionUploadStream(connHandle, sql, data)}, and the download path
- * unwraps the proto response into an {@link InputStream}.
+ * structured uploadStream parameters and forwarded via {@code
+ * coreDriverApi.connectionUploadStreamBegin}; the source {@link InputStream} is drained in {@code
+ * STREAM_CHUNK_SIZE}-sized pieces, each sent through {@code connectionUploadStreamChunk}, before
+ * {@code connectionUploadStreamFinish} closes the session (or {@code connectionUploadStreamAbort}
+ * on a read failure). The download path mirrors this: {@code connectionDownloadStreamBegin} opens
+ * the session and the returned {@link InputStream} lazily pulls chunks via {@code
+ * connectionDownloadStreamChunk} until {@code eof}, closing the session via {@code
+ * connectionDownloadStreamClose}.
  */
 class UploadDownloadStreamTest {
 
@@ -51,6 +69,10 @@ class UploadDownloadStreamTest {
       DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
   private static final ConnectionHandle CONN_HANDLE =
       ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
+  private static final UploadStreamHandle UPLOAD_HANDLE =
+      UploadStreamHandle.newBuilder().setId(10).setMagic(1000).build();
+  private static final DownloadStreamHandle DOWNLOAD_HANDLE =
+      DownloadStreamHandle.newBuilder().setId(20).setMagic(2000).build();
 
   private CoreDriverApi mockCoreApi;
   private SnowflakeConnectionImpl connection;
@@ -67,6 +89,24 @@ class UploadDownloadStreamTest {
         .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
     when(mockCoreApi.connectionInit(any(), any(), any()))
         .thenReturn(ConnectionInitResponse.getDefaultInstance());
+
+    when(mockCoreApi.connectionUploadStreamBegin(any(), anyString()))
+        .thenReturn(
+            ConnectionUploadStreamBeginResponse.newBuilder()
+                .setUploadHandle(UPLOAD_HANDLE)
+                .build());
+    when(mockCoreApi.connectionUploadStreamFinish(any()))
+        .thenReturn(ConnectionUploadStreamFinishResponse.getDefaultInstance());
+    when(mockCoreApi.connectionUploadStreamAbort(any()))
+        .thenReturn(ConnectionUploadStreamAbortResponse.getDefaultInstance());
+
+    when(mockCoreApi.connectionDownloadStreamBegin(any(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(
+            ConnectionDownloadStreamBeginResponse.newBuilder()
+                .setDownloadHandle(DOWNLOAD_HANDLE)
+                .build());
+    when(mockCoreApi.connectionDownloadStreamClose(any()))
+        .thenReturn(ConnectionDownloadStreamCloseResponse.getDefaultInstance());
 
     Properties props = new Properties();
     props.setProperty("account", "test_account");
@@ -112,36 +152,29 @@ class UploadDownloadStreamTest {
   }
 
   // ---------------------------------------------------------------------------
-  // uploadStream — wiring + SQL forwarded to RPC
+  // uploadStream — wiring: Begin -> Chunk* -> Finish (or Abort on read failure)
   // ---------------------------------------------------------------------------
 
   @Test
   void shouldForwardSynthesizedSqlAndBytesForDefaultConfig() throws Exception {
-    when(mockCoreApi.connectionUploadStream(any(), anyString(), any()))
-        .thenReturn(ConnectionUploadStreamResponse.getDefaultInstance());
-
     byte[] payload = new byte[] {1, 2, 3};
     connection.uploadStream("@my_stage", "data.csv", new ByteArrayInputStream(payload));
 
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    ArgumentCaptor<byte[]> dataCaptor = ArgumentCaptor.forClass(byte[].class);
-    verify(mockCoreApi)
-        .connectionUploadStream(eq(CONN_HANDLE), sqlCaptor.capture(), dataCaptor.capture());
-
+    verify(mockCoreApi).connectionUploadStreamBegin(eq(CONN_HANDLE), sqlCaptor.capture());
     assertEquals("PUT 'file:///data.csv' @my_stage OVERWRITE = TRUE", sqlCaptor.getValue());
-    assertArrayEquals(payload, dataCaptor.getValue());
+
+    assertArrayEquals(payload, capturedUploadedChunk());
+    verify(mockCoreApi).connectionUploadStreamFinish(UPLOAD_HANDLE);
   }
 
   @Test
   void shouldSynthesizeAutoCompressFalseWhenCompressDataIsFalse() throws Exception {
-    when(mockCoreApi.connectionUploadStream(any(), anyString(), any()))
-        .thenReturn(ConnectionUploadStreamResponse.getDefaultInstance());
-
     UploadStreamConfig config = UploadStreamConfig.builder().setCompressData(false).build();
     connection.uploadStream("@my_stage", "data.csv", new ByteArrayInputStream(new byte[0]), config);
 
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(mockCoreApi).connectionUploadStream(eq(CONN_HANDLE), sqlCaptor.capture(), any());
+    verify(mockCoreApi).connectionUploadStreamBegin(eq(CONN_HANDLE), sqlCaptor.capture());
     assertTrue(
         sqlCaptor.getValue().contains("AUTO_COMPRESS = FALSE"),
         "synthesized SQL must carry AUTO_COMPRESS = FALSE: " + sqlCaptor.getValue());
@@ -149,14 +182,11 @@ class UploadDownloadStreamTest {
 
   @Test
   void shouldAppendDestPrefixToStagePathOnUpload() throws Exception {
-    when(mockCoreApi.connectionUploadStream(any(), anyString(), any()))
-        .thenReturn(ConnectionUploadStreamResponse.getDefaultInstance());
-
     UploadStreamConfig config = UploadStreamConfig.builder().setDestPrefix("inbox").build();
     connection.uploadStream("@my_stage", "data.csv", new ByteArrayInputStream(new byte[0]), config);
 
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(mockCoreApi).connectionUploadStream(eq(CONN_HANDLE), sqlCaptor.capture(), any());
+    verify(mockCoreApi).connectionUploadStreamBegin(eq(CONN_HANDLE), sqlCaptor.capture());
     assertTrue(
         sqlCaptor.getValue().contains("@my_stage/inbox"),
         "stage path must include destPrefix: " + sqlCaptor.getValue());
@@ -164,26 +194,19 @@ class UploadDownloadStreamTest {
 
   @Test
   void shouldReadAllBytesFromInputStream() throws Exception {
-    when(mockCoreApi.connectionUploadStream(any(), anyString(), any()))
-        .thenReturn(ConnectionUploadStreamResponse.getDefaultInstance());
-
     byte[] expected = new byte[] {1, 2, 3, 4, 5};
     connection.uploadStream("@s", "f", new ByteArrayInputStream(expected));
 
-    ArgumentCaptor<byte[]> dataCaptor = ArgumentCaptor.forClass(byte[].class);
-    verify(mockCoreApi).connectionUploadStream(any(), anyString(), dataCaptor.capture());
-    assertArrayEquals(expected, dataCaptor.getValue());
+    assertArrayEquals(expected, capturedUploadedChunk());
+    verify(mockCoreApi).connectionUploadStreamFinish(UPLOAD_HANDLE);
   }
 
   @Test
   void shouldDefaultToCompressDataTrueWhenConfigIsNull() throws Exception {
-    when(mockCoreApi.connectionUploadStream(any(), anyString(), any()))
-        .thenReturn(ConnectionUploadStreamResponse.getDefaultInstance());
-
     connection.uploadStream("@my_stage", "data.csv", new ByteArrayInputStream(new byte[0]), null);
 
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(mockCoreApi).connectionUploadStream(eq(CONN_HANDLE), sqlCaptor.capture(), any());
+    verify(mockCoreApi).connectionUploadStreamBegin(eq(CONN_HANDLE), sqlCaptor.capture());
     // null config => compressData defaults to true => no AUTO_COMPRESS = FALSE clause.
     assertFalse(
         sqlCaptor.getValue().contains("AUTO_COMPRESS = FALSE"),
@@ -191,7 +214,7 @@ class UploadDownloadStreamTest {
   }
 
   @Test
-  void shouldWrapIoExceptionAsSqlException() {
+  void shouldAbortAndWrapIoExceptionAsSqlException() throws Exception {
     InputStream brokenStream =
         new InputStream() {
           @Override
@@ -200,44 +223,196 @@ class UploadDownloadStreamTest {
           }
         };
 
-    assertThrows(SQLException.class, () -> connection.uploadStream("@s", "f", brokenStream));
+    SQLException thrown =
+        assertThrows(SQLException.class, () -> connection.uploadStream("@s", "f", brokenStream));
+    assertTrue(
+        thrown.getMessage().contains("simulated IO failure"),
+        "exception message must surface the underlying IO failure: " + thrown.getMessage());
+    assertInstanceOf(IOException.class, thrown.getCause());
+
+    verify(mockCoreApi).connectionUploadStreamAbort(UPLOAD_HANDLE);
+    verify(mockCoreApi, never()).connectionUploadStreamFinish(any());
+  }
+
+  @Test
+  void shouldAbortAndRethrowRuntimeExceptionFromInputStreamWithoutWrapping() throws Exception {
+    RuntimeException readFailure = new IllegalStateException("simulated runtime failure");
+    InputStream brokenStream =
+        new InputStream() {
+          @Override
+          public int read() {
+            throw readFailure;
+          }
+        };
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> connection.uploadStream("@s", "f", brokenStream));
+    assertSame(
+        readFailure,
+        thrown,
+        "the SQLException|RuntimeException catch arm must rethrow the original exception as-is,"
+            + " not wrap it");
+
+    verify(mockCoreApi).connectionUploadStreamAbort(UPLOAD_HANDLE);
+    verify(mockCoreApi, never()).connectionUploadStreamFinish(any());
+  }
+
+  @Test
+  void shouldCoalescePartialReadsIntoFullSizeChunksAndFlushTrailingRemainder() throws Exception {
+    // Mirrors the private SnowflakeConnectionImpl.STREAM_CHUNK_SIZE constant.
+    final int chunkSize = 8 * 1024 * 1024;
+    final int trailing = 100;
+    byte[] payload = new byte[chunkSize + trailing];
+    for (int i = 0; i < payload.length; i++) {
+      payload[i] = (byte) i;
+    }
+    // Returns at most half of chunkSize per call, forcing the upload loop to accumulate
+    // several partial reads before a full chunk is ready to send.
+    InputStream partialReadStream =
+        new ByteArrayInputStream(payload) {
+          @Override
+          public synchronized int read(byte[] b, int off, int len) {
+            return super.read(b, off, Math.min(len, chunkSize / 2));
+          }
+        };
+
+    connection.uploadStream("@s", "f", partialReadStream);
+
+    ArgumentCaptor<byte[]> dataCaptor = ArgumentCaptor.forClass(byte[].class);
+    ArgumentCaptor<Integer> lengthCaptor = ArgumentCaptor.forClass(Integer.class);
+    verify(mockCoreApi, times(2))
+        .connectionUploadStreamChunk(
+            eq(UPLOAD_HANDLE), dataCaptor.capture(), eq(0), lengthCaptor.capture());
+
+    assertEquals(
+        chunkSize,
+        lengthCaptor.getAllValues().get(0),
+        "first chunk must be full-size, proving partial reads were coalesced");
+    assertEquals(
+        trailing,
+        lengthCaptor.getAllValues().get(1),
+        "second chunk must carry only the trailing remainder");
+    assertArrayEquals(
+        Arrays.copyOfRange(payload, 0, chunkSize),
+        Arrays.copyOf(dataCaptor.getAllValues().get(0), chunkSize));
+    assertArrayEquals(
+        Arrays.copyOfRange(payload, chunkSize, payload.length),
+        Arrays.copyOf(dataCaptor.getAllValues().get(1), trailing));
+    verify(mockCoreApi).connectionUploadStreamFinish(UPLOAD_HANDLE);
+  }
+
+  /**
+   * Captures the single {@code connectionUploadStreamChunk} call triggered by the small-payload
+   * upload tests above (each writes a payload well under {@code STREAM_CHUNK_SIZE}, so exactly one
+   * chunk RPC fires) and returns the bytes actually sent — trimmed from the wrapper's reusable read
+   * buffer down to {@code [0, length)}, since the buffer itself is larger than any test payload.
+   */
+  private byte[] capturedUploadedChunk() throws SQLException {
+    ArgumentCaptor<byte[]> dataCaptor = ArgumentCaptor.forClass(byte[].class);
+    ArgumentCaptor<Integer> lengthCaptor = ArgumentCaptor.forClass(Integer.class);
+    verify(mockCoreApi)
+        .connectionUploadStreamChunk(
+            eq(UPLOAD_HANDLE), dataCaptor.capture(), eq(0), lengthCaptor.capture());
+    return Arrays.copyOf(dataCaptor.getValue(), lengthCaptor.getValue());
   }
 
   // ---------------------------------------------------------------------------
-  // downloadStream
+  // downloadStream — wiring: Begin -> Chunk* (until eof) -> Close
   // ---------------------------------------------------------------------------
 
   @Test
   void shouldCallCoreApiWithDecompressFalseForDefaultConfig() throws Exception {
     byte[] expected = "downloaded content".getBytes();
-    when(mockCoreApi.connectionDownloadStream(any(), anyString(), anyString(), anyBoolean()))
+    when(mockCoreApi.connectionDownloadStreamChunk(eq(DOWNLOAD_HANDLE), anyLong()))
         .thenReturn(
-            ConnectionDownloadStreamResponse.newBuilder()
+            ConnectionDownloadStreamChunkResponse.newBuilder()
                 .setData(ByteString.copyFrom(expected))
+                .setEof(true)
                 .build());
 
-    InputStream result = connection.downloadStream("@my_stage", "data.csv.gz");
+    try (InputStream result = connection.downloadStream("@my_stage", "data.csv.gz")) {
+      assertArrayEquals(expected, readAllBytes(result));
+    }
 
-    assertArrayEquals(expected, readAllBytes(result));
     verify(mockCoreApi)
-        .connectionDownloadStream(eq(CONN_HANDLE), eq("@my_stage"), eq("data.csv.gz"), eq(false));
+        .connectionDownloadStreamBegin(
+            eq(CONN_HANDLE), eq("@my_stage"), eq("data.csv.gz"), eq(false));
+    verify(mockCoreApi).connectionDownloadStreamClose(DOWNLOAD_HANDLE);
   }
 
   @Test
   void shouldForwardDecompressFlagWhenDecompressIsTrue() throws Exception {
     byte[] expected = "decompressed".getBytes();
-    when(mockCoreApi.connectionDownloadStream(any(), anyString(), anyString(), anyBoolean()))
+    when(mockCoreApi.connectionDownloadStreamChunk(eq(DOWNLOAD_HANDLE), anyLong()))
         .thenReturn(
-            ConnectionDownloadStreamResponse.newBuilder()
+            ConnectionDownloadStreamChunkResponse.newBuilder()
                 .setData(ByteString.copyFrom(expected))
+                .setEof(true)
                 .build());
 
     DownloadStreamConfig config = DownloadStreamConfig.builder().setDecompress(true).build();
-    InputStream result = connection.downloadStream("@my_stage", "data.csv.gz", config);
+    try (InputStream result = connection.downloadStream("@my_stage", "data.csv.gz", config)) {
+      assertArrayEquals(expected, readAllBytes(result));
+    }
 
-    assertArrayEquals(expected, readAllBytes(result));
     verify(mockCoreApi)
-        .connectionDownloadStream(eq(CONN_HANDLE), eq("@my_stage"), eq("data.csv.gz"), eq(true));
+        .connectionDownloadStreamBegin(
+            eq(CONN_HANDLE), eq("@my_stage"), eq("data.csv.gz"), eq(true));
+    verify(mockCoreApi).connectionDownloadStreamClose(DOWNLOAD_HANDLE);
+  }
+
+  @Test
+  void shouldWrapChunkReadFailureAsIoExceptionAndAllowEarlyCloseWithoutReachingEof()
+      throws Exception {
+    when(mockCoreApi.connectionDownloadStreamChunk(eq(DOWNLOAD_HANDLE), anyLong()))
+        .thenThrow(new SQLException("chunk rpc failed"));
+
+    // try-with-resources guarantees the stream is released even if an assertion below throws;
+    // the ARM close() is a harmless third no-op (close() short-circuits once closed), so the
+    // verify(times(1)) below still holds.
+    try (InputStream result = connection.downloadStream("@my_stage", "data.csv.gz")) {
+      IOException thrown = assertThrows(IOException.class, result::read);
+      assertTrue(
+          thrown.getMessage().contains("chunk rpc failed"),
+          "exception message must surface the underlying chunk failure: " + thrown.getMessage());
+
+      // The caller can still close the stream after a read failure, without ever reaching eof;
+      // a second close() call must be a no-op rather than re-invoking the close RPC.
+      result.close();
+      result.close();
+
+      verify(mockCoreApi, times(1)).connectionDownloadStreamClose(DOWNLOAD_HANDLE);
+    }
+  }
+
+  @Test
+  void shouldMarkDownloadStreamClosedEvenWhenCloseRpcFailsSoSecondCloseIsNoop() throws Exception {
+    when(mockCoreApi.connectionDownloadStreamChunk(eq(DOWNLOAD_HANDLE), anyLong()))
+        .thenReturn(
+            ConnectionDownloadStreamChunkResponse.newBuilder()
+                .setData(ByteString.copyFrom(new byte[0]))
+                .setEof(true)
+                .build());
+    when(mockCoreApi.connectionDownloadStreamClose(DOWNLOAD_HANDLE))
+        .thenThrow(new SQLException("close rpc failed"));
+
+    // try-with-resources guarantees release even if an assertion below throws. By block exit the
+    // stream is already closed by the explicit calls, so the ARM close() is a no-op that neither
+    // re-invokes the RPC nor re-throws — verify(times(1)) still holds.
+    try (InputStream result = connection.downloadStream("@my_stage", "data.csv.gz")) {
+      IOException thrown = assertThrows(IOException.class, result::close);
+      assertTrue(
+          thrown.getMessage().contains("close rpc failed"),
+          "exception message must surface the underlying close failure: " + thrown.getMessage());
+
+      // Regression guard for the close()-ordering fix: the stream must be marked closed (and
+      // deregistered from the leak-safety-net set) in a finally block, even though the close RPC
+      // threw, so a second close() call is a silent no-op instead of re-invoking the RPC.
+      assertDoesNotThrow(result::close);
+
+      verify(mockCoreApi, times(1)).connectionDownloadStreamClose(DOWNLOAD_HANDLE);
+    }
   }
 
   private static byte[] readAllBytes(InputStream is) throws IOException {

@@ -43,6 +43,16 @@ class _FakeConnection(ErrorHandlerMixin):
     def calls_failing_public(self):
         self.do_something()
 
+    def do_something_other(self):
+        raise ProgrammingError(msg="also bad SQL", errno=43)
+
+    def calls_failing_public_after_swallowing_sibling(self):
+        try:
+            self.do_something()
+        except ProgrammingError:
+            pass
+        self.do_something_other()
+
 
 class _FakeCursor(ErrorHandlerMixin):
     """Simulates a Cursor: routes through both connection and cursor."""
@@ -189,6 +199,19 @@ class TestReentrancy:
             conn.do_something()
         assert _errorhandler_active.get() is False
 
+    def test_sibling_error_after_swallowed_exception_still_routes(self):
+        """A nested error swallowed by ordinary (non-wrapper) code must not
+        confuse ``_errorhandler_active`` nesting for a later, unrelated sibling
+        error within the same outer call: PEP 249 routing must still see and
+        route that later error exactly once.
+        """
+        conn = _FakeConnection()
+        with pytest.raises(ProgrammingError, match="also bad SQL"):
+            conn.calls_failing_public_after_swallowing_sibling()
+
+        assert len(conn.messages) == 1  # PEP 249 routing only sees the escaping error
+        assert _errorhandler_active.get() is False
+
 
 # ---------------------------------------------------------------------------
 # Wrapping skips private methods, properties, staticmethods, classmethods
@@ -328,7 +351,14 @@ class TestRouteException:
         captured_values: list[dict] = []
         conn.errorhandler = lambda c, cur, cls, val: captured_values.append(val)
 
-        exc = ProgrammingError(msg="full test", errno=42, sqlstate="HY000", sfqid="qid-123", query="SELECT 1")
+        exc = ProgrammingError(
+            msg="full test",
+            errno=42,
+            sqlstate="HY000",
+            sfqid="qid-123",
+            query="SELECT 1",
+            request_id="rid-456",
+        )
         with pytest.raises(ProgrammingError):
             route_exception(conn, None, exc)
 
@@ -339,3 +369,4 @@ class TestRouteException:
         assert val["sqlstate"] == "HY000"
         assert val["sfqid"] == "qid-123"
         assert val["query"] == "SELECT 1"
+        assert val["request_id"] == "rid-456"

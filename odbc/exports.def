@@ -28,6 +28,7 @@ EXPORTS
     SQLFreeHandle
     SQLFreeStmt
     SQLGetConnectAttrW
+    SQLGetCursorNameW
     SQLGetData
     SQLGetDescFieldW
     SQLGetDescRecW
@@ -43,15 +44,19 @@ EXPORTS
     SQLNumResultCols
     SQLDescribeParam
     SQLParamData
+    SQLParamOptions
     SQLPrepareW
     SQLPutData
     SQLRowCount
     SQLSetConnectAttrW
+    SQLSetCursorNameW
     SQLSetDescFieldW
     SQLSetDescRec
     SQLSetEnvAttr
+    SQLSetScrollOptions
     SQLSetStmtAttrW
     SQLTablesW
+    SQLTransact
     SQLColumnsW
     SQLPrimaryKeysW
     SQLForeignKeysW

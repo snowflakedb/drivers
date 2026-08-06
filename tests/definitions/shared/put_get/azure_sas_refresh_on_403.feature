@@ -1,3 +1,4 @@
+@core
 Feature: Azure SAS refresh on 403
 
   An expired Azure SAS in a stage URL surfaces as HTTP 403. On ANY 403
@@ -8,6 +9,7 @@ Feature: Azure SAS refresh on 403
   # warn (non-token 403) or error (refresh itself failed), carrying status,
   # Azure <Code>, and a SAS-redacted URL.
 
+  @core_int
   Scenario: should refresh SAS and succeed when Azure PUT returns 403 on the first attempt
     Given Snowflake client is logged in to an Azure-backed deployment
     And Stage SAS is configured to return HTTP 403 on the first PUT attempt
@@ -37,6 +39,7 @@ Feature: Azure SAS refresh on 403
       |                                                       |
 
   # Azure download is a single non-Range GET; a 403 surfaces before any body bytes.
+  @core_int
   Scenario: should refresh SAS and re-drive the GET once when Azure returns 403
     Given Snowflake client is logged in to an Azure-backed deployment
     And File is uploaded to an Azure-backed stage
@@ -47,6 +50,7 @@ Feature: Azure SAS refresh on 403
     And File should be downloaded with correct content
     And No warn-level log line is emitted for the recovered 403
 
+  @core_int
   Scenario: should surface terminal error when GET SAS refresh itself fails
     Given Snowflake client is logged in to an Azure-backed deployment
     And File is uploaded to an Azure-backed stage
@@ -57,6 +61,7 @@ Feature: Azure SAS refresh on 403
     And An error is raised indicating SAS refresh failed
     And An error-level log line is emitted naming the refresh-failure reason
 
+  @core_int
   Scenario: should retry then fail when Azure GET 403 is not caused by SAS expiry
     # UD's status-only trigger always fires one refresh, even for non-token 403s.
     # Legacy Python's reason-gate would skip refresh entirely on the GET path.
@@ -73,14 +78,16 @@ Feature: Azure SAS refresh on 403
     And The warn log names the Azure error code
     And The warn log carries a SAS-redacted URL
 
-  Scenario: should coalesce concurrent 403s into one refresh query
+  @core_int
+  Scenario: should recover both concurrent PUTs via the shared refreshed SAS
     Given Snowflake client is logged in to an Azure-backed deployment
     And Two PUT operations are running in parallel against the same Azure stage
     And Stage SAS is configured to return HTTP 403 for both concurrent operations
     When Both PUT operations trigger SAS refresh concurrently
-    Then Only one GS refresh query is issued for the concurrent 403s
+    Then Both PUTs carry the shared refreshed SAS at the wire
     And Both operations succeed with the shared refreshed SAS
 
+  @core_int
   Scenario: should surface terminal error when PUT SAS refresh itself fails
     Given Snowflake client is logged in to an Azure-backed deployment
     And Stage SAS is configured to return HTTP 403 on the PUT
@@ -90,6 +97,7 @@ Feature: Azure SAS refresh on 403
     And An error is raised indicating SAS refresh failed
     And An error-level log line is emitted naming the refresh-failure reason
 
+  @core_int
   Scenario: should retry then fail when Azure PUT 403 is not caused by SAS expiry
     # Any 403 triggers one refresh; if the new SAS still 403s (e.g. bucket-policy
     # denial), the terminal 403 surfaces and logs at warn (the contract-drift signal).

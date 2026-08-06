@@ -314,6 +314,20 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid cursor name: {name}"))]
+    InvalidCursorName {
+        name: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Duplicate cursor name: {name}"))]
+    DuplicateCursorName {
+        name: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Statement is in error state"))]
     StatementErrorState {
         #[snafu(implicit)]
@@ -739,6 +753,8 @@ impl OdbcError {
             OdbcError::CountFieldIncorrect { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidCatalogName { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidCursorState { .. } => ErrorSource::CursorState,
+            OdbcError::InvalidCursorName { .. } => ErrorSource::ApiMisuse,
+            OdbcError::DuplicateCursorName { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidTransactionState { .. } => ErrorSource::ApiMisuse,
             OdbcError::CursorAlreadyOpen { .. } => ErrorSource::CursorState,
             OdbcError::StatementErrorState { .. } => ErrorSource::CursorState,
@@ -819,14 +835,17 @@ impl OdbcError {
                 .map(|entry| entry.message.clone())
                 .unwrap_or_default()
         });
-        if crate::api::error_trace_flag::error_trace_enabled() && !trace.is_empty() {
+        let body = if crate::api::error_trace_flag::error_trace_enabled() && !trace.is_empty() {
             format!(
                 "{base}\nerror trace:\n{}",
                 error_trace::format_error_trace(&trace)
             )
         } else {
             base
-        }
+        };
+        // Per the ODBC spec, driver message text must be prefixed with
+        // [vendor][ODBC-component] so callers can identify the source.
+        format!("[Snowflake][Snowflake ODBC Driver]{body}")
     }
 
     /// Extract a user-facing message from structured protobuf error fields
@@ -858,10 +877,16 @@ impl OdbcError {
     }
 
     pub fn to_diagnostic_record(&self) -> DiagnosticRecord {
+        use crate::api::diagnostic::{class_origin_for_sqlstate, subclass_origin_for_sqlstate};
+        let sql_state = self.to_sql_state();
+        let class_origin = class_origin_for_sqlstate(sql_state.as_str());
+        let subclass_origin = subclass_origin_for_sqlstate(sql_state.as_str());
         DiagnosticRecord {
             message_text: self.message_text(),
-            sql_state: self.to_sql_state(),
+            sql_state,
             native_error: self.to_native_error(),
+            class_origin,
+            subclass_origin,
             ..Default::default()
         }
     }
@@ -926,6 +951,8 @@ impl OdbcError {
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
             OdbcError::InvalidTransactionState { .. } => SqlState::InvalidTransactionState,
             OdbcError::CursorAlreadyOpen { .. } => SqlState::InvalidCursorState,
+            OdbcError::InvalidCursorName { .. } => SqlState::InvalidCursorName,
+            OdbcError::DuplicateCursorName { .. } => SqlState::DuplicateCursorName,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
@@ -980,8 +1007,21 @@ impl OdbcError {
                 CoreProtobufError::Application {
                     error,
                     sql_state: server_sql_state,
+                    vendor_code,
                     ..
                 } => {
+                    // Query-canceled (gsCode 604) maps to HY008 regardless of
+                    // the SQLSTATE the server attaches. A cross-thread
+                    // `SQLCancel` fires two signals at the in-flight execute:
+                    // the local cancellation token (→ `OperationCanceled` →
+                    // HY008) and the server abort (→ a canceled query-response
+                    // carrying 604). Whichever wins the race, the application
+                    // must observe the same SQLSTATE, so pin 604 to HY008 here
+                    // — before the verbatim server-SQLSTATE forwarding below.
+                    if *vendor_code == Some(sf_core::rest::snowflake::QUERY_CANCELED) {
+                        return SqlState::OperationCanceled;
+                    }
+
                     // Forward the server's SQLSTATE verbatim when it's a
                     // well-formed 5-character ANSI/ODBC state outside the
                     // success/warning/no-data classes. The driver does not
@@ -1138,8 +1178,8 @@ impl OdbcError {
                 status_code: driver_exception.status_code,
                 error_trace: driver_exception.error_trace,
                 sql_state: driver_exception.sql_state,
-                query_id: driver_exception.query_id,
                 vendor_code: driver_exception.vendor_code,
+                query_id: driver_exception.query_id,
                 location,
             },
             ProtoError::Transport(message) => CoreProtobufError::Transport { message, location },
@@ -1168,11 +1208,12 @@ pub enum CoreProtobufError {
         error_trace: Vec<ErrorTraceEntry>,
         /// ANSI SQL state forwarded from the server response, if present.
         sql_state: Option<String>,
+        /// Snowflake server error code (gsCode), if present. Used to map the
+        /// query-canceled code (604) to `HY008` so a server-side abort races
+        /// SQLSTATE-stably against the local cancellation token.
+        vendor_code: Option<i32>,
         /// Snowflake Query ID from the failed query, if available.
         query_id: Option<String>,
-        /// Snowflake server-side numeric error code (e.g. 2003 for "object does
-        /// not exist"), forwarded from `DriverException.vendor_code` on the wire.
-        vendor_code: Option<i32>,
         location: Location,
     },
     #[snafu(display("Transport error: {message}"))]
@@ -1334,8 +1375,8 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: None,
-                    query_id: None,
                     vendor_code: None,
+                    query_id: None,
                     location: loc(),
                 }),
                 location: loc(),
@@ -1399,8 +1440,8 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: None,
-                query_id: None,
                 vendor_code: None,
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1432,8 +1473,8 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: None,
-                    query_id: None,
                     vendor_code: None,
+                    query_id: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -1462,8 +1503,8 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: Some("22000".to_string()),
-                query_id: None,
                 vendor_code: None,
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1500,8 +1541,8 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: Some(state.to_string()),
-                    query_id: None,
                     vendor_code: None,
+                    query_id: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -1560,13 +1601,40 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: Some("22001".to_string()),
-                query_id: None,
                 vendor_code: None,
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::StringDataRightTruncation);
+    }
+
+    #[test]
+    fn should_map_query_canceled_gscode_604_to_hy008_over_server_sql_state() {
+        // A server-side abort surfaces on the executing thread as a canceled
+        // query-response carrying gsCode 604. Even if the server attaches its
+        // own SQLSTATE (here a well-formed "57014"), the ODBC layer pins the
+        // result to HY008 so it matches the local-token cancel path — the
+        // application sees a stable SQLSTATE no matter which signal wins the
+        // cross-thread SQLCancel race.
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "SQL execution canceled".to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: Some("57014".to_string()),
+                vendor_code: Some(sf_core::rest::snowflake::QUERY_CANCELED),
+                query_id: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::OperationCanceled);
+        assert_eq!(odbc_err.to_sql_state().as_str(), "HY008");
     }
 
     #[test]
@@ -1685,6 +1753,7 @@ mod tests {
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
+            request_id: None,
             root_cause: None,
         }));
 
@@ -1713,6 +1782,7 @@ mod tests {
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
+            request_id: None,
             root_cause: None,
         }));
 
@@ -1742,6 +1812,7 @@ mod tests {
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
+            request_id: None,
             root_cause: None,
         }));
 
@@ -1768,6 +1839,7 @@ mod tests {
             vendor_code: None,
             sql_state: None,
             query_id: None,
+            request_id: None,
             root_cause: None,
         }));
 

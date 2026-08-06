@@ -8,8 +8,7 @@
 
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::config::rest_parameters::{DEFAULT_LOG_MAX_QUERY_LENGTH, QueryParameters};
-use sf_core::config::retry::RetryPolicy;
-use sf_core::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
+use sf_core::rest::snowflake::{QueryInput, QueryOptions, snowflake_query_with_client};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -38,9 +37,7 @@ async fn should_include_request_id_in_query_parameters() {
         query_params,
         "test-token",
         QueryInput::new("SELECT 1"),
-        &RetryPolicy::default(),
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions::default(),
     )
     .await;
 
@@ -111,9 +108,7 @@ async fn should_retry_sync_query_on_connection_reset() {
         query_params,
         "test-token",
         QueryInput::new("SELECT 1"),
-        &RetryPolicy::default(),
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions::default(),
     )
     .await;
 
@@ -167,9 +162,7 @@ async fn should_use_sync_mode_by_default() {
         query_params,
         "test-token",
         QueryInput::new("SELECT 1"),
-        &RetryPolicy::default(),
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions::default(),
     )
     .await;
 
@@ -232,9 +225,7 @@ async fn should_include_statement_timeout_in_parameters_when_set() {
                 m
             }),
         },
-        &RetryPolicy::default(),
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions::default(),
     )
     .await;
 
@@ -289,9 +280,7 @@ async fn should_not_include_parameters_when_timeout_not_set() {
         query_params,
         "test-token",
         QueryInput::new("SELECT 1"),
-        &RetryPolicy::default(),
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions::default(),
     )
     .await;
 

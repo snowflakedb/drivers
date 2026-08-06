@@ -44,7 +44,7 @@ public final class SnowflakeCallableStatementImpl extends SnowflakePreparedState
   public static String parseSqlEscapeSyntax(String originalSql) {
     originalSql = originalSql.trim();
     if (originalSql.startsWith("{") && originalSql.endsWith("}")) {
-      logger.debug("Curly brackets {} removed before sending sql to server.", false);
+      logger.debug("Curly brackets {} removed before sending sql to server.");
       return originalSql.substring(1, originalSql.length() - 1);
     }
     return originalSql;

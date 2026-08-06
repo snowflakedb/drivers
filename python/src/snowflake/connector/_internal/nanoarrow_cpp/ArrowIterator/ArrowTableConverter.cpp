@@ -188,6 +188,15 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
         scale = std::stoi(
             std::string(scaleString.data, scaleString.size_bytes));
       }
+      if (scale < 0 || scale > 9) {
+        PyErr_SetString(
+            PyExc_Exception,
+            Logger::formatString(
+                "[Snowflake Exception] invalid scale value %d for TIME "
+                "column (expected 0-9)",
+                scale).c_str());
+        break;
+      }
       convertTimeColumn_nanoarrow(&columnSchemaView, columnArray, scale);
       break;
     }
@@ -205,6 +214,15 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
         scale = std::stoi(
             std::string(scaleString.data, scaleString.size_bytes));
       }
+      if (scale < 0 || scale > 9) {
+        PyErr_SetString(
+            PyExc_Exception,
+            Logger::formatString(
+                "[Snowflake Exception] invalid scale value %d for "
+                "TIMESTAMP_NTZ column (expected 0-9)",
+                scale).c_str());
+        break;
+      }
       convertTimestampColumn_nanoarrow(&columnSchemaView, columnArray, scale);
       break;
     }
@@ -221,6 +239,15 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
                           returnCode);
         scale = std::stoi(
             std::string(scaleString.data, scaleString.size_bytes));
+      }
+      if (scale < 0 || scale > 9) {
+        PyErr_SetString(
+            PyExc_Exception,
+            Logger::formatString(
+                "[Snowflake Exception] invalid scale value %d for "
+                "TIMESTAMP_LTZ column (expected 0-9)",
+                scale).c_str());
+        break;
       }
       convertTimestampColumn_nanoarrow(&columnSchemaView, columnArray, scale,
                                        m_timezone);
@@ -253,6 +280,15 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
               std::string(byteLengthString.data,
                           byteLengthString.size_bytes));
         }
+      }
+      if (scale < 0 || scale > 9) {
+        PyErr_SetString(
+            PyExc_Exception,
+            Logger::formatString(
+                "[Snowflake Exception] invalid scale value %d for "
+                "TIMESTAMP_TZ column (expected 0-9)",
+                scale).c_str());
+        break;
       }
       convertTimestampTZColumn_nanoarrow(&columnSchemaView, columnArray,
                                          scale, byteLength, m_timezone);

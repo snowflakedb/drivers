@@ -18,6 +18,29 @@ use sf_core::apis::database_driver_v1::ESCAPE_CHAR;
 use snafu::ResultExt;
 use tracing;
 
+/// Logs `"{name}: exit"` at INFO when dropped — pair with a matching
+/// `tracing::info!("{name}: entry")` at the top of a public wrapper API
+/// function so a single call can be traced end to end, per the logging
+/// guidelines (`ud-log-public-api-entry-and-exit`).
+pub(crate) struct ApiExitLog(pub(crate) &'static str);
+
+impl Drop for ApiExitLog {
+    fn drop(&mut self) {
+        tracing::info!("{}: exit", self.0);
+    }
+}
+
+/// Logs `"{name}: exit"` at DEBUG when dropped — use for core (non-wrapper)
+/// API functions where entry/exit logging belongs at DEBUG level per
+/// `ud-log-public-api-entry-and-exit`.
+pub(crate) struct ApiExitLogDebug(pub(crate) &'static str);
+
+impl Drop for ApiExitLogDebug {
+    fn drop(&mut self) {
+        tracing::debug!("{}: exit", self.0);
+    }
+}
+
 /// Process a catalog function string argument according to SQL_ATTR_METADATA_ID rules.
 ///
 /// When `metadata_id` is `true`, the argument is treated as a case-insensitive identifier:

@@ -1343,7 +1343,6 @@ class TestClosedCursorErrors:
             assert isinstance(excinfo.value, AttributeError)
 
 
-@pytest.mark.flaky
 class TestClosedConnectionCursorErrors:
     """Test cursor operations when the underlying connection has been closed."""
 
@@ -2729,13 +2728,10 @@ class TestCursorDescribeInternal:
 
     def test_returns_none_for_dml(self, function_connection):
         """_describe_internal returns None for a DML statement that produces no result set."""
-        cur = function_connection.cursor()
-        try:
+        with function_connection.cursor() as cur:
             cur.execute("CREATE OR REPLACE TEMP TABLE _test_di_none (x INT)")
             result = cur._describe_internal("INSERT INTO _test_di_none VALUES (1)")
             assert result is None
-        finally:
-            cur.execute("DROP TABLE IF EXISTS _test_di_none")
 
     def test_v2_type_codes_match_describe(self, cursor):
         """V2 type_code and name match the V1 describe() output for the same query."""

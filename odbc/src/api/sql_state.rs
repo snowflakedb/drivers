@@ -11,7 +11,7 @@ use std::str::FromStr;
 /// SQLState is a five-character string that indicates the success or failure
 /// of an SQL operation. The first two characters indicate the class,
 /// and the last three characters indicate the subclass.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, strum_macros::EnumIter)]
 pub enum SqlState {
     // Success class (00)
     /// 00000 - Successful completion
@@ -170,6 +170,14 @@ pub enum SqlState {
     // Invalid collation name class (2H)
     /// 2H000 - Invalid collation name
     InvalidCollationName,
+
+    // Invalid cursor name class (34)
+    /// 34000 - Invalid cursor name
+    InvalidCursorName,
+
+    // Duplicate cursor name class (3C)
+    /// 3C000 - Duplicate cursor name
+    DuplicateCursorName,
 
     // Invalid catalog name class (3D)
     /// 3D000 - Invalid catalog name
@@ -381,6 +389,8 @@ impl SqlState {
             SqlState::ReadingSqlDataNotPermitted => "2F004",
             SqlState::FunctionExecutedNoReturnStatement => "2F005",
             SqlState::InvalidCollationName => "2H000",
+            SqlState::InvalidCursorName => "34000",
+            SqlState::DuplicateCursorName => "3C000",
             SqlState::InvalidCatalogName => "3D000",
             SqlState::SyntaxErrorOrAccessRuleViolation => "42000",
             SqlState::BaseTableOrViewAlreadyExists => "42S01",
@@ -559,6 +569,8 @@ impl FromStr for SqlState {
             "2F004" => SqlState::ReadingSqlDataNotPermitted,
             "2F005" => SqlState::FunctionExecutedNoReturnStatement,
             "2H000" => SqlState::InvalidCollationName,
+            "34000" => SqlState::InvalidCursorName,
+            "3C000" => SqlState::DuplicateCursorName,
             "3D000" => SqlState::InvalidCatalogName,
             "42000" => SqlState::SyntaxErrorOrAccessRuleViolation,
             "42S01" => SqlState::BaseTableOrViewAlreadyExists,
@@ -634,6 +646,32 @@ impl FromStr for SqlState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A SQLSTATE is always exactly 5 characters (2-char class + 3-char subclass)
+    /// drawn from the SQL-standard alphanumeric set (0-9, A-Z). This locks that
+    /// invariant for every fixed code in the enum. `Unknown(String)` is a pass-through
+    /// for server SQLSTATEs this enum doesn't recognize; at runtime it is *also* a
+    /// 5-char code (error.rs only builds it after `is_well_formed_sql_state`). It is
+    /// skipped here only because `strum::EnumIter` yields the `String::default()`
+    /// placeholder `Unknown("")`, which is not a value that occurs at runtime.
+    #[test]
+    fn every_sql_state_is_a_well_formed_5_char_code() {
+        use strum::IntoEnumIterator;
+        for state in SqlState::iter() {
+            // Skip EnumIter's placeholder Unknown(""); real Unknown values are gated to
+            // 5-char codes by is_well_formed_sql_state in error.rs (see doc comment above).
+            if matches!(&state, SqlState::Unknown(_)) {
+                continue;
+            }
+            let s = state.as_str();
+            assert_eq!(s.len(), 5, "{state:?} -> {s:?} is not 5 characters");
+            assert!(
+                s.bytes()
+                    .all(|b| b.is_ascii_digit() || b.is_ascii_uppercase()),
+                "{state:?} -> {s:?} contains non-alphanumeric SQLSTATE characters"
+            );
+        }
+    }
 
     #[test]
     fn test_sql_state_to_string() {

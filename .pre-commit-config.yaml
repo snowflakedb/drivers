@@ -50,6 +50,13 @@ repos:
         pass_filenames: false
         files: (param_registry\.rs|param_defs_export\.rs)$
         language: system
+    -   id: generate-python-stubs
+        name: Generate sf_core_python.pyi from Rust source
+        description: Regenerate type stubs when python_bridge/src/lib.rs changes
+        entry: bash -c 'set -euo pipefail; cargo run -p python_stub_gen -- python/src/snowflake/connector/_core && git add python/src/snowflake/connector/_core/sf_core_python.pyi'
+        pass_filenames: false
+        files: ^python_bridge/src/lib\.rs$
+        language: system
     -   id: python-checks
         name: Python code checks (ruff + mypy)
         description: Run linting, formatting, and type checks on changed Python files

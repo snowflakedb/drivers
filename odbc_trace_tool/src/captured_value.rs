@@ -9,12 +9,14 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// Shared with the C++ emitter so schema drift is caught by unit tests.
 pub mod tags {
     pub const BYTES: &str = "Bytes";
+    pub const CHAR: &str = "Char";
     pub const DOUBLE: &str = "Double";
     pub const FLOAT: &str = "Float";
     pub const INT: &str = "Int";
     pub const DATE: &str = "Date";
     pub const TIME: &str = "Time";
     pub const TIMESTAMP: &str = "Timestamp";
+    pub const WCHAR: &str = "WChar";
 }
 
 /// A floating-point payload that round-trips through JSON/YAML without
@@ -126,11 +128,27 @@ impl<'de> Deserialize<'de> for FloatVal {
     }
 }
 
+/// Narrow-character `SQLGetData` payload captured from a live driver replay.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharCapture {
+    pub value: String,
+    pub ind: i64,
+}
+
+/// Wide-character `SQLGetData` payload as little-endian UTF-16 code units
+/// encoded in lowercase hex (no `0x` prefix).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WCharCapture {
+    pub hex: String,
+    pub ind: i64,
+}
+
 /// Decoded buffer value for a single obscured `SQLGetData` call.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CapturedValue {
     /// Lowercase hex string (no `0x` prefix).
     Bytes(String),
+    Char(CharCapture),
     Double(DoubleVal),
     Float(FloatVal),
     /// Decimal string — JSON numbers are IEEE `double` and cannot hold all
@@ -155,6 +173,51 @@ pub enum CapturedValue {
         second: u16,
         fraction: u32,
     },
+    WChar(WCharCapture),
+}
+
+/// Apply a text capture to the trace `GetData` fields used by replay generation.
+pub fn apply_text_capture(
+    value: &mut Option<String>,
+    indicator: &mut Option<i64>,
+    captured: &CapturedValue,
+) -> bool {
+    match captured {
+        CapturedValue::Char(c) => {
+            *value = Some(c.value.clone());
+            *indicator = Some(c.ind);
+            true
+        }
+        CapturedValue::WChar(w) => {
+            if let Some(decoded) = utf16_le_hex_to_utf8(&w.hex) {
+                *value = Some(decoded);
+                *indicator = Some(w.ind);
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+fn utf16_le_hex_to_utf8(hex: &str) -> Option<String> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for chunk in hex.as_bytes().chunks(2) {
+        let s = std::str::from_utf8(chunk).ok()?;
+        bytes.push(u8::from_str_radix(s, 16).ok()?);
+    }
+    if !bytes.len().is_multiple_of(2) {
+        return None;
+    }
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16(&units).ok()
 }
 
 impl Serialize for CapturedValue {
@@ -166,6 +229,7 @@ impl Serialize for CapturedValue {
         let mut map = serializer.serialize_map(Some(1))?;
         match self {
             Self::Bytes(v) => map.serialize_entry(tags::BYTES, v)?,
+            Self::Char(v) => map.serialize_entry(tags::CHAR, v)?,
             Self::Double(v) => map.serialize_entry(tags::DOUBLE, v)?,
             Self::Float(v) => map.serialize_entry(tags::FLOAT, v)?,
             Self::Int(v) => map.serialize_entry(tags::INT, v)?,
@@ -209,6 +273,7 @@ impl Serialize for CapturedValue {
                     fraction: *fraction,
                 },
             )?,
+            Self::WChar(v) => map.serialize_entry(tags::WCHAR, v)?,
         }
         map.end()
     }
@@ -233,6 +298,11 @@ impl<'de> Deserialize<'de> for CapturedValue {
             tags::BYTES => {
                 let v = String::deserialize(value.clone()).map_err(serde::de::Error::custom)?;
                 Ok(Self::Bytes(v))
+            }
+            tags::CHAR => {
+                let v =
+                    CharCapture::deserialize(value.clone()).map_err(serde::de::Error::custom)?;
+                Ok(Self::Char(v))
             }
             tags::DOUBLE => {
                 let v = DoubleVal::deserialize(value.clone()).map_err(serde::de::Error::custom)?;
@@ -274,6 +344,11 @@ impl<'de> Deserialize<'de> for CapturedValue {
                     second: f.second,
                     fraction: f.fraction,
                 })
+            }
+            tags::WCHAR => {
+                let v =
+                    WCharCapture::deserialize(value.clone()).map_err(serde::de::Error::custom)?;
+                Ok(Self::WChar(v))
             }
             other => Err(serde::de::Error::custom(format!(
                 "unknown CapturedValue tag {other:?}"
@@ -412,6 +487,13 @@ mod tests {
     fn schema_tags_match_constants() {
         let cases = [
             (CapturedValue::Bytes("ab".into()), tags::BYTES),
+            (
+                CapturedValue::Char(CharCapture {
+                    value: "x".into(),
+                    ind: 1,
+                }),
+                tags::CHAR,
+            ),
             (CapturedValue::Double(DoubleVal::Finite(2.5)), tags::DOUBLE),
             (CapturedValue::Float(FloatVal::Finite(1.0)), tags::FLOAT),
             (CapturedValue::Int("42".into()), tags::INT),
@@ -442,6 +524,13 @@ mod tests {
                     fraction: 0,
                 },
                 tags::TIMESTAMP,
+            ),
+            (
+                CapturedValue::WChar(WCharCapture {
+                    hex: "5400".into(),
+                    ind: 2,
+                }),
+                tags::WCHAR,
             ),
         ];
         for (cv, tag) in cases {
@@ -486,5 +575,41 @@ mod tests {
         let map = parse_capture_map(json).unwrap();
         assert_eq!(map.len(), 1);
         assert!(map.contains_key(&42));
+    }
+
+    #[test]
+    fn apply_text_capture_decodes_wchar_hex() {
+        let mut value = Some("TABLE".into());
+        let mut indicator = Some(10);
+        let captured = CapturedValue::WChar(WCharCapture {
+            hex: "5600490045005700".into(),
+            ind: 8,
+        });
+        assert!(apply_text_capture(&mut value, &mut indicator, &captured));
+        assert_eq!(value.as_deref(), Some("VIEW"));
+        assert_eq!(indicator, Some(8));
+    }
+
+    #[test]
+    fn apply_text_capture_rejects_malformed_and_unpaired_surrogate_wchar_hex() {
+        let mut value = Some("stale".into());
+        let mut indicator = Some(10);
+
+        let odd_hex = CapturedValue::WChar(WCharCapture {
+            hex: "560049".into(),
+            ind: 3,
+        });
+        assert!(!apply_text_capture(&mut value, &mut indicator, &odd_hex));
+        assert_eq!(value.as_deref(), Some("stale"));
+        assert_eq!(indicator, Some(10));
+
+        // U+D800 as a lone code unit — valid hex, invalid UTF-16.
+        let unpaired = CapturedValue::WChar(WCharCapture {
+            hex: "00d8".into(),
+            ind: 2,
+        });
+        assert!(!apply_text_capture(&mut value, &mut indicator, &unpaired));
+        assert_eq!(value.as_deref(), Some("stale"));
+        assert_eq!(indicator, Some(10));
     }
 }

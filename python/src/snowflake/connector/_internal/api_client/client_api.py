@@ -26,6 +26,12 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     ConnectionAbortQueryResponse,
     ConnectionCloseRequest,
     ConnectionCloseResponse,
+    ConnectionDownloadStreamBeginRequest,
+    ConnectionDownloadStreamBeginResponse,
+    ConnectionDownloadStreamChunkRequest,
+    ConnectionDownloadStreamChunkResponse,
+    ConnectionDownloadStreamCloseRequest,
+    ConnectionDownloadStreamCloseResponse,
     ConnectionGetAllParametersRequest,
     ConnectionGetAllParametersResponse,
     ConnectionGetInfoRequest,
@@ -57,6 +63,14 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     ConnectionSetSessionParametersResponse,
     ConnectionTokenRequest,
     ConnectionTokenResponse,
+    ConnectionUploadStreamAbortRequest,
+    ConnectionUploadStreamAbortResponse,
+    ConnectionUploadStreamBeginRequest,
+    ConnectionUploadStreamBeginResponse,
+    ConnectionUploadStreamChunkRequest,
+    ConnectionUploadStreamChunkResponse,
+    ConnectionUploadStreamFinishRequest,
+    ConnectionUploadStreamFinishResponse,
     DatabaseFetchChunkRequest,
     DatabaseFetchChunkResponse,
     DatabaseHandle,
@@ -66,6 +80,7 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     DatabaseNewResponse,
     DatabaseReleaseRequest,
     DatabaseReleaseResponse,
+    DownloadStreamHandle,
     ExecuteQueryResponse,
     QueryBindings,
     ResultChunk,
@@ -95,6 +110,7 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     TelemetrySendResponse,
     TelemetrySendWrapperErrorRequest,
     TokenRequestType,
+    UploadStreamHandle,
     WrapperIdentity,
 )
 from ..protobuf_gen.database_driver_v1_pb2 import (
@@ -112,6 +128,11 @@ from ..protobuf_gen.proto_exception import (
     ProtoTransportException,
 )
 from .bridge import ProtoTransport
+
+
+# Chunk size for ConnectionUploadStreamChunk; bounds wrapper memory to ~one
+# chunk. Matches JDBC's chunked upload default.
+CHUNK_SIZE = 8 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +168,26 @@ def _extract_error_detail(driver_exception: Any) -> str | None:
         return ". ".join(parts)
     # GenericError, InternalError have no extra fields
     return None
+
+
+def _extract_invalid_parameter_info(driver_exception: Any) -> tuple[str, int | None] | None:
+    """Return ``(parameter, validation_code)`` for an InvalidParameterValue error, or ``None``.
+
+    ``validation_code`` is the raw sf_core ``ValidationCode`` enum value (see
+    ``protobuf_gen.database_driver_v1_pb2.ValidationCode``), carried on the wire only when
+    the error originated from connection-config validation (``validate_settings`` in the
+    Rust core); ``None`` for InvalidParameterValue errors from other sources.
+    """
+    error = getattr(driver_exception, "error", None)
+    if error is None or error.WhichOneof("error_type") != "invalid_parameter_value":
+        return None
+    inner = error.invalid_parameter_value
+    # `code` is `optional ValidationCode`; HasField("code") is only True when the
+    # Rust side explicitly sets a concrete code. validate_settings never assigns
+    # VALIDATION_CODE_UNSPECIFIED (0), so _get_optional_int can't currently return
+    # 0 for a "real" code here — if that ever changes, this would need to treat
+    # 0 as unset too.
+    return inner.parameter, _get_optional_int(inner, "code")
 
 
 def _append_detail(base: str, detail: str) -> str:
@@ -221,7 +262,23 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
 
     sfqid = _get_optional_str(driver_exc, "query_id")
 
-    return exc_class(message, errno=errno, sqlstate=sqlstate, sfqid=sfqid)
+    # Client-generated requestId used for the query submission, when the error
+    # originated from a query execution attempt.
+    request_id = _get_optional_str(driver_exc, "request_id")
+
+    # Structured attributes for InvalidParameterValue errors (e.g. connection-config
+    # validation failures), so callers can discriminate without matching message text.
+    parameter, validation_code = _extract_invalid_parameter_info(driver_exc) or (None, None)
+
+    return exc_class(
+        message,
+        errno=errno,
+        sqlstate=sqlstate,
+        sfqid=sfqid,
+        request_id=request_id,
+        parameter=parameter,
+        validation_code=validation_code,
+    )
 
 
 def _get_optional_int(msg: Any, field: str) -> int | None:
@@ -417,6 +474,49 @@ class CoreDriver:
             body=body,
         )
         return self.client.connection_send_http(request)
+
+    # =====================================================================
+    # Connection chunked upload streaming (PUT)
+    # =====================================================================
+
+    def upload_stream_begin(self, conn_handle: ConnectionHandle, sql: str) -> ConnectionUploadStreamBeginResponse:
+        request = ConnectionUploadStreamBeginRequest(conn_handle=conn_handle, sql=sql)
+        return self.client.connection_upload_stream_begin(request)
+
+    def upload_stream_chunk(
+        self, upload_handle: UploadStreamHandle, data: bytes
+    ) -> ConnectionUploadStreamChunkResponse:
+        request = ConnectionUploadStreamChunkRequest(upload_handle=upload_handle, data=data)
+        return self.client.connection_upload_stream_chunk(request)
+
+    def upload_stream_finish(self, upload_handle: UploadStreamHandle) -> ConnectionUploadStreamFinishResponse:
+        request = ConnectionUploadStreamFinishRequest(upload_handle=upload_handle)
+        return self.client.connection_upload_stream_finish(request)
+
+    def upload_stream_abort(self, upload_handle: UploadStreamHandle) -> ConnectionUploadStreamAbortResponse:
+        request = ConnectionUploadStreamAbortRequest(upload_handle=upload_handle)
+        return self.client.connection_upload_stream_abort(request)
+
+    def download_stream_begin(
+        self, conn_handle: ConnectionHandle, stage_name: str, source_filename: str, decompress: bool
+    ) -> ConnectionDownloadStreamBeginResponse:
+        request = ConnectionDownloadStreamBeginRequest(
+            conn_handle=conn_handle,
+            stage_name=stage_name,
+            source_filename=source_filename,
+            decompress=decompress,
+        )
+        return self.client.connection_download_stream_begin(request)
+
+    def download_stream_chunk(
+        self, download_handle: DownloadStreamHandle, max_len: int
+    ) -> ConnectionDownloadStreamChunkResponse:
+        request = ConnectionDownloadStreamChunkRequest(download_handle=download_handle, max_len=max_len)
+        return self.client.connection_download_stream_chunk(request)
+
+    def download_stream_close(self, download_handle: DownloadStreamHandle) -> ConnectionDownloadStreamCloseResponse:
+        request = ConnectionDownloadStreamCloseRequest(download_handle=download_handle)
+        return self.client.connection_download_stream_close(request)
 
     # =====================================================================
     # Connection tokens/params
@@ -693,6 +793,32 @@ class AsyncCoreDriver:
     ) -> ConnectionTokenResponse:
         return await self.client.connection_request_token(
             ConnectionTokenRequest(conn_handle=conn_handle, request_type=request_type)
+        )
+
+    # =====================================================================
+    # Connection chunked upload streaming (PUT)
+    # =====================================================================
+
+    async def upload_stream_begin(self, conn_handle: ConnectionHandle, sql: str) -> ConnectionUploadStreamBeginResponse:
+        return await self.client.connection_upload_stream_begin(
+            ConnectionUploadStreamBeginRequest(conn_handle=conn_handle, sql=sql)
+        )
+
+    async def upload_stream_chunk(
+        self, upload_handle: UploadStreamHandle, data: bytes
+    ) -> ConnectionUploadStreamChunkResponse:
+        return await self.client.connection_upload_stream_chunk(
+            ConnectionUploadStreamChunkRequest(upload_handle=upload_handle, data=data)
+        )
+
+    async def upload_stream_finish(self, upload_handle: UploadStreamHandle) -> ConnectionUploadStreamFinishResponse:
+        return await self.client.connection_upload_stream_finish(
+            ConnectionUploadStreamFinishRequest(upload_handle=upload_handle)
+        )
+
+    async def upload_stream_abort(self, upload_handle: UploadStreamHandle) -> ConnectionUploadStreamAbortResponse:
+        return await self.client.connection_upload_stream_abort(
+            ConnectionUploadStreamAbortRequest(upload_handle=upload_handle)
         )
 
     # =====================================================================

@@ -304,16 +304,31 @@ def read_csv_results(csv_path: Path) -> List[Dict]:
         List of dicts, each containing timestamp and metrics for one iteration
     """
     results = []
-    known_columns = {'timestamp_ms', 'query_s', 'fetch_s', 'row_count', 'cpu_time_s', 'peak_rss_mb'}
+    known_columns = {
+        'timestamp_ms', 'query_s', 'fetch_s', 'row_count', 'cpu_time_s', 'peak_rss_mb',
+        'e2e_s', 'load_s', 'connect_s', 'select1_s',
+    }
 
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
             result = {
                 'timestamp': int(row['timestamp_ms']),
-                'query_s': float(row['query_s'])
             }
-            
+
+            # Standard SELECT / PUT_GET columns
+            if 'query_s' in row:
+                result['query_s'] = float(row['query_s'])
+            # Cold-start columns
+            if 'e2e_s' in row:
+                result['e2e_s'] = float(row['e2e_s'])
+            if 'load_s' in row:
+                result['load_s'] = float(row['load_s'])
+            if 'connect_s' in row:
+                result['connect_s'] = float(row['connect_s'])
+            if 'select1_s' in row:
+                result['select1_s'] = float(row['select1_s'])
+
             if 'fetch_s' in row:
                 result['fetch_s'] = float(row['fetch_s'])
             if 'cpu_time_s' in row:
@@ -599,12 +614,22 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                     results_by_test[test_name] = results
                     
                     # Upload all iterations from this CSV
-                    known_result_keys = {'timestamp', 'query_s', 'fetch_s', 'cpu_time_s', 'peak_rss_mb'}
+                    known_result_keys = {
+                        'timestamp', 'query_s', 'fetch_s', 'cpu_time_s', 'peak_rss_mb',
+                        'e2e_s', 'load_s', 'connect_s', 'select1_s',
+                    }
                     for idx, result in enumerate(results, 1):
-                        metrics = {
-                            f"{test_name}_query_s": result['query_s'],
-                        }
-                        
+                        metrics = {}
+
+                        # Standard SELECT / PUT_GET primary metric
+                        if 'query_s' in result:
+                            metrics[f"{test_name}_query_s"] = result['query_s']
+
+                        # Cold-start metrics
+                        for cs_key in ('e2e_s', 'load_s', 'connect_s', 'select1_s'):
+                            if cs_key in result:
+                                metrics[f"{test_name}_{cs_key}"] = result[cs_key]
+
                         # fetch_s is only present in SELECT tests, not PUT/GET tests
                         if 'fetch_s' in result:
                             metrics[f"{test_name}_fetch_s"] = result['fetch_s']

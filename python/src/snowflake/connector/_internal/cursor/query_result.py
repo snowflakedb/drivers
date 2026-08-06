@@ -65,7 +65,7 @@ class MultiStatementQueryResultState:
 class QueryResult:
     """Pure metadata about a query execution result."""
 
-    __slots__ = ("description", "sqlstate", "sfqid", "query", "stats", "rowcount", "is_file_transfer")
+    __slots__ = ("description", "sqlstate", "sfqid", "request_id", "query", "stats", "rowcount", "is_file_transfer")
 
     def __init__(
         self,
@@ -73,6 +73,7 @@ class QueryResult:
         description: list[ResultMetadata] | None = None,
         sqlstate: str | None = None,
         sfqid: str | None = None,
+        request_id: str | None = None,
         query: str | None = None,
         stats: QueryResultStats | None = None,
         rowcount: int | None = None,
@@ -81,6 +82,9 @@ class QueryResult:
         self.description = description
         self.sqlstate = sqlstate
         self.sfqid = sfqid
+        # Client-generated requestId of the query submission. Currently only
+        # populated on the error path (from a failed execute).
+        self.request_id = request_id
         self.query = query
         self.stats = stats if stats is not None else QueryResultStats()
         self.rowcount = rowcount
@@ -89,8 +93,8 @@ class QueryResult:
     def reset(self, closing: bool = False) -> None:
         """Optionally clear the rowcount.
 
-        Only rowcount is reset — description, sqlstate, sfqid, query, and stats
-        are left intact for backward compatibility (callers may read them after close/reset).
+        Only rowcount is reset — description, sqlstate, sfqid, request_id, query,
+        and stats are left intact for backward compatibility (callers may read them after close/reset).
         They are overwritten wholesale when the cursor's _query_result is replaced on the next execute().
         """
         if not closing:
@@ -115,6 +119,7 @@ class QueryResult:
         return QueryResult(
             sqlstate=exc.sqlstate or None,
             sfqid=exc.sfqid or None,
+            request_id=exc.request_id or None,
             query=exc.query or None,
         )
 

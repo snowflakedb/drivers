@@ -49,13 +49,17 @@ apilevel = "2.0"
 threadsafety = 2  # Threads may share the module and connections, but not cursors
 paramstyle = "pyformat"  # Default: %(name)s and %s placeholders (client-side interpolation)
 
+# Sentinel to distinguish "not provided" from explicit values. Forwarding ``None``
+# defaults would make ``@api_telemetry`` treat connection_name/config as passed.
+_UNSET = object()
+
 
 @pep249
 def connect(
     *,
-    connection_name: str | None = None,
-    connections_file_path: str | None = None,
-    config: ConnectionConfig | None = None,
+    connection_name: str | None | object = _UNSET,
+    connections_file_path: str | None | object = _UNSET,
+    config: ConnectionConfig | None | object = _UNSET,
     **kwargs: Any,
 ) -> Connection:
     """
@@ -72,12 +76,14 @@ def connect(
     Returns:
         Connection: A Connection object
     """
-    return Connection(
-        connection_name=connection_name,
-        connections_file_path=connections_file_path,
-        config=config,
-        **kwargs,
-    )
+    conn_kwargs = dict(kwargs)
+    if connection_name is not _UNSET:
+        conn_kwargs["connection_name"] = connection_name
+    if connections_file_path is not _UNSET:
+        conn_kwargs["connections_file_path"] = connections_file_path
+    if config is not _UNSET:
+        conn_kwargs["config"] = config
+    return Connection(**conn_kwargs)
 
 
 # Export all public symbols

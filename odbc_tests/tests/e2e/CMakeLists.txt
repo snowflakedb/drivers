@@ -8,6 +8,7 @@ add_odbc_test(e2e_authentication_private_key_auth authentication/private_key_aut
 add_odbc_test(e2e_authentication_mfa_auth authentication/user_password_mfa.cpp)
 add_odbc_test(e2e_authentication_user_password authentication/user_password.cpp)
 add_odbc_test(e2e_authentication_external_browser authentication/external_browser.cpp)
+add_odbc_test(e2e_authentication_workload_identity_cross_param authentication/workload_identity_cross_param.cpp)
 
 # Aggregate build target for the auth E2E suites that require the headless
 # browser container. Mirrors the `requires_browser` Catch2 tag used to select
@@ -25,6 +26,7 @@ add_custom_target(e2e_auth_no_mfa DEPENDS
 # put_get
 add_odbc_test(e2e_put_get_put_get_auto_compress put_get/put_get_auto_compress.cpp)
 add_odbc_test(e2e_put_get_put_get_basic_operations put_get/put_get_basic_operations.cpp)
+add_odbc_test(e2e_put_get_put_get_fastfail_default put_get/put_get_fastfail_default.cpp)
 add_odbc_test(e2e_put_get_put_get_missing_download_dir put_get/put_get_missing_download_dir.cpp)
 add_odbc_test(e2e_put_get_put_get_overwrite put_get/put_get_overwrite.cpp)
 add_odbc_test(e2e_put_get_put_get_source_compression put_get/put_get_source_compression.cpp)

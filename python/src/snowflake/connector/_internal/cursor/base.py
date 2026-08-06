@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import re
 
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
@@ -19,10 +20,11 @@ from ..binding_converters import (
 )
 from ..config_utils import create_config_setting
 from ..decorators import api_telemetry, pep249
-from ..errorcode import ER_INVALID_VALUE
+from ..errorcode import ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT, ER_INVALID_VALUE
 from ..errorhandler import ErrorHandlerMixin
 from ..extras import check_dependency, pandas, pyarrow
 from ..protobuf_gen.database_driver_v1_pb2 import BinaryDataPtr, ConfigSetting, QueryBindings
+from ..text_utils import extract_values_clause
 from .query_result import MultiStatementQueryResultState, QueryResult
 from .result_metadata import QueryResultStats, ResultMetadata
 
@@ -34,6 +36,9 @@ if TYPE_CHECKING:
 
 class CursorBaseMixin(ErrorHandlerMixin):
     """Zero-I/O cursor members shared by sync and async base cursor classes."""
+
+    _INSERT_SQL_RE = re.compile(r"^insert\s+into", re.IGNORECASE)
+    _COMMENT_SQL_RE = re.compile(r"/\*.*\*/")
 
     # Set by subclass ``__init__`` before ``super().__init__()``.
     _connection: Connection | AsyncConnection
@@ -156,6 +161,20 @@ class CursorBaseMixin(ErrorHandlerMixin):
             str | None: Snowflake Query ID (UUID format), or None if no query has been executed or described
         """
         return self._query_result.sfqid
+
+    @property
+    @api_telemetry
+    def request_id(self) -> str | None:
+        """
+        Read-only attribute containing the client-generated ``requestId`` of the last query submission.
+
+        Populated when the last ``execute()`` failed (captured from the raised error);
+        ``None`` otherwise.
+
+        Returns:
+            str | None: Client request UUID, or None when unavailable.
+        """
+        return self._query_result.request_id
 
     @property
     @api_telemetry
@@ -364,6 +383,37 @@ class CursorBaseMixin(ErrorHandlerMixin):
         # Input:  [(row1_col1, row1_col2), (row2_col1, row2_col2), ...]
         # Output: [[row1_col1, row2_col1, ...], [row1_col2, row2_col2, ...]]
         return [[row[col_idx] for row in rows] for col_idx in range(first_len)]
+
+    def _rewrite_multirow_insert(
+        self,
+        operation: str,
+        seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]],
+    ) -> str | None:
+        """Rewrite a client-side-bound INSERT into a single multi-row INSERT.
+
+        Used by ``executemany`` for pyformat/format paramstyles so bulk
+        inserts issue one HTTP request instead of one per row, mirroring the
+        reference connector's rewrite. Returns ``None`` when ``operation`` is
+        not a rewritable ``INSERT INTO ... VALUES (...)`` statement (e.g.
+        UPDATE, DELETE, MERGE) — callers fall back to per-row execution.
+        """
+        stripped = operation.strip(" \t\n\r")
+        if not self._INSERT_SQL_RE.match(stripped):
+            return None
+
+        command_wo_comments = self._COMMENT_SQL_RE.sub("", stripped)
+        fmt = extract_values_clause(command_wo_comments)
+        if fmt is None:
+            raise ProgrammingError(
+                msg=(
+                    "executemany() failed to rewrite INSERT as multi-row: no VALUES clause found."
+                    " Ensure the statement has the form 'INSERT INTO ... VALUES (...)'."
+                ),
+                errno=ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT,
+            )
+
+        values = [ClientSideBindingConverter.interpolate_query(fmt, params) for params in seq_of_parameters]
+        return stripped.replace(fmt, ",".join(values), 1)
 
     def _collect_statement_params(
         self, *, skip_upload_on_content_match: bool, num_statements: int | None = None

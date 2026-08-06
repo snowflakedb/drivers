@@ -1,18 +1,24 @@
 USE ROLE TESTROLE_UNIVERSAL;
 
 -- =============================================================================
--- Readonly Metadata Test Database Setup
+-- ODBC Metadata + Scratch Test Database Setup
 -- =============================================================================
 --
--- This script creates a dedicated Snowflake database with pre-provisioned
--- tables, views, and procedures used by ODBC catalog and metadata tests.
+-- This script provisions two Snowflake databases:
 --
--- Purpose: Eliminate per-test DDL that causes flaky test failures. Tests query
--- this pre-existing schema instead of creating their own objects.
+--   ODBCMETADATATESTDB — readonly catalog / datatype fixtures for ODBC catalog
+--     tests and Excel/Power Query replay. Tests MUST NOT mutate objects here.
+--
+--   ODBCSCRATCHTESTDB — writable scratch for Excel ADO transaction replay
+--     (INSERT into SCRATCHINSERT; CREATE/DROP of ADO6_TMP_* at runtime).
+--
+-- Purpose: Eliminate per-test DDL that causes flaky test failures for catalog
+-- fixtures, and provide a stable scratch DB for DML/DDL replay tests.
 --
 -- IMPORTANT: Object names MUST NOT contain underscores. ODBC catalog functions
 -- treat '_' as a single-character wildcard in pattern arguments, which causes
 -- painfully slow metadata queries when identifiers contain them.
+-- (Runtime ADO6_TMP_<pid> tables are an intentional exception in SCRATCHTESTS.)
 --
 -- Likewise, do not add objects whose names match the BASIC% wildcard prefix
 -- used by tables_tests.cpp (BASICTABLE, BASICVIEW, etc.). A fixture such as
@@ -29,8 +35,8 @@ USE ROLE TESTROLE_UNIVERSAL;
 --   Via SnowSQL:
 --     snowsql -f scripts/odbc/setup_readonly_metadata_db.sql
 --
--- This script is idempotent: it drops and recreates the schema (CASCADE),
--- so it can be safely re-run to reset the database.
+-- This script is idempotent: it drops and recreates schemas (CASCADE),
+-- so it can be safely re-run to reset both databases.
 -- =============================================================================
 
 CREATE DATABASE IF NOT EXISTS ODBCMETADATATESTDB;
@@ -337,3 +343,20 @@ SELECT
   'NULLROW',
   NULL,
   NULL;
+
+-- =============================================================================
+-- ODBCSCRATCHTESTDB -- writable scratch for Excel ADO transaction replay.
+-- Intentionally mutable (unlike ODBCMETADATATESTDB). SCRATCHINSERT starts empty;
+-- ADO6_TMP_* tables are created/dropped at runtime by the test (pid-suffixed).
+-- =============================================================================
+
+CREATE DATABASE IF NOT EXISTS ODBCSCRATCHTESTDB;
+USE DATABASE ODBCSCRATCHTESTDB;
+DROP SCHEMA IF EXISTS SCRATCHTESTS CASCADE;
+CREATE SCHEMA SCRATCHTESTS;
+USE SCHEMA SCRATCHTESTS;
+
+CREATE TABLE SCRATCHINSERT (
+  LABEL  VARCHAR(100),
+  NUMVAL INTEGER
+);

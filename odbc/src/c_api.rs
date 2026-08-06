@@ -889,6 +889,21 @@ pub unsafe extern "system" fn SQLFreeStmt(
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
     }
+
+    // SQL_DROP (1) frees the statement handle — it is equivalent to
+    // SQLFreeHandle(SQL_HANDLE_STMT), not one of free_stmt's live-statement options
+    // (SQL_CLOSE / SQL_UNBIND / SQL_RESET_PARAMS). It is deprecated in ODBC 3.x: a 3.x
+    // driver manager (e.g. unixODBC) remaps it to SQLFreeHandle so the driver never
+    // sees it, but ODBC 2.x applications and iODBC pass it straight through to the
+    // driver. Route it to the handle-lifecycle path and, like SQLFreeHandle above,
+    // skip the clear/set diagnostic calls: the handle's diagnostic storage is gone
+    // once it is freed, so touching it afterwards would operate on a stale handle.
+    const SQL_DROP: sql::USmallInt = 1;
+    if option == SQL_DROP {
+        return api::handle_allocation::sql_free_handle(sql::HandleType::Stmt, statement_handle)
+            .to_sql_code();
+    }
+
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::FreeStmtOption::try_from(option)
         .and_then(|opt| api::statement::free_stmt(statement_handle, opt));
@@ -911,6 +926,120 @@ pub unsafe extern "system" fn SQLCloseCursor(statement_handle: sql::Handle) -> s
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
     record_err!(sql::HandleType::Stmt, statement_handle, result);
     result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetCursorName(
+    statement_handle: sql::Handle,
+    cursor_name: *const sql::Char,
+    name_length: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLSetCursorName");
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::set_cursor_name::<Narrow>(
+        statement_handle,
+        cursor_name as sql::Pointer,
+        name_length,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetCursorNameW(
+    statement_handle: sql::Handle,
+    cursor_name: *const WideChar,
+    name_length: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLSetCursorName");
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::set_cursor_name::<Wide>(
+        statement_handle,
+        cursor_name as sql::Pointer,
+        name_length,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLGetCursorName(
+    statement_handle: sql::Handle,
+    cursor_name: *mut sql::Char,
+    buffer_length: sql::SmallInt,
+    name_length_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLGetCursorName");
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::get_cursor_name::<Narrow>(
+        statement_handle,
+        cursor_name as sql::Pointer,
+        buffer_length,
+        name_length_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLGetCursorNameW(
+    statement_handle: sql::Handle,
+    cursor_name: *mut WideChar,
+    buffer_length: sql::SmallInt,
+    name_length_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLGetCursorName");
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::get_cursor_name::<Wide>(
+        statement_handle,
+        cursor_name as sql::Pointer,
+        buffer_length,
+        name_length_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -970,10 +1099,13 @@ pub unsafe extern "system" fn SQLCancel(statement_handle: sql::Handle) -> sql::R
 /// aliasing caveat described there. Diagnostics are not touched
 /// (same reasoning as `SQLCancel`).
 ///
-/// For **SQL_HANDLE_DBC** this is currently a no-op returning SUCCESS.
-/// Connection-level cancel (async connect, cross-thread
-/// `SQLDriverConnect`) will be implemented after the connection state
-/// machine is hardened (SNOW-3307201).
+/// For **SQL_HANDLE_DBC**: returns HY010 when any associated statement is
+/// asynchronously executing or mid data-at-execution (ODBC 3.8 Diagnostics).
+/// Otherwise a no-op returning SUCCESS: neither this driver nor the reference
+/// driver supports async DBC functions, so there is no cancelable
+/// connection-level operation when no child statement is busy. (Idle cancel
+/// "has no effect"; whether prior DM-owned diagnostics remain is a Driver
+/// Manager difference — Windows keeps them, unixODBC clears in function_entry.)
 ///
 /// **SQL_HANDLE_ENV** and **SQL_HANDLE_DESC** return `SQL_ERROR` with
 /// SQLSTATE HY092 per the ODBC 3.8 spec. Any truly unknown handle
@@ -994,11 +1126,12 @@ pub unsafe extern "system" fn SQLCancelHandle(
             record_err!(sql::HandleType::Stmt, handle, result);
             result.to_sql_code()
         }
-        // TODO(SNOW-3307201): implement connection-level cancel after
-        // the connection state machine is hardened.
         sql::HandleType::Dbc => {
             api::diagnostic::clear_diag_info(handle_type, handle);
-            sql::SqlReturn::SUCCESS.0
+            let result = api::connection::cancel_handle(handle);
+            api::diagnostic::set_diag_info_from_result(handle_type, handle, &result);
+            record_err!(handle_type, handle, result);
+            result.to_sql_code()
         }
         sql::HandleType::Env | sql::HandleType::Desc => {
             api::diagnostic::clear_diag_info(handle_type, handle);
@@ -1564,26 +1697,12 @@ pub unsafe extern "system" fn SQLDisconnect(connection_handle: sql::Handle) -> s
     result.to_sql_code()
 }
 
-/// # Safety
-/// This function is called by the ODBC driver manager.
-///
-/// `SQLEndTran` commits or rolls back the open transaction. It accepts
-/// **SQL_HANDLE_DBC** (the connection) and **SQL_HANDLE_ENV** (every
-/// connection on the environment). **SQL_HANDLE_STMT** / **SQL_HANDLE_DESC**
-/// are rejected with SQLSTATE HY092; a null handle returns
-/// `SQL_INVALID_HANDLE`; an invalid completion type yields HY012 (posted by
-/// `end_tran`/`end_tran_env`).
-#[unsafe(no_mangle)]
-pub unsafe extern "system" fn SQLEndTran(
+/// Shared dispatch for `SQLEndTran` and `SQLTransact`.
+unsafe fn end_tran_dispatch(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     completion_type: sql::SmallInt,
 ) -> sql::RetCode {
-    set_dispatch!();
-    record_api!(handle_type, handle, "SQLEndTran");
-    if handle.is_null() {
-        return sql::SqlReturn::INVALID_HANDLE.0;
-    }
     match handle_type {
         sql::HandleType::Dbc => {
             api::diagnostic::clear_diag_info(handle_type, handle);
@@ -1613,6 +1732,56 @@ pub unsafe extern "system" fn SQLEndTran(
         _ => sql::SqlReturn::INVALID_HANDLE.0,
     }
 }
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+///
+/// `SQLEndTran` commits or rolls back the open transaction. It accepts
+/// **SQL_HANDLE_DBC** (the connection) and **SQL_HANDLE_ENV** (every
+/// connection on the environment). **SQL_HANDLE_STMT** / **SQL_HANDLE_DESC**
+/// are rejected with SQLSTATE HY092; a null handle returns
+/// `SQL_INVALID_HANDLE`; an invalid completion type yields HY012 (posted by
+/// `end_tran`/`end_tran_env`).
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLEndTran(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    completion_type: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(handle_type, handle, "SQLEndTran");
+    if handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    end_tran_dispatch(handle_type, handle, completion_type)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+///
+/// ODBC 2.x transaction terminator. When `ConnectionHandle` is not
+/// `SQL_NULL_HDBC`, behaves as `SQLEndTran(SQL_HANDLE_DBC, ConnectionHandle,
+/// CompletionType)`; otherwise behaves as `SQLEndTran(SQL_HANDLE_ENV,
+/// EnvironmentHandle, CompletionType)`. Returns `SQL_INVALID_HANDLE` when both
+/// handles are null.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLTransact(
+    environment_handle: sql::Handle,
+    connection_handle: sql::Handle,
+    completion_type: sql::USmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    let (handle_type, handle) = if !connection_handle.is_null() {
+        (sql::HandleType::Dbc, connection_handle)
+    } else if !environment_handle.is_null() {
+        (sql::HandleType::Env, environment_handle)
+    } else {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    };
+    record_api!(handle_type, handle, "SQLTransact");
+    end_tran_dispatch(handle_type, handle, completion_type as sql::SmallInt)
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
@@ -2208,6 +2377,7 @@ pub unsafe extern "system" fn SQLGetDiagField(
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
     set_dispatch!();
+    let mut warnings = vec![];
     let result = api::diagnostic::get_diag_field::<Narrow>(
         handle_type,
         handle,
@@ -2216,9 +2386,11 @@ pub unsafe extern "system" fn SQLGetDiagField(
         diag_info_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
+    api::diagnostic::set_diag_info_from_warnings(handle_type, handle, &warnings);
     record_err!(handle_type, handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 /// # Safety
 /// This function is called by the ODBC driver manager.
@@ -2233,6 +2405,7 @@ pub unsafe extern "system" fn SQLGetDiagFieldW(
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
     set_dispatch!();
+    let mut warnings = vec![];
     let result = api::diagnostic::get_diag_field::<Wide>(
         handle_type,
         handle,
@@ -2241,9 +2414,11 @@ pub unsafe extern "system" fn SQLGetDiagFieldW(
         diag_info_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
+    api::diagnostic::set_diag_info_from_warnings(handle_type, handle, &warnings);
     record_err!(handle_type, handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -2378,6 +2553,89 @@ pub unsafe extern "system" fn SQLSetStmtOptionW(
             value as sql::Pointer,
             sql::NTS as sql::Integer,
         )
+    }
+}
+
+/// ODBC 2.x deprecated entry point that maps four scroll-related parameters to
+/// the equivalent `SQL_ATTR_*` statement attribute writes. Advertising this
+/// function ensures `SQLGetFunctions(SQL_API_SQLSETSCROLLOPTIONS)` returns
+/// `SQL_TRUE`, which is required by the comprehensive `SQLGetFunctions` test
+/// suite.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetScrollOptions(
+    statement_handle: sql::Handle,
+    f_concurrency: sql::USmallInt,
+    crow_keyset: sql::Len,
+    crow_rowset: sql::USmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(
+        sql::HandleType::Stmt,
+        statement_handle,
+        "SQLSetScrollOptions"
+    );
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::set_scroll_options(
+        statement_handle,
+        f_concurrency,
+        crow_keyset,
+        crow_rowset,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// ODBC 2.x deprecated entry point, superseded by `SQLSetStmtAttr` in ODBC
+/// 3.x. Sets `SQL_ATTR_PARAMSET_SIZE` (`crow`) and
+/// `SQL_ATTR_PARAMS_PROCESSED_PTR` (`pi_row`) as a single convenience call.
+/// Many ODBC 2.x applications still invoke it directly, so the driver
+/// exports it for compatibility.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLParamOptions(
+    statement_handle: sql::Handle,
+    crow: sql::ULen,
+    pi_row: *mut sql::ULen,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLParamOptions");
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    let ret = std::panic::catch_unwind(|| {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result =
+            api::statement::set_param_options(statement_handle, crow, pi_row, &mut warnings);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        record_err!(sql::HandleType::Stmt, statement_handle, result);
+        result.to_sql_code_with_warnings(&warnings)
+    });
+    match ret {
+        Ok(r) => r,
+        Err(_) => sql::SqlReturn::ERROR.0,
     }
 }
 

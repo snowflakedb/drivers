@@ -2,8 +2,8 @@ use super::cloud_http;
 use super::encryption::Encryptor;
 use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
-    ByteSource, CloudCredentials, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
-    StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
+    ByteSource, CloudCredentials, EncryptedFileMetadata, LocationType, MaterialDescription,
+    PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
 };
 use crate::config::retry::RetryPolicy;
 use crate::refresh::{Refresher, execute_with_refresh};
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::marker::PhantomData;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio_stream::wrappers::ReceiverStream;
 
 // AWS SDK imports
@@ -35,6 +35,12 @@ const SNOWFLAKE_UPLOAD_PROVIDER: &str = "snowflake-upload";
 const SNOWFLAKE_DOWNLOAD_PROVIDER: &str = "snowflake-download";
 const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 
+/// S3 object metadata key holding the local SHA-256 digest computed at
+/// upload time. Written by `put_object` / `s3_create_multipart_upload` and
+/// read back by `probe_remote_object` for the opt-in content-match skip.
+/// Mirrors Azure's `x-ms-meta-sfcdigest` (see `AZURE_META_SFC_DIGEST`).
+const S3_META_SFC_DIGEST: &str = "sfc-digest";
+
 /// S3 Transfer Acceleration global endpoint. AWS routes the request to the
 /// nearest edge location, which then forwards over the AWS backbone.
 const S3_ACCELERATE_ENDPOINT: &str = "https://s3-accelerate.amazonaws.com";
@@ -51,11 +57,21 @@ const INTERNAL_STAGE_BUCKET_PREFIX: &str = "sfc-";
 /// full attempt can complete.
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
-/// Uploads a file to S3, skipping if it already exists and `overwrite` is false.
+/// Uploads a file to S3, skipping when a HEAD probe says either "the object
+/// exists and overwrite is off" or "the object's content matches the local
+/// digest and the caller opted into content-match skipping"
+/// (`skip_upload_on_content_match`). HEAD is elided when neither skip branch
+/// can fire (`overwrite=true` and `skip_upload_on_content_match=false`),
+/// saving a round-trip — mirrors Azure's `upload_to_azure_or_skip`. The
+/// actual skip decision is [`super::classify_pre_upload_skip`], shared with
+/// the Azure path so the decision logic and its unit tests live in one
+/// place.
 ///
 /// Files whose on-cloud size (ciphertext length for CSE, source length for SSE)
 /// is at or above `multipart.threshold` take the multipart path
 /// ([`s3_multipart_upload`]); smaller files take the single `PutObject` path.
+/// The skip check gates both paths identically — a content-match hit skips
+/// the upload regardless of which path would otherwise have run.
 ///
 /// On AWS `ExpiredToken` the `refresher` (if any) is invoked to fetch fresh
 /// STS credentials, which it writes into the shared `StageInfoCache`; the
@@ -72,14 +88,16 @@ const REQUEST_TIMEOUT_SECS: u64 = 300;
 /// When `refresher` is `Some`, the retry loop is driven by
 /// [`crate::refresh::execute_with_refresh`] via the [`S3StsRefresher`]
 /// implementation in this module.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn upload_to_s3_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    skip_upload_on_content_match: bool,
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, UploadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -96,6 +114,12 @@ pub(super) async fn upload_to_s3_or_skip(
     // `>=` matches the Python connector boundary (`upload_size >= threshold`).
     let use_multipart = body_len >= multipart.threshold.bytes();
 
+    // HEAD checks existence (`!overwrite`) or fetches the remote digest for the
+    // opt-in content-match skip; elided otherwise so the common `overwrite=true`,
+    // no-skip path saves a round-trip. The predicate is shared so every cloud's
+    // "when to probe" stays coupled to the classifier — see `super::head_needed`.
+    let head_needed = super::head_needed(overwrite, skip_upload_on_content_match);
+
     let attempt = |creds: CloudCredentials| {
         let prepared = prepared.clone();
         let stage_info = with_creds(stage_info, creds);
@@ -106,13 +130,29 @@ pub(super) async fn upload_to_s3_or_skip(
                 .await
                 .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
 
-            if !overwrite
-                && check_if_file_exists(&s3_client, &stage_info, &s3_key)
+            let remote = if head_needed {
+                probe_remote_object(&s3_client, &stage_info, &s3_key, overwrite)
                     .await
                     .map_err(S3AttemptError::Other)?
-            {
-                tracing::info!("File already exists in S3: {:?}", s3_key);
-                return Ok(UploadStatus::Skipped);
+            } else {
+                None
+            };
+
+            let remote_head = match &remote {
+                Some(h) => super::RemoteHead::Present {
+                    digest: h.digest.as_deref(),
+                },
+                None => super::RemoteHead::Absent,
+            };
+            if let Some(status) = super::skip_upload_decision(
+                LocationType::S3,
+                overwrite,
+                skip_upload_on_content_match,
+                &remote_head,
+                &prepared.digest,
+                &s3_key,
+            ) {
+                return Ok(status);
             }
 
             if use_multipart {
@@ -166,15 +206,10 @@ enum S3AttemptError<E> {
 /// error variant locally rather than via a blanket
 /// `From<StageInfoRefreshError>` impl on `UploadFileError` /
 /// `DownloadFileError`, which would lose location info.
-///
-/// Tracks the last AWS key id handed out so a refresh that doesn't
-/// actually rotate (refresher inside its coalescing window) reports
-/// `Ok(false)` and the helper propagates the original error rather than
-/// spinning.
 struct S3StsRefresher<'a, E, W> {
-    refresher: &'a mut dyn StageInfoRefresher,
-    last_seen_key: Option<String>,
+    refresher: &'a dyn StageInfoRefresher,
     map_refresh_err: W,
+    observed: Instant,
     _marker: PhantomData<fn() -> E>,
 }
 
@@ -182,14 +217,10 @@ impl<'a, E, W> S3StsRefresher<'a, E, W>
 where
     W: Fn(StageInfoRefreshError) -> E,
 {
-    fn new(
-        refresher: &'a mut dyn StageInfoRefresher,
-        initial: &CloudCredentials,
-        map_refresh_err: W,
-    ) -> Self {
+    fn new(refresher: &'a dyn StageInfoRefresher, map_refresh_err: W) -> Self {
         Self {
+            observed: refresher.cache().cached_at(),
             refresher,
-            last_seen_key: aws_key_id(initial).map(str::to_string),
             map_refresh_err,
             _marker: PhantomData,
         }
@@ -216,19 +247,14 @@ where
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, S3AttemptError<E>>> {
         Box::pin(async move {
             tracing::info!("S3 hit ExpiredToken; refreshing stage credentials");
-            self.refresher
-                .refresh()
+            let new_gen = self
+                .refresher
+                .refresh(self.observed)
                 .await
                 .map_err(|e| S3AttemptError::Other((self.map_refresh_err)(e)))?;
-            let new = self.refresher.cache().snapshot().creds;
-            let new_key = aws_key_id(&new).map(str::to_string);
-            if new_key == self.last_seen_key {
-                // Refresher coalesced or returned the same creds — retrying
-                // would loop, so decline further rotations.
-                return Ok(false);
-            }
-            self.last_seen_key = new_key;
-            Ok(true)
+            let advanced = new_gen > self.observed;
+            self.observed = new_gen;
+            Ok(advanced)
         })
     }
 }
@@ -243,7 +269,7 @@ where
 /// instrumentation at the boundary so source locations land on the
 /// operation's own error variants rather than on this helper.
 async fn run_s3_with_sts_refresh<F, Fut, T, E>(
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     initial_creds: &CloudCredentials,
     map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
     map_sts_err: impl FnOnce(aws_sdk_s3::Error) -> E,
@@ -254,9 +280,9 @@ where
     Fut: Future<Output = Result<T, S3AttemptError<E>>>,
     E: Send,
 {
-    let outcome = match refresher.as_deref_mut() {
+    let outcome = match refresher {
         Some(r) => {
-            let mut sts_refresher = S3StsRefresher::new(r, initial_creds, map_refresh_err);
+            let mut sts_refresher = S3StsRefresher::new(r, map_refresh_err);
             execute_with_refresh(&mut sts_refresher, attempt).await
         }
         None => attempt(initial_creds.clone()).await,
@@ -268,8 +294,9 @@ where
 }
 
 /// Returns the AWS key id from S3 credentials, or None for non-S3 variants.
-/// Used as the rotation marker; a different key id implies a fresh STS
-/// rotation from GS.
+/// Used as the rotation marker in tests; a different key id implies a fresh
+/// STS rotation from GS.
+#[cfg(test)]
 fn aws_key_id(creds: &CloudCredentials) -> Option<&str> {
     match creds {
         CloudCredentials::S3 { aws_key_id, .. } => Some(aws_key_id.as_str()),
@@ -285,15 +312,52 @@ fn with_creds(stage_info: &StageInfo, creds: CloudCredentials) -> StageInfo {
     info
 }
 
-/// Returns true if the file exists in S3, false if it does not.
-/// When the check cannot be performed due to 403 Forbidden (limited
-/// temporary credentials that allow PUT but not HEAD), returns false
-/// so the caller proceeds with upload.
-async fn check_if_file_exists(
+/// Subset of the S3 HEAD response consumed by the upload-or-skip path. Only
+/// constructed when the object exists (200), so existence is carried by the
+/// outer `Option` returned from [`probe_remote_object`] rather than a field —
+/// the illegal "absent but has a digest" state is thus unrepresentable, the
+/// invariant the shared [`super::RemoteHead`] enum forbids. `None` digest means
+/// the object exists but has no parseable `sfc-digest` metadata ("cannot
+/// compare"). Mirrors Azure's `RemoteBlobHeader`.
+#[derive(Debug, Clone)]
+struct S3RemoteObject {
+    digest: Option<String>,
+}
+
+/// Probes `s3_key` with HEAD, feeding both the `!overwrite` existence check
+/// and the opt-in content-match skip from a single request. Returns:
+///
+/// - `Ok(Some(header))` on 200 — the object exists. `header.digest` is the
+///   [`S3_META_SFC_DIGEST`] object-metadata value, or `None` if the header is
+///   absent (e.g. the object was written by a tool that doesn't set
+///   Snowflake's custom metadata).
+/// - `Ok(None)` on 404 — the object does not exist, safe to upload.
+/// - On 403 Forbidden (temporary credentials that allow PUT but not HEAD) the
+///   behavior depends on `overwrite`:
+///   - `overwrite == false`: fail CLOSED (`Err`). Existence can't be verified,
+///     and assuming absence would let the subsequent PUT silently clobber bytes
+///     the caller asked to preserve. This matches Azure's
+///     `send_head_to_azure_blob` and legacy Python S3
+///     (`SnowflakeS3RestClient.get_file_header`, which raises on any
+///     non-200/404) — resolving the prior UD-specific divergence.
+///   - `overwrite == true`: fail OPEN (`Ok(None)`). Here the HEAD only feeds
+///     the opt-in content-match skip; a missed skip is bandwidth waste, not
+///     data loss, and the PUT is allowed to overwrite anyway. Python has no
+///     overwrite-true HEAD path to mirror, so this follows Azure.
+/// - `Err` on any other outcome (5xx after retry exhaustion, transport
+///   error, etc.).
+async fn probe_remote_object(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-) -> Result<bool, UploadFileError> {
+    overwrite: bool,
+) -> Result<Option<S3RemoteObject>, UploadFileError> {
+    tracing::info!(
+        method = "HEAD",
+        bucket = %stage_info.bucket,
+        key = ?s3_key,
+        "S3 probe_remote_object"
+    );
     match s3_client
         .head_object()
         .bucket(stage_info.bucket.clone())
@@ -301,15 +365,71 @@ async fn check_if_file_exists(
         .send()
         .await
     {
-        Ok(_) => Ok(true),
-        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-        Err(SdkError::ServiceError(ref err)) if err.raw().status().as_u16() == 403 => {
-            tracing::warn!(
-                "Access denied when checking if file exists in S3 ({s3_key:?}), proceeding with upload"
+        Ok(out) => {
+            tracing::debug!(
+                status = 200,
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 probe_remote_object: object exists"
             );
-            Ok(false)
+            let digest = out
+                .metadata()
+                .and_then(|m| m.get(S3_META_SFC_DIGEST))
+                .cloned();
+            Ok(Some(S3RemoteObject { digest }))
         }
-        Err(e) => Err(aws_sdk_s3::Error::from(e)).context(upload_file_error::S3HeadSnafu),
+        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => {
+            tracing::debug!(
+                status = 404,
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 probe_remote_object: object not found"
+            );
+            Ok(None)
+        }
+        Err(SdkError::ServiceError(err)) if err.raw().status().as_u16() == 403 => {
+            if overwrite {
+                // Content-match skip only: a missed optimization is not data
+                // loss, and the PUT may clobber anyway. Fail OPEN.
+                tracing::warn!(
+                    status = 403,
+                    bucket = %stage_info.bucket,
+                    key = ?s3_key,
+                    "S3 probe_remote_object: access denied on content-match probe, proceeding with upload"
+                );
+                Ok(None)
+            } else {
+                // Mandatory existence check: assuming absence would silently
+                // clobber preserve-requested bytes. Fail CLOSED (matches Azure +
+                // legacy Python).
+                tracing::warn!(
+                    status = 403,
+                    bucket = %stage_info.bucket,
+                    key = ?s3_key,
+                    "S3 probe_remote_object: access denied verifying existence under OVERWRITE=FALSE; failing closed"
+                );
+                Err(aws_sdk_s3::Error::from(SdkError::ServiceError(err)))
+                    .context(upload_file_error::S3HeadSnafu)
+            }
+        }
+        Err(e) => {
+            let err = aws_sdk_s3::Error::from(e);
+            // Log only the foreign error's type at WARN — its Display can embed
+            // sensitive identifiers; the full message goes to DEBUG.
+            tracing::warn!(
+                error_type = std::any::type_name_of_val(&err),
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 probe_remote_object: HEAD failed after retries"
+            );
+            tracing::debug!(
+                error = %err,
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 probe_remote_object: HEAD failure detail"
+            );
+            Err(err).context(upload_file_error::S3HeadSnafu)
+        }
     }
 }
 
@@ -432,7 +552,7 @@ async fn put_object(
         .body(body)
         .set_content_length(content_length)
         .content_type(CONTENT_TYPE_OCTET_STREAM)
-        .metadata("sfc-digest", &prepared.digest);
+        .metadata(S3_META_SFC_DIGEST, &prepared.digest);
 
     if let Some(ref enc_meta) = encryption_metadata {
         let mat_desc = serde_json::to_string(&enc_meta.material_desc)
@@ -550,7 +670,7 @@ async fn s3_create_multipart_upload(
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
         .content_type(CONTENT_TYPE_OCTET_STREAM)
-        .metadata("sfc-digest", &prepared.digest);
+        .metadata(S3_META_SFC_DIGEST, &prepared.digest);
 
     if let Some(enc_meta) = prepared.cse.as_ref().map(|c| &c.metadata) {
         let mat_desc = serde_json::to_string(&enc_meta.material_desc)
@@ -834,7 +954,8 @@ pub(super) async fn download_from_s3(
     filename: &str,
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<S3Download, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
@@ -848,7 +969,15 @@ pub(super) async fn download_from_s3(
             let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy)
                 .await
                 .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
-            s3_download_attempt(&s3_client, &stage_info, &s3_key, multipart, spill_target).await
+            s3_download_attempt(
+                &s3_client,
+                &stage_info,
+                &s3_key,
+                multipart,
+                unsafe_file_write,
+                spill_target,
+            )
+            .await
         }
     };
 
@@ -871,6 +1000,7 @@ async fn s3_download_attempt(
     stage_info: &StageInfo,
     s3_key: &str,
     multipart: MultipartParams,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<S3Download, S3AttemptError<DownloadFileError>> {
     let head = s3_head_object(s3_client, stage_info, s3_key).await?;
@@ -895,6 +1025,7 @@ async fn s3_download_attempt(
             content_length,
             chunk_size,
             multipart.concurrency,
+            unsafe_file_write,
             spill_target,
         )
         .await?;
@@ -911,6 +1042,109 @@ async fn s3_download_attempt(
     })
 }
 
+/// A streaming S3 GET, opened but not drained: the `ByteStream` body plus
+/// the same digest/CSE metadata as `S3Download`. Unlike `S3Download`, the
+/// body isn't buffered or spilled to disk — the caller drains it directly
+/// (see `file_manager::open_s3_download_stream`). One request total: no
+/// separate HEAD, since `GetObjectOutput` already exposes
+/// `content_length`/`metadata`.
+pub(super) struct S3StreamingDownload {
+    pub(super) body: ByteStream,
+    pub(super) digest: Option<String>,
+    pub(super) file_metadata: Option<EncryptedFileMetadata>,
+    /// On-cloud byte count from the GET's `Content-Length`. `0` if absent
+    /// (chunked transfer-encoding) or the object is empty — indistinguishable
+    /// here, but S3 GETs practically always report a length.
+    pub(super) cloud_byte_count: i64,
+}
+
+/// Opens a streaming GET against S3, returning the body as a `ByteStream`
+/// with no buffering or disk spill (contrast [`download_from_s3`], which
+/// fully materializes the object). See `upload_to_s3_or_skip` for
+/// `refresher` semantics.
+///
+/// Only opening the GET is covered by the STS-refresh retry; once the body
+/// streams, a transport failure surfaces as a read error with no retry.
+pub(super) async fn download_from_s3_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    base_policy: &RetryPolicy,
+    refresher: Option<&dyn StageInfoRefresher>,
+) -> Result<S3StreamingDownload, DownloadFileError> {
+    let s3_key = format!("{}{filename}", stage_info.key_prefix);
+    let policy = s3_retry_policy(base_policy);
+
+    let attempt = |creds: CloudCredentials| {
+        let stage_info = with_creds(stage_info, creds);
+        let s3_key = s3_key.clone();
+        let policy = policy.clone();
+        async move {
+            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy)
+                .await
+                .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
+            s3_get_streaming(&s3_client, &stage_info, &s3_key).await
+        }
+    };
+
+    run_s3_with_sts_refresh(
+        refresher,
+        &stage_info.creds,
+        |e| download_file_error::StageInfoRefreshSnafu.into_error(e),
+        |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
+        attempt,
+    )
+    .await
+}
+
+/// One streaming GET attempt: issues `GetObject`, returns the body stream
+/// plus digest/CSE metadata from its headers (no HEAD call). Folds
+/// `ExpiredToken` into `StsExpired` so the STS-refresh loop can retry
+/// opening the stream.
+async fn s3_get_streaming(
+    s3_client: &S3Client,
+    stage_info: &StageInfo,
+    s3_key: &str,
+) -> Result<S3StreamingDownload, S3AttemptError<DownloadFileError>> {
+    tracing::info!(
+        method = "GET",
+        bucket = %stage_info.bucket,
+        key = ?s3_key,
+        "S3 GetObject (streaming)"
+    );
+    let out = match s3_client
+        .get_object()
+        .bucket(stage_info.bucket.clone())
+        .key(s3_key)
+        .send()
+        .await
+    {
+        Ok(out) => out,
+        Err(sdk_err) => {
+            tracing::warn!(
+                cause = std::any::type_name_of_val(&sdk_err),
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 GetObject (streaming) failed"
+            );
+            return Err(map_s3_error(aws_sdk_s3::Error::from(sdk_err), |e| {
+                download_file_error::S3DownloadSnafu.into_error(e)
+            }));
+        }
+    };
+
+    let cloud_byte_count = out.content_length().unwrap_or(0).max(0);
+    let metadata_map = out.metadata().cloned().unwrap_or_default();
+    let (digest, file_metadata) =
+        parse_s3_file_metadata(&metadata_map).map_err(S3AttemptError::Other)?;
+
+    Ok(S3StreamingDownload {
+        body: out.body,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    })
+}
+
 /// Parses the `sfc-digest` and the CSE metadata headers (`x-amz-matdesc` /
 /// `x-amz-key` / `x-amz-iv`) from an S3 user-metadata map. All three CSE
 /// headers must be present together or all absent (SSE); a partial set is an
@@ -918,7 +1152,7 @@ async fn s3_download_attempt(
 fn parse_s3_file_metadata(
     metadata_map: &HashMap<String, String>,
 ) -> Result<(Option<String>, Option<EncryptedFileMetadata>), DownloadFileError> {
-    let digest = metadata_map.get("sfc-digest").cloned();
+    let digest = metadata_map.get(S3_META_SFC_DIGEST).cloned();
     let mat_desc = metadata_map.get("x-amz-matdesc");
     let encrypted_key = metadata_map.get("x-amz-key");
     let iv = metadata_map.get("x-amz-iv");
@@ -1034,6 +1268,7 @@ async fn s3_get_whole(
 /// Ranges are fetched up to `concurrency` at a time and written at their
 /// absolute offset (`pwrite`), so out-of-order completion is fine. Thin
 /// wrapper around the shared [`cloud_http::assemble_ranged_download`] helper.
+#[allow(clippy::too_many_arguments)]
 async fn s3_range_download(
     s3_client: &S3Client,
     stage_info: &StageInfo,
@@ -1041,6 +1276,7 @@ async fn s3_range_download(
     content_length: u64,
     chunk_size: u64,
     concurrency: usize,
+    unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, S3AttemptError<DownloadFileError>> {
     let mk_temp_err = |detail: String| {
@@ -1052,6 +1288,7 @@ async fn s3_range_download(
         chunk_size,
         concurrency,
         target,
+        unsafe_file_write,
         mk_temp_err,
         mk_temp_err,
         move |range| async move { s3_get_range(s3_client, stage_info, s3_key, &range).await },
@@ -1157,14 +1394,14 @@ async fn create_s3_client(
     stage_info: &StageInfo,
     provider_name: &'static str,
     policy: &RetryPolicy,
-) -> Result<S3Client, S3CredentialError> {
+) -> Result<S3Client, CreateS3ClientError> {
     let super::types::CloudCredentials::S3 {
         ref aws_key_id,
         ref aws_secret_key,
         ref aws_token,
     } = stage_info.creds
     else {
-        return Err(S3CredentialError);
+        return Err(CreateS3ClientError::MissingCredentials);
     };
 
     let credentials = Credentials::new(
@@ -1175,17 +1412,26 @@ async fn create_s3_client(
         provider_name,
     );
 
-    let mut loader = aws_config::defaults(BehaviorVersion::latest())
+    // Build the HTTP client over the same reqwest transport Azure/GCS use, so S3
+    // honours the connection's full TLS policy (version window, CRL, custom root
+    // store) and proxy handling (explicit proxy, `no_proxy`, `use_proxy_env`)
+    // through one shared implementation. Fails the build on a bad custom root
+    // store or CRL verifier, matching Azure/GCS.
+    let http_client = crate::tls::aws_http_client::build_s3_reqwest_client(
+        &stage_info.tls_config,
+        Some(&stage_info.proxy_config),
+        stage_info.crl_worker.clone(),
+    )
+    .map_err(CreateS3ClientError::HttpClient)?;
+
+    let loader = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(credentials)
         .region(Region::new(stage_info.region.clone()))
         .retry_config(to_aws_retry_config(policy))
-        .timeout_config(to_aws_timeout_config(policy));
-    // Always inject our hyper/rustls client so S3 connections honour the
-    // connection's full TLS policy (version window, CRL, custom root store).
-    loader = loader.http_client(crate::tls::aws_http_client::tls_configured_aws_http_client(
-        &stage_info.tls_config,
-        stage_info.crl_worker.clone(),
-    ));
+        .timeout_config(to_aws_timeout_config(policy))
+        .http_client(crate::tls::aws_http_client::reqwest_aws_http_client(
+            http_client,
+        ));
     let config = loader.load().await;
 
     let accelerate = resolve_acceleration(stage_info, &config).await;
@@ -1331,19 +1577,39 @@ fn regional_s3_endpoint(region: &str) -> String {
     format!("https://s3.{region}.{suffix}")
 }
 
-/// Error returned when `create_s3_client` is called with non-S3 credentials.
+/// Error returned when `create_s3_client` cannot produce an `S3Client`: the stage
+/// carries non-S3 credentials, or the TLS/proxy-configured HTTP client failed to
+/// build (mirroring Azure/GCS, which also surface a `configure_tls_builder`
+/// failure rather than silently continuing).
 #[derive(Debug)]
-struct S3CredentialError;
+enum CreateS3ClientError {
+    MissingCredentials,
+    HttpClient(crate::tls::error::TlsError),
+}
 
-impl From<S3CredentialError> for UploadFileError {
-    fn from(_: S3CredentialError) -> Self {
-        upload_file_error::MissingS3CredentialsSnafu.build()
+impl From<CreateS3ClientError> for UploadFileError {
+    fn from(err: CreateS3ClientError) -> Self {
+        match err {
+            CreateS3ClientError::MissingCredentials => {
+                upload_file_error::MissingS3CredentialsSnafu.build()
+            }
+            CreateS3ClientError::HttpClient(source) => {
+                upload_file_error::HttpClientBuildSnafu.into_error(source)
+            }
+        }
     }
 }
 
-impl From<S3CredentialError> for DownloadFileError {
-    fn from(_: S3CredentialError) -> Self {
-        download_file_error::MissingS3CredentialsSnafu.build()
+impl From<CreateS3ClientError> for DownloadFileError {
+    fn from(err: CreateS3ClientError) -> Self {
+        match err {
+            CreateS3ClientError::MissingCredentials => {
+                download_file_error::MissingS3CredentialsSnafu.build()
+            }
+            CreateS3ClientError::HttpClient(source) => {
+                download_file_error::HttpClientBuildSnafu.into_error(source)
+            }
+        }
     }
 }
 
@@ -1415,6 +1681,13 @@ pub enum UploadFileError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to build the S3 HTTP client"))]
+    HttpClientBuild {
+        #[snafu(source(from(crate::tls::error::TlsError, Box::new)))]
+        source: Box<crate::tls::error::TlsError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
     StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
@@ -1472,6 +1745,13 @@ pub enum DownloadFileError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to build the S3 HTTP client"))]
+    HttpClientBuild {
+        #[snafu(source(from(crate::tls::error::TlsError, Box::new)))]
+        source: Box<crate::tls::error::TlsError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
     StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
@@ -1485,6 +1765,7 @@ pub enum DownloadFileError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::retry::RetryPolicy;
     use bytes::Bytes;
@@ -1624,6 +1905,7 @@ mod tests {
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
         }
     }
 
@@ -1862,19 +2144,24 @@ mod tests {
     }
 
     impl StageInfoRefresher for FakeRefresher {
-        fn refresh(&mut self) -> super::super::types::RefreshFuture<'_> {
+        fn refresh(&self, observed: std::time::Instant) -> super::super::types::RefreshFuture<'_> {
             self.refresh_calls.fetch_add(1, AtomicOrdering::SeqCst);
             let next = self.next_creds.lock().unwrap().take();
             if let Some(c) = next {
                 self.cache.store(StageInfoSnapshot::creds_only(c));
+                // Real coordinator's contract: return the post-store generation.
+                let new_gen = self.cache.cached_at();
+                return Box::pin(async move { Ok(new_gen) });
             }
-            Box::pin(async { Ok::<(), StageInfoRefreshError>(()) })
+            Box::pin(async move { Ok(observed) })
         }
 
-        fn refresh_url(&mut self) -> super::super::types::RefreshFuture<'_> {
-            // S3 tests never trigger URL refresh; share the same path so the
-            // trait is satisfied. Production GCS tests provide a dedicated fake.
-            self.refresh()
+        fn refresh_url(
+            &self,
+            _current_upload_file: Option<&str>,
+        ) -> super::super::types::RefreshFuture<'_> {
+            // S3 tests never trigger URL refresh; satisfy the trait minimally.
+            Box::pin(async { Ok(std::time::Instant::now()) })
         }
 
         fn cache(&self) -> &StageInfoCache {
@@ -1890,14 +2177,13 @@ mod tests {
 
     #[tokio::test]
     async fn s3_sts_refresher_refresh_returns_true_when_creds_rotate() {
-        let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
+        let fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
-        let initial = s3_creds("AKIA1");
-        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
+        let mut sts_refresher = S3StsRefresher::new(&fake, identity_map);
 
         let rotated = sts_refresher.refresh().await.unwrap();
 
-        assert!(rotated);
+        assert!(rotated, "rotation must return true");
         assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(
             aws_key_id(&fake.cache().snapshot().creds),
@@ -1908,39 +2194,32 @@ mod tests {
 
     #[tokio::test]
     async fn s3_sts_refresher_refresh_returns_false_when_creds_unchanged() {
-        // FakeRefresher with no `arm()` leaves the cache holding the
-        // initial creds — simulating a hit inside the refresher's
-        // coalescing window. The S3StsRefresher must report Ok(false) so
-        // the generic helper propagates the original error rather than
-        // spinning.
-        let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
-        let initial = s3_creds("AKIA1");
-        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
+        // FakeRefresher with no `arm()` leaves the cache holding the initial
+        // creds — simulating a coalesced peer. S3StsRefresher must return
+        // Ok(false) so execute_with_refresh propagates the original error.
+        let fake = FakeRefresher::new(s3_creds("AKIA1"));
+        let mut sts_refresher = S3StsRefresher::new(&fake, identity_map);
 
         let rotated = sts_refresher.refresh().await.unwrap();
 
-        assert!(
-            !rotated,
-            "unchanged creds → S3StsRefresher declines further rotations"
-        );
+        assert!(!rotated, "unchanged creds → false (no rotation)");
         assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn s3_sts_refresher_refresh_tracks_last_seen_key_across_rotations() {
-        // After a successful rotation, last_seen_key is updated. A
-        // subsequent unchanged refresh against the new key should still
-        // report Ok(false) — confirming the marker followed the rotation.
-        let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
+    async fn s3_sts_refresher_refresh_returns_true_on_second_rotation() {
+        // Two successive rotations: both must return true.
+        let fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
-        let initial = s3_creds("AKIA1");
-        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
+        let mut sts_refresher = S3StsRefresher::new(&fake, identity_map);
 
-        assert!(sts_refresher.refresh().await.unwrap()); // AKIA1 -> AKIA2
-        // Cache still holds AKIA2; arming nothing means refresh() leaves
-        // it as-is. S3StsRefresher must see "no rotation" against AKIA2
-        // (not AKIA1).
-        assert!(!sts_refresher.refresh().await.unwrap());
+        let rotated1 = sts_refresher.refresh().await.unwrap();
+        assert!(rotated1, "first rotation returns true");
+
+        // Arm a second rotation.
+        fake.arm(s3_creds("AKIA3"));
+        let rotated2 = sts_refresher.refresh().await.unwrap();
+        assert!(rotated2, "second rotation returns true");
     }
 
     // The SigV4 payload hash is set inside aws-sigv4 and only appears on the
@@ -1972,18 +2251,20 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         };
 
-        // overwrite=true skips the HEAD probe.
+        // overwrite=true, skip_upload_on_content_match=false skips the HEAD probe.
         upload_to_s3_or_skip(
             prepared,
             &stage_info,
             "f.dat",
             true,
+            false,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2059,6 +2340,7 @@ mod tests {
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
         };
 
         tokio::time::timeout(
@@ -2072,9 +2354,10 @@ mod tests {
                 &stage_info,
                 "f.dat",
                 true,
+                false,
                 &base_policy(),
                 MultipartParams::default(),
-                &mut None,
+                None,
             ),
         )
         .await
@@ -2161,6 +2444,7 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         };
 
@@ -2176,9 +2460,10 @@ mod tests {
             &stage_info,
             "f.dat",
             true,
+            false,
             &base_policy(),
             MultipartParams::default(),
-            &mut None,
+            None,
         )
         .await
         .expect("encrypted S3 upload should succeed against the mock");
@@ -2196,6 +2481,279 @@ mod tests {
             seen_unsigned_payload.load(Ordering::SeqCst),
             "the CSE body must stay payload-unsigned (STREAMING-UNSIGNED-PAYLOAD-TRAILER)",
         );
+    }
+
+    // --- Pre-upload HEAD probe and skip-decision (wiremock) ---
+    //
+    // Contract: HEAD is issued only when at least one skip branch could fire
+    // (`!overwrite || skip_upload_on_content_match`), and the skip is keyed
+    // on either remote existence or remote-vs-local digest equality via the
+    // shared `classify_pre_upload_skip` (see `file_manager::mod` tests for
+    // the decision-in-isolation coverage that bypasses this HEAD-elision).
+    // Mirrors the equivalent Azure scenarios in `azure_transfer.rs`.
+
+    /// Mount a HEAD responder and a PUT responder with a usage expectation,
+    /// mirroring the GCS test helper. Both are path-anchored to the object
+    /// under `mp_stage` (`/test-bucket/prefix/f.dat`) so stray requests from
+    /// concurrent multi-threaded tests can't satisfy the expectation.
+    async fn mount_head_and_put(
+        server: &MockServer,
+        head_response: ResponseTemplate,
+        expected_puts: u64,
+    ) {
+        use wiremock::matchers::path;
+        Mock::given(method("HEAD"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .respond_with(head_response)
+            .mount(server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(expected_puts)
+            .mount(server)
+            .await;
+    }
+
+    /// Scenario 1: existence-only branch — `!overwrite && exists` returns
+    /// `Skipped` without issuing a PUT.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_when_overwrite_false_and_object_exists() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(&mock, ResponseTemplate::new(200), 0).await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &base_policy(),
+            MultipartParams::default(),
+            None,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// Scenario 2: HEAD elision — `overwrite=true && skip_match=false`
+    /// proves the driver doesn't waste a round-trip on a HEAD that can't
+    /// change the outcome. `Mock::given(method("HEAD")).expect(0)` is the
+    /// load-bearing assertion: any HEAD against the mock fails the test.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn no_head_issued_when_overwrite_true_and_skip_match_false() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            &base_policy(),
+            MultipartParams::default(),
+            None,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Scenario 3: content-match branch — when the remote `sfc-digest`
+    /// metadata equals the local digest, the upload is skipped.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_when_overwrite_true_and_skip_match_true_and_digests_match() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(
+            &mock,
+            ResponseTemplate::new(200).insert_header("x-amz-meta-sfc-digest", "matching-digest"),
+            0,
+        )
+        .await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("matching-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            None,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// Scenario 4: content-mismatch — same flags as scenario 3, but the
+    /// remote `sfc-digest` differs from the local one. Different content
+    /// cannot be skipped over; upload must proceed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_when_overwrite_true_and_skip_match_true_and_digests_differ() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(
+            &mock,
+            ResponseTemplate::new(200).insert_header("x-amz-meta-sfc-digest", "remote-digest"),
+            1,
+        )
+        .await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            None,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Scenario 5: 404 on HEAD — object doesn't exist. Even with the flag
+    /// on, there is no remote metadata to compare, so the upload runs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_when_skip_match_true_and_head_404() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(&mock, ResponseTemplate::new(404), 1).await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            None,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Scenario 6: HEAD returns 200 but the `x-amz-meta-sfc-digest`
+    /// user-metadata header is absent — e.g. the object was uploaded by a
+    /// tool that doesn't write Snowflake's custom metadata. Cannot compare
+    /// digests, so the content-match branch must NOT skip.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_when_skip_match_true_and_head_200_without_sfc_digest_header() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(&mock, ResponseTemplate::new(200), 1).await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            None,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Existence precedence: content-match is *armed* (`skip_match=true`) but
+    /// `!overwrite`, so the existence branch must win first and the deliberately
+    /// non-matching remote digest is never consulted (a content-match compare
+    /// would have proceeded to upload on the mismatch). This is the genuine
+    /// "content-match armed but existence still wins" pin; pure-unit precedence
+    /// is also covered by `classify_existence_wins_under_no_overwrite`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_when_overwrite_false_and_object_exists_ignores_digest() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(
+            &mock,
+            ResponseTemplate::new(200).insert_header("x-amz-meta-sfc-digest", "remote-digest"),
+            0,
+        )
+        .await;
+
+        let status = upload_to_s3_or_skip(
+            // Local digest deliberately differs from the remote header — with
+            // content-match armed, existence must still win outright under
+            // `!overwrite` and the mismatching digest must be ignored.
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            None,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// The skip decision gates the multipart branch identically to the
+    /// single-PUT branch: a body above the multipart threshold with a
+    /// matching remote digest must skip without issuing
+    /// `CreateMultipartUpload`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_on_content_match_also_gates_multipart_branch() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-amz-meta-sfc-digest", "matching-digest"),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(query_param("uploads", ""))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                7u8;
+                9 << 20
+            ])),
+            digest: "matching-digest".to_string(),
+            cse: None,
+        };
+
+        let status = upload_to_s3_or_skip(
+            prepared,
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            always_multipart(),
+            None,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
     }
 
     // --- Acceleration probe (wiremock) ---
@@ -2329,6 +2887,7 @@ mod tests {
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
         }
     }
 
@@ -2391,9 +2950,10 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             true,
+            false,
             &base_policy(),
             always_multipart(),
-            &mut None,
+            None,
         )
         .await
         .expect("multipart upload should succeed against the mock");
@@ -2452,9 +3012,10 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             true,
+            false,
             &base_policy_with_attempts(1), // single attempt: fail fast, no SDK retry storm
             always_multipart(),
-            &mut None,
+            None,
         )
         .await;
 
@@ -2498,7 +3059,8 @@ mod tests {
             "f.dat",
             &base_policy(),
             always_multipart(),
-            &mut None,
+            None,
+            false,
             cloud_http::CloudSpillTarget::Temp(spill.path()),
         )
         .await
@@ -2550,7 +3112,8 @@ mod tests {
             "f.dat",
             &base_policy(),
             always_multipart(),
-            &mut None,
+            None,
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await
@@ -2564,6 +3127,12 @@ mod tests {
                     payload,
                     "the .part must hold the whole reassembled object"
                 );
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(&part_path).unwrap().permissions().mode();
+                    assert_eq!(mode & 0o777, 0o600, "ranged .part must be owner-only");
+                }
             }
             _ => panic!("a non-encrypted ranged download must assemble into `.part`"),
         }
@@ -2593,7 +3162,8 @@ mod tests {
             "f.dat",
             &base_policy_with_attempts(1), // single attempt: fail fast
             always_multipart(),
-            &mut None,
+            None,
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await;

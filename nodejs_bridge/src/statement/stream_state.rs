@@ -1,12 +1,11 @@
-use arrow::array::{Int64Array, RecordBatch, RecordBatchReader};
-use arrow::datatypes::SchemaRef;
+use super::column_reader::ColumnReader;
+use crate::sql_value::SqlValue;
+use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::error::ArrowError;
-use std::collections::HashMap;
 
 pub(super) struct StreamState {
     batch_reader: Box<dyn RecordBatchReader + Send>,
-    current_batch: Option<RecordBatch>,
-    current_batch_row_index: usize,
+    current_batch: Option<CurrentBatch>,
 }
 
 impl StreamState {
@@ -14,54 +13,62 @@ impl StreamState {
         Self {
             batch_reader,
             current_batch: None,
-            current_batch_row_index: 0,
         }
     }
 
-    pub(super) fn next_row(&mut self) -> Result<Option<HashMap<String, i64>>, ArrowError> {
+    pub(super) fn next_row(&mut self) -> Result<Option<Vec<SqlValue>>, ArrowError> {
+        // Loop so zero-row batches are skipped rather than ending iteration.
         loop {
-            if let Some(batch) = &self.current_batch {
-                if self.current_batch_row_index < batch.num_rows() {
-                    let row = convert_row(
-                        &self.batch_reader.schema(),
-                        batch,
-                        self.current_batch_row_index,
-                    );
-                    self.current_batch_row_index += 1;
+            if let Some(batch) = &mut self.current_batch {
+                if let Some(row) = batch.next_row() {
                     return Ok(Some(row));
                 }
                 self.current_batch = None;
             }
-
             match self.batch_reader.next() {
-                Some(batch) => {
-                    self.current_batch = Some(batch?);
-                    self.current_batch_row_index = 0;
-                }
-                None => {
-                    return Ok(None);
-                }
+                Some(batch) => self.current_batch = Some(CurrentBatch::from_batch(&batch?)?),
+                None => return Ok(None),
             }
         }
     }
 }
 
-/// Placeholder Arrow-to-JS row conversion.
-///
-/// TODO: This intentionally handles only `Int64` columns (any other type
-/// yields `-1`). Proper per-`DataType` conversion mirroring the ODBC
-/// converters in `odbc/src/conversion/` is a separate follow-up task. Keeping
-/// the logic in this single function makes that swap a one-site change.
-fn convert_row(schema: &SchemaRef, batch: &RecordBatch, row: usize) -> HashMap<String, i64> {
-    let mut out = HashMap::new();
-    for (i, field) in schema.fields().iter().enumerate() {
-        let value = batch
-            .column(i)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .map(|arr| arr.value(row))
-            .unwrap_or(-1);
-        out.insert(field.name().clone(), value);
+/// The batch currently being drained, plus a cursor into it. The
+/// `row_index < num_rows` bound is enforced solely by [`next_row`](Self::next_row),
+/// so the cursor can never point past the batch.
+struct CurrentBatch {
+    column_readers: Vec<ColumnReader>,
+    num_rows: usize,
+    row_index: usize,
+}
+
+impl CurrentBatch {
+    fn from_batch(batch: &RecordBatch) -> Result<Self, ArrowError> {
+        let column_readers = batch
+            .schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(index, field)| ColumnReader::for_field(field, batch.column(index)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ArrowError::ComputeError)?;
+        Ok(Self {
+            column_readers,
+            num_rows: batch.num_rows(),
+            row_index: 0,
+        })
     }
-    out
+
+    fn next_row(&mut self) -> Option<Vec<SqlValue>> {
+        if self.row_index >= self.num_rows {
+            return None;
+        }
+        let row = self
+            .column_readers
+            .iter()
+            .map(|reader| reader.read(self.row_index))
+            .collect();
+        self.row_index += 1;
+        Some(row)
+    }
 }

@@ -1,6 +1,6 @@
 name: Import mirror PR
 
-# Imports a labeled PR from snowflakedb/universal-driver back
+# Imports a labeled PR from snowflakedb/drivers back
 # into the internal repo as an internal PR so it can run against internal
 # CI before merge.
 #
@@ -93,12 +93,12 @@ jobs:
           # the main-side parent of the most recent merge commit. This is a
           # no-op for clean linear PRs and fixes the "Cannot read origin
           # revision from baseline" error for PRs with merge commits.
-          BASELINE_SHA=$(gh api "repos/snowflakedb/universal-driver/pulls/${PR_NUMBER}" \
+          BASELINE_SHA=$(gh api "repos/snowflakedb/drivers/pulls/${PR_NUMBER}" \
             --jq '.base.sha')
           # Outbound mirror commits carry GitOrigin-RevId pointing at the
           # matching internal main commit. Copybara needs that destination
           # parent explicitly when the PR contains merge commits.
-          DESTINATION_PARENT_SHA=$(gh api "repos/snowflakedb/universal-driver/commits/${BASELINE_SHA}" \
+          DESTINATION_PARENT_SHA=$(gh api "repos/snowflakedb/drivers/commits/${BASELINE_SHA}" \
             --jq '.commit.message' \
             | grep -E '^GitOrigin-RevId:' \
             | sed 's/^GitOrigin-RevId: //' \
@@ -118,7 +118,7 @@ jobs:
           python3 scripts/mirror/prepare_import_paths.py "${PR_NUMBER}" "${draft_args[@]}"
 
           # --nogit-destination-rebase: the mirror is a strict subset of
-          # the internal repo (no copy.bara.sky, _internal/, adr/,
+          # the internal repo (no copy.bara.sky, NOMIRROR directories, adr/,
           # .github/, …). Rebasing the mirror PR branch onto internal main
           # fails with modify/delete conflicts on those internal-only
           # files. Skipping the rebase applies the PR diff as-is on top
@@ -129,7 +129,7 @@ jobs:
             -v "${HOME}/.gitconfig:/root/.gitconfig:ro" \
             -e GITHUB_TOKEN \
             copybara:local migrate ci/mirroring/copy.bara.sky import "${PR_NUMBER}" \
-            --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflake-eng/universal-driver.git" \
+            --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflake-eng/drivers.git" \
             --nogit-destination-rebase \
             --baseline-for-merge-import="${BASELINE_SHA}" \
             --change-request-parent="${DESTINATION_PARENT_SHA}" \
@@ -144,7 +144,7 @@ jobs:
             echo "## Import PR #${PR_NUMBER}"
             echo ""
             echo "- **Dispatched by:** ${{ github.actor }}"
-            echo "- **Source PR:** https://github.com/snowflakedb/universal-driver/pull/${PR_NUMBER}"
+            echo "- **Source PR:** https://github.com/snowflakedb/drivers/pull/${PR_NUMBER}"
             echo "- **Imported as draft:** ${{ github.event.inputs.draft }}"
             echo "- **Result:** ${{ job.status }}"
             echo ""

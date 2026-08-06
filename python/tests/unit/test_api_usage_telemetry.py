@@ -8,29 +8,31 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from snowflake.connector._internal.decorators import _TRACKING
+from snowflake.connector._internal.decorators import _TRACKING, api_telemetry
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     ConnectionIsClosedResponse,
     ConnectionIsExpiredResponse,
     DatabaseHandle,
-    ExecuteQueryResponse,
     ResultSetDescriptor,
-    ResultSetHandle,
-    ResultSetResponse,
     StatementHandle,
-    TelemetrySendResponse,
 )
+from snowflake.connector.constants import SessionParameterName
+from snowflake.connector.errors import ProgrammingError
+from tests.helpers.fixtures import _make_execute_response
 
 
-def _make_execute_response(query_id: str = "fake-qid") -> ExecuteQueryResponse:
-    """Return an ExecuteQueryResponse with a single-statement ResultSetResponse."""
-    return ExecuteQueryResponse(
-        single=ResultSetResponse(
-            result_set_handle=ResultSetHandle(id=1),
-            result_descriptor=ResultSetDescriptor(query_id=query_id),
-        )
-    )
+def _get_parameter_side_effect(request: object) -> MagicMock:
+    """Default CLIENT_TELEMETRY_ENABLED to "true" so telemetry-assertion tests in this
+    file exercise their intended path by default; every other parameter stays unset,
+    matching the shared ``mock_db_api`` fixture in ``tests/helpers/fixtures.py``.
+
+    ``core_driver.connection_get_parameter`` calls ``self.client.connection_get_parameter(request)``
+    with a single positional ``ConnectionGetParameterRequest``, not ``key=`` kwargs.
+    """
+    if request.key == SessionParameterName.CLIENT_TELEMETRY_ENABLED:
+        return MagicMock(value="true")
+    return MagicMock(value="")
 
 
 @pytest.fixture
@@ -41,7 +43,13 @@ def mock_db_api():
     db_api = MagicMock()
     db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
     db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
-    db_api.connection_get_parameter.return_value = MagicMock(value="")
+    db_api.connection_get_parameter.side_effect = _get_parameter_side_effect
+    # Mirrors connection_get_parameter's default: sf_core's connection_get_all_parameters
+    # sources from the same session_parameters cache, so the bulk snapshot taken by
+    # SessionParametersProxy.freeze() (on close()) must agree with the per-key default.
+    db_api.connection_get_all_parameters.return_value = MagicMock(
+        parameters={SessionParameterName.CLIENT_TELEMETRY_ENABLED: "true"}
+    )
 
     def _connection_is_closed(request):
         return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
@@ -79,10 +87,10 @@ def cursor(connection, mock_db_api):
 
 @pytest.fixture(autouse=True)
 def reset_tracking():
-    """Ensure _TRACKING ContextVar is reset before each test."""
-    token = _TRACKING.set(True)
+    """Ensure the _TRACKING ContextVar is reset before each test."""
+    tracking_token = _TRACKING.set(True)
     yield
-    _TRACKING.reset(token)
+    _TRACKING.reset(tracking_token)
 
 
 def _get_api_methods(mock_db_api):
@@ -104,53 +112,42 @@ def _passed_arguments_for(mock_db_api, api_method):
     return matches[0]
 
 
-def _run_async(coro):
-    """Run a coroutine in a fresh event loop (no pytest-asyncio dependency)."""
-    return asyncio.run(coro)
+def _run_async(awaitable):
+    """Run a coroutine/awaitable in a fresh event loop (no pytest-asyncio dependency).
+
+    Accepts plain coroutines and awaitables such as ``_AwaitableContextManager``
+    (returned by ``@awaitable_context_manager``-decorated factories like
+    ``Connection.cursor``).
+    """
+
+    async def _run():
+        return await awaitable
+
+    return asyncio.run(_run())
 
 
 @pytest.fixture
-def mock_async_db_api():
-    """Create a mock AsyncDatabaseDriverClient patched into async_core_driver."""
-    from snowflake.connector._internal.api_client.client_api import async_core_driver
-
-    db_api = MagicMock()
-    db_api.database_new = AsyncMock(return_value=MagicMock(db_handle=DatabaseHandle(id=1)))
-    db_api.database_init = AsyncMock()
-    db_api.connection_new = AsyncMock(return_value=MagicMock(conn_handle=ConnectionHandle(id=42)))
-    db_api.connection_set_options = AsyncMock(return_value=MagicMock(warnings=[]))
-    db_api.connection_set_session_parameters = AsyncMock()
-    db_api.connection_init = AsyncMock()
-    db_api.connection_get_parameter = AsyncMock(return_value=MagicMock(value=""))
-
-    def _connection_is_closed(request):
-        return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
-
-    db_api.connection_is_closed = AsyncMock(side_effect=_connection_is_closed)
-    db_api.connection_is_expired = AsyncMock(return_value=ConnectionIsExpiredResponse(is_expired=False))
-    db_api.connection_close = AsyncMock()
-    db_api.connection_release = AsyncMock()
-    db_api.database_release = AsyncMock()
-    db_api.connection_get_all_parameters = AsyncMock(return_value=MagicMock(parameters={}))
-    db_api.connection_get_info = AsyncMock(return_value=MagicMock(ListFields=lambda: []))
-    db_api.statement_new = AsyncMock(return_value=MagicMock(stmt_handle=StatementHandle(id=1)))
-    db_api.statement_set_sql_query = AsyncMock()
-    db_api.statement_execute_query = AsyncMock(return_value=_make_execute_response())
-    db_api.statement_release = AsyncMock()
-    db_api.connection_get_result_set = AsyncMock(
-        return_value=MagicMock(result_descriptor=ResultSetDescriptor(query_id="fake-qid")),
+def mock_async_db_api(mock_async_db_api):
+    """Layer the CLIENT_TELEMETRY_ENABLED default onto the shared ``mock_async_db_api``
+    (`tests/helpers/fixtures.py`), mirroring this file's ``mock_db_api`` override so the
+    frozen-snapshot path (``connection_get_all_parameters``) agrees with the per-key default.
+    """
+    mock_async_db_api.connection_get_all_parameters = AsyncMock(
+        return_value=MagicMock(parameters={SessionParameterName.CLIENT_TELEMETRY_ENABLED: "true"})
     )
-    db_api.telemetry_send_api_usage = AsyncMock(return_value=TelemetrySendResponse())
-
-    old_client = async_core_driver._client
-    async_core_driver.client = db_api
-    yield db_api
-    async_core_driver.client = old_client
+    return mock_async_db_api
 
 
 @pytest.fixture
-def async_connection(mock_async_db_api):
-    """Create an async Connection with a mocked async db_api."""
+def async_connection(mock_async_db_api, mock_db_api):
+    """Create an async Connection with a mocked async db_api.
+
+    Also depends on ``mock_db_api``: single-key session-parameter reads (used by
+    ``Connection.telemetry_enabled`` gating) always go through the *sync*
+    ``core_driver`` client, even from async code — see
+    ``SessionParametersProxyMixin`` in ``_internal/connection/freezable_proxy.py``.
+    Without this, those reads would fall through to a real, unpatched client.
+    """
     from snowflake.connector.aio.connection._connection import Connection
 
     with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
@@ -372,6 +369,207 @@ class TestApiTelemetryResetBehavior:
         assert "Connection.close" in methods
 
 
+class TestWrapperErrorTelemetry:
+    """Tests that ErrorHandlerMixin sends wrapper_error telemetry when a wrapped call raises."""
+
+    @staticmethod
+    def _get_wrapper_errors(mock_db_api):
+        """Extract (exception_type, error_source) from all send_wrapper_error calls."""
+        return [
+            (call[0][0].exception_type, call[0][0].error_source)
+            for call in mock_db_api.telemetry_send_wrapper_error.call_args_list
+        ]
+
+    def test_cursor_execute_error_sends_wrapper_error(self, cursor, mock_db_api):
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("syntax error")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("BAD SQL")
+
+        assert ("ProgrammingError", "SnowflakeCursor.execute") in self._get_wrapper_errors(mock_db_api)
+
+    def test_connection_commit_error_reports_inner_source(self, connection, mock_db_api):
+        """When commit() -> execute() raises, both the inner execute() frame and the
+        outer commit() frame report — each wrapped frame that catches the exception
+        reports it under its own method name, innermost first."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        with pytest.raises(ProgrammingError):
+            connection.commit()
+
+        assert self._get_wrapper_errors(mock_db_api) == [
+            ("ProgrammingError", "SnowflakeCursor.execute"),
+            ("ProgrammingError", "Connection.commit"),
+        ]
+
+    def test_sibling_error_after_swallowed_exception_still_reports(self, connection, cursor, mock_db_api):
+        """An exception raised by a nested decorated call and caught by ordinary
+        (non-decorator) code inside an outer decorated call must not suppress
+        reporting for a later, unrelated exception raised by a sibling decorated
+        call within that same outer call."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        @api_telemetry
+        def outer(self):
+            try:
+                cursor.execute("first")
+            except ProgrammingError:
+                pass
+            cursor.execute("second")
+
+        with pytest.raises(ProgrammingError):
+            outer(connection)
+
+        assert self._get_wrapper_errors(mock_db_api) == [
+            ("ProgrammingError", "SnowflakeCursor.execute"),
+            ("ProgrammingError", "SnowflakeCursor.execute"),
+        ]
+
+    def test_non_connector_exception_reported(self, cursor, mock_db_api):
+        """Non-Error exceptions (e.g. RuntimeError) are also reported."""
+        mock_db_api.statement_execute_query.side_effect = RuntimeError("unexpected")
+
+        with pytest.raises(RuntimeError):
+            cursor.execute("SELECT 1")
+
+        assert ("RuntimeError", "SnowflakeCursor.execute") in self._get_wrapper_errors(mock_db_api)
+
+    def test_successful_call_does_not_send_wrapper_error(self, cursor, mock_db_api):
+        cursor.execute("SELECT 1")
+        assert self._get_wrapper_errors(mock_db_api) == []
+
+    def test_wrapper_error_telemetry_failure_does_not_suppress_exception(self, cursor, mock_db_api):
+        """If send_wrapper_error itself fails, the original exception still propagates."""
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("original")
+        mock_db_api.telemetry_send_wrapper_error.side_effect = RuntimeError("telemetry down")
+
+        with pytest.raises(ProgrammingError, match="original"):
+            cursor.execute("SELECT 1")
+
+    def test_generator_error_reports_innermost_method(self, connection, mock_db_api):
+        """execute_stream() is a generator method, so it is never itself wrapped by
+        ErrorHandlerMixin — but the inner cursor.execute() call it drives while being
+        iterated is a regular wrapped method, and reports the error from that inner
+        frame."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        with pytest.raises(ProgrammingError):
+            list(connection.execute_stream(StringIO("SELECT 1")))
+
+        assert self._get_wrapper_errors(mock_db_api) == [("ProgrammingError", "SnowflakeCursor.execute")]
+
+
+class TestAsyncWrapperErrorTelemetry:
+    """Async counterpart of TestWrapperErrorTelemetry."""
+
+    @staticmethod
+    def _get_wrapper_errors(mock_async_db_api):
+        return [
+            (call[0][0].exception_type, call[0][0].error_source)
+            for call in mock_async_db_api.telemetry_send_wrapper_error.call_args_list
+        ]
+
+    def test_async_cursor_execute_error_sends_wrapper_error(self, async_cursor, mock_async_db_api):
+        mock_async_db_api.statement_execute_query.side_effect = ProgrammingError("syntax error")
+
+        with pytest.raises(ProgrammingError):
+            _run_async(async_cursor.execute("BAD SQL"))
+
+        assert ("ProgrammingError", "SnowflakeCursor.execute") in self._get_wrapper_errors(mock_async_db_api)
+
+    def test_async_connection_commit_error_reports_inner_source(self, async_connection, mock_async_db_api):
+        mock_async_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_async_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        with pytest.raises(ProgrammingError):
+            _run_async(async_connection.commit())
+
+        assert self._get_wrapper_errors(mock_async_db_api) == [
+            ("ProgrammingError", "SnowflakeCursor.execute"),
+            ("ProgrammingError", "Connection.commit"),
+        ]
+
+
+class TestTelemetryEnabledGating:
+    """Tests that Connection.telemetry_enabled actually gates wrapper telemetry sends,
+    matching the legacy driver's AND-of-client-and-server gating (not just the client half).
+    """
+
+    def test_client_disabled_suppresses_api_usage_telemetry(self, connection, mock_db_api):
+        connection.telemetry_enabled = False
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        connection.cursor()
+
+        assert _get_api_methods(mock_db_api) == []
+
+    def test_client_disabled_suppresses_wrapper_error_telemetry(self, cursor, mock_db_api):
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        cursor._connection.telemetry_enabled = False
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("boom")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("BAD SQL")
+
+        assert mock_db_api.telemetry_send_wrapper_error.call_count == 0
+
+    def test_server_param_disabled_suppresses_telemetry_even_when_client_enabled(self, connection, mock_db_api):
+        """Regression guard: gating must consult the server half too, not just the client flag."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        assert connection._client_param_telemetry_enabled is True
+        mock_db_api.connection_get_parameter.side_effect = None
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value="false")
+
+        connection.cursor()
+
+        assert _get_api_methods(mock_db_api) == []
+
+    def test_client_enabled_and_server_enabled_sends_telemetry(self, connection, mock_db_api):
+        """Baseline: with both halves on (this file's fixture default), telemetry flows."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        connection.cursor()
+
+        assert "Connection.cursor" in _get_api_methods(mock_db_api)
+
+    def test_re_enabling_resumes_telemetry(self, connection, mock_db_api):
+        connection.telemetry_enabled = False
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.cursor()
+        assert _get_api_methods(mock_db_api) == []
+
+        connection.telemetry_enabled = True
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.cursor()
+        assert "Connection.cursor" in _get_api_methods(mock_db_api)
+
+
+class TestAsyncTelemetryEnabledGating:
+    """Async counterpart of TestTelemetryEnabledGating."""
+
+    def test_client_disabled_suppresses_api_usage_telemetry(self, async_connection, mock_async_db_api):
+        async_connection.telemetry_enabled = False
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+
+        _run_async(async_connection.cursor())
+
+        methods = [call[0][0].api_method for call in mock_async_db_api.telemetry_send_api_usage.call_args_list]
+        assert methods == []
+
+    def test_client_disabled_suppresses_wrapper_error_telemetry(self, async_cursor, mock_async_db_api):
+        mock_async_db_api.telemetry_send_wrapper_error.reset_mock()
+        async_cursor._connection.telemetry_enabled = False
+        mock_async_db_api.statement_execute_query.side_effect = ProgrammingError("boom")
+
+        with pytest.raises(ProgrammingError):
+            _run_async(async_cursor.execute("BAD SQL"))
+
+        assert mock_async_db_api.telemetry_send_wrapper_error.call_count == 0
+
+
 class TestApiTelemetryFailureIsolation:
     """Tests that telemetry failures don't break the actual method."""
 
@@ -517,6 +715,36 @@ class TestPassedArgumentNames:
 
 class TestPassedArgumentsThroughStack:
     """End-to-end: argument names reach the TelemetrySendApiUsageRequest."""
+
+    def test_connect_init_omits_unset_named_params(self, mock_db_api):
+        """connect() must not forward defaulted connection_name/config kwargs."""
+        from snowflake.connector import connect
+
+        with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
+            connect(user="test_user", account="test_account")
+
+        init_calls = [
+            list(call[0][0].passed_arguments)
+            for call in mock_db_api.telemetry_send_api_usage.call_args_list
+            if call[0][0].api_method == "Connection.__init__"
+        ]
+        assert len(init_calls) == 1
+        passed = set(init_calls[0])
+        assert passed == {"user", "account"}, f"unexpected Connection.__init__ api_arguments: {passed}"
+
+    def test_connect_init_records_explicit_connection_name(self, mock_db_api):
+        from snowflake.connector import connect
+
+        with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
+            connect(connection_name="myconn", user="test_user", account="test_account")
+
+        init_calls = [
+            list(call[0][0].passed_arguments)
+            for call in mock_db_api.telemetry_send_api_usage.call_args_list
+            if call[0][0].api_method == "Connection.__init__"
+        ]
+        assert len(init_calls) == 1
+        assert "connection_name" in init_calls[0]
 
     def test_execute_records_only_passed_arguments(self, cursor, mock_db_api):
         cursor.execute("SELECT 1")

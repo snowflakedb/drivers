@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'net481'">
+    <DefineConstants>$(DefineConstants);OLD_XUNIT</DefineConstants>
+    <OldXunit>True</OldXunit>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net472;net481</TargetFrameworks>
+    <TargetFrameworks Condition="'$(OS)' != 'Windows_NT'">net8.0;net9.0;net10.0</TargetFrameworks>
+    <RootNamespace>Snowflake.Data.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <Import Project="targets/Snowflake.Data.Tests.xunit3.targets" Condition="'$(OldXunit)' != 'True'" />
+  <Import Project="targets/Snowflake.Data.Tests.xunit2.targets" Condition="'$(OldXunit)' == 'True'" />
+
+  <ItemGroup>
+    <PackageReference Include="FluentAssertions" Version="8.10.0" />
+    <PackageReference Include="Snowflake.Data" Version="*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj" />
+  </ItemGroup>
+
+</Project>

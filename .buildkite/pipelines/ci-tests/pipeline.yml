@@ -10,7 +10,7 @@ env:
 common: &common
   agents:
     queue: "discovery"
-    repo: "snowflake-eng/universal-driver"
+    repo: "snowflake-eng/drivers"
   plugins:
     - ${GLOBAL_PLUGIN}/vault_secrets:
         secrets:
@@ -31,7 +31,7 @@ steps:
     key: "test-selection"
     agents:
       queue: "discovery"
-      repo: "snowflake-eng/universal-driver"
+      repo: "snowflake-eng/drivers"
     command: |
       set -euo pipefail
       pip3 install pyyaml -q
@@ -238,7 +238,7 @@ steps:
               export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
 
               echo "--- :hammer: Building ODBC Driver"
-              cargo build
+              cargo build --package odbc
 
               echo "--- :hammer: Building C++ Test Suite"
               source /opt/rh/gcc-toolset-11/enable
@@ -362,7 +362,7 @@ steps:
     soft_fail: true
     agents:
       queue: "discovery"
-      repo: "snowflake-eng/universal-driver"
+      repo: "snowflake-eng/drivers"
     plugins:
       - ${GLOBAL_PLUGIN}/vault_secrets:
           secrets:

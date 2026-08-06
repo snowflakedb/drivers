@@ -2,6 +2,7 @@
 Unit tests for Connection.
 """
 
+import logging
 import warnings
 
 from unittest.mock import MagicMock, patch
@@ -10,7 +11,10 @@ import pytest
 
 from snowflake.connector._internal.binding_converters import ParamStyle
 from snowflake.connector._internal.connection import CURRENT_VERSION_SQL
+from snowflake.connector._internal.errorcode import ER_INVALID_VALUE, ER_INVALID_WIF_SETTINGS
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    VALIDATION_CODE_CONFLICTING_PARAMETERS,
+    VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
     ConfigSetting,
     ConnectionGetInfoResponse,
     ConnectionGetQueryStatusResponse,
@@ -202,6 +206,76 @@ class TestGetAutocommit:
         assert connection.get_autocommit() is True
 
 
+class TestTelemetryEnabled:
+    """Unit tests for Connection.telemetry_enabled."""
+
+    def test_false_when_server_param_unset(self, connection):
+        """Absent CLIENT_TELEMETRY_ENABLED session parameter means unconfirmed, matching legacy."""
+        assert connection.telemetry_enabled is False
+
+    @pytest.mark.parametrize(
+        ("server_value", "expected"),
+        [
+            ("true", True),
+            ("TRUE", True),
+            ("True", True),
+            ("false", False),
+            ("yes", False),
+        ],
+    )
+    def test_reads_server_param_case_insensitively(self, connection, mock_db_api, server_value, expected):
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value=server_value)
+        assert connection.telemetry_enabled is expected
+
+    def test_client_false_overrides_server_true(self, connection, mock_db_api):
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        connection.telemetry_enabled = False
+        assert connection.telemetry_enabled is False
+
+    def test_client_default_and_server_true(self, connection, mock_db_api):
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        assert connection.telemetry_enabled is True
+
+    @pytest.mark.parametrize("raw_value", [1, 0, "", None])
+    def test_setter_coerces_to_bool(self, connection, raw_value):
+        connection.telemetry_enabled = raw_value
+        assert connection._client_param_telemetry_enabled is (bool(raw_value))
+        assert isinstance(connection._client_param_telemetry_enabled, bool)
+
+    def test_enabling_while_server_disabled_logs_info(self, connection, caplog):
+        """Re-enabling while the server half is off should log the legacy message."""
+        with caplog.at_level(logging.INFO):
+            connection.telemetry_enabled = True
+        assert "Telemetry has been disabled by the session parameter CLIENT_TELEMETRY_ENABLED" in caplog.text
+
+    def test_enabling_while_server_enabled_does_not_log(self, connection, mock_db_api, caplog):
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        with caplog.at_level(logging.INFO):
+            connection.telemetry_enabled = True
+        assert "CLIENT_TELEMETRY_ENABLED" not in caplog.text
+
+    def test_disabling_does_not_log(self, connection, caplog):
+        with caplog.at_level(logging.INFO):
+            connection.telemetry_enabled = False
+        assert "CLIENT_TELEMETRY_ENABLED" not in caplog.text
+
+    def test_getter_never_raises_on_rpc_failure(self, connection, mock_db_api):
+        mock_db_api.connection_get_parameter.side_effect = RuntimeError("boom")
+        assert connection.telemetry_enabled is False
+
+    def test_read_after_close_uses_frozen_snapshot(self, connection, mock_db_api):
+        """Post-close reads should answer from the frozen snapshot, matching legacy retaining its last value."""
+        mock_db_api.connection_get_all_parameters.return_value = MagicMock(
+            parameters={"CLIENT_TELEMETRY_ENABLED": "true"}
+        )
+        connection.close()
+
+        assert connection.telemetry_enabled is True
+        call_count_before = mock_db_api.connection_get_parameter.call_count
+        assert connection.telemetry_enabled is True
+        assert mock_db_api.connection_get_parameter.call_count == call_count_before
+
+
 class TestAutocommitKwargUnit:
     """Unit tests for the autocommit keyword argument at connection time."""
 
@@ -285,6 +359,64 @@ class TestClientSessionKeepAliveKwargUnit:
             connection.client_session_keep_alive = True
         with pytest.raises(AttributeError):
             connection.client_session_keep_alive_heartbeat_frequency = 600
+
+
+class TestTimeoutPropertiesUnit:
+    """Unit tests for login_timeout / network_timeout / socket_timeout properties."""
+
+    def test_login_timeout_read_from_config(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a", login_timeout=45)
+
+        assert conn.login_timeout == 45
+
+    def test_login_timeout_default(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a")
+
+        assert conn.login_timeout == 120
+
+    def test_network_timeout_fans_out_to_query_and_request_timeout(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with pytest.warns(DeprecationWarning, match="network_timeout"):
+            conn = Connection(user="u", account="a", network_timeout=45)
+
+        assert conn.network_timeout == 45
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["query_timeout"] == ConfigSetting(int_value=45)
+        assert request.options["request_timeout"] == ConfigSetting(int_value=45)
+
+    def test_socket_timeout_fans_out_to_connect_and_retry_timeout(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with pytest.warns(DeprecationWarning, match="socket_timeout"):
+            conn = Connection(user="u", account="a", socket_timeout=30)
+
+        assert conn.socket_timeout == 30
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["connect_timeout"] == ConfigSetting(int_value=30)
+        assert request.options["retry_timeout"] == ConfigSetting(int_value=30)
+
+    def test_network_and_socket_timeout_defaults(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a")
+
+        assert conn.network_timeout == 120
+        assert conn.socket_timeout is None
+
+    def test_network_timeout_getter_reflects_explicit_request_timeout(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with pytest.warns(DeprecationWarning, match="network_timeout"):
+            conn = Connection(user="u", account="a", network_timeout=45, request_timeout=60)
+
+        assert conn.network_timeout == 60
 
 
 class TestConnectionSetOptions:
@@ -411,6 +543,99 @@ class TestDriverIdentity:
         assert identity.language_runtime == platform.python_implementation()
         assert identity.language_version == platform.python_version()
         assert identity.language_compiler == platform.python_compiler()
+
+
+class TestWifConflictErrnoRemap:
+    """Unit tests for the WIF cross-param errno remap in Connection._connect().
+
+    ``connection_init`` surfaces sf_core's WIF cross-param validation failures as a
+    ``ProgrammingError`` with ``errno=ER_INVALID_VALUE`` and structured ``parameter``/
+    ``validation_code`` attributes set by the lower conversion layer. ``_connect()``
+    re-raises with ``errno=ER_INVALID_WIF_SETTINGS`` for legacy parity, and must forward
+    the same ``parameter``/``validation_code`` onto the re-raised exception rather than
+    dropping them.
+    """
+
+    def test_remapped_exception_carries_parameter_and_validation_code(self, mock_db_api):
+        """The remapped ProgrammingError should carry the original parameter/validation_code."""
+        mock_db_api.connection_init.side_effect = ProgrammingError(
+            msg="workload_identity_provider was set but authenticator was not WORKLOAD_IDENTITY",
+            errno=ER_INVALID_VALUE,
+            parameter="workload_identity_provider",
+            validation_code=VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
+        )
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            Connection(user="test_user", account="test_account")
+
+        assert excinfo.value.errno == ER_INVALID_WIF_SETTINGS
+        assert excinfo.value.parameter == "workload_identity_provider"
+        assert excinfo.value.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
+
+    def test_non_wif_programming_error_is_reraised_unchanged(self, mock_db_api):
+        """A generic CONFLICTING_PARAMETERS error (not WIF) should pass through as-is."""
+        mock_db_api.connection_init.side_effect = ProgrammingError(
+            msg="Both 'private_key' and 'private_key_file' are set. Please provide only one.",
+            errno=ER_INVALID_VALUE,
+            parameter="private_key",
+            validation_code=VALIDATION_CODE_CONFLICTING_PARAMETERS,
+        )
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            Connection(user="test_user", account="test_account")
+
+        assert excinfo.value.errno == ER_INVALID_VALUE
+        assert excinfo.value.parameter == "private_key"
+
+
+class TestAsyncWifConflictErrnoRemap:
+    """Unit tests for the WIF cross-param errno remap in the async Connection.connect()."""
+
+    def test_remapped_exception_carries_parameter_and_validation_code(self, mock_async_db_api):
+        # reference-driver: local import avoids collection-time ImportError — the
+        # reference driver has no `snowflake.connector.aio`, and pytest.mark.skipif
+        # only skips execution, not module import/collection.
+        import asyncio
+
+        from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
+
+        mock_async_db_api.connection_init.side_effect = ProgrammingError(
+            msg="workload_identity_provider was set but authenticator was not WORKLOAD_IDENTITY",
+            errno=ER_INVALID_VALUE,
+            parameter="workload_identity_provider",
+            validation_code=VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
+        )
+
+        conn = AsyncConnection(user="test_user", account="test_account")
+        with pytest.raises(ProgrammingError) as excinfo:
+            asyncio.run(conn.connect())
+
+        assert excinfo.value.errno == ER_INVALID_WIF_SETTINGS
+        assert excinfo.value.parameter == "workload_identity_provider"
+        assert excinfo.value.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
+
+    def test_non_wif_programming_error_is_reraised_unchanged(self, mock_async_db_api):
+        """A generic CONFLICTING_PARAMETERS error (not WIF) should pass through as-is."""
+        # reference-driver: local import avoids collection-time ImportError — the
+        # reference driver has no `snowflake.connector.aio`, and pytest.mark.skipif
+        # only skips execution, not module import/collection.
+        import asyncio
+
+        from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
+
+        mock_async_db_api.connection_init.side_effect = ProgrammingError(
+            msg="Both 'private_key' and 'private_key_file' are set. Please provide only one.",
+            errno=ER_INVALID_VALUE,
+            parameter="private_key",
+            validation_code=VALIDATION_CODE_CONFLICTING_PARAMETERS,
+        )
+
+        conn = AsyncConnection(user="test_user", account="test_account")
+        with pytest.raises(ProgrammingError) as excinfo:
+            asyncio.run(conn.connect())
+
+        assert excinfo.value.errno == ER_INVALID_VALUE
+        assert excinfo.value.parameter == "private_key"
 
 
 class TestClose:

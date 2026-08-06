@@ -24,7 +24,6 @@ public final class ParameterKeyNormalizer {
     LEGACY_KEY_ALIASES.put("db", "database");
     LEGACY_KEY_ALIASES.put("privatekey", "private_key");
     LEGACY_KEY_ALIASES.put("oktausername", "okta_username");
-    LEGACY_KEY_ALIASES.put("logintimeout", "authentication_timeout");
     LEGACY_KEY_ALIASES.put("disablesamlurlcheck", "disable_saml_url_check");
     LEGACY_KEY_ALIASES.put("oauthclientid", "oauth_client_id");
     LEGACY_KEY_ALIASES.put("oauthclientsecret", "oauth_client_secret");
@@ -32,6 +31,20 @@ public final class ParameterKeyNormalizer {
     LEGACY_KEY_ALIASES.put("oauthtokenrequesturl", "oauth_token_request_url");
     LEGACY_KEY_ALIASES.put("oauthredirecturi", "oauth_redirect_uri");
     LEGACY_KEY_ALIASES.put("oauthscope", "oauth_scope");
+    LEGACY_KEY_ALIASES.put("logintimeout", "login_timeout");
+    LEGACY_KEY_ALIASES.put("allowunderscoresinhost", "preserve_underscores_in_hostname");
+    LEGACY_KEY_ALIASES.put("querytimeoutseconds", "query_timeout");
+    LEGACY_KEY_ALIASES.put("querytimeout", "query_timeout");
+    LEGACY_KEY_ALIASES.put("maxhttpretries", "retry_max_attempts");
+    LEGACY_KEY_ALIASES.put("putgetmaxretries", "put_get_max_attempts");
+    LEGACY_KEY_ALIASES.put("proxyhost", "proxy_host");
+    LEGACY_KEY_ALIASES.put("proxyport", "proxy_port");
+    LEGACY_KEY_ALIASES.put("proxyuser", "proxy_user");
+    LEGACY_KEY_ALIASES.put("proxypassword", "proxy_password");
+    LEGACY_KEY_ALIASES.put("nonproxyhosts", "no_proxy");
+    LEGACY_KEY_ALIASES.put("enablediagnostics", "enable_connection_diag");
+    LEGACY_KEY_ALIASES.put("diagnosticsallowlistfile", "connection_diag_allowlist_path");
+    LEGACY_KEY_ALIASES.put("browser_response_timeout", "authentication_timeout");
   }
 
   /**

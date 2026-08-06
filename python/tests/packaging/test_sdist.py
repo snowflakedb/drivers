@@ -126,14 +126,16 @@ class TestSdistPackaging:
             [
                 str(python_exe),
                 "-c",
-                "from snowflake.connector._internal.api_client import c_api; print('c_api imported successfully')",
+                "from snowflake.connector._core import sf_core_python; print('sf_core_python imported successfully')",
             ]
         )
 
         if result.returncode != 0:
-            pytest.fail(f"Failed to import c_api (native library):\nstdout: {result.stdout}\nstderr: {result.stderr}")
+            pytest.fail(
+                f"Failed to import sf_core_python (native library):\nstdout: {result.stdout}\nstderr: {result.stderr}"
+            )
 
-        assert "c_api imported successfully" in result.stdout
+        assert "sf_core_python imported successfully" in result.stdout
 
     @pytest.mark.slow
     def test_sdist_build_and_install(self, temp_env: Path) -> None:
@@ -187,7 +189,8 @@ class TestSdistPackaging:
                 "Cargo.lock",
                 "sf_core/Cargo.toml",
                 "sf_core/src/lib.rs",
-                "sf_core/src/c_api.rs",
+                "python_bridge/Cargo.toml",
+                "python_bridge/src/lib.rs",
                 "proto_utils/Cargo.toml",
                 "proto_utils/src/lib.rs",
                 "proto_generator/Cargo.toml",
@@ -209,6 +212,7 @@ class TestSdistPackaging:
                 for n in names
                 if n.endswith("/Cargo.toml")
                 and "sf_core" not in n
+                and "python_bridge" not in n
                 and "proto_utils" not in n
                 and "proto_generator" not in n
                 and "error_trace" not in n
@@ -218,6 +222,7 @@ class TestSdistPackaging:
             content = cargo_content.read().decode("utf-8")
 
             assert "sf_core" in content
+            assert "python_bridge" in content
             assert "proto_utils" in content
             assert "error_trace" in content
             assert "error_trace_derive" in content

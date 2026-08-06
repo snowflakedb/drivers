@@ -22,11 +22,11 @@
 #   COPYBARA_RELEASE        Copybara release tag (e.g. v20260504). Used both
 #                           as the default build arg for the image and as
 #                           part of the local image tag.
-#   DRIVER_MIRROR_TOKEN     Push token for snowflake-eng/universal-driver
+#   DRIVER_MIRROR_TOKEN     Push token for snowflake-eng/drivers
 #                           (outbound: git fetch origin; inbound: inlined
 #                           into --git-destination-url).
 #   DRIVER_MIRROR_TOKEN_SNOWFLAKEDB
-#                           Push token for snowflakedb/universal-driver
+#                           Push token for snowflakedb/drivers
 #                           (outbound: inlined into --git-destination-url;
 #                           inbound: git fetch origin + PR metadata API).
 #
@@ -166,7 +166,7 @@ case "${SUBCOMMAND}" in
     # against a not-yet-mirrored branch, seed it first (or pass --init-history
     # via single_ref/last_rev for a full-history replay).
     run_copybara migrate ci/mirroring/copy.bara.sky mirror "${BRANCH}" \
-      --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/universal-driver.git" \
+      --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/drivers.git" \
       --git-destination-push="${BRANCH}" \
       --force \
       "${extra_args[@]}"
@@ -188,7 +188,7 @@ case "${SUBCOMMAND}" in
     fi
     python3 "${REPO_ROOT}/scripts/mirror/prepare_import_paths.py" "${PR_NUMBER}" "${import_draft_args[@]}"
     # --nogit-destination-rebase: the mirror is a strict subset of the
-    # internal repo (no copy.bara.sky, _internal/, adr/, .github/, …).
+    # internal repo (no copy.bara.sky, NOMIRROR directories, adr/, .github/, …).
     # Rebasing the mirror PR branch onto internal main fails with
     # modify/delete conflicts on those internal-only files. Skipping the
     # rebase applies the PR diff as-is on top of internal main — safe
@@ -208,7 +208,7 @@ case "${SUBCOMMAND}" in
       -e "GITHUB_TOKEN=${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}" \
       "${COPYBARA_IMAGE}" \
       migrate ci/mirroring/copy.bara.sky import "${PR_NUMBER}" \
-        --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflake-eng/universal-driver.git" \
+        --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflake-eng/drivers.git" \
         --nogit-destination-rebase \
         --force || rc=$?
     if [ "${rc}" -eq 4 ]; then

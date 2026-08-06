@@ -1,17 +1,15 @@
 package net.snowflake.client.internal.log;
 
-import net.snowflake.client.internal.util.MaskedException;
-
-/** Direct delivery backend with shared formatting, masking, and never-throw guard. */
+/** Direct delivery backend with shared formatting and never-throw guard. */
 abstract class AbstractDeliveryLogger extends AbstractSFLogger {
 
   @Override
-  protected final void logPlain(LogLevel level, String msg, boolean isMasked) {
+  protected final void logPlain(LogLevel level, String msg) {
     try {
       if (!isLevelEnabled(level)) {
         return;
       }
-      deliver(level, isMasked ? LogFormatter.mask(msg) : msg, null);
+      deliver(level, msg, null);
     } catch (Throwable ignored) {
       // Logging must never throw.
     }
@@ -24,7 +22,15 @@ abstract class AbstractDeliveryLogger extends AbstractSFLogger {
         return;
       }
       LogFormatter.Formatted formatted = LogFormatter.format(msg, arguments);
-      deliver(level, formatted.getMessage(), formatted.getThrowable());
+      Throwable throwable = formatted.getThrowable();
+      if (LogFormatter.deferThrowableDetailToDebug(level, throwable)) {
+        deliver(level, LogFormatter.withTypeOnlyCause(formatted.getMessage(), throwable), null);
+        if (isLevelEnabled(LogLevel.DEBUG)) {
+          deliver(LogLevel.DEBUG, formatted.getMessage(), throwable);
+        }
+      } else {
+        deliver(level, formatted.getMessage(), throwable);
+      }
     } catch (Throwable ignored) {
       // Logging must never throw.
     }
@@ -36,7 +42,14 @@ abstract class AbstractDeliveryLogger extends AbstractSFLogger {
       if (!isLevelEnabled(level)) {
         return;
       }
-      deliver(level, LogFormatter.mask(msg), t == null ? null : new MaskedException(t));
+      if (LogFormatter.deferThrowableDetailToDebug(level, t)) {
+        deliver(level, LogFormatter.withTypeOnlyCause(msg, t), null);
+        if (isLevelEnabled(LogLevel.DEBUG)) {
+          deliver(LogLevel.DEBUG, msg, t);
+        }
+      } else {
+        deliver(level, msg, t);
+      }
     } catch (Throwable ignored) {
       // Logging must never throw.
     }

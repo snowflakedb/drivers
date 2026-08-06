@@ -79,13 +79,12 @@ aws-credential-types = "1.2.11"
 # Enables `ByteStream::from_body_1_x` so the S3 PUT path can stream a custom
 # (lazily-encrypting) http-body without buffering ciphertext.
 aws-smithy-types = { version = "1.3", features = ["http-body-1-x"] }
-# Hand-built, version-pinned AWS HTTP client (see `tls::aws_http_client`).
-# aws-smithy-http-client's TLS API exposes no min/max protocol-version knob, so
-# when the caller narrows the TLS window we adapt a hyper(-rustls) client to
-# smithy's `HttpClient` trait. Only engaged for a narrowed window.
+# aws-smithy-http-client's own TLS API exposes no min/max protocol-version knob,
+# no CRL hook, and no custom root store, so it cannot honour the connection's
+# full `TlsConfig`. Instead of a second HTTP stack, `tls::aws_http_client` adapts
+# the shared reqwest transport (the one Azure/GCS use) to smithy's `HttpClient`
+# trait — hence only the smithy runtime-api trait surface is needed here.
 aws-smithy-runtime-api = { version = "1.9", features = ["client", "http-1x"] }
-hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
-hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "aws-lc-rs"] }
 snafu = "0.8.7"
 error_trace = { path = "../error_trace" }
 fs2 = "0.4"

@@ -112,6 +112,7 @@ jobs:
             --input protobuf/database_driver_v1.proto \
             --output python/src/snowflake/connector/_internal/protobuf_gen
 
+
       - name: Run pre-commit on all files
         # Skip `generate-connection-config` in CI: it regenerates the file,
         # reformats via hatch, and `git add`s — all pointless on ephemeral

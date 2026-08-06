@@ -49,7 +49,8 @@ def verify_results(
             lines = f.readlines()
             if len(lines) <= 1:
                 raise RuntimeError(f"Result file {latest_file} is empty or missing data")
-            if "timestamp" not in lines[0] or "query_s" not in lines[0]:
+            has_valid_header = "timestamp" in lines[0] and ("query_s" in lines[0] or "e2e_s" in lines[0])
+            if not has_valid_header:
                 raise RuntimeError(f"Invalid CSV header in {latest_file}")
             # +1 for header line
             if len(lines) < min_iterations + 1:

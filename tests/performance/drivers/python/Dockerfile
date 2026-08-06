@@ -55,28 +55,29 @@ COPY error_trace_derive/ ./error_trace_derive/
 COPY jdbc_bridge/ ./jdbc_bridge/
 COPY nodejs_bridge/ ./nodejs_bridge/
 COPY odbc_trace_tool/ ./odbc_trace_tool/
+COPY python_bridge/ ./python_bridge/
 
 # Copy Python package sources
 COPY python/ ./python/
 # Recreate symlinks (Docker COPY does not preserve symlinks to outside the context)
 RUN cd python && \
-    rm -f Cargo.toml sf_core proto_utils proto_generator protobuf error_trace error_trace_derive && \
+    rm -f Cargo.toml sf_core proto_utils proto_generator protobuf error_trace error_trace_derive python_bridge && \
     ln -s ../Cargo.toml Cargo.toml && \
     ln -s ../sf_core sf_core && \
     ln -s ../proto_utils proto_utils && \
     ln -s ../proto_generator proto_generator && \
     ln -s ../protobuf protobuf && \
     ln -s ../error_trace error_trace && \
-    ln -s ../error_trace_derive error_trace_derive
+    ln -s ../error_trace_derive error_trace_derive && \
+    ln -s ../python_bridge python_bridge
 
-# Use pre-built libsf_core.so from sf-core-builder.
-COPY tests/performance/.tmp/libsf_core.so /workdir/python/src/snowflake/connector/_core/libsf_core.so
-COPY tests/performance/.tmp/rust_version /etc/rust_version
+# Install the driver — builds Cython extensions + python_bridge via hatch_build.py.
+# SF_PERF_METRICS enables sf_core/perf_timing in the PyO3 extension build.
+ENV SF_PERF_METRICS=1
+RUN pip install --no-cache-dir "/workdir/python/[pandas]"
 
-# Install the driver — builds Cython extensions via hatch_build.py.
-# SKIP_CORE_BUILD tells hatch to skip cargo build of sf_core (we use the pre-built one above).
-ENV SKIP_CORE_BUILD=1
-RUN pip install --no-cache-dir /workdir/python/
+# Record the Rust toolchain that built python_bridge (for results metadata).
+RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /etc/rust_version
 
 ENV DRIVER_TYPE=universal
 
@@ -92,7 +93,7 @@ CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/r
 # ============================================================================
 FROM base AS old
 
-RUN pip install --no-cache-dir snowflake-connector-python
+RUN pip install --no-cache-dir "snowflake-connector-python[pandas]"
 RUN echo "N/A" > /etc/rust_version
 
 ENV DRIVER_TYPE=old

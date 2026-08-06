@@ -1,7 +1,9 @@
-# Minimal workspace for sdist builds (only includes sf_core and its dependencies)
+# Minimal workspace for sdist builds (only includes python bridge and its dependencies)
 [workspace]
 members = [
     "sf_core",
+    "python_bridge",
+    "python_bridge/stub_gen",
     "proto_utils",
     "error_trace",
     "error_trace_derive",
@@ -11,7 +13,7 @@ members = [
     # Cargo validates all path dependencies even for release builds.
     "sf_core/tests/common/arrow_deserialize_macro",
 ]
-resolver = "1"
+resolver = "2"
 
 [profile.release]
 strip = true

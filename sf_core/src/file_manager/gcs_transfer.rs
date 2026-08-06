@@ -2,21 +2,20 @@ use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRet
 use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
-    MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher,
-    UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    LocationType, MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError,
+    StageInfoRefresher, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::log_foreign_error;
 use crate::refresh::{Refresher, execute_with_refresh};
-use crate::sensitive::SensitiveString;
 use bytes::Bytes;
 use reqwest::{Method, StatusCode};
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
@@ -27,12 +26,18 @@ const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
 
 /// Uploads a file to GCS, skipping when either:
 ///   * the object already exists and `overwrite` is false (existence skip), or
-///   * the remote object's stored SHA-256 (`x-goog-meta-sfc-digest`) matches
-///     the local payload's SHA-256 — even under `OVERWRITE=TRUE` (digest skip).
+///   * the caller opted in via `skip_upload_on_content_match` and the remote
+///     object's stored SHA-256 (`x-goog-meta-sfc-digest`) matches the local
+///     payload's SHA-256 under `OVERWRITE=TRUE` (content-match skip).
 ///
-/// The existence check runs first (cheap, gated on `!overwrite`); the
-/// content-match check runs regardless of `overwrite`. The HEAD is always
-/// issued so both checks can share its result.
+/// The decision is shared with S3 and Azure via `super::skip_upload_decision`;
+/// gating the content-match skip on the flag restores legacy-Python parity
+/// (GCS previously skipped matching content unconditionally).
+///
+/// The HEAD probe is elided entirely when neither skip could fire
+/// (`head_needed = !overwrite || skip_upload_on_content_match`) — matching
+/// the "no HEAD issued when overwrite=true and skip=false" behavior of the
+/// other clouds.
 ///
 /// `refresher` drives the reactive stage-info recovery introduced by gaps
 /// 2.1 (URL expiry) and 2.4 (token expiry):
@@ -50,26 +55,24 @@ const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
 /// When `refresher` is `None`, neither recovery fires and the old shape is
 /// preserved (400 stays on the wire-level retry list via `gcs_retry_policy`;
 /// 401 surfaces as `TokenExpired` exactly as before).
+// One arg over the 7-arg clippy threshold (multipart + the opt-in
+// `skip_upload_on_content_match`); mirrors Azure's `upload_to_azure_or_skip`.
+#[allow(clippy::too_many_arguments)]
 pub async fn upload_to_gcs_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    skip_upload_on_content_match: bool,
     multipart: MultipartParams,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let using_presigned_url = stage_info.presigned_url.is_some();
     let has_refresher = refresher.is_some();
 
-    // Tell the refresher which destination file is uploading so a per-file URL
-    // refresh re-issues the PUT SQL rewritten for *this* file (multi-file glob
-    // PUT). `filename` is the dst object name (incl. compression suffix).
-    if let Some(r) = refresher.as_deref_mut() {
-        r.notify_current_upload_file(filename.to_string());
-    }
     // With a refresher, 400 is removed from the wire-level retry list — we
     // handle it reactively here by rotating the URL. Without a refresher,
     // the injected policy keeps the legacy 400-retry-with-same-URL fallback.
@@ -81,9 +84,7 @@ pub async fn upload_to_gcs_or_skip(
 
     // Two-strike URL-refresh model. `make_attempt` is a factory that captures
     // `base` (the stage-info for this strike) so the attempt body is written
-    // once and called twice with different bases. `Option<&mut dyn Trait>`
-    // reborrows prevent extracting the two-strike orchestration into a shared
-    // async helper across sequential awaits, so it stays inline here.
+    // once and called twice with different bases.
     let make_attempt = |base: &StageInfo| {
         let base = base.clone();
         let prepared = prepared.clone();
@@ -100,27 +101,35 @@ pub async fn upload_to_gcs_or_skip(
                 let (url, token) = resolve_url_and_token(&stage_info, &key, None)
                     .map_err(map_gcs_request_error_for_attempt)?;
 
-                let head = check_file_exists_gcs(&client, &url, token).await;
-
-                if !overwrite && matches!(head, GcsHeadResult::Found { .. }) {
-                    tracing::info!("File already exists in GCS: {key:?}");
-                    return Ok(UploadStatus::Skipped);
-                }
+                // Elide the HEAD when neither skip branch could fire (mirrors
+                // Azure/S3): with overwrite=true and the flag off there is
+                // nothing to check, so we go straight to the PUT.
+                let head_needed = !overwrite || skip_upload_on_content_match;
+                let head = if head_needed {
+                    check_file_exists_gcs(&client, &url, token).await
+                } else {
+                    GcsHeadResult::NotFound
+                };
 
                 // `prepared.digest` is the SHA-256 of the (compressed) plaintext for both
                 // SSE and CSE stages (see `encryption.rs`), so it is stable across uploads
                 // of identical content and matches the digest stored by this and other
-                // drivers. The skip therefore fires whenever the remote content matches,
-                // regardless of the encryption mode.
-                if let GcsHeadResult::Found {
-                    digest: Some(ref d),
-                } = head
-                    && d == &prepared.digest
-                {
-                    tracing::info!(
-                        "Remote GCS object matches local content digest, skipping upload: {key:?}"
-                    );
-                    return Ok(UploadStatus::Skipped);
+                // drivers, regardless of the encryption mode.
+                let remote_head = match &head {
+                    GcsHeadResult::Found { digest } => super::RemoteHead::Present {
+                        digest: digest.as_deref(),
+                    },
+                    GcsHeadResult::NotFound => super::RemoteHead::Absent,
+                };
+                if let Some(status) = super::skip_upload_decision(
+                    LocationType::Gcs,
+                    overwrite,
+                    skip_upload_on_content_match,
+                    &remote_head,
+                    &prepared.digest,
+                    &key,
+                ) {
+                    return Ok(status);
                 }
 
                 // Large files on the access-token path take the XML-API
@@ -149,7 +158,7 @@ pub async fn upload_to_gcs_or_skip(
     };
 
     let first = run_gcs_with_token_refresh(
-        refresher.as_deref_mut(),
+        refresher,
         stage_info,
         |e| gcs_upload_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info),
@@ -171,13 +180,13 @@ pub async fn upload_to_gcs_or_skip(
 
     tracing::warn!("GCS PUT returned 400 in presigned mode; refreshing per-file URL and retrying");
     let refreshed_stage_info = {
-        let Some(r) = refresher.as_mut() else {
+        let Some(r) = refresher else {
             // Invariant: needs_url_refresh is only true when has_refresher
             // is true, so refresher must be Some here.
             unreachable!("refresher is Some: needs_url_refresh requires has_refresher");
         };
-        match r.refresh_url().await {
-            Ok(()) => {}
+        match r.refresh_url(Some(filename)).await {
+            Ok(_) => {}
             Err(StageInfoRefreshError::PresignedUrlRefreshSkipped { .. }) => {
                 // The PUT command had no parseable file:// path to rewrite for
                 // this file, so a per-file URL refresh wasn't possible. Fail
@@ -194,7 +203,7 @@ pub async fn upload_to_gcs_or_skip(
     };
 
     let second = run_gcs_with_token_refresh(
-        refresher.as_deref_mut(),
+        refresher,
         &refreshed_stage_info,
         |e| gcs_upload_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(&refreshed_stage_info),
@@ -258,7 +267,7 @@ async fn gcs_get_with_refresh(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<reqwest::Response, GcsDownloadError> {
     let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -320,7 +329,7 @@ async fn gcs_get_with_refresh(
     };
 
     let first = run_gcs_with_token_refresh(
-        refresher.as_deref_mut(),
+        refresher,
         stage_info,
         |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info, initial_per_file_url.clone()),
@@ -349,12 +358,12 @@ async fn gcs_get_with_refresh(
             "GCS GET returned 400 in presigned mode; refreshing per-file URL and retrying"
         );
         let (refreshed_stage_info, refreshed_per_file_url) = {
-            let Some(r) = refresher.as_mut() else {
+            let Some(r) = refresher else {
                 // Invariant: needs_url_refresh is only true when has_refresher
                 // is true, so refresher must be Some here.
                 unreachable!("refresher is Some: needs_url_refresh requires has_refresher");
             };
-            r.refresh_url()
+            r.refresh_url(None)
                 .await
                 .context(gcs_download_error::StageInfoRefreshSnafu)?;
             let snap = r.cache().snapshot();
@@ -376,7 +385,7 @@ async fn gcs_get_with_refresh(
         };
 
         let second = run_gcs_with_token_refresh(
-            refresher.as_deref_mut(),
+            refresher,
             &refreshed_stage_info,
             |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
             make_attempt(&refreshed_stage_info, refreshed_per_file_url),
@@ -410,7 +419,7 @@ pub async fn download_from_gcs(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<DownloadResponse, GcsDownloadError> {
     let response = gcs_get_with_refresh(
         stage_info,
@@ -1129,6 +1138,10 @@ fn create_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client, GcsReque
     let builder = crate::tls::client::configure_tls_builder(
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
+        // Honour the connection's explicit proxy (proxy_host/proxy_port/no_proxy)
+        // and its use_proxy_env env-detection policy for GCS transfers — the same
+        // logic the GS/REST client uses.
+        Some(&stage_info.proxy_config),
         stage_info.crl_worker.clone(),
     )
     .map_err(|e| {
@@ -1263,9 +1276,10 @@ fn try_get_header(
 /// the integration-test / retry-test surface.
 ///
 /// The body is streamed from the HTTP response through a tokio-spawned producer
-/// task into a `std::sync::mpsc::sync_channel`. `StreamReader` consumes from
-/// the channel, implementing `Read` so `decrypt_ciphertext_to_writer` (which is
-/// sync) can consume the body without blocking the async runtime.
+/// task into a `tokio::sync::mpsc::channel`. `StreamReader` consumes from the
+/// channel via `blocking_recv`, implementing `Read` so `decrypt_ciphertext_to_writer`
+/// (which is sync) can consume the body from inside `spawn_blocking` without
+/// blocking an async runtime worker.
 ///
 /// `pub` so the cfg-gated `file_manager::internal` re-export in `mod.rs`
 /// can surface it to integration tests via `pub use`; the parent module
@@ -1283,7 +1297,8 @@ pub async fn download_from_gcs_streaming(
     policy: &RetryPolicy,
     per_file_index: usize,
     multipart: MultipartParams,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
     // Ranged (multipart) download applies only on the access-token path — a
@@ -1299,6 +1314,7 @@ pub async fn download_from_gcs_streaming(
             policy,
             multipart,
             refresher,
+            unsafe_file_write,
             spill_target,
         )
         .await?
@@ -1308,6 +1324,32 @@ pub async fn download_from_gcs_streaming(
     // else: presigned session, or object below the threshold / size not
     // probeable — fall through to the single streamed GET below.
 
+    // Non-ranged fall-through: a single unranged streaming GET.
+    gcs_get_streaming(
+        stage_info,
+        filename,
+        per_file_presigned_url,
+        policy,
+        per_file_index,
+        refresher,
+    )
+    .await
+}
+
+/// Single unranged streaming GET against GCS — the zero-disk path's entry
+/// point (mirrors [`azure_transfer::azure_get_streaming`]). Always issues one
+/// GET straight off the network, so the result always carries a
+/// `producer_abort`, never a spilled body. [`download_from_gcs_streaming`]
+/// delegates here for its non-ranged fall-through; [`super::open_gcs_download_stream`]
+/// calls it directly to guarantee the single-GET body zero-disk needs.
+pub(super) async fn gcs_get_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    per_file_presigned_url: Option<&str>,
+    policy: &RetryPolicy,
+    per_file_index: usize,
+    refresher: Option<&dyn StageInfoRefresher>,
+) -> Result<CloudStreamingDownload, GcsDownloadError> {
     let response = gcs_get_with_refresh(
         stage_info,
         filename,
@@ -1318,21 +1360,39 @@ pub async fn download_from_gcs_streaming(
     )
     .await?;
 
-    // cloud_byte_count from Content-Length (accurate for non-chunked responses).
-    // Falls back to 0 when the header is absent; mod.rs uses the actual written
-    // byte count as a fallback for the Python flavor.
-    let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
+    let headers = response.headers();
+    let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
 
-    let cse_info = parse_gcs_cse_info(response.headers())?;
+    let file_metadata = match try_get_header(headers, GCS_META_ENCRYPTIONDATA)? {
+        Some(encryption_data_str) => {
+            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
 
-    let reader = cloud_http::spawn_byte_stream_producer(response);
-    let cloud_bytes_read = reader.bytes_read_handle();
-    Ok(CloudStreamingDownload {
-        cloud_byte_count,
-        cse_info,
-        cloud_bytes_read,
-        body: cloud_http::CloudDownloadBody::Streamed(Box::new(reader)),
-    })
+            let mat_desc_str = try_get_header(headers, GCS_META_MATDESC)?.context(
+                gcs_download_error::MissingMetadataSnafu {
+                    field: GCS_META_MATDESC,
+                },
+            )?;
+            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
+
+            Some(EncryptedFileMetadata {
+                encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+                iv: enc_data.content_encryption_iv,
+                material_desc,
+            })
+        }
+        None => None,
+    };
+
+    // Content-Length byte count, git-stage fallback, and spawning the
+    // byte-stream producer are shared with Azure's single-GET path — see
+    // `CloudStreamingDownload::from_reqwest_response`.
+    Ok(CloudStreamingDownload::from_reqwest_response(
+        response,
+        digest,
+        file_metadata,
+    ))
 }
 
 /// Parses the `sfc-digest` and (for CSE) the `encryptiondata` / `matdesc` GCS
@@ -1388,7 +1448,8 @@ async fn gcs_try_ranged_download(
     filename: &str,
     policy: &RetryPolicy,
     multipart: MultipartParams,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<Option<CloudStreamingDownload>, GcsDownloadError> {
     let client = create_gcs_client(stage_info)?;
@@ -1410,14 +1471,22 @@ async fn gcs_try_ranged_download(
                 let Some(token) = token else {
                     return Ok(None);
                 };
-                gcs_ranged_download_attempt(&client, &url, token, multipart, policy, spill_target)
-                    .await
+                gcs_ranged_download_attempt(
+                    &client,
+                    &url,
+                    token,
+                    multipart,
+                    policy,
+                    unsafe_file_write,
+                    spill_target,
+                )
+                .await
             }
         }
     };
 
     run_gcs_with_token_refresh(
-        refresher.as_deref_mut(),
+        refresher,
         stage_info,
         |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info),
@@ -1435,6 +1504,7 @@ async fn gcs_ranged_download_attempt(
     token: &str,
     multipart: MultipartParams,
     policy: &RetryPolicy,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<Option<CloudStreamingDownload>, GcsAttemptError<GcsDownloadError>> {
     // HEAD probe. A 401 must refresh; any other probe failure degrades to the
@@ -1484,6 +1554,7 @@ async fn gcs_ranged_download_attempt(
         chunk_size,
         multipart.concurrency,
         policy,
+        unsafe_file_write,
         spill_target,
     )
     .await
@@ -1498,6 +1569,8 @@ async fn gcs_ranged_download_attempt(
         cloud_byte_count: content_length as i64,
         cse_info,
         cloud_bytes_read: Arc::new(AtomicU64::new(0)),
+        // Ranged/spilled: parallel GETs already finished, no producer task
+        // left to cancel.
         body: cloud_http::CloudDownloadBody::Spilled(spilled),
     }))
 }
@@ -1510,9 +1583,9 @@ async fn gcs_ranged_download_attempt(
 ///
 /// Every argument is a distinct input (connection + request identity, the
 /// object's size and chosen chunk size, how many ranges to fetch at once, the
-/// retry policy, and the spill target); Azure's `azure_range_download` stays
-/// under the limit only because its auth rides in the URL/SAS rather than a
-/// separate bearer `token` argument.
+/// retry policy, the spill target, and output-file permissions); S3/Azure omit
+/// a separate bearer `token` argument because auth rides in the SDK client or
+/// SAS URL respectively.
 #[allow(clippy::too_many_arguments)]
 async fn gcs_range_download(
     client: &reqwest::Client,
@@ -1522,6 +1595,7 @@ async fn gcs_range_download(
     chunk_size: u64,
     concurrency: usize,
     policy: &RetryPolicy,
+    unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, GcsRequestError> {
     let mk_temp_err = |detail: String| GcsRequestError::TempFile { detail };
@@ -1536,6 +1610,7 @@ async fn gcs_range_download(
         chunk_size,
         concurrency,
         target,
+        unsafe_file_write,
         mk_temp_err,
         mk_range_err,
         move |range| async move { gcs_get_range(client, url, token, &range, policy).await },
@@ -1606,16 +1681,13 @@ fn map_gcs_request_error_for_attempt<E: From<GcsRequestError>>(
 /// shared cache and asking it to rotate when GCS returns 401.
 ///
 /// Tracks the last bearer token handed out so a refresh that doesn't
-/// actually rotate (refresher inside its 10-min coalescing window — bit-for-bit
-/// identical to libsfclient's `m_lastRefreshTokenSec` at
-/// `FileTransferAgent.cpp:412`) reports `Ok(false)` and the helper propagates
-/// the original error rather than spinning. The bearer comparison goes through
-/// `SensitiveString`'s `reveal` boundary only here; the comparison result is a
-/// plain `bool` and the strings themselves don't escape.
+/// Forwards `refresh` to the shared `StageInfoRefresher` coordinator, which
+/// handles coalescing and single-flight. The generation-based return value
+/// encodes whether a real rotation occurred.
 struct GcsTokenRefresher<'a, E, W> {
-    refresher: &'a mut dyn StageInfoRefresher,
-    last_seen_token: Option<SensitiveString>,
+    refresher: &'a dyn StageInfoRefresher,
     map_refresh_err: W,
+    observed: Instant,
     _marker: PhantomData<fn() -> E>,
 }
 
@@ -1623,12 +1695,10 @@ impl<'a, E, W> GcsTokenRefresher<'a, E, W>
 where
     W: Fn(StageInfoRefreshError) -> E,
 {
-    fn new(refresher: &'a mut dyn StageInfoRefresher, map_refresh_err: W) -> Self {
-        let last_seen_token =
-            gcs_bearer_token(&refresher.cache().snapshot().creds).map(SensitiveString::from);
+    fn new(refresher: &'a dyn StageInfoRefresher, map_refresh_err: W) -> Self {
         Self {
+            observed: refresher.cache().cached_at(),
             refresher,
-            last_seen_token,
             map_refresh_err,
             _marker: PhantomData,
         }
@@ -1658,34 +1728,15 @@ where
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, GcsAttemptError<E>>> {
         Box::pin(async move {
             tracing::info!("GCS hit 401; refreshing stage info (creds)");
-            self.refresher
-                .refresh()
+            let new_gen = self
+                .refresher
+                .refresh(self.observed)
                 .await
                 .map_err(|e| GcsAttemptError::Other((self.map_refresh_err)(e)))?;
-            let new = self.refresher.cache().snapshot();
-            let new_token = gcs_bearer_token(&new.creds).map(SensitiveString::from);
-            if new_token.as_ref().map(|s| s.reveal().as_str())
-                == self.last_seen_token.as_ref().map(|s| s.reveal().as_str())
-            {
-                // Refresher coalesced or returned the same bearer — retrying
-                // would loop, so decline further rotations.
-                return Ok(false);
-            }
-            self.last_seen_token = new_token;
-            Ok(true)
+            let advanced = new_gen > self.observed;
+            self.observed = new_gen;
+            Ok(advanced)
         })
-    }
-}
-
-/// Returns the bearer string from GCS credentials, or None for non-GCS
-/// variants. Used as the rotation marker; a different bearer implies a
-/// fresh GS rotation. Mirrors `aws_key_id` in `s3_transfer.rs`.
-fn gcs_bearer_token(creds: &CloudCredentials) -> Option<&str> {
-    match creds {
-        CloudCredentials::Gcs {
-            gcs_access_token: Some(t),
-        } => Some(t.reveal().as_str()),
-        _ => None,
     }
 }
 
@@ -1698,14 +1749,13 @@ fn gcs_bearer_token(creds: &CloudCredentials) -> Option<&str> {
 /// `initial_stage_info` seeds the snapshot handed to the first `attempt`
 /// invocation in the no-refresher branch, so the legacy path keeps reading
 /// the caller's original creds and presigned_url.
-async fn run_gcs_with_token_refresh<'r, 'd, F, Fut, T, E>(
-    refresher: Option<&'r mut (dyn StageInfoRefresher + 'd)>,
+async fn run_gcs_with_token_refresh<F, Fut, T, E>(
+    refresher: Option<&dyn StageInfoRefresher>,
     initial_stage_info: &StageInfo,
     map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
     attempt: F,
 ) -> Result<T, E>
 where
-    'd: 'r,
     F: Fn(super::types::StageInfoSnapshot) -> Fut,
     Fut: Future<Output = Result<T, GcsAttemptError<E>>>,
     E: Send + From<GcsRequestError>,
@@ -2047,10 +2097,11 @@ pub enum GcsDownloadError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
     use crate::config::retry::Jitter;
-    use crate::file_manager::types::{RefreshFuture, StageInfoCache, StageInfoSnapshot};
+    use crate::file_manager::types::{StageInfoCache, StageInfoSnapshot};
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
 
@@ -2081,6 +2132,7 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         }
     }
@@ -2700,12 +2752,17 @@ mod tests {
     }
 
     impl super::super::types::StageInfoRefresher for NoopRefresher {
-        fn refresh(&mut self) -> super::super::types::RefreshFuture<'_> {
-            Box::pin(async { Ok(()) })
+        fn refresh(&self, _observed: std::time::Instant) -> super::super::types::RefreshFuture<'_> {
+            // Noop: no rotation performed, so the generation is unchanged.
+            let new_gen = self.cache.cached_at();
+            Box::pin(async move { Ok(new_gen) })
         }
 
-        fn refresh_url(&mut self) -> RefreshFuture<'_> {
-            Box::pin(async { Ok(()) })
+        fn refresh_url(
+            &self,
+            _current_upload_file: Option<&str>,
+        ) -> super::super::types::RefreshFuture<'_> {
+            Box::pin(async move { Ok(std::time::Instant::now()) })
         }
 
         fn cache(&self) -> &StageInfoCache {
@@ -2720,10 +2777,10 @@ mod tests {
         // by the outer 400-refresh loop) and 403 (access denied, not
         // recoverable by cred rotation) must not trigger the creds refresh
         // loop.
-        let mut noop = NoopRefresher::with_token("tok");
+        let noop = NoopRefresher::with_token("tok");
         // Use unit type as E to isolate the should_refresh logic from error
         // conversions — the check dispatches only on the enum variant.
-        let r: GcsTokenRefresher<'_, (), _> = GcsTokenRefresher::new(&mut noop, |_| ());
+        let r: GcsTokenRefresher<'_, (), _> = GcsTokenRefresher::new(&noop, |_| ());
 
         assert!(
             r.should_refresh(&GcsAttemptError::TokenExpired),
@@ -2877,30 +2934,18 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // `upload_to_gcs_or_skip` — digest-based skip-on-content-match
+    // `upload_to_gcs_or_skip` — skip-on-content-match decision
     //
-    // Mirrors Python connector `storage_client.py:213-220` order:
+    // Decision order (shared with S3/Azure via `super::skip_upload_decision`):
     //   1. existence skip (gated on `!overwrite`)
-    //   2. digest skip (fires even when `overwrite=true`)
+    //   2. content-match skip (gated on `overwrite && skip_upload_on_content_match`)
     //   3. PUT
     //
     // Each test mounts a `HEAD` mock with a configurable response and a
     // `PUT` mock with `.expect(0)` or `.expect(1)` to assert the skip
-    // path was (or wasn't) taken without relying on side effects.
+    // path was (or wasn't) taken without relying on side effects. The
+    // opt-out and no-HEAD tests at the end pin the flag-off behavior.
     // ---------------------------------------------------------------
-
-    /// Constructs a SSE-shaped `PreparedUpload` whose `digest` field is
-    /// the caller-supplied marker string. The actual `data` bytes are
-    /// irrelevant — the skip branch never gets to PUT them.
-    fn make_prepared_for_skip(digest: &str) -> PreparedUpload {
-        PreparedUpload {
-            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(
-                b"payload-bytes",
-            )),
-            digest: digest.to_string(),
-            cse: None,
-        }
-    }
 
     /// Constructs a CSE-shaped `PreparedUpload` — the only structural
     /// difference is that `cse` is `Some(_)`. The `digest` field drives the
@@ -2971,11 +3016,8 @@ mod tests {
     async fn gcs_resumable_upload_initiates_then_puts_chunks() {
         let server = MockServer::start().await;
 
-        // Existence-check HEAD: 404 so the upload proceeds.
-        Mock::given(method("HEAD"))
-            .respond_with(ResponseTemplate::new(404))
-            .mount(&server)
-            .await;
+        // overwrite=true + skip_upload_on_content_match=false ⇒ head_needed=false,
+        // so no HEAD is issued and none is mocked.
         // Initiation POST → 201 with the session URL in `Location`.
         let session_path = "/resumable-session/abc";
         Mock::given(method("POST"))
@@ -3015,9 +3057,10 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            false,
             always_multipart(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("resumable upload should succeed against the mock");
@@ -3053,10 +3096,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn gcs_resumable_upload_deletes_session_on_chunk_failure() {
         let server = MockServer::start().await;
-        Mock::given(method("HEAD"))
-            .respond_with(ResponseTemplate::new(404))
-            .mount(&server)
-            .await;
+        // overwrite=true + skip_upload_on_content_match=false ⇒ head_needed=false,
+        // so no HEAD is issued and none is mocked.
         let session_path = "/resumable-session/xyz";
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(201).insert_header(
@@ -3095,9 +3136,10 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            false,
             always_multipart(),
             &test_policy(false, 1),
-            &mut None,
+            None,
         )
         .await;
         assert!(
@@ -3138,7 +3180,8 @@ mod tests {
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             0,
             always_multipart(),
-            &mut None,
+            None,
+            false,
             cloud_http::CloudSpillTarget::Temp(spill.path()),
         )
         .await
@@ -3182,7 +3225,8 @@ mod tests {
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             0,
             always_multipart(),
-            &mut None,
+            None,
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await
@@ -3196,6 +3240,12 @@ mod tests {
                     payload,
                     "the .part must hold the whole reassembled object"
                 );
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(&part_path).unwrap().permissions().mode();
+                    assert_eq!(mode & 0o777, 0o600, "ranged .part must be owner-only");
+                }
             }
             _ => panic!("a non-encrypted ranged download must assemble into `.part`"),
         }
@@ -3227,7 +3277,8 @@ mod tests {
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             0,
             always_multipart(),
-            &mut None,
+            None,
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await;
@@ -3241,9 +3292,10 @@ mod tests {
 
     #[tokio::test]
     async fn upload_to_gcs_or_skip_skips_when_digest_matches_under_overwrite_true() {
-        // Python parity: `storage_client.py:214-220` — content-match
-        // skip fires regardless of the `overwrite` flag (the existence
-        // skip above it is gated on `!overwrite`; this branch is not).
+        // With the opt-in flag set, the content-match skip fires under
+        // `overwrite=true`: the remote digest equals the local one, so the
+        // redundant upload is skipped (`storage_client.py:214-220` parity,
+        // now gated by `skip_upload_on_content_match`).
         let server = MockServer::start().await;
         let digest = "ZGlnZXN0Lw==";
         mount_head_and_put(
@@ -3254,15 +3306,16 @@ mod tests {
         .await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip(digest);
+        let prepared = prepared_upload_with_digest(digest);
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
             true,
+            true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3286,15 +3339,16 @@ mod tests {
         .await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip(digest);
+        let prepared = prepared_upload_with_digest(digest);
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
             false,
+            false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3313,15 +3367,16 @@ mod tests {
         .await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip("local-digest-value");
+        let prepared = prepared_upload_with_digest("local-digest-value");
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
             true,
+            true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3339,15 +3394,16 @@ mod tests {
         mount_head_and_put(&server, ResponseTemplate::new(200), 1).await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip("local-digest-value");
+        let prepared = prepared_upload_with_digest("local-digest-value");
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
             true,
+            true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3365,15 +3421,16 @@ mod tests {
         mount_head_and_put(&server, ResponseTemplate::new(200), 0).await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip("local-digest-value");
+        let prepared = prepared_upload_with_digest("local-digest-value");
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
             false,
+            false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3387,15 +3444,16 @@ mod tests {
         mount_head_and_put(&server, ResponseTemplate::new(404), 1).await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip("local-digest-value");
+        let prepared = prepared_upload_with_digest("local-digest-value");
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
             false,
+            false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3425,9 +3483,10 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3455,9 +3514,10 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
@@ -3492,13 +3552,92 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .unwrap();
 
         assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_uploads_when_digest_matches_but_opt_in_off() {
+        // The core SNOW-3715266 regression: `overwrite=true` with the flag
+        // OFF makes `head_needed` false, so the content-match skip is elided
+        // and the file is re-uploaded. GCS previously skipped here
+        // unconditionally, diverging from legacy Python; this pins the
+        // restored opt-in parity.
+        //
+        // Because the HEAD is elided, the matching digest mounted below is
+        // never fetched or compared under these args — the test would pass
+        // the same with a mismatching or absent one. It stays as a guard:
+        // were the code to regress to the old *unconditional* content-match
+        // skip, that matching digest would make it skip and this `Uploaded`
+        // assertion would fail.
+        let server = MockServer::start().await;
+        let digest = "ZGlnZXN0Lw==";
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, digest),
+            1,
+        )
+        .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = prepared_upload_with_digest(digest);
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            false,
+            MultipartParams::default(),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_issues_no_head_when_overwrite_true_and_opt_in_off() {
+        // `overwrite=true` + flag OFF => neither skip branch can fire, so the
+        // HEAD probe is elided entirely (mirrors Azure/S3). Assert zero HEAD
+        // requests and exactly one PUT.
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = prepared_upload_with_digest("local-digest-value");
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            false,
+            MultipartParams::default(),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status, UploadStatus::Uploaded);
     }
 }

@@ -73,7 +73,14 @@ def read_pr_medians(results_dir: Path, driver: str, driver_type: str) -> dict[st
             if not rows:
                 continue
 
-            metric_col = "fetch_s" if "fetch_s" in rows[0] else "query_s"
+            if "fetch_s" in rows[0]:
+                metric_col = "fetch_s"
+            elif "query_s" in rows[0]:
+                metric_col = "query_s"
+            elif "e2e_s" in rows[0]:
+                metric_col = "e2e_s"
+            else:
+                continue
             values = [float(r[metric_col]) for r in rows if r.get(metric_col)]
             if values:
                 medians[test_name] = statistics.median(values)
@@ -166,7 +173,14 @@ def _rerun_test(
             rows = list(reader)
         if not rows:
             return None
-        metric_col = "fetch_s" if "fetch_s" in rows[0] else "query_s"
+        if "fetch_s" in rows[0]:
+            metric_col = "fetch_s"
+        elif "query_s" in rows[0]:
+            metric_col = "query_s"
+        elif "e2e_s" in rows[0]:
+            metric_col = "e2e_s"
+        else:
+            return None
         values = [float(r[metric_col]) for r in rows if r.get(metric_col)]
         return statistics.median(values) if values else None
     except Exception as e:
