@@ -264,11 +264,14 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = await self._execute_query(stmt_handle, bindings)
+            request_id = response.request_id or None
 
             if response.HasField("multi"):
                 await self._handle_multi_statement_response(response.multi, query)
             else:
                 await self._apply_result_set(response.single, query)
+
+            self._query_result.request_id = request_id
 
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
@@ -957,12 +960,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     ) -> dict[str, str | None]:
         query, binding_params = self._prepare_query(command, params)
 
-        response = None
         async with async_statement(self._connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = await async_core_driver.statement_execute_async(stmt_handle=stmt_handle, bindings=bindings)
-        query_id = (response.query_id if response.query_id else None) if response else None
-        self._query_result = QueryResult(sfqid=query_id)
+        query_id = response.query_id or None
+        request_id = response.request_id or None
+        self._query_result = QueryResult(sfqid=query_id, request_id=request_id)
 
         return {"queryId": query_id}
 

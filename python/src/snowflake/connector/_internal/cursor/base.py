@@ -168,13 +168,15 @@ class CursorBaseMixin(ErrorHandlerMixin):
         """
         Read-only attribute containing the client-generated ``requestId`` of the last query submission.
 
-        Populated when the last ``execute()`` failed (captured from the raised error);
-        ``None`` otherwise.
-
         Returns:
             str | None: Client request UUID, or None when unavailable.
         """
         return self._query_result.request_id
+
+    @property
+    def _request_id(self) -> str | None:
+        """Private alias of :attr:`request_id`, kept for Snowpark's expected attribute name."""
+        return self.request_id
 
     @property
     @api_telemetry

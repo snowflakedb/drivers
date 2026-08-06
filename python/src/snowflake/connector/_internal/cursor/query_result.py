@@ -82,8 +82,8 @@ class QueryResult:
         self.description = description
         self.sqlstate = sqlstate
         self.sfqid = sfqid
-        # Client-generated requestId of the query submission. Currently only
-        # populated on the error path (from a failed execute).
+        # Client-generated requestId of the query submission, populated on
+        # both the success and error paths.
         self.request_id = request_id
         self.query = query
         self.stats = stats if stats is not None else QueryResultStats()
