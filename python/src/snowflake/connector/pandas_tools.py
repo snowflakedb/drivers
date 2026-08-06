@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable
 from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from ._internal.decorators import api_telemetry, snowpark_compat
+from ._internal.decorators import api_telemetry
 from ._internal.errorhandler import route_exception
 from ._internal.extras import pandas, requires_dependency, sqlalchemy
 from ._internal.write_pandas_operation import (
@@ -24,7 +24,7 @@ from ._internal.write_pandas_operation import (
     WritePandasResult,
     qualify_name,
 )
-from .errors import Error, NotSupportedError, ProgrammingError
+from .errors import Error, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -141,23 +141,13 @@ def write_pandas(
 
 
 # ------------------------------------------------------------------
-# Snowpark import surface: snowpark's analyzer_utils imports these three names
+# Snowpark import surface: snowpark's analyzer_utils imports this name
 # directly from snowflake.connector.pandas_tools.
 # ------------------------------------------------------------------
 
 # Legacy name for a fully-qualified object name; identical to qualify_name, so
 # alias rather than duplicate the escaping logic.
 build_location_helper = qualify_name
-
-
-@snowpark_compat
-def _create_temp_stage(*args: Any, **kwargs: Any) -> str:
-    raise NotSupportedError("_create_temp_stage is not supported by the Universal Driver (no PUT/staging yet).")
-
-
-@snowpark_compat
-def _create_temp_file_format(*args: Any, **kwargs: Any) -> str:
-    raise NotSupportedError("_create_temp_file_format is not supported by the Universal Driver (no PUT/staging yet).")
 
 
 @requires_dependency(pandas, sqlalchemy)

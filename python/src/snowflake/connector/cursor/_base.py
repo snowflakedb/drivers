@@ -24,7 +24,6 @@ from .._internal.cursor import (
     QueryResult,
     QueryResultWaiter,
     ResultMetadata,
-    ResultMetadataV2,
     Row,
 )
 from .._internal.cursor.decorators import (
@@ -32,7 +31,7 @@ from .._internal.cursor.decorators import (
     requires_open_cursor_not_connection,
     with_prefetch_hook,
 )
-from .._internal.decorators import api_telemetry, backward_compatibility, pep249, snowpark_compat
+from .._internal.decorators import api_telemetry, pep249
 from .._internal.errorcode import ER_INVALID_VALUE
 from .._internal.extras import pandas, pyarrow, requires_dependency
 from .._internal.logging import get_logger
@@ -545,23 +544,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
         return self._query_result.description
 
-    @snowpark_compat
-    @backward_compatibility
-    def _describe_internal(
-        self,
-        operation: str,
-        parameters: Sequence[Any] | dict[str, Any] | None = None,
-        *,
-        params: Sequence[Any] | dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> list[ResultMetadataV2] | None:
-        """Describe-only path returning new-format metadata (see BD#43).
-
-        Not implemented: UD's ResultMetadataV2 is an alias for ResultMetadata and
-        lacks vector_dimension / fields. Snowpark falls back to cursor.description.
-        """
-        raise NotImplementedError
-
     # ------------------------------------------------------------------
     # Fetch – shared implementation
     # ------------------------------------------------------------------
@@ -1029,27 +1011,3 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             query_id=qid,
         )
         return response.outcome == ABORT_QUERY_OUTCOME_ABORTED
-
-    # ------------------------------------------------------------------
-    # File-transfer stubs (Snowpark compatibility only)
-    #
-    # Snowpark calls these on the cursor for PUT/GET streaming; the UD has no
-    # file transfer yet, so they fail loudly rather than silently no-op.
-    # (Connection.upload_stream lives on the Connection, not here.)
-    # ------------------------------------------------------------------
-
-    @snowpark_compat
-    def _upload(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_upload is not yet supported by the Universal Driver.")
-
-    @snowpark_compat
-    def _download(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_download is not yet supported by the Universal Driver.")
-
-    @snowpark_compat
-    def _upload_stream(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_upload_stream is not yet supported by the Universal Driver.")
-
-    @snowpark_compat
-    def _download_stream(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_download_stream is not yet supported by the Universal Driver.")
