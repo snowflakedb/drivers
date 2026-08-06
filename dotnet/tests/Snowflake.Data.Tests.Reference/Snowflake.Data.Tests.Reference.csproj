@@ -13,7 +13,6 @@
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
     <OutputType Condition="'$(OldXunit)' != 'True'">Exe</OutputType>
     <!-- Old Snowflake.Data NuGet has transitive vuln deps (log4net) we can't control -->
-    <!-- TODO once we're done with old driver code, this should go !-->
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
