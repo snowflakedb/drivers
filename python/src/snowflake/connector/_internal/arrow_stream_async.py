@@ -147,11 +147,10 @@ async def collect_arrow_table_async(
     )
 
 
-async def to_pandas_async(table: Table, **kwargs: Any) -> Any:
+async def to_pandas_async(table: Table) -> Any:
     """Convert an Arrow table to a pandas DataFrame off the event loop.
 
     ``Table.to_pandas`` is CPU-heavy C/Cython work with no async entry point, so
-    it is offloaded for the same reason as the fetch path. ``**kwargs`` are
-    forwarded to ``Table.to_pandas`` (e.g. ``split_blocks``, ``self_destruct``).
+    it is offloaded for the same reason as the fetch path.
     """
-    return await asyncio.to_thread(table.to_pandas, **kwargs)
+    return await asyncio.to_thread(table.to_pandas)
