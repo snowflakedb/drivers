@@ -670,7 +670,7 @@ behavior_differences:
       Callers who previously disabled caching via `enable_crl_cache=False` must
       set both toggles to `False` explicitly.
   43:
-    name: "ResultMetadataV2 lacks vector_dimension and fields attributes"
+    name: "ResultMetadataV2.fields is always None (no nested structured-type metadata)"
     status: todo
     type: api_incompatibility
     reviewed: false
@@ -684,18 +684,18 @@ behavior_differences:
       Snowpark and other callers read these attributes to handle VECTOR and structured
       columns correctly.
     new_driver_behavior: |
-      The Universal Driver aliases `ResultMetadataV2 = ResultMetadata` (a NamedTuple).
-      The alias lacks `vector_dimension` and `fields`; accessing either attribute on a
-      result from `cursor._describe_internal()` raises `AttributeError`. As a result,
-      `cursor._describe_internal()` currently raises `NotImplementedError` to prevent
-      silent data loss for callers that read these fields.
-      Snowpark falls back to `cursor.description` (V1 path) for schema inference.
+      `cursor._describe_internal()` returns a real, distinct `ResultMetadataV2` class
+      (not an alias for `ResultMetadata`). `vector_dimension` is fully populated from
+      the protobuf `dimension` field, so VECTOR column schema inference works correctly.
+      `fields` is always `None` -- the UD proto `ColumnMetadata` carries no nested
+      column list for structured types (OBJECT/ARRAY/MAP) -- so structured-type
+      introspection via `_describe_internal` is unsupported; Snowpark falls back to
+      `cursor.description` (V1 path) for those columns.
     description: |
-      Tracked as part of SNOW-2912540 Snowpark compatibility work. Proper fix requires
-      implementing a distinct `ResultMetadataV2` class in the UD with `vector_dimension`
-      and `fields` populated from the protobuf column descriptor, then wiring
-      `_describe_internal` to use it. Until then, VECTOR column schema inference and
-      structured-type introspection via `_describe_internal` are unsupported.
+      Tracked as part of SNOW-2912540 Snowpark compatibility work. `vector_dimension`
+      is fully implemented. Remaining fix requires the UD proto's `ColumnMetadata` to
+      carry a nested field list for structured types, then wiring `fields` to populate
+      from it.
 
   44:
     name: "ReauthenticationRequest is not raised in MasterTokenExpired scenarios"
