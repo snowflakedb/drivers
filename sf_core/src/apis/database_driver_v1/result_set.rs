@@ -67,6 +67,18 @@ pub enum ExecuteQueryResult {
     },
 }
 
+/// `ExecuteQueryResult` paired with the client-generated request UUID that was
+/// sent as `?requestId=` on the submission HTTP request. Exposed to language
+/// wrappers via `ExecuteQueryResponse.request_id` so Snowpark can log it.
+///
+/// Every path through `execute_query_internal` generates a UUID (both Blocking
+/// and Async). `connection_get_query_result` is the only path without one, and
+/// it returns `ExecuteQueryResult` directly — never `ExecuteQueryOutcome`.
+pub struct ExecuteQueryOutcome {
+    pub result: ExecuteQueryResult,
+    pub request_id: uuid::Uuid,
+}
+
 #[derive(Clone)]
 pub enum InlineData {
     /// Base64-encoded Arrow IPC stream.

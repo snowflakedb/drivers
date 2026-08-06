@@ -1051,6 +1051,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         Ok(StatementExecuteAsyncResponse {
             query_id: result.query_id,
+            request_id: result.request_id.to_string(),
         })
     }
 

@@ -794,6 +794,8 @@ message ExecuteQueryResponse {
     // Multi-statement — child query IDs only, fetch metadata lazily.
     MultiStatementResult multi = 2;
   }
+  // Client-generated UUID v4 sent as ?requestId= on the submission request.
+  optional string request_id = 3;
 }
 
 // Async query execution: submit and return immediately with query_id
@@ -804,6 +806,8 @@ message StatementExecuteAsyncRequest {
 
 message StatementExecuteAsyncResponse {
   string query_id = 1;
+  // Client-generated UUID v4 sent as ?requestId= on the submission request.
+  string request_id = 2;
 }
 
 message StatementExecutePartitionsRequest {

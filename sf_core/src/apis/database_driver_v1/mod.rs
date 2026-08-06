@@ -47,8 +47,8 @@ pub use get_objects::{
 pub use global_state::{DatabaseDriverV1, DriverProviders, PutGetResultsetFlavor, WrapperPresets};
 pub use like_pattern::ESCAPE_CHAR;
 pub use result_set::{
-    ChunkData, ChunkDataWithDescriptor, ColumnMetadata, ExecuteQueryResult, InlineData,
-    ResultSetDescriptor, ResultSetInfo,
+    ChunkData, ChunkDataWithDescriptor, ColumnMetadata, ExecuteQueryOutcome, ExecuteQueryResult,
+    InlineData, ResultSetDescriptor, ResultSetInfo,
 };
 pub use statement::{BindingType, DataPtr};
 pub use validation::{ValidationCode, ValidationIssue, ValidationSeverity};

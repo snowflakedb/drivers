@@ -97,7 +97,7 @@ impl Connection {
 
         let _ = DRIVER.statement_release(stmt_handle);
 
-        self.statement_from_result(result).await
+        self.statement_from_result(result.result).await
     }
 
     #[napi]
