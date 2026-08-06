@@ -9,8 +9,6 @@ Implementation details are in snowflake.connector._internal.write_pandas_operati
 
 from __future__ import annotations
 
-import warnings
-
 from collections.abc import Callable, Iterable
 from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
@@ -90,7 +88,6 @@ def write_pandas(
     quote_identifiers: bool = True,
     infer_schema: bool = False,
     auto_create_table: bool = False,
-    create_temp_table: bool = False,
     overwrite: bool = False,
     table_type: Literal["", "temp", "temporary", "transient"] = "",
     use_logical_type: bool | None = None,
@@ -104,15 +101,6 @@ def write_pandas(
     Returns a WritePandasResult named tuple (success, nchunks, nrows, copy_results).
     Backward-compatible with plain tuple unpacking and indexing.
     """
-    # ``create_temp_table`` is the legacy boolean spelling of ``table_type="temp"``;
-    # Snowpark still passes it. Translate it and do not forward it to the config.
-    if create_temp_table and not table_type:
-        table_type = "temp"
-        warnings.warn(
-            "'create_temp_table' is deprecated; use 'table_type=\"temp\"' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     try:
         cfg = WritePandasConfig(
             conn,
