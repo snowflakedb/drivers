@@ -11,6 +11,8 @@
     <PackageReference Include="Apache.Arrow" Version="18.0.0" />
     <ProjectReference Include="..\Snowflake.Data.Proto\Snowflake.Data.Proto.csproj" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests" />
+    <InternalsVisibleTo Include="Snowflake.Data.Tests.Common" />
+    <InternalsVisibleTo Include="Snowflake.Data.Tests.Reference" />
   </ItemGroup>
 
   <Import Project="targets/Snowflake.Data.Framework.targets" Condition="'$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'net481'" />

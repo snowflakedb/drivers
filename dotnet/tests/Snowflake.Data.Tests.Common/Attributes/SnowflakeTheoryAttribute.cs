@@ -1,26 +1,24 @@
 using System.Runtime.CompilerServices;
 
 #if !OLD_XUNIT
-using Xunit.v3;
 using Snowflake.Data.Tests.Discovery;
 #else
-using Xunit.Sdk;
 #endif
 
 namespace Snowflake.Data.Tests.Attributes;
 
 #if !OLD_XUNIT
-[XunitTestCaseDiscoverer(typeof(SnowflakeTestCaseDiscovererV3))]
+[XunitTestCaseDiscoverer(typeof(SnowflakeTheoryDiscovererV3))]
 #else
-[XunitTestCaseDiscoverer("Snowflake.Data.Tests.Discovery.SnowflakeTestCaseDiscoverer", "Snowflake.Data.Tests")]
+[XunitTestCaseDiscoverer("Snowflake.Data.Tests.Discovery.SnowflakeTheoryDiscoverer", "Snowflake.Data.Tests.Common")]
 #endif
-public sealed class SnowflakeFactAttribute : FactAttribute
+public sealed class SnowflakeTheoryAttribute : TheoryAttribute
 {
     public RetriesCount RetriesCount { get; set; }
 
-    public SnowflakeFactAttribute(
+    public SnowflakeTheoryAttribute(
         SkipCondition skip = SkipCondition.None,
-        RetriesCount retriesCount = RetriesCount.Once,
+        RetriesCount retriesCount = RetriesCount.NoRetries,
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
 #if !OLD_XUNIT
@@ -33,12 +31,4 @@ public sealed class SnowflakeFactAttribute : FactAttribute
         if (skipEvaluationResult.ShouldSkip)
             Skip = skipEvaluationResult.SkipMessage;
     }
-}
-
-public enum RetriesCount
-{
-    NoRetries = 0,
-    Once = 1,
-    Twice = 2,
-    Thrice = 3,
 }

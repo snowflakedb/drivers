@@ -134,7 +134,7 @@ jobs:
   dotnet_tests_reference:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_dotnet_reference == 'true'
-    name: dotnet Old Driver Reference Tests
+    name: dotnet Reference Tests (old driver)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -186,9 +186,9 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
-      - name: Run e2e tests (old driver reference)
+      - name: Run reference tests (old driver)
         run: dotnet run --no-build --framework net10.0
-        working-directory: dotnet/tests/Snowflake.Data.Tests
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Reference
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           SNOWFLAKE_DOTNET_USE_OLD_DRIVER: "1"
@@ -196,6 +196,69 @@ jobs:
       - name: Check formatting
         run: dotnet format Snowflake.Data.sln --verify-no-changes
         working-directory: dotnet
+
+  dotnet_tests_reference_new_driver:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_dotnet_reference == 'true'
+    continue-on-error: true
+    name: dotnet Reference Tests (new driver)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore
+        working-directory: dotnet
+
+      - name: Restore Cargo cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "proto-generator"
+
+      - name: Regenerate proto files
+        run: dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/
+        working-directory: dotnet
+
+      - name: Save Cargo cache
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "proto-generator"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: dotnet
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Build Rust components
+        run: cargo build --package sf_core
+
+      - name: Run reference tests (new driver)
+        run: dotnet run --no-build --framework net10.0
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Reference
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
 
   dotnet-status:
     needs: [detect-changes, load-dotnet-matrix, dotnet_tests, dotnet_tests_reference]
@@ -216,7 +279,7 @@ jobs:
           if [[ "$MATRIX_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ dotnet CI FAILED or CANCELLED"
             echo "  - dotnet_tests (matrix): $MATRIX_RESULT"
-            echo "  - dotnet_tests_reference: $REFERENCE_RESULT"
+            echo "  - dotnet_tests_reference (old driver): $REFERENCE_RESULT"
             exit 1
           fi
 
@@ -229,5 +292,5 @@ jobs:
           # Tests ran and passed
           echo "✓ dotnet jobs were RUN and PASSED"
           echo "  - dotnet_tests (matrix): $MATRIX_RESULT"
-          echo "  - dotnet_tests_reference: $REFERENCE_RESULT"
+          echo "  - dotnet_tests_reference (old driver): $REFERENCE_RESULT"
           exit 0
