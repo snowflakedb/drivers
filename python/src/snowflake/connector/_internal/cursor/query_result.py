@@ -110,6 +110,7 @@ class QueryResult:
             description=description,
             sqlstate=extract_sqlstate(result),
             sfqid=(result.query_id if result.query_id else None) if result else None,
+            request_id=(result.request_id if result.request_id else None) if result else None,
             query=(result.query if result.query else None) if result else None,
             rowcount=0 if description else None,
         )

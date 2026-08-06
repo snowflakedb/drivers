@@ -957,6 +957,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 sql_state: result.sql_state,
                 array_bind_supported: result.array_bind_supported,
                 binds: result.binds.into_iter().map(|cm| cm.into()).collect(),
+                request_id: result.request_id.to_string(),
             }),
         })
     }

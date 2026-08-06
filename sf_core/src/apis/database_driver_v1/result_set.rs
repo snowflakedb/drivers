@@ -74,6 +74,11 @@ pub enum ExecuteQueryResult {
 /// Every path through `execute_query_internal` generates a UUID (both Blocking
 /// and Async). `connection_get_query_result` is the only path without one, and
 /// it returns `ExecuteQueryResult` directly — never `ExecuteQueryOutcome`.
+///
+/// Every caller that receives an `ExecuteQueryOutcome` MUST forward
+/// `request_id` onward rather than discarding it after unpacking `.result`
+/// (see `statement_prepare`, which carries it into `PrepareResult.request_id`)
+/// — dropping it silently reintroduces a real gap, not a cosmetic one.
 pub struct ExecuteQueryOutcome {
     pub result: ExecuteQueryResult,
     pub request_id: uuid::Uuid,

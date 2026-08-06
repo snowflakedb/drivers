@@ -762,6 +762,10 @@ message PrepareResult {
   optional string sql_state = 7;
   bool array_bind_supported = 8;
   repeated ColumnMetadata binds = 9;
+  // Client-generated UUID v4 sent as ?requestId= on the submission request.
+  // Unlike ExecuteQueryResponse.request_id, this is never absent: every
+  // statement_prepare call goes through execute_query_internal.
+  string request_id = 10;
 }
 
 message StatementPrepareRequest {

@@ -212,6 +212,7 @@ pub struct PrepareResult {
     pub sql_state: Option<String>,
     pub array_bind_supported: bool,
     pub binds: Vec<ColumnMetadata>,
+    pub request_id: uuid::Uuid,
 }
 
 impl DatabaseDriverV1 {
@@ -222,6 +223,7 @@ impl DatabaseDriverV1 {
                 .execute_query_internal(stmt_handle, None, Some(true), None)
                 .await?;
 
+            let request_id = outcome.request_id;
             // Multi-statement query prepare is not supported.
             let ExecuteQueryResult::Single(rs_info) = outcome.result else {
                 return InvalidArgumentSnafu {
@@ -252,6 +254,7 @@ impl DatabaseDriverV1 {
                 sql_state: rs_info.descriptor.sql_state,
                 array_bind_supported: rs_info.descriptor.array_bind_supported,
                 binds: rs_info.descriptor.binds,
+                request_id,
             })
         }
         .instrument(crate::snowflake_op_span!("statement_prepare", session_id))

@@ -428,27 +428,9 @@ impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
 
 impl From<NativeExecuteQueryOutcome> for ExecuteQueryResponse {
     fn from(outcome: NativeExecuteQueryOutcome) -> Self {
-        let request_id = Some(outcome.request_id.to_string());
-        match outcome.result {
-            NativeExecuteQueryResult::Single(info) => ExecuteQueryResponse {
-                result: Some(execute_query_response::Result::Single(info.into())),
-                request_id,
-            },
-            NativeExecuteQueryResult::Multi {
-                parent,
-                query_ids,
-                statement_type_ids,
-            } => ExecuteQueryResponse {
-                result: Some(execute_query_response::Result::Multi(
-                    MultiStatementResult {
-                        parent: Some(parent.into()),
-                        query_ids,
-                        statement_type_ids,
-                    },
-                )),
-                request_id,
-            },
-        }
+        let mut response: ExecuteQueryResponse = outcome.result.into();
+        response.request_id = Some(outcome.request_id.to_string());
+        response
     }
 }
 
