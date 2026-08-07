@@ -327,6 +327,28 @@ jobs:
           cargo llvm-cov --no-report --package sf_core ${{ matrix.cargo_flags }} \
             -- --ignored large_
 
+      # Real PUT/GET through a genuine mitmdump proxy (see PR description for why).
+      # Runs whenever this job runs (PR, push, schedule) — the test itself is ~4s;
+      # the only real cost is the shared compile the coverage step above already pays.
+      # `mitmdump --version` fails the step loudly if pipx installed off-PATH.
+      - name: Install mitmproxy (live-proxy e2e)
+        if: matrix.os == 'ubuntu-latest' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
+        run: |
+          pipx install 'mitmproxy>=11,<13'
+          mitmdump --version
+
+      # Filters on the `mitmdump_proxy` substring in the test *names* (not the
+      # `proxy_live_mitm` file path), so a file rename can't make this match nothing.
+      - name: Run live-proxy e2e tests (aws + azure + gcp)
+        if: matrix.os == 'ubuntu-latest' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
+        timeout-minutes: 15
+        env:
+          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo llvm-cov --no-report --package sf_core ${{ matrix.cargo_flags }} \
+            -- --ignored mitmdump_proxy
+
       # Report step is best-effort and gated on actually having coverage data. If the
       # build/run step failed at compilation (before any test ran), target/llvm-cov-target/
       # contains no *.profraw files; running `cargo llvm-cov report` then fails with
