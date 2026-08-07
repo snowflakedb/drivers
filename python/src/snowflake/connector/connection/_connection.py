@@ -64,11 +64,12 @@ def _is_wif_conflict(exc: ProgrammingError) -> bool:
     return exc.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
 
 
-class Connection(ConnectionMixin):
+class Connection(ConnectionMixin[CursorInstance]):
     """Connection objects represent a database connection."""
 
     _session_parameters: SessionParametersProxy
     _connection_info: ConnectionInfoProxy
+    _default_cursor_class = SnowflakeCursor
 
     # ------------------------------------------------------------------
     # Initialization
@@ -270,20 +271,6 @@ class Connection(ConnectionMixin):
         if self._should_auto_cleanup():
             self._try_close()
 
-    def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
-        """Release the Rust-side connection handle."""
-        try:
-            core_driver.connection_release(conn_handle=conn_handle)
-        except Exception:
-            logger.warning("Failed to release connection handle", exc_info=True)
-
-    def _release_database_handle(self, db_handle: DatabaseHandle) -> None:
-        """Release the Rust-side database handle."""
-        try:
-            core_driver.database_release(db_handle=db_handle)
-        except Exception:
-            logger.warning("Failed to release database handle", exc_info=True)
-
     def _close_at_process_exit(self) -> None:
         """
         Cleanup handler called by atexit when process exits.
@@ -349,26 +336,6 @@ class Connection(ConnectionMixin):
             cur.execute(ROLLBACK_SQL)
         finally:
             cur.close()
-
-    # ------------------------------------------------------------------
-    # Cursors
-    # ------------------------------------------------------------------
-
-    @pep249
-    @api_telemetry
-    @requires_open
-    def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
-        """
-        Return a new Cursor object using the connection.
-
-        Args:
-            cursor_class: The class to use for the cursor (default: SnowflakeCursor).
-                          Pass DictCursor to get results as dictionaries.
-
-        Returns:
-            SnowflakeCursorBase: A new cursor object
-        """
-        return cursor_class(self)
 
     # ------------------------------------------------------------------
     # Context manager

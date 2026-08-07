@@ -9,7 +9,8 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ...constants import SessionParameterName, StatementParameterName
-from ...errors import Error, ErrorValue, InterfaceError, ProgrammingError
+from ...errors import Error, ErrorValue, InterfaceError, NotSupportedError, ProgrammingError
+from ..api_client.client_api import core_driver
 from ..binding_converters import (
     BindingConverterBase,
     ClientSideBindingConverter,
@@ -23,8 +24,9 @@ from ..decorators import api_telemetry, pep249
 from ..errorcode import ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT, ER_INVALID_VALUE
 from ..errorhandler import ErrorHandlerMixin
 from ..extras import check_dependency, pandas, pyarrow
-from ..protobuf_gen.database_driver_v1_pb2 import BinaryDataPtr, ConfigSetting, QueryBindings
+from ..protobuf_gen.database_driver_v1_pb2 import BinaryDataPtr, ConfigSetting, QueryBindings, StatementHandle
 from ..text_utils import extract_values_clause
+from .decorators import requires_open
 from .query_result import MultiStatementQueryResultState, QueryResult
 from .result_metadata import QueryResultStats, ResultMetadata
 
@@ -356,6 +358,30 @@ class CursorBaseMixin(ErrorHandlerMixin):
         """Store a statement-level parameter for the next execute."""
         self._statement_parameters[key] = value
 
+    @api_telemetry
+    @requires_open
+    def set_statement_parameter(self, key: str, value: Any) -> None:
+        """Set a sticky statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
+
+        Persists across `execute()` calls on this cursor until explicitly
+        changed. For per-call kwargs (one execute, no bleed across calls),
+        use the `statement_parameters` channel in `execute()` instead.
+
+        This must be called before execute() to take effect.
+
+        Args:
+            key: Parameter name (e.g., "MULTI_STATEMENT_COUNT").
+            value: Parameter value.
+
+        Raises:
+            InterfaceError: If cursor is closed.
+
+        Example:
+            cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+            cursor.execute("SELECT 1; SELECT 2; SELECT 3")
+        """
+        self._set_statement_parameter(key, value)
+
     def _build_array_binding_params(
         self,
         operation: str,
@@ -448,6 +474,40 @@ class CursorBaseMixin(ErrorHandlerMixin):
             if setting is not None:
                 options[key] = setting
         return options
+
+    def _apply_statement_parameters(
+        self,
+        stmt_handle: StatementHandle,
+        statement_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        """Apply sticky `_statement_parameters` merged with per-call
+        `statement_parameters` via SetOptions RPC. Per-call wins on key
+        collision and is never persisted on the cursor.
+        """
+        options = self._build_statement_parameters_options(statement_parameters)
+        if not options:
+            return
+        core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
+
+    # ------------------------------------------------------------------
+    # Cursor state / navigation
+    # ------------------------------------------------------------------
+
+    @api_telemetry
+    def is_closed(self) -> bool:
+        """
+        Check if the cursor is closed.
+
+        Returns:
+            bool: True if closed, False otherwise
+        """
+        return self._closed or self._connection.is_closed()
+
+    @pep249
+    @api_telemetry
+    def scroll(self, value: int, mode: str = "relative") -> None:
+        """Scroll the cursor in the result set."""
+        raise NotSupportedError("scroll is not supported")
 
     @pep249
     @api_telemetry

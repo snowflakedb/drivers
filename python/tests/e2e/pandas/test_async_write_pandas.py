@@ -47,7 +47,7 @@ class TestAsyncWritePandas:
 
         async def _run():
             async with aio.connect(config=config) as conn:
-                cur = await conn.cursor()
+                cur = conn.cursor()
                 try:
                     await cur.execute(
                         "CREATE OR REPLACE TEMPORARY TABLE IDENTIFIER(?) (NAME STRING, SCORE INT)",
@@ -102,7 +102,7 @@ class TestAsyncWritePandas:
                     auto_create_table=True,
                     table_type="temp",
                 )
-                cur = await conn.cursor()
+                cur = conn.cursor()
                 try:
                     await cur.execute(
                         "SELECT * FROM IDENTIFIER(?)",
@@ -134,7 +134,7 @@ class TestAsyncWritePandas:
 
         async def _run():
             async with aio.connect(config=config) as conn:
-                cur = await conn.cursor()
+                cur = conn.cursor()
                 try:
                     await cur.execute(
                         "CREATE OR REPLACE TEMPORARY TABLE IDENTIFIER(?) (NAME STRING, SCORE INT)",

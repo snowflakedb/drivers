@@ -113,12 +113,7 @@ def _passed_arguments_for(mock_db_api, api_method):
 
 
 def _run_async(awaitable):
-    """Run a coroutine/awaitable in a fresh event loop (no pytest-asyncio dependency).
-
-    Accepts plain coroutines and awaitables such as ``_AwaitableContextManager``
-    (returned by ``@awaitable_context_manager``-decorated factories like
-    ``Connection.cursor``).
-    """
+    """Run a coroutine/awaitable in a fresh event loop (no pytest-asyncio dependency)."""
 
     async def _run():
         return await awaitable
@@ -170,7 +165,7 @@ def async_connection(mock_async_db_api):
 def async_cursor(async_connection, mock_async_db_api):
     """Create an async cursor from the mocked async connection."""
     mock_async_db_api.telemetry_send_api_usage.reset_mock()
-    return _run_async(async_connection.cursor())
+    return async_connection.cursor()
 
 
 class TestConnectionApiTelemetry:
@@ -560,7 +555,7 @@ class TestAsyncTelemetryEnabledGating:
         async_connection.telemetry_enabled = False
         mock_async_db_api.telemetry_send_api_usage.reset_mock()
 
-        _run_async(async_connection.cursor())
+        async_connection.cursor()
 
         methods = [call[0][0].api_method for call in mock_async_db_api.telemetry_send_api_usage.call_args_list]
         assert methods == []
@@ -594,7 +589,17 @@ class TestAsyncConnectionApiTelemetry:
 
     def test_cursor_sends_telemetry(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_api_usage.reset_mock()
-        _run_async(async_connection.cursor())
+
+        async def _cursor_and_drain():
+            # cursor() is synchronous; on an async connection its telemetry is
+            # fire-and-forget (scheduled via create_task), so it only records
+            # under a running loop. Drain the scheduled task before asserting.
+            async_connection.cursor()
+            pending = asyncio.all_tasks() - {asyncio.current_task()}
+            if pending:
+                await asyncio.gather(*pending)
+
+        _run_async(_cursor_and_drain())
 
         methods = _get_api_methods(mock_async_db_api)
         assert "Connection.cursor" in methods
