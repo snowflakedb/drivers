@@ -27,7 +27,6 @@ from ..._internal.connection.freezable_proxy import ConnectionInfoProxy as _Conn
 from ..._internal.connection.freezable_proxy import SessionParametersProxy as _SessionParametersProxy
 from ..._internal.decorators import (
     api_telemetry,
-    awaitable_context_manager,
     backward_compatibility,
     internal_api,
     pep249,
@@ -65,11 +64,12 @@ def _is_wif_conflict(exc: ProgrammingError) -> bool:
     return exc.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
 
 
-class Connection(ConnectionMixin):
+class Connection(ConnectionMixin[CursorInstance]):
     """Async connection objects represent a database connection."""
 
     _session_parameters: _SessionParametersProxy
     _connection_info: _ConnectionInfoProxy
+    _default_cursor_class = SnowflakeCursor
 
     # ------------------------------------------------------------------
     # Initialization
@@ -204,21 +204,9 @@ class Connection(ConnectionMixin):
                 await async_core_driver.connection_close(conn_handle=conn_handle)
         finally:
             if conn_handle:
-                await self._release_connection_handle(conn_handle)
+                self._release_connection_handle(conn_handle)
             if db_handle:
-                await self._release_database_handle(db_handle)
-
-    async def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
-        try:
-            await async_core_driver.connection_release(conn_handle=conn_handle)
-        except Exception:
-            logger.warning("Failed to release connection handle", exc_info=True)
-
-    async def _release_database_handle(self, db_handle: DatabaseHandle) -> None:
-        try:
-            await async_core_driver.database_release(db_handle=db_handle)
-        except Exception:
-            logger.warning("Failed to release database handle", exc_info=True)
+                self._release_database_handle(db_handle)
 
     # ------------------------------------------------------------------
     # Transactions
@@ -228,7 +216,7 @@ class Connection(ConnectionMixin):
     @api_telemetry
     @requires_open
     async def commit(self) -> None:
-        cur = await self.cursor()
+        cur = self.cursor()
         try:
             await cur.execute(COMMIT_SQL)
         finally:
@@ -238,22 +226,11 @@ class Connection(ConnectionMixin):
     @api_telemetry
     @requires_open
     async def rollback(self) -> None:
-        cur = await self.cursor()
+        cur = self.cursor()
         try:
             await cur.execute(ROLLBACK_SQL)
         finally:
             await cur.close()
-
-    # ------------------------------------------------------------------
-    # Cursors
-    # ------------------------------------------------------------------
-
-    @pep249
-    @awaitable_context_manager
-    @api_telemetry
-    @requires_open
-    async def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
-        return cursor_class(self)
 
     # ------------------------------------------------------------------
     # Context manager
@@ -285,7 +262,7 @@ class Connection(ConnectionMixin):
     async def set_autocommit(self, autocommit: bool) -> None:
         if not isinstance(autocommit, bool):
             raise ProgrammingError(msg=f"Invalid autocommit parameter: {autocommit!r}", errno=ER_INVALID_VALUE)
-        cur = await self.cursor()
+        cur = self.cursor()
         try:
             await cur.execute(SET_AUTOCOMMIT_SQL.format(autocommit=str(autocommit).lower()))
         except Error as e:
@@ -316,7 +293,7 @@ class Connection(ConnectionMixin):
         """
         value = clamp_client_prefetch_threads(value)
         self.config.client_prefetch_threads = value
-        cur = await self.cursor()
+        cur = self.cursor()
         try:
             await cur.execute(SET_CLIENT_PREFETCH_THREADS_SQL.format(value=value))
         finally:
@@ -381,7 +358,7 @@ class Connection(ConnectionMixin):
         for sql, is_put_or_get in split_statements(stream, remove_comments=remove_comments):
             if not sql:
                 continue
-            cur = await self.cursor(cursor_class=cursor_class)
+            cur = self.cursor(cursor_class=cursor_class)
             await cur.execute(sql, _is_put_get=is_put_or_get)
             yield cur
 
@@ -413,7 +390,7 @@ class Connection(ConnectionMixin):
 
     @api_telemetry
     async def snowflake_version(self) -> str:
-        cur = await self.cursor(DictCursor)
+        cur = self.cursor(DictCursor)
         async with cur:
             await cur.execute(CURRENT_VERSION_SQL)
             row: dict[str, Any] = await cur.fetchone()  # type: ignore[assignment]

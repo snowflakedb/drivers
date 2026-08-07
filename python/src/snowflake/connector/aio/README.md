@@ -44,7 +44,7 @@ await conn.close()
 | Operation | Sync | Async |
 |-----------|------|-------|
 | **Connect** | `conn = connect(...)` | `conn = await connect(...)` |
-| **Create cursor** | `cur = conn.cursor()` | `cur = await conn.cursor()` |
+| **Create cursor** | `cur = conn.cursor()` | `cur = conn.cursor()` |
 | **Execute** | `cur.execute(sql)` | `await cur.execute(sql)` |
 | **Fetch one** | `cur.fetchone()` | `await cur.fetchone()` |
 | **Fetch many** | `cur.fetchmany(n)` | `await cur.fetchmany(n)` |
@@ -84,7 +84,7 @@ from snowflake.connector.aio import connect
 
 
 async def fetch(conn, sql):
-    cur = await conn.cursor()
+    cur = conn.cursor()
     await cur.execute(sql)
     return await cur.fetchall()
 
@@ -129,13 +129,13 @@ asyncio.run(main())
 ```python
 # WRONG — connection not established yet
 conn = SnowflakeConnection(user="...", password="...", account="...")
-cur = await conn.cursor()
+cur = conn.cursor()
 await cur.execute("SELECT 1")  # Will fail!
 
 # CORRECT — call connect() first
 conn = SnowflakeConnection(user="...", password="...", account="...")
 await conn.connect()
-cur = await conn.cursor()
+cur = conn.cursor()
 await cur.execute("SELECT 1")
 ```
 
@@ -144,18 +144,18 @@ await cur.execute("SELECT 1")
 ```python
 # SLOW — sequential awaits
 async with connect(...) as conn:
-    cur1 = await conn.cursor()
+    cur1 = conn.cursor()
     await cur1.execute("SELECT * FROM table1")
     results1 = await cur1.fetchall()
 
-    cur2 = await conn.cursor()
+    cur2 = conn.cursor()
     await cur2.execute("SELECT * FROM table2")
     results2 = await cur2.fetchall()
 
 
 # FAST — concurrent with asyncio.gather
 async def fetch(conn, table):
-    cur = await conn.cursor()
+    cur = conn.cursor()
     await cur.execute(f"SELECT * FROM {table}")
     return await cur.fetchall()
 

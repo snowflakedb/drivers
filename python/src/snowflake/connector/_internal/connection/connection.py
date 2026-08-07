@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
 
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus, SessionParameterName
@@ -16,12 +16,19 @@ from ..extras import check_dependency
 from ..extras import numpy as np
 from ..logging import get_logger
 from .constants import LOG_MAX_QUERY_LENGTH
+from .decorators import requires_open
 
 
 if TYPE_CHECKING:
-    from ..protobuf_gen.database_driver_v1_pb2 import ConnectionHandle
+    from ...aio.cursor import CursorType as AsyncCursorType
+    from ...cursor import CursorType as SyncCursorType
+    from ..protobuf_gen.database_driver_v1_pb2 import ConnectionHandle, DatabaseHandle
     from ..protobuf_gen.database_driver_v1_services import ConnectionGetInfoResponse
 
+
+# Cursor instance type produced by ``cursor()``; each concrete Connection binds
+# it to its own (sync vs. async) ``CursorInstance`` union.
+_CursorT = TypeVar("_CursorT")
 
 logger = get_logger(__name__)
 
@@ -41,7 +48,7 @@ def clamp_client_prefetch_threads(value: int) -> int:
     return value
 
 
-class ConnectionMixin(ErrorHandlerMixin):
+class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
     """Connection members shared by sync and async connection classes.
 
     Subclasses set handle/proxy fields (``conn_handle``, ``_session_parameters``,
@@ -58,6 +65,11 @@ class ConnectionMixin(ErrorHandlerMixin):
     _connection_info: Any
     _client_param_telemetry_enabled: bool
     conn_handle: ConnectionHandle | None
+
+    # Concrete subclasses set the default cursor class returned by ``cursor()``
+    # (the sync vs. async ``SnowflakeCursor``); kept off the shared mixin so
+    # ``_internal`` never imports the public cursor packages at runtime.
+    _default_cursor_class: ClassVar[SyncCursorType | AsyncCursorType]
 
     def __init__(
         self,
@@ -89,6 +101,48 @@ class ConnectionMixin(ErrorHandlerMixin):
             check_dependency(np)
 
         self._interpolate_empty_sequences = False
+
+    # ------------------------------------------------------------------
+    # Cursors
+    # ------------------------------------------------------------------
+
+    @pep249
+    @api_telemetry
+    @requires_open
+    def cursor(self, cursor_class: type[_CursorT] | None = None) -> _CursorT:
+        """Return a new Cursor object using the connection.
+
+        Args:
+            cursor_class: The class to instantiate. Defaults to the
+                connection's ``SnowflakeCursor``; pass ``DictCursor`` to get
+                results as dictionaries.
+
+        Returns:
+            A new cursor object.
+        """
+        # The concrete Connection subclass passes itself to the cursor
+        # constructor; the mixin can't prove ``self`` is that concrete type,
+        # so it builds through an untyped factory.
+        factory: Any = cursor_class or self._default_cursor_class
+        return cast("_CursorT", factory(self))
+
+    # ------------------------------------------------------------------
+    # Handle release
+    # ------------------------------------------------------------------
+
+    def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
+        """Release the Rust-side connection handle."""
+        try:
+            core_driver.connection_release(conn_handle=conn_handle)
+        except Exception:
+            logger.warning("Failed to release connection handle", exc_info=True)
+
+    def _release_database_handle(self, db_handle: DatabaseHandle) -> None:
+        """Release the Rust-side database handle."""
+        try:
+            core_driver.database_release(db_handle=db_handle)
+        except Exception:
+            logger.warning("Failed to release database handle", exc_info=True)
 
     # ------------------------------------------------------------------
     # PEP 249 attributes

@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import functools
-import inspect
-
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from ...errors import DatabaseError
+from ..decorators import wrap_method_with_sync_pre
 from ..errorcode import ER_CONNECTION_IS_CLOSED
 from ..sqlstate import SQLSTATE_CONNECTION_NOT_EXISTS
 from .connection_types import F
@@ -17,29 +14,6 @@ from .connection_types import F
 if TYPE_CHECKING:
     from ...aio.connection import Connection as AsyncConnection
     from ...connection import Connection
-
-
-def _wrap_connection_method(
-    func: F,
-    *,
-    pre: Callable[[Any], None],
-) -> F:
-    """Wrap *func* with a sync pre-call hook (used for both sync and async methods)."""
-    if inspect.iscoroutinefunction(func):
-
-        @functools.wraps(func)
-        async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-            pre(self)
-            return await func(self, *args, **kwargs)
-
-        return cast(F, async_wrapper)
-
-    @functools.wraps(func)
-    def sync_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-        pre(self)
-        return func(self, *args, **kwargs)
-
-    return cast(F, sync_wrapper)
 
 
 def _raise_if_connection_closed(self: Connection | AsyncConnection) -> None:
@@ -54,4 +28,4 @@ def _raise_if_connection_closed(self: Connection | AsyncConnection) -> None:
 
 def requires_open(func: F) -> F:
     """Raise ``DatabaseError`` if the connection is closed."""
-    return _wrap_connection_method(func, pre=_raise_if_connection_closed)
+    return wrap_method_with_sync_pre(func, pre=_raise_if_connection_closed)

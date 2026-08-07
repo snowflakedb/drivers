@@ -1,4 +1,4 @@
-"""Marker and annotation decorators for internal APIs.
+"""Marker, annotation, and precondition wrapper decorators for internal APIs.
 
 The runtime machinery for ``@backward_compatibility`` (call-time wrapper,
 module ``__getattr__`` installer, dedup state) lives in
@@ -13,7 +13,7 @@ import functools
 import inspect
 import types
 
-from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Generator
 from contextvars import ContextVar
 from typing import Any, Generic, ParamSpec, Protocol, TypeVar, cast
 
@@ -147,6 +147,78 @@ def backward_compatibility(obj: T) -> T:
       call-time wrapper is installed before the descriptor is built on top.
     """
     return apply_backward_compatibility(obj)
+
+
+# ------------------------------------------------------------------
+# Precondition wrappers (connection/cursor @requires_open, etc.)
+# ------------------------------------------------------------------
+
+
+def wrap_method_with_sync_pre(
+    func: F,
+    *,
+    pre: Callable[[Any], None],
+) -> F:
+    """Wrap *func* with a sync pre-call hook (used for both sync and async methods)."""
+    if inspect.isasyncgenfunction(func):
+
+        @functools.wraps(func)
+        async def gen_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            pre(self)
+            async for value in func(self, *args, **kwargs):
+                yield value
+
+        return cast(F, gen_wrapper)
+
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            pre(self)
+            return await func(self, *args, **kwargs)
+
+        return cast(F, async_wrapper)
+
+    @functools.wraps(func)
+    def sync_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        pre(self)
+        return func(self, *args, **kwargs)
+
+    return cast(F, sync_wrapper)
+
+
+def wrap_method_with_awaitable_pre(
+    func: F,
+    *,
+    sync_pre: Callable[[Any], None],
+    async_pre: Callable[[Any], Awaitable[None]],
+) -> F:
+    """Wrap *func* with sync/async pre-call hooks when the pre itself may await."""
+    if inspect.isasyncgenfunction(func):
+
+        @functools.wraps(func)
+        async def gen_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            await async_pre(self)
+            async for value in func(self, *args, **kwargs):
+                yield value
+
+        return cast(F, gen_wrapper)
+
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            await async_pre(self)
+            return await func(self, *args, **kwargs)
+
+        return cast(F, async_wrapper)
+
+    @functools.wraps(func)
+    def sync_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        sync_pre(self)
+        return func(self, *args, **kwargs)
+
+    return cast(F, sync_wrapper)
 
 
 _TRACKING: ContextVar[bool] = ContextVar("_api_tracking", default=True)

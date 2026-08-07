@@ -49,7 +49,7 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from ..._internal.statement_utils import async_statement
 from ..._internal.utils import _resolve_alias
-from ...errors import NotSupportedError, ProgrammingError
+from ...errors import ProgrammingError
 from ..result_batch import ResultBatch
 from ._result_set_wrapper import _ResultSetWrapper
 
@@ -146,27 +146,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         await self.execute(command, args)
         return args
 
-    @api_telemetry
-    @requires_open
-    async def set_statement_parameter(self, key: str, value: Any) -> None:
-        """Set a statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
-
-        This must be called before execute() to take effect.
-
-        Args:
-            key: Parameter name (e.g., "MULTI_STATEMENT_COUNT").
-            value: Parameter value.
-
-        Raises:
-            InterfaceError: If cursor is closed.
-
-        Example:
-            await cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
-            await cursor.execute("SELECT 1; SELECT 2; SELECT 3")
-        """
-        # Store in cursor for application in _execute
-        self._set_statement_parameter(key, value)
-
     @pep249
     @api_telemetry
     @requires_open
@@ -259,7 +238,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         )
 
         async with async_statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
-            await self._apply_statement_parameters(stmt_handle, statement_parameters)
+            self._apply_statement_parameters(stmt_handle, statement_parameters)
 
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = await self._execute_query(stmt_handle, bindings)
@@ -296,20 +275,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 logger.debug("upload_stream_abort during cleanup failed; propagating original error", exc_info=True)
             raise
         self._apply_result_set(finish_response, query)  # type: ignore[arg-type]
-
-    async def _apply_statement_parameters(
-        self,
-        stmt_handle: StatementHandle,
-        statement_parameters: dict[str, Any] | None = None,
-    ) -> None:
-        """Apply sticky `_statement_parameters` merged with per-call
-        `statement_parameters` via SetOptions RPC. Per-call wins on key
-        collision and is never persisted on the cursor.
-        """
-        options = self._build_statement_parameters_options(statement_parameters)
-        if not options:
-            return
-        await async_core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
 
     async def _execute_query(
         self, stmt_handle: StatementHandle, bindings: QueryBindings | None
@@ -646,7 +611,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             InterfaceError: If cursor is closed.
 
         Example:
-            await cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+            cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
             await cursor.execute("SELECT 1; SELECT 2; SELECT 3")
             print(await cursor.fetchone())  # (1,)
             await cursor.nextset()
@@ -674,12 +639,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
         return self
 
-    @pep249
-    @api_telemetry
-    async def scroll(self, value: int, mode: str = "relative") -> None:
-        """Scroll the cursor in the result set."""
-        raise NotSupportedError("scroll is not supported")
-
     # ------------------------------------------------------------------
     # Context manager
     # ------------------------------------------------------------------
@@ -696,16 +655,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the runtime context for the cursor."""
         await self.close()
-
-    @api_telemetry
-    async def is_closed(self) -> bool:
-        """
-        Check if the cursor is closed.
-
-        Returns:
-            bool: True if closed, False otherwise
-        """
-        return self._closed or self._connection.is_closed()
 
     @api_telemetry
     @requires_open_cursor_not_connection
