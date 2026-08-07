@@ -3,6 +3,7 @@ mod azure_retry;
 mod gcs_multipart;
 mod gcs_retry;
 pub(crate) mod multipart_test_support;
+mod proxy_transfer;
 mod retry;
 mod s3_multipart;
 mod session_refresh;
