@@ -1182,6 +1182,7 @@ fn apply_execute_response(
             let stream = fetch_stream_and_release(rs_handle)?;
             let statement_type_id = descriptor.statement_type_id;
             let rows_affected = descriptor.rows_affected;
+            let cursor_row_count = descriptor.row_count;
             let execute_state =
                 create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
             let is_zero_dml = matches!(
@@ -1191,9 +1192,13 @@ fn apply_execute_response(
                     ..
                 }
             );
-            // Populate SQL_DIAG_ROW_COUNT / SQL_DIAG_DYNAMIC_FUNCTION(CODE).
-            stmt.get_diag_info_mut()
-                .set_execution_info(statement_type_id, rows_affected);
+            // Populate SQL_DIAG_ROW_COUNT / SQL_DIAG_CURSOR_ROW_COUNT /
+            // SQL_DIAG_DYNAMIC_FUNCTION(CODE).
+            stmt.get_diag_info_mut().set_execution_info(
+                statement_type_id,
+                rows_affected,
+                cursor_row_count,
+            );
             set_state(stmt, execute_state);
             stmt.last_query_id = Some(query_id).filter(|s| !s.is_empty());
             if is_zero_dml {
