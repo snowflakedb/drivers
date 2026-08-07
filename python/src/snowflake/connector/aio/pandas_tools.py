@@ -115,7 +115,7 @@ class _AsyncWritePandasOperation(WritePandasMixin):
                     )
             raise
         finally:
-            await cur.close()
+            cur.close()
 
         success = all(row[1] == "LOADED" for row in copy_results)
         return WritePandasResult(success, nchunks, nrows, copy_results)

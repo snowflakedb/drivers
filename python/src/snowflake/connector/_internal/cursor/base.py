@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import abc
 import ctypes
 import re
 
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from ...connection import Connection
 
 
-class CursorBaseMixin(ErrorHandlerMixin):
+class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
     """Zero-I/O cursor members shared by sync and async base cursor classes."""
 
     _INSERT_SQL_RE = re.compile(r"^insert\s+into", re.IGNORECASE)
@@ -493,6 +494,11 @@ class CursorBaseMixin(ErrorHandlerMixin):
     # Cursor state / navigation
     # ------------------------------------------------------------------
 
+    @abc.abstractmethod
+    def reset(self, closing: bool = False) -> None:
+        """Release result-set resources; implemented by ``SnowflakeCursorBase``."""
+        ...
+
     @api_telemetry
     def is_closed(self) -> bool:
         """
@@ -502,6 +508,23 @@ class CursorBaseMixin(ErrorHandlerMixin):
             bool: True if closed, False otherwise
         """
         return self._closed or self._connection.is_closed()
+
+    @pep249
+    @api_telemetry
+    def close(self) -> bool | None:
+        """Close the cursor now.
+
+        Returns whether the cursor was closed during this call.
+        """
+        try:
+            if self._closed:
+                return False
+            self.reset(closing=True)
+            self._closed = True
+            del self._messages[:]
+            return True
+        except Exception:
+            return None
 
     @pep249
     @api_telemetry
