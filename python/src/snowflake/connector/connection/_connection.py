@@ -26,6 +26,7 @@ from .._internal.connection import (
     clamp_client_prefetch_threads,
     requires_open,
 )
+from .._internal.connection.freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
 from .._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from .._internal.errorcode import ER_INVALID_VALUE, ER_INVALID_WIF_SETTINGS
 from .._internal.logging import get_logger
@@ -40,7 +41,6 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     WrapperIdentity,
 )
 from .._internal.protobuf_gen.database_driver_v1_services import (
-    ConnectionGetInfoResponse,
     ConnectionGetQueryStatusResponse,
 )
 from .._internal.snowflake_restful import SnowflakeRestful
@@ -52,7 +52,6 @@ from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from ..errors import Error, ProgrammingError
 from ..telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from ..version import __version__
-from ._freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
 
 
 logger = get_logger(__name__)
@@ -402,11 +401,6 @@ class Connection(ConnectionMixin):
     # Autocommit
     # ------------------------------------------------------------------
 
-    @property
-    def _autocommit(self) -> bool:
-        value = self._session_parameters["AUTOCOMMIT"]
-        return value is not None and value.lower() == "true"
-
     @requires_open
     @api_telemetry
     def set_autocommit(self, autocommit: bool) -> None:
@@ -421,16 +415,6 @@ class Connection(ConnectionMixin):
             logger.warning("Autocommit feature is not enabled for this connection. Ignored: %s", e)
         finally:
             cur.close()
-
-    @api_telemetry
-    def get_autocommit(self) -> bool:
-        """
-        Get the current autocommit mode.
-
-        Returns:
-            bool: Current autocommit setting
-        """
-        return self._autocommit
 
     @pep249
     @api_telemetry
@@ -461,11 +445,6 @@ class Connection(ConnectionMixin):
         finally:
             cur.close()
 
-    @api_telemetry
-    def get_client_prefetch_threads(self) -> int:
-        """Get the configured number of chunk-prefetch threads."""
-        return cast(int, self.config.client_prefetch_threads)
-
     @property
     @api_telemetry
     def client_prefetch_threads(self) -> int | None:
@@ -494,30 +473,6 @@ class Connection(ConnectionMixin):
         try:
             response = core_driver.connection_is_closed(conn_handle=self.conn_handle)  # type: ignore[arg-type]
             return bool(response.is_closed)
-        except Exception:
-            return True
-
-    @property
-    @api_telemetry
-    def expired(self) -> bool:
-        """
-        True if the connection's master token has expired and the session can
-        no longer be renewed.  The connection must be replaced with a new one;
-        full re-authentication is required.
-
-        Set when the server returns GS code 390114, or when a time-based check
-        confirms master-token expiry just before a refresh attempt.
-
-        Matches the legacy snowflake-connector-python ``SnowflakeConnection.expired``
-        flag — intended as a read-only signal for external pool / application code.
-
-        Fails closed: if the expiry check itself errors, returns True so pools
-        evict the connection on uncertainty rather than reuse a possibly-dead one
-        (mirrors the async ``is_expired()`` coroutine).
-        """
-        try:
-            response = core_driver.connection_is_expired(conn_handle=self.conn_handle)  # type: ignore[arg-type]
-            return bool(response.is_expired)
         except Exception:
             return True
 
@@ -583,14 +538,6 @@ class Connection(ConnectionMixin):
     def rest(self) -> SnowflakeRestful:
         """Internal :class:`SnowflakeRestful` instance exposed for backward compatibility."""
         return SnowflakeRestful(connection=self)
-
-    @internal_api
-    def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
-        """Return connection details from Core."""
-        return core_driver.connection_get_info(
-            conn_handle=self.conn_handle,  # type: ignore[arg-type]
-            include_master_token=include_master_token,
-        )
 
     @internal_api
     @backward_compatibility

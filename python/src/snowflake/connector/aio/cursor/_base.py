@@ -705,7 +705,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Returns:
             bool: True if closed, False otherwise
         """
-        return self._closed or await self._connection.is_closed()
+        return self._closed or self._connection.is_closed()
 
     @api_telemetry
     @requires_open_cursor_not_connection

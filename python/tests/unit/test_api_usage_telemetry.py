@@ -128,25 +128,31 @@ def _run_async(awaitable):
 
 @pytest.fixture
 def mock_async_db_api(mock_async_db_api):
-    """Layer the CLIENT_TELEMETRY_ENABLED default onto the shared ``mock_async_db_api``
+    """Layer telemetry/session-parameter defaults onto the shared ``mock_async_db_api``
     (`tests/helpers/fixtures.py`), mirroring this file's ``mock_db_api`` override so the
     frozen-snapshot path (``connection_get_all_parameters``) agrees with the per-key default.
+
+    Also configures ``_sync_db_api`` (used by ``is_expired``, ``is_closed``, proxy reads)
+    so ``async_connection`` does not need the separate ``mock_db_api`` fixture — that
+    fixture would overwrite ``core_driver.client`` and drop ``connection_is_expired``.
     """
     mock_async_db_api.connection_get_all_parameters = AsyncMock(
         return_value=MagicMock(parameters={SessionParameterName.CLIENT_TELEMETRY_ENABLED: "true"})
+    )
+    sync_api = mock_async_db_api._sync_db_api
+    sync_api.connection_get_parameter.side_effect = _get_parameter_side_effect
+    sync_api.connection_get_all_parameters.return_value = MagicMock(
+        parameters={SessionParameterName.CLIENT_TELEMETRY_ENABLED: "true"}
     )
     return mock_async_db_api
 
 
 @pytest.fixture
-def async_connection(mock_async_db_api, mock_db_api):
+def async_connection(mock_async_db_api):
     """Create an async Connection with a mocked async db_api.
 
-    Also depends on ``mock_db_api``: single-key session-parameter reads (used by
-    ``Connection.telemetry_enabled`` gating) always go through the *sync*
-    ``core_driver`` client, even from async code — see
-    ``SessionParametersProxyMixin`` in ``_internal/connection/freezable_proxy.py``.
-    Without this, those reads would fall through to a real, unpatched client.
+    Sync ``core_driver`` reads (``is_expired``, session-parameter proxies, etc.) go
+    through ``mock_async_db_api._sync_db_api`` — see ``mock_async_db_api`` above.
     """
     from snowflake.connector.aio.connection._connection import Connection
 
@@ -650,7 +656,7 @@ class TestAsyncApiTelemetryFailureIsolation:
         mock_async_db_api.telemetry_send_api_usage.side_effect = RuntimeError("telemetry down")
 
         _run_async(async_connection.close())
-        assert _run_async(async_connection.is_closed())
+        assert async_connection.is_closed()
 
 
 class TestPassedArgumentNames:
@@ -928,38 +934,42 @@ class TestApiTelemetryFreeFunction:
 
 
 class TestAsyncExpired:
-    """Unit tests for ``aio.Connection.is_expired()`` coroutine.
+    """Unit tests for ``aio.Connection.is_expired()``.
 
-    Mirrors the sync ``TestExpired`` in test_connection.py. Injection point is
-    ``mock_async_db_api.connection_is_expired`` — the same RPC-layer mock used
-    by all other async connection tests.
+    Mirrors the sync ``TestExpired`` in test_connection.py. Now a sync method
+    backed by the sync core_driver.
     """
 
     def test_returns_false_for_fresh_connection(self, async_connection, mock_async_db_api):
         """A fresh async connection must report is_expired() == False."""
-        mock_async_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=False)
-        assert _run_async(async_connection.is_expired()) is False
-        mock_async_db_api.connection_is_expired.assert_called_once()
+        sync_api = mock_async_db_api._sync_db_api
+        sync_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=False)
+        assert async_connection.is_expired() is False
+        sync_api.connection_is_expired.assert_called_once()
 
     def test_returns_true_when_core_reports_expired(self, async_connection, mock_async_db_api):
         """is_expired() == True is forwarded from sf_core."""
-        mock_async_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
-        assert _run_async(async_connection.is_expired()) is True
+        sync_api = mock_async_db_api._sync_db_api
+        sync_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
+        assert async_connection.is_expired() is True
 
     def test_returns_true_on_exception(self, async_connection, mock_async_db_api):
         """If the RPC raises, is_expired() fails closed and returns True rather than
         propagating — the connection may be unusable, so callers treat it as expired."""
-        mock_async_db_api.connection_is_expired.side_effect = RuntimeError("handle gone")
-        assert _run_async(async_connection.is_expired()) is True
+        sync_api = mock_async_db_api._sync_db_api
+        sync_api.connection_is_expired.side_effect = RuntimeError("handle gone")
+        assert async_connection.is_expired() is True
 
     def test_conn_handle_none_returns_false(self, async_connection, mock_async_db_api):
         """conn_handle=None (pre-connect or post-release) must return False immediately."""
+        sync_api = mock_async_db_api._sync_db_api
         async_connection.conn_handle = None
-        assert _run_async(async_connection.is_expired()) is False
-        mock_async_db_api.connection_is_expired.assert_not_called()
+        assert async_connection.is_expired() is False
+        sync_api.connection_is_expired.assert_not_called()
 
     def test_returns_bool(self, async_connection, mock_async_db_api):
         """is_expired() must return a plain Python bool, not a protobuf bool."""
-        mock_async_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
-        result = _run_async(async_connection.is_expired())
+        sync_api = mock_async_db_api._sync_db_api
+        sync_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
+        result = async_connection.is_expired()
         assert type(result) is bool
