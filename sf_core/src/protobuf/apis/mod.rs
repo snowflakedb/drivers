@@ -74,13 +74,10 @@ impl RustTransport {
         // TODO(SNOW-3675196): handle_message should accept the CancellationToken and
         //       pass it down the stack, so every operation can race against this token
         //       and cancel at a proper checkpoint instead of only via future-drop.
-        match token
+        token
             .run_until_cancelled(self.handle_message(service, method, message))
             .await
-        {
-            Some(result) => result,
-            None => Err(ProtoError::Application(encode_cancelled())),
-        }
+            .unwrap_or_else(|| Err(ProtoError::Application(encode_cancelled())))
     }
 }
 

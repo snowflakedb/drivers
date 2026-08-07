@@ -7,7 +7,10 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
-use syn::{FnArg, ItemFn, Pat, ReturnType, Type, TypePath, TypeReference, TypeTuple};
+use syn::{
+    Expr, ExprCall, FnArg, ItemFn, Pat, ReturnType, Type, TypePath, TypeReference, TypeSlice,
+    TypeTuple,
+};
 
 fn main() {
     let out_dir = std::env::args()
@@ -91,12 +94,14 @@ fn write_stub_function(out: &mut String, func: &ItemFn) {
         })
         .collect();
 
+    let is_async = func.sig.asyncness.is_some() || returns_future_into_py(func);
     let ret = match &func.sig.output {
         ReturnType::Default => "None".to_string(),
         ReturnType::Type(_, ty) => rust_type_to_python(ty),
     };
 
-    let _ = writeln!(out, "def {name}({}) -> {ret}:", params.join(", "));
+    let kw = if is_async { "async def" } else { "def" };
+    let _ = writeln!(out, "{kw} {name}({}) -> {ret}:", params.join(", "));
 
     if !docs.is_empty() {
         out.push_str("    \"\"\"");
@@ -127,10 +132,65 @@ fn is_python_token(ty: &Type) -> bool {
     }
 }
 
+/// Async pyfunctions hand a Rust future to Python via `future_into_py`.
+fn returns_future_into_py(func: &ItemFn) -> bool {
+    func.block.stmts.iter().any(|stmt| match stmt {
+        syn::Stmt::Expr(expr, _) => expr_returns_future_into_py(expr),
+        syn::Stmt::Local(local) => local
+            .init
+            .as_ref()
+            .is_some_and(|init| expr_returns_future_into_py(&init.expr)),
+        _ => false,
+    })
+}
+
+fn expr_returns_future_into_py(expr: &Expr) -> bool {
+    if is_future_into_py_call(expr) {
+        return true;
+    }
+    match expr {
+        Expr::Return(ret) => ret
+            .expr
+            .as_ref()
+            .map(|e| e.as_ref())
+            .is_some_and(expr_returns_future_into_py),
+        Expr::If(expr_if) => {
+            expr_if.then_branch.stmts.iter().any(|stmt| match stmt {
+                syn::Stmt::Expr(expr, _) => expr_returns_future_into_py(expr),
+                _ => false,
+            }) || expr_if
+                .else_branch
+                .as_ref()
+                .is_some_and(|(_, expr)| expr_returns_future_into_py(expr))
+        }
+        _ => false,
+    }
+}
+
+fn is_future_into_py_call(expr: &Expr) -> bool {
+    let Expr::Call(ExprCall { func, .. }) = expr else {
+        return false;
+    };
+    let Expr::Path(path) = func.as_ref() else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|s| s.ident == "future_into_py")
+}
+
 fn rust_type_to_python(ty: &Type) -> String {
     match ty {
         Type::Path(tp) => path_to_python(tp),
         Type::Reference(TypeReference { elem, .. }) => rust_type_to_python(elem),
+        Type::Slice(TypeSlice { elem, .. }) => {
+            if is_u8(elem) {
+                "bytes".to_string()
+            } else {
+                format!("list[{}]", rust_type_to_python(elem))
+            }
+        }
         Type::Tuple(TypeTuple { elems, .. }) => {
             if elems.is_empty() {
                 "None".to_string()
@@ -175,6 +235,13 @@ fn path_to_python(tp: &TypePath) -> String {
                 "object | None".to_string()
             }
         }
+        "PyResult" => {
+            if let Some(inner) = extract_generic_arg(seg) {
+                rust_type_to_python(&inner)
+            } else {
+                "object".to_string()
+            }
+        }
         "Py" => {
             // Py<PyAny> → object, Py<PyBytes> → bytes
             if let Some(inner) = extract_generic_arg(seg) {
@@ -204,6 +271,13 @@ fn extract_generic_arg(seg: &syn::PathSegment) -> Option<Type> {
         }
     }
     None
+}
+
+fn is_u8(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "u8")
+    )
 }
 
 fn extract_last_generic_arg(seg: &syn::PathSegment) -> Option<Type> {
