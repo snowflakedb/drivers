@@ -716,6 +716,76 @@ behavior_differences:
       TODO: implement OOB telemetry in the Universal Driver and wire up
       `TelemetryService` to the real implementation.
 
+  46:
+    name: "Azure EncryptionAgent.EncryptionAlgorithm stays 256; Python-Azure emits 128"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure `encryptiondata` JSON: `EncryptionAgent.EncryptionAlgorithm = "AES_CBC_128"`;
+      `WrappedContentKey.Algorithm = "AES_CBC_256"` in the same blob (self-inconsistent).
+      Origin: commit 4455b4e1 (2017-10-26) introduced both fields self-consistently at 128-bit
+      (`A128KW` + `AES_CBC_128`). Commit 07309aaf (2017-11-03) changed only
+      `WrappedContentKey.Algorithm` to `AES_CBC_256`, without updating the sibling field.
+      No commit, comment, or test treats this as deliberate; `git log -S "AES_CBC_128" --all`
+      shows no revisits since 2017. JDBC had the same class of incomplete edit one week later
+      (cf776907, 2017-11-10), but its `EncryptionAgent` was already 256, so no visible split
+      resulted there.
+    new_driver_behavior: |
+      UD emits `256` for both fields on Azure, matching JDBC-Azure, ODBC-Azure, and GCS.
+      Source-confirmed (Python/JDBC/ODBC): no decrypt path reads this field's value. Python/JDBC
+      deserialize via JSON parsers that never look up `EncryptionAgent`; ODBC's Azure reader
+      slices substrings between the literal delimiters `","Algorithm"` and
+      `","KeyWrappingMetadata"`, keyed on field names, not values. Cross-driver decryption is
+      therefore unaffected either way. Not changed to match Python's `128`: that value is an
+      unrevisited 2017 editing miss, not an intentional legacy behavior, and matching it would
+      newly diverge UD from JDBC/ODBC/GCS. Both fields are static labels in every driver,
+      disconnected from the real per-file cipher (follows QSMK length; recorded separately in
+      `matdesc.keySize`).
+
+  47:
+    name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure/GCS `encryptiondata` JSON: `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"`,
+      hardcoded on every cloud, including Python itself.
+    new_driver_behavior: |
+      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
+      self-identification, not an oversight. Confirmed no reader anywhere consumes this value:
+      not the four legacy drivers' decrypt paths, not UD's own, and not GS's own server-side
+      parser, which validates several sibling fields (throws on a bad `EncryptionMode` or
+      `EncryptionAlgorithm`) but never reads `EncryptionLibrary`. GS's own internal C++
+      encryption library independently emits `"OpenSSL 1.0.1e-fips"` rather than `"Java 5.3.0"`
+      on its GCS path -- the same
+      self-identify-honestly pattern UD follows, not a UD-only quirk. Kept deliberately: matching
+      "Java 5.3.0" would misidentify which implementation produced the blob, which has real
+      diagnostic value during the mixed-fleet rollout period when legacy and universal drivers
+      both write objects into the same stages.
+
+  48:
+    name: "Error exposes structured parameter and validation_code attributes on validation failures"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The legacy connector's `Error` class carries only the message, `errno`, `sqlstate`,
+      `sfqid`, and `query`. There is no attribute identifying which connection parameter
+      failed validation, and no structured code for the validation rule that fired — callers
+      can only substring-match the error message.
+    new_driver_behavior: |
+      `Error` (and its subclasses) additionally expose `parameter` (the offending config
+      parameter name) and `validation_code` (the structured sf_core `ValidationCode` enum
+      value) when the error originated from a connection-config validation failure. Both
+      default to `None` for errors from any other source, so existing callers are unaffected.
+
   49:
     name: "file_stream on a non-PUT statement raises ProgrammingError instead of being silently ignored"
     status: allowed
@@ -748,6 +818,41 @@ behavior_differences:
       With the flag off (the default), a content-matching `PUT ... OVERWRITE=TRUE` re-uploads,
       matching legacy Python; the content-match skip fires only when the caller opts in.
 
+  51:
+    name: "fetch_pandas_all/fetch_pandas_batches: no pandas.concat kwarg routing"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Legacy's `_fetch_pandas_all` (`result_set.py:268-280` in the legacy connector) fetches
+      results in per-batch Arrow chunks and explicitly calls
+      `pandas.concat(dataframes, ignore_index=True, **concat_kwargs)`. Any kwarg passed to
+      `fetch_pandas_all`/`fetch_pandas_batches` that matches `pandas.concat`'s signature
+      (e.g. `sort`, `keys`, `copy`) is specially routed to that concat call rather than to
+      `Table.to_pandas`.
+    new_driver_behavior: |
+      The universal driver obtains the full result as a single, already-consolidated Arrow
+      Table directly from the Rust core (`collect_arrow_table`/`collect_arrow_table_async`)
+      — there is no per-chunk Python-level `pandas.concat` step, so there is nothing to route
+      `pandas.concat`-specific kwargs to. `fetch_pandas_all`/`fetch_pandas_batches` pop only
+      `force_microsecond_precision` (the Arrow-conversion parameter) and forward every other
+      kwarg straight to `pyarrow.Table.to_pandas`. Kwargs that are genuine `Table.to_pandas`
+      options (`split_blocks`, `self_destruct`, `zero_copy_only`, `types_mapper`, etc.) work
+      correctly. `pandas.concat`-specific kwargs (`sort`, `keys`, `copy`, ...) that don't
+      also happen to be `Table.to_pandas` options now raise `TypeError` from `to_pandas`
+      instead of being silently applied to a concat step that no longer exists.
+    description: |
+      Architectural consequence of fetching the full result set as one already-merged Arrow
+      Table from the core rather than legacy's per-chunk-then-concat approach — not a bug to
+      fix, since there's no concat step for `pandas.concat` kwargs to attach to. Distinct from
+      the `fetch_arrow_all`/`fetch_pandas_all` kwargs-forwarding bugfix (both sync and async
+      previously dropped or misrouted kwargs entirely regardless of this architectural
+      difference); that bug is now fixed, and genuine `Table.to_pandas` kwargs are forwarded
+      correctly. Only kwargs that are exclusively `pandas.concat`-specific remain
+      unsupported, and only because the concat step itself doesn't exist in the new
+      architecture.
   52:
     name: "login_timeout, network_timeout, and socket_timeout connection getters are now implemented"
     status: unknown
@@ -796,76 +901,6 @@ behavior_differences:
 
       Previously all three getters raised `NotImplementedError`.
 
-  47:
-    name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      Azure/GCS `encryptiondata` JSON: `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"`,
-      hardcoded on every cloud, including Python itself.
-    new_driver_behavior: |
-      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
-      self-identification, not an oversight. Confirmed no reader anywhere consumes this value:
-      not the four legacy drivers' decrypt paths, not UD's own, and not GS's own server-side
-      parser, which validates several sibling fields (throws on a bad `EncryptionMode` or
-      `EncryptionAlgorithm`) but never reads `EncryptionLibrary`. GS's own internal C++
-      encryption library independently emits `"OpenSSL 1.0.1e-fips"` rather than `"Java 5.3.0"`
-      on its GCS path -- the same
-      self-identify-honestly pattern UD follows, not a UD-only quirk. Kept deliberately: matching
-      "Java 5.3.0" would misidentify which implementation produced the blob, which has real
-      diagnostic value during the mixed-fleet rollout period when legacy and universal drivers
-      both write objects into the same stages.
-
-  46:
-    name: "Azure EncryptionAgent.EncryptionAlgorithm stays 256; Python-Azure emits 128"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      Azure `encryptiondata` JSON: `EncryptionAgent.EncryptionAlgorithm = "AES_CBC_128"`;
-      `WrappedContentKey.Algorithm = "AES_CBC_256"` in the same blob (self-inconsistent).
-      Origin: commit 4455b4e1 (2017-10-26) introduced both fields self-consistently at 128-bit
-      (`A128KW` + `AES_CBC_128`). Commit 07309aaf (2017-11-03) changed only
-      `WrappedContentKey.Algorithm` to `AES_CBC_256`, without updating the sibling field.
-      No commit, comment, or test treats this as deliberate; `git log -S "AES_CBC_128" --all`
-      shows no revisits since 2017. JDBC had the same class of incomplete edit one week later
-      (cf776907, 2017-11-10), but its `EncryptionAgent` was already 256, so no visible split
-      resulted there.
-    new_driver_behavior: |
-      UD emits `256` for both fields on Azure, matching JDBC-Azure, ODBC-Azure, and GCS.
-      Source-confirmed (Python/JDBC/ODBC): no decrypt path reads this field's value. Python/JDBC
-      deserialize via JSON parsers that never look up `EncryptionAgent`; ODBC's Azure reader
-      slices substrings between the literal delimiters `","Algorithm"` and
-      `","KeyWrappingMetadata"`, keyed on field names, not values. Cross-driver decryption is
-      therefore unaffected either way. Not changed to match Python's `128`: that value is an
-      unrevisited 2017 editing miss, not an intentional legacy behavior, and matching it would
-      newly diverge UD from JDBC/ODBC/GCS. Both fields are static labels in every driver,
-      disconnected from the real per-file cipher (follows QSMK length; recorded separately in
-      `matdesc.keySize`).
-
-  48:
-    name: "Error exposes structured parameter and validation_code attributes on validation failures"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      The legacy connector's `Error` class carries only the message, `errno`, `sqlstate`,
-      `sfqid`, and `query`. There is no attribute identifying which connection parameter
-      failed validation, and no structured code for the validation rule that fired — callers
-      can only substring-match the error message.
-    new_driver_behavior: |
-      `Error` (and its subclasses) additionally expose `parameter` (the offending config
-      parameter name) and `validation_code` (the structured sf_core `ValidationCode` enum
-      value) when the error originated from a connection-config validation failure. Both
-      default to `None` for errors from any other source, so existing callers are unaffected.
-
   53:
     name: "Connection.telemetry_enabled restored; matches legacy AND semantics"
     status: allowed
@@ -890,38 +925,3 @@ behavior_differences:
       batched-queue flush model has no analog, since the universal driver sends each
       telemetry event immediately via RPC.
 
-  51:
-    name: "fetch_pandas_all/fetch_pandas_batches: no pandas.concat kwarg routing"
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      Legacy's `_fetch_pandas_all` (`result_set.py:268-280` in the legacy connector) fetches
-      results in per-batch Arrow chunks and explicitly calls
-      `pandas.concat(dataframes, ignore_index=True, **concat_kwargs)`. Any kwarg passed to
-      `fetch_pandas_all`/`fetch_pandas_batches` that matches `pandas.concat`'s signature
-      (e.g. `sort`, `keys`, `copy`) is specially routed to that concat call rather than to
-      `Table.to_pandas`.
-    new_driver_behavior: |
-      The universal driver obtains the full result as a single, already-consolidated Arrow
-      Table directly from the Rust core (`collect_arrow_table`/`collect_arrow_table_async`)
-      — there is no per-chunk Python-level `pandas.concat` step, so there is nothing to route
-      `pandas.concat`-specific kwargs to. `fetch_pandas_all`/`fetch_pandas_batches` pop only
-      `force_microsecond_precision` (the Arrow-conversion parameter) and forward every other
-      kwarg straight to `pyarrow.Table.to_pandas`. Kwargs that are genuine `Table.to_pandas`
-      options (`split_blocks`, `self_destruct`, `zero_copy_only`, `types_mapper`, etc.) work
-      correctly. `pandas.concat`-specific kwargs (`sort`, `keys`, `copy`, ...) that don't
-      also happen to be `Table.to_pandas` options now raise `TypeError` from `to_pandas`
-      instead of being silently applied to a concat step that no longer exists.
-    description: |
-      Architectural consequence of fetching the full result set as one already-merged Arrow
-      Table from the core rather than legacy's per-chunk-then-concat approach — not a bug to
-      fix, since there's no concat step for `pandas.concat` kwargs to attach to. Distinct from
-      the `fetch_arrow_all`/`fetch_pandas_all` kwargs-forwarding bugfix (both sync and async
-      previously dropped or misrouted kwargs entirely regardless of this architectural
-      difference); that bug is now fixed, and genuine `Table.to_pandas` kwargs are forwarded
-      correctly. Only kwargs that are exclusively `pandas.concat`-specific remain
-      unsupported, and only because the concat step itself doesn't exist in the new
-      architecture.
