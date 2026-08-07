@@ -36,7 +36,6 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Resul
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteAsyncResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.util.DelegatingWrapper;
-import net.snowflake.client.internal.util.NotImplementedException;
 import net.snowflake.client.internal.util.StringUtil;
 
 @JdbcBoundary
@@ -721,10 +720,9 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   }
 
   @Override
+  @Deprecated
   public void setBatchID(String batchID) {
-    // A not-yet-implemented gap (legacy snowflake-jdbc stores the batch id), not a by-design
-    // unsupported feature — hence NotImplementedException, not SFSQLFeatureNotSupportedException.
-    throw new NotImplementedException("setBatchID not supported");
+    // No-op. See SnowflakeStatement#setBatchID.
   }
 
   @Override
