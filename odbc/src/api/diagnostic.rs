@@ -52,11 +52,11 @@ pub enum DiagIdentifier {
     /// SQL_DIAG_DYNAMIC_FUNCTION_CODE - Dynamic function code
     DynamicFunctionCode = 12,
     /// SQL_DIAG_CURSOR_ROW_COUNT - Number of rows in the cursor
-    CursorRowCount = 13,
+    CursorRowCount = -1249,
     /// SQL_DIAG_ROW_NUMBER - Row number where the error occurred
-    RowNumber = 14,
+    RowNumber = -1248,
     /// SQL_DIAG_COLUMN_NUMBER - Column number where the error occurred
-    ColumnNumber = 15,
+    ColumnNumber = -1247,
 }
 
 impl TryFrom<sql::SmallInt> for DiagIdentifier {
@@ -76,9 +76,9 @@ impl TryFrom<sql::SmallInt> for DiagIdentifier {
             10 => Ok(DiagIdentifier::ConnectionName),
             11 => Ok(DiagIdentifier::ServerName),
             12 => Ok(DiagIdentifier::DynamicFunctionCode),
-            13 => Ok(DiagIdentifier::CursorRowCount),
-            14 => Ok(DiagIdentifier::RowNumber),
-            15 => Ok(DiagIdentifier::ColumnNumber),
+            -1249 => Ok(DiagIdentifier::CursorRowCount),
+            -1248 => Ok(DiagIdentifier::RowNumber),
+            -1247 => Ok(DiagIdentifier::ColumnNumber),
             _ => InvalidDiagnosticIdentifierSnafu { identifier: value }.fail(),
         }
     }
@@ -178,10 +178,16 @@ impl DiagnosticInfo {
         &mut self,
         statement_type_id: Option<i64>,
         rows_affected: Option<i64>,
+        cursor_row_count: Option<i64>,
     ) {
         let qt = QueryType::from_raw(statement_type_id);
         let (fn_name, fn_code) = query_type_to_dynamic_function(qt);
         self.header.row_count = rows_affected.map(|v| v as sql::Len);
+        // SQL_DIAG_CURSOR_ROW_COUNT: total rows in the result set. Snowflake returns
+        // this up front as `data.total` (surfaced on the descriptor as `row_count`);
+        // it is None for statements without a result set (DML/DDL), where the field
+        // is undefined and the getter reports 0.
+        self.header.cursor_row_count = cursor_row_count.map(|v| v as sql::Len);
         self.header.dynamic_function = Some(fn_name.to_owned());
         self.header.dynamic_function_code = Some(fn_code);
     }
@@ -754,9 +760,11 @@ pub fn get_diag_field<E: OdbcEncoding>(
             }
             DiagIdentifier::ColumnNumber => {
                 unsafe {
+                    // SQL_COLUMN_NUMBER_UNKNOWN (-2) when no column info is available.
+                    const SQL_COLUMN_NUMBER_UNKNOWN: sql::Integer = -2;
                     std::ptr::write(
                         diag_info_ptr as *mut sql::Integer,
-                        record.column_number.unwrap_or(0),
+                        record.column_number.unwrap_or(SQL_COLUMN_NUMBER_UNKNOWN),
                     );
                 }
                 Ok(())
@@ -764,9 +772,11 @@ pub fn get_diag_field<E: OdbcEncoding>(
             DiagIdentifier::RowNumber => {
                 unsafe {
                     // ODBC spec requires SQLLEN (pointer-sized integer) for SQL_DIAG_ROW_NUMBER.
+                    // SQL_ROW_NUMBER_UNKNOWN (-2) when no row info is available.
+                    const SQL_ROW_NUMBER_UNKNOWN: sql::Len = -2;
                     std::ptr::write(
                         diag_info_ptr as *mut sql::Len,
-                        record.row_number.unwrap_or(0),
+                        record.row_number.unwrap_or(SQL_ROW_NUMBER_UNKNOWN),
                     );
                 }
                 Ok(())

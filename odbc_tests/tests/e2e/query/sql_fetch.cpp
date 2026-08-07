@@ -1227,8 +1227,11 @@ TEST_CASE("SQLGetDiagField returns correct row and column number on fetch error.
     CHECK((row_number > 0 || row_number == SQL_ROW_NUMBER_UNKNOWN));
   }
 
-  // And SQLGetDiagField should return the column number
-  SQLLEN column_number = 0;
+  // And SQLGetDiagField should return the column number.
+  // SQL_DIAG_COLUMN_NUMBER is a 32-bit SQLINTEGER field; reading it into a 64-bit
+  // SQLLEN would leave the upper bytes untouched, so a negative value such as
+  // SQL_COLUMN_NUMBER_UNKNOWN (-2) would read back as 0x00000000FFFFFFFE.
+  SQLINTEGER column_number = 0;
   diag_ret =
       SQLGetDiagField(SQL_HANDLE_STMT, stmt.getHandle(), 1, SQL_DIAG_COLUMN_NUMBER, &column_number, 0, &string_length);
 
