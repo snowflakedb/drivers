@@ -719,23 +719,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         # Clear multistatement state
         self._multi_statement = None
 
-    @pep249
-    @api_telemetry
-    def close(self) -> bool | None:
-        """Close the cursor now.
-
-        Returns whether the cursor was closed during this call.
-        """
-        try:
-            if self._closed:
-                return False
-            self.reset(closing=True)
-            self._closed = True
-            del self._messages[:]
-            return True
-        except Exception:
-            return None
-
     # ------------------------------------------------------------------
     # Fetch – Arrow / Pandas
     # ------------------------------------------------------------------

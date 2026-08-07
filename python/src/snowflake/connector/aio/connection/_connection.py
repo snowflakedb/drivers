@@ -220,7 +220,7 @@ class Connection(ConnectionMixin[CursorInstance]):
         try:
             await cur.execute(COMMIT_SQL)
         finally:
-            await cur.close()
+            cur.close()
 
     @pep249
     @api_telemetry
@@ -230,7 +230,7 @@ class Connection(ConnectionMixin[CursorInstance]):
         try:
             await cur.execute(ROLLBACK_SQL)
         finally:
-            await cur.close()
+            cur.close()
 
     # ------------------------------------------------------------------
     # Context manager
@@ -268,7 +268,7 @@ class Connection(ConnectionMixin[CursorInstance]):
         except Error as e:
             logger.warning("Autocommit feature is not enabled for this connection. Ignored: %s", e)
         finally:
-            await cur.close()
+            cur.close()
 
     @pep249
     @api_telemetry
@@ -297,7 +297,7 @@ class Connection(ConnectionMixin[CursorInstance]):
         try:
             await cur.execute(SET_CLIENT_PREFETCH_THREADS_SQL.format(value=value))
         finally:
-            await cur.close()
+            cur.close()
 
     # ------------------------------------------------------------------
     # Connection state

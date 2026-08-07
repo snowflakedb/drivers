@@ -648,7 +648,16 @@ class TestAsyncCursorApiTelemetry:
         assert "SnowflakeCursor.execute" in methods
 
     def test_close_sends_telemetry(self, async_cursor, mock_async_db_api):
-        _run_async(async_cursor.close())
+        async def _close_and_drain():
+            # close() is synchronous; on an async cursor its telemetry is
+            # fire-and-forget (scheduled via create_task), so it only records
+            # under a running loop. Drain the scheduled task before asserting.
+            async_cursor.close()
+            pending = asyncio.all_tasks() - {asyncio.current_task()}
+            if pending:
+                await asyncio.gather(*pending)
+
+        _run_async(_close_and_drain())
 
         methods = _get_api_methods(mock_async_db_api)
         assert "SnowflakeCursor.close" in methods

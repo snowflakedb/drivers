@@ -70,7 +70,7 @@ class TestAsyncWritePandas:
                     )
                     rows = await cur.fetchall()
                 finally:
-                    await cur.close()
+                    cur.close()
             return success, nchunks, nrows, rows
 
         success, nchunks, nrows, rows = loop.run(_run())
@@ -111,7 +111,7 @@ class TestAsyncWritePandas:
                     )
                     rows = await cur.fetchall()
                 finally:
-                    await cur.close()
+                    cur.close()
             return success, nchunks, nrows, rows
 
         success, nchunks, nrows, rows = loop.run(_run())
@@ -152,7 +152,7 @@ class TestAsyncWritePandas:
                         chunk_size=chunk_size,
                     )
                 finally:
-                    await cur.close()
+                    cur.close()
             return success, nchunks, nrows
 
         success, nchunks, nrows = loop.run(_run())
