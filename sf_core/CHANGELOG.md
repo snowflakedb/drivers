@@ -18,6 +18,7 @@ Bug fixes:
 Internal improvements:
 
 - Replaced the three rarely-varied trailing parameters of `snowflake_query` and `snowflake_query_with_client` (retry policy, execution mode, request id) with a single `QueryOptions` struct that defaults to the common case (default retry policy, blocking mode, freshly-minted requestId), so most callers pass `QueryOptions::default()`.
+- Raised the default multipart block size for PUT uploads to internal Azure stages from 4 MiB to 8 MiB, matching the S3/GCS default and improving throughput for typical file sizes.
 
 Test improvements:
 
