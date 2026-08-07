@@ -1,6 +1,7 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -29,7 +30,6 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Resul
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
-import net.snowflake.client.internal.util.NotImplementedException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -271,12 +271,9 @@ public class SnowflakeStatementImplTest {
   }
 
   @Test
-  void shouldThrowNotImplementedForSetBatchID() throws Exception {
+  void shouldAcceptBatchIDWithoutThrowing() throws Exception {
     Statement stmt = createStatement();
-    // setBatchID is a not-yet-implemented gap, surfaced as NotImplementedException so the boundary
-    // maps it to SQLFeatureNotSupportedException.
-    assertThrows(
-        NotImplementedException.class, () -> ((SnowflakeStatement) stmt).setBatchID("batch-1"));
+    assertDoesNotThrow(() -> ((SnowflakeStatement) stmt).setBatchID("batch-1"));
   }
 
   private static CoreException driverExceptionWithQueryId(String queryId) {
