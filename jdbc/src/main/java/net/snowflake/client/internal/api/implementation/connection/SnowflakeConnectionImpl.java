@@ -1,8 +1,6 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
 import static java.sql.ClientInfoStatus.REASON_UNKNOWN_PROPERTY;
-import static java.sql.Connection.TRANSACTION_NONE;
-import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
 import static java.sql.ResultSet.CLOSE_CURSORS_AT_COMMIT;
 import static java.sql.ResultSet.CONCUR_READ_ONLY;
 import static java.sql.ResultSet.TYPE_FORWARD_ONLY;
@@ -20,11 +18,11 @@ import java.sql.Blob;
 import java.sql.CallableStatement;
 import java.sql.ClientInfoStatus;
 import java.sql.Clob;
+import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.NClob;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLWarning;
@@ -42,9 +40,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
 import net.snowflake.client.api.connection.UploadStreamConfig;
 import net.snowflake.client.api.driver.SnowflakeDriver;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.decorator.Telemetry;
+import net.snowflake.client.internal.api.implementation.Decorators;
+import net.snowflake.client.internal.api.implementation.exception.SFClientInfoException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
+import net.snowflake.client.internal.api.implementation.metadata.DecoratedSnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
 import net.snowflake.client.internal.api.implementation.parameters.CoreParametersRegistry;
@@ -54,10 +56,14 @@ import net.snowflake.client.internal.api.implementation.parameters.ParameterValu
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
+import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
+import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakeCallableStatementImpl;
+import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.api.implementation.telemetry.CoreTelemetry;
+import net.snowflake.client.internal.codegen.JdbcBoundary;
 import net.snowflake.client.internal.log.Jdk14LoggerBootstrap;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -80,6 +86,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Wrapp
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
 
+@JdbcBoundary
 public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, DelegatingWrapper {
 
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeConnectionImpl.class);
@@ -108,16 +115,21 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private volatile String cachedDatabaseVersion;
   private final Object databaseVersionLock = new Object();
 
-  public SnowflakeConnectionImpl(String url, Properties properties) throws SQLException {
+  // The decorator that wraps this impl and is handed to the application. Created once on first
+  // decoration and reused so round-trips that hand the connection back (DatabaseMetaData.get
+  // Connection(), Statement.getConnection()) return the very same object the caller holds, as JDBC
+  // callers reasonably expect (assertSame). Without this, each call minted a fresh decorator.
+  private volatile Connection decoratedSelf;
+
+  public SnowflakeConnectionImpl(String url, Properties properties) {
     this(url, properties, ProtobufApis.coreDriverApi);
   }
 
-  SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi)
-      throws SQLException {
+  SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi) {
     try {
       Jdk14LoggerBootstrap.initFromConnectionIfConfigured(url, properties);
     } catch (IOException e) {
-      throw new SQLException("Failed to initialize JDBC logging", e);
+      throw new SFSQLException("Failed to initialize JDBC logging", e);
     }
 
     this.coreDriverApi = coreDriverApi;
@@ -140,7 +152,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       this.sqlWarnings = sqlWarnings;
       this.parametersRegistry = new CoreParametersRegistry(coreDriverApi, connHandle);
       this.autoCommit = parametersRegistry.getBool(Parameter.AUTOCOMMIT);
-    } catch (SQLException e) {
+    } catch (RuntimeException e) {
       releaseHandlesQuietly(coreDriverApi, connHandle, dbHandle);
       throw e;
     }
@@ -162,8 +174,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     return identityBuilder.build();
   }
 
-  private SQLWarning setOptions(ConnectionHandle connHandle, String url, Properties properties)
-      throws SQLException {
+  private SQLWarning setOptions(ConnectionHandle connHandle, String url, Properties properties) {
     Properties resolvedProperties = ConnectionOptionsResolver.resolve(url, properties);
     Map<String, ConfigSetting> options = new HashMap<>();
 
@@ -212,43 +223,67 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     return telemetry;
   }
 
+  /**
+   * Returns the {@link DecoratedSnowflakeConnectionImpl} wrapping this impl, creating it once and
+   * caching it so every path that hands the connection back to the caller returns the same object.
+   */
+  public Connection decoratedSelf(Telemetry telemetry) {
+    Connection existing = decoratedSelf;
+    if (existing != null) {
+      return existing;
+    }
+    synchronized (this) {
+      if (decoratedSelf == null) {
+        decoratedSelf = new DecoratedSnowflakeConnectionImpl(this, telemetry);
+      }
+      return decoratedSelf;
+    }
+  }
+
   @Override
   public ParametersRegistry getParameters() {
     return parametersRegistry;
   }
 
   @Override
-  public Statement createStatement() throws SQLException {
+  public Statement createStatement() {
+    return Decorators.statement(createStatementInternal(), telemetry);
+  }
+
+  @Override
+  public SnowflakeStatementImpl createStatementInternal() {
     checkClosed();
-    Statement stmt = new SnowflakeStatementImpl(this, coreDriverApi);
+    SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(this, coreDriverApi);
     openStatements.add(stmt);
     return stmt;
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql) throws SQLException {
+  public PreparedStatement prepareStatement(String sql) {
     checkClosed();
-    PreparedStatement stmt = new SnowflakePreparedStatementImpl(this, sql, coreDriverApi);
+    SnowflakePreparedStatementImpl stmt =
+        new SnowflakePreparedStatementImpl(this, sql, coreDriverApi);
     openStatements.add(stmt);
-    return stmt;
+    return new DecoratedSnowflakePreparedStatementImpl(stmt, telemetry);
   }
 
   @Override
-  public CallableStatement prepareCall(String sql) throws SQLException {
+  public CallableStatement prepareCall(String sql) {
     checkClosed();
-    CallableStatement stmt = new SnowflakeCallableStatementImpl(this, sql, coreDriverApi);
+    SnowflakeCallableStatementImpl stmt =
+        new SnowflakeCallableStatementImpl(this, sql, coreDriverApi);
     openStatements.add(stmt);
-    return stmt;
+    return new DecoratedSnowflakeCallableStatementImpl(stmt, telemetry);
   }
 
   @Override
-  public String nativeSQL(String sql) throws SQLException {
+  public String nativeSQL(String sql) {
     checkClosed();
     return sql;
   }
 
   @Override
-  public void setAutoCommit(boolean autoCommit) throws SQLException {
+  public void setAutoCommit(boolean autoCommit) {
     boolean currentAutoCommit = getAutoCommit();
     if (autoCommit != currentAutoCommit) {
       this.autoCommit = autoCommit;
@@ -257,25 +292,25 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public boolean getAutoCommit() throws SQLException {
+  public boolean getAutoCommit() {
     checkClosed();
     return autoCommit;
   }
 
   @Override
-  public void commit() throws SQLException {
+  public void commit() {
     checkClosed();
     coreDriverApi.connectionCommit(connectionHandle);
   }
 
   @Override
-  public void rollback() throws SQLException {
+  public void rollback() {
     checkClosed();
     coreDriverApi.connectionRollback(connectionHandle);
   }
 
   @Override
-  public void close() throws SQLException {
+  public void close() {
     if (!closed.compareAndSet(false, true)) {
       return;
     }
@@ -286,7 +321,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
     try {
       coreDriverApi.connectionClose(connectionHandle);
-    } catch (SQLException e) {
+    } catch (RuntimeException e) {
       logger.warn("Error during connection close: {}", e.getClass().getName());
       logger.debug("Connection close error details", e);
       throw e;
@@ -329,57 +364,58 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     if (connHandle != null) {
       try {
         driver.connectionRelease(connHandle);
-      } catch (SQLException e) {
+      } catch (RuntimeException e) {
         logger.debug("Error releasing connection handle", e);
       }
     }
     if (dbHandle != null) {
       try {
         driver.databaseRelease(dbHandle);
-      } catch (SQLException e) {
+      } catch (RuntimeException e) {
         logger.debug("Error releasing database handle", e);
       }
     }
   }
 
   @Override
-  public boolean isClosed() throws SQLException {
+  public boolean isClosed() {
     return closed.get();
   }
 
   @Override
-  public DatabaseMetaData getMetaData() throws SQLException {
+  public DatabaseMetaData getMetaData() {
     checkClosed();
-    return new SnowflakeDatabaseMetaDataImpl(this);
+    return new DecoratedSnowflakeDatabaseMetaDataImpl(
+        new SnowflakeDatabaseMetaDataImpl(this), telemetry);
   }
 
   @Override
-  public void setReadOnly(boolean readOnly) throws SQLException {
+  public void setReadOnly(boolean readOnly) {
     checkClosed();
     logger.debug("setReadOnly not supported.");
   }
 
   @Override
-  public boolean isReadOnly() throws SQLException {
+  public boolean isReadOnly() {
     checkClosed();
     return false;
   }
 
   @Override
-  public void setCatalog(String catalog) throws SQLException {
+  public void setCatalog(String catalog) {
     checkClosed();
     coreDriverApi.connectionUseDatabase(connectionHandle, catalog);
     this.catalog = readCurrentCatalog();
   }
 
   @Override
-  public String getCatalog() throws SQLException {
+  public String getCatalog() {
     checkClosed();
     catalog = readCurrentCatalog();
     return catalog;
   }
 
-  private String readCurrentCatalog() throws SQLException {
+  private String readCurrentCatalog() {
     ConnectionGetInfoResponse info = coreDriverApi.connectionGetInfo(connectionHandle);
     if (info == null || !info.hasDatabase() || info.getDatabase().isEmpty()) {
       return null;
@@ -388,7 +424,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public void setTransactionIsolation(int level) throws SQLException {
+  public void setTransactionIsolation(int level) {
     checkClosed();
     if (level == TRANSACTION_NONE || level == TRANSACTION_READ_COMMITTED) {
       this.transactionIsolation = level;
@@ -398,58 +434,56 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public int getTransactionIsolation() throws SQLException {
+  public int getTransactionIsolation() {
     checkClosed();
     return transactionIsolation;
   }
 
   @Override
-  public SQLWarning getWarnings() throws SQLException {
+  public SQLWarning getWarnings() {
     checkClosed();
     return sqlWarnings;
   }
 
   @Override
-  public void clearWarnings() throws SQLException {
+  public void clearWarnings() {
     checkClosed();
     sqlWarnings = null;
   }
 
   @Override
-  public Statement createStatement(int resultSetType, int resultSetConcurrency)
-      throws SQLException {
+  public Statement createStatement(int resultSetType, int resultSetConcurrency) {
     return createStatement(resultSetType, resultSetConcurrency, CLOSE_CURSORS_AT_COMMIT);
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency)
-      throws SQLException {
+  public PreparedStatement prepareStatement(
+      String sql, int resultSetType, int resultSetConcurrency) {
     return prepareStatement(sql, resultSetType, resultSetConcurrency, CLOSE_CURSORS_AT_COMMIT);
   }
 
   @Override
-  public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency)
-      throws SQLException {
+  public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency) {
     return prepareCall(sql, resultSetType, resultSetConcurrency, CLOSE_CURSORS_AT_COMMIT);
   }
 
   @Override
-  public Map<String, Class<?>> getTypeMap() throws SQLException {
+  public Map<String, Class<?>> getTypeMap() {
     checkClosed();
     return emptyMap();
   }
 
   @Override
-  public void setTypeMap(Map<String, Class<?>> map) throws SQLException {
+  public void setTypeMap(Map<String, Class<?>> map) {
     throw featureNotSupported("setTypeMap not supported");
   }
 
   @Override
-  public void setHoldability(int holdability) throws SQLException {
+  public void setHoldability(int holdability) {
     checkClosed();
     if (holdability != CLOSE_CURSORS_AT_COMMIT
         && holdability != ResultSet.HOLD_CURSORS_OVER_COMMIT) {
-      throw new SQLException("The given parameter is not a ResultSet holdability constant.");
+      throw new SFSQLException("The given parameter is not a ResultSet holdability constant.");
     }
     if (holdability == ResultSet.HOLD_CURSORS_OVER_COMMIT) {
       throw featureNotSupported("Holdability not supported");
@@ -457,56 +491,54 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public int getHoldability() throws SQLException {
+  public int getHoldability() {
     checkClosed();
     return CLOSE_CURSORS_AT_COMMIT;
   }
 
   @Override
-  public Savepoint setSavepoint() throws SQLException {
+  public Savepoint setSavepoint() {
     throw featureNotSupported("setSavepoint not supported");
   }
 
   @Override
-  public Savepoint setSavepoint(String name) throws SQLException {
+  public Savepoint setSavepoint(String name) {
     throw featureNotSupported("setSavepoint not supported");
   }
 
   @Override
-  public void rollback(Savepoint savepoint) throws SQLException {
+  public void rollback(Savepoint savepoint) {
     throw featureNotSupported("rollback to savepoint not supported");
   }
 
   @Override
-  public void releaseSavepoint(Savepoint savepoint) throws SQLException {
+  public void releaseSavepoint(Savepoint savepoint) {
     throw featureNotSupported("releaseSavepoint not supported");
   }
 
   @Override
   public Statement createStatement(
-      int resultSetType, int resultSetConcurrency, int resultSetHoldability) throws SQLException {
+      int resultSetType, int resultSetConcurrency, int resultSetHoldability) {
     validateStmtType(resultSetType, resultSetConcurrency, resultSetHoldability);
     return createStatement();
   }
 
   @Override
   public PreparedStatement prepareStatement(
-      String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
-      throws SQLException {
+      String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability) {
     validateStmtType(resultSetType, resultSetConcurrency, resultSetHoldability);
     return prepareStatement(sql);
   }
 
   @Override
   public CallableStatement prepareCall(
-      String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
-      throws SQLException {
+      String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability) {
     validateStmtType(resultSetType, resultSetConcurrency, resultSetHoldability);
     return prepareCall(sql);
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql, int autoGeneratedKeys) throws SQLException {
+  public PreparedStatement prepareStatement(String sql, int autoGeneratedKeys) {
     if (autoGeneratedKeys == Statement.NO_GENERATED_KEYS) {
       return prepareStatement(sql);
     }
@@ -516,40 +548,40 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql, int[] columnIndexes) throws SQLException {
+  public PreparedStatement prepareStatement(String sql, int[] columnIndexes) {
     throw featureNotSupported("prepareStatement with columnIndexes not supported");
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql, String[] columnNames) throws SQLException {
+  public PreparedStatement prepareStatement(String sql, String[] columnNames) {
     throw featureNotSupported("prepareStatement with columnNames not supported");
   }
 
   @Override
-  public Blob createBlob() throws SQLException {
+  public Blob createBlob() {
     throw featureNotSupported("createBlob not supported");
   }
 
   @Override
-  public Clob createClob() throws SQLException {
+  public Clob createClob() {
     checkClosed();
-    return new SnowflakeClob();
+    return new DecoratedSnowflakeClob(new SnowflakeClob(), telemetry);
   }
 
   @Override
-  public NClob createNClob() throws SQLException {
+  public NClob createNClob() {
     throw featureNotSupported("createNClob not supported");
   }
 
   @Override
-  public SQLXML createSQLXML() throws SQLException {
+  public SQLXML createSQLXML() {
     throw featureNotSupported("createSQLXML not supported");
   }
 
   @Override
-  public boolean isValid(int timeout) throws SQLException {
+  public boolean isValid(int timeout) {
     if (timeout < 0) {
-      throw new SQLException("timeout is less than 0");
+      throw new SFSQLException("timeout is less than 0");
     }
     if (closed.get()) {
       return false;
@@ -564,7 +596,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public void setClientInfo(String name, String value) throws SQLClientInfoException {
+  public void setClientInfo(String name, String value) {
     throwClientInfoIfClosed(singleton(name));
     Map<String, ClientInfoStatus> failedProps = new HashMap<>();
     failedProps.put(name, REASON_UNKNOWN_PROPERTY);
@@ -572,7 +604,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public void setClientInfo(Properties properties) throws SQLClientInfoException {
+  public void setClientInfo(Properties properties) {
     Set<String> names = properties == null ? emptySet() : properties.stringPropertyNames();
     throwClientInfoIfClosed(names);
     if (names.isEmpty()) {
@@ -585,13 +617,13 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     raiseSetClientInfoException(failedProps);
   }
 
-  private void throwClientInfoIfClosed(Set<String> names) throws SQLClientInfoException {
+  private void throwClientInfoIfClosed(Set<String> names) {
     if (closed.get()) {
       Map<String, ClientInfoStatus> failedProps = new HashMap<>();
       for (String name : names) {
         failedProps.put(name, REASON_UNKNOWN_PROPERTY);
       }
-      throw new SQLClientInfoException(
+      throw new SFClientInfoException(
           "The connection is not opened.",
           CONNECTION_CLOSED.getSqlState(),
           CONNECTION_CLOSED.getMessageCode(),
@@ -599,9 +631,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     }
   }
 
-  private static void raiseSetClientInfoException(Map<String, ClientInfoStatus> failedProps)
-      throws SQLClientInfoException {
-    throw new SQLClientInfoException(
+  private static void raiseSetClientInfoException(Map<String, ClientInfoStatus> failedProps) {
+    throw new SFClientInfoException(
         "The client property cannot be set by setClientInfo.",
         INVALID_PARAMETER_VALUE.getSqlState(),
         INVALID_PARAMETER_VALUE.getMessageCode(),
@@ -609,43 +640,43 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public String getClientInfo(String name) throws SQLException {
+  public String getClientInfo(String name) {
     checkClosed();
     return null;
   }
 
   @Override
-  public Properties getClientInfo() throws SQLException {
+  public Properties getClientInfo() {
     checkClosed();
     return new Properties();
   }
 
   @Override
-  public Array createArrayOf(String typeName, Object[] elements) throws SQLException {
+  public Array createArrayOf(String typeName, Object[] elements) {
     checkClosed();
     throw new NotImplementedException();
   }
 
   @Override
-  public Struct createStruct(String typeName, Object[] attributes) throws SQLException {
+  public Struct createStruct(String typeName, Object[] attributes) {
     throw featureNotSupported("createStruct not supported");
   }
 
   @Override
-  public void setSchema(String schema) throws SQLException {
+  public void setSchema(String schema) {
     checkClosed();
     coreDriverApi.connectionUseSchema(connectionHandle, schema);
     this.schema = readCurrentSchema();
   }
 
   @Override
-  public String getSchema() throws SQLException {
+  public String getSchema() {
     checkClosed();
     schema = readCurrentSchema();
     return schema;
   }
 
-  private String readCurrentSchema() throws SQLException {
+  private String readCurrentSchema() {
     ConnectionGetInfoResponse info = coreDriverApi.connectionGetInfo(connectionHandle);
     if (info == null || !info.hasSchema() || info.getSchema().isEmpty()) {
       return null;
@@ -654,27 +685,28 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public void abort(Executor executor) throws SQLException {
+  public void abort(Executor executor) {
     close();
   }
 
   @Override
-  public void setNetworkTimeout(Executor executor, int milliseconds) throws SQLException {
+  public void setNetworkTimeout(Executor executor, int milliseconds) {
     checkClosed();
     // TODO: [retries&timeouts epic] delegate to sf_core once connection network timeout APIs land;
     // do not keep a JDBC-local cache here (legacy parity is out of scope for this PR).
   }
 
   @Override
-  public int getNetworkTimeout() throws SQLException {
+  public int getNetworkTimeout() {
     checkClosed();
     // TODO: [retries&timeouts epic] read from sf_core once connection network timeout APIs land.
     return 0;
   }
 
-  public void checkClosed() throws SQLException {
+  public void checkClosed() {
     if (isClosed()) {
-      throw new SQLException(
+      throw SFSQLException.fromErrorCode(
+          CONNECTION_CLOSED,
           "Connection is closed",
           CONNECTION_CLOSED.getSqlState(),
           CONNECTION_CLOSED.getMessageCode());
@@ -682,15 +714,13 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public void uploadStream(String stageName, String destFileName, InputStream inputStream)
-      throws SQLException {
+  public void uploadStream(String stageName, String destFileName, InputStream inputStream) {
     uploadStream(stageName, destFileName, inputStream, UploadStreamConfig.builder().build());
   }
 
   @Override
   public void uploadStream(
-      String stageName, String destFileName, InputStream inputStream, UploadStreamConfig config)
-      throws SQLException {
+      String stageName, String destFileName, InputStream inputStream, UploadStreamConfig config) {
     checkClosed();
     logger.info("uploadStream: entry");
     try {
@@ -718,8 +748,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
         }
       } catch (IOException e) {
         abortUploadStreamQuietly(uploadHandle);
-        throw new SnowflakeSQLException("Failed to read input stream: " + e.getMessage(), e);
-      } catch (SQLException | RuntimeException e) {
+        throw new SFSQLException("Failed to read input stream: " + e.getMessage(), e);
+      } catch (RuntimeException e) {
         abortUploadStreamQuietly(uploadHandle);
         throw e;
       }
@@ -732,7 +762,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private void abortUploadStreamQuietly(UploadStreamHandle uploadHandle) {
     try {
       coreDriverApi.connectionUploadStreamAbort(uploadHandle);
-    } catch (SQLException e) {
+    } catch (RuntimeException e) {
       logger.debug("Error aborting upload stream", e);
     }
   }
@@ -769,13 +799,13 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public InputStream downloadStream(String stageName, String sourceFileName) throws SQLException {
+  public InputStream downloadStream(String stageName, String sourceFileName) {
     return downloadStream(stageName, sourceFileName, DownloadStreamConfig.builder().build());
   }
 
   @Override
   public InputStream downloadStream(
-      String stageName, String sourceFileName, DownloadStreamConfig config) throws SQLException {
+      String stageName, String sourceFileName, DownloadStreamConfig config) {
     checkClosed();
     logger.info("downloadStream: entry");
     try {
@@ -796,7 +826,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public String getSessionID() throws SQLException {
+  public String getSessionID() {
     checkClosed();
     ConnectionGetInfoResponse info = coreDriverApi.connectionGetInfo(connectionHandle);
     if (!info.hasSessionId()) {
@@ -806,7 +836,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public QueryStatus getQueryStatus(String queryID) throws SQLException {
+  public QueryStatus getQueryStatus(String queryID) {
     checkClosed();
     ConnectionGetQueryStatusResponse response =
         coreDriverApi.connectionGetQueryStatus(connectionHandle, queryID);
@@ -822,30 +852,31 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
    * by a previous session.
    */
   @Override
-  public ResultSet createResultSet(String queryID) throws SQLException {
+  public ResultSet createResultSet(String queryID) {
     checkClosed();
     // This statement is owned exclusively by the async result set and will be closed
     // when the result set is closed.
-    SnowflakeStatementImpl stmt = (SnowflakeStatementImpl) createStatement();
-    return ResultSetFactory.createAsync(queryID, this, stmt, true);
+    SnowflakeStatementImpl stmt = createStatementInternal();
+    return Decorators.resultSet(ResultSetFactory.createAsync(queryID, this, stmt, true), telemetry);
   }
 
   @Override
   public InternalResultSet createResultSetFromSfqid(
-      String queryID, SnowflakeStatementImpl statement) throws SQLException {
+      String queryID, SnowflakeStatementImpl statement) {
     ResultSetResponse rsResponse = coreDriverApi.connectionGetResultSet(connectionHandle, queryID);
     return ResultSetFactory.create(coreDriverApi, statement, queryID, rsResponse);
   }
 
   @Override
-  public String[] getChildQueryIds(String queryID) throws SQLException {
+  public String[] getChildQueryIds(String queryID) {
     checkClosed();
     QueryStatus status = getQueryStatus(queryID);
     if (status.isStillRunning()) {
-      throw new SQLException(
-          "Status of query associated with resultSet is "
-              + status.getDescription()
-              + ". Results not generated.");
+      throw new SFSQLException(
+              "Status of query associated with resultSet is "
+                  + status.getDescription()
+                  + ". Results not generated.")
+          .withQueryId(queryID);
     }
     ExecuteQueryResponse result = coreDriverApi.connectionGetQueryResult(connectionHandle, queryID);
     // A single-statement query has no children; return the query ID itself.
@@ -856,17 +887,17 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public int getDatabaseMajorVersion() throws SQLException {
+  public int getDatabaseMajorVersion() {
     return SnowflakeDriver.parseVersionComponent(getDatabaseVersion(), 0);
   }
 
   @Override
-  public int getDatabaseMinorVersion() throws SQLException {
+  public int getDatabaseMinorVersion() {
     return SnowflakeDriver.parseVersionComponent(getDatabaseVersion(), 1);
   }
 
   @Override
-  public String getDatabaseVersion() throws SQLException {
+  public String getDatabaseVersion() {
     checkClosed();
     String cached = cachedDatabaseVersion;
     if (cached != null) {
@@ -880,15 +911,18 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     }
   }
 
-  private String fetchDatabaseVersion() throws SQLException {
-    try (Statement stmt = createStatement();
-        ResultSet rs = stmt.executeQuery(ConnectionQueries.CURRENT_VERSION)) {
+  private String fetchDatabaseVersion() {
+    try (SnowflakeStatementImpl stmt = createStatementInternal();
+        SnowflakeResultSetImpl rs =
+            (SnowflakeResultSetImpl) stmt.executeQueryInternal(ConnectionQueries.CURRENT_VERSION)) {
       if (!rs.next()) {
-        throw new SQLException("SELECT CURRENT_VERSION() returned no rows");
+        throw new SFSQLException("SELECT CURRENT_VERSION() returned no rows")
+            .withQueryId(stmt.getQueryID());
       }
       String raw = rs.getString(1);
       if (raw == null) {
-        throw new SQLException("SELECT CURRENT_VERSION() returned NULL");
+        throw new SFSQLException("SELECT CURRENT_VERSION() returned NULL")
+            .withQueryId(stmt.getQueryID());
       }
       return stripVersionSuffix(raw);
     }
@@ -904,8 +938,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   private static void validateStmtType(
-      int resultSetType, int resultSetConcurrency, int resultSetHoldability)
-      throws SQLFeatureNotSupportedException {
+      int resultSetType, int resultSetConcurrency, int resultSetHoldability) {
     if (resultSetType != TYPE_FORWARD_ONLY) {
       throw featureNotSupported(
           String.format("ResultSet type %d is not supported.", resultSetType));
@@ -922,8 +955,11 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     }
   }
 
-  private static SQLFeatureNotSupportedException featureNotSupported(String message) {
-    return new SQLFeatureNotSupportedException(
-        message, FEATURE_UNSUPPORTED.getSqlState(), FEATURE_UNSUPPORTED.getMessageCode());
+  private static SFSQLFeatureNotSupportedException featureNotSupported(String message) {
+    // Carry FEATURE_UNSUPPORTED's SQLState / vendor code through the cause; toSQLException()
+    // re-derives them so the surfaced SQLFeatureNotSupportedException is byte-identical.
+    return new SFSQLFeatureNotSupportedException(
+        new SQLFeatureNotSupportedException(
+            message, FEATURE_UNSUPPORTED.getSqlState(), FEATURE_UNSUPPORTED.getMessageCode()));
   }
 }

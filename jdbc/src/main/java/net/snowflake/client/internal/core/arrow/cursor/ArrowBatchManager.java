@@ -1,7 +1,7 @@
 package net.snowflake.client.internal.core.arrow.cursor;
 
 import java.io.IOException;
-import java.sql.SQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
 public final class ArrowBatchManager {
@@ -15,7 +15,7 @@ public final class ArrowBatchManager {
     this.schema = schema;
   }
 
-  public boolean fetchNextRow() throws SQLException {
+  public boolean fetchNextRow() {
     if (cursor.isAfterLast()) {
       return false;
     }
@@ -26,7 +26,7 @@ public final class ArrowBatchManager {
       }
       return advanceToNextBatch();
     } catch (IOException e) {
-      throw new SQLException("Unable to advance Arrow results", e);
+      throw new SFSQLException("Unable to advance Arrow results", e);
     }
   }
 
@@ -40,7 +40,7 @@ public final class ArrowBatchManager {
     return null;
   }
 
-  private boolean advanceToNextBatch() throws IOException, SQLException {
+  private boolean advanceToNextBatch() throws IOException {
     VectorSchemaRoot nextRoot = loadNextNonEmptyBatch();
     if (nextRoot == null) {
       cursor.setAfterLast();

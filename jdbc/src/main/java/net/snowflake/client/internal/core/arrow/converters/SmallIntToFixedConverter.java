@@ -3,8 +3,8 @@ package net.snowflake.client.internal.core.arrow.converters;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.ValueVector;
@@ -29,7 +29,7 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public byte[] toBytes(int index) throws SFException {
+  public byte[] toBytes(int index) {
     if (isNull(index)) {
       return null;
     }
@@ -42,18 +42,18 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public byte toByte(int index) throws SFException {
+  public byte toByte(int index) {
     short shortVal = toShort(index);
     byte byteVal = (byte) shortVal;
     if (byteVal == shortVal) {
       return byteVal;
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BYTE_STR, shortVal);
   }
 
   @Override
-  public short toShort(int index) throws SFException {
+  public short toShort(int index) {
     if (smallIntVector.isNull(index)) {
       return 0;
     }
@@ -61,27 +61,27 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public int toInt(int index) throws SFException {
+  public int toInt(int index) {
     return (int) toShort(index);
   }
 
   @Override
-  public long toLong(int index) throws SFException {
+  public long toLong(int index) {
     return (long) toShort(index);
   }
 
   @Override
-  public float toFloat(int index) throws SFException {
+  public float toFloat(int index) {
     return toShort(index);
   }
 
   @Override
-  public double toDouble(int index) throws SFException {
+  public double toDouble(int index) {
     return toShort(index);
   }
 
   @Override
-  public BigDecimal toBigDecimal(int index) throws SFException {
+  public BigDecimal toBigDecimal(int index) {
     if (smallIntVector.isNull(index)) {
       return null;
     }
@@ -89,7 +89,7 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public Object toObject(int index) throws SFException {
+  public Object toObject(int index) {
     if (smallIntVector.isNull(index)) {
       return null;
     }
@@ -100,19 +100,19 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public String toString(int index) throws SFException {
+  public String toString(int index) {
     return isNull(index) ? null : Short.toString(getShort(index));
   }
 
   @Override
-  public boolean toBoolean(int index) throws SFException {
+  public boolean toBoolean(int index) {
     short val = toShort(index);
     if (val == 0) {
       return false;
     } else if (val == 1) {
       return true;
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BOOLEAN_STR, val);
   }
 }

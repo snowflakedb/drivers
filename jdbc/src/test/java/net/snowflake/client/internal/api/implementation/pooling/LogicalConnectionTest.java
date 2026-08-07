@@ -17,10 +17,21 @@ import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import org.junit.jupiter.api.Test;
 
 public class LogicalConnectionTest {
+
+  // LogicalConnection is a @JdbcBoundary: its impl throws unchecked carriers (SFSQLException,
+  // SFSQLFeatureNotSupportedException, SFClientInfoException) and the generated decorator is what
+  // translates them into the checked SQLException the JDBC Connection contract promises. Public
+  // exception-contract assertions therefore drive the handle through its decorator; the physical
+  // failures still fire connectionErrorOccurred inside the impl regardless of decoration.
+  private static Connection logical(SnowflakePooledConnection pooledConnection) {
+    return new DecoratedLogicalConnection(new LogicalConnection(pooledConnection), Telemetry.NOOP);
+  }
 
   @Test
   public void shouldConstructorRejectsAlreadyClosedPhysicalConnection() throws SQLException {
@@ -32,9 +43,12 @@ public class LogicalConnectionTest {
     // A physical connection closed in the borrow window must fail the borrow with CONNECTION_CLOSED
     // rather than hand back a handle backed by an already-dead physical session (which would let
     // the
-    // pool recycle a broken connection on the handle's later close()).
-    SnowflakeSQLException ex =
-        assertThrows(SnowflakeSQLException.class, () -> new LogicalConnection(pooledConnection));
+    // pool recycle a broken connection on the handle's later close()). A constructor cannot be
+    // decorated, so it surfaces the runtime carrier directly; translate it the way the boundary
+    // would to assert the public errorCode + SQLState contract.
+    SFSQLException carrier =
+        assertThrows(SFSQLException.class, () -> new LogicalConnection(pooledConnection));
+    SnowflakeSQLException ex = (SnowflakeSQLException) carrier.toSQLException();
     assertEquals(CONNECTION_CLOSED.getMessageCode(), ex.getErrorCode());
     assertEquals(CONNECTION_CLOSED.getSqlState(), ex.getSQLState());
   }
@@ -46,7 +60,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.abort(null);
 
     verify(physicalConnection).abort(null);
@@ -59,7 +73,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     assertFalse(logicalConnection.isClosed());
 
     logicalConnection.abort(null);
@@ -79,7 +93,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
     logicalConnection.abort(null);
 
@@ -94,7 +108,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
 
     assertThrows(SQLException.class, logicalConnection::createStatement);
@@ -117,7 +131,7 @@ public class LogicalConnectionTest {
         .when(physicalConnection)
         .setHoldability(1);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
 
     assertThrows(SQLFeatureNotSupportedException.class, () -> logicalConnection.setHoldability(1));
 
@@ -137,7 +151,7 @@ public class LogicalConnectionTest {
     when(physicalConnection.unwrap(String.class))
         .thenThrow(new SQLException("Cannot unwrap to java.lang.String"));
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
 
     // Unwrapping to an unsupported interface is a caller/type mistake, not a broken physical
     // connection, so it must not signal connectionErrorOccurred and evict a healthy pooled handle.
@@ -155,7 +169,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
     logicalConnection.close();
 
@@ -170,7 +184,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
     logicalConnection.abort(null);
 
@@ -185,7 +199,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
 
     // A closed logical handle must not expose the live physical connection via the wrapper API.
@@ -207,7 +221,7 @@ public class LogicalConnectionTest {
         .when(physicalConnection)
         .setClientInfo("k", "v");
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
 
     // Rejecting an unknown client-info property is a caller error, not a broken connection,
     // so it must not evict the pooled connection.
@@ -229,7 +243,7 @@ public class LogicalConnectionTest {
         .when(physicalConnection)
         .setClientInfo(properties);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
 
     assertThrows(SQLClientInfoException.class, () -> logicalConnection.setClientInfo(properties));
     // Positive control: the exemption must be on the delegate path (setClientInfo was invoked).
@@ -246,7 +260,7 @@ public class LogicalConnectionTest {
     when(physicalConnection.getClientInfo("k"))
         .thenThrow(new SQLClientInfoException("unknown property", null));
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
 
     // getClientInfo must be symmetric with setClientInfo: a client-info error is not a connection
     // failure and must not evict the pooled connection.
@@ -264,7 +278,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
 
     // BD#29: getClientInfo on a closed handle throws CONNECTION_CLOSED without touching the
@@ -292,7 +306,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
 
     // setClientInfo can only throw SQLClientInfoException, but on a closed handle it must still
@@ -314,7 +328,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
 
     java.util.Properties props = new java.util.Properties();
@@ -376,40 +390,45 @@ public class LogicalConnectionTest {
     doThrow(sqlException).when(connection).setSchema(null);
     doThrow(sqlException).when(connection).setNetworkTimeout(null, 1);
 
+    // This test exercises the raw impl (not its decorator): firing connectionErrorOccurred on a
+    // delegated physical failure is LogicalConnection's own responsibility, independent of the
+    // boundary translation, so the delegated calls surface the runtime SFSQLException carrier
+    // directly. Routing through the decorator would also change isWrapperFor(Connection.class)
+    // semantics (the decorator answers wrapper queries about itself), which this test must observe
+    // on the impl.
     LogicalConnection logicalConnection = new LogicalConnection(snowflakePooledConnection);
 
-    assertThrows(SQLException.class, logicalConnection::createStatement);
-    assertThrows(SQLException.class, () -> logicalConnection.createStatement(1, 2, 3));
-    assertThrows(SQLException.class, () -> logicalConnection.nativeSQL("mocksql"));
-    assertThrows(SQLException.class, logicalConnection::getAutoCommit);
-    assertThrows(SQLException.class, logicalConnection::getMetaData);
-    assertThrows(SQLException.class, logicalConnection::isReadOnly);
-    assertThrows(SQLException.class, logicalConnection::getCatalog);
-    assertThrows(SQLException.class, logicalConnection::getTransactionIsolation);
-    assertThrows(SQLException.class, logicalConnection::getWarnings);
-    assertThrows(SQLException.class, () -> logicalConnection.prepareCall("mocksql"));
-    assertThrows(SQLException.class, logicalConnection::getTypeMap);
-    assertThrows(SQLException.class, logicalConnection::getHoldability);
-    assertThrows(SQLException.class, logicalConnection::createClob);
-    assertThrows(SQLException.class, () -> logicalConnection.getClientInfo("mocksql"));
-    assertThrows(SQLException.class, logicalConnection::getClientInfo);
-    assertThrows(SQLException.class, () -> logicalConnection.createArrayOf("mock", null));
-    assertThrows(SQLException.class, logicalConnection::getSchema);
-    assertThrows(SQLException.class, logicalConnection::getNetworkTimeout);
-    assertThrows(SQLException.class, () -> logicalConnection.setAutoCommit(false));
-    assertThrows(SQLException.class, logicalConnection::rollback);
-    assertThrows(SQLException.class, () -> logicalConnection.setReadOnly(false));
-    assertThrows(SQLException.class, logicalConnection::clearWarnings);
-    assertThrows(SQLException.class, () -> logicalConnection.setSchema(null));
-    assertThrows(SQLException.class, () -> logicalConnection.setNetworkTimeout(null, 1));
-    assertThrows(SQLException.class, () -> logicalConnection.prepareStatement("mocksql"));
-    assertThrows(SQLException.class, () -> logicalConnection.prepareCall("mocksql", 1, 2, 3));
-    assertThrows(SQLException.class, () -> logicalConnection.prepareCall("mocksql", 1, 2));
-    assertThrows(SQLException.class, logicalConnection::commit);
+    assertThrows(SFSQLException.class, logicalConnection::createStatement);
+    assertThrows(SFSQLException.class, () -> logicalConnection.createStatement(1, 2, 3));
+    assertThrows(SFSQLException.class, () -> logicalConnection.nativeSQL("mocksql"));
+    assertThrows(SFSQLException.class, logicalConnection::getAutoCommit);
+    assertThrows(SFSQLException.class, logicalConnection::getMetaData);
+    assertThrows(SFSQLException.class, logicalConnection::isReadOnly);
+    assertThrows(SFSQLException.class, logicalConnection::getCatalog);
+    assertThrows(SFSQLException.class, logicalConnection::getTransactionIsolation);
+    assertThrows(SFSQLException.class, logicalConnection::getWarnings);
+    assertThrows(SFSQLException.class, () -> logicalConnection.prepareCall("mocksql"));
+    assertThrows(SFSQLException.class, logicalConnection::getTypeMap);
+    assertThrows(SFSQLException.class, logicalConnection::getHoldability);
+    assertThrows(SFSQLException.class, logicalConnection::createClob);
+    assertThrows(SFSQLException.class, () -> logicalConnection.getClientInfo("mocksql"));
+    assertThrows(SFSQLException.class, logicalConnection::getClientInfo);
+    assertThrows(SFSQLException.class, () -> logicalConnection.createArrayOf("mock", null));
+    assertThrows(SFSQLException.class, logicalConnection::getSchema);
+    assertThrows(SFSQLException.class, logicalConnection::getNetworkTimeout);
+    assertThrows(SFSQLException.class, () -> logicalConnection.setAutoCommit(false));
+    assertThrows(SFSQLException.class, logicalConnection::rollback);
+    assertThrows(SFSQLException.class, () -> logicalConnection.setReadOnly(false));
+    assertThrows(SFSQLException.class, logicalConnection::clearWarnings);
+    assertThrows(SFSQLException.class, () -> logicalConnection.setSchema(null));
+    assertThrows(SFSQLException.class, () -> logicalConnection.setNetworkTimeout(null, 1));
+    assertThrows(SFSQLException.class, () -> logicalConnection.prepareStatement("mocksql"));
+    assertThrows(SFSQLException.class, () -> logicalConnection.prepareCall("mocksql", 1, 2, 3));
+    assertThrows(SFSQLException.class, () -> logicalConnection.prepareCall("mocksql", 1, 2));
+    assertThrows(SFSQLException.class, logicalConnection::commit);
 
-    // Each assertThrows above is itself a delegation positive control: the thrown SQLException is
-    // the
-    // exact stubbed instance from the physical mock, so it can only surface if the call was
+    // Each assertThrows above is itself a delegation positive control: the SFSQLException carrier
+    // wraps the exact stubbed physical SQLException, so it can only surface if the call was
     // delegated.
     // A few explicit verifies make that intent unambiguous for future readers.
     verify(connection).createStatement();
@@ -417,9 +436,10 @@ public class LogicalConnectionTest {
     verify(connection).getSchema();
     verify(snowflakePooledConnection, times(28)).fireConnectionErrorEvent(sqlException);
 
-    // isWrapperFor (like unwrap) is a type-resolution call: a physical SQLException propagates but
-    // must NOT fire connectionErrorOccurred, so it is intentionally excluded from the count above.
-    assertThrows(SQLException.class, () -> logicalConnection.isWrapperFor(Connection.class));
+    // isWrapperFor (like unwrap) is a type-resolution call: a physical SQLException propagates as
+    // the carrier but must NOT fire connectionErrorOccurred, so it is intentionally excluded from
+    // the count above.
+    assertThrows(SFSQLException.class, () -> logicalConnection.isWrapperFor(Connection.class));
     verify(snowflakePooledConnection, times(28)).fireConnectionErrorEvent(sqlException);
   }
 
@@ -433,7 +453,7 @@ public class LogicalConnectionTest {
     SQLException sqlException = new SQLException("abort failed");
     doThrow(sqlException).when(physicalConnection).abort(null);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
 
     // A failed abort leaves the physical connection dead, so the handle stays closed and the pool
     // is told to discard it via an error event, never a (recycle) close event.
@@ -460,7 +480,7 @@ public class LogicalConnectionTest {
         .when(physicalConnection)
         .abort(null);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
 
     // An unsupported abort does not touch the physical connection, so the handle remains usable and
     // no pool events are fired.
@@ -480,7 +500,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
 
     // Logical close returns the handle to the pool; the physical connection must stay open.
@@ -496,7 +516,7 @@ public class LogicalConnectionTest {
     when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
     when(physicalConnection.isClosed()).thenReturn(false);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
     logicalConnection.close();
 
     // A closed logical handle reports not-valid without throwing, touching the physical connection,
@@ -515,7 +535,7 @@ public class LogicalConnectionTest {
     SQLException sqlException = new SQLException("invalid timeout");
     when(physicalConnection.isValid(-1)).thenThrow(sqlException);
 
-    Connection logicalConnection = new LogicalConnection(pooledConnection);
+    Connection logicalConnection = logical(pooledConnection);
 
     assertThrows(SQLException.class, () -> logicalConnection.isValid(-1));
     // Positive control: the failing isValid must have been delegated to the physical connection.

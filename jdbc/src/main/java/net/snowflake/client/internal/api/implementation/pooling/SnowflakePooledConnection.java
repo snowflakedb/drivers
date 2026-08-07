@@ -10,11 +10,14 @@ import javax.sql.ConnectionEvent;
 import javax.sql.ConnectionEventListener;
 import javax.sql.PooledConnection;
 import javax.sql.StatementEventListener;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.exception.DriverRuntimeException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.codegen.JdbcBoundary;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 
+@JdbcBoundary
 public class SnowflakePooledConnection implements PooledConnection {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakePooledConnection.class);
 
@@ -22,23 +25,39 @@ public class SnowflakePooledConnection implements PooledConnection {
   private final Set<ConnectionEventListener> eventListeners;
   private LogicalConnection currentHandle;
 
-  public SnowflakePooledConnection(Connection physicalConnection) throws SQLException {
+  // The PooledConnection handed to the application is the decorator that wraps this instance, not
+  // this raw impl. ConnectionEvent.getSource() must therefore report the decorator so listeners can
+  // match the event source against the object they registered on (JDBC contract). Defaults to this
+  // for direct/unwrapped use; the datasource points it at the decorator via setEventSource().
+  private volatile PooledConnection eventSource = this;
+
+  public SnowflakePooledConnection(Connection physicalConnection) {
     this.physicalConnection = physicalConnection;
-    SnowflakeConnectionImpl sfConnection = physicalConnection.unwrap(SnowflakeConnectionImpl.class);
+    SnowflakeConnectionImpl sfConnection = null;
+    try {
+      sfConnection = physicalConnection.unwrap(SnowflakeConnectionImpl.class);
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
+    }
     logger.debug(
         "Creating new pooled connection with session id: {}", safeGetSessionID(sfConnection));
     this.eventListeners = new CopyOnWriteArraySet<>();
   }
 
   @Override
-  public Connection getConnection() throws SQLException {
+  public Connection getConnection() {
     Connection currentPhysicalConnection = getPhysicalConnection();
-    SnowflakeConnectionImpl sfConnection =
-        currentPhysicalConnection.unwrap(SnowflakeConnectionImpl.class);
-    logger.debug(
-        "Creating new Logical Connection based on pooled connection with session id: {}",
-        safeGetSessionID(sfConnection));
-    LogicalConnection newHandle = new LogicalConnection(this);
+    SnowflakeConnectionImpl sfConnection = null;
+    LogicalConnection newHandle;
+    try {
+      sfConnection = currentPhysicalConnection.unwrap(SnowflakeConnectionImpl.class);
+      logger.debug(
+          "Creating new Logical Connection based on pooled connection with session id: {}",
+          safeGetSessionID(sfConnection));
+      newHandle = new LogicalConnection(this);
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
+    }
     // The javax.sql.PooledConnection contract allows at most one active logical handle per pooled
     // connection: borrowing a new handle must invalidate any previously returned, still-open one so
     // two handles can never drive the same physical session. Invalidate silently (no
@@ -51,7 +70,7 @@ public class SnowflakePooledConnection implements PooledConnection {
       this.currentHandle = newHandle;
     }
     logger.debug("getConnection: returning new logical connection for pooled connection");
-    return newHandle;
+    return new DecoratedLogicalConnection(newHandle, sfConnection.getTelemetry());
   }
 
   /**
@@ -61,10 +80,14 @@ public class SnowflakePooledConnection implements PooledConnection {
    * volatile field into a local snapshot keeps the null/closed check and the return value
    * consistent even if another thread closes the pooled connection concurrently.
    */
-  Connection getPhysicalConnection() throws SQLException {
+  Connection getPhysicalConnection() {
     Connection currentPhysicalConnection = physicalConnection;
-    if (currentPhysicalConnection == null || currentPhysicalConnection.isClosed()) {
-      throw new SnowflakeSQLException(CONNECTION_CLOSED, "Connection is closed");
+    try {
+      if (currentPhysicalConnection == null || currentPhysicalConnection.isClosed()) {
+        throw new SFSQLException(CONNECTION_CLOSED, "Connection is closed");
+      }
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
     }
     return currentPhysicalConnection;
   }
@@ -76,7 +99,7 @@ public class SnowflakePooledConnection implements PooledConnection {
     if (physicalConnection == null) {
       return;
     }
-    ConnectionEvent event = new ConnectionEvent(this);
+    ConnectionEvent event = new ConnectionEvent(eventSource);
     for (ConnectionEventListener connectionEventListener : eventListeners) {
       try {
         connectionEventListener.connectionClosed(event);
@@ -92,7 +115,7 @@ public class SnowflakePooledConnection implements PooledConnection {
     if (physicalConnection == null) {
       return;
     }
-    ConnectionEvent event = new ConnectionEvent(this, e);
+    ConnectionEvent event = new ConnectionEvent(eventSource, e);
     for (ConnectionEventListener connectionEventListener : eventListeners) {
       try {
         connectionEventListener.connectionErrorOccurred(event);
@@ -102,13 +125,22 @@ public class SnowflakePooledConnection implements PooledConnection {
     }
   }
 
+  /**
+   * Sets the source reported by {@link ConnectionEvent#getSource()} to the decorator that wraps
+   * this pooled connection. The application never sees this raw impl, so listeners must observe the
+   * decorator as the event source.
+   */
+  void setEventSource(PooledConnection eventSource) {
+    this.eventSource = eventSource;
+  }
+
   @Override
   public void addConnectionEventListener(ConnectionEventListener eventListener) {
     this.eventListeners.add(eventListener);
   }
 
   @Override
-  public void close() throws SQLException {
+  public void close() {
     logger.debug("close: closing pooled connection");
     // Atomically claim the physical connection so concurrent close() calls cannot double-close it
     // or NPE on a reference the other thread already cleared.
@@ -122,11 +154,15 @@ public class SnowflakePooledConnection implements PooledConnection {
     // registered on a pooled connection whose physical reference is already gone.
     try {
       if (connectionToClose != null) {
-        SnowflakeConnectionImpl sfConnection =
-            connectionToClose.unwrap(SnowflakeConnectionImpl.class);
-        logger.debug(
-            "Closing pooled connection with session id: {}", safeGetSessionID(sfConnection));
-        connectionToClose.close();
+        SnowflakeConnectionImpl sfConnection = null;
+        try {
+          sfConnection = connectionToClose.unwrap(SnowflakeConnectionImpl.class);
+          logger.debug(
+              "Closing pooled connection with session id: {}", safeGetSessionID(sfConnection));
+          connectionToClose.close();
+        } catch (SQLException e) {
+          throw new RuntimeException(e);
+        }
       }
     } finally {
       eventListeners.clear();
@@ -157,7 +193,11 @@ public class SnowflakePooledConnection implements PooledConnection {
   private static String safeGetSessionID(SnowflakeConnectionImpl sfConnection) {
     try {
       return sfConnection.getSessionID();
-    } catch (SQLException | RuntimeException e) {
+    } catch (DriverRuntimeException e) {
+      // getSessionID() is a debug-logging convenience, so its failures must be swallowed, not break
+      // pooling. It surfaces only the unchecked driver carriers - CoreException when it is
+      // unimplemented, CONNECTION_CLOSED (SFSQLException) when probed on an already-aborted/closed
+      // connection during close() - so catch that whole family here.
       logger.debug("Could not resolve session id for pooled connection logging", e);
       return "unknown";
     }

@@ -16,9 +16,10 @@ import static org.mockito.Mockito.when;
 import java.sql.BatchUpdateException;
 import java.sql.SQLException;
 import java.sql.Statement;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakeStatement;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
@@ -28,6 +29,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Resul
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
+import net.snowflake.client.internal.util.NotImplementedException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -54,6 +56,16 @@ public class SnowflakeStatementImplTest {
 
   private Statement createStatement() {
     return new SnowflakeStatementImpl(mockConnection, mockCoreApi);
+  }
+
+  /**
+   * The public-contract view: the decorator that wraps the raw impl and translates the runtime
+   * carriers it throws into the checked {@link java.sql.SQLException} types the JDBC API promises.
+   * Tests asserting the public exception contract must go through this, not the raw impl.
+   */
+  private Statement createDecoratedStatement() {
+    return new DecoratedSnowflakeStatementImpl(
+        new SnowflakeStatementImpl(mockConnection, mockCoreApi), Telemetry.NOOP);
   }
 
   @Test
@@ -88,7 +100,10 @@ public class SnowflakeStatementImplTest {
 
   @Test
   void closeSucceedsEvenWhenReleaseThrows() throws Exception {
-    when(mockCoreApi.statementRelease(any())).thenThrow(new SQLException("release failed"));
+    when(mockCoreApi.statementRelease(any()))
+        .thenThrow(
+            new CoreException(
+                DriverException.newBuilder().setMessage("release failed").build(), null));
 
     Statement stmt = createStatement();
     stmt.close();
@@ -98,8 +113,8 @@ public class SnowflakeStatementImplTest {
   }
 
   @Test
-  void operationsThrowAfterClose() throws Exception {
-    Statement stmt = createStatement();
+  void shouldThrowSqlExceptionForOperationsAfterClose() throws Exception {
+    Statement stmt = createDecoratedStatement();
     stmt.close();
 
     assertThrows(SQLException.class, () -> stmt.execute("SELECT 1"));
@@ -117,7 +132,8 @@ public class SnowflakeStatementImplTest {
     assertSame(mockConnection, stmt.getConnectionInternal());
 
     // The public JDBC getConnection() still enforces the closed check.
-    SQLException ex = assertThrows(SQLException.class, stmt::getConnection);
+    Statement decorated = new DecoratedSnowflakeStatementImpl(stmt, Telemetry.NOOP);
+    SQLException ex = assertThrows(SQLException.class, decorated::getConnection);
     assertEquals("Statement is closed", ex.getMessage());
   }
 
@@ -151,11 +167,21 @@ public class SnowflakeStatementImplTest {
   }
 
   @Test
-  void executeBatchContinuesAfterFailureAndAlignsBatchQueryIds() throws Exception {
-    Statement stmt = createStatement();
+  void shouldContinueBatchAfterFailureAndAlignBatchQueryIds() throws Exception {
+    // Route through the decorator so executeBatch surfaces the checked BatchUpdateException. The
+    // failure is seeded as a CoreException — the type the real CoreDriverApi facade produces and
+    // the only type StatementBatch catches.
+    Statement stmt = createDecoratedStatement();
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
         .thenReturn(insertResponse(1L, "qid-ok-1"))
-        .thenThrow(new SQLException("boom", "42000", 1234))
+        .thenThrow(
+            new CoreException(
+                DriverException.newBuilder()
+                    .setMessage("boom")
+                    .setSqlState("42000")
+                    .setVendorCode(1234)
+                    .build(),
+                null))
         .thenReturn(insertResponse(3L, "qid-ok-3"));
 
     stmt.addBatch("INSERT INTO t VALUES (1)");
@@ -205,10 +231,12 @@ public class SnowflakeStatementImplTest {
   }
 
   @Test
-  void getQueryIdIsPreservedFromFailedExecuteWhenServerProvidesIt() throws Exception {
+  void shouldPreserveQueryIdFromFailedExecuteWhenServerProvidesIt() throws Exception {
     Statement stmt = createStatement();
-    // Seed a prior successful execute so a buggy implementation that simply ignored the failure
-    // path on a fresh field would not pass: the failed execute MUST overwrite the prior value.
+    // Seed a prior successful execute so a buggy impl that ignored the failure path on a fresh
+    // field would not pass: the failed execute MUST overwrite the prior value. The failure is a
+    // CoreException (what the real CoreDriverApi facade surfaces), carrying the server-side query
+    // id.
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
         .thenReturn(insertResponse(1L, "qid-prior-success"))
         .thenThrow(driverExceptionWithQueryId("qid-failed"));
@@ -216,7 +244,7 @@ public class SnowflakeStatementImplTest {
     stmt.executeUpdate("INSERT INTO t VALUES (1)");
     assertEquals("qid-prior-success", ((SnowflakeStatement) stmt).getQueryID());
 
-    assertThrows(SQLException.class, () -> stmt.executeUpdate("INSERT INTO t VALUES (2)"));
+    assertThrows(CoreException.class, () -> stmt.executeUpdate("INSERT INTO t VALUES (2)"));
     assertEquals(
         "qid-failed",
         ((SnowflakeStatement) stmt).getQueryID(),
@@ -229,21 +257,32 @@ public class SnowflakeStatementImplTest {
     // First a successful execute populates the field.
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
         .thenReturn(insertResponse(1L, "qid-stale"))
-        .thenThrow(new SQLException("transport error"));
+        .thenThrow(
+            new CoreException(
+                DriverException.newBuilder().setMessage("transport error").build(), null));
 
     stmt.executeUpdate("INSERT INTO t VALUES (1)");
     assertEquals("qid-stale", ((SnowflakeStatement) stmt).getQueryID());
 
-    assertThrows(SQLException.class, () -> stmt.executeUpdate("INSERT INTO t VALUES (2)"));
+    assertThrows(CoreException.class, () -> stmt.executeUpdate("INSERT INTO t VALUES (2)"));
     assertNull(
         ((SnowflakeStatement) stmt).getQueryID(),
         "Failed execute with no server-side query id wipes any stale value");
   }
 
-  private static SnowflakeSQLException driverExceptionWithQueryId(String queryId) {
+  @Test
+  void shouldThrowNotImplementedForSetBatchID() throws Exception {
+    Statement stmt = createStatement();
+    // setBatchID is a not-yet-implemented gap, surfaced as NotImplementedException so the boundary
+    // maps it to SQLFeatureNotSupportedException.
+    assertThrows(
+        NotImplementedException.class, () -> ((SnowflakeStatement) stmt).setBatchID("batch-1"));
+  }
+
+  private static CoreException driverExceptionWithQueryId(String queryId) {
     DriverException error =
         DriverException.newBuilder().setMessage("server-side failure").setQueryId(queryId).build();
-    return new SnowflakeSQLException(error, new RuntimeException("test cause"));
+    return new CoreException(error, null);
   }
 
   private static ExecuteQueryResponse insertResponse(long rowsAffected) {

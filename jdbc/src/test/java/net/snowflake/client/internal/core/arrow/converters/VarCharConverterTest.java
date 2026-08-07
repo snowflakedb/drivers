@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.TimeZone;
-import net.snowflake.client.api.exception.SFException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.TestHelper;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -110,7 +110,7 @@ public class VarCharConverterTest extends BaseConverterTest {
   }
 
   @Test
-  public void testGetDate() throws SFException {
+  public void testGetDate() throws SFSQLException {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "FIXED");
 

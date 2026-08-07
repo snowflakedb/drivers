@@ -13,8 +13,6 @@ import java.sql.NClob;
 import java.sql.Ref;
 import java.sql.ResultSetMetaData;
 import java.sql.RowId;
-import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLWarning;
 import java.sql.SQLXML;
 import java.sql.Statement;
@@ -30,12 +28,18 @@ import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.internal.api.decorator.Telemetry;
+import net.snowflake.client.internal.api.implementation.Decorators;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.DecoratedSnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
+import net.snowflake.client.internal.codegen.JdbcBoundary;
+import net.snowflake.client.internal.codegen.NoTelemetry;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
 
+@JdbcBoundary
 @RequiredArgsConstructor(access = AccessLevel.PACKAGE)
 public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrapper {
 
@@ -60,7 +64,8 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
-  public boolean next() throws SQLException {
+  @NoTelemetry
+  public boolean next() {
     if (closed) {
       return false;
     }
@@ -68,7 +73,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
-  public void close() throws SQLException {
+  public void close() {
     if (closed) {
       return;
     }
@@ -89,68 +94,78 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
         if (!statement.isClosed()) {
           statement.close();
         }
-      } catch (SQLException ignored) {
+      } catch (CoreException ignored) {
         // closing the owning statement is best-effort
       }
     }
   }
 
   @Override
-  public boolean wasNull() throws SQLException {
+  @NoTelemetry
+  public boolean wasNull() {
     checkClosed();
     return rowReader.wasNull();
   }
 
   @Override
-  public String getString(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public String getString(int columnIndex) {
     checkClosed();
     return rowReader.getString(columnIndex);
   }
 
   @Override
-  public boolean getBoolean(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public boolean getBoolean(int columnIndex) {
     checkClosed();
     return rowReader.getBoolean(columnIndex);
   }
 
   @Override
-  public byte getByte(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public byte getByte(int columnIndex) {
     checkClosed();
     return rowReader.getByte(columnIndex);
   }
 
   @Override
-  public short getShort(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public short getShort(int columnIndex) {
     checkClosed();
     return rowReader.getShort(columnIndex);
   }
 
   @Override
-  public int getInt(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public int getInt(int columnIndex) {
     checkClosed();
     return rowReader.getInt(columnIndex);
   }
 
   @Override
-  public long getLong(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public long getLong(int columnIndex) {
     checkClosed();
     return rowReader.getLong(columnIndex);
   }
 
   @Override
-  public float getFloat(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public float getFloat(int columnIndex) {
     checkClosed();
     return rowReader.getFloat(columnIndex);
   }
 
   @Override
-  public double getDouble(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public double getDouble(int columnIndex) {
     checkClosed();
     return rowReader.getDouble(columnIndex);
   }
 
   @Override
-  public BigDecimal getBigDecimal(int columnIndex, int scale) throws SQLException {
+  @NoTelemetry
+  public BigDecimal getBigDecimal(int columnIndex, int scale) {
     BigDecimal value = getBigDecimal(columnIndex);
     if (value == null) {
       return null;
@@ -159,13 +174,15 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
-  public byte[] getBytes(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public byte[] getBytes(int columnIndex) {
     checkClosed();
     return rowReader.getBytes(columnIndex);
   }
 
   @Override
-  public Date getDate(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public Date getDate(int columnIndex) {
     checkClosed();
     // Mirrors snowflake-jdbc's SnowflakeBaseResultSet.getDate(int): JDBC_GET_DATE_USE_NULL_TIMEZONE
     // (default true) selects a null timezone (raw epoch-day date); when false the JVM default
@@ -181,149 +198,164 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
    * threaded into the converter, which applies the session-vs-caller timezone shift only when both
    * are present and the flag is set.
    */
-  private Date getDate(int columnIndex, TimeZone tz) throws SQLException {
+  private Date getDate(int columnIndex, TimeZone tz) {
     checkClosed();
     return rowReader.getDate(columnIndex, tz);
   }
 
   @Override
-  public Time getTime(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public Time getTime(int columnIndex) {
     checkClosed();
     return rowReader.getTime(columnIndex);
   }
 
   @Override
-  public Timestamp getTimestamp(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public Timestamp getTimestamp(int columnIndex) {
     checkClosed();
     return rowReader.getTimestamp(columnIndex);
   }
 
   /** Backs {@code getObject(col, Period.class)} for INTERVAL YEAR TO MONTH columns. */
-  private Period getPeriod(int columnIndex) throws SQLException {
+  private Period getPeriod(int columnIndex) {
     checkClosed();
     return rowReader.getPeriod(columnIndex);
   }
 
   /** Backs {@code getObject(col, Duration.class)} for INTERVAL DAY TO SECOND columns. */
-  private Duration getDuration(int columnIndex) throws SQLException {
+  private Duration getDuration(int columnIndex) {
     checkClosed();
     return rowReader.getDuration(columnIndex);
   }
 
   @Override
-  public InputStream getAsciiStream(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getAsciiStream not supported");
+  public InputStream getAsciiStream(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getAsciiStream not supported");
   }
 
   @Override
-  public InputStream getUnicodeStream(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getUnicodeStream not supported");
+  public InputStream getUnicodeStream(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getUnicodeStream not supported");
   }
 
   @Override
-  public InputStream getBinaryStream(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getBinaryStream not supported");
+  public InputStream getBinaryStream(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getBinaryStream not supported");
   }
 
   // String-based column access
   @Override
-  public String getString(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public String getString(String columnLabel) {
     return getString(findColumn(columnLabel));
   }
 
   @Override
-  public boolean getBoolean(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public boolean getBoolean(String columnLabel) {
     return getBoolean(findColumn(columnLabel));
   }
 
   @Override
-  public byte getByte(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public byte getByte(String columnLabel) {
     return getByte(findColumn(columnLabel));
   }
 
   @Override
-  public short getShort(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public short getShort(String columnLabel) {
     return getShort(findColumn(columnLabel));
   }
 
   @Override
-  public int getInt(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public int getInt(String columnLabel) {
     return getInt(findColumn(columnLabel));
   }
 
   @Override
-  public long getLong(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public long getLong(String columnLabel) {
     return getLong(findColumn(columnLabel));
   }
 
   @Override
-  public float getFloat(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public float getFloat(String columnLabel) {
     return getFloat(findColumn(columnLabel));
   }
 
   @Override
-  public double getDouble(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public double getDouble(String columnLabel) {
     return getDouble(findColumn(columnLabel));
   }
 
   @Override
-  public BigDecimal getBigDecimal(String columnLabel, int scale) throws SQLException {
+  @NoTelemetry
+  public BigDecimal getBigDecimal(String columnLabel, int scale) {
     return getBigDecimal(findColumn(columnLabel), scale);
   }
 
   @Override
-  public byte[] getBytes(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public byte[] getBytes(String columnLabel) {
     return getBytes(findColumn(columnLabel));
   }
 
   @Override
-  public Date getDate(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public Date getDate(String columnLabel) {
     return getDate(findColumn(columnLabel));
   }
 
   @Override
-  public Time getTime(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public Time getTime(String columnLabel) {
     return getTime(findColumn(columnLabel));
   }
 
   @Override
-  public Timestamp getTimestamp(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public Timestamp getTimestamp(String columnLabel) {
     return getTimestamp(findColumn(columnLabel));
   }
 
   @Override
-  public InputStream getAsciiStream(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getAsciiStream not supported");
+  public InputStream getAsciiStream(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getAsciiStream not supported");
   }
 
   @Override
-  public InputStream getUnicodeStream(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getUnicodeStream not supported");
+  public InputStream getUnicodeStream(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getUnicodeStream not supported");
   }
 
   @Override
-  public InputStream getBinaryStream(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getAsciiStream not supported");
+  public InputStream getBinaryStream(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getAsciiStream not supported");
   }
 
   @Override
-  public SQLWarning getWarnings() throws SQLException {
+  public SQLWarning getWarnings() {
     checkClosed();
     return null;
   }
 
   @Override
-  public void clearWarnings() throws SQLException {
+  public void clearWarnings() {
     checkClosed();
   }
 
   @Override
-  public String getCursorName() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getCursorName not supported");
+  public String getCursorName() {
+    throw new SFSQLFeatureNotSupportedException("getCursorName not supported");
   }
 
   @Override
-  public ResultSetMetaData getMetaData() throws SQLException {
+  public ResultSetMetaData getMetaData() {
     checkClosed();
     // No connection in scope for serializable-derived result sets (statement == null) — NOOP then.
     Telemetry telemetry =
@@ -331,98 +363,120 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
     return new DecoratedSnowflakeResultSetMetaDataImpl(resultSetMetaData, telemetry);
   }
 
+  /**
+   * The concrete metadata for intra-package callers (e.g. the async view building its own decorated
+   * projection). Returns the impl directly rather than the decorated {@link #getMetaData()} view,
+   * so callers avoid the checked {@code unwrap} that the decorator boundary re-exposes.
+   */
+  SnowflakeResultSetMetaDataImpl getMetaDataImpl() {
+    return resultSetMetaData;
+  }
+
   @Override
-  public Object getObject(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public Object getObject(int columnIndex) {
     checkClosed();
     return rowReader.getObject(columnIndex);
   }
 
   @Override
-  public Object getObject(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public Object getObject(String columnLabel) {
     return getObject(findColumn(columnLabel));
   }
 
   @Override
-  public int findColumn(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public int findColumn(String columnLabel) {
     // TODO(SNOW-3695645): in SnowflakeResultSetMetaDataImpl::getColumnIndex session parameter
     //  "isResultColumnCaseInsensitive" is respect during the search, should we respect it here?
 
     checkClosed();
-    for (int i = 0; i < resultSetMetaData.getColumnCount(); i++) {
-      if (resultSetMetaData.getColumnNames().get(i).equalsIgnoreCase(columnLabel)) {
+    List<String> columnNames = resultSetMetaData.columnNames();
+    for (int i = 0; i < columnNames.size(); i++) {
+      if (columnNames.get(i).equalsIgnoreCase(columnLabel)) {
         return i + 1; // JDBC columns are 1-based
       }
     }
-    throw new SQLException("Column not found: " + columnLabel);
+    throw new IllegalArgumentException("Column not found: " + columnLabel);
   }
 
   @Override
-  public Reader getCharacterStream(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public Reader getCharacterStream(int columnIndex) {
     throw new NotImplementedException();
   }
 
   @Override
-  public Reader getCharacterStream(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public Reader getCharacterStream(String columnLabel) {
     return getCharacterStream(findColumn(columnLabel));
   }
 
   @Override
-  public BigDecimal getBigDecimal(int columnIndex) throws SQLException {
+  @NoTelemetry
+  public BigDecimal getBigDecimal(int columnIndex) {
     checkClosed();
     return rowReader.getBigDecimal(columnIndex);
   }
 
   @Override
-  public BigDecimal getBigDecimal(String columnLabel) throws SQLException {
+  @NoTelemetry
+  public BigDecimal getBigDecimal(String columnLabel) {
     return getBigDecimal(findColumn(columnLabel));
   }
 
   @Override
-  public boolean isBeforeFirst() throws SQLException {
+  @NoTelemetry
+  public boolean isBeforeFirst() {
     checkClosed();
     return rowReader.isBeforeFirst();
   }
 
   @Override
-  public boolean isAfterLast() throws SQLException {
+  @NoTelemetry
+  public boolean isAfterLast() {
     checkClosed();
     return rowReader.isAfterLast();
   }
 
   @Override
-  public boolean isFirst() throws SQLException {
+  @NoTelemetry
+  public boolean isFirst() {
     checkClosed();
     return rowReader.isFirst();
   }
 
   @Override
-  public boolean isLast() throws SQLException {
+  @NoTelemetry
+  public boolean isLast() {
     checkClosed();
     return rowReader.isLast();
   }
 
   @Override
-  public void beforeFirst() throws SQLException {
-    throw new SQLFeatureNotSupportedException("beforeFirst not supported");
+  public void beforeFirst() {
+    throw new SFSQLFeatureNotSupportedException("beforeFirst not supported");
   }
 
   @Override
-  public void afterLast() throws SQLException {
-    throw new SQLFeatureNotSupportedException("afterLast not supported");
+  public void afterLast() {
+    throw new SFSQLFeatureNotSupportedException("afterLast not supported");
   }
 
   @Override
-  public boolean first() throws SQLException {
-    throw new SQLFeatureNotSupportedException("first not supported (forward-only)");
+  public boolean first() {
+    throw new SFSQLFeatureNotSupportedException("first not supported (forward-only)");
   }
 
   @Override
-  public boolean last() throws SQLException {
-    throw new SQLFeatureNotSupportedException("last not supported (forward-only)");
+  public boolean last() {
+    throw new SFSQLFeatureNotSupportedException("last not supported (forward-only)");
   }
 
   @Override
-  public int getRow() throws SQLException {
+  @NoTelemetry
+  public int getRow() {
     checkClosed();
     int currentRow = rowReader.getCurrentRow();
     if (currentRow < 0 || rowReader.isAfterLast()) {
@@ -432,382 +486,389 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
-  public boolean absolute(int row) throws SQLException {
-    throw new SQLFeatureNotSupportedException("absolute not supported (forward-only)");
+  public boolean absolute(int row) {
+    throw new SFSQLFeatureNotSupportedException("absolute not supported (forward-only)");
   }
 
   @Override
-  public boolean relative(int rows) throws SQLException {
-    throw new SQLFeatureNotSupportedException("relative not supported (forward-only)");
+  public boolean relative(int rows) {
+    throw new SFSQLFeatureNotSupportedException("relative not supported (forward-only)");
   }
 
   @Override
-  public boolean previous() throws SQLException {
-    throw new SQLFeatureNotSupportedException("previous not supported (forward-only)");
+  public boolean previous() {
+    throw new SFSQLFeatureNotSupportedException("previous not supported (forward-only)");
   }
 
   @Override
-  public void setFetchDirection(int direction) throws SQLException {
+  public void setFetchDirection(int direction) {
     checkClosed();
     if (direction != FETCH_FORWARD) {
-      throw new SQLFeatureNotSupportedException("Only FETCH_FORWARD supported");
+      throw new SFSQLFeatureNotSupportedException("Only FETCH_FORWARD supported");
     }
     this.fetchDirection = direction;
   }
 
   @Override
-  public int getFetchDirection() throws SQLException {
+  public int getFetchDirection() {
     checkClosed();
     return fetchDirection;
   }
 
   @Override
-  public void setFetchSize(int rows) throws SQLException {
+  public void setFetchSize(int rows) {
     checkClosed();
     if (rows < 0) {
-      throw new SQLException("Fetch size must be >= 0");
+      throw new IllegalArgumentException("Fetch size must be >= 0");
     }
     this.fetchSize = rows;
   }
 
   @Override
-  public int getFetchSize() throws SQLException {
+  public int getFetchSize() {
     checkClosed();
     return fetchSize;
   }
 
   @Override
-  public int getType() throws SQLException {
+  public int getType() {
     return TYPE_FORWARD_ONLY;
   }
 
   @Override
-  public int getConcurrency() throws SQLException {
+  public int getConcurrency() {
     return CONCUR_READ_ONLY;
   }
 
   // Update methods (not supported)
   @Override
-  public boolean rowUpdated() throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public boolean rowUpdated() {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public boolean rowInserted() throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public boolean rowInserted() {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public boolean rowDeleted() throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public boolean rowDeleted() {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNull(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNull(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBoolean(int columnIndex, boolean x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBoolean(int columnIndex, boolean x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateByte(int columnIndex, byte x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateByte(int columnIndex, byte x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateShort(int columnIndex, short x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateShort(int columnIndex, short x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateInt(int columnIndex, int x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateInt(int columnIndex, int x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateLong(int columnIndex, long x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateLong(int columnIndex, long x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateFloat(int columnIndex, float x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateFloat(int columnIndex, float x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateDouble(int columnIndex, double x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateDouble(int columnIndex, double x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBigDecimal(int columnIndex, BigDecimal x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBigDecimal(int columnIndex, BigDecimal x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateString(int columnIndex, String x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateString(int columnIndex, String x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBytes(int columnIndex, byte[] x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBytes(int columnIndex, byte[] x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateDate(int columnIndex, Date x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateDate(int columnIndex, Date x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateTime(int columnIndex, Time x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateTime(int columnIndex, Time x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateTimestamp(int columnIndex, Timestamp x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateTimestamp(int columnIndex, Timestamp x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateAsciiStream(int columnIndex, InputStream x, int length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateAsciiStream(int columnIndex, InputStream x, int length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBinaryStream(int columnIndex, InputStream x, int length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBinaryStream(int columnIndex, InputStream x, int length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateCharacterStream(int columnIndex, Reader x, int length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateCharacterStream(int columnIndex, Reader x, int length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateObject(int columnIndex, Object x, int scaleOrLength) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateObject(int columnIndex, Object x, int scaleOrLength) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateObject(int columnIndex, Object x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateObject(int columnIndex, Object x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   // String-based update methods
   @Override
-  public void updateNull(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNull(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBoolean(String columnLabel, boolean x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBoolean(String columnLabel, boolean x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateByte(String columnLabel, byte x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateByte(String columnLabel, byte x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateShort(String columnLabel, short x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateShort(String columnLabel, short x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateInt(String columnLabel, int x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateInt(String columnLabel, int x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateLong(String columnLabel, long x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateLong(String columnLabel, long x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateFloat(String columnLabel, float x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateFloat(String columnLabel, float x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateDouble(String columnLabel, double x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateDouble(String columnLabel, double x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBigDecimal(String columnLabel, BigDecimal x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBigDecimal(String columnLabel, BigDecimal x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateString(String columnLabel, String x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateString(String columnLabel, String x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBytes(String columnLabel, byte[] x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBytes(String columnLabel, byte[] x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateDate(String columnLabel, Date x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateDate(String columnLabel, Date x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateTime(String columnLabel, Time x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateTime(String columnLabel, Time x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateTimestamp(String columnLabel, Timestamp x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateTimestamp(String columnLabel, Timestamp x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateAsciiStream(String columnLabel, InputStream x, int length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateAsciiStream(String columnLabel, InputStream x, int length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBinaryStream(String columnLabel, InputStream x, int length)
-      throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBinaryStream(String columnLabel, InputStream x, int length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateCharacterStream(String columnLabel, Reader reader, int length)
-      throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateCharacterStream(String columnLabel, Reader reader, int length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateObject(String columnLabel, Object x, int scaleOrLength) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateObject(String columnLabel, Object x, int scaleOrLength) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateObject(String columnLabel, Object x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateObject(String columnLabel, Object x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void insertRow() throws SQLException {
-    throw new SQLFeatureNotSupportedException("insertRow not supported");
+  public void insertRow() {
+    throw new SFSQLFeatureNotSupportedException("insertRow not supported");
   }
 
   @Override
-  public void updateRow() throws SQLException {
-    throw new SQLFeatureNotSupportedException("updateRow not supported");
+  public void updateRow() {
+    throw new SFSQLFeatureNotSupportedException("updateRow not supported");
   }
 
   @Override
-  public void deleteRow() throws SQLException {
-    throw new SQLFeatureNotSupportedException("deleteRow not supported");
+  public void deleteRow() {
+    throw new SFSQLFeatureNotSupportedException("deleteRow not supported");
   }
 
   @Override
-  public void refreshRow() throws SQLException {
-    throw new SQLFeatureNotSupportedException("refreshRow not supported");
+  public void refreshRow() {
+    throw new SFSQLFeatureNotSupportedException("refreshRow not supported");
   }
 
   @Override
-  public void cancelRowUpdates() throws SQLException {
+  public void cancelRowUpdates() {
     checkClosed();
   }
 
   @Override
-  public void moveToInsertRow() throws SQLException {
-    throw new SQLFeatureNotSupportedException("moveToInsertRow not supported");
+  public void moveToInsertRow() {
+    throw new SFSQLFeatureNotSupportedException("moveToInsertRow not supported");
   }
 
   @Override
-  public void moveToCurrentRow() throws SQLException {
-    throw new SQLFeatureNotSupportedException("moveToCurrentRow not supported");
+  public void moveToCurrentRow() {
+    throw new SFSQLFeatureNotSupportedException("moveToCurrentRow not supported");
   }
 
   @Override
-  public Statement getStatement() throws SQLException {
+  public Statement getStatement() {
     checkClosed();
-    return statement;
+    return statement == null
+        ? null
+        : Decorators.statement(statement, Decorators.telemetryOf(statement));
   }
 
   @Override
-  public Object getObject(int columnIndex, Map<String, Class<?>> map) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getObject not supported");
+  @NoTelemetry
+  public Object getObject(int columnIndex, Map<String, Class<?>> map) {
+    throw new SFSQLFeatureNotSupportedException("getObject not supported");
   }
 
   @Override
-  public Ref getRef(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getRef not supported");
+  public Ref getRef(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getRef not supported");
   }
 
   @Override
-  public Blob getBlob(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getBlob not supported");
+  public Blob getBlob(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getBlob not supported");
   }
 
   @Override
-  public Clob getClob(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getClob not supported");
+  public Clob getClob(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getClob not supported");
   }
 
   @Override
-  public Array getArray(int columnIndex) throws SQLException {
+  public Array getArray(int columnIndex) {
     throw new NotImplementedException();
   }
 
   @Override
-  public Object getObject(String columnLabel, Map<String, Class<?>> map) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getObject not supported");
+  @NoTelemetry
+  public Object getObject(String columnLabel, Map<String, Class<?>> map) {
+    throw new SFSQLFeatureNotSupportedException("getObject not supported");
   }
 
   @Override
-  public Ref getRef(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getRef not supported");
+  public Ref getRef(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getRef not supported");
   }
 
   @Override
-  public Blob getBlob(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getBlob not supported");
+  public Blob getBlob(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getBlob not supported");
   }
 
   @Override
-  public Clob getClob(String columnLabel) throws SQLException {
+  public Clob getClob(String columnLabel) {
     throw new NotImplementedException();
   }
 
   @Override
-  public Array getArray(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getArray not supported");
+  public Array getArray(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getArray not supported");
   }
 
   @Override
-  public Date getDate(int columnIndex, Calendar cal) throws SQLException {
+  @NoTelemetry
+  public Date getDate(int columnIndex, Calendar cal) {
     return getDate(columnIndex, cal == null ? null : cal.getTimeZone());
   }
 
   @Override
-  public Date getDate(String columnLabel, Calendar cal) throws SQLException {
+  @NoTelemetry
+  public Date getDate(String columnLabel, Calendar cal) {
     return getDate(findColumn(columnLabel), cal);
   }
 
   @Override
-  public Time getTime(int columnIndex, Calendar cal) throws SQLException {
+  @NoTelemetry
+  public Time getTime(int columnIndex, Calendar cal) {
     return getTime(columnIndex);
   }
 
   @Override
-  public Time getTime(String columnLabel, Calendar cal) throws SQLException {
+  @NoTelemetry
+  public Time getTime(String columnLabel, Calendar cal) {
     return getTime(findColumn(columnLabel), cal);
   }
 
   @Override
-  public Timestamp getTimestamp(int columnIndex, Calendar cal) throws SQLException {
+  @NoTelemetry
+  public Timestamp getTimestamp(int columnIndex, Calendar cal) {
     checkClosed();
     // Mirrors snowflake-jdbc's SnowflakeBaseResultSet.getTimestamp(int, Calendar): pass the
     // Calendar's timezone to the converter. Only TIMESTAMP_NTZ consumes it (honor-client-TZ
@@ -817,308 +878,304 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
-  public Timestamp getTimestamp(String columnLabel, Calendar cal) throws SQLException {
+  @NoTelemetry
+  public Timestamp getTimestamp(String columnLabel, Calendar cal) {
     return getTimestamp(findColumn(columnLabel), cal);
   }
 
   @Override
-  public URL getURL(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getURL not supported");
+  public URL getURL(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getURL not supported");
   }
 
   @Override
-  public URL getURL(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getURL not supported");
+  public URL getURL(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getURL not supported");
   }
 
   @Override
-  public void updateRef(int columnIndex, Ref x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateRef(int columnIndex, Ref x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateRef(String columnLabel, Ref x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateRef(String columnLabel, Ref x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBlob(int columnIndex, Blob x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBlob(int columnIndex, Blob x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBlob(String columnLabel, Blob x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBlob(String columnLabel, Blob x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateClob(int columnIndex, Clob x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateClob(int columnIndex, Clob x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateClob(String columnLabel, Clob x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateClob(String columnLabel, Clob x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateArray(int columnIndex, Array x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateArray(int columnIndex, Array x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateArray(String columnLabel, Array x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateArray(String columnLabel, Array x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public RowId getRowId(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getRowId not supported");
+  public RowId getRowId(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getRowId not supported");
   }
 
   @Override
-  public RowId getRowId(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getRowId not supported");
+  public RowId getRowId(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getRowId not supported");
   }
 
   @Override
-  public void updateRowId(int columnIndex, RowId x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateRowId(int columnIndex, RowId x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateRowId(String columnLabel, RowId x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateRowId(String columnLabel, RowId x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public int getHoldability() throws SQLException {
+  public int getHoldability() {
     return CLOSE_CURSORS_AT_COMMIT;
   }
 
   @Override
-  public boolean isClosed() throws SQLException {
+  public boolean isClosed() {
     return closed;
   }
 
   @Override
-  public void updateNString(int columnIndex, String nString) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNString(int columnIndex, String nString) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNString(String columnLabel, String nString) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNString(String columnLabel, String nString) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNClob(int columnIndex, NClob nClob) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNClob(int columnIndex, NClob nClob) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNClob(String columnLabel, NClob nClob) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNClob(String columnLabel, NClob nClob) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public NClob getNClob(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getNClob not supported");
+  public NClob getNClob(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getNClob not supported");
   }
 
   @Override
-  public NClob getNClob(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getNClob not supported");
+  public NClob getNClob(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getNClob not supported");
   }
 
   @Override
-  public SQLXML getSQLXML(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getSQLXML not supported");
+  public SQLXML getSQLXML(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getSQLXML not supported");
   }
 
   @Override
-  public SQLXML getSQLXML(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getSQLXML not supported");
+  public SQLXML getSQLXML(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getSQLXML not supported");
   }
 
   @Override
-  public void updateSQLXML(int columnIndex, SQLXML xmlObject) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateSQLXML(int columnIndex, SQLXML xmlObject) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateSQLXML(String columnLabel, SQLXML xmlObject) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateSQLXML(String columnLabel, SQLXML xmlObject) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public String getNString(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getNString not supported");
+  public String getNString(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getNString not supported");
   }
 
   @Override
-  public String getNString(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getNString not supported");
+  public String getNString(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getNString not supported");
   }
 
   @Override
-  public Reader getNCharacterStream(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getNCharacterStream not supported");
+  public Reader getNCharacterStream(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getNCharacterStream not supported");
   }
 
   @Override
-  public Reader getNCharacterStream(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getNCharacterStream not supported");
+  public Reader getNCharacterStream(String columnLabel) {
+    throw new SFSQLFeatureNotSupportedException("getNCharacterStream not supported");
   }
 
   @Override
-  public void updateNCharacterStream(int columnIndex, Reader x, long length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNCharacterStream(int columnIndex, Reader x, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNCharacterStream(String columnLabel, Reader reader, long length)
-      throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNCharacterStream(String columnLabel, Reader reader, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateAsciiStream(int columnIndex, InputStream x, long length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateAsciiStream(int columnIndex, InputStream x, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBinaryStream(int columnIndex, InputStream x, long length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBinaryStream(int columnIndex, InputStream x, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateCharacterStream(int columnIndex, Reader x, long length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateCharacterStream(int columnIndex, Reader x, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateAsciiStream(String columnLabel, InputStream x, long length)
-      throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateAsciiStream(String columnLabel, InputStream x, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBinaryStream(String columnLabel, InputStream x, long length)
-      throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBinaryStream(String columnLabel, InputStream x, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateCharacterStream(String columnLabel, Reader reader, long length)
-      throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateCharacterStream(String columnLabel, Reader reader, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBlob(int columnIndex, InputStream inputStream, long length)
-      throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBlob(int columnIndex, InputStream inputStream, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBlob(String columnLabel, InputStream inputStream, long length)
-      throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBlob(String columnLabel, InputStream inputStream, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateClob(int columnIndex, Reader reader, long length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateClob(int columnIndex, Reader reader, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateClob(String columnLabel, Reader reader, long length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateClob(String columnLabel, Reader reader, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNClob(int columnIndex, Reader reader, long length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNClob(int columnIndex, Reader reader, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNClob(String columnLabel, Reader reader, long length) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNClob(String columnLabel, Reader reader, long length) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNCharacterStream(int columnIndex, Reader x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNCharacterStream(int columnIndex, Reader x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNCharacterStream(String columnLabel, Reader reader) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNCharacterStream(String columnLabel, Reader reader) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateAsciiStream(int columnIndex, InputStream x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateAsciiStream(int columnIndex, InputStream x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBinaryStream(int columnIndex, InputStream x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBinaryStream(int columnIndex, InputStream x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateCharacterStream(int columnIndex, Reader x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateCharacterStream(int columnIndex, Reader x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateAsciiStream(String columnLabel, InputStream x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateAsciiStream(String columnLabel, InputStream x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBinaryStream(String columnLabel, InputStream x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBinaryStream(String columnLabel, InputStream x) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateCharacterStream(String columnLabel, Reader reader) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateCharacterStream(String columnLabel, Reader reader) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBlob(int columnIndex, InputStream inputStream) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBlob(int columnIndex, InputStream inputStream) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateBlob(String columnLabel, InputStream inputStream) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateBlob(String columnLabel, InputStream inputStream) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateClob(int columnIndex, Reader reader) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateClob(int columnIndex, Reader reader) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateClob(String columnLabel, Reader reader) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateClob(String columnLabel, Reader reader) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNClob(int columnIndex, Reader reader) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNClob(int columnIndex, Reader reader) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public void updateNClob(String columnLabel, Reader reader) throws SQLException {
-    throw new SQLFeatureNotSupportedException("Updates not supported");
+  public void updateNClob(String columnLabel, Reader reader) {
+    throw new SFSQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
-  public <T> T getObject(int columnIndex, Class<T> type) throws SQLException {
+  @NoTelemetry
+  public <T> T getObject(int columnIndex, Class<T> type) {
     if (type == String.class) {
       return type.cast(getString(columnIndex));
     } else if (type == Integer.class) {
@@ -1142,11 +1199,12 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
     } else if (type == Duration.class) {
       return type.cast(getDuration(columnIndex));
     }
-    throw new SQLFeatureNotSupportedException("Type not supported: " + type.getName());
+    throw new SFSQLFeatureNotSupportedException("Type not supported: " + type.getName());
   }
 
   @Override
-  public <T> T getObject(String columnLabel, Class<T> type) throws SQLException {
+  @NoTelemetry
+  public <T> T getObject(String columnLabel, Class<T> type) {
     return getObject(findColumn(columnLabel), type);
   }
 
@@ -1168,42 +1226,41 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
     return rowReader;
   }
 
-  private void checkClosed() throws SQLException {
+  private void checkClosed() {
     if (closed) {
-      throw new SQLException("ResultSet is closed");
+      throw new IllegalStateException("ResultSet is closed");
     }
   }
 
   @Override
-  public String getQueryID() throws SQLException {
+  public String getQueryID() {
     return queryId;
   }
 
   @Override
-  public List<SnowflakeResultSetSerializable> getResultSetSerializables(long maxSizeInBytes)
-      throws SQLException {
+  public List<SnowflakeResultSetSerializable> getResultSetSerializables(long maxSizeInBytes) {
     checkClosed();
     if (resultSetChunksProvider == null) {
       // Plain in-memory (metadata) and converter-wrapped result sets have no chunk backing to
       // slice, matching snowflake-jdbc whose SnowflakeDatabaseMetaDataResultSet rejects this.
-      throw new SQLFeatureNotSupportedException(
+      throw new SFSQLFeatureNotSupportedException(
           "getResultSetSerializables is not supported for this result set");
     }
     return resultSetChunksProvider.getChunks(maxSizeInBytes);
   }
 
   @Override
-  public <T> T[] getArray(int columnIndex, Class<T> type) throws SQLException {
+  public <T> T[] getArray(int columnIndex, Class<T> type) {
     throw new NotImplementedException();
   }
 
   @Override
-  public <T> List<T> getList(int columnIndex, Class<T> type) throws SQLException {
+  public <T> List<T> getList(int columnIndex, Class<T> type) {
     throw new NotImplementedException();
   }
 
   @Override
-  public <T> Map<String, T> getMap(int columnIndex, Class<T> type) throws SQLException {
+  public <T> Map<String, T> getMap(int columnIndex, Class<T> type) {
     throw new NotImplementedException();
   }
 }

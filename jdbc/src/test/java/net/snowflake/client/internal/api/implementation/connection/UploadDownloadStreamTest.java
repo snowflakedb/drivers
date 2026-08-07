@@ -28,7 +28,10 @@ import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Properties;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
+import net.snowflake.client.api.connection.SnowflakeConnection;
 import net.snowflake.client.api.connection.UploadStreamConfig;
+import net.snowflake.client.internal.api.decorator.Telemetry;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamBeginResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamChunkResponse;
@@ -223,8 +226,11 @@ class UploadDownloadStreamTest {
           }
         };
 
+    // uploadStream is a @JdbcBoundary method: the raw impl throws an unchecked carrier, and the
+    // generated decorator reconstructs the checked SQLException the public contract promises.
+    SnowflakeConnection boundary = new DecoratedSnowflakeConnectionImpl(connection, Telemetry.NOOP);
     SQLException thrown =
-        assertThrows(SQLException.class, () -> connection.uploadStream("@s", "f", brokenStream));
+        assertThrows(SQLException.class, () -> boundary.uploadStream("@s", "f", brokenStream));
     assertTrue(
         thrown.getMessage().contains("simulated IO failure"),
         "exception message must surface the underlying IO failure: " + thrown.getMessage());
@@ -365,8 +371,11 @@ class UploadDownloadStreamTest {
   @Test
   void shouldWrapChunkReadFailureAsIoExceptionAndAllowEarlyCloseWithoutReachingEof()
       throws Exception {
+    // The core facade surfaces failures as unchecked carriers (never checked SQLException), and
+    // read()/close() run outside the decorator boundary — so ChunkedDownloadInputStream catches the
+    // carrier base and wraps it as IOException, the only checked type an InputStream may throw.
     when(mockCoreApi.connectionDownloadStreamChunk(eq(DOWNLOAD_HANDLE), anyLong()))
-        .thenThrow(new SQLException("chunk rpc failed"));
+        .thenThrow(new CoreException("chunk rpc failed"));
 
     // try-with-resources guarantees the stream is released even if an assertion below throws;
     // the ARM close() is a harmless third no-op (close() short-circuits once closed), so the
@@ -395,7 +404,7 @@ class UploadDownloadStreamTest {
                 .setEof(true)
                 .build());
     when(mockCoreApi.connectionDownloadStreamClose(DOWNLOAD_HANDLE))
-        .thenThrow(new SQLException("close rpc failed"));
+        .thenThrow(new CoreException("close rpc failed"));
 
     // try-with-resources guarantees release even if an assertion below throws. By block exit the
     // stream is already closed by the explicit calls, so the ARM close() is a no-op that neither

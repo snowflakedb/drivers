@@ -1,8 +1,10 @@
 package net.snowflake.client.internal.core.arrow.cursor;
 
+import static net.snowflake.client.api.exception.ErrorCode.INTERNAL_ERROR;
+
 import java.io.Closeable;
 import java.io.IOException;
-import java.sql.SQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import org.apache.arrow.c.ArrowArrayStream;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -20,14 +22,14 @@ public final class ArrowResources {
     this.reader = reader;
   }
 
-  public VectorSchemaRoot getActiveRoot() throws SQLException {
+  public VectorSchemaRoot getActiveRoot() {
     if (currentRoot != null) {
       return currentRoot;
     }
     try {
       return reader.getVectorSchemaRoot();
     } catch (IOException e) {
-      throw new SQLException("Unable to read Arrow schema", e);
+      throw SFSQLException.fromErrorCode(INTERNAL_ERROR, "Unable to read Arrow schema", e);
     }
   }
 
@@ -47,8 +49,8 @@ public final class ArrowResources {
     return reader.getVectorSchemaRoot();
   }
 
-  public void closeAll() throws SQLException {
-    SQLException failure = null;
+  public void closeAll() {
+    SFSQLException failure = null;
     failure = closeResource(failure, this::closeReader);
     failure = closeResource(failure, this::closeStream);
     failure = closeResource(failure, this::closeAllocator);
@@ -82,8 +84,9 @@ public final class ArrowResources {
     allocator = null;
   }
 
-  private SQLException appendCloseFailure(SQLException failure, String message, Exception cause) {
-    SQLException next = new SQLException(message, cause);
+  private SFSQLException appendCloseFailure(
+      SFSQLException failure, String message, Exception cause) {
+    SFSQLException next = new SFSQLException(message, cause);
     if (failure == null) {
       return next;
     }
@@ -91,7 +94,7 @@ public final class ArrowResources {
     return failure;
   }
 
-  private SQLException closeResource(SQLException failure, Closeable action) {
+  private SFSQLException closeResource(SFSQLException failure, Closeable action) {
     if (action == null) {
       return failure;
     }

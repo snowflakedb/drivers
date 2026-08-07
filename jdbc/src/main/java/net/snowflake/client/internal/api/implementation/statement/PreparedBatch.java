@@ -1,7 +1,5 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
-import java.sql.BatchUpdateException;
-import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -10,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.SFBatchUpdateException;
 import net.snowflake.client.internal.api.implementation.statement.PreparedStatementBindingSerializer.ParameterValue;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -33,7 +33,7 @@ final class PreparedBatch {
    * Two-pass: every column is validated before any is mutated so a type-mismatch on a later column
    * doesn't leave earlier columns at a different length.
    */
-  void addRow(Map<Integer, ParameterValue> currentValues) throws SQLException {
+  void addRow(Map<Integer, ParameterValue> currentValues) {
     Set<Integer> columnIndexes = rowCount == 0 ? currentValues.keySet() : columns.keySet();
     for (int parameterIndex : columnIndexes) {
       BatchColumnValidator.validate(
@@ -65,10 +65,10 @@ final class PreparedBatch {
   /**
    * Single-roundtrip array-bind execution. Returns one entry per row: per-row {@code 1} when the
    * server's aggregate count equals {@code batchSize} (SNOW-14034), else {@link
-   * Statement#SUCCESS_NO_INFO}. On failure throws {@link BatchUpdateException} with all entries set
-   * to {@link Statement#EXECUTE_FAILED}.
+   * Statement#SUCCESS_NO_INFO}. On failure throws {@link SFBatchUpdateException} with all entries
+   * set to {@link Statement#EXECUTE_FAILED}.
    */
-  long[] executeAll(SnowflakePreparedStatementImpl stmt, String sql) throws SQLException {
+  long[] executeAll(SnowflakePreparedStatementImpl stmt, String sql) {
     final int batchSize = size();
     stmt.clearBatchQueryIds();
     if (batchSize == 0) {
@@ -76,12 +76,12 @@ final class PreparedBatch {
       return new long[0];
     }
     long[] result = new long[0];
-    BatchUpdateException pending = null;
+    SFBatchUpdateException pending = null;
     try {
       long updateCount = serializeAndExecute(stmt, sql);
       result = expandUpdateCounts(updateCount, batchSize);
       stmt.recordBatchQueryId();
-    } catch (SQLException e) {
+    } catch (CoreException e) {
       pending = SnowflakeStatementImpl.buildBatchFailureException(e, allFailed(batchSize));
       stmt.recordBatchQueryId();
     } finally {
@@ -95,10 +95,9 @@ final class PreparedBatch {
 
   /**
    * Manual try/finally rather than try-with-resources: a close-throws-after-RPC-success would
-   * otherwise be caught by the outer catch(SQLException) and falsely mark the batch as failed.
+   * otherwise be caught by the outer catch and falsely mark the batch as failed.
    */
-  private long serializeAndExecute(SnowflakePreparedStatementImpl stmt, String sql)
-      throws SQLException {
+  private long serializeAndExecute(SnowflakePreparedStatementImpl stmt, String sql) {
     PreparedStatementBindingSerializer.NativeBindings nativeBindings =
         PreparedStatementBindingSerializer.serialize(snapshot());
     try {

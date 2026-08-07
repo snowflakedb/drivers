@@ -1,8 +1,8 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
 import java.util.Map;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.complex.FixedSizeListVector;
@@ -32,7 +32,7 @@ public final class ArrowVectorConverterUtil {
    * java data.
    */
   public static ArrowVectorConverter initConverter(
-      ValueVector vector, DataConversionContext context, int idx) throws SnowflakeSQLException {
+      ValueVector vector, DataConversionContext context, int idx) {
     Types.MinorType type = Types.getMinorTypeForArrowType(vector.getField().getType());
     SnowflakeType st = getSnowflakeTypeFromFieldMetadata(vector.getField());
 
@@ -107,7 +107,7 @@ public final class ArrowVectorConverterUtil {
             case BIGINT:
               return new TimeConverter(vector, idx, context, timeScale);
             default:
-              throw new SnowflakeSQLException("Unsupported Arrow physical type for TIME: " + type);
+              throw new SFSQLException("Unsupported Arrow physical type for TIME: " + type);
           }
 
         case VECTOR:
@@ -138,7 +138,7 @@ public final class ArrowVectorConverterUtil {
             return initTimestampLtzConverter(vector, context, idx);
           }
           if (!SnowflakeType.TIMESTAMP_NTZ.name().equals(mappedType)) {
-            throw new SnowflakeSQLException(
+            throw new SFSQLException(
                 "Unsupported TIMESTAMP mapping for bare TIMESTAMP: " + mappedType);
           }
           // fall through: mapped to NTZ
@@ -151,7 +151,7 @@ public final class ArrowVectorConverterUtil {
           } else if (vector.getField().getChildren().size() == 2) {
             return new TwoFieldStructToTimestampNTZConverter(vector, idx, context, ntzScale);
           }
-          throw new SnowflakeSQLException(
+          throw new SFSQLException(
               "Unsupported Arrow physical layout for TIMESTAMP_NTZ: "
                   + vector.getField().getChildren().size()
                   + " struct children");
@@ -163,11 +163,11 @@ public final class ArrowVectorConverterUtil {
           return initTimestampTzConverter(vector, context, idx);
 
         default:
-          throw new SnowflakeSQLException("Unsupported Arrow logical type: " + st.name());
+          throw new SFSQLException("Unsupported Arrow logical type: " + st.name());
       }
     }
 
-    throw new SnowflakeSQLException("Unsupported Arrow field type: " + type);
+    throw new SFSQLException("Unsupported Arrow field type: " + type);
   }
 
   /**
@@ -177,14 +177,14 @@ public final class ArrowVectorConverterUtil {
    * TIMESTAMP} fall-through when {@code CLIENT_TIMESTAMP_TYPE_MAPPING} resolves to LTZ.
    */
   private static ArrowVectorConverter initTimestampLtzConverter(
-      ValueVector vector, DataConversionContext context, int idx) throws SnowflakeSQLException {
+      ValueVector vector, DataConversionContext context, int idx) {
     int scale = getScaleFromFieldMetadata(vector);
     if (vector.getField().getChildren().isEmpty()) {
       return new BigIntToTimestampLTZConverter(vector, idx, context, scale);
     } else if (vector.getField().getChildren().size() == 2) {
       return new TwoFieldStructToTimestampLTZConverter(vector, idx, context, scale);
     }
-    throw new SnowflakeSQLException(
+    throw new SFSQLException(
         "Unsupported Arrow physical layout for TIMESTAMP_LTZ: "
             + vector.getField().getChildren().size()
             + " struct children");
@@ -198,22 +198,21 @@ public final class ArrowVectorConverterUtil {
    * maps to it.
    */
   private static ArrowVectorConverter initTimestampTzConverter(
-      ValueVector vector, DataConversionContext context, int idx) throws SnowflakeSQLException {
+      ValueVector vector, DataConversionContext context, int idx) {
     int scale = getScaleFromFieldMetadata(vector);
     if (vector.getField().getChildren().size() == 2) {
       return new TwoFieldStructToTimestampTZConverter(vector, idx, context, scale);
     } else if (vector.getField().getChildren().size() == 3) {
       return new ThreeFieldStructToTimestampTZConverter(vector, idx, context, scale);
     }
-    throw new SnowflakeSQLException(
+    throw new SFSQLException(
         "Unsupported Arrow physical layout for TIMESTAMP_TZ: "
             + vector.getField().getChildren().size()
             + " struct children");
   }
 
   public static ArrowVectorConverter initConverter(
-      FieldVector vector, DataConversionContext context, int columnIndex)
-      throws SnowflakeSQLException {
+      FieldVector vector, DataConversionContext context, int columnIndex) {
     return initConverter((ValueVector) vector, context, columnIndex);
   }
 }

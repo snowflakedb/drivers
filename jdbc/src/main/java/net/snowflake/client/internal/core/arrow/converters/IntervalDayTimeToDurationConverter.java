@@ -2,8 +2,8 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import java.time.Duration;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.ValueVector;
 
@@ -25,7 +25,7 @@ public class IntervalDayTimeToDurationConverter extends AbstractArrowVectorConve
   }
 
   @Override
-  public Duration toDuration(int index) throws SFException {
+  public Duration toDuration(int index) {
     if (isNull(index)) {
       return null;
     }
@@ -43,12 +43,13 @@ public class IntervalDayTimeToDurationConverter extends AbstractArrowVectorConve
         return duration.negated();
       }
     } catch (ArithmeticException e) {
-      throw new SFException(ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Duration", numNanos);
+      throw SFSQLException.fromErrorCode(
+          ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Duration", numNanos);
     }
   }
 
   @Override
-  public String toString(int index) throws SFException {
+  public String toString(int index) {
     if (isNull(index)) {
       return null;
     }
@@ -56,7 +57,7 @@ public class IntervalDayTimeToDurationConverter extends AbstractArrowVectorConve
   }
 
   @Override
-  public Object toObject(int index) throws SFException {
+  public Object toObject(int index) {
     return toDuration(index);
   }
 }

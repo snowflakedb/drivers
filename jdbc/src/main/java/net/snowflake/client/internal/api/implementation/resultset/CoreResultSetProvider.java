@@ -1,10 +1,10 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
-import java.sql.SQLException;
 import java.util.List;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -29,12 +29,12 @@ class CoreResultSetProvider implements ResultSetChunksProvider {
   private final String queryId;
   private final ParametersRegistry parameters;
 
-  ResultSetGetStreamResponse getStream() throws SQLException {
+  ResultSetGetStreamResponse getStream() {
     return coreDriverApi.resultSetGetStream(handle);
   }
 
   @Override
-  public List<SnowflakeResultSetSerializable> getChunks(long maxSizeInBytes) throws SQLException {
+  public List<SnowflakeResultSetSerializable> getChunks(long maxSizeInBytes) {
     // The handle still holds the query's chunk metadata in core, so this reads it locally instead
     // of re-fetching the result from the backend.
     ResultSetGetChunksResponse chunks = coreDriverApi.resultSetGetChunks(handle);
@@ -52,7 +52,7 @@ class CoreResultSetProvider implements ResultSetChunksProvider {
   public void release() {
     try {
       coreDriverApi.resultSetRelease(handle);
-    } catch (SQLException e) {
+    } catch (CoreException e) {
       logger.warn("Failed to release ResultSet handle: {}", e.getClass().getName());
       logger.debug("Failed to release ResultSet handle", e);
     }

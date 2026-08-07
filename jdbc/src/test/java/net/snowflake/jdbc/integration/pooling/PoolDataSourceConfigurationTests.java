@@ -17,6 +17,8 @@ import java.util.Properties;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import net.snowflake.client.api.pooling.SnowflakeConnectionPoolDataSource;
+import net.snowflake.client.internal.api.decorator.Telemetry;
+import net.snowflake.client.internal.api.implementation.pooling.DecoratedSnowflakePooledConnectionDataSource;
 import net.snowflake.client.internal.api.implementation.pooling.SnowflakePooledConnectionDataSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -388,8 +390,11 @@ class PoolDataSourceConfigurationTests {
   @ParameterizedTest
   @MethodSource("unsupportedOperations")
   void shouldRejectTheUnsupportedOperationOperation(String operation) {
+    // The impl throws runtime carriers; the checked SQLFeatureNotSupportedException the JDBC API
+    // promises is reconstructed by the generated boundary decorator, so the contract assertion goes
+    // through it rather than the raw impl.
     // Given a new Snowflake connection pool data source
-    SnowflakePooledConnectionDataSource ds = new SnowflakePooledConnectionDataSource();
+    DecoratedSnowflakePooledConnectionDataSource ds = decorated();
 
     // When <operation> is invoked on the data source
     Executable call = unsupportedOperationCall(ds, operation);
@@ -398,8 +403,19 @@ class PoolDataSourceConfigurationTests {
     assertThrows(SQLFeatureNotSupportedException.class, call);
   }
 
+  /**
+   * SnowflakePooledConnectionDataSource is a {@code @JdbcBoundary}: its generated decorator is the
+   * public contract, translating the impl's runtime carriers (SFSQLFeatureNotSupportedException,
+   * SFSQLException) into the checked SQLException types JDBC promises. Contract-asserting tests go
+   * through the decorator; tests asserting stored configuration stay on the raw impl.
+   */
+  private static DecoratedSnowflakePooledConnectionDataSource decorated() {
+    return new DecoratedSnowflakePooledConnectionDataSource(
+        new SnowflakePooledConnectionDataSource(), Telemetry.NOOP);
+  }
+
   private static Executable unsupportedOperationCall(
-      SnowflakePooledConnectionDataSource ds, String operation) {
+      DecoratedSnowflakePooledConnectionDataSource ds, String operation) {
     switch (operation) {
       case "getLogWriter":
         return () -> ds.getLogWriter();
@@ -428,8 +444,10 @@ class PoolDataSourceConfigurationTests {
 
   @Test
   void shouldRejectUnwrappingToAnUnsupportedInterface() throws SQLException {
+    // unwrap surfaces its failure as a runtime carrier from the impl; the checked SQLException is
+    // reconstructed by the boundary decorator, so the rejection contract is asserted through it.
     // Given a new Snowflake connection pool data source
-    SnowflakePooledConnectionDataSource ds = new SnowflakePooledConnectionDataSource();
+    DecoratedSnowflakePooledConnectionDataSource ds = decorated();
 
     // When isWrapperFor and unwrap are called with an unsupported interface
     boolean wrapsForUnsupported = ds.isWrapperFor(String.class);
