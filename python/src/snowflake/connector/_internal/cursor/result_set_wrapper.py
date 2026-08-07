@@ -20,8 +20,7 @@ class ResultSetWrapperBase:
     The core layer supports repeated ``result_set_get_stream`` calls — each
     invocation builds a fresh Arrow stream from the stored ``RowsetData``.
 
-    Sync and async specializations live in :mod:`snowflake.connector.cursor._result_set_wrapper`
-    and :mod:`snowflake.connector.aio.cursor._result_set_wrapper` respectively.
+    Release/replace are always synchronous (pure FFI handle deletion, no network I/O).
     """
 
     __slots__ = ("_handle",)
@@ -30,17 +29,26 @@ class ResultSetWrapperBase:
         self._handle: ResultSetHandle | None = handle
 
     def __del__(self) -> None:
-        # __del__ cannot be a coroutine, so the safety-net release stays
-        # synchronous (via the sync core_driver). Explicit teardown should go
-        # through release()/replace().
-        handle = self._handle
+        self._do_release()
+
+    def replace(self, new_handle: ResultSetHandle | None) -> None:
+        """Release the current handle (if any) and adopt *new_handle*."""
+        self._do_release()
+        self._handle = new_handle
+
+    def release(self) -> None:
+        """Explicitly release the handle."""
+        self._do_release()
+
+    def _do_release(self) -> None:
+        handle = self._take_handle()
         if handle is None:
             return
-        self._handle = None
         try:
             core_driver.result_set_release(result_set_handle=handle)
-        except Exception:
-            logger.warning("Failed to release ResultSet handle", exc_info=True)
+        except Exception as e:
+            logger.warning("Failed to release ResultSet handle: %s", type(e).__name__)
+            logger.debug("Failed to release ResultSet handle", exc_info=True)
 
     def _take_handle(self) -> ResultSetHandle | None:
         handle = self._handle

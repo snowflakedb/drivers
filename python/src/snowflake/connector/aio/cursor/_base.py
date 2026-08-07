@@ -267,7 +267,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             if response.HasField("multi"):
                 await self._handle_multi_statement_response(response.multi, query)
             else:
-                await self._apply_result_set(response.single, query)
+                self._apply_result_set(response.single, query)
 
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
@@ -295,7 +295,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             except Exception:
                 logger.debug("upload_stream_abort during cleanup failed; propagating original error", exc_info=True)
             raise
-        await self._apply_result_set(finish_response, query)  # type: ignore[arg-type]
+        self._apply_result_set(finish_response, query)  # type: ignore[arg-type]
 
     async def _apply_statement_parameters(
         self,
@@ -332,10 +332,10 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         first_qid = self._multi_statement.advance()  # always non-None: from_result() guarantees non-empty children
         # already populate cursor with first child query results
         rs_response = await self._fetch_result_set_by_query_id(first_qid)  # type: ignore[arg-type]
-        await self._apply_result_set(rs_response, query)
+        self._apply_result_set(rs_response, query)
 
-    async def _apply_result_set(self, rs_response: ResultSetResponse, query: str | None) -> None:
-        await self._result_set.replace(rs_response.result_set_handle)
+    def _apply_result_set(self, rs_response: ResultSetResponse, query: str | None) -> None:
+        self._result_set.replace(rs_response.result_set_handle)
         self._query_result = QueryResult.from_result_set_response(rs_response, query)
 
     async def _fetch_result_set_by_query_id(self, query_id: str) -> ResultSetResponse:
@@ -669,7 +669,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self._multi_statement = ms
 
         rs_response = await self._fetch_result_set_by_query_id(query_id)
-        await self._apply_result_set(rs_response, query=None)
+        self._apply_result_set(rs_response, query=None)
         self._rownumber = -1
 
         return self
@@ -727,7 +727,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """
         del self._messages[:]
         self._query_result.reset(closing=closing)
-        await self._result_set.release()
+        self._result_set.release()
         self._iterator = None
         self._binding_data = None
         self._prefetch_hook = None
@@ -871,12 +871,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             if multi_result.query_ids:
                 first_qid = multi_result.query_ids[0]
                 rs_response = await self._fetch_result_set_by_query_id(first_qid)
-                await self._apply_result_set(rs_response, query=None)
+                self._apply_result_set(rs_response, query=None)
             else:
                 self._query_result = QueryResult()
         else:
             rs_response = response.single
-            await self._apply_result_set(rs_response, query=None)
+            self._apply_result_set(rs_response, query=None)
 
         self._rownumber = -1
 
