@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus, SessionParameterName
 from ...errors import Error, ErrorValue, InterfaceError, ProgrammingError
+from ..api_client.client_api import core_driver
 from ..binding_converters import ParamStyle
-from ..decorators import api_telemetry, backward_compatibility, pep249
+from ..decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from ..errorhandler import ErrorHandlerMixin
 from ..extras import check_dependency
 from ..extras import numpy as np
 from ..logging import get_logger
 from .constants import LOG_MAX_QUERY_LENGTH
+
+
+if TYPE_CHECKING:
+    from ..protobuf_gen.database_driver_v1_pb2 import ConnectionHandle
+    from ..protobuf_gen.database_driver_v1_services import ConnectionGetInfoResponse
 
 
 logger = get_logger(__name__)
@@ -36,7 +42,7 @@ def clamp_client_prefetch_threads(value: int) -> int:
 
 
 class ConnectionMixin(ErrorHandlerMixin):
-    """Zero-I/O connection members shared by sync and async connection classes.
+    """Connection members shared by sync and async connection classes.
 
     Subclasses set handle/proxy fields (``conn_handle``, ``_session_parameters``,
     ``_connection_info``, etc.) and call :meth:`__init__` before performing any
@@ -51,6 +57,7 @@ class ConnectionMixin(ErrorHandlerMixin):
     _session_parameters: Any
     _connection_info: Any
     _client_param_telemetry_enabled: bool
+    conn_handle: ConnectionHandle | None
 
     def __init__(
         self,
@@ -431,6 +438,64 @@ class ConnectionMixin(ErrorHandlerMixin):
     def consent_cache_id_token(self) -> bool:
         """Whether to cache the IdP token for browser-based SSO authentication."""
         raise NotImplementedError("consent_cache_id_token is not yet implemented")
+
+    # ------------------------------------------------------------------
+    # connection state (sync core_driver reads)
+    # ------------------------------------------------------------------
+
+    def _autocommit_enabled(self) -> bool:
+        value = self._session_parameters["AUTOCOMMIT"]
+        return value is not None and value.lower() == "true"
+
+    @property
+    def _autocommit(self) -> bool:
+        """Whether autocommit is enabled (legacy internal name used by sync tests)."""
+        return self._autocommit_enabled()
+
+    @api_telemetry
+    def get_autocommit(self) -> bool:
+        """Return the current autocommit mode."""
+        return self._autocommit_enabled()
+
+    @api_telemetry
+    def get_client_prefetch_threads(self) -> int:
+        """Return the configured number of chunk-prefetch threads."""
+        return cast(int, self.config.client_prefetch_threads)
+
+    @api_telemetry
+    def is_expired(self) -> bool:
+        """Return True if the connection's master token has expired.
+
+        Once True, the session can no longer be renewed and the connection
+        must be replaced; full re-authentication is required.
+
+        Matches the legacy ``SnowflakeConnection.expired`` flag — intended as a
+        read-only signal for external pool / application code. Fails closed on
+        RPC errors so pools evict uncertain connections.
+        """
+        if self.conn_handle is None:
+            return False
+        try:
+            response = core_driver.connection_is_expired(conn_handle=self.conn_handle)
+            return bool(response.is_expired)
+        except Exception:
+            return True
+
+    @property
+    @api_telemetry
+    def expired(self) -> bool:
+        """Whether the master token has expired (sync legacy property name)."""
+        return self.is_expired()
+
+    @internal_api
+    def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
+        """Return connection details from Core."""
+        if self.conn_handle is None:
+            raise InterfaceError(msg="Connection handle is not available")
+        return core_driver.connection_get_info(
+            conn_handle=self.conn_handle,
+            include_master_token=include_master_token,
+        )
 
     # ------------------------------------------------------------------
     # Query status helpers

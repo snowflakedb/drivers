@@ -5,7 +5,7 @@ asserts that the async counterpart exposes the same parameter names, defaults,
 and kinds for every shared public method.
 
 When a sync method is intentionally absent from the async surface (e.g.
-``connect``, ``is_expired``, ``fetch_info`` on AsyncConnection), add it to the
+``connect``, ``fetch_info`` on AsyncConnection), add it to the
 appropriate ``_ASYNC_ONLY_*`` set below rather than adjusting the assertion.
 """
 
@@ -91,7 +91,6 @@ class TestCursorSignatureParity:
 # Methods that intentionally exist only on AsyncConnection (not in sync).
 _CONN_ASYNC_ONLY: set[str] = {
     "connect",  # async Connection has a separate I/O init step; sync connects in __init__
-    "is_expired",  # sync exposes this as the `expired` property, not a method
     "fetch_info",  # async-only convenience wrapper around _connection_info
     "snowflake_version",  # sync exposes this as a @cached_property; async exposes as a coroutine
 }

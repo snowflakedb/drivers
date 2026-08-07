@@ -8,9 +8,9 @@ import warnings
 
 from collections.abc import AsyncGenerator, Iterable
 from io import StringIO
-from typing import Any, cast
+from typing import Any
 
-from ..._internal.api_client.client_api import async_core_driver
+from ..._internal.api_client.client_api import async_core_driver, core_driver
 from ..._internal.config_utils import create_config_settings_from_dict
 from ..._internal.connection import (
     APPLICATION_NAME,
@@ -23,6 +23,8 @@ from ..._internal.connection import (
     clamp_client_prefetch_threads,
     requires_open,
 )
+from ..._internal.connection.freezable_proxy import ConnectionInfoProxy as _ConnectionInfoProxy
+from ..._internal.connection.freezable_proxy import SessionParametersProxy as _SessionParametersProxy
 from ..._internal.decorators import (
     api_telemetry,
     awaitable_context_manager,
@@ -38,7 +40,6 @@ from ..._internal.logout_config_mapping import (
 )
 from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
     VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
-    ConnectionGetInfoResponse,
     ConnectionGetQueryStatusResponse,
     ConnectionHandle,
     DatabaseHandle,
@@ -52,7 +53,6 @@ from ...errors import Error, ProgrammingError
 from ...telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from ...version import __version__
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
-from ._freezable_proxy import _ConnectionInfoProxy, _SessionParametersProxy
 
 
 logger = get_logger(__name__)
@@ -181,13 +181,13 @@ class Connection(ConnectionMixin):
     @api_telemetry
     async def close(self, retry: bool = True) -> None:
         """Close the connection, send logout, and release handles."""
-        if self.conn_handle is None or await self.is_closed():
+        if self.conn_handle is None or self.is_closed():
             return
 
         session_parameters = self._session_parameters
         connection_info = self._connection_info
-        await session_parameters.freeze()
-        await connection_info.freeze()
+        session_parameters.freeze()
+        connection_info.freeze()
 
         async with self._close_lock:
             del self._messages[:]
@@ -265,7 +265,7 @@ class Connection(ConnectionMixin):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         try:
-            if not await self.is_closed() and not await self._autocommit_enabled():
+            if not self.is_closed() and not self._autocommit_enabled():
                 if exc_type is None:
                     await self.commit()
                 else:
@@ -280,10 +280,6 @@ class Connection(ConnectionMixin):
     # Autocommit
     # ------------------------------------------------------------------
 
-    async def _autocommit_enabled(self) -> bool:
-        value = self._session_parameters["AUTOCOMMIT"]
-        return value is not None and value.lower() == "true"
-
     @requires_open
     @api_telemetry
     async def set_autocommit(self, autocommit: bool) -> None:
@@ -296,10 +292,6 @@ class Connection(ConnectionMixin):
             logger.warning("Autocommit feature is not enabled for this connection. Ignored: %s", e)
         finally:
             await cur.close()
-
-    @api_telemetry
-    async def get_autocommit(self) -> bool:
-        return await self._autocommit_enabled()
 
     @pep249
     @api_telemetry
@@ -330,52 +322,26 @@ class Connection(ConnectionMixin):
         finally:
             await cur.close()
 
-    @api_telemetry
-    async def get_client_prefetch_threads(self) -> int:
-        """Get the configured number of chunk-prefetch threads."""
-        return cast(int, self.config.client_prefetch_threads)
-
     # ------------------------------------------------------------------
     # Connection state
     # ------------------------------------------------------------------
 
     @api_telemetry
-    async def is_closed(self) -> bool:
+    def is_closed(self) -> bool:
+        # Kept on the async Connection (not ConnectionMixin): lazy connect leaves
+        # conn_handle=None until connect(), so we use _ever_opened to distinguish
+        # "never opened" (False) from "opened then closed" (True). Sync Connection
+        # allocates a handle in __init__ and does not need this guard.
         if self.conn_handle is None:
             return self._ever_opened
         try:
-            response = await async_core_driver.connection_is_closed(conn_handle=self.conn_handle)
+            response = core_driver.connection_is_closed(conn_handle=self.conn_handle)
             return bool(response.is_closed)
         except Exception:
             return True
 
-    @api_telemetry
-    async def is_expired(self) -> bool:
-        """
-        Return True if the connection's master token has expired.
-
-        Once True, the session can no longer be renewed and the connection
-        must be replaced; full re-authentication is required.
-
-        Set when the server returns GS code 390114, or when a time-based check
-        confirms master-token expiry just before a refresh attempt.
-
-        Matches the legacy snowflake-connector-python ``SnowflakeConnection.expired``
-        flag — intended as a read-only signal for external pool / application code.
-
-        Unlike the sync ``Connection.expired`` property, this is a coroutine
-        because the async client requires ``await`` for all RPC calls.
-        """
-        if self.conn_handle is None:
-            return False
-        try:
-            response = await async_core_driver.connection_is_expired(conn_handle=self.conn_handle)
-            return bool(response.is_expired)
-        except Exception:
-            return True
-
     async def is_valid(self) -> bool:
-        if self.conn_handle is None or await self.is_closed():
+        if self.conn_handle is None or self.is_closed():
             return False
         try:
             response = await async_core_driver.connection_heartbeat(conn_handle=self.conn_handle)
@@ -422,13 +388,6 @@ class Connection(ConnectionMixin):
     # ------------------------------------------------------------------
     # Internal API
     # ------------------------------------------------------------------
-
-    @internal_api
-    async def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
-        return await async_core_driver.connection_get_info(
-            conn_handle=self.conn_handle,  # type: ignore[arg-type]
-            include_master_token=include_master_token,
-        )
 
     @internal_api
     @backward_compatibility
@@ -481,7 +440,7 @@ class Connection(ConnectionMixin):
     async def _get_query_status_with_response(
         self, sf_qid: str
     ) -> tuple[QueryStatus, ConnectionGetQueryStatusResponse]:
-        if self.conn_handle is None or await self.is_closed():
+        if self.conn_handle is None or self.is_closed():
             return QueryStatus.DISCONNECTED, ConnectionGetQueryStatusResponse()
         response = await async_core_driver.connection_get_query_status(
             conn_handle=self.conn_handle,
