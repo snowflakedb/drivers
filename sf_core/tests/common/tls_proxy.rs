@@ -6,7 +6,7 @@
 //! solely for HTTPS support.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rcgen::generate_simple_self_signed;
 use rustls::ServerConfig;
@@ -17,22 +17,40 @@ use tokio_rustls::TlsAcceptor;
 /// A running TLS proxy that terminates TLS and forwards to a backend HTTP port.
 pub struct TlsProxy {
     addr: SocketAddr,
+    /// PEM of the self-signed cert this proxy presents, so callers can trust it
+    /// via a `TlsConfig` custom root store (used by the proxy-transfer tests).
+    cert_pem: String,
+    accept_handle: tokio::task::JoinHandle<()>,
+    child_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl TlsProxy {
-    /// Start a TLS reverse proxy on a random port.
+    /// Start a TLS reverse proxy on a random port with the default
+    /// `localhost`/`127.0.0.1` SANs.
     ///
     /// Must be called within a tokio runtime context.  All accepted TLS
     /// connections are transparently forwarded (at the TCP byte level) to
     /// `backend_addr`.  The proxy runs as a background tokio task and lives
     /// for the duration of the runtime.
     pub async fn start(backend_addr: SocketAddr) -> Self {
+        Self::start_with_sans(
+            backend_addr,
+            vec!["localhost".to_string(), "127.0.0.1".to_string()],
+        )
+        .await
+    }
+
+    /// Like [`Self::start`] but with caller-supplied subject-alternative-names,
+    /// so a test can make the presented cert valid for a specific (possibly
+    /// unresolvable) hostname it will dial through a CONNECT tunnel — letting
+    /// TLS hostname verification genuinely pass instead of being disabled.
+    pub async fn start_with_sans(backend_addr: SocketAddr, sans: Vec<String>) -> Self {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-        let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
-        let cert = generate_simple_self_signed(subject_alt_names)
-            .expect("Failed to generate self-signed certificate");
+        let cert =
+            generate_simple_self_signed(sans).expect("Failed to generate self-signed certificate");
 
+        let cert_pem = cert.cert.pem();
         let cert_der = CertificateDer::from(cert.cert);
         let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
 
@@ -47,13 +65,15 @@ impl TlsProxy {
             .expect("Failed to bind TLS proxy listener");
         let addr = listener.local_addr().unwrap();
 
-        tokio::spawn(async move {
+        let child_handles = Arc::new(Mutex::new(Vec::new()));
+        let children = Arc::clone(&child_handles);
+        let accept_handle = tokio::spawn(async move {
             loop {
                 let Ok((tcp_stream, _)) = listener.accept().await else {
                     continue;
                 };
                 let acceptor = acceptor.clone();
-                tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     let Ok(mut tls_stream) = acceptor.accept(tcp_stream).await else {
                         return;
                     };
@@ -62,14 +82,43 @@ impl TlsProxy {
                     };
                     let _ = tokio::io::copy_bidirectional(&mut tls_stream, &mut backend).await;
                 });
+                children.lock().unwrap().push(handle);
             }
         });
 
-        Self { addr }
+        Self {
+            addr,
+            cert_pem,
+            accept_handle,
+            child_handles,
+        }
     }
 
     pub fn url(&self) -> String {
         format!("https://localhost:{}", self.addr.port())
+    }
+
+    /// The loopback address this proxy listens on (for a CONNECT proxy to
+    /// bridge tunneled bytes into).
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// PEM of the self-signed cert this proxy presents.
+    pub fn cert_pem(&self) -> &str {
+        &self.cert_pem
+    }
+}
+
+impl Drop for TlsProxy {
+    /// Aborts the accept-loop task and every per-connection task it spawned,
+    /// so none of them keep running on the shared tokio runtime after this
+    /// proxy goes out of scope at the end of a test (even one still mid-copy).
+    fn drop(&mut self) {
+        self.accept_handle.abort();
+        for handle in self.child_handles.lock().unwrap().drain(..) {
+            handle.abort();
+        }
     }
 }
 
