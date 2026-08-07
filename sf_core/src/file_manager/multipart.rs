@@ -75,19 +75,21 @@ impl MultipartConfig {
         max_object: 5 * TIB,
         max_parts: Some(10_000),
     };
-    /// Azure block-blob limits: 4 MiB default block, 100 MiB block ceiling,
+    /// Azure block-blob limits: 8 MiB default block (matches the S3/GCS
+    /// default, and the legacy connector's post-fix default —
+    /// snowflakedb/snowflake-connector-python#2982), 100 MiB block ceiling,
     /// ~4.77 TiB object ceiling, 50 000 blocks. The 100 MiB block / 50 000 block
     /// limits are Azure's for the conservative `2016-05-31`..`2019-07-07` API
     /// versions (newer ones allow 4000 MiB blocks → ~190 TiB); `max_object` is
     /// the product of the two. [`compute_part_size`] grows the block past the
-    /// 4 MiB default once a file would otherwise need more than 50 000 blocks
-    /// (past ~195 GiB), so large blobs stay within the block-count limit instead
-    /// of failing. (libsnowflakeclient grows the block the same way; Python/JDBC
-    /// keep it fixed at 4 MiB.)
+    /// 8 MiB default once a file would otherwise need more than 50 000 blocks
+    /// (past ~391 GiB), so large blobs stay within the block-count limit instead
+    /// of failing. (libsnowflakeclient grows the block the same way; JDBC keeps
+    /// it fixed at 4 MiB.)
     /// <https://learn.microsoft.com/en-us/rest/api/storageservices/put-block>
     pub(super) const AZURE: Self = Self {
         cloud: "Azure",
-        default_part: 4 * MIB,
+        default_part: 8 * MIB,
         min_part: 1,
         max_part: 100 * MIB,
         max_object: 100 * MIB * 50_000,
@@ -118,8 +120,8 @@ impl MultipartConfig {
 ///
 /// For S3 and Azure this mirrors Python's `_chunk_size_calculator`: the part
 /// grows once a file would otherwise exceed the cloud's part-count limit (for
-/// Azure, past the fixed 4 MiB block Python/JDBC use, keeping blobs larger than
-/// ~195 GiB within the 50 000-block limit). GCS has no part-count limit
+/// Azure, past the 8 MiB default block, keeping blobs larger than ~391 GiB
+/// within the 50 000-block limit). GCS has no part-count limit
 /// (`max_parts == None`), so the chunk never grows and stays at `default_part`.
 ///
 /// `file_size` is the *on-cloud* byte count — ciphertext length for CSE,
@@ -453,7 +455,7 @@ mod tests {
             compute_part_size(7 * GIB, &MultipartConfig::S3).unwrap(),
             MultipartConfig::S3.default_part
         );
-        // Azure keeps its smaller 4 MiB default in the same regime.
+        // Azure shares the same 8 MiB default as S3/GCS in this regime.
         assert_eq!(
             compute_part_size(MIB, &MultipartConfig::AZURE).unwrap(),
             MultipartConfig::AZURE.default_part
