@@ -8,8 +8,6 @@ AsyncSnowflakeCursor.
 
 from __future__ import annotations
 
-import warnings
-
 from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -230,7 +228,6 @@ async def write_pandas(
     quote_identifiers: bool = True,
     infer_schema: bool = False,
     auto_create_table: bool = False,
-    create_temp_table: bool = False,
     overwrite: bool = False,
     table_type: Literal["", "temp", "temporary", "transient"] = "",
     use_logical_type: bool | None = None,
@@ -254,15 +251,6 @@ async def write_pandas(
         for ``to_sql`` is not possible.  Use ``pd_writer`` from
         :mod:`snowflake.connector.pandas_tools` if you need ``to_sql`` integration.
     """
-    # ``create_temp_table`` is the legacy boolean spelling of ``table_type="temp"``;
-    # Snowpark still passes it. Translate it and do not forward it to the config.
-    if create_temp_table and not table_type:
-        table_type = "temp"
-        warnings.warn(
-            "'create_temp_table' is deprecated; use 'table_type=\"temp\"' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     try:
         cfg = WritePandasConfig(
             conn,
