@@ -5,6 +5,7 @@ pub mod cloud_gating;
 pub mod config;
 pub mod connect_proxy;
 pub mod file_utils;
+pub mod mitm_proxy;
 pub mod mocks;
 pub mod private_key_helper;
 pub mod put_get_common;
