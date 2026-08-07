@@ -1,4 +1,5 @@
 import type { SnowflakeError } from './error.js';
+import { normalizeConnectionOptions } from './connection-option-aliases.js';
 import { CoreConnection, type CoreConnectionInstance } from './core';
 import { collectRows } from './query-result/rows.js';
 import {
@@ -32,7 +33,7 @@ export class Connection {
   #core: CoreConnectionInstance;
 
   constructor(options: ConnectionOptions) {
-    this.#core = new CoreConnection(options);
+    this.#core = new CoreConnection(normalizeConnectionOptions(options));
   }
 
   connect(callback?: ConnectionCallback) {
