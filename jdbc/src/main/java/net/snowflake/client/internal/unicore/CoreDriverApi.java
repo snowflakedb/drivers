@@ -1,6 +1,5 @@
 package net.snowflake.client.internal.unicore;
 
-import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
@@ -64,118 +63,103 @@ public interface CoreDriverApi {
 
   // Database lifecycle
 
-  DatabaseNewResponse databaseNew() throws SQLException;
+  DatabaseNewResponse databaseNew();
 
-  DatabaseInitResponse databaseInit(DatabaseHandle dbHandle) throws SQLException;
+  DatabaseInitResponse databaseInit(DatabaseHandle dbHandle);
 
-  DatabaseReleaseResponse databaseRelease(DatabaseHandle dbHandle) throws SQLException;
+  DatabaseReleaseResponse databaseRelease(DatabaseHandle dbHandle);
 
   // Connection lifecycle
 
-  ConnectionNewResponse connectionNew() throws SQLException;
+  ConnectionNewResponse connectionNew();
 
   ConnectionInitResponse connectionInit(
-      ConnectionHandle connHandle, DatabaseHandle dbHandle, WrapperIdentity wrapperIdentity)
-      throws SQLException;
+      ConnectionHandle connHandle, DatabaseHandle dbHandle, WrapperIdentity wrapperIdentity);
 
   ConnectionSetOptionsResponse connectionSetOptions(
-      ConnectionHandle connHandle, Map<String, ConfigSetting> options) throws SQLException;
+      ConnectionHandle connHandle, Map<String, ConfigSetting> options);
 
   ConnectionSetAutocommitResponse connectionSetAutocommit(
-      ConnectionHandle connHandle, boolean autocommit) throws SQLException;
+      ConnectionHandle connHandle, boolean autocommit);
 
-  ConnectionCommitResponse connectionCommit(ConnectionHandle connHandle) throws SQLException;
+  ConnectionCommitResponse connectionCommit(ConnectionHandle connHandle);
 
-  ConnectionRollbackResponse connectionRollback(ConnectionHandle connHandle) throws SQLException;
+  ConnectionRollbackResponse connectionRollback(ConnectionHandle connHandle);
 
   ConnectionSetSessionParametersResponse connectionSetSessionParameters(
-      ConnectionHandle connHandle, Map<String, String> parameters) throws SQLException;
+      ConnectionHandle connHandle, Map<String, String> parameters);
 
-  ConnectionCloseResponse connectionClose(ConnectionHandle connHandle) throws SQLException;
+  ConnectionCloseResponse connectionClose(ConnectionHandle connHandle);
 
-  ConnectionReleaseResponse connectionRelease(ConnectionHandle connHandle) throws SQLException;
+  ConnectionReleaseResponse connectionRelease(ConnectionHandle connHandle);
 
-  ConnectionIsClosedResponse connectionIsClosed(ConnectionHandle connHandle) throws SQLException;
+  ConnectionIsClosedResponse connectionIsClosed(ConnectionHandle connHandle);
 
-  ConnectionHeartbeatResponse connectionHeartbeat(ConnectionHandle connHandle, int timeoutSeconds)
-      throws SQLException;
+  ConnectionHeartbeatResponse connectionHeartbeat(ConnectionHandle connHandle, int timeoutSeconds);
 
-  ConnectionGetInfoResponse connectionGetInfo(ConnectionHandle connHandle) throws SQLException;
+  ConnectionGetInfoResponse connectionGetInfo(ConnectionHandle connHandle);
 
-  ConnectionUseDatabaseResponse connectionUseDatabase(ConnectionHandle connHandle, String database)
-      throws SQLException;
+  ConnectionUseDatabaseResponse connectionUseDatabase(ConnectionHandle connHandle, String database);
 
-  ConnectionUseSchemaResponse connectionUseSchema(ConnectionHandle connHandle, String schema)
-      throws SQLException;
+  ConnectionUseSchemaResponse connectionUseSchema(ConnectionHandle connHandle, String schema);
 
   ConnectionGetQueryStatusResponse connectionGetQueryStatus(
-      ConnectionHandle connHandle, String queryId) throws SQLException;
+      ConnectionHandle connHandle, String queryId);
 
   // Connection data & queries
 
-  ResultSetResponse connectionGetResultSet(ConnectionHandle connHandle, String queryId)
-      throws SQLException;
+  ResultSetResponse connectionGetResultSet(ConnectionHandle connHandle, String queryId);
 
-  ExecuteQueryResponse connectionGetQueryResult(ConnectionHandle connHandle, String queryId)
-      throws SQLException;
+  ExecuteQueryResponse connectionGetQueryResult(ConnectionHandle connHandle, String queryId);
 
-  ConnectionAbortQueryResponse connectionAbortQuery(ConnectionHandle connHandle, String queryId)
-      throws SQLException;
+  ConnectionAbortQueryResponse connectionAbortQuery(ConnectionHandle connHandle, String queryId);
 
-  ConnectionSendHttpResponse connectionSendHttp(ConnectionSendHttpRequest request)
-      throws SQLException;
+  ConnectionSendHttpResponse connectionSendHttp(ConnectionSendHttpRequest request);
 
   // Connection tokens & parameters
 
   ConnectionTokenResponse connectionRequestToken(
-      ConnectionHandle connHandle, TokenRequestType requestType) throws SQLException;
+      ConnectionHandle connHandle, TokenRequestType requestType);
 
-  ConnectionGetParameterResponse connectionGetParameter(ConnectionHandle connHandle, String key)
-      throws SQLException;
+  ConnectionGetParameterResponse connectionGetParameter(ConnectionHandle connHandle, String key);
 
-  ConnectionGetAllParametersResponse connectionGetAllParameters(ConnectionHandle connHandle)
-      throws SQLException;
+  ConnectionGetAllParametersResponse connectionGetAllParameters(ConnectionHandle connHandle);
 
   // Statement lifecycle
 
-  StatementNewResponse statementNew(ConnectionHandle connHandle) throws SQLException;
+  StatementNewResponse statementNew(ConnectionHandle connHandle);
 
-  StatementSetSqlQueryResponse statementSetSqlQuery(StatementHandle stmtHandle, String sql)
-      throws SQLException;
+  StatementSetSqlQueryResponse statementSetSqlQuery(StatementHandle stmtHandle, String sql);
 
-  StatementPrepareResponse statementPrepare(StatementHandle stmtHandle) throws SQLException;
+  StatementPrepareResponse statementPrepare(StatementHandle stmtHandle);
 
   StatementSetOptionsResponse statementSetOptions(
-      StatementHandle stmtHandle, Map<String, ConfigSetting> options) throws SQLException;
+      StatementHandle stmtHandle, Map<String, ConfigSetting> options);
 
-  ExecuteQueryResponse statementExecuteQuery(StatementHandle stmtHandle, QueryBindings bindings)
-      throws SQLException;
+  ExecuteQueryResponse statementExecuteQuery(StatementHandle stmtHandle, QueryBindings bindings);
 
   StatementExecuteAsyncResponse statementExecuteAsync(
-      StatementHandle stmtHandle, QueryBindings bindings) throws SQLException;
+      StatementHandle stmtHandle, QueryBindings bindings);
 
-  StatementReleaseResponse statementRelease(StatementHandle stmtHandle) throws SQLException;
+  StatementReleaseResponse statementRelease(StatementHandle stmtHandle);
 
   // Result set
 
-  ResultSetGetStreamResponse resultSetGetStream(ResultSetHandle resultSetHandle)
-      throws SQLException;
+  ResultSetGetStreamResponse resultSetGetStream(ResultSetHandle resultSetHandle);
 
-  ResultSetGetChunksResponse resultSetGetChunks(ResultSetHandle resultSetHandle)
-      throws SQLException;
+  ResultSetGetChunksResponse resultSetGetChunks(ResultSetHandle resultSetHandle);
 
-  ResultSetReleaseResponse resultSetRelease(ResultSetHandle resultSetHandle) throws SQLException;
+  ResultSetReleaseResponse resultSetRelease(ResultSetHandle resultSetHandle);
 
   DatabaseFetchChunkResponse databaseFetchChunk(
-      List<ResultChunk> chunk, List<ColumnMetadata> columnMetadata) throws SQLException;
+      List<ResultChunk> chunk, List<ColumnMetadata> columnMetadata);
 
   // Telemetry
 
-  TelemetrySendResponse telemetrySendApiUsage(ConnectionHandle connHandle, String apiMethod)
-      throws SQLException;
+  TelemetrySendResponse telemetrySendApiUsage(ConnectionHandle connHandle, String apiMethod);
 
   TelemetrySendResponse telemetrySendWrapperError(
-      ConnectionHandle connHandle, String exceptionType, String errorSource) throws SQLException;
+      ConnectionHandle connHandle, String exceptionType, String errorSource);
 
   // Stream-based file transfer (gap 4)
 
@@ -185,7 +169,7 @@ public interface CoreDriverApi {
    * #connectionUploadStreamFinish}. Bounds wrapper memory to ~one chunk regardless of source size.
    */
   ConnectionUploadStreamBeginResponse connectionUploadStreamBegin(
-      ConnectionHandle connHandle, String sql) throws SQLException;
+      ConnectionHandle connHandle, String sql);
 
   /**
    * Appends one chunk of the upload source to the session opened by {@link
@@ -193,21 +177,20 @@ public interface CoreDriverApi {
    * with a reusable read buffer do not need to trim it into a fresh array first.
    */
   ConnectionUploadStreamChunkResponse connectionUploadStreamChunk(
-      UploadStreamHandle uploadHandle, byte[] data, int offset, int length) throws SQLException;
+      UploadStreamHandle uploadHandle, byte[] data, int offset, int length);
 
   /**
    * Finishes a chunked upload: closes the session, reassembles the buffered chunks, and runs the
    * PUT exactly as a file-path PUT would.
    */
-  ConnectionUploadStreamFinishResponse connectionUploadStreamFinish(UploadStreamHandle uploadHandle)
-      throws SQLException;
+  ConnectionUploadStreamFinishResponse connectionUploadStreamFinish(
+      UploadStreamHandle uploadHandle);
 
   /**
    * Aborts a chunked upload without running the PUT (e.g. the caller's source stream failed
    * mid-read). Any buffered bytes are discarded.
    */
-  ConnectionUploadStreamAbortResponse connectionUploadStreamAbort(UploadStreamHandle uploadHandle)
-      throws SQLException;
+  ConnectionUploadStreamAbortResponse connectionUploadStreamAbort(UploadStreamHandle uploadHandle);
 
   /**
    * Begins a chunked, zero-disk download: resolves {@code stageName} + {@code sourceFilename}
@@ -216,8 +199,7 @@ public interface CoreDriverApi {
    * across the JNI boundary.
    */
   ConnectionDownloadStreamBeginResponse connectionDownloadStreamBegin(
-      ConnectionHandle connHandle, String stageName, String sourceFilename, boolean decompress)
-      throws SQLException;
+      ConnectionHandle connHandle, String stageName, String sourceFilename, boolean decompress);
 
   /**
    * Pulls up to {@code maxLen} bytes from the session opened by {@link
@@ -225,7 +207,7 @@ public interface CoreDriverApi {
    * finished and no more bytes remain.
    */
   ConnectionDownloadStreamChunkResponse connectionDownloadStreamChunk(
-      DownloadStreamHandle downloadHandle, long maxLen) throws SQLException;
+      DownloadStreamHandle downloadHandle, long maxLen);
 
   /**
    * Closes the session opened by {@link #connectionDownloadStreamBegin}, aborting the in-flight
@@ -233,5 +215,5 @@ public interface CoreDriverApi {
    * consumer failed mid-read).
    */
   ConnectionDownloadStreamCloseResponse connectionDownloadStreamClose(
-      DownloadStreamHandle downloadHandle) throws SQLException;
+      DownloadStreamHandle downloadHandle);
 }

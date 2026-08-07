@@ -1,6 +1,5 @@
 package net.snowflake.client.internal.api.implementation.parameters;
 
-import java.sql.SQLException;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
@@ -26,7 +25,7 @@ public class CoreParametersRegistry implements ParametersRegistry {
       if (response != null && response.hasValue()) {
         return response.getValue();
       }
-    } catch (SQLException e) {
+    } catch (RuntimeException e) {
       logger.warn(
           "Failed to read {} session parameter; defaulting to {}", param.getKey(), defaultValue, e);
     }
@@ -39,7 +38,7 @@ public class CoreParametersRegistry implements ParametersRegistry {
       ConnectionGetAllParametersResponse response =
           coreDriverApi.connectionGetAllParameters(handle);
       return new FrozenParametersRegistry(response.getParametersMap());
-    } catch (SQLException e) {
+    } catch (RuntimeException e) {
       logger.warn("Failed to snapshot session parameters; using an empty snapshot", e);
       return ParametersRegistry.EMPTY;
     }

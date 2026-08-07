@@ -5,7 +5,7 @@ import static net.snowflake.client.api.exception.ErrorCode.CONNECTION_ESTABLISHE
 import java.sql.SQLWarning;
 import java.util.Properties;
 import lombok.experimental.UtilityClass;
-import net.snowflake.client.api.exception.SFException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.parameters.ParameterKeyNormalizer;
 import net.snowflake.client.internal.api.implementation.parameters.SessionProperty;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
@@ -54,8 +54,9 @@ class ConnectionEstablishedWarnings {
     if (requested == null || requested.equalsIgnoreCase(actual)) {
       return head;
     }
-    SFException e =
-        new SFException(CONNECTION_ESTABLISHED_WITH_DIFFERENT_PROP, property, requested, actual);
+    SFSQLException e =
+        SFSQLException.fromErrorCode(
+            CONNECTION_ESTABLISHED_WITH_DIFFERENT_PROP, property, requested, actual);
     SQLWarning warning =
         new SQLWarning(
             e.getMessage(), e.getErrorCode().getSqlState(), e.getErrorCode().getMessageCode());

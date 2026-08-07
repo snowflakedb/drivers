@@ -5,10 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.sql.SQLException;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.snowflake.client.api.resultset.QueryStatus;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import org.junit.jupiter.api.Test;
 
 class QueryResultWaiterTest {
@@ -63,10 +63,11 @@ class QueryResultWaiterTest {
     QueryStatus failed = errorStatus("FAILED_WITH_ERROR", 100123, "Query compilation error");
     QueryResultWaiter waiter = new QueryResultWaiter(() -> failed, queryId);
 
-    SQLException thrown = assertThrows(SQLException.class, waiter::waitForCompletion);
+    SFSQLException thrown = assertThrows(SFSQLException.class, waiter::waitForCompletion);
 
     assertTrue(thrown.getMessage().contains("FAILED_WITH_ERROR"));
     assertTrue(thrown.getMessage().contains("Query compilation error"));
+    assertEquals(queryId, thrown.getQueryId());
   }
 
   @Test
@@ -74,20 +75,22 @@ class QueryResultWaiterTest {
     QueryStatus aborted = errorStatus("ABORTED", 0, "");
     QueryResultWaiter waiter = new QueryResultWaiter(() -> aborted, queryId);
 
-    SQLException thrown = assertThrows(SQLException.class, waiter::waitForCompletion);
+    SFSQLException thrown = assertThrows(SFSQLException.class, waiter::waitForCompletion);
 
     assertTrue(thrown.getMessage().contains("ABORTED"));
     assertTrue(thrown.getMessage().contains("No error message available"));
+    assertEquals(queryId, thrown.getQueryId());
   }
 
   @Test
   void shouldThrowAfterMaxNoDataRetries() {
     QueryResultWaiter waiter = new QueryResultWaiter(() -> status("NO_DATA"), queryId, NO_SLEEP);
 
-    SQLException thrown = assertThrows(SQLException.class, waiter::waitForCompletion);
+    SFSQLException thrown = assertThrows(SFSQLException.class, waiter::waitForCompletion);
 
     assertTrue(thrown.getMessage().contains("Cannot retrieve data"));
     assertTrue(thrown.getMessage().contains(queryId));
+    assertEquals(queryId, thrown.getQueryId());
   }
 
   @Test
@@ -119,7 +122,7 @@ class QueryResultWaiterTest {
 
   @Test
   void shouldPropagateExceptionFromStatusCheck() {
-    SQLException apiError = new SQLException("connection lost");
+    SFSQLException apiError = new SFSQLException("connection lost");
     QueryResultWaiter waiter =
         new QueryResultWaiter(
             () -> {
@@ -127,7 +130,7 @@ class QueryResultWaiterTest {
             },
             queryId);
 
-    SQLException thrown = assertThrows(SQLException.class, waiter::waitForCompletion);
+    SFSQLException thrown = assertThrows(SFSQLException.class, waiter::waitForCompletion);
 
     assertSame(apiError, thrown);
   }
@@ -137,9 +140,10 @@ class QueryResultWaiterTest {
     QueryResultWaiter waiter = new QueryResultWaiter(() -> status("RUNNING"), queryId);
 
     Thread.currentThread().interrupt();
-    SQLException thrown = assertThrows(SQLException.class, waiter::waitForCompletion);
+    SFSQLException thrown = assertThrows(SFSQLException.class, waiter::waitForCompletion);
 
     assertTrue(thrown.getMessage().contains("Interrupted"));
+    assertEquals(queryId, thrown.getQueryId());
     assertTrue(Thread.interrupted(), "Thread interrupt flag should be re-set");
   }
 }

@@ -5,8 +5,8 @@ import static net.snowflake.client.internal.core.arrow.ArrowResultUtil.getDurati
 import java.math.BigDecimal;
 import java.time.Duration;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.ValueVector;
@@ -40,7 +40,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
   }
 
   @Override
-  public byte toByte(int index) throws SFException {
+  public byte toByte(int index) {
     if (isNull(index)) {
       return 0;
     }
@@ -50,15 +50,15 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
       if (byteVal == bigDecimal.longValue()) {
         return byteVal;
       }
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Byte", bigDecimal.toPlainString());
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Byte", bigDecimal.toPlainString());
   }
 
   @Override
-  public short toShort(int index) throws SFException {
+  public short toShort(int index) {
     if (isNull(index)) {
       return 0;
     }
@@ -68,13 +68,13 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
       if (bigDecimal.compareTo(BigDecimal.valueOf(shortValue)) == 0) {
         return shortValue;
       }
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT,
           logicalTypeStr,
           SnowflakeUtil.SHORT_STR,
           bigDecimal.toPlainString());
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT,
         logicalTypeStr,
         SnowflakeUtil.SHORT_STR,
@@ -82,7 +82,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
   }
 
   @Override
-  public int toInt(int index) throws SFException {
+  public int toInt(int index) {
     if (isNull(index)) {
       return 0;
     }
@@ -92,13 +92,13 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
       if (bigDecimal.compareTo(BigDecimal.valueOf(intValue)) == 0) {
         return intValue;
       }
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT,
           logicalTypeStr,
           SnowflakeUtil.INT_STR,
           bigDecimal.toPlainString());
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT,
         logicalTypeStr,
         SnowflakeUtil.INT_STR,
@@ -106,7 +106,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
   }
 
   @Override
-  public long toLong(int index) throws SFException {
+  public long toLong(int index) {
     if (isNull(index)) {
       return 0;
     }
@@ -116,13 +116,13 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
       if (bigDecimal.compareTo(BigDecimal.valueOf(longValue)) == 0) {
         return longValue;
       }
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT,
           logicalTypeStr,
           SnowflakeUtil.LONG_STR,
           bigDecimal.toPlainString());
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT,
         logicalTypeStr,
         SnowflakeUtil.LONG_STR,
@@ -130,7 +130,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
   }
 
   @Override
-  public float toFloat(int index) throws SFException {
+  public float toFloat(int index) {
     if (isNull(index)) {
       return 0;
     }
@@ -138,7 +138,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
   }
 
   @Override
-  public double toDouble(int index) throws SFException {
+  public double toDouble(int index) {
     if (isNull(index)) {
       return 0;
     }
@@ -151,7 +151,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
   }
 
   @Override
-  public Object toObject(int index) throws SFException {
+  public Object toObject(int index) {
     return toBigDecimal(index);
   }
 
@@ -162,7 +162,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
   }
 
   @Override
-  public boolean toBoolean(int index) throws SFException {
+  public boolean toBoolean(int index) {
     if (isNull(index)) {
       return false;
     }
@@ -172,7 +172,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
     } else if (val.compareTo(BigDecimal.ONE) == 0) {
       return true;
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT,
         logicalTypeStr,
         SnowflakeUtil.BOOLEAN_STR,
@@ -180,7 +180,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
   }
 
   @Override
-  public Duration toDuration(int index) throws SFException {
+  public Duration toDuration(int index) {
     if (isNull(index)) {
       return null;
     }
@@ -188,7 +188,7 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
     try {
       return getDurationFromNanos(numNanos);
     } catch (ArithmeticException e) {
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Duration", numNanos.toPlainString());
     }
   }

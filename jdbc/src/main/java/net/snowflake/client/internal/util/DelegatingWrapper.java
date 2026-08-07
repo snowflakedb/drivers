@@ -2,18 +2,35 @@ package net.snowflake.client.internal.util;
 
 import java.sql.SQLException;
 import java.sql.Wrapper;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 
 public interface DelegatingWrapper extends Wrapper {
 
+  // These narrow Wrapper's throws-SQLException signatures to an unchecked clause, keeping the
+  // checked exception off the impl layer; the decorator boundary reconstructs it from the carrier.
+  // The delegate-walking logic is factored into the static resolve* helpers so AbstractDecorator
+  // can reuse it without implementing this interface — a decorator must re-expose the checked
+  // `throws SQLException`, which Java forbids as a widening override of these narrowed defaults.
   @Override
-  default <T> T unwrap(Class<T> iface) throws SQLException {
-    // check if this object matches
-    if (iface.isInstance(this)) {
-      return iface.cast(this);
-    }
+  default <T> T unwrap(Class<T> iface) {
+    return resolveUnwrap(this, getDelegate(), iface);
+  }
 
-    // get the underlying delegate
-    Object delegate = getDelegate();
+  @Override
+  default boolean isWrapperFor(Class<?> iface) {
+    return resolveIsWrapperFor(this, getDelegate(), iface);
+  }
+
+  /**
+   * Shared {@code unwrap} logic: returns {@code self} or {@code delegate} if either is an {@code
+   * iface} instance, else recurses through a foreign {@link Wrapper} delegate, else throws the
+   * runtime {@link SFSQLException} carrier.
+   */
+  static <T> T resolveUnwrap(Object self, Object delegate, Class<T> iface) {
+    // check if this object matches
+    if (iface.isInstance(self)) {
+      return iface.cast(self);
+    }
 
     if (delegate != null) {
       // check if the delegate itself is a direct match
@@ -22,23 +39,25 @@ public interface DelegatingWrapper extends Wrapper {
       }
       // if the delegate is also a Wrapper, unwrap recursively
       if (delegate instanceof Wrapper) {
-        return ((Wrapper) delegate).unwrap(iface);
+        try {
+          return ((Wrapper) delegate).unwrap(iface);
+        } catch (SQLException e) {
+          // A DelegatingWrapper delegate is already de-checked; this only fires for a
+          // foreign java.sql.Wrapper. Carry it as the runtime type for the boundary.
+          throw new SFSQLException(e.getMessage(), e);
+        }
       }
     }
 
-    throw new SQLException("Cannot unwrap to " + iface.getName());
+    throw new SFSQLException("Cannot unwrap to " + iface.getName());
   }
 
-  @Override
-  default boolean isWrapperFor(Class<?> iface) throws SQLException {
+  /** Shared {@code isWrapperFor} logic; see {@link #resolveUnwrap}. */
+  static boolean resolveIsWrapperFor(Object self, Object delegate, Class<?> iface) {
     // check if this object matches
-    if (iface.isInstance(this)) {
+    if (iface.isInstance(self)) {
       return true;
     }
-
-    //
-    // get the underlying delegate
-    Object delegate = getDelegate();
 
     if (delegate != null) {
       // check if the delegate is a direct match
@@ -47,7 +66,11 @@ public interface DelegatingWrapper extends Wrapper {
       }
       // if the delegate is also a Wrapper, check recursively
       if (delegate instanceof Wrapper) {
-        return ((Wrapper) delegate).isWrapperFor(iface);
+        try {
+          return ((Wrapper) delegate).isWrapperFor(iface);
+        } catch (SQLException e) {
+          throw new SFSQLException(e.getMessage(), e);
+        }
       }
     }
 

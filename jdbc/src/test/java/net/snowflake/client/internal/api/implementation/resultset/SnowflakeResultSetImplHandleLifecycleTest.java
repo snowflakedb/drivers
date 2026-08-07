@@ -11,10 +11,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.Collections;
 import java.util.List;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
@@ -81,7 +82,8 @@ class SnowflakeResultSetImplHandleLifecycleTest {
 
   @Test
   void shouldSwallowReleaseFailureOnClose() throws Exception {
-    when(mockCoreApi.resultSetRelease(HANDLE)).thenThrow(new SQLException("release failed"));
+    // CoreDriverApi reports every core failure as a CoreException, and release() logs those.
+    when(mockCoreApi.resultSetRelease(HANDLE)).thenThrow(new CoreException("release failed"));
     SnowflakeResultSetImpl resultSet = handleBackedResultSet();
 
     // A failed handle release must not surface from close().
@@ -175,7 +177,8 @@ class SnowflakeResultSetImplHandleLifecycleTest {
 
     resultSet.close();
 
-    assertThrows(SQLException.class, () -> resultSet.getResultSetSerializables(Long.MAX_VALUE));
+    assertThrows(
+        IllegalStateException.class, () -> resultSet.getResultSetSerializables(Long.MAX_VALUE));
   }
 
   @Test
@@ -183,7 +186,7 @@ class SnowflakeResultSetImplHandleLifecycleTest {
     try (SnowflakeResultSetImpl resultSet = inMemoryResultSet()) {
 
       assertThrows(
-          SQLFeatureNotSupportedException.class,
+          SFSQLFeatureNotSupportedException.class,
           () -> resultSet.getResultSetSerializables(Long.MAX_VALUE));
     }
   }

@@ -21,6 +21,7 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.Calendar;
 import java.util.HashMap;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
@@ -56,8 +57,13 @@ class SnowflakeCallableStatementImplTest {
         .thenReturn(StatementReleaseResponse.getDefaultInstance());
   }
 
+  // Route through the decorator: it wraps the raw impl and translates the runtime carriers it
+  // throws (e.g. SFSQLFeatureNotSupportedException) into the checked java.sql exception types the
+  // JDBC API promises. These tests assert that public contract, so they must go through the
+  // boundary, not the raw impl.
   private CallableStatement createCallableStatement(String sql) throws Exception {
-    return new SnowflakeCallableStatementImpl(mockConnection, sql, mockCoreApi);
+    return new DecoratedSnowflakeCallableStatementImpl(
+        new SnowflakeCallableStatementImpl(mockConnection, sql, mockCoreApi), Telemetry.NOOP);
   }
 
   // ── parseSqlEscapeSyntax ──────────────────────────────────────────────────

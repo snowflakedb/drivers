@@ -4,8 +4,8 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Map;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.complex.StructVector;
@@ -32,7 +32,7 @@ class DecfloatToDecimalConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public double toDouble(int rowIndex) throws SFException {
+  public double toDouble(int rowIndex) {
     if (isNull(rowIndex)) {
       return 0;
     }
@@ -40,7 +40,7 @@ class DecfloatToDecimalConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public float toFloat(int rowIndex) throws SFException {
+  public float toFloat(int rowIndex) {
     if (isNull(rowIndex)) {
       return 0;
     }
@@ -48,7 +48,7 @@ class DecfloatToDecimalConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public short toShort(int rowIndex) throws SFException {
+  public short toShort(int rowIndex) {
     if (isNull(rowIndex)) {
       return 0;
     }
@@ -58,17 +58,17 @@ class DecfloatToDecimalConverter extends AbstractArrowVectorConverter {
       if (shortVal == bigDecimal.longValue()) {
         return shortVal;
       } else {
-        throw new SFException(
+        throw SFSQLException.fromErrorCode(
             ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Short", bigDecimal.toPlainString());
       }
     } else {
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Short", bigDecimal.toPlainString());
     }
   }
 
   @Override
-  public int toInt(int rowIndex) throws SFException {
+  public int toInt(int rowIndex) {
     if (isNull(rowIndex)) {
       return 0;
     }
@@ -78,17 +78,17 @@ class DecfloatToDecimalConverter extends AbstractArrowVectorConverter {
       if (intVal == bigDecimal.longValue()) {
         return intVal;
       } else {
-        throw new SFException(
+        throw SFSQLException.fromErrorCode(
             ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Integer", bigDecimal.toPlainString());
       }
     } else {
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Integer", bigDecimal.toPlainString());
     }
   }
 
   @Override
-  public long toLong(int rowIndex) throws SFException {
+  public long toLong(int rowIndex) {
     if (isNull(rowIndex)) {
       return 0;
     }
@@ -98,22 +98,22 @@ class DecfloatToDecimalConverter extends AbstractArrowVectorConverter {
       if (intVal.bitLength() <= 63) {
         return intVal.longValue();
       } else {
-        throw new SFException(
+        throw SFSQLException.fromErrorCode(
             ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Long", bigDecimal.toPlainString());
       }
     } else {
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Long", bigDecimal.toPlainString());
     }
   }
 
   @Override
-  public Object toObject(int index) throws SFException {
+  public Object toObject(int index) {
     return toBigDecimal(index);
   }
 
   @Override
-  public String toString(int index) throws SFException {
+  public String toString(int index) {
     if (isNull(index)) {
       return null;
     }
@@ -121,14 +121,14 @@ class DecfloatToDecimalConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public byte[] toBytes(int index) throws SFException {
-    throw new SFException(
+  public byte[] toBytes(int index) {
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BYTES_STR, null);
   }
 
   @Override
-  public boolean toBoolean(int rowIndex) throws SFException {
-    throw new SFException(
+  public boolean toBoolean(int rowIndex) {
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BOOLEAN_STR, null);
   }
 }

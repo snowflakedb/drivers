@@ -1,20 +1,18 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
-import java.sql.SQLException;
 import java.util.List;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.statement.PreparedStatementBindingSerializer.ParameterValue;
 
 final class BatchColumnValidator {
 
   private BatchColumnValidator() {}
 
-  static void validate(int parameterIndex, ParameterValue existing, ParameterValue newValue)
-      throws SQLException {
+  static void validate(int parameterIndex, ParameterValue existing, ParameterValue newValue) {
     if (newValue == null) {
-      throw new SnowflakeSQLException("Missing value for parameter index: " + parameterIndex);
+      throw new SFSQLException("Missing value for parameter index: " + parameterIndex);
     }
     if (existing == null) {
       return;
@@ -34,7 +32,7 @@ final class BatchColumnValidator {
       return;
     }
     int prevRow = values.size();
-    throw new SnowflakeSQLException(
+    throw new SFSQLException(
         ErrorCode.ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED,
         "Array binding does not support mixed types: parameter "
             + parameterIndex

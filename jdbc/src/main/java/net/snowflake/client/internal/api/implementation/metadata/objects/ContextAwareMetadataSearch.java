@@ -2,7 +2,6 @@ package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import static net.snowflake.client.internal.api.implementation.metadata.objects.MatchingUtils.matches;
 
-import java.sql.SQLException;
 import java.util.regex.Pattern;
 import lombok.Value;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
@@ -19,8 +18,7 @@ class ContextAwareMetadataSearch {
   boolean enableWildcards;
 
   static ContextAwareMetadataSearch fromSession(
-      InternalSnowflakeConnection connection, String catalog, String schemaPattern)
-      throws SQLException {
+      InternalSnowflakeConnection connection, String catalog, String schemaPattern) {
     ParametersRegistry params = connection.getParameters();
     boolean useSessionSchema = false;
     if (params.getBool(Parameter.CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX)) {

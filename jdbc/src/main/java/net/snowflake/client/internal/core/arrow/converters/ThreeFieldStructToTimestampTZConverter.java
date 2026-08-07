@@ -5,8 +5,8 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.TimeZone;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
 import net.snowflake.client.internal.jdbc.SnowflakeDateWithTimezone;
@@ -58,9 +58,10 @@ public class ThreeFieldStructToTimestampTZConverter extends AbstractArrowVectorC
   }
 
   @Override
-  public String toString(int index) throws SFException {
+  public String toString(int index) {
     if (context.getTimestampTZFormatter() == null) {
-      throw new SFException(ErrorCode.INTERNAL_ERROR, "missing timestamp TZ formatter");
+      throw SFSQLException.fromErrorCode(
+          ErrorCode.INTERNAL_ERROR, "missing timestamp TZ formatter");
     }
     try {
       Timestamp ts = isNull(index) ? null : getTimestamp(index, true);
@@ -73,17 +74,17 @@ public class ThreeFieldStructToTimestampTZConverter extends AbstractArrowVectorC
   }
 
   @Override
-  public Object toObject(int index) throws SFException {
+  public Object toObject(int index) {
     return toTimestamp(index, TimeZone.getDefault());
   }
 
   @Override
-  public Timestamp toTimestamp(int index, TimeZone tz) throws SFException {
+  public Timestamp toTimestamp(int index, TimeZone tz) {
     // TZ carries its own stored offset; the caller tz/Calendar is ignored.
     return isNull(index) ? null : getTimestamp(index, false);
   }
 
-  private Timestamp getTimestamp(int index, boolean fromToString) throws SFException {
+  private Timestamp getTimestamp(int index, boolean fromToString) {
     long epoch = epochs.getDataBuffer().getLong((long) index * BigIntVector.TYPE_WIDTH);
     int fraction = fractions.getDataBuffer().getInt((long) index * IntVector.TYPE_WIDTH);
     int timeZoneIndex = timeZoneIndices.getDataBuffer().getInt((long) index * IntVector.TYPE_WIDTH);
@@ -98,7 +99,7 @@ public class ThreeFieldStructToTimestampTZConverter extends AbstractArrowVectorC
   }
 
   @Override
-  public Date toDate(int index, TimeZone tz, boolean dateFormat) throws SFException {
+  public Date toDate(int index, TimeZone tz, boolean dateFormat) {
     if (isNull(index)) {
       return null;
     }
@@ -111,7 +112,7 @@ public class ThreeFieldStructToTimestampTZConverter extends AbstractArrowVectorC
   }
 
   @Override
-  public Time toTime(int index) throws SFException {
+  public Time toTime(int index) {
     Timestamp ts = toTimestamp(index, TimeZone.getDefault());
     return ts == null
         ? null
@@ -119,27 +120,30 @@ public class ThreeFieldStructToTimestampTZConverter extends AbstractArrowVectorC
   }
 
   @Override
-  public boolean toBoolean(int index) throws SFException {
+  public boolean toBoolean(int index) {
     if (isNull(index)) {
       return false;
     }
     Timestamp val = toTimestamp(index, TimeZone.getDefault());
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BOOLEAN_STR, val);
   }
 
   @Override
-  public byte[] toBytes(int index) throws SFException {
+  public byte[] toBytes(int index) {
     if (isNull(index)) {
       return null;
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "byteArray", toString(index));
   }
 
   static Timestamp getTimestamp(
-      long epoch, int fraction, int timeZoneIndex, boolean useSessionTimezone, boolean fromToString)
-      throws SFException {
+      long epoch,
+      int fraction,
+      int timeZoneIndex,
+      boolean useSessionTimezone,
+      boolean fromToString) {
     if (ArrowResultUtil.isTimestampOverflow(epoch)) {
       if (fromToString) {
         throw new TimestampOperationNotAvailableException(epoch, fraction);

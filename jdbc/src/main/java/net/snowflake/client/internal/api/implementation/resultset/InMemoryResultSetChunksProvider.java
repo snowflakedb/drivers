@@ -1,6 +1,5 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
-import java.sql.SQLException;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
@@ -28,7 +27,7 @@ class InMemoryResultSetChunksProvider implements ResultSetChunksProvider {
   private final ParametersRegistry parameters;
 
   @Override
-  public List<SnowflakeResultSetSerializable> getChunks(long maxSizeInBytes) throws SQLException {
+  public List<SnowflakeResultSetSerializable> getChunks(long maxSizeInBytes) {
     return SnowflakeResultSetSerializableImpl.splitBySize(
         coreDriverApi, chunks, columns, queryId, parameters, maxSizeInBytes);
   }

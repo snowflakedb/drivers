@@ -1,8 +1,7 @@
 package net.snowflake.client.internal.api.implementation.parameters;
 
-import java.sql.SQLException;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.util.StringUtil;
@@ -31,10 +30,10 @@ public interface ParametersRegistry {
     return value;
   }
 
-  default String getOrThrow(Property param) throws SQLException {
+  default String getOrThrow(Property param) {
     String value = getRawValue(param, null);
     if (StringUtil.isNullOrEmpty(value)) {
-      throw new SnowflakeSQLException(
+      throw new SFSQLException(
           ErrorCode.INTERNAL_ERROR, "Required parameter not found: " + param.getKey());
     }
     return value;

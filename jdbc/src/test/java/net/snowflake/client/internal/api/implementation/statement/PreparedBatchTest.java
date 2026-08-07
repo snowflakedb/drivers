@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.statement.PreparedStatementBindingSerializer.ParameterValue;
 import org.junit.jupiter.api.Test;
 
@@ -32,9 +33,12 @@ class PreparedBatchTest {
     PreparedBatch batch = new PreparedBatch();
     batch.addRow(row(1, SnowflakeType.FIXED, "1"));
 
-    SnowflakeSQLException ex =
-        assertThrows(
-            SnowflakeSQLException.class, () -> batch.addRow(row(1, SnowflakeType.TEXT, "boom")));
+    // PreparedBatch is internal plumbing (not a @JdbcBoundary), so addRow surfaces the runtime
+    // carrier directly; translate it the way the boundary would to assert the public errorCode +
+    // SQLState contract.
+    SFSQLException carrier =
+        assertThrows(SFSQLException.class, () -> batch.addRow(row(1, SnowflakeType.TEXT, "boom")));
+    SnowflakeSQLException ex = (SnowflakeSQLException) carrier.toSQLException();
     assertEquals(200023, ex.getErrorCode());
     assertEquals("0A000", ex.getSQLState());
   }
@@ -46,7 +50,7 @@ class PreparedBatchTest {
     assertEquals(1, batch.size());
 
     assertThrows(
-        SnowflakeSQLException.class,
+        SFSQLException.class,
         () -> batch.addRow(row(1, SnowflakeType.FIXED, "2", 2, SnowflakeType.FIXED, "999")));
 
     // size() reads the first column's list length; if the failed addRow had partially
@@ -83,8 +87,8 @@ class PreparedBatchTest {
     PreparedBatch batch = new PreparedBatch();
     batch.addRow(row(1, SnowflakeType.FIXED, "1", 2, SnowflakeType.TEXT, "a"));
 
-    SQLException ex =
-        assertThrows(SQLException.class, () -> batch.addRow(row(1, SnowflakeType.FIXED, "2")));
+    SFSQLException ex =
+        assertThrows(SFSQLException.class, () -> batch.addRow(row(1, SnowflakeType.FIXED, "2")));
     assertTrue(ex.getMessage().contains("Missing value for parameter index: 2"));
   }
 

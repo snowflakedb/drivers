@@ -14,6 +14,10 @@ import java.util.List;
 import lombok.AccessLevel;
 import lombok.Getter;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
+import net.snowflake.client.internal.api.decorator.Telemetry;
+import net.snowflake.client.internal.api.implementation.Decorators;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.api.implementation.exception.SqlExceptionMapper;
 import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
@@ -58,10 +62,9 @@ class SnowflakeResultSetSerializableImpl implements SnowflakeResultSetSerializab
       List<ColumnMetadata> columnMetadata,
       String queryId,
       ParametersRegistry parameters,
-      long maxSizeInBytes)
-      throws SQLException {
+      long maxSizeInBytes) {
     if (allChunks.isEmpty()) {
-      throw new SQLException("The Result Set serializable is invalid.");
+      throw new SFSQLException("The Result Set serializable is invalid.");
     }
 
     ResultChunk inlineChunk = null;
@@ -76,7 +79,7 @@ class SnowflakeResultSetSerializableImpl implements SnowflakeResultSetSerializab
     }
 
     if (inlineChunk == null && remoteChunks.stream().noneMatch(ResultChunk::hasRemote)) {
-      throw new SQLException("The Result Set serializable is invalid.");
+      throw new SFSQLException("The Result Set serializable is invalid.");
     }
 
     FrozenParametersRegistry frozenParameters = parameters.freeze();
@@ -103,24 +106,47 @@ class SnowflakeResultSetSerializableImpl implements SnowflakeResultSetSerializab
     return resultSetSerializables;
   }
 
+  /**
+   * This class is its own exception-translation boundary rather than a {@code @JdbcBoundary}: the
+   * generated decorator extends {@link
+   * net.snowflake.client.internal.api.decorator.AbstractDecorator AbstractDecorator}, which is not
+   * {@link Serializable}, and shipping slices to remote workers is this type's whole purpose — a
+   * decorated wrapper could not be serialized. So this method routes through {@link
+   * SqlExceptionMapper#call} to convert the impl tier's unchecked carriers ({@link SFSQLException}
+   * here, {@code CoreException} from the fetch) into the checked {@link SQLException} the interface
+   * declares, and decorates the returned result set (with {@link Telemetry#NOOP}, since the
+   * sessionless slice emits no telemetry) so its hot-path accessors translate too.
+   */
   @Override
   public ResultSet getResultSet(ResultSetRetrieveConfig resultSetRetrieveConfig)
       throws SQLException {
-    if (chunks.isEmpty()) {
-      throw new SQLException("The Result Set serializable is invalid.");
-    }
-    // TODO: use url and proxy setting from ResultSetRetrieveConfig
+    return SqlExceptionMapper.call(
+        () -> {
+          if (chunks.isEmpty()) {
+            throw new SFSQLException("The Result Set serializable is invalid.");
+          }
+          // TODO: use url and proxy setting from ResultSetRetrieveConfig
 
-    DatabaseFetchChunkResponse response = coreDriverApi.databaseFetchChunk(chunks, columnMetadata);
-    // The factory rebuilds the originating session's conversion context from this frozen parameter
-    // snapshot so formatting matches the live result set. Pass the chunks too, so the derived
-    // (sessionless) ResultSet can be serialized again without re-fetch.
-    return ResultSetFactory.createFromChunks(
-        coreDriverApi, chunks, columnMetadata, queryId, response, getRowCount(), parameters);
+          DatabaseFetchChunkResponse response =
+              coreDriverApi.databaseFetchChunk(chunks, columnMetadata);
+          // The factory rebuilds the originating session's conversion context from this frozen
+          // parameter snapshot so formatting matches the live result set. Pass the chunks too, so
+          // the derived (sessionless) ResultSet can be serialized again without re-fetch.
+          return Decorators.resultSet(
+              ResultSetFactory.createFromChunks(
+                  coreDriverApi,
+                  chunks,
+                  columnMetadata,
+                  queryId,
+                  response,
+                  getRowCount(),
+                  parameters),
+              Telemetry.NOOP);
+        });
   }
 
   @Override
-  public long getRowCount() throws SQLException {
+  public long getRowCount() {
     return chunks.stream().mapToInt(ResultChunk::getRowCount).sum();
   }
 
