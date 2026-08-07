@@ -10,7 +10,6 @@ import java.security.PrivateKey;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.Base64;
 import java.util.Properties;
 import java.util.function.Supplier;
@@ -155,8 +154,8 @@ public class SnowflakeBasicDataSource
   }
 
   @Override
-  public Logger getParentLogger() throws SQLFeatureNotSupportedException {
-    throw new SQLFeatureNotSupportedException();
+  public Logger getParentLogger() {
+    throw new SFSQLFeatureNotSupportedException("getParentLogger not supported");
   }
 
   // SnowflakeDataSource methods -------------------------------------------------------------------

@@ -381,7 +381,8 @@ public class SnowflakeBasicDataSourceTest {
 
   @Test
   public void shouldThrowSQLFeatureNotSupportedExceptionFromGetParentLogger() {
-    assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.getParentLogger());
+    assertThrows(
+        SQLFeatureNotSupportedException.class, () -> decorated(dataSource).getParentLogger());
   }
 
   @Test
