@@ -42,6 +42,19 @@ class ParameterValueNormalizerTest {
   }
 
   @Test
+  void shouldTranslateLegacyTlsProtocolNamesToCoreForm() {
+    assertEquals("tls12", ParameterValueNormalizer.normalize("min_tls_version", "TLSv1.2"));
+    assertEquals("tls13", ParameterValueNormalizer.normalize("max_tls_version", "TLSv1.3"));
+    assertEquals("tls12", ParameterValueNormalizer.normalize("MIN_TLS_VERSION", "TLSv1.2"));
+  }
+
+  @Test
+  void shouldLeaveCoreTlsVersionValuesUnchanged() {
+    assertEquals("tls12", ParameterValueNormalizer.normalize("min_tls_version", "tls12"));
+    assertEquals("tls13", ParameterValueNormalizer.normalize("max_tls_version", "tls13"));
+  }
+
+  @Test
   void shouldReturnNonStringValuesUnchanged() {
     Integer value = 42;
     assertSame(value, ParameterValueNormalizer.normalize("no_proxy", value));
