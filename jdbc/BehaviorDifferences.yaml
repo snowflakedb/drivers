@@ -917,7 +917,6 @@ behavior_differences:
       the same self-identify-honestly pattern UD follows. Kept deliberately: matching
       "Java 5.3.0" would misidentify which implementation produced the blob, valuable for
       diagnostics during the mixed-fleet rollout period.
-
   51:
     name: "secondary_roles connection parameter is now accepted (no legacy JDBC equivalent)"
     status: allowed
@@ -936,3 +935,24 @@ behavior_differences:
       `secondary_roles=ALL` or `secondary_roles=NONE` to control secondary-role activation at login,
       sent as `SECONDARY_ROLES` in the login-request body. This is a net-new, opt-in capability with no
       legacy JDBC counterpart — not a fix of a prior gap — so it is filed as `allowed`, not `fixed`.
+
+  52:
+    name: "Plaintext PEM string accepted for private_key (JDBC)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Legacy snowflake-jdbc's SFSessionProperty recognizes only three ways to supply a JWT
+      private key: privateKey (a java.security.PrivateKey object), private_key_file (a path), and
+      private_key_base64 (a base64-encoded key). There is no private_key property carrying a
+      plaintext PEM string. Setting one is silently ignored: SessionUtilKeyPair.buildPrivateKey()
+      falls through to the (absent) privateKey object, yielding null, and the constructor then
+      throws SnowflakeSQLLoggedException(INVALID_OR_UNSUPPORTED_PRIVATE_KEY, "Use
+      java.security.interfaces.RSAPrivateCrtKey.class for the private key").
+    new_driver_behavior: |
+      sf_core's param_registry defines private_key as a canonical parameter accepting a plaintext
+      PEM string (optionally decrypted with private_key_password), consistent with the
+      plaintext-PEM support added for the other wrappers in this PR stack. Purely additive:
+      private_key_file and private_key_base64 continue to work unchanged on both drivers.
