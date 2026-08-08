@@ -699,8 +699,8 @@ behavior_differences:
 
   45:
     name: "Out-of-band (OOB) telemetry is not implemented"
-    status: todo
-    type: bug
+    status: allowed
+    type: api_incompatibility
     reviewed: false
     is_breaking_change: false
     impact: low
@@ -713,8 +713,7 @@ behavior_differences:
       is a no-op stub. Operation methods raise `NotSupportedError` (Snowpark
       swallows these silently). get_instance/enable/disable/close are no-ops.
     description: |
-      TODO: implement OOB telemetry in the Universal Driver and wire up
-      `TelemetryService` to the real implementation.
+      Telemetry OOB is disabled on the backend anyway; not planned for UD scope currently.
 
   46:
     name: "Azure EncryptionAgent.EncryptionAlgorithm stays 256; Python-Azure emits 128"
