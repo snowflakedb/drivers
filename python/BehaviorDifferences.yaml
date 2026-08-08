@@ -727,8 +727,8 @@ behavior_differences:
 
   45:
     name: "Out-of-band (OOB) telemetry is not implemented"
-    status: todo
-    type: bug
+    status: allowed
+    type: api_incompatibility
     reviewed: false
     is_breaking_change: false
     impact: low
@@ -737,12 +737,11 @@ behavior_differences:
       telemetry endpoint from a background thread. Snowpark uses this for usage
       tracking and diagnostics.
     new_driver_behavior: |
-      The Universal Driver does not implement OOB telemetry. `TelemetryService`
-      is a no-op stub. Operation methods raise `NotSupportedError` (Snowpark
-      swallows these silently). get_instance/enable/disable/close are no-ops.
+      The Universal Driver does not implement OOB telemetry at all -- the
+      `telemetry_oob` module and `TelemetryService` class do not exist;
+      `import snowflake.connector.telemetry_oob` raises `ModuleNotFoundError`.
     description: |
-      TODO: implement OOB telemetry in the Universal Driver and wire up
-      `TelemetryService` to the real implementation.
+      Telemetry OOB is disabled on the backend anyway; not planned for UD scope currently.
 
   49:
     name: "file_stream on a non-PUT statement raises ProgrammingError instead of being silently ignored"

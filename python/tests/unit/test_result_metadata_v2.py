@@ -238,7 +238,7 @@ class TestDescribeInternal:
 
 
 class TestResultMetadataV2FromColumnFieldSizes:
-    """Verify display_size and internal_size proto-field mapping (BD#46)."""
+    """Verify display_size and internal_size proto-field mapping (BD#56)."""
 
     def test_display_size_populated_for_text_column(self):
         col = _mock_column(col_type="TEXT", length=100)
