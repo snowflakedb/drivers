@@ -20,6 +20,9 @@ pub mod internal {
         decrypt_ciphertext_to_writer,
     };
     pub use super::gcs_transfer::download_from_gcs_streaming;
+    // Real per-cloud part-size formula, so live/e2e tests derive the expected
+    // part/range count from it instead of mirroring constants.
+    pub use super::multipart::{MultipartConfig, compute_part_size};
     pub use crate::compression::compress_to_tempfile;
 
     use super::{

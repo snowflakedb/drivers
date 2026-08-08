@@ -15,19 +15,15 @@
 //!     put_get::proxy_live_mitm -- --ignored --nocapture
 
 use crate::common::arrow_result_helper::ArrowResultHelper;
+use crate::common::dead_proxy::assert_connect_fails_through_dead_proxy;
 use crate::common::mitm_proxy::{MitmProxy, cloud_storage_host_suffix, mitmdump_available};
-use crate::common::put_get_common::{PutResult, get_file_from_stage, upload_to_stage_with_options};
+use crate::common::put_get_common::{
+    PutResult, file_digest, get_file_from_stage, upload_to_stage_with_options,
+};
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::file_manager::internal::compute_sha256_digest;
-use sf_core::file_manager::types::ByteSource;
-use std::path::Path;
 
 const PAYLOAD: &[u8] = b"col1,col2\n1,2\n3,4\nproxy-live-mitm-probe\n";
 const FILENAME: &str = "proxy_probe.csv";
-
-fn file_digest(path: &Path) -> String {
-    compute_sha256_digest(&ByteSource::Path(path.to_path_buf())).expect("digest")
-}
 
 #[test]
 #[ignore = "live-cloud PUT/GET through a real mitmdump proxy; run with --ignored. \
@@ -125,30 +121,28 @@ fn should_route_live_put_get_through_mitmdump_proxy() {
 #[ignore = "live-account negative control: connect through a dead proxy port must fail; \
             run with --ignored. Mirrors integration::http::proxy_transfer's dead-proxy controls."]
 fn should_fail_live_connect_when_mitmdump_proxy_port_dead() {
-    // Given a dead loopback port and otherwise-valid credentials — the only
-    // thing wrong is the proxy. Fails at login, before any PUT/GET.
-    let dead_port = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        port
-    };
-    let client = SnowflakeTestClient::with_default_jwt_auth_params();
-    client.set_connection_option("proxy_host", "127.0.0.1");
-    client.set_connection_option_int("proxy_port", i64::from(dead_port));
-
-    // When the connection is initialized through the dead proxy port
-    let result = client.connect();
-
-    // Then it must fail — `expect_err` is load-bearing: a bypassed proxy would
-    // connect and succeed instead. TODO(SNOW-3850381): connect() collapses this
-    // to a String; surface a typed transport error instead.
-    let err = result.expect_err("connecting through a dead proxy port must fail");
-    let lower = err.to_lowercase();
-    assert!(
-        !lower.contains("incorrect")
-            && !lower.contains("password")
-            && !lower.contains("jwt token is invalid"),
-        "dead-proxy failure must be a transport error, not an auth rejection: {err}"
+    // Given otherwise-valid credentials — the only thing wrong is the proxy.
+    // Fails at login, before any PUT/GET.
+    assert_connect_fails_through_dead_proxy(
+        |dead_port| {
+            let client = SnowflakeTestClient::with_default_jwt_auth_params();
+            client.set_connection_option("proxy_host", "127.0.0.1");
+            client.set_connection_option_int("proxy_port", i64::from(dead_port));
+            // When the connection is initialized through the dead proxy port
+            client.connect()
+        },
+        |err| {
+            // Then it must fail as a transport error — a bypassed proxy would
+            // connect and succeed instead. TODO(SNOW-3850381): connect()
+            // collapses this to a String; surface a typed transport error
+            // instead.
+            let lower = err.to_lowercase();
+            assert!(
+                !lower.contains("incorrect")
+                    && !lower.contains("password")
+                    && !lower.contains("jwt token is invalid"),
+                "dead-proxy failure must be a transport error, not an auth rejection: {err}"
+            );
+        },
     );
 }

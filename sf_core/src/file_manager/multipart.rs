@@ -42,7 +42,7 @@ const DEFAULT_PART_CONCURRENCY: usize = 1;
 
 /// Per-cloud multipart limits, tabulated as consts so adding a cloud is one
 /// struct literal rather than a new branch in every helper.
-pub(super) struct MultipartConfig {
+pub struct MultipartConfig {
     /// Cloud label, used only in `FileTooLarge` messages and logs.
     pub(super) cloud: &'static str,
     /// Part size used when the file fits in `max_parts` at this size.
@@ -67,7 +67,7 @@ impl MultipartConfig {
     /// AWS service limits; the 8 MiB default is the reference-driver choice, and
     /// 5 TiB is the conventional object ceiling (AWS now allows more).
     /// <https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html>
-    pub(super) const S3: Self = Self {
+    pub const S3: Self = Self {
         cloud: "S3",
         default_part: 8 * MIB,
         min_part: 5 * MIB,
@@ -87,7 +87,7 @@ impl MultipartConfig {
     /// of failing. (libsnowflakeclient grows the block the same way; JDBC keeps
     /// it fixed at 4 MiB.)
     /// <https://learn.microsoft.com/en-us/rest/api/storageservices/put-block>
-    pub(super) const AZURE: Self = Self {
+    pub const AZURE: Self = Self {
         cloud: "Azure",
         default_part: 8 * MIB,
         min_part: 1,
@@ -104,7 +104,7 @@ impl MultipartConfig {
     /// this.
     /// Object size: <https://cloud.google.com/storage/quotas>
     /// 256-KiB rule: <https://cloud.google.com/storage/docs/performing-resumable-uploads>
-    pub(super) const GCS: Self = Self {
+    pub const GCS: Self = Self {
         cloud: "GCS",
         default_part: 8 * MIB,
         min_part: 256 * KIB,
@@ -112,6 +112,18 @@ impl MultipartConfig {
         max_object: 5 * TIB,
         max_parts: None,
     };
+
+    /// Number of parts (upload) or ranges (download) a transfer of
+    /// `file_size` bytes takes under this cloud's part-size policy —
+    /// `ceil(file_size / compute_part_size(file_size, self))`. Test-only: the
+    /// fields above are `pub(super)` on purpose, so rather than widening them
+    /// for external callers, this gives live/e2e tests (reachable only via
+    /// the `internal` test-utils module) the expected count directly.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn expected_part_count(&self, file_size: u64) -> Result<u64, FileTooLargeError> {
+        let part_size = compute_part_size(file_size, self)?;
+        Ok(file_size.div_ceil(part_size))
+    }
 }
 
 /// Picks the part size for `file_size`: start from `default_part` and grow it
@@ -126,10 +138,7 @@ impl MultipartConfig {
 ///
 /// `file_size` is the *on-cloud* byte count — ciphertext length for CSE,
 /// source length for SSE — because that is what gets split into parts.
-pub(super) fn compute_part_size(
-    file_size: u64,
-    cfg: &MultipartConfig,
-) -> Result<u64, FileTooLargeError> {
+pub fn compute_part_size(file_size: u64, cfg: &MultipartConfig) -> Result<u64, FileTooLargeError> {
     if file_size > cfg.max_object {
         return FileTooLargeSnafu {
             actual_bytes: file_size,
