@@ -295,15 +295,14 @@ pub struct StageInfo {
     /// TLS configuration for storage HTTP clients (S3/GCS/Azure). Carried on
     /// `StageInfo` so every `create_*_client` site can honour CRL, custom root
     /// store, and the protocol-version window without threading them through
-    /// the transfer call chain. Set from the connection's `TlsConfig` in
-    /// `perform_put_get_transfer`; defaults to `TlsConfig::default()` elsewhere.
+    /// the transfer call chain. Always set by `StageTransport` — see that
+    /// type's doc comment for how the wire-decode converters enforce this.
     pub tls_config: TlsConfig,
-    /// Driver-owned lazy CRL worker for storage TLS clients. Set alongside
-    /// `tls_config` in `perform_put_get_transfer`.
+    /// Driver-owned lazy CRL worker for storage TLS clients. Always set by
+    /// `StageTransport` alongside `tls_config`.
     pub crl_worker: crate::crl::worker::SharedCrlWorker,
-    /// Explicit proxy config for the storage HTTP clients (S3/GCS/Azure); set
-    /// alongside `tls_config` on the PUT/GET path, `ProxyConfig::default()`
-    /// otherwise.
+    /// Explicit proxy config for the storage HTTP clients (S3/GCS/Azure).
+    /// Always set by `StageTransport` alongside `tls_config`.
     pub proxy_config: crate::tls::config::ProxyConfig,
 }
 
@@ -319,6 +318,51 @@ impl StageInfo {
             info.presigned_url = snapshot.presigned_url;
         }
         info
+    }
+}
+
+/// Bundles the three storage-transport settings that a GS PUT/GET response
+/// knows nothing about: TLS configuration, proxy configuration, and the CRL
+/// worker. `StageInfo` needs all three, but the wire-decoded response (parsed
+/// in `rest::snowflake::query_response`) only ever carries bucket/creds/region
+/// — the transport settings live on the connection, one layer up.
+///
+/// Before this type existed, `query_response::Data::to_file_upload_data` /
+/// `to_bind_stage_upload_data` / `to_file_download_data` returned a
+/// `StageInfo` with these three fields left at their defaults, and every
+/// caller had to remember to overwrite them afterward. Three call sites
+/// forgot at various points (fixed ad hoc). Requiring `&StageTransport` as a
+/// parameter on those converters closes the gap structurally: a caller can no
+/// longer obtain an `UploadData` / `DownloadData` / `SingleUploadData` without
+/// supplying all three — the compiler enforces it instead of a code reviewer.
+#[derive(Debug, Clone)]
+pub struct StageTransport {
+    pub tls_config: TlsConfig,
+    pub proxy_config: crate::tls::config::ProxyConfig,
+    pub crl_worker: crate::crl::worker::SharedCrlWorker,
+}
+
+impl StageTransport {
+    /// Default transport bundle for `query_response` unit tests that don't
+    /// exercise TLS/proxy/CRL behavior and only need some value to satisfy
+    /// the required parameter. Not reachable outside the crate's own test
+    /// build — production code always threads real connection settings.
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            tls_config: TlsConfig::default(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+        }
+    }
+
+    /// Copies all three fields onto `stage_info` — the one place this
+    /// three-field assignment happens, so a future field can't be added to
+    /// one call site and forgotten at the others.
+    pub(crate) fn apply_to(&self, stage_info: &mut StageInfo) {
+        stage_info.tls_config = self.tls_config.clone();
+        stage_info.proxy_config = self.proxy_config.clone();
+        stage_info.crl_worker = self.crl_worker.clone();
     }
 }
 

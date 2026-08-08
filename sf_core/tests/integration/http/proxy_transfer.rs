@@ -41,6 +41,7 @@ use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::common::connect_proxy::ConnectProxy;
+use crate::common::dead_proxy::dead_loopback_port;
 use crate::common::tls_proxy::TlsProxy;
 
 // RFC-6761 `.invalid` origins — no DNS entry can ever exist for these, so a
@@ -93,17 +94,6 @@ fn proxy_via(port: u16, no_proxy: Option<&str>) -> ProxyConfig {
         use_proxy_env: false,
         ..Default::default()
     }
-}
-
-/// A loopback port with nothing listening on it (bind then drop), for the
-/// dead-proxy negative controls.
-async fn dead_loopback_port() -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
 }
 
 fn azure_stage(tls_config: TlsConfig, proxy_config: ProxyConfig) -> StageInfo {
@@ -252,7 +242,7 @@ async fn should_route_azure_download_through_proxy() {
 
 #[tokio::test]
 async fn should_fail_azure_download_when_proxy_port_dead() {
-    let port = dead_loopback_port().await;
+    let port = dead_loopback_port();
     let stage = azure_stage(TlsConfig::default(), proxy_via(port, None));
 
     let err = download_from_azure(&stage, "file.csv", &azure_policy(1), None)
@@ -332,7 +322,7 @@ async fn should_route_gcs_download_through_proxy() {
 
 #[tokio::test]
 async fn should_fail_gcs_download_when_proxy_port_dead() {
-    let port = dead_loopback_port().await;
+    let port = dead_loopback_port();
     let stage = gcs_stage(TlsConfig::default(), proxy_via(port, None));
 
     let err = download_from_gcs(&stage, "file.csv", None, &gcs_policy(1), 0, None)
@@ -413,7 +403,7 @@ async fn should_route_s3_upload_through_proxy() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn should_fail_s3_upload_when_proxy_port_dead() {
-    let port = dead_loopback_port().await;
+    let port = dead_loopback_port();
     let stage = s3_stage(TlsConfig::default(), proxy_via(port, None));
 
     let err = upload_single_file(s3_single_upload(stage), &s3_policy(1), None)

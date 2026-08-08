@@ -12,9 +12,11 @@
 //! fixed-width base64, the commit carries the `sfcdigest` metadata, and the
 //! download issues a HEAD (Get Blob Properties) probe before any ranged GET.
 //!
-//! The Azure block *size* (4 MiB, `MultipartConfig::AZURE.default_part`) is
-//! fixed for files this small, so the payload must exceed it to split — the
-//! threshold only controls single-vs-multipart routing.
+//! The Azure block *size* is fixed for files this small, so the payload must
+//! exceed it to split — the threshold only controls single-vs-multipart
+//! routing. The expected block count is derived from the real
+//! `MultipartConfig::AZURE` policy rather than a mirrored constant, so raising
+//! the default block size can't silently desynchronise this test.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,7 +25,7 @@ use base64::Engine as _;
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
-use sf_core::file_manager::internal::compute_sha256_digest;
+use sf_core::file_manager::internal::{MultipartConfig, compute_sha256_digest};
 use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, LocationType, SingleDownloadData, SingleUploadData, StageInfo,
 };
@@ -40,11 +42,9 @@ use crate::http::multipart_test_support::{make_payload, parse_range};
 /// digest. Mirrors the private constant of the same name in `azure_transfer.rs`.
 const AZURE_META_SFC_DIGEST: &str = "x-ms-meta-sfcdigest";
 
-/// Azure block-blob default block size (`MultipartConfig::AZURE.default_part`).
-/// `compute_part_size` returns this for any file below the grow boundary
-/// (past ~195 GiB it grows to keep the block count under 50 000).
-const PART_SIZE: usize = 4 * 1024 * 1024;
-/// > 4 × `PART_SIZE`, so the file splits into 5 blocks / ranges — unambiguously ≥2.
+/// Comfortably larger than Azure's default block size, so the transfer splits
+/// into several blocks / ranges. The exact count is derived from the real
+/// config at runtime (see `expected_chunks`), not asserted here.
 const PAYLOAD_LEN: usize = 20 * 1024 * 1024;
 /// Below `PAYLOAD_LEN`, so both upload and download take the multipart path.
 const THRESHOLD_BYTES: i64 = 4 * 1024 * 1024;
@@ -151,7 +151,9 @@ async fn should_upload_and_download_via_azure_multipart_roundtrip() {
     let payload = make_payload(PAYLOAD_LEN);
     let digest =
         compute_sha256_digest(&ByteSource::Bytes(payload.clone().into())).expect("compute digest");
-    let expected_chunks = PAYLOAD_LEN.div_ceil(PART_SIZE);
+    let expected_chunks = MultipartConfig::AZURE
+        .expected_part_count(PAYLOAD_LEN as u64)
+        .expect("payload is far below Azure's max object size") as usize;
     assert!(expected_chunks >= 2, "payload must split into >=2 chunks");
 
     let state = Arc::new(AzureMockState {

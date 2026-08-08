@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use rcgen::generate_simple_self_signed;
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 
@@ -45,6 +46,25 @@ impl TlsProxy {
     /// unresolvable) hostname it will dial through a CONNECT tunnel — letting
     /// TLS hostname verification genuinely pass instead of being disabled.
     pub async fn start_with_sans(backend_addr: SocketAddr, sans: Vec<String>) -> Self {
+        Self::start_with_sans_and_marker(backend_addr, sans, None).await
+    }
+
+    /// Like [`Self::start_with_sans`] but, when `marker` is `Some((name, value))`,
+    /// injects that header into the first HTTP request of each accepted
+    /// connection before relaying to the backend. The backend
+    /// (`wiremock::MockServer::received_requests`) can then confirm the request
+    /// actually transited this TLS-terminating hop — an independent signal from
+    /// the CONNECT-proxy's own bookkeeping.
+    ///
+    /// Keep-alive: only the FIRST request on a connection is marked; the rest of
+    /// the connection is relayed blind. That is sufficient here because every
+    /// test issues a single cloud request per connection (login is bypassed to a
+    /// separate host), and avoids a full per-request HTTP framer in test infra.
+    pub async fn start_with_sans_and_marker(
+        backend_addr: SocketAddr,
+        sans: Vec<String>,
+        marker: Option<(String, String)>,
+    ) -> Self {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
         let cert =
@@ -64,6 +84,7 @@ impl TlsProxy {
             .await
             .expect("Failed to bind TLS proxy listener");
         let addr = listener.local_addr().unwrap();
+        let marker = marker.map(Arc::new);
 
         let child_handles = Arc::new(Mutex::new(Vec::new()));
         let children = Arc::clone(&child_handles);
@@ -73,6 +94,7 @@ impl TlsProxy {
                     continue;
                 };
                 let acceptor = acceptor.clone();
+                let marker = marker.clone();
                 let handle = tokio::spawn(async move {
                     let Ok(mut tls_stream) = acceptor.accept(tcp_stream).await else {
                         return;
@@ -80,6 +102,13 @@ impl TlsProxy {
                     let Ok(mut backend) = TcpStream::connect(backend_addr).await else {
                         return;
                     };
+                    let injected = match marker.as_deref() {
+                        Some(marker) => inject_marker(&mut tls_stream, &mut backend, marker).await,
+                        None => Ok(()),
+                    };
+                    if injected.is_err() {
+                        return;
+                    }
                     let _ = tokio::io::copy_bidirectional(&mut tls_stream, &mut backend).await;
                 });
                 children.lock().unwrap().push(handle);
@@ -120,6 +149,43 @@ impl Drop for TlsProxy {
             handle.abort();
         }
     }
+}
+
+/// Reads the first HTTP request head off `client` (up to the blank-line
+/// terminator, one byte at a time so no body bytes are consumed), inserts
+/// `marker` as a header line, and writes the rewritten head to `backend`. The
+/// caller then blind-relays the body and the remainder of the connection.
+/// Content-Length is untouched (only a header is added, the body is unchanged).
+async fn inject_marker(
+    client: &mut (impl AsyncReadExt + Unpin),
+    backend: &mut (impl AsyncWriteExt + Unpin),
+    marker: &(String, String),
+) -> std::io::Result<()> {
+    let mut head = Vec::with_capacity(256);
+    let mut byte = [0u8; 1];
+    loop {
+        if client.read(&mut byte).await? == 0 {
+            // Connection closed before a full head — forward what we have.
+            backend.write_all(&head).await?;
+            return Ok(());
+        }
+        head.push(byte[0]);
+        if head.ends_with(b"\r\n\r\n") {
+            break;
+        }
+        if head.len() > 16384 {
+            // Oversized head — relay unmodified rather than guess.
+            backend.write_all(&head).await?;
+            return Ok(());
+        }
+    }
+    // Insert `name: value\r\n` just before the terminating blank line.
+    let injected = format!("{}: {}\r\n", marker.0, marker.1);
+    let split = head.len() - 2;
+    backend.write_all(&head[..split]).await?;
+    backend.write_all(injected.as_bytes()).await?;
+    backend.write_all(b"\r\n").await?;
+    Ok(())
 }
 
 /// Wraps a `wiremock::MockServer` + `TlsProxy` with a **dedicated** tokio

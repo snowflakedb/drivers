@@ -4,6 +4,7 @@ pub mod arrow_result_helper;
 pub mod cloud_gating;
 pub mod config;
 pub mod connect_proxy;
+pub mod dead_proxy;
 pub mod file_utils;
 pub mod mitm_proxy;
 pub mod mocks;
