@@ -592,7 +592,6 @@ class Connection(ConnectionMixin):
             include_master_token=include_master_token,
         )
 
-    @property
     @internal_api
     @backward_compatibility
     def _telemetry(self) -> _BackwardCompatTelemetryClient:

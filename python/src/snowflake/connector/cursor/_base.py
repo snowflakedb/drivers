@@ -32,7 +32,12 @@ from .._internal.cursor.decorators import (
     requires_open_cursor_not_connection,
     with_prefetch_hook,
 )
-from .._internal.decorators import api_telemetry, backward_compatibility, pep249, snowpark_compat
+from .._internal.decorators import (
+    api_telemetry,
+    backward_compatibility,
+    pep249,
+    snowpark_compat,
+)
 from .._internal.errorcode import ER_INVALID_VALUE
 from .._internal.extras import pandas, pyarrow, requires_dependency
 from .._internal.logging import get_logger
@@ -854,7 +859,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self,
         force_return_table: bool = False,
         force_microsecond_precision: bool = False,
-        **kwargs: Any,  # Snowpark may pass split_blocks=...; ignored by the UD
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
         stream_ptr = self._result_set.get_arrow_stream_ptr()
@@ -874,17 +878,30 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @api_telemetry
     @requires_open
     def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[DataFrame]:
-        """Fetch Pandas DataFrames in batches."""
-        for table in self.fetch_arrow_batches(**kwargs):
-            yield table.to_pandas()
+        """Fetch Pandas DataFrames in batches.
+
+        ``force_microsecond_precision`` (if present) governs the Arrow
+        conversion; all other kwargs are forwarded to ``pyarrow.Table.to_pandas``
+        (e.g. ``split_blocks``), matching snowflake-connector-python.
+        """
+        force_microsecond_precision = kwargs.pop("force_microsecond_precision", False)
+        for table in self.fetch_arrow_batches(force_microsecond_precision=force_microsecond_precision):
+            yield table.to_pandas(**kwargs)
 
     @requires_dependency(pandas)
     @api_telemetry
     @requires_open
     def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
-        """Fetch all results as a single Pandas DataFrame."""
-        table: Table = self.fetch_arrow_all(force_return_table=True, **kwargs)
-        return table.to_pandas()
+        """Fetch all results as a single Pandas DataFrame.
+
+        ``force_microsecond_precision`` (if present) governs the Arrow
+        conversion; all other kwargs are forwarded to ``pyarrow.Table.to_pandas``.
+        """
+        force_microsecond_precision = kwargs.pop("force_microsecond_precision", False)
+        table: Table = self.fetch_arrow_all(
+            force_return_table=True, force_microsecond_precision=force_microsecond_precision
+        )
+        return table.to_pandas(**kwargs)
 
     # ------------------------------------------------------------------
     # Distributed fetch
@@ -1043,27 +1060,3 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             query_id=qid,
         )
         return response.outcome == ABORT_QUERY_OUTCOME_ABORTED
-
-    # ------------------------------------------------------------------
-    # File-transfer stubs (Snowpark compatibility only)
-    #
-    # Snowpark calls these on the cursor for PUT/GET streaming; the UD has no
-    # file transfer yet, so they fail loudly rather than silently no-op.
-    # (Connection.upload_stream lives on the Connection, not here.)
-    # ------------------------------------------------------------------
-
-    @snowpark_compat
-    def _upload(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_upload is not yet supported by the Universal Driver.")
-
-    @snowpark_compat
-    def _download(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_download is not yet supported by the Universal Driver.")
-
-    @snowpark_compat
-    def _upload_stream(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_upload_stream is not yet supported by the Universal Driver.")
-
-    @snowpark_compat
-    def _download_stream(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_download_stream is not yet supported by the Universal Driver.")

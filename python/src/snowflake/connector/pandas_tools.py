@@ -9,26 +9,18 @@ Implementation details are in snowflake.connector._internal.write_pandas_operati
 
 from __future__ import annotations
 
-import warnings
-
 from collections.abc import Callable, Iterable
 from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from ._internal.decorators import api_telemetry, snowpark_compat
+from ._internal.decorators import api_telemetry
 from ._internal.errorhandler import route_exception
 from ._internal.extras import pandas, requires_dependency, sqlalchemy
 from ._internal.write_pandas_operation import (
     WritePandasConfig,
     WritePandasOperation,
     WritePandasResult,
-    _create_temp_object,
-    _file_format_sql,
-    _stage_sql,
     qualify_name,
-)
-from ._internal.write_pandas_operation import (
-    generate_temp_name as _generate_temp_name,
 )
 from .errors import Error, ProgrammingError
 
@@ -97,7 +89,6 @@ def write_pandas(
     quote_identifiers: bool = True,
     infer_schema: bool = False,
     auto_create_table: bool = False,
-    create_temp_table: bool = False,
     overwrite: bool = False,
     table_type: Literal["", "temp", "temporary", "transient"] = "",
     use_logical_type: bool | None = None,
@@ -111,15 +102,6 @@ def write_pandas(
     Returns a WritePandasResult named tuple (success, nchunks, nrows, copy_results).
     Backward-compatible with plain tuple unpacking and indexing.
     """
-    # ``create_temp_table`` is the legacy boolean spelling of ``table_type="temp"``;
-    # Snowpark still passes it. Translate it and do not forward it to the config.
-    if create_temp_table and not table_type:
-        table_type = "temp"
-        warnings.warn(
-            "'create_temp_table' is deprecated; use 'table_type=\"temp\"' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     try:
         cfg = WritePandasConfig(
             conn,
@@ -148,55 +130,13 @@ def write_pandas(
 
 
 # ------------------------------------------------------------------
-# Snowpark import surface: snowpark's analyzer_utils imports these three names
+# Snowpark import surface: snowpark's analyzer_utils imports this name
 # directly from snowflake.connector.pandas_tools.
 # ------------------------------------------------------------------
 
 # Legacy name for a fully-qualified object name; identical to qualify_name, so
 # alias rather than duplicate the escaping logic.
 build_location_helper = qualify_name
-
-
-@snowpark_compat
-def _create_temp_stage(
-    cursor: SnowflakeCursor,
-    database: str | None,
-    schema: str | None,
-    quote_identifiers: bool,
-    compression: str,
-    auto_create_table: bool,
-    overwrite: bool,
-    use_scoped_temp_object: bool = False,
-) -> str:
-    name = _generate_temp_name("STAGE")
-    qualified = qualify_name(database, schema, name, quote_identifiers)
-    binary_as_text_false = auto_create_table or overwrite
-    return _create_temp_object(
-        cursor,
-        lambda n: _stage_sql(n, compression, binary_as_text_false, use_scoped_temp_object),
-        qualified,
-        name,
-    )
-
-
-@snowpark_compat
-def _create_temp_file_format(
-    cursor: SnowflakeCursor,
-    database: str | None,
-    schema: str | None,
-    quote_identifiers: bool,
-    compression: str,
-    sql_use_logical_type: str,
-    use_scoped_temp_object: bool = False,
-) -> str:
-    name = _generate_temp_name("FILE_FORMAT")
-    qualified = qualify_name(database, schema, name, quote_identifiers)
-    return _create_temp_object(
-        cursor,
-        lambda n: _file_format_sql(n, compression, sql_use_logical_type, use_scoped_temp_object),
-        qualified,
-        name,
-    )
 
 
 @requires_dependency(pandas, sqlalchemy)
