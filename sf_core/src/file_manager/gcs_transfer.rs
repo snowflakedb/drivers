@@ -1134,6 +1134,10 @@ fn map_http_error(e: HttpError) -> GcsRequestError {
 
 // --- Helpers ---
 
+// Shared by both the upload (`upload_to_gcs_or_skip`) and download
+// (`gcs_get_with_refresh`) call sites — if client construction is ever split
+// per direction (as `create_s3_client`'s `provider_name` param anticipates),
+// add the equivalent GCS case here too.
 fn create_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client, GcsRequestError> {
     let builder = crate::tls::client::configure_tls_builder(
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
