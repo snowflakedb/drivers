@@ -187,24 +187,24 @@ pub unsafe extern "C" fn sf_core_api_call_proto_async(
     let state = STATE.get().expect("sf_core_init was not called");
     // The client passes this handle to `sf_core_api_cancel`. Registering it on
     // the transport before we return means it can never be cancelled before it
-    // exists.
-    let (async_handle, token) = state.transport.register();
+    // exists. The token stays in the registry — cancel by handle.
+    let (async_handle, _token) = state.transport.register();
 
     // Tokio worker threads do not inherit the caller's tracing dispatch (see the sync path's set_default above).
     // Without this, async RPC tracing events skip file/OTLP/telemetry/CallbackLayer.
     let dispatch = state.dispatch.clone();
     state.runtime.spawn(async move {
         let _guard = tracing::dispatcher::set_default(&dispatch);
-        // `handle_message_cancellable` races the work against `token`; on cancel
-        // it resolves to an `Application` error carrying a Cancelled
-        // `DriverException`. The completion callback fires on every outcome,
-        // including cancellation; Python guards `on_response` with `future.done()`.
+        // `handle_message_cancellable` dispatches the operation under the token
+        // registered for `async_handle`; the operation observes that token and
+        // unwinds with a Cancelled `DriverException`. The completion callback
+        // fires on every outcome, including cancellation; Python guards
+        // `on_response` with `future.done()`.
         let result = std::panic::AssertUnwindSafe(state.transport.handle_message_cancellable(
-            async_handle,
             &api_str,
             &method_str,
             request_vec,
-            token,
+            async_handle,
         ))
         .catch_unwind()
         .await;

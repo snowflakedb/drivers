@@ -6,7 +6,7 @@ New features:
 
 - Added a `secondary_roles` connection parameter that lets a client control secondary-role activation at login (e.g. `ALL` or `NONE`) without relying on the user's `DEFAULT_SECONDARY_ROLES` setting, ported from legacy snowflake-connector-python. Also restores parity with legacy ODBC's `SecondaryRoles` connection attribute, and is newly available (with no legacy equivalent) for JDBC. (snowflakedb/drivers#954)
 - Added server-side query cancel: capture the in-flight `requestId`/`sqlText` on the statement at submit time and add a `statement_cancel` driver API (plus `StatementCancel` RPC) that aborts the running query via `POST /queries/v1/abort-request`, so a cross-thread `SQLCancel` can stop a query on the server. (snowflakedb/drivers#628)
-- Added a shared operation-cancellation registry and `RustTransport::handle_message_cancellable`, letting a bridge race an in-flight RPC against a cancellation token and surface cancellation as `DriverException` with `STATUS_CODE_CANCELLED`; the async C API now cancels through this registry. (snowflakedb/drivers#TBD)
+- Added a shared operation-cancellation registry and `RustTransport::handle_message_cancellable`, letting a bridge cancel an in-flight RPC by handle from any thread and surface cancellation as `DriverException` with `STATUS_CODE_CANCELLED`; the async C API now cancels through this registry. (snowflakedb/drivers#TBD)
 - Added async-first RPCs: an RPC marked `async_first` in the proto generates a `Future`-returning client method, and JDBC's `ConnectionInit` now uses it via new `nativeSubmitMessage`/`nativeAwaitMessage`/`nativeCancel` JNI entries. (snowflakedb/drivers#TBD)
 
 Bug fixes:
@@ -17,6 +17,8 @@ Bug fixes:
 
 Internal improvements:
 
+- Cancellation is now observed inside the operation rather than raced at the protobuf transport, and the proto is the single source of truth for which operations are cancellable: an RPC marked `async_first` receives an `OperationCtx` through the generated dispatch, and its `DatabaseDriverV1` implementation reports cancellation as a typed `ApiError::Cancelled` (mapped to `STATUS_CODE_CANCELLED`). Unmarked RPCs keep the previous transport-level behaviour, so no wrapper changes semantics. (snowflakedb/drivers#TBD)
+- Node's `Connection` now owns a cancellation context for `connect()` and exposes `cancelConnect()` to trigger it. (snowflakedb/drivers#TBD)
 - Replaced the three rarely-varied trailing parameters of `snowflake_query` and `snowflake_query_with_client` (retry policy, execution mode, request id) with a single `QueryOptions` struct that defaults to the common case (default retry policy, blocking mode, freshly-minted requestId), so most callers pass `QueryOptions::default()`.
 - Raised the default multipart block size for PUT uploads to internal Azure stages from 4 MiB to 8 MiB, matching the S3/GCS default and improving throughput for typical file sizes.
 

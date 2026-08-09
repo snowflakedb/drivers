@@ -5,6 +5,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity;
 use sf_core::apis::database_driver_v1::{ApiError, ExecuteQueryResult};
+use sf_core::apis::operation_ctx::OperationCtx;
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
@@ -12,6 +13,10 @@ use std::collections::HashMap;
 #[napi]
 pub struct Connection {
     handle: Handle,
+    /// Cancellation context for the in-flight `connect()`. Node owns its own
+    /// token rather than going through the transport's handle registry, since it
+    /// calls the driver API directly and never crosses the protobuf layer.
+    connect_ctx: OperationCtx,
 }
 
 #[napi]
@@ -50,7 +55,15 @@ impl Connection {
 
         Ok(Self {
             handle: conn_handle,
+            connect_ctx: OperationCtx::with_own_token(),
         })
+    }
+
+    /// Cancel an in-flight [`Self::connect`] from another JS tick or thread.
+    /// A no-op once connect has finished.
+    #[napi]
+    pub fn cancel_connect(&self) {
+        self.connect_ctx.cancel();
     }
 
     #[napi]
@@ -59,7 +72,11 @@ impl Connection {
             // TODO:
             // The _db_handle parameter is currently unused but required; passing a dummy value for now.
             // This argument is planned for removal from connection_init in a future update.
-            .connection_init(self.handle, Handle { id: 0, magic: 0 })
+            .connection_init(
+                Some(&self.connect_ctx),
+                self.handle,
+                Handle { id: 0, magic: 0 },
+            )
             .await
             .map_err(to_napi_err)
     }

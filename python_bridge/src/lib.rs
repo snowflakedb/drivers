@@ -215,20 +215,17 @@ fn call_proto_async<'py>(
     let request = request.to_vec();
 
     let (handle, cancel_token) = bridge.transport.register();
-    let cancel_token_for_task = cancel_token.clone();
 
     // Tokio worker threads do not inherit the caller's tracing dispatch.
     // Without this, async RPC tracing events skip file/OTLP/telemetry/CallbackLayer.
     let dispatch = bridge.dispatch.clone();
     let join_handle = bridge.runtime.spawn(async move {
         let _logging_guard = tracing::dispatcher::set_default(&dispatch);
-        std::panic::AssertUnwindSafe(bridge.transport.handle_message_cancellable(
-            handle,
-            &api,
-            &method,
-            request,
-            cancel_token_for_task,
-        ))
+        std::panic::AssertUnwindSafe(
+            bridge
+                .transport
+                .handle_message_cancellable(&api, &method, request, handle),
+        )
         .catch_unwind()
         .await
         .unwrap_or_else(|_| Err(ProtoError::Transport("sf_core panic in async task".into())))

@@ -209,6 +209,18 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    /// The operation observed its [`OperationCtx`](crate::apis::operation_ctx::OperationCtx)
+    /// token being cancelled and unwound cooperatively.
+    ///
+    /// Raised by the operation itself, not synthesised at the FFI boundary, so
+    /// callers below the protobuf layer (Node, in-process Rust) see the same
+    /// typed error the protobuf layer maps to `STATUS_CODE_CANCELLED`.
+    #[snafu(display("Operation was cancelled"))]
+    #[snafu(visibility(pub))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to write upload stream chunk to spool buffer: {source}"))]
     SpoolBufferWrite {
         #[snafu(implicit)]
