@@ -1,6 +1,5 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
-import java.sql.SQLException;
 import java.util.List;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
@@ -40,8 +39,7 @@ public class ResultSetFactory {
       CoreDriverApi coreDriverApi,
       SnowflakeStatementImpl statement,
       String queryId,
-      ResultSetResponse rs)
-      throws SQLException {
+      ResultSetResponse rs) {
     CoreResultSetProvider coreResultSet =
         new CoreResultSetProvider(
             coreDriverApi, rs.getResultSetHandle(), queryId, parametersOf(statement));
@@ -67,8 +65,7 @@ public class ResultSetFactory {
       CoreDriverApi coreDriverApi,
       SnowflakeStatementImpl statement,
       String queryId,
-      ResultSetResponse rs)
-      throws SQLException {
+      ResultSetResponse rs) {
     CoreResultSetProvider coreResultSet =
         new CoreResultSetProvider(
             coreDriverApi, rs.getResultSetHandle(), queryId, parametersOf(statement));
@@ -93,8 +90,7 @@ public class ResultSetFactory {
       String queryId,
       DatabaseFetchChunkResponse chunk,
       long rowCount,
-      ParametersRegistry parameters)
-      throws SQLException {
+      ParametersRegistry parameters) {
     ResultSetChunksProvider chunkSource =
         new InMemoryResultSetChunksProvider(
             coreDriverApi, chunks, columnMetadata, queryId, parameters);
@@ -117,8 +113,7 @@ public class ResultSetFactory {
       SnowflakeStatementImpl statement,
       SnowflakeResultSetImpl resultSet,
       SnowflakeResultSetMetaDataImpl metaData,
-      RowConverter converter)
-      throws SQLException {
+      RowConverter converter) {
     String queryID = metaData.getQueryID();
     RowReader sourceReader = resultSet.detachRowReader();
     String[] names = metaData.getColumnNames().toArray(new String[metaData.getColumnCount()]);
@@ -132,8 +127,7 @@ public class ResultSetFactory {
       SnowflakeStatementImpl statement,
       SnowflakeResultSetMetaDataImpl metaData,
       Object[][] rows,
-      boolean ownsStatement)
-      throws SQLException {
+      boolean ownsStatement) {
     String queryId = metaData.getQueryID();
     String[] names = metaData.getColumnNames().toArray(new String[metaData.getColumnCount()]);
     InMemoryRowReader rowReader = new InMemoryRowReader(names, rows);
@@ -144,8 +138,7 @@ public class ResultSetFactory {
   public static InternalResultSet createEmpty(
       SnowflakeStatementImpl statement,
       SnowflakeResultSetMetaDataImpl metaData,
-      boolean ownsStatement)
-      throws SQLException {
+      boolean ownsStatement) {
     String queryId = metaData.getQueryID();
     String[] names = metaData.getColumnNames().toArray(new String[metaData.getColumnCount()]);
     InMemoryRowReader rowReader = new InMemoryRowReader(names, new Object[][] {});
@@ -157,8 +150,7 @@ public class ResultSetFactory {
       SnowflakeStatementImpl statement,
       String queryId,
       ArrowArrayStreamPtr arrayStreamPtr,
-      ResultSetDescriptor descriptor)
-      throws SQLException {
+      ResultSetDescriptor descriptor) {
     long totalRowCount = descriptor.hasRowCount() ? descriptor.getRowCount() : -1;
     return resultSetFromResponse(
         resultSetChunksProvider,
@@ -177,8 +169,7 @@ public class ResultSetFactory {
       ArrowArrayStreamPtr arrayStreamPtr,
       List<ColumnMetadata> columns,
       long totalRowCount,
-      DataConversionContext conversionContext)
-      throws SQLException {
+      DataConversionContext conversionContext) {
     byte[] streamPointerBytes = arrayStreamPtr.getValue().toByteArray();
     long pointer = ArrowStreamFactory.pointerFromBytes(streamPointerBytes);
     ArrowResources arrowResources = ArrowStreamFactory.createFromPointer(pointer);

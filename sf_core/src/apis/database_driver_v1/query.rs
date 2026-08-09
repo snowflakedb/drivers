@@ -89,37 +89,39 @@ pub(super) async fn perform_put_get_transfer(
     let refresher_handle = refresher
         .as_ref()
         .map(|r| r as &dyn file_manager::StageInfoRefresher);
+    // Bundled once and threaded into whichever converter the running arm
+    // calls below — see `file_manager::StageTransport`.
+    let transport = file_manager::StageTransport {
+        tls_config,
+        proxy_config,
+        crl_worker,
+    };
 
     match command {
         "UPLOAD" => {
-            let mut file_upload_data = data
+            let file_upload_data = data
                 .to_file_upload_data(
                     wrapper_presets.put_get_resultset_flavor.clone(),
                     wrapper_presets.legacy_odbc_compression_autodetect,
                     skip_upload_on_content_match,
                     use_s3_regional_url_session_param,
                     put_fastfail,
+                    &transport,
                 )
                 .context(FileTransferPreparationSnafu)?;
-            file_upload_data.stage_info.tls_config = tls_config.clone();
-            file_upload_data.stage_info.proxy_config = proxy_config.clone();
-            file_upload_data.stage_info.crl_worker = crl_worker.clone();
-            let upload_results = upload_files(
-                &file_upload_data,
-                retry_policy,
-                refresher_handle.as_ref().copied(),
-            )
-            .await
-            .context(FileUploadSnafu)?;
+            let upload_results = upload_files(&file_upload_data, retry_policy, refresher_handle)
+                .await
+                .context(FileUploadSnafu)?;
             Ok(RowsetData::Upload(upload_results))
         }
         "DOWNLOAD" => {
-            let mut file_download_data = data
+            let file_download_data = data
                 .to_file_download_data(
                     &wrapper_presets.put_get_resultset_flavor,
                     use_s3_regional_url_session_param,
                     unsafe_file_write,
                     get_fastfail,
+                    &transport,
                 )
                 .map_err(|e| {
                     if e.to_string().contains("source locations") {
@@ -128,16 +130,10 @@ pub(super) async fn perform_put_get_transfer(
                         FileTransferPreparationSnafu.into_error(e)
                     }
                 })?;
-            file_download_data.stage_info.tls_config = tls_config;
-            file_download_data.stage_info.proxy_config = proxy_config;
-            file_download_data.stage_info.crl_worker = crl_worker;
-            let download_results = download_files(
-                file_download_data,
-                retry_policy,
-                refresher_handle.as_ref().copied(),
-            )
-            .await
-            .context(FileDownloadSnafu)?;
+            let download_results =
+                download_files(file_download_data, retry_policy, refresher_handle)
+                    .await
+                    .context(FileDownloadSnafu)?;
             Ok(RowsetData::Download(download_results))
         }
         _ => UnsupportedCommandSnafu {
@@ -165,10 +161,15 @@ pub(super) async fn build_and_upload_stream(
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     put_get_policy: &RetryPolicy,
-    proxy_config: crate::tls::config::ProxyConfig,
+    transport: &file_manager::StageTransport,
     payload: ByteSource,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
-    let mut upload_data = data
+    // Streaming PUT builds `StageInfo` outside `perform_put_get_transfer`, so
+    // the connection's TLS, proxy, and CRL settings are threaded here via the
+    // same `StageTransport` bundle that function's UPLOAD arm uses. `crl_worker`
+    // is threaded for parity with the non-streaming PUT/GET path; the
+    // hermetic/live proxy tests disable CRL checking, so it isn't exercised.
+    let upload_data = data
         .to_file_upload_data(
             wrapper_presets.put_get_resultset_flavor.clone(),
             wrapper_presets.legacy_odbc_compression_autodetect,
@@ -180,6 +181,7 @@ pub(super) async fn build_and_upload_stream(
             // never enters the `upload_files` batch loop, so `put_fastfail` is
             // inert here — seed it from the wrapper preset for consistency.
             wrapper_presets.put_get_fastfail_default,
+            transport,
         )
         .context(FileTransferPreparationSnafu)?;
 
@@ -200,10 +202,6 @@ pub(super) async fn build_and_upload_stream(
     let refresher_handle = refresher
         .as_ref()
         .map(|r| r as &dyn file_manager::StageInfoRefresher);
-
-    // Streaming PUT builds `StageInfo` outside `perform_put_get_transfer`, so
-    // copy the connection's proxy settings onto it explicitly.
-    upload_data.stage_info.proxy_config = proxy_config;
 
     let single = SingleUploadData {
         // `upload_prepared_source` reads from `source` (below), not this

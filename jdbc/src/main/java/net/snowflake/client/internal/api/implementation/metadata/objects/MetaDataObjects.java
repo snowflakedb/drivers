@@ -9,8 +9,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -18,9 +16,9 @@ import java.util.List;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
@@ -30,6 +28,7 @@ import net.snowflake.client.internal.api.implementation.resultset.RowConverter;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeColumnMetadata;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
+import net.snowflake.client.internal.api.implementation.statement.InternalStatement;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -64,14 +63,13 @@ public class MetaDataObjects {
     this.limits = new MetaDataLimits(connection);
   }
 
-  public ResultSet getCatalogs() throws SQLException {
+  public ResultSet getCatalogs() {
     String sqlQuery = queryBuilder().show("databases").inAccount().build();
     RowConverter rowConverter = row -> new Object[] {row.getString("name")};
     return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_CATALOGS);
   }
 
-  public ResultSet getSchemas(String originalCatalog, String originalSchemaPattern)
-      throws SQLException {
+  public ResultSet getSchemas(String originalCatalog, String originalSchemaPattern) {
     ContextAwareMetadataSearch contextAware =
         ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
@@ -104,8 +102,7 @@ public class MetaDataObjects {
       String originalCatalog,
       String originalSchemaPattern,
       final String tableNamePattern,
-      final String[] types)
-      throws SQLException {
+      final String[] types) {
     List<String> tableTypes = validateTableTypes(types);
     if (tableTypes.isEmpty()) {
       return emptyResultSet(MetaDataResultSetFormat.GET_TABLES);
@@ -181,8 +178,7 @@ public class MetaDataObjects {
       String originalSchemaPattern,
       String tableNamePattern,
       String columnNamePattern,
-      boolean extendedSet)
-      throws SQLException {
+      boolean extendedSet) {
     ContextAwareMetadataSearch contextAware =
         ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
@@ -253,7 +249,8 @@ public class MetaDataObjects {
             } catch (Exception ex) {
               logger.error("Exception when parsing column result: {}", ex.getClass().getName());
               logger.debug("Exception when parsing column result", ex);
-              throw new SnowflakeSQLException(
+              // INTERNAL_ERROR carries the verbatim message (null template) — see SFSQLException.
+              throw new SFSQLException(
                   ErrorCode.INTERNAL_ERROR, "error parsing data type: " + dataTypeStr);
             }
             SnowflakeColumnMetadata columnMetadata =
@@ -316,19 +313,18 @@ public class MetaDataObjects {
     return createResultSet(sqlQuery, rowConverter, resultFormat);
   }
 
-  public ResultSet getTableTypes() throws SQLException {
+  public ResultSet getTableTypes() {
     Object[][] rows =
         SUPPORTED_TABLE_TYPES.stream().map(t -> new Object[] {t}).toArray(Object[][]::new);
     return createResultSet(rows, MetaDataResultSetFormat.GET_TABLE_TYPES);
   }
 
-  public ResultSet getTypeInfo() throws SQLException {
+  public ResultSet getTypeInfo() {
     return createResultSet(TYPE_INFO, MetaDataResultSetFormat.GET_TYPE_INFO);
   }
 
   public ResultSet getProcedures(
-      String originalCatalog, String originalSchemaPattern, String procedureNamePattern)
-      throws SQLException {
+      String originalCatalog, String originalSchemaPattern, String procedureNamePattern) {
     ContextAwareMetadataSearch contextAware =
         ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
@@ -375,8 +371,7 @@ public class MetaDataObjects {
   }
 
   public ResultSet getFunctions(
-      String originalCatalog, String originalSchemaPattern, String functionNamePattern)
-      throws SQLException {
+      String originalCatalog, String originalSchemaPattern, String functionNamePattern) {
     ContextAwareMetadataSearch contextAware =
         ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
@@ -428,8 +423,7 @@ public class MetaDataObjects {
       String originalCatalog,
       String originalSchemaPattern,
       String procedureNamePattern,
-      String columnNamePattern)
-      throws SQLException {
+      String columnNamePattern) {
     ContextAwareMetadataSearch contextAware =
         ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
@@ -448,7 +442,7 @@ public class MetaDataObjects {
 
     logger.debug("SQL query in getProcedureColumns: {}", sqlQuery);
 
-    try (Statement stmt = connection.createStatement()) {
+    try (InternalStatement stmt = connection.createStatementInternal()) {
       Object[][] rows =
           new ObjectsByDescribe(limits, stmt, sqlQuery)
               .showAndDescribeProcedures(
@@ -461,8 +455,7 @@ public class MetaDataObjects {
       String originalCatalog,
       String originalSchemaPattern,
       String functionNamePattern,
-      String columnNamePattern)
-      throws SQLException {
+      String columnNamePattern) {
     // BD#19: result rows used raw params instead of session-resolved values.
     // null catalog produced null FUNCTION_CAT even when session context had a real database
     ContextAwareMetadataSearch contextAware =
@@ -483,7 +476,7 @@ public class MetaDataObjects {
 
     logger.debug("SQL query in getFunctionColumns: {}", sqlQuery);
 
-    try (Statement stmt = connection.createStatement()) {
+    try (InternalStatement stmt = connection.createStatementInternal()) {
       Object[][] rows =
           new ObjectsByDescribe(limits, stmt, sqlQuery)
               .showAndDescribeFunctions(
@@ -493,8 +486,7 @@ public class MetaDataObjects {
   }
 
   public ResultSet getTablePrivileges(
-      String originalCatalog, String originalSchemaPattern, String tableNamePattern)
-      throws SQLException {
+      String originalCatalog, String originalSchemaPattern, String tableNamePattern) {
     // TODO(SNOW-3740736): only this method null-guards tableNamePattern; others pass null to the
     //  query builder. Align in one direction or the other.
     if (tableNamePattern == null) {
@@ -536,8 +528,7 @@ public class MetaDataObjects {
     return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_TABLE_PRIVILEGES);
   }
 
-  public ResultSet getPrimaryKeys(String originalCatalog, String originalSchema, String table)
-      throws SQLException {
+  public ResultSet getPrimaryKeys(String originalCatalog, String originalSchema, String table) {
     ContextAwareMetadataSearch contextAware =
         ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchema);
     String catalog = contextAware.getDatabase();
@@ -613,8 +604,7 @@ public class MetaDataObjects {
       String parentTable,
       String foreignCatalog,
       String foreignSchema,
-      String foreignTable)
-      throws SQLException {
+      String foreignTable) {
     ContextAwareMetadataSearch contextAware =
         ContextAwareMetadataSearch.fromSession(
             connection, originalParentCatalog, originalParentSchema);
@@ -835,7 +825,7 @@ public class MetaDataObjects {
   }
 
   public ResultSet getStreams(
-      String originalCatalog, String originalSchemaPattern, String streamName) throws SQLException {
+      String originalCatalog, String originalSchemaPattern, String streamName) {
     ContextAwareMetadataSearch contextAware =
         ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
@@ -884,19 +874,17 @@ public class MetaDataObjects {
   }
 
   public ResultSet getColumnPrivileges(
-      String catalog, String schema, String table, String columnNamePattern) throws SQLException {
+      String catalog, String schema, String table, String columnNamePattern) {
     return emptyResultSet(MetaDataResultSetFormat.GET_COLUMN_PRIVILEGES);
   }
 
   public ResultSet getIndexInfo(
-      String catalog, String schema, String table, boolean unique, boolean approximate)
-      throws SQLException {
+      String catalog, String schema, String table, boolean unique, boolean approximate) {
     return emptyResultSet(MetaDataResultSetFormat.GET_INDEX_INFO);
   }
 
   public ResultSet getUDTs(
-      String catalog, String schemaPattern, String typeNamePattern, int[] types)
-      throws SQLException {
+      String catalog, String schemaPattern, String typeNamePattern, int[] types) {
     return emptyResultSet(MetaDataResultSetFormat.GET_UDTS);
   }
 
@@ -945,13 +933,15 @@ public class MetaDataObjects {
         ctx.isExactSchema(), ctx.isUseSessionSchema(), ctx.isEnableWildcards());
   }
 
+  private SnowflakeStatementImpl newStatement() {
+    return connection.createStatementInternal();
+  }
+
   private ResultSet createResultSet(
-      String sqlQuery, RowConverter rowConverter, MetaDataResultSetFormat rsFormat)
-      throws SQLException {
-    SnowflakeStatementImpl statement =
-        connection.createStatement().unwrap(SnowflakeStatementImpl.class);
+      String sqlQuery, RowConverter rowConverter, MetaDataResultSetFormat rsFormat) {
+    SnowflakeStatementImpl statement = newStatement();
     try {
-      ResultSet showResult = statement.executeQuery(sqlQuery);
+      ResultSet showResult = statement.executeQueryInternal(sqlQuery);
       String queryId = statement.getQueryID();
       SnowflakeResultSetMetaDataImpl metaData = rsFormat.metaData(queryId);
 
@@ -962,28 +952,25 @@ public class MetaDataObjects {
       if (isMissingMetadataObject(e)) {
         return emptyResultSet(rsFormat);
       }
-      throw e;
+      throw new RuntimeException(e);
     }
   }
 
-  private ResultSet createResultSet(Object[][] rows, MetaDataResultSetFormat format)
-      throws SQLException {
-    SnowflakeStatementImpl statement =
-        connection.createStatement().unwrap(SnowflakeStatementImpl.class);
+  private ResultSet createResultSet(Object[][] rows, MetaDataResultSetFormat format) {
+    SnowflakeStatementImpl statement = newStatement();
     try {
       return ResultSetFactory.createFromRows(statement, format.metaData(null), rows, true);
-    } catch (SQLException | RuntimeException e) {
+    } catch (RuntimeException e) {
       statement.close();
       throw e;
     }
   }
 
-  private ResultSet emptyResultSet(MetaDataResultSetFormat format) throws SQLException {
-    SnowflakeStatementImpl statement =
-        connection.createStatement().unwrap(SnowflakeStatementImpl.class);
+  private ResultSet emptyResultSet(MetaDataResultSetFormat format) {
+    SnowflakeStatementImpl statement = newStatement();
     try {
       return ResultSetFactory.createEmpty(statement, format.metaData(null), true);
-    } catch (SQLException | RuntimeException e) {
+    } catch (RuntimeException e) {
       statement.close();
       throw e;
     }

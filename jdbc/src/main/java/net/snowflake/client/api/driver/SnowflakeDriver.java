@@ -10,8 +10,10 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.Decorators;
 import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.exception.SqlExceptionMapper;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 
@@ -74,7 +76,14 @@ public class SnowflakeDriver implements Driver {
     if (!parsed.isValid()) {
       throw new SnowflakeSQLException("Connection string is invalid. Unable to parse.");
     }
-    return new SnowflakeConnectionImpl(url, info);
+    // The connection constructor performs login and throws unchecked driver carriers on failure.
+    // Because a constructor runs before any instance exists, the @JdbcBoundary decorator cannot
+    // wrap
+    // it — so translate here to honor connect()'s throws SQLException contract instead of letting a
+    // carrier (e.g. CoreException on a bad login) escape the public JDBC entry point.
+    SnowflakeConnectionImpl connection =
+        SqlExceptionMapper.call(() -> new SnowflakeConnectionImpl(url, info));
+    return Decorators.connection(connection, connection.getTelemetry());
   }
 
   @Override

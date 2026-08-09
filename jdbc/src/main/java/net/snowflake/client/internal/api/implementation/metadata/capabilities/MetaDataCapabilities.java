@@ -4,7 +4,6 @@ import static java.sql.DatabaseMetaData.sqlStateSQL;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 
@@ -13,496 +12,496 @@ public final class MetaDataCapabilities {
 
   private final InternalSnowflakeConnection connection;
 
-  public boolean allProceduresAreCallable() throws SQLException {
+  public boolean allProceduresAreCallable() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean allTablesAreSelectable() throws SQLException {
+  public boolean allTablesAreSelectable() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean isReadOnly() throws SQLException {
+  public boolean isReadOnly() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean nullsAreSortedHigh() throws SQLException {
+  public boolean nullsAreSortedHigh() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean nullsAreSortedLow() throws SQLException {
+  public boolean nullsAreSortedLow() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean nullsAreSortedAtStart() throws SQLException {
+  public boolean nullsAreSortedAtStart() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean nullsAreSortedAtEnd() throws SQLException {
+  public boolean nullsAreSortedAtEnd() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean usesLocalFiles() throws SQLException {
+  public boolean usesLocalFiles() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean usesLocalFilePerTable() throws SQLException {
+  public boolean usesLocalFilePerTable() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsMixedCaseIdentifiers() throws SQLException {
+  public boolean supportsMixedCaseIdentifiers() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean storesUpperCaseIdentifiers() throws SQLException {
+  public boolean storesUpperCaseIdentifiers() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean storesLowerCaseIdentifiers() throws SQLException {
+  public boolean storesLowerCaseIdentifiers() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean storesMixedCaseIdentifiers() throws SQLException {
+  public boolean storesMixedCaseIdentifiers() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsMixedCaseQuotedIdentifiers() throws SQLException {
+  public boolean supportsMixedCaseQuotedIdentifiers() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean storesUpperCaseQuotedIdentifiers() throws SQLException {
+  public boolean storesUpperCaseQuotedIdentifiers() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean storesLowerCaseQuotedIdentifiers() throws SQLException {
+  public boolean storesLowerCaseQuotedIdentifiers() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean storesMixedCaseQuotedIdentifiers() throws SQLException {
+  public boolean storesMixedCaseQuotedIdentifiers() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsAlterTableWithAddColumn() throws SQLException {
+  public boolean supportsAlterTableWithAddColumn() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsAlterTableWithDropColumn() throws SQLException {
+  public boolean supportsAlterTableWithDropColumn() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsColumnAliasing() throws SQLException {
+  public boolean supportsColumnAliasing() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean nullPlusNonNullIsNull() throws SQLException {
+  public boolean nullPlusNonNullIsNull() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsConvert() throws SQLException {
+  public boolean supportsConvert() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsConvert(int fromType, int toType) throws SQLException {
+  public boolean supportsConvert(int fromType, int toType) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsTableCorrelationNames() throws SQLException {
+  public boolean supportsTableCorrelationNames() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsDifferentTableCorrelationNames() throws SQLException {
+  public boolean supportsDifferentTableCorrelationNames() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsExpressionsInOrderBy() throws SQLException {
+  public boolean supportsExpressionsInOrderBy() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsOrderByUnrelated() throws SQLException {
+  public boolean supportsOrderByUnrelated() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsGroupBy() throws SQLException {
+  public boolean supportsGroupBy() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsGroupByUnrelated() throws SQLException {
+  public boolean supportsGroupByUnrelated() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsGroupByBeyondSelect() throws SQLException {
+  public boolean supportsGroupByBeyondSelect() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsLikeEscapeClause() throws SQLException {
+  public boolean supportsLikeEscapeClause() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsMultipleResultSets() throws SQLException {
+  public boolean supportsMultipleResultSets() {
     connection.checkClosed();
     // TODO: it should be true when we support multi statements
     return false;
   }
 
-  public boolean supportsMultipleTransactions() throws SQLException {
+  public boolean supportsMultipleTransactions() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsNonNullableColumns() throws SQLException {
+  public boolean supportsNonNullableColumns() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsMinimumSQLGrammar() throws SQLException {
+  public boolean supportsMinimumSQLGrammar() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsCoreSQLGrammar() throws SQLException {
+  public boolean supportsCoreSQLGrammar() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsExtendedSQLGrammar() throws SQLException {
+  public boolean supportsExtendedSQLGrammar() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsANSI92EntryLevelSQL() throws SQLException {
+  public boolean supportsANSI92EntryLevelSQL() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsANSI92IntermediateSQL() throws SQLException {
+  public boolean supportsANSI92IntermediateSQL() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsANSI92FullSQL() throws SQLException {
+  public boolean supportsANSI92FullSQL() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsIntegrityEnhancementFacility() throws SQLException {
+  public boolean supportsIntegrityEnhancementFacility() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsOuterJoins() throws SQLException {
+  public boolean supportsOuterJoins() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsFullOuterJoins() throws SQLException {
+  public boolean supportsFullOuterJoins() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsLimitedOuterJoins() throws SQLException {
+  public boolean supportsLimitedOuterJoins() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean isCatalogAtStart() throws SQLException {
+  public boolean isCatalogAtStart() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsSchemasInDataManipulation() throws SQLException {
+  public boolean supportsSchemasInDataManipulation() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsSchemasInProcedureCalls() throws SQLException {
+  public boolean supportsSchemasInProcedureCalls() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsSchemasInTableDefinitions() throws SQLException {
+  public boolean supportsSchemasInTableDefinitions() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsSchemasInIndexDefinitions() throws SQLException {
+  public boolean supportsSchemasInIndexDefinitions() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsSchemasInPrivilegeDefinitions() throws SQLException {
+  public boolean supportsSchemasInPrivilegeDefinitions() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsCatalogsInDataManipulation() throws SQLException {
+  public boolean supportsCatalogsInDataManipulation() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsCatalogsInProcedureCalls() throws SQLException {
+  public boolean supportsCatalogsInProcedureCalls() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsCatalogsInTableDefinitions() throws SQLException {
+  public boolean supportsCatalogsInTableDefinitions() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsCatalogsInIndexDefinitions() throws SQLException {
+  public boolean supportsCatalogsInIndexDefinitions() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsCatalogsInPrivilegeDefinitions() throws SQLException {
+  public boolean supportsCatalogsInPrivilegeDefinitions() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsPositionedDelete() throws SQLException {
+  public boolean supportsPositionedDelete() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsPositionedUpdate() throws SQLException {
+  public boolean supportsPositionedUpdate() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsSelectForUpdate() throws SQLException {
+  public boolean supportsSelectForUpdate() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsStoredProcedures() throws SQLException {
+  public boolean supportsStoredProcedures() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsSubqueriesInComparisons() throws SQLException {
+  public boolean supportsSubqueriesInComparisons() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsSubqueriesInExists() throws SQLException {
+  public boolean supportsSubqueriesInExists() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsSubqueriesInIns() throws SQLException {
+  public boolean supportsSubqueriesInIns() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsSubqueriesInQuantifieds() throws SQLException {
+  public boolean supportsSubqueriesInQuantifieds() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsCorrelatedSubqueries() throws SQLException {
+  public boolean supportsCorrelatedSubqueries() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsUnion() throws SQLException {
+  public boolean supportsUnion() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsUnionAll() throws SQLException {
+  public boolean supportsUnionAll() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsOpenCursorsAcrossCommit() throws SQLException {
+  public boolean supportsOpenCursorsAcrossCommit() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsOpenCursorsAcrossRollback() throws SQLException {
+  public boolean supportsOpenCursorsAcrossRollback() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsOpenStatementsAcrossCommit() throws SQLException {
+  public boolean supportsOpenStatementsAcrossCommit() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsOpenStatementsAcrossRollback() throws SQLException {
+  public boolean supportsOpenStatementsAcrossRollback() {
     connection.checkClosed();
     return false;
   }
 
-  public int getDefaultTransactionIsolation() throws SQLException {
+  public int getDefaultTransactionIsolation() {
     connection.checkClosed();
     return Connection.TRANSACTION_READ_COMMITTED;
   }
 
-  public boolean supportsTransactions() throws SQLException {
+  public boolean supportsTransactions() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsTransactionIsolationLevel(int level) throws SQLException {
+  public boolean supportsTransactionIsolationLevel(int level) {
     connection.checkClosed();
     return (level == Connection.TRANSACTION_NONE)
         || (level == Connection.TRANSACTION_READ_COMMITTED);
   }
 
-  public boolean supportsDataDefinitionAndDataManipulationTransactions() throws SQLException {
+  public boolean supportsDataDefinitionAndDataManipulationTransactions() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsDataManipulationTransactionsOnly() throws SQLException {
+  public boolean supportsDataManipulationTransactionsOnly() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean dataDefinitionCausesTransactionCommit() throws SQLException {
+  public boolean dataDefinitionCausesTransactionCommit() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean dataDefinitionIgnoredInTransactions() throws SQLException {
+  public boolean dataDefinitionIgnoredInTransactions() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsResultSetType(int type) throws SQLException {
+  public boolean supportsResultSetType(int type) {
     connection.checkClosed();
     return (type == ResultSet.TYPE_FORWARD_ONLY);
   }
 
-  public boolean supportsResultSetConcurrency(int type, int concurrency) throws SQLException {
+  public boolean supportsResultSetConcurrency(int type, int concurrency) {
     connection.checkClosed();
     return (type == ResultSet.TYPE_FORWARD_ONLY && concurrency == ResultSet.CONCUR_READ_ONLY);
   }
 
-  public boolean ownUpdatesAreVisible(int type) throws SQLException {
+  public boolean ownUpdatesAreVisible(int type) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean ownDeletesAreVisible(int type) throws SQLException {
+  public boolean ownDeletesAreVisible(int type) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean ownInsertsAreVisible(int type) throws SQLException {
+  public boolean ownInsertsAreVisible(int type) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean othersUpdatesAreVisible(int type) throws SQLException {
+  public boolean othersUpdatesAreVisible(int type) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean othersDeletesAreVisible(int type) throws SQLException {
+  public boolean othersDeletesAreVisible(int type) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean othersInsertsAreVisible(int type) throws SQLException {
+  public boolean othersInsertsAreVisible(int type) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean updatesAreDetected(int type) throws SQLException {
+  public boolean updatesAreDetected(int type) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean deletesAreDetected(int type) throws SQLException {
+  public boolean deletesAreDetected(int type) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean insertsAreDetected(int type) throws SQLException {
+  public boolean insertsAreDetected(int type) {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsBatchUpdates() throws SQLException {
+  public boolean supportsBatchUpdates() {
     connection.checkClosed();
     return true;
   }
 
-  public boolean supportsSavepoints() throws SQLException {
+  public boolean supportsSavepoints() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsNamedParameters() throws SQLException {
+  public boolean supportsNamedParameters() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsMultipleOpenResults() throws SQLException {
+  public boolean supportsMultipleOpenResults() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsGetGeneratedKeys() throws SQLException {
+  public boolean supportsGetGeneratedKeys() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsResultSetHoldability(int holdability) throws SQLException {
+  public boolean supportsResultSetHoldability(int holdability) {
     connection.checkClosed();
     return holdability == ResultSet.CLOSE_CURSORS_AT_COMMIT;
   }
 
-  public int getResultSetHoldability() throws SQLException {
+  public int getResultSetHoldability() {
     return ResultSet.CLOSE_CURSORS_AT_COMMIT;
   }
 
-  public int getSQLStateType() throws SQLException {
+  public int getSQLStateType() {
     return sqlStateSQL;
   }
 
-  public boolean locatorsUpdateCopy() throws SQLException {
+  public boolean locatorsUpdateCopy() {
     return false;
   }
 
-  public boolean supportsStatementPooling() throws SQLException {
+  public boolean supportsStatementPooling() {
     connection.checkClosed();
     return false;
   }
 
-  public boolean supportsStoredFunctionsUsingCallSyntax() throws SQLException {
+  public boolean supportsStoredFunctionsUsingCallSyntax() {
     connection.checkClosed();
     return true;
   }

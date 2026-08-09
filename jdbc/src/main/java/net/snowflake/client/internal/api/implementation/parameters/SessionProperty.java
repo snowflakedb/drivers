@@ -25,6 +25,8 @@ public enum SessionProperty implements Property {
 
   // Transport
   SSL("ssl"),
+  MIN_TLS_VERSION("min_tls_version"),
+  MAX_TLS_VERSION("max_tls_version"),
 
   // Authentication
   AUTHENTICATOR("authenticator"),

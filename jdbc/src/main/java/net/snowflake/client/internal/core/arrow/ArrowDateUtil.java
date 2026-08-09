@@ -7,7 +7,7 @@ import java.time.LocalDate;
 import java.util.Calendar;
 import java.util.TimeZone;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 
 public class ArrowDateUtil {
@@ -37,9 +37,8 @@ public class ArrowDateUtil {
    * @param oldTz the source (session) timezone
    * @param newTz the target (JVM/Calendar) timezone
    * @return the adjusted date
-   * @throws SFException if the day value is invalid
    */
-  public static Date getDate(int day, TimeZone oldTz, TimeZone newTz) throws SFException {
+  public static Date getDate(int day, TimeZone oldTz, TimeZone newTz) {
     try {
       long milliSecsSinceEpoch = (long) day * MILLIS_IN_ONE_DAY;
       long milliSecsSinceEpochNew =
@@ -52,7 +51,7 @@ public class ArrowDateUtil {
       // http://en.wikipedia.org/wiki/Gregorian_calendar
       return adjustDate(preDate);
     } catch (NumberFormatException ex) {
-      throw new SFException(ErrorCode.INTERNAL_ERROR, "Invalid date value: " + day);
+      throw SFSQLException.fromErrorCode(ErrorCode.INTERNAL_ERROR, "Invalid date value: " + day);
     }
   }
 

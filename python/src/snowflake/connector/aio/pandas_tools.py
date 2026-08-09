@@ -76,7 +76,7 @@ class _AsyncWritePandasOperation(WritePandasMixin):
         cfg = self._cfg
         cfg.emit_warnings()
 
-        cur = await cfg.conn.cursor(AsyncSnowflakeCursor)  # type: ignore[misc, arg-type]
+        cur: AsyncSnowflakeCursor = cfg.conn.cursor(AsyncSnowflakeCursor)  # type: ignore[assignment, arg-type]
         target_location: str | None = None
         try:
             stage_location = await self._create_stage(cur)
@@ -113,7 +113,7 @@ class _AsyncWritePandasOperation(WritePandasMixin):
                     )
             raise
         finally:
-            await cur.close()
+            cur.close()
 
         success = all(row[1] == "LOADED" for row in copy_results)
         return WritePandasResult(success, nchunks, nrows, copy_results)

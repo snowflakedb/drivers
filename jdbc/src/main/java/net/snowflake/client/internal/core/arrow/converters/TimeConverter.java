@@ -6,8 +6,8 @@ import java.sql.Timestamp;
 import java.time.LocalTime;
 import java.util.TimeZone;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
 import net.snowflake.client.internal.util.SnowflakeUtil;
@@ -36,7 +36,7 @@ public class TimeConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public Time toTime(int index) throws SFException {
+  public Time toTime(int index) {
     if (isNull(index)) {
       return null;
     }
@@ -61,7 +61,7 @@ public class TimeConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public Timestamp toTimestamp(int index, TimeZone tz) throws SFException {
+  public Timestamp toTimestamp(int index, TimeZone tz) {
     if (isNull(index)) {
       return null;
     }
@@ -77,7 +77,7 @@ public class TimeConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public String toString(int index) throws SFException {
+  public String toString(int index) {
     if (isNull(index)) {
       return null;
     }
@@ -85,22 +85,22 @@ public class TimeConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public Object toObject(int index) throws SFException {
+  public Object toObject(int index) {
     return toTime(index);
   }
 
   @Override
-  public boolean toBoolean(int index) throws SFException {
+  public boolean toBoolean(int index) {
     if (isNull(index)) {
       return false;
     }
     Time val = toTime(index);
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BOOLEAN_STR, val);
   }
 
   @Override
-  public byte[] toBytes(int index) throws SFException {
+  public byte[] toBytes(int index) {
     if (isNull(index)) {
       return null;
     }

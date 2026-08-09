@@ -1,7 +1,7 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
-import java.sql.SQLException;
 import net.snowflake.client.api.resultset.QueryStatus;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 
 /** Polls query status with capped exponential backoff until the query completes or errors. */
 class QueryResultWaiter {
@@ -15,7 +15,7 @@ class QueryResultWaiter {
 
   @FunctionalInterface
   interface QueryStatusCheck {
-    QueryStatus get() throws SQLException;
+    QueryStatus get();
   }
 
   /**
@@ -41,9 +41,8 @@ class QueryResultWaiter {
    * Block until the query reaches a terminal state.
    *
    * @return the successful {@link QueryStatus}
-   * @throws SQLException if the query fails, is aborted, or status cannot be determined
    */
-  QueryStatus waitForCompletion() throws SQLException {
+  QueryStatus waitForCompletion() {
     int noDataRetry = 0;
     int retryIdx = 0;
     while (true) {
@@ -56,26 +55,29 @@ class QueryResultWaiter {
         if (errorMessage == null || errorMessage.isEmpty()) {
           errorMessage = "No error message available";
         }
-        throw new SQLException(
-            String.format(
-                "Status of query associated with resultSet is %s. %s Results not generated.",
-                status.getDescription(), errorMessage));
+        throw new SFSQLException(
+                String.format(
+                    "Status of query associated with resultSet is %s. %s Results not generated.",
+                    status.getDescription(), errorMessage))
+            .withQueryId(queryId);
       }
       if (status.getStatus() == QueryStatus.Status.NO_DATA) {
         noDataRetry++;
         if (noDataRetry >= NO_DATA_MAX_RETRIES) {
-          throw new SQLException(
-              String.format(
-                  "Cannot retrieve data on the status of this query."
-                      + " No information returned from server for queryID=%s",
-                  queryId));
+          throw new SFSQLException(
+                  String.format(
+                      "Cannot retrieve data on the status of this query."
+                          + " No information returned from server for queryID=%s",
+                      queryId))
+              .withQueryId(queryId);
         }
       }
       try {
         sleeper.sleep(500L * RETRY_PATTERN[retryIdx]);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
-        throw new SQLException("Interrupted while waiting for async query to complete", e);
+        throw new SFSQLException("Interrupted while waiting for async query to complete", e)
+            .withQueryId(queryId);
       }
       if (retryIdx < RETRY_PATTERN.length - 1) {
         retryIdx++;

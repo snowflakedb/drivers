@@ -23,9 +23,10 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.sql.Types;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
@@ -64,6 +65,16 @@ public class SnowflakePreparedStatementImplTest {
 
   private SnowflakePreparedStatementImpl createPreparedStatement(String sql) {
     return new SnowflakePreparedStatementImpl(mockConnection, sql, mockCoreApi);
+  }
+
+  /**
+   * The public-contract view: the generated decorator wrapping the raw impl. It translates the
+   * runtime carriers the impl throws into the checked {@link java.sql.SQLException} types the JDBC
+   * API promises, so tests asserting the public exception contract must go through this.
+   */
+  private PreparedStatement createDecoratedPreparedStatement(String sql) {
+    return new DecoratedSnowflakePreparedStatementImpl(
+        createPreparedStatement(sql), Telemetry.NOOP);
   }
 
   @Test
@@ -130,17 +141,28 @@ public class SnowflakePreparedStatementImplTest {
   }
 
   @Test
-  void preparedStatementRejectsAddBatchWithSql() {
-    PreparedStatement ps = createPreparedStatement("INSERT INTO t VALUES (?)");
+  void shouldRejectAddBatchWithSqlOnPreparedStatement() {
+    PreparedStatement ps = createDecoratedPreparedStatement("INSERT INTO t VALUES (?)");
     assertThrows(
         SQLFeatureNotSupportedException.class, () -> ps.addBatch("INSERT INTO t VALUES (1)"));
   }
 
   @Test
-  void executeBatchOnFailureWrapsAsBatchUpdateExceptionWithExecuteFailedSlots() throws Exception {
-    SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
+  void shouldWrapExecuteBatchFailureAsBatchUpdateExceptionWithExecuteFailedSlots()
+      throws Exception {
+    // Route through the decorator so executeBatch surfaces the checked BatchUpdateException. The
+    // failure is seeded as a CoreException — what the real CoreDriverApi facade produces and the
+    // only type the batch path catches.
+    PreparedStatement ps = createDecoratedPreparedStatement("INSERT INTO t VALUES (?)");
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenThrow(new SQLException("boom", "42000", 7));
+        .thenThrow(
+            new CoreException(
+                DriverException.newBuilder()
+                    .setMessage("boom")
+                    .setSqlState("42000")
+                    .setVendorCode(7)
+                    .build(),
+                null));
 
     ps.setInt(1, 1);
     ps.addBatch();
@@ -193,8 +215,11 @@ public class SnowflakePreparedStatementImplTest {
   }
 
   @Test
-  void getQueryIdIsPreservedFromFailedPreparedExecuteWhenServerProvidesIt() throws Exception {
+  void shouldPreserveQueryIdFromFailedPreparedExecuteWhenServerProvidesIt() throws Exception {
     SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
+    // The failure is a CoreException — the type the real CoreDriverApi facade surfaces (it wraps
+    // the transport-layer ServiceException, preserving the server-side query id) and the type the
+    // impl's execute path catches to capture that id.
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
         .thenReturn(insertResponse(1L, "qid-prior"))
         .thenThrow(driverExceptionWithQueryId("qid-prepared-failed"));
@@ -204,7 +229,7 @@ public class SnowflakePreparedStatementImplTest {
     assertEquals("qid-prior", ps.getQueryID());
 
     ps.setInt(1, 2);
-    assertThrows(SQLException.class, ps::executeUpdate);
+    assertThrows(CoreException.class, ps::executeUpdate);
     assertEquals(
         "qid-prepared-failed",
         ps.getQueryID(),
@@ -212,8 +237,7 @@ public class SnowflakePreparedStatementImplTest {
   }
 
   @Test
-  void getParameterMetaDataFallsBackToEmptyOnIgnoredDescribeErrorAndCachesResult()
-      throws Exception {
+  void shouldFallBackToEmptyMetadataOnIgnoredDescribeErrorAndCacheResult() throws Exception {
     SnowflakePreparedStatementImpl ps = createPreparedStatement("CREATE TABLE t (id INT)");
     // Error code 7 (statement cannot be prepared) is ignored in describe mode.
     when(mockCoreApi.statementPrepare(any())).thenThrow(driverExceptionWithVendorCode(7));
@@ -229,7 +253,9 @@ public class SnowflakePreparedStatementImplTest {
     SnowflakePreparedStatementImpl ps = createPreparedStatement("SELECT ?");
     when(mockCoreApi.statementPrepare(any())).thenThrow(driverExceptionWithVendorCode(1003));
 
-    assertThrows(SnowflakeSQLException.class, ps::getParameterMetaData);
+    // The raw impl rethrows a non-ignored describe error untranslated as CoreException; the
+    // decorator would map it to a SnowflakeSQLException at the public boundary.
+    assertThrows(CoreException.class, ps::getParameterMetaData);
   }
 
   @Test
@@ -259,7 +285,7 @@ public class SnowflakePreparedStatementImplTest {
 
   @Test
   void shouldRejectClobWhoseLengthExceedsMaxValue() throws Exception {
-    try (SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)")) {
+    try (PreparedStatement ps = createDecoratedPreparedStatement("INSERT INTO t VALUES (?)")) {
       Clob oversizedClob = mock(Clob.class);
       when(oversizedClob.length()).thenReturn((long) Integer.MAX_VALUE + 1L);
 
@@ -303,19 +329,19 @@ public class SnowflakePreparedStatementImplTest {
     }
   }
 
-  private static SnowflakeSQLException driverExceptionWithVendorCode(int vendorCode) {
+  private static CoreException driverExceptionWithVendorCode(int vendorCode) {
     DriverException error =
         DriverException.newBuilder()
             .setMessage("describe failure")
             .setVendorCode(vendorCode)
             .build();
-    return new SnowflakeSQLException(error, new RuntimeException("test cause"));
+    return new CoreException(error, null);
   }
 
-  private static SnowflakeSQLException driverExceptionWithQueryId(String queryId) {
+  private static CoreException driverExceptionWithQueryId(String queryId) {
     DriverException error =
         DriverException.newBuilder().setMessage("server-side failure").setQueryId(queryId).build();
-    return new SnowflakeSQLException(error, new RuntimeException("test cause"));
+    return new CoreException(error, null);
   }
 
   private static ExecuteQueryResponse insertResponse(long rowsAffected) {

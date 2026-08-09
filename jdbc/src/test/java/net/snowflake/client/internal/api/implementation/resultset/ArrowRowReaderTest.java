@@ -9,9 +9,9 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import org.apache.arrow.memory.BufferAllocator;
@@ -261,8 +261,8 @@ class ArrowRowReaderTest {
       ArrowResources res = buildResources(alloc, new int[][] {{1}}, new String[][] {{"a"}});
       try (ArrowRowReader reader =
           new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
-        assertThrows(SQLException.class, () -> reader.getColumnName(0));
-        assertThrows(SQLException.class, () -> reader.getColumnName(3));
+        assertThrows(SFSQLException.class, () -> reader.getColumnName(0));
+        assertThrows(SFSQLException.class, () -> reader.getColumnName(3));
       }
     }
   }
@@ -275,7 +275,7 @@ class ArrowRowReaderTest {
       ArrowResources res = buildResources(alloc, new int[][] {{1}}, new String[][] {{"a"}});
       try (ArrowRowReader reader =
           new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
-        assertThrows(SQLException.class, () -> reader.getInt(1));
+        assertThrows(IllegalStateException.class, () -> reader.getInt(1));
       }
     }
   }
@@ -289,7 +289,7 @@ class ArrowRowReaderTest {
         reader.next();
         reader.next();
         assertTrue(reader.isAfterLast());
-        assertThrows(SQLException.class, () -> reader.getInt(1));
+        assertThrows(IllegalStateException.class, () -> reader.getInt(1));
       }
     }
   }

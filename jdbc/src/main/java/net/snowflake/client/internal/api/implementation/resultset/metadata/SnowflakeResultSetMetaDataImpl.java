@@ -1,14 +1,11 @@
 package net.snowflake.client.internal.api.implementation.resultset.metadata;
 
 import java.sql.ResultSetMetaData;
-import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
-import net.snowflake.client.api.exception.SFException;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.FieldMetadata;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.client.internal.codegen.JdbcBoundary;
@@ -40,8 +37,7 @@ public class SnowflakeResultSetMetaDataImpl
    * @return the assembled metadata
    */
   public static SnowflakeResultSetMetaDataImpl from(
-      String queryId, List<ColumnMetadata> columns, DataConversionContext conversionContext)
-      throws SnowflakeSQLException {
+      String queryId, List<ColumnMetadata> columns, DataConversionContext conversionContext) {
     // TODO(SNOW-3740746): source isResultColumnCaseInsensitive and
     //  enableReturnTimestampWithTimeZone from connection parameters
     boolean jdbcTreatDecimalAsInt = conversionContext.isTreatDecimalAsInt();
@@ -88,17 +84,17 @@ public class SnowflakeResultSetMetaDataImpl
   }
 
   @Override
-  public int getColumnCount() throws SQLException {
+  public int getColumnCount() {
     return resultSetMetaData.getColumnCount();
   }
 
   @Override
-  public boolean isAutoIncrement(int column) throws SQLException {
+  public boolean isAutoIncrement(int column) {
     return resultSetMetaData.getIsAutoIncrement(column);
   }
 
   @Override
-  public boolean isCaseSensitive(int column) throws SQLException {
+  public boolean isCaseSensitive(int column) {
     int colType = getColumnType(column);
 
     switch (colType) {
@@ -125,42 +121,42 @@ public class SnowflakeResultSetMetaDataImpl
   }
 
   @Override
-  public boolean isSearchable(int column) throws SQLException {
+  public boolean isSearchable(int column) {
     return true;
   }
 
   @Override
-  public boolean isCurrency(int column) throws SQLException {
+  public boolean isCurrency(int column) {
     return false;
   }
 
   @Override
-  public int isNullable(int column) throws SQLException {
+  public int isNullable(int column) {
     return resultSetMetaData.isNullable(column);
   }
 
   @Override
-  public boolean isSigned(int column) throws SQLException {
+  public boolean isSigned(int column) {
     return resultSetMetaData.isSigned(column);
   }
 
   @Override
-  public int getColumnDisplaySize(int column) throws SQLException {
+  public int getColumnDisplaySize(int column) {
     return resultSetMetaData.getColumnDisplaySize(column);
   }
 
   @Override
-  public String getColumnLabel(int column) throws SQLException {
+  public String getColumnLabel(int column) {
     return resultSetMetaData.getColumnLabel(column);
   }
 
   @Override
-  public String getColumnName(int column) throws SQLException {
+  public String getColumnName(int column) {
     return resultSetMetaData.getColumnName(column);
   }
 
   @Override
-  public String getSchemaName(int column) throws SQLException {
+  public String getSchemaName(int column) {
     // TODO(SNOW-3740747): : is it correct behavior?
     if (this.queryType == QueryType.SYNC) {
       return resultSetMetaData.getSchemaName(column);
@@ -169,17 +165,17 @@ public class SnowflakeResultSetMetaDataImpl
   }
 
   @Override
-  public int getPrecision(int column) throws SQLException {
+  public int getPrecision(int column) {
     return resultSetMetaData.getPrecision(column);
   }
 
   @Override
-  public int getScale(int column) throws SQLException {
+  public int getScale(int column) {
     return resultSetMetaData.getScale(column);
   }
 
   @Override
-  public String getTableName(int column) throws SQLException {
+  public String getTableName(int column) {
     // TODO(SNOW-3740747): : is it correct behavior?
     if (this.queryType == QueryType.SYNC) {
       return resultSetMetaData.getTableName(column);
@@ -188,7 +184,7 @@ public class SnowflakeResultSetMetaDataImpl
   }
 
   @Override
-  public String getCatalogName(int column) throws SQLException {
+  public String getCatalogName(int column) {
     // TODO(SNOW-3740747): : is it correct behavior?
     if (this.queryType == QueryType.SYNC) {
       return resultSetMetaData.getCatalogName(column);
@@ -197,85 +193,80 @@ public class SnowflakeResultSetMetaDataImpl
   }
 
   @Override
-  public int getColumnType(int column) throws SQLException {
-    try {
-      return resultSetMetaData.getColumnType(column);
-    } catch (SFException ex) {
-      throw new SnowflakeSQLException(ex.getErrorCode(), ex.getMessage());
-    }
+  public int getColumnType(int column) {
+    // Any SFSQLException propagates untranslated to the decorator boundary.
+    return resultSetMetaData.getColumnType(column);
   }
 
   @Override
-  public String getColumnTypeName(int column) throws SQLException {
-    try {
-      return resultSetMetaData.getColumnTypeName(column);
-    } catch (SFException ex) {
-      throw new SnowflakeSQLException(ex.getErrorCode(), ex.getMessage());
-    }
+  public String getColumnTypeName(int column) {
+    return resultSetMetaData.getColumnTypeName(column);
   }
 
   @Override
-  public boolean isReadOnly(int column) throws SQLException {
+  public boolean isReadOnly(int column) {
     return true; // metadata column is always readonly
   }
 
   @Override
-  public boolean isWritable(int column) throws SQLException {
+  public boolean isWritable(int column) {
     return false; // never writable
   }
 
   @Override
-  public boolean isDefinitelyWritable(int column) throws SQLException {
+  public boolean isDefinitelyWritable(int column) {
     return false; // never writable
   }
 
   @Override
-  public String getColumnClassName(int column) throws SQLException {
+  public String getColumnClassName(int column) {
     int type = this.getColumnType(column);
 
     return SnowflakeUtil.javaTypeToClassName(type);
   }
 
   @Override
-  public String getQueryID() throws SQLException {
+  public String getQueryID() {
     return queryId;
   }
 
   @Override
-  public List<String> getColumnNames() throws SQLException {
+  public List<String> getColumnNames() {
     return resultSetMetaData.getColumnNames();
   }
 
   @Override
-  public int getColumnIndex(String columnName) throws SQLException {
+  public int getColumnIndex(String columnName) {
     return resultSetMetaData.getColumnIndex(columnName);
   }
 
-  @Override
-  public int getInternalColumnType(int column) throws SQLException {
-    try {
-      return resultSetMetaData.getInternalColumnType(column);
-    } catch (SFException ex) {
-      throw new SnowflakeSQLException(ex.getErrorCode(), ex.getMessage());
-    }
+  /**
+   * The in-memory column names without the checked {@link #getColumnNames()} interface signature.
+   * For same-driver internal callers (e.g. {@code SnowflakeResultSetImpl#findColumn}) that scan the
+   * names directly: the backing list is materialized at construction, so this never fails and needs
+   * no boundary translation.
+   */
+  public List<String> columnNames() {
+    return resultSetMetaData.getColumnNames();
   }
 
   @Override
-  public List<FieldMetadata> getColumnFields(int column) throws SQLException {
-    try {
-      return resultSetMetaData.getColumnFields(column);
-    } catch (SFException ex) {
-      throw new SnowflakeSQLException(ex.getErrorCode(), ex.getMessage());
-    }
+  public int getInternalColumnType(int column) {
+    return resultSetMetaData.getInternalColumnType(column);
   }
 
   @Override
-  public int getVectorDimension(int column) throws SQLException {
+  public List<FieldMetadata> getColumnFields(int column) {
+    return resultSetMetaData.getColumnFields(column);
+  }
+
+  @Override
+  public int getVectorDimension(int column) {
     return resultSetMetaData.getDimension(column);
   }
 
   @Override
-  public int getVectorDimension(String columnName) throws SQLException {
+  public int getVectorDimension(String columnName) {
     return resultSetMetaData.getDimension(getColumnIndex(columnName) + 1);
   }
 }

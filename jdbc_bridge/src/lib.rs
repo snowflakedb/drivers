@@ -1,3 +1,22 @@
+// This crate reaches `sf_core`'s RPC dispatch through its own async layers, so
+// rustc computes the layout of each operation's future from several frames
+// deeper than `sf_core` does. An operation's `await` chain (settings → HTTP →
+// TLS → auth/rest) is ~130 levels on its own, which clears the default
+// `recursion_limit` of 128 from here and fails with
+// `error: queries overflow the depth limit!`.
+//
+// Raising the ceiling is compile-time only and costs nothing at runtime. It is
+// preferred over `Box::pin`ning individual operations in `sf_core`, because
+// which operation is deepest varies by target — Linux overflows on
+// `connection_get_query_result` where macOS overflows on `connection_init` — so
+// boxing one arm fixes only the platform it was measured on.
+//
+// Two things that make this class of error easy to miss: clippy never reports it
+// (it does no codegen), and dev-profile incremental builds cache the layout
+// queries, so it can compile fine locally after an earlier successful build.
+// Reproduce with `CARGO_INCREMENTAL=0` on a cleaned crate.
+#![recursion_limit = "256"]
+
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, OnceLock};
 
@@ -82,22 +101,16 @@ impl JdbcBridge {
         self.results.lock_recover()
     }
 
-    /// Non-blocking submit: register a cancellation handle, spawn the RPC racing
-    /// its token, stash the `JoinHandle`, and return the handle immediately.
+    /// Non-blocking submit: register a cancellation handle, spawn the RPC under
+    /// it, stash the `JoinHandle`, and return the handle immediately.
     fn submit(&self, service_name: String, method_name: String, request_bytes: Vec<u8>) -> u64 {
-        let (handle, token) = self.transport.register();
+        let (handle, _token) = self.transport.register();
         let dispatch = self.dispatch.clone();
         let join = self.runtime.spawn(async move {
             let _guard = tracing::dispatcher::set_default(&dispatch);
             let result = JDBC_BRIDGE
                 .transport
-                .handle_message_cancellable(
-                    handle,
-                    &service_name,
-                    &method_name,
-                    request_bytes,
-                    token,
-                )
+                .handle_message_cancellable(&service_name, &method_name, request_bytes, handle)
                 .await;
             encode_result(result)
         });

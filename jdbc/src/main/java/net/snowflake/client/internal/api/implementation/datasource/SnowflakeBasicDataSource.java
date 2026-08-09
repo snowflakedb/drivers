@@ -10,15 +10,16 @@ import java.security.PrivateKey;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.Base64;
 import java.util.Properties;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
 import net.snowflake.client.api.datasource.SnowflakeDataSource;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.Property;
 import net.snowflake.client.internal.api.implementation.parameters.SessionProperty;
+import net.snowflake.client.internal.codegen.JdbcBoundary;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.util.DelegatingWrapper;
@@ -38,6 +39,7 @@ import net.snowflake.client.internal.util.DelegatingWrapper;
  * passphrase, proxy password) are held in the serialized {@code properties} and are therefore
  * written in clear text when the instance is serialized; protect any serialized form accordingly.
  */
+@JdbcBoundary
 public class SnowflakeBasicDataSource
     implements SnowflakeDataSource, DelegatingWrapper, Serializable {
 
@@ -68,12 +70,12 @@ public class SnowflakeBasicDataSource
   // DataSource methods ----------------------------------------------------------------------------
 
   @Override
-  public Connection getConnection() throws SQLException {
+  public Connection getConnection() {
     return getConnection(user, password);
   }
 
   @Override
-  public Connection getConnection(String username, String password) throws SQLException {
+  public Connection getConnection(String username, String password) {
     String resolvedUrl = resolveUrl();
     String effectiveUser = username != null ? username : user;
     try {
@@ -84,7 +86,7 @@ public class SnowflakeBasicDataSource
           effectiveUser,
           (Supplier<String>) () -> sanitize(getUrl()));
       return con;
-    } catch (SQLException e) {
+    } catch (Exception e) {
       logger.error(
           "Failed to create a connection for {} at {}: {}",
           effectiveUser,
@@ -95,16 +97,12 @@ public class SnowflakeBasicDataSource
     }
   }
 
-  private String resolveUrl() throws SQLException {
-    try {
-      String resolved = getUrl();
-      if (resolved == null || resolved.trim().isEmpty()) {
-        throw new IllegalStateException("URL is not set.");
-      }
-      return resolved;
-    } catch (IllegalStateException e) {
-      throw new SQLException(e.getMessage(), e);
+  private String resolveUrl() {
+    String resolved = getUrl();
+    if (resolved == null || resolved.trim().isEmpty()) {
+      throw new IllegalStateException("URL is not set.");
     }
+    return resolved;
   }
 
   private Properties getProperties(String username, String password) {
@@ -118,20 +116,24 @@ public class SnowflakeBasicDataSource
     return properties;
   }
 
-  protected Connection openConnection(String url, Properties properties) throws SQLException {
-    return DriverManager.getConnection(url, properties);
+  protected Connection openConnection(String url, Properties properties) {
+    try {
+      return DriverManager.getConnection(url, properties);
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   // CommonDataSource methods ----------------------------------------------------------------------
 
   @Override
-  public PrintWriter getLogWriter() throws SQLException {
-    throw new SQLFeatureNotSupportedException();
+  public PrintWriter getLogWriter() {
+    throw new SFSQLFeatureNotSupportedException("getLogWriter not supported");
   }
 
   @Override
-  public void setLogWriter(PrintWriter out) throws SQLException {
-    throw new SQLFeatureNotSupportedException();
+  public void setLogWriter(PrintWriter out) {
+    throw new SFSQLFeatureNotSupportedException("setLogWriter not supported");
   }
 
   @Override
@@ -152,8 +154,8 @@ public class SnowflakeBasicDataSource
   }
 
   @Override
-  public Logger getParentLogger() throws SQLFeatureNotSupportedException {
-    throw new SQLFeatureNotSupportedException();
+  public Logger getParentLogger() {
+    throw new SFSQLFeatureNotSupportedException("getParentLogger not supported");
   }
 
   // SnowflakeDataSource methods -------------------------------------------------------------------

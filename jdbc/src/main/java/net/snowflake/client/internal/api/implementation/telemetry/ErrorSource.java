@@ -2,8 +2,8 @@ package net.snowflake.client.internal.api.implementation.telemetry;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.util.NotImplementedException;
 
 /**
@@ -33,7 +33,7 @@ public enum ErrorSource {
    * defensible subset, refined later without changing callers.
    */
   public static ErrorSource of(Throwable t) {
-    if (t instanceof SFException || t instanceof SnowflakeSQLException) {
+    if (t instanceof SFSQLException || t instanceof SnowflakeSQLException) {
       return SERVER_ERROR;
     }
     if (t instanceof NotImplementedException) {

@@ -11,6 +11,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Properties;
 import net.snowflake.jdbc.utils.PrivateKeyHelper;
+import net.snowflake.jdbc.utils.SkipOldDriver;
 import net.snowflake.jdbc.utils.TestParameters;
 import net.snowflake.jdbc.utils.WithConnect;
 import net.snowflake.jdbc.utils.WithQueryUtils;
@@ -22,7 +23,7 @@ import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 
 @TestInstance(Lifecycle.PER_CLASS)
-class PrivateKeyTests implements WithQueryUtils, WithConnect {
+class PrivateKeyAuthTests implements WithQueryUtils, WithConnect {
 
   private static final String USER = TestParameters.get("SNOWFLAKE_TEST_USER");
 
@@ -129,6 +130,23 @@ class PrivateKeyTests implements WithQueryUtils, WithConnect {
     props.setProperty("user", USER);
     props.setProperty("private_key_base64", privateKeyHelper.getBase64EncodedKey());
     props.setProperty("private_key_pwd", privateKeyHelper.getPassword());
+
+    // When Trying to Connect
+    try (Connection conn = connect(props)) {
+      // Then Login is successful and simple query can be executed
+      assertSimpleQuerySucceeds(conn);
+    }
+  }
+
+  @Test
+  @SkipOldDriver("BD#52")
+  void shouldAuthenticateUsingPrivateKeyAsPemString() throws Exception {
+    // Given Authentication is set to JWT and private key is provided as plaintext PEM
+    Properties props = loadDefaultConnectionProperties();
+    props.setProperty("authenticator", "SNOWFLAKE_JWT");
+    props.setProperty("user", USER);
+    props.setProperty("private_key", privateKeyHelper.getPemContent());
+    props.setProperty("private_key_password", privateKeyHelper.getPassword());
 
     // When Trying to Connect
     try (Connection conn = connect(props)) {

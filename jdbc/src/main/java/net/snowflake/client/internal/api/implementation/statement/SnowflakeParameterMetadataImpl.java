@@ -1,17 +1,19 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
 import java.sql.ParameterMetaData;
-import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
+import net.snowflake.client.internal.codegen.JdbcBoundary;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.SnowflakeTypeHelper;
 
+@JdbcBoundary
 @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
 class SnowflakeParameterMetadataImpl implements ParameterMetaData, DelegatingWrapper {
   private final List<BindMetadata> binds;
@@ -36,55 +38,55 @@ class SnowflakeParameterMetadataImpl implements ParameterMetaData, DelegatingWra
   }
 
   @Override
-  public int getParameterCount() throws SQLException {
+  public int getParameterCount() {
     return binds.size();
   }
 
   @Override
-  public int isNullable(int param) throws SQLException {
+  public int isNullable(int param) {
     return bind(param).isNullable() ? parameterNullable : parameterNoNulls;
   }
 
   @Override
-  public boolean isSigned(int param) throws SQLException {
-    throw new SQLFeatureNotSupportedException("isSigned not supported");
+  public boolean isSigned(int param) {
+    throw new SFSQLFeatureNotSupportedException("isSigned not supported");
   }
 
   @Override
-  public int getPrecision(int param) throws SQLException {
+  public int getPrecision(int param) {
     return bind(param).getPrecision();
   }
 
   @Override
-  public int getScale(int param) throws SQLException {
+  public int getScale(int param) {
     return bind(param).getScale();
   }
 
   @Override
-  public int getParameterType(int param) throws SQLException {
+  public int getParameterType(int param) {
     return SnowflakeTypeHelper.convertStringToType(bind(param).getType());
   }
 
   @Override
-  public String getParameterTypeName(int param) throws SQLException {
+  public String getParameterTypeName(int param) {
     // Return the server-reported type name verbatim (the server reports bind type
     // names in lowercase, e.g. "text", "fixed"); this matches the reference driver.
     return bind(param).getType();
   }
 
   @Override
-  public String getParameterClassName(int param) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getParameterClassName not supported");
+  public String getParameterClassName(int param) {
+    throw new SFSQLFeatureNotSupportedException("getParameterClassName not supported");
   }
 
   @Override
-  public int getParameterMode(int param) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getParameterMode not supported");
+  public int getParameterMode(int param) {
+    throw new SFSQLFeatureNotSupportedException("getParameterMode not supported");
   }
 
-  private SnowflakeParameterMetadataImpl.BindMetadata bind(int param) throws SQLException {
+  private SnowflakeParameterMetadataImpl.BindMetadata bind(int param) {
     if (param < 1 || param > binds.size()) {
-      throw new SQLException(
+      throw new SFSQLException(
           "Invalid parameter index: " + param + " (parameter count: " + binds.size() + ")");
     }
     return binds.get(param - 1);

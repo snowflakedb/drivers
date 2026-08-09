@@ -1,14 +1,14 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
-import java.sql.BatchUpdateException;
-import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.SFBatchUpdateException;
 
 /**
  * Per-statement batch of SQL strings. {@link #executeAll} runs each entry sequentially per JDBC §14
- * (continue-on-error) and surfaces the first failure as a {@link BatchUpdateException}.
+ * (continue-on-error) and surfaces the first failure as a {@link SFBatchUpdateException}.
  */
 final class StatementBatch {
   private final List<String> entries = new ArrayList<>();
@@ -25,12 +25,12 @@ final class StatementBatch {
     return entries.size();
   }
 
-  int[] executeAll(SnowflakeStatementImpl stmt) throws SQLException {
+  int[] executeAll(SnowflakeStatementImpl stmt) {
     int[] updateCounts = new int[entries.size()];
     stmt.clearBatchQueryIds();
-    BatchUpdateException pending = null;
+    SFBatchUpdateException pending = null;
     try {
-      SQLException firstFailure = runEntries(stmt, updateCounts);
+      CoreException firstFailure = runEntries(stmt, updateCounts);
       if (firstFailure != null) {
         pending = SnowflakeStatementImpl.buildBatchFailureException(firstFailure, updateCounts);
       }
@@ -44,10 +44,10 @@ final class StatementBatch {
   }
 
   /** Returns the first per-row failure, or {@code null} if every entry succeeded. */
-  private SQLException runEntries(SnowflakeStatementImpl stmt, int[] updateCounts) {
-    SQLException firstFailure = null;
+  private CoreException runEntries(SnowflakeStatementImpl stmt, int[] updateCounts) {
+    CoreException firstFailure = null;
     for (int i = 0; i < entries.size(); i++) {
-      SQLException rowFailure = runOne(stmt, entries.get(i), updateCounts, i);
+      CoreException rowFailure = runOne(stmt, entries.get(i), updateCounts, i);
       if (rowFailure != null && firstFailure == null) {
         firstFailure = rowFailure;
       }
@@ -56,13 +56,13 @@ final class StatementBatch {
   }
 
   /** Returns {@code null} on success, or the failure exception on per-row error. */
-  private static SQLException runOne(
+  private static CoreException runOne(
       SnowflakeStatementImpl stmt, String sql, int[] updateCounts, int row) {
     try {
       long count = stmt.executeLargeUpdateWithBindings(sql, null);
       updateCounts[row] = SnowflakeStatementImpl.toBatchInt(count);
       return null;
-    } catch (SQLException e) {
+    } catch (CoreException e) {
       updateCounts[row] = Statement.EXECUTE_FAILED;
       return e;
     } finally {

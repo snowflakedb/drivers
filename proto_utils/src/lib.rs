@@ -10,5 +10,5 @@ pub trait Transport {
         service: &str,
         method: &str,
         message: Vec<u8>,
-    ) -> impl std::future::Future<Output = Result<Vec<u8>, ProtoError<Vec<u8>>>> + Send;
+    ) -> impl Future<Output = Result<Vec<u8>, ProtoError<Vec<u8>>>> + Send;
 }

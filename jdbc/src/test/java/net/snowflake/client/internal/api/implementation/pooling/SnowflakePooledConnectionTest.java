@@ -14,11 +14,21 @@ import static org.mockito.Mockito.when;
 import java.sql.Connection;
 import java.sql.SQLException;
 import javax.sql.ConnectionEventListener;
+import javax.sql.PooledConnection;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import org.junit.jupiter.api.Test;
 
 public class SnowflakePooledConnectionTest {
+
+  // SnowflakePooledConnection is a @JdbcBoundary: getConnection()'s public contract — translating
+  // the runtime CONNECTION_CLOSED carrier into the checked SnowflakeSQLException the JDBC API
+  // promises — lives in its generated decorator, so exception-contract assertions must go through
+  // it rather than the raw impl.
+  private static PooledConnection decorated(SnowflakePooledConnection raw) {
+    return new DecoratedSnowflakePooledConnection(raw, Telemetry.NOOP);
+  }
 
   @Test
   public void shouldGetConnectionAfterCloseThrowsConnectionClosed() throws SQLException {
@@ -26,7 +36,8 @@ public class SnowflakePooledConnectionTest {
     SnowflakeConnectionImpl sfConnection = mock(SnowflakeConnectionImpl.class);
     when(physicalConnection.unwrap(SnowflakeConnectionImpl.class)).thenReturn(sfConnection);
 
-    SnowflakePooledConnection pooledConnection = new SnowflakePooledConnection(physicalConnection);
+    PooledConnection pooledConnection =
+        decorated(new SnowflakePooledConnection(physicalConnection));
     pooledConnection.close();
 
     // After the pooled connection is closed the physical connection is released; borrowing a
@@ -99,7 +110,8 @@ public class SnowflakePooledConnectionTest {
     SnowflakeConnectionImpl sfConnection = mock(SnowflakeConnectionImpl.class);
     when(physicalConnection.unwrap(SnowflakeConnectionImpl.class)).thenReturn(sfConnection);
 
-    SnowflakePooledConnection pooledConnection = new SnowflakePooledConnection(physicalConnection);
+    PooledConnection pooledConnection =
+        decorated(new SnowflakePooledConnection(physicalConnection));
     // Simulate the physical connection being torn down (e.g. by a logical abort) without the
     // pooled connection being explicitly closed.
     when(physicalConnection.isClosed()).thenReturn(true);
@@ -146,9 +158,10 @@ public class SnowflakePooledConnectionTest {
     ConnectionEventListener listener = mock(ConnectionEventListener.class);
     pooledConnection.addConnectionEventListener(listener);
 
-    // getConnection() returns a usable logical handle wired to the real pooled connection.
+    // getConnection() returns a usable logical handle wired to the real pooled connection, now
+    // behind its decorated boundary (the delegation assertions below prove it stays usable).
     Connection logicalConnection = pooledConnection.getConnection();
-    assertInstanceOf(LogicalConnection.class, logicalConnection);
+    assertInstanceOf(DecoratedLogicalConnection.class, logicalConnection);
     assertFalse(logicalConnection.isClosed());
     // Delegation reaches the physical connection.
     assertTrue(logicalConnection.getAutoCommit());

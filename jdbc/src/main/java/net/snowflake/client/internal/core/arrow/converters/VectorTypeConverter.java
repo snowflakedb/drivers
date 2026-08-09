@@ -1,7 +1,6 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
 import java.util.List;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import org.apache.arrow.vector.complex.FixedSizeListVector;
 
@@ -16,7 +15,7 @@ public class VectorTypeConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public String toString(int index) throws SFException {
+  public String toString(int index) {
     List<?> object = vector.getObject(index);
     if (object == null) {
       return null;
@@ -30,12 +29,12 @@ public class VectorTypeConverter extends AbstractArrowVectorConverter {
   // universal driver has no StructObjectWrapper layer, so we return the string directly to
   // preserve the public ResultSet.getObject() == getString() parity.
   @Override
-  public Object toObject(int index) throws SFException {
+  public Object toObject(int index) {
     return toString(index);
   }
 
   @Override
-  public byte[] toBytes(int index) throws SFException {
+  public byte[] toBytes(int index) {
     return isNull(index) ? null : toString(index).getBytes();
   }
 }

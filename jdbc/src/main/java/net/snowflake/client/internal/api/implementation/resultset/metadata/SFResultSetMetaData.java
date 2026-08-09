@@ -11,9 +11,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.FieldMetadata;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -22,7 +22,7 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
 // ported from snowflake-jdbc
 class SFResultSetMetaData {
   // TODO(SNOW-3740749): maybe we should validate column index on all accessors and throw
-  // SFException
+  // SFSQLException
   //   with COLUMN_DOES_NOT_EXIST (surfaced as SQLException by the wrapper)
   //   instead of letting out-of-range indices propagate as IndexOutOfBoundsException
   //   Current implementation is ported from snowflake-jdbc.
@@ -311,7 +311,7 @@ class SFResultSetMetaData {
     return columnCount;
   }
 
-  int getColumnType(int column) throws SFException {
+  int getColumnType(int column) {
     return ColumnTypeHelper.getColumnType(
         getInternalColumnType(column), enableReturnTimestampWithTimeZone);
   }
@@ -330,26 +330,30 @@ class SFResultSetMetaData {
     return -1;
   }
 
-  int getInternalColumnType(int column) throws SFException {
+  int getInternalColumnType(int column) {
     int columnIdx = column - 1;
     if (column < 1 || column > columnTypes.size()) {
-      throw new SFException(ErrorCode.COLUMN_DOES_NOT_EXIST, column);
+      throw SFSQLException.fromErrorCode(ErrorCode.COLUMN_DOES_NOT_EXIST, column);
     }
 
     if (columnTypes.get(columnIdx) == null) {
-      throw new SFException(ErrorCode.INTERNAL_ERROR, "Missing column type for column " + column);
+      throw SFSQLException.fromErrorCode(
+              ErrorCode.INTERNAL_ERROR, "Missing column type for column " + column)
+          .withQueryId(queryId);
     }
 
     return columnTypes.get(columnIdx);
   }
 
-  String getColumnTypeName(int column) throws SFException {
+  String getColumnTypeName(int column) {
     if (column < 1 || column > columnTypeNames.size()) {
-      throw new SFException(ErrorCode.COLUMN_DOES_NOT_EXIST, column);
+      throw SFSQLException.fromErrorCode(ErrorCode.COLUMN_DOES_NOT_EXIST, column);
     }
 
     if (columnTypeNames.get(column - 1) == null) {
-      throw new SFException(ErrorCode.INTERNAL_ERROR, "Missing column type for column " + column);
+      throw SFSQLException.fromErrorCode(
+              ErrorCode.INTERNAL_ERROR, "Missing column type for column " + column)
+          .withQueryId(queryId);
     }
 
     return columnTypeNames.get(column - 1);
@@ -452,13 +456,15 @@ class SFResultSetMetaData {
     return isAutoIncrementList;
   }
 
-  List<FieldMetadata> getColumnFields(int column) throws SFException {
+  List<FieldMetadata> getColumnFields(int column) {
     if (column < 1 || column > columnMetadata.size()) {
-      throw new SFException(ErrorCode.COLUMN_DOES_NOT_EXIST, column);
+      throw SFSQLException.fromErrorCode(ErrorCode.COLUMN_DOES_NOT_EXIST, column);
     }
 
     if (columnMetadata.get(column - 1) == null) {
-      throw new SFException(ErrorCode.INTERNAL_ERROR, "Missing column fields for column " + column);
+      throw SFSQLException.fromErrorCode(
+              ErrorCode.INTERNAL_ERROR, "Missing column fields for column " + column)
+          .withQueryId(queryId);
     }
 
     return columnMetadata.get(column - 1).getFields();

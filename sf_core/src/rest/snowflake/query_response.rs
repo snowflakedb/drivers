@@ -383,6 +383,9 @@ impl Data {
     /// PUT auto-detect path into the libsnowflakeclient-parity behaviors
     /// (short-prefix magic-byte detection plus error-swallowing on
     /// unsupported formats). See `WrapperPresets` for the full doc-comment.
+    ///
+    /// `transport` supplies `StageInfo`'s TLS/proxy/CRL settings, which the
+    /// wire-decoded response can't provide — see [`file_manager::StageTransport`].
     pub fn to_file_upload_data(
         &self,
         flavor: PutGetResultsetFlavor,
@@ -390,6 +393,7 @@ impl Data {
         skip_upload_on_content_match: bool,
         use_s3_regional_url_session_param: bool,
         put_fastfail: bool,
+        transport: &file_manager::StageTransport,
     ) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
             parameter: "source locations",
@@ -420,6 +424,7 @@ impl Data {
         if use_s3_regional_url_session_param {
             stage_info.use_s3_regional_url = true;
         }
+        transport.apply_to(&mut stage_info);
 
         let encryption_material: Option<file_manager::EncryptionMaterial> = match &self
             .encryption_material
@@ -494,9 +499,13 @@ impl Data {
     /// - `filename` / `source` are always `"0"` (one CSV file per request)
     /// - `auto_compress` is `true` (stage binding uses server-side compress)
     /// - `source_compression` is `None` (CSV payload is sent uncompressed)
+    ///
+    /// `transport` supplies `StageInfo`'s TLS/proxy/CRL settings, which the
+    /// wire-decoded response can't provide — see [`file_manager::StageTransport`].
     pub fn to_bind_stage_upload_data(
         &self,
         use_s3_regional_url_session_param: bool,
+        transport: &file_manager::StageTransport,
     ) -> Result<file_manager::SingleUploadData, QueryResponseError> {
         let mut stage_info: file_manager::StageInfo = self
             .stage_info
@@ -509,6 +518,7 @@ impl Data {
         if use_s3_regional_url_session_param {
             stage_info.use_s3_regional_url = true;
         }
+        transport.apply_to(&mut stage_info);
 
         let encryption_material: Option<file_manager::EncryptionMaterial> = match &self
             .encryption_material
@@ -554,12 +564,16 @@ impl Data {
     /// column per `BehaviorDifferences.yaml` BD#4. Taken by reference so
     /// callers don't have to clone — the single `clone` happens at the
     /// `DownloadData` storage point below.
+    ///
+    /// `transport` supplies `StageInfo`'s TLS/proxy/CRL settings, which the
+    /// wire-decoded response can't provide — see [`file_manager::StageTransport`].
     pub fn to_file_download_data(
         &self,
         flavor: &PutGetResultsetFlavor,
         use_s3_regional_url_session_param: bool,
         unsafe_file_write: bool,
         get_fastfail: bool,
+        transport: &file_manager::StageTransport,
     ) -> Result<file_manager::DownloadData, QueryResponseError> {
         let src_locations = self
             .src_locations
@@ -587,6 +601,7 @@ impl Data {
         if use_s3_regional_url_session_param {
             stage_info.use_s3_regional_url = true;
         }
+        transport.apply_to(&mut stage_info);
 
         let encryption_materials: Vec<Option<file_manager::EncryptionMaterial>> =
             match &self.encryption_material {
@@ -1597,7 +1612,14 @@ mod tests {
         let json = make_upload_json(r#""encryptionMaterial": null,"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false, false)
+            .to_file_upload_data(
+                PutGetResultsetFlavor::default(),
+                false,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1607,7 +1629,14 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false, false)
+            .to_file_upload_data(
+                PutGetResultsetFlavor::default(),
+                false,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1617,7 +1646,14 @@ mod tests {
         let json = make_upload_json(r#""encryptionMaterial": [],"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false, false)
+            .to_file_upload_data(
+                PutGetResultsetFlavor::default(),
+                false,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1629,7 +1665,14 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false, false)
+            .to_file_upload_data(
+                PutGetResultsetFlavor::default(),
+                false,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert!(upload.encryption_material.is_some());
     }
@@ -1641,7 +1684,14 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false, false)
+            .to_file_upload_data(
+                PutGetResultsetFlavor::default(),
+                false,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert!(upload.encryption_material.is_some());
     }
@@ -1655,8 +1705,14 @@ mod tests {
             ],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let result =
-            data.to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false, false);
+        let result = data.to_file_upload_data(
+            PutGetResultsetFlavor::default(),
+            false,
+            false,
+            false,
+            false,
+            &file_manager::StageTransport::for_test(),
+        );
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
@@ -1670,7 +1726,14 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::Python, false, false, false, false)
+            .to_file_upload_data(
+                PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Python);
         assert!(!upload.legacy_odbc_compression_autodetect);
@@ -1681,7 +1744,14 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::Odbc, true, false, false, false)
+            .to_file_upload_data(
+                PutGetResultsetFlavor::Odbc,
+                true,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Odbc);
         assert!(upload.legacy_odbc_compression_autodetect);
@@ -1712,7 +1782,14 @@ mod tests {
             let json = upload_json_with_source_compression(value);
             let data: Data = serde_json::from_str(&json).unwrap();
             let upload = data
-                .to_file_upload_data(PutGetResultsetFlavor::Python, false, false, false, false)
+                .to_file_upload_data(
+                    PutGetResultsetFlavor::Python,
+                    false,
+                    false,
+                    false,
+                    false,
+                    &file_manager::StageTransport::for_test(),
+                )
                 .unwrap();
             assert!(
                 matches!(upload.source_compression, SourceCompressionParam::Parquet),
@@ -1728,7 +1805,14 @@ mod tests {
             let json = upload_json_with_source_compression(value);
             let data: Data = serde_json::from_str(&json).unwrap();
             let upload = data
-                .to_file_upload_data(PutGetResultsetFlavor::Python, false, false, false, false)
+                .to_file_upload_data(
+                    PutGetResultsetFlavor::Python,
+                    false,
+                    false,
+                    false,
+                    false,
+                    &file_manager::StageTransport::for_test(),
+                )
                 .unwrap();
             assert!(
                 matches!(upload.source_compression, SourceCompressionParam::Orc),
@@ -1756,7 +1840,13 @@ mod tests {
     fn download_data_forwards_flavor_python() {
         let data: Data = serde_json::from_str(&make_download_json()).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(download.flavor, PutGetResultsetFlavor::Python);
     }
@@ -1765,7 +1855,13 @@ mod tests {
     fn download_data_forwards_flavor_odbc() {
         let data: Data = serde_json::from_str(&make_download_json()).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Odbc, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Odbc,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(download.flavor, PutGetResultsetFlavor::Odbc);
     }
@@ -1802,7 +1898,13 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": ["u0", "u1", "u2"]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(
             download.presigned_urls,
@@ -1823,7 +1925,13 @@ mod tests {
         let json = make_download_json_multi_with_urls("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
@@ -1839,7 +1947,13 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": ["u0", "u1"]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(
             download.presigned_urls,
@@ -1862,7 +1976,13 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(
             download.presigned_urls,
@@ -1893,7 +2013,13 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": []"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
@@ -1921,7 +2047,13 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": [null, "u1", null]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(
             download.presigned_urls,
@@ -1937,7 +2069,13 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": [null, null, null]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
@@ -1949,7 +2087,13 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Jdbc, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Jdbc,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
@@ -1959,7 +2103,13 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": ["u0", "u1"]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Jdbc, false, false, false)
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Jdbc,
+                false,
+                false,
+                false,
+                &file_manager::StageTransport::for_test(),
+            )
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
@@ -2631,6 +2781,7 @@ mod tests {
             false,
             use_s3_regional_url_session_param,
             false,
+            &file_manager::StageTransport::for_test(),
         )
         .expect("convert to UploadData")
     }

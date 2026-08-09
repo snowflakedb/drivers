@@ -313,11 +313,15 @@ impl DatabaseDriverV1 {
 
             // The file transfer itself uses the put/get retry policy (distinct
             // from the query policy that drove the GS PUT above).
-            let (put_get_policy, proxy_config) = {
+            let (put_get_policy, transport) = {
                 let conn = conn_ptr.lock().await;
                 (
                     crate::config::retry::RetryPolicy::put_get(&conn.connection_seed),
-                    conn.proxy_config(),
+                    file_manager::StageTransport {
+                        tls_config: conn.tls_config(),
+                        proxy_config: conn.proxy_config(),
+                        crl_worker: self.crl_worker.clone(),
+                    },
                 )
             };
 
@@ -327,7 +331,7 @@ impl DatabaseDriverV1 {
                 Some(refresh_ctx),
                 use_s3_regional_url,
                 &put_get_policy,
-                proxy_config,
+                &transport,
                 source,
             )
             .await
@@ -397,25 +401,29 @@ impl DatabaseDriverV1 {
             )
             .await?;
 
-            let (use_s3_regional_url, unsafe_file_write, proxy_config) = {
+            let (use_s3_regional_url, unsafe_file_write, transport) = {
                 let conn = conn_ptr.lock().await;
                 let unsafe_file_write = conn.unsafe_file_write();
                 let use_s3_regional_url = conn.use_s3_regional_url_session_param().await;
-                (use_s3_regional_url, unsafe_file_write, conn.proxy_config())
+                (
+                    use_s3_regional_url,
+                    unsafe_file_write,
+                    file_manager::StageTransport {
+                        tls_config: conn.tls_config(),
+                        proxy_config: conn.proxy_config(),
+                        crl_worker: self.crl_worker.clone(),
+                    },
+                )
             };
 
-            let mut resolved = resolve_download_target(
+            let resolved = resolve_download_target(
                 response,
                 self.wrapper_presets.put_get_resultset_flavor.clone(),
                 use_s3_regional_url,
                 unsafe_file_write,
+                &transport,
                 &source_filename,
             )?;
-
-            // Zero-disk streaming GET builds `StageInfo` outside
-            // `perform_put_get_transfer`, so copy the connection's proxy
-            // settings onto it explicitly.
-            resolved.stage_info.proxy_config = proxy_config;
 
             let refresh_ctx = StageInfoRefreshContext {
                 sql: get_sql,
@@ -645,6 +653,7 @@ fn resolve_download_target(
     flavor: PutGetResultsetFlavor,
     use_s3_regional_url: bool,
     unsafe_file_write: bool,
+    transport: &file_manager::StageTransport,
     source_filename: &str,
 ) -> Result<ResolvedDownload, ApiError> {
     if !response.success {
@@ -657,11 +666,23 @@ fn resolve_download_target(
     }
 
     let gs_data = response.data;
+    // Both download entry points build `StageInfo` outside
+    // `perform_put_get_transfer`, so the connection's TLS, proxy, and CRL
+    // settings are threaded here via `StageTransport` — one place covers
+    // every caller. `crl_worker` is threaded for parity with the
+    // non-streaming PUT/GET path; the hermetic/live proxy tests disable CRL
+    // checking, so it isn't exercised.
     let download_data = gs_data
         // `get_fastfail` is inert here: this single-file stream path only
         // projects individual fields out of `download_data` into
         // `ResolvedDownload` and never runs the `download_files` batch loop.
-        .to_file_download_data(&flavor, use_s3_regional_url, unsafe_file_write, false)
+        .to_file_download_data(
+            &flavor,
+            use_s3_regional_url,
+            unsafe_file_write,
+            false,
+            transport,
+        )
         .map_err(|e| {
             InvalidArgumentSnafu {
                 argument: format!("Failed to parse GET response: {e}"),
@@ -1353,6 +1374,7 @@ mod tests {
             PutGetResultsetFlavor::Python,
             false,
             false,
+            &file_manager::StageTransport::for_test(),
             "data.csv",
         ) {
             Err(ApiError::InvalidArgument { argument, .. }) => {
@@ -1376,6 +1398,7 @@ mod tests {
             PutGetResultsetFlavor::Python,
             false,
             false,
+            &file_manager::StageTransport::for_test(),
             "data.csv",
         ) {
             Err(ApiError::InvalidArgument { argument, .. }) => {
@@ -1405,6 +1428,7 @@ mod tests {
             PutGetResultsetFlavor::Python,
             false,
             false,
+            &file_manager::StageTransport::for_test(),
             "missing.csv",
         );
         assert!(

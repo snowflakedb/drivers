@@ -9,13 +9,25 @@ import java.io.Reader;
 import java.io.Writer;
 import java.sql.Clob;
 import java.sql.SQLException;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import org.junit.jupiter.api.Test;
 
 public class SnowflakeClobTest {
 
+  // SnowflakeClob is a @JdbcBoundary: its generated decorator is the public contract, translating
+  // the impl's runtime carriers (SFSQLException) into the checked SQLException JDBC promises. These
+  // tests assert that contract, so they construct the Clob through the decorator.
+  private static Clob decoratedClob() {
+    return new DecoratedSnowflakeClob(new SnowflakeClob(), Telemetry.NOOP);
+  }
+
+  private static Clob decoratedClob(String initial) {
+    return new DecoratedSnowflakeClob(new SnowflakeClob(initial), Telemetry.NOOP);
+  }
+
   @Test
   public void shouldSetStringOnEmptyClobAndRoundTripViaGetSubString() throws SQLException {
-    Clob clob = new SnowflakeClob();
+    Clob clob = decoratedClob();
 
     // The createClob() usage pattern: build content on an initially-empty Clob starting at pos 1.
     // The JDK SerialClob throws "Invalid position in Clob object set" here, which is why a mutable
@@ -30,7 +42,7 @@ public class SnowflakeClobTest {
 
   @Test
   public void shouldReturnEmptyStringForZeroLengthGetSubStringOnEmptyClob() throws SQLException {
-    Clob clob = new SnowflakeClob();
+    Clob clob = decoratedClob();
     assertEquals(0, clob.length());
     assertEquals("", clob.getSubString(1, 0));
   }
@@ -38,7 +50,7 @@ public class SnowflakeClobTest {
   @Test
   public void shouldOverwriteAndExtendViaSetString() throws SQLException {
     // BD#13: overwrite prefix in-place; legacy driver would insert and yield "HELLOhello world".
-    Clob clob = new SnowflakeClob("hello");
+    Clob clob = decoratedClob("hello");
     clob.setString(6, " world");
     assertEquals("hello world", clob.getSubString(1, (int) clob.length()));
 
@@ -48,7 +60,7 @@ public class SnowflakeClobTest {
 
   @Test
   public void shouldTruncateAndFindPosition() throws SQLException {
-    Clob clob = new SnowflakeClob("hello world");
+    Clob clob = decoratedClob("hello world");
     assertEquals(7, clob.position("world", 1));
     clob.truncate(5);
     assertEquals("hello", clob.getSubString(1, (int) clob.length()));
@@ -57,7 +69,7 @@ public class SnowflakeClobTest {
 
   @Test
   public void shouldRejectInvalidPositions() throws SQLException {
-    Clob clob = new SnowflakeClob("abc");
+    Clob clob = decoratedClob("abc");
     assertThrows(SQLException.class, () -> clob.setString(0, "x"));
     assertThrows(SQLException.class, () -> clob.getSubString(0, 1));
     // Writing past the end (a gap) is invalid.
@@ -67,7 +79,7 @@ public class SnowflakeClobTest {
   @Test
   public void shouldRejectOperationsAfterFree() throws SQLException {
     // BD#15: JDBC-invalid after free(); legacy driver resets buffer and keeps the Clob usable.
-    Clob clob = new SnowflakeClob("abc");
+    Clob clob = decoratedClob("abc");
     clob.free();
     assertThrows(SQLException.class, clob::length);
     assertThrows(SQLException.class, () -> clob.getSubString(1, 1));
@@ -79,7 +91,7 @@ public class SnowflakeClobTest {
   @Test
   public void shouldSetStringWithOffsetAndLength() throws SQLException {
     // BD#17: len is a character count; legacy driver treats len as a substring end index.
-    Clob clob = new SnowflakeClob();
+    Clob clob = decoratedClob();
     int written = clob.setString(1, "XXhelloYY", 2, 5);
     assertEquals(5, written);
     assertEquals("hello", clob.getSubString(1, (int) clob.length()));
@@ -90,7 +102,7 @@ public class SnowflakeClobTest {
   public void shouldMatchLegacySliceWhenOffsetIsZero() throws SQLException {
     // BD#17: offset == 0 is the only case where substring(offset, len) matches
     // substring(offset, offset + len); both drivers copy the first len characters.
-    Clob clob = new SnowflakeClob();
+    Clob clob = decoratedClob();
     clob.setString(1, "abcdef", 0, 4);
     assertEquals("abcd", clob.getSubString(1, (int) clob.length()));
   }
@@ -98,7 +110,7 @@ public class SnowflakeClobTest {
   @Test
   public void shouldCopyLenCharactersFromNonZeroOffset() throws SQLException {
     // BD#17: new -> "bcde"; legacy substring(1, 4) -> "bcd".
-    Clob clob = new SnowflakeClob();
+    Clob clob = decoratedClob();
     clob.setString(1, "abcdef", 1, 4);
     assertEquals(4, clob.length());
     assertEquals("bcde", clob.getSubString(1, (int) clob.length()));
@@ -106,7 +118,7 @@ public class SnowflakeClobTest {
 
   @Test
   public void shouldRejectOutOfBoundsCharacterStreamWindow() throws Exception {
-    Clob clob = new SnowflakeClob("abc");
+    Clob clob = decoratedClob("abc");
     // getSubString truncates, but getCharacterStream(pos, length) must reject an over-long window.
     assertEquals("bc", clob.getSubString(2, 100));
     assertThrows(SQLException.class, () -> clob.getCharacterStream(2, 100));
@@ -120,8 +132,8 @@ public class SnowflakeClobTest {
 
   @Test
   public void shouldFindPositionWithClobAndRejectNull() throws SQLException {
-    Clob clob = new SnowflakeClob("hello world");
-    Clob needle = new SnowflakeClob("world");
+    Clob clob = decoratedClob("hello world");
+    Clob needle = decoratedClob("world");
     assertEquals(7, clob.position(needle, 1));
     assertThrows(SQLException.class, () -> clob.position((String) null, 1));
     assertThrows(SQLException.class, () -> clob.position((Clob) null, 1));
@@ -129,7 +141,7 @@ public class SnowflakeClobTest {
 
   @Test
   public void shouldReturnOneBytePerCharFromAsciiStream() throws Exception {
-    Clob clob = new SnowflakeClob("ab");
+    Clob clob = decoratedClob("ab");
     try (InputStream stream = clob.getAsciiStream()) {
       assertEquals('a', stream.read());
       assertEquals('b', stream.read());
@@ -139,7 +151,7 @@ public class SnowflakeClobTest {
 
   @Test
   public void shouldAppendViaSetCharacterStreamWriter() throws Exception {
-    Clob clob = new SnowflakeClob("hel");
+    Clob clob = decoratedClob("hel");
     try (Writer writer = clob.setCharacterStream(1)) {
       writer.write("lo".toCharArray());
       writer.flush();
@@ -149,7 +161,7 @@ public class SnowflakeClobTest {
 
   @Test
   public void shouldAppendViaSetAsciiStream() throws Exception {
-    Clob clob = new SnowflakeClob();
+    Clob clob = decoratedClob();
     try (OutputStream stream = clob.setAsciiStream(1)) {
       stream.write('a');
       stream.write('b');

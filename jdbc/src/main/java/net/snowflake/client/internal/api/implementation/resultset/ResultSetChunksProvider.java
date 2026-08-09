@@ -1,6 +1,5 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
-import java.sql.SQLException;
 import java.util.List;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 
@@ -8,7 +7,7 @@ import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 interface ResultSetChunksProvider {
 
   /** Slices the chunks into serializable pieces, each below {@code maxSizeInBytes}. */
-  List<SnowflakeResultSetSerializable> getChunks(long maxSizeInBytes) throws SQLException;
+  List<SnowflakeResultSetSerializable> getChunks(long maxSizeInBytes);
 
   /** Releases any core-side resources. No-op when backed by in-memory chunks. */
   void release();

@@ -22,7 +22,6 @@ import javax.sql.ConnectionEvent;
 import javax.sql.ConnectionEventListener;
 import javax.sql.PooledConnection;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
-import net.snowflake.client.internal.api.implementation.pooling.SnowflakePooledConnection;
 import org.junit.jupiter.api.Test;
 
 public class PooledConnectionLifecycleIT extends PoolingTestBase {
@@ -71,7 +70,7 @@ public class PooledConnectionLifecycleIT extends PoolingTestBase {
     assertEquals(1, listener.closedEvents.size());
     ConnectionEvent closedEvent = listener.closedEvents.get(0);
     assertNull(closedEvent.getSQLException());
-    assertInstanceOf(SnowflakePooledConnection.class, closedEvent.getSource());
+    assertInstanceOf(PooledConnection.class, closedEvent.getSource());
     assertSame(pooledConnection, closedEvent.getSource());
 
     // Physical connection should still be alive after logical close
@@ -104,7 +103,7 @@ public class PooledConnectionLifecycleIT extends PoolingTestBase {
               () -> logicalConnection.setCatalog("nonexistent_database_xyz_9999"));
       assertEquals(1, listener.errorEvents.size());
       ConnectionEvent errorEvent = listener.errorEvents.get(0);
-      assertInstanceOf(SnowflakePooledConnection.class, errorEvent.getSource());
+      assertInstanceOf(PooledConnection.class, errorEvent.getSource());
       assertSame(pooledConnection, errorEvent.getSource());
       assertNotNull(errorEvent.getSQLException());
       assertEquals(error.getErrorCode(), errorEvent.getSQLException().getErrorCode());

@@ -1,7 +1,9 @@
 package net.snowflake.client.internal.api.implementation.parameters;
 
+import java.util.Locale;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Adjusts legacy JDBC connection property <em>values</em> to the representation sf_core expects,
@@ -15,6 +17,25 @@ public final class ParameterValueNormalizer {
 
   private static final String NO_PROXY = "no_proxy";
 
+  @RequiredArgsConstructor
+  private enum LegacyTlsVersion {
+    TLS_1_2("TLSV1.2", "tls12"),
+    TLS_1_3("TLSV1.3", "tls13");
+
+    private final String legacyNormalized;
+    private final String coreValue;
+
+    static String toCoreValue(String value) {
+      String normalized = value.trim().toUpperCase(Locale.ROOT);
+      for (LegacyTlsVersion version : values()) {
+        if (version.legacyNormalized.equals(normalized)) {
+          return version.coreValue;
+        }
+      }
+      return value;
+    }
+  }
+
   /**
    * Normalizes a property value for the given canonical (already key-normalized) property. Returns
    * the value unchanged when no translation applies.
@@ -26,7 +47,16 @@ public final class ParameterValueNormalizer {
     if (NO_PROXY.equals(canonicalKey) && value instanceof String) {
       return normalizeNoProxy((String) value);
     }
+    if (isTlsVersionKey(canonicalKey) && value instanceof String) {
+      return LegacyTlsVersion.toCoreValue((String) value);
+    }
     return value;
+  }
+
+  private static boolean isTlsVersionKey(String canonicalKey) {
+    String normalized = canonicalKey.toLowerCase(Locale.ROOT);
+    return SessionProperty.MIN_TLS_VERSION.getKey().equals(normalized)
+        || SessionProperty.MAX_TLS_VERSION.getKey().equals(normalized);
   }
 
   /**

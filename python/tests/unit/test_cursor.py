@@ -2533,8 +2533,7 @@ class TestAsyncExecuteSkipUploadOnContentMatch:
     @pytest.fixture
     def cursor(self):
         mock_connection = MagicMock()
-        # aio cursor awaits self._connection.is_closed(), so it must be async.
-        mock_connection.is_closed = AsyncMock(return_value=False)
+        mock_connection.is_closed = MagicMock(return_value=False)
         return AsyncSnowflakeCursor(mock_connection)
 
     @staticmethod
@@ -2575,8 +2574,7 @@ class TestAsyncExecuteNumStatements:
     @pytest.fixture
     def cursor(self):
         mock_connection = MagicMock()
-        # aio cursor awaits self._connection.is_closed(), so it must be async.
-        mock_connection.is_closed = AsyncMock(return_value=False)
+        mock_connection.is_closed = MagicMock(return_value=False)
         return AsyncSnowflakeCursor(mock_connection)
 
     @staticmethod
@@ -2926,7 +2924,7 @@ class TestFileStreamUpload:
 
     def test_async_aborts_and_reraises_on_chunk_failure(self, async_mock_core_client):
         conn = MagicMock()
-        conn.is_closed = AsyncMock(return_value=False)
+        conn.is_closed = MagicMock(return_value=False)
         conn.conn_handle = ConnectionHandle(id=1)
         cursor = AsyncSnowflakeCursor(conn)
 
@@ -2940,7 +2938,7 @@ class TestFileStreamUpload:
 
     def test_async_original_error_propagates_when_finish_fails_and_abort_also_fails(self, async_mock_core_client):
         conn = MagicMock()
-        conn.is_closed = AsyncMock(return_value=False)
+        conn.is_closed = MagicMock(return_value=False)
         conn.conn_handle = ConnectionHandle(id=1)
         cursor = AsyncSnowflakeCursor(conn)
 
@@ -2954,7 +2952,7 @@ class TestFileStreamUpload:
 
     def test_async_streams_all_chunks_then_finishes(self, async_mock_core_client):
         conn = MagicMock()
-        conn.is_closed = AsyncMock(return_value=False)
+        conn.is_closed = MagicMock(return_value=False)
         conn.conn_handle = ConnectionHandle(id=1)
         cursor = AsyncSnowflakeCursor(conn)
 

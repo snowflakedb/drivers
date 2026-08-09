@@ -169,9 +169,7 @@ class BlockingConnection(_BlockingAsyncFacade):
     def cursor(self, cursor_class: type = SyncSnowflakeCursor) -> BlockingCursor:
         async_connection = object.__getattribute__(self, "_async_obj")
         loop = object.__getattribute__(self, "_loop")
-        # cursor() is @awaitable_context_manager — returns _AwaitableContextManager;
-        # _LoopRunner.run accepts that awaitable.
-        async_cur = loop.run(async_connection.cursor(cursor_class=self._async_cursor_class(cursor_class)))
+        async_cur = async_connection.cursor(cursor_class=self._async_cursor_class(cursor_class))
         return BlockingCursor(async_cur, loop)
 
     def execute_string(
