@@ -4,6 +4,7 @@ use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
+use crate::apis::operation_ctx::OperationCtx;
 use crate::chunks::ChunkFormatKind;
 use crate::config::config_manager;
 use crate::config::path_resolver;
@@ -208,9 +209,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_init", skip(self, input))]
+    #[instrument(name = "DatabaseDriverV1::connection_init", skip(self, ctx, input))]
     async fn connection_init(
         &self,
+        ctx: Option<&OperationCtx>,
         input: ConnectionInitRequest,
     ) -> Result<ConnectionInitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -245,7 +247,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         }
 
         self.driver
-            .connection_init(conn_handle.into(), db_handle.into())
+            .connection_init(ctx, conn_handle.into(), db_handle.into())
             .await
             .to_protobuf()?;
         Ok(ConnectionInitResponse {})

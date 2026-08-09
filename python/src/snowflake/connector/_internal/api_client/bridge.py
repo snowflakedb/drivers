@@ -19,7 +19,10 @@ except ImportError as err:
 class ProtoTransport:
     """Bridge between Python proto RPC calls and the Rust core via PyO3.
 
-    :meth:`handle_message_async` — returns a native awaitable from Rust.
+    :meth:`handle_message_async` — returns a native awaitable from Rust. The
+        request runs as a tokio task; dropping the awaitable (which is what
+        cancelling the surrounding asyncio task does) cancels the operation's
+        token in core.
 
     :meth:`handle_message` — blocking call (releases the GIL).
     """
