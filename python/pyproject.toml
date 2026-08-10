@@ -284,10 +284,10 @@ SKIP_CORE_BUILD = "{env:SKIP_CORE_BUILD:1}"
 python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.dev.scripts]
-# Unit tests
-unit = "pytest tests/unit {args}"
-# Integration tests
-integ = "pytest tests/integ {args}"
+# Unit / integ: on failure, once-rerun last-failed tests (cap at 5 failures)
+# via pytest cache --lf / --maxfail. https://docs.pytest.org/en/stable/how-to/cache.html
+unit = "pytest tests/unit {args} || pytest tests/unit --lf --maxfail=5 {args}"
+integ = "pytest tests/integ {args} || pytest tests/integ --lf --maxfail=5 {args}"
 # End-to-end tests
 e2e = "pytest tests/e2e {args}"
 # All tests

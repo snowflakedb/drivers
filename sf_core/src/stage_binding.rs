@@ -118,6 +118,9 @@ pub struct StageBindingContext<'a> {
     pub retry_policy: &'a RetryPolicy,
     pub put_get_policy: &'a RetryPolicy,
     pub use_s3_regional_url_session_param: bool,
+    /// Driver-owned CRL worker for the storage TLS client, threaded through so
+    /// the bind-stage upload honours CRL like the file-path PUT/GET does.
+    pub crl_worker: crate::crl::worker::SharedCrlWorker,
 }
 
 #[derive(Clone)]
@@ -221,13 +224,17 @@ async fn upload_blob(
     csv_bytes: &[u8],
     data: &Data,
 ) -> Result<(), StageBindingError> {
-    let mut single = data
-        .to_bind_stage_upload_data(ctx.use_s3_regional_url_session_param)
+    // This path builds `StageInfo` outside `perform_put_get_transfer`, so the
+    // connection's TLS, proxy, and CRL settings are threaded here via
+    // `StageTransport` — the same three the file-path path threads.
+    let transport = file_manager::StageTransport {
+        tls_config: ctx.query_parameters.client_info.tls_config.clone(),
+        proxy_config: ctx.query_parameters.client_info.proxy_config.clone(),
+        crl_worker: ctx.crl_worker.clone(),
+    };
+    let single = data
+        .to_bind_stage_upload_data(ctx.use_s3_regional_url_session_param, &transport)
         .context(MalformedPutResponseSnafu)?;
-
-    // This path builds `StageInfo` outside `perform_put_get_transfer`, so copy
-    // the connection's proxy settings onto it explicitly.
-    single.stage_info.proxy_config = ctx.query_parameters.client_info.proxy_config.clone();
 
     // No `StageInfoRefresher` is needed here: CSV binding payloads are small
     // (a few KB at most) and upload in well under the storage-credential

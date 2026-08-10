@@ -50,7 +50,7 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from ..._internal.statement_utils import async_statement
 from ..._internal.utils import _resolve_alias
-from ...errors import NotSupportedError, ProgrammingError
+from ...errors import ProgrammingError
 from ..result_batch import ResultBatch
 from ._result_set_wrapper import _ResultSetWrapper
 
@@ -147,27 +147,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         await self.execute(command, args)
         return args
 
-    @api_telemetry
-    @requires_open
-    async def set_statement_parameter(self, key: str, value: Any) -> None:
-        """Set a statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
-
-        This must be called before execute() to take effect.
-
-        Args:
-            key: Parameter name (e.g., "MULTI_STATEMENT_COUNT").
-            value: Parameter value.
-
-        Raises:
-            InterfaceError: If cursor is closed.
-
-        Example:
-            await cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
-            await cursor.execute("SELECT 1; SELECT 2; SELECT 3")
-        """
-        # Store in cursor for application in _execute
-        self._set_statement_parameter(key, value)
-
     @pep249
     @api_telemetry
     @requires_open
@@ -224,7 +203,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         if _statement_params:
             statement_parameters.update(_statement_params)
 
-        await self.reset()
+        self.reset()
         return await self._execute(
             operation,
             parameters,
@@ -260,7 +239,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         )
 
         async with async_statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
-            await self._apply_statement_parameters(stmt_handle, statement_parameters)
+            self._apply_statement_parameters(stmt_handle, statement_parameters)
 
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = await self._execute_query(stmt_handle, bindings)
@@ -269,7 +248,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             if response.HasField("multi"):
                 await self._handle_multi_statement_response(response.multi, query)
             else:
-                await self._apply_result_set(response.single, query)
+                self._apply_result_set(response.single, query)
 
             self._query_result.request_id = request_id
 
@@ -299,21 +278,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             except Exception:
                 logger.debug("upload_stream_abort during cleanup failed; propagating original error", exc_info=True)
             raise
-        await self._apply_result_set(finish_response, query)  # type: ignore[arg-type]
-
-    async def _apply_statement_parameters(
-        self,
-        stmt_handle: StatementHandle,
-        statement_parameters: dict[str, Any] | None = None,
-    ) -> None:
-        """Apply sticky `_statement_parameters` merged with per-call
-        `statement_parameters` via SetOptions RPC. Per-call wins on key
-        collision and is never persisted on the cursor.
-        """
-        options = self._build_statement_parameters_options(statement_parameters)
-        if not options:
-            return
-        await async_core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
+        self._apply_result_set(finish_response, query)  # type: ignore[arg-type]
 
     async def _execute_query(
         self, stmt_handle: StatementHandle, bindings: QueryBindings | None
@@ -336,10 +301,10 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         first_qid = self._multi_statement.advance()  # always non-None: from_result() guarantees non-empty children
         # already populate cursor with first child query results
         rs_response = await self._fetch_result_set_by_query_id(first_qid)  # type: ignore[arg-type]
-        await self._apply_result_set(rs_response, query)
+        self._apply_result_set(rs_response, query)
 
-    async def _apply_result_set(self, rs_response: ResultSetResponse, query: str | None) -> None:
-        await self._result_set.replace(rs_response.result_set_handle)
+    def _apply_result_set(self, rs_response: ResultSetResponse, query: str | None) -> None:
+        self._result_set.replace(rs_response.result_set_handle)
         self._query_result = QueryResult.from_result_set_response(rs_response, query)
 
     async def _fetch_result_set_by_query_id(self, query_id: str) -> ResultSetResponse:
@@ -373,7 +338,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         paramstyles, dict parameters, or statements the server reports as not
         array-bindable (e.g. UPDATE, DELETE, MERGE).
         """
-        await self.reset()
+        self.reset()
         total_rowcount = 0
         unknown_rowcount = False
         for params in seq_of_parameters:
@@ -493,7 +458,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Side effects:
             - Updates cursor.description with the column metadata
         """
-        await self.reset()
+        self.reset()
         query, _ = self._prepare_query(operation, parameters)
 
         prepare_result: PrepareResult | None = None
@@ -650,7 +615,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             InterfaceError: If cursor is closed.
 
         Example:
-            await cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+            cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
             await cursor.execute("SELECT 1; SELECT 2; SELECT 3")
             print(await cursor.fetchone())  # (1,)
             await cursor.nextset()
@@ -669,20 +634,14 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         # Detach multi-statement state so reset() doesn't clear it
         ms = self._multi_statement
         self._multi_statement = None
-        await self.reset()
+        self.reset()
         self._multi_statement = ms
 
         rs_response = await self._fetch_result_set_by_query_id(query_id)
-        await self._apply_result_set(rs_response, query=None)
+        self._apply_result_set(rs_response, query=None)
         self._rownumber = -1
 
         return self
-
-    @pep249
-    @api_telemetry
-    async def scroll(self, value: int, mode: str = "relative") -> None:
-        """Scroll the cursor in the result set."""
-        raise NotSupportedError("scroll is not supported")
 
     # ------------------------------------------------------------------
     # Context manager
@@ -699,21 +658,11 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the runtime context for the cursor."""
-        await self.close()
-
-    @api_telemetry
-    async def is_closed(self) -> bool:
-        """
-        Check if the cursor is closed.
-
-        Returns:
-            bool: True if closed, False otherwise
-        """
-        return self._closed or await self._connection.is_closed()
+        self.close()
 
     @api_telemetry
     @requires_open_cursor_not_connection
-    async def reset(self, closing: bool = False) -> None:
+    def reset(self, closing: bool = False) -> None:
         """Reset the result set.
 
         Frees heavy result data (arrow streams, multi-statement state) while
@@ -731,29 +680,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """
         del self._messages[:]
         self._query_result.reset(closing=closing)
-        await self._result_set.release()
+        self._result_set.release()
         self._iterator = None
         self._binding_data = None
         self._prefetch_hook = None
         # Clear multistatement state
         self._multi_statement = None
-
-    @pep249
-    @api_telemetry
-    async def close(self) -> bool | None:
-        """Close the cursor now.
-
-        Returns whether the cursor was closed during this call.
-        """
-        try:
-            if self._closed:
-                return False
-            await self.reset(closing=True)
-            self._closed = True
-            del self._messages[:]
-            return True
-        except Exception:
-            return None
 
     # ------------------------------------------------------------------
     # Fetch – Arrow / Pandas
@@ -875,7 +807,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             ProgrammingError: If the query ID is invalid, the query is still
                 running, or the results are no longer available.
         """
-        await self.reset()
+        self.reset()
 
         response = await async_core_driver.connection_get_query_result(
             conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
@@ -888,12 +820,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             if multi_result.query_ids:
                 first_qid = multi_result.query_ids[0]
                 rs_response = await self._fetch_result_set_by_query_id(first_qid)
-                await self._apply_result_set(rs_response, query=None)
+                self._apply_result_set(rs_response, query=None)
             else:
                 self._query_result = QueryResult()
         else:
             rs_response = response.single
-            await self._apply_result_set(rs_response, query=None)
+            self._apply_result_set(rs_response, query=None)
 
         self._rownumber = -1
 
@@ -921,7 +853,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             DatabaseError: If the server stops returning status information
                 while polling for query completion.
         """
-        await self.reset()
+        self.reset()
         await self.connection.get_query_status_throw_if_error(sfqid)
         self._query_result.sfqid = sfqid
         waiter = AsyncQueryResultWaiter(self._connection, sfqid)
@@ -964,7 +896,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             dict with a ``queryId`` key containing the Snowflake Query ID.
         """
         # TODO: deprecate returning the dict, return just the sfqid itself
-        await self.reset()
+        self.reset()
         return await self._execute_async(command, params)
 
     async def _execute_async(
@@ -1009,7 +941,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         proto carries no nested column list for structured types — BD#43).
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
-        await self.reset()
+        self.reset()
         query, _ = self._prepare_query(operation, parameters)
         prepare_result: PrepareResult | None = None
         async with async_statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]

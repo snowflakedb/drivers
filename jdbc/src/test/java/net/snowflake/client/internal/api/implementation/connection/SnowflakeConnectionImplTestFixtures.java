@@ -7,11 +7,14 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.sql.Connection;
 import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.util.Properties;
 import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.internal.api.decorator.Telemetry;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCommitResponse;
@@ -77,9 +80,17 @@ final class SnowflakeConnectionImplTestFixtures {
     return new SnowflakeConnectionImpl(DEFAULT_JDBC_URL, props, mockCoreApi);
   }
 
-  static void assertConnectionClosedSqlException(SQLException ex) {
-    assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), ex.getSQLState());
-    assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), ex.getErrorCode());
+  // SnowflakeConnectionImpl is a @JdbcBoundary: the raw impl throws unchecked carriers, and the
+  // generated decorator is what reconstructs the checked SQLException the JDBC API promises. Tests
+  // asserting the public exception contract (SQLFeatureNotSupportedException /
+  // SQLClientInfoException)
+  // must exercise the subject through this boundary rather than the raw impl.
+  static Connection boundary(SnowflakeConnectionImpl raw) {
+    return new DecoratedSnowflakeConnectionImpl(raw, Telemetry.NOOP);
+  }
+
+  static void assertConnectionClosedException(SFSQLException ex) {
+    assertEquals(ErrorCode.CONNECTION_CLOSED, ex.getErrorCode());
   }
 
   static void assertConnectionClosedClientInfoException(SQLClientInfoException ex) {

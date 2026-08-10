@@ -1,12 +1,11 @@
 package net.snowflake.client.internal.util;
 
 import java.math.BigDecimal;
-import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 
 public class SnowflakeUtil {
   public static final String BIG_DECIMAL_STR = "big decimal";
@@ -101,7 +100,7 @@ public class SnowflakeUtil {
   }
 
   // ported from snowflake-jdbc
-  public static String javaTypeToClassName(int type) throws SQLException {
+  public static String javaTypeToClassName(int type) {
     switch (type) {
       case Types.VARCHAR:
       case Types.CHAR:
@@ -141,7 +140,7 @@ public class SnowflakeUtil {
         return Short.class.getName();
 
       default:
-        throw new SQLFeatureNotSupportedException(
+        throw new SFSQLFeatureNotSupportedException(
             String.format("No corresponding Java type is found for java.sql.Type: %d", type));
     }
   }

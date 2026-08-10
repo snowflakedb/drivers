@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import java.sql.SQLException;
 import lombok.experimental.UtilityClass;
+import net.snowflake.client.internal.api.implementation.exception.DriverRuntimeException;
 
 @UtilityClass
 class ErrorUtils {
@@ -41,6 +42,13 @@ class ErrorUtils {
     while (current != null) {
       if (current instanceof SQLException) {
         return (SQLException) current;
+      }
+      // The impl tier now throws unchecked carriers instead of checked SQLExceptions (they are
+      // only translated at the decorator boundary, which these metadata queries run beneath).
+      // Convert the carrier to the SQLException it becomes so the SQLState / vendor code the core
+      // reported (e.g. "object does not exist") stays inspectable here.
+      if (current instanceof DriverRuntimeException) {
+        return ((DriverRuntimeException) current).toSQLException();
       }
       current = current.getCause();
     }

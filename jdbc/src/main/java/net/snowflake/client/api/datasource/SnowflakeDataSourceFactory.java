@@ -2,6 +2,8 @@ package net.snowflake.client.api.datasource;
 
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
+import net.snowflake.client.internal.api.decorator.Telemetry;
+import net.snowflake.client.internal.api.implementation.Decorators;
 import net.snowflake.client.internal.api.implementation.datasource.SnowflakeBasicDataSource;
 
 /**
@@ -14,6 +16,6 @@ import net.snowflake.client.internal.api.implementation.datasource.SnowflakeBasi
 public final class SnowflakeDataSourceFactory {
 
   public static SnowflakeDataSource createDataSource() {
-    return new SnowflakeBasicDataSource();
+    return Decorators.dataSource(new SnowflakeBasicDataSource(), Telemetry.NOOP);
   }
 }

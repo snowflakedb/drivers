@@ -306,6 +306,7 @@ impl DatabaseDriverV1 {
             retry_policy,
             put_get_policy: &put_get_policy,
             use_s3_regional_url_session_param,
+            crl_worker: self.crl_worker.clone(),
         };
         let request_id = uuid::Uuid::new_v4();
         crate::stage_binding::upload_csv_bindings(&stage_ctx, &flags, request_id, csv_bytes)

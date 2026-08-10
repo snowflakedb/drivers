@@ -928,6 +928,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::CancelTimeout { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
+        ApiError::Cancelled { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
         ApiError::SpoolBufferWrite { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
@@ -1137,6 +1140,8 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         // language wrappers can surface HYT00 / OperationalError correctly.
         ApiError::QueryTimeout { .. } => StatusCode::GenericError,
         ApiError::CancelTimeout { .. } => StatusCode::GenericError,
+        ApiError::Cancelled { .. } => StatusCode::Cancelled,
+
         // Local temp-file / in-memory spool I/O failure while buffering a
         // chunked upload-stream chunk — a driver-side fault, not caller input.
         ApiError::SpoolBufferWrite { .. } => StatusCode::InternalError,
@@ -1198,6 +1203,16 @@ impl<T> ToProtobuf<T> for Result<T, ApiError> {
     #[allow(clippy::result_large_err)]
     fn to_protobuf(self) -> Result<T, DriverException> {
         self.map_err(to_driver_exception)
+    }
+}
+
+/// Exists so operation-layer code can be generic over `E: From<ApiError>` and
+/// still be usable from the protobuf layer, whose error type is
+/// `DriverException`. `OperationCtx::run` is the current caller — it raises
+/// `ApiError::Cancelled` without knowing which layer it was invoked from.
+impl From<ApiError> for DriverException {
+    fn from(error: ApiError) -> Self {
+        to_driver_exception(error)
     }
 }
 

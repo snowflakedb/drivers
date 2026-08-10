@@ -109,8 +109,29 @@ def mock_async_db_api():
 
     old_client = async_core_driver._client
     async_core_driver.client = db_api
+
+    # Sync core_driver is used by is_closed, is_expired, freeze, etc.
+    from snowflake.connector._internal.api_client.client_api import core_driver
+
+    sync_db_api = MagicMock()
+
+    def _sync_connection_is_closed(request):
+        return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
+
+    sync_db_api.connection_is_closed = MagicMock(side_effect=_sync_connection_is_closed)
+    sync_db_api.connection_is_expired = MagicMock(return_value=ConnectionIsExpiredResponse(is_expired=False))
+    sync_db_api.connection_get_all_parameters = MagicMock(return_value=MagicMock(parameters={}))
+    sync_db_api.connection_get_info = MagicMock(return_value=MagicMock(ListFields=lambda: []))
+    sync_db_api.connection_get_parameter = MagicMock(return_value=MagicMock(value=""))
+
+    old_sync_client = core_driver._client
+    core_driver.client = sync_db_api
+
+    db_api._sync_db_api = sync_db_api
+
     yield db_api
     async_core_driver.client = old_client
+    core_driver.client = old_sync_client
 
 
 @pytest.fixture

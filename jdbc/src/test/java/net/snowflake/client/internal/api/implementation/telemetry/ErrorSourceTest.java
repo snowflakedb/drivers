@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.io.IOException;
 import java.sql.SQLException;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.util.NotImplementedException;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +16,8 @@ public class ErrorSourceTest {
   @Test
   public void shouldClassifySfExceptionAsServerError() {
     assertEquals(
-        ErrorSource.SERVER_ERROR, ErrorSource.of(new SFException(ErrorCode.CONNECTION_CLOSED)));
+        ErrorSource.SERVER_ERROR,
+        ErrorSource.of(SFSQLException.fromErrorCode(ErrorCode.CONNECTION_CLOSED)));
   }
 
   @Test

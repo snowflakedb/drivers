@@ -1,13 +1,17 @@
 package net.snowflake.jdbc.wiremock;
 
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.ServerSocket;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,6 +19,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 import net.snowflake.jdbc.utils.HttpTestClient;
 import net.snowflake.jdbc.utils.HttpTestClient.Response;
 import org.json.JSONArray;
@@ -35,19 +44,38 @@ public final class WiremockClient implements AutoCloseable {
 
   private static final String WIREMOCK_JAR_RELATIVE =
       "tests/wiremock/wiremock_standalone/wiremock-standalone-3.13.2.jar";
+  private static final String WIREMOCK_KEYSTORE = "wiremock-keystore.p12";
+  private static final String WIREMOCK_KEYSTORE_PASSWORD = "password";
+  private static final String TLS_BASE_DISABLED = "SSLv3, TLSv1, TLSv1.1";
   private static final Duration DEFAULT_HEALTH_TIMEOUT = Duration.ofSeconds(30);
   private static final Duration DEFAULT_HEALTH_POLL_INTERVAL = Duration.ofMillis(250);
 
   private final Path workspaceRoot;
   private final Path wiremockDir;
   private final Path wiremockJar;
+  private final String tlsVersion;
   private Process process;
   private int httpPort = -1;
+  private int httpsPort = -1;
+  private Path securityPropsFile;
   private Thread stdoutDrain;
   private Thread stderrDrain;
   private HttpTestClient httpClient;
 
   public WiremockClient() {
+    this(null);
+  }
+
+  /**
+   * @param tlsVersion when {@code "tls12"} or {@code "tls13"}, starts an HTTPS listener restricted
+   *     to that protocol version; use {@link #httpsUrl()} to connect
+   */
+  public WiremockClient(String tlsVersion) {
+    if (tlsVersion != null && !"tls12".equals(tlsVersion) && !"tls13".equals(tlsVersion)) {
+      throw new IllegalArgumentException(
+          "tlsVersion must be 'tls12' or 'tls13', got: " + tlsVersion);
+    }
+    this.tlsVersion = tlsVersion;
     this.workspaceRoot = findWorkspaceRoot();
     this.wiremockDir = workspaceRoot.resolve("tests/wiremock");
     this.wiremockJar = workspaceRoot.resolve(WIREMOCK_JAR_RELATIVE);
@@ -71,6 +99,11 @@ public final class WiremockClient implements AutoCloseable {
     return !spec.startsWith("1."); // "1.8" → false, "11"/"17"/"21" → true
   }
 
+  /** Absolute path to the WireMock test CA PEM (counterpart of Python's {@code _CA_PEM}). */
+  public static Path wiremockCaPemPath() {
+    return findWorkspaceRoot().resolve("tests/wiremock/wiremock-ca.pem");
+  }
+
   public WiremockClient start() {
     if (process != null) {
       return this;
@@ -78,6 +111,13 @@ public final class WiremockClient implements AutoCloseable {
     httpPort = findFreePort();
     List<String> command = new ArrayList<>();
     command.add(System.getProperty("java.home") + File.separator + "bin" + File.separator + "java");
+
+    if (tlsVersion != null) {
+      httpsPort = findFreePort();
+      securityPropsFile = writeTlsSecurityProperties(tlsVersion);
+      command.add("-Djava.security.properties=" + securityPropsFile.toString());
+    }
+
     command.add("-jar");
     command.add(wiremockJar.toString());
     command.add("--root-dir");
@@ -88,6 +128,18 @@ public final class WiremockClient implements AutoCloseable {
     command.add("--port");
     command.add(Integer.toString(httpPort));
     command.add("--disable-banner");
+
+    if (tlsVersion != null) {
+      Path keystorePath = wiremockDir.resolve(WIREMOCK_KEYSTORE);
+      command.add("--https-port");
+      command.add(Integer.toString(httpsPort));
+      command.add("--https-keystore");
+      command.add(keystorePath.toString());
+      command.add("--keystore-type");
+      command.add("PKCS12");
+      command.add("--keystore-password");
+      command.add(WIREMOCK_KEYSTORE_PASSWORD);
+    }
 
     ProcessBuilder pb = new ProcessBuilder(command);
     pb.redirectErrorStream(false);
@@ -102,6 +154,9 @@ public final class WiremockClient implements AutoCloseable {
       stderrDrain = drainAsync(process.getErrorStream(), "wiremock-stderr");
       httpClient = new HttpTestClient();
       waitForHealth(DEFAULT_HEALTH_TIMEOUT, DEFAULT_HEALTH_POLL_INTERVAL);
+      if (tlsVersion != null) {
+        waitForHttpsHealth(DEFAULT_HEALTH_TIMEOUT, DEFAULT_HEALTH_POLL_INTERVAL);
+      }
     } catch (RuntimeException | Error e) {
       stop();
       throw e;
@@ -112,6 +167,14 @@ public final class WiremockClient implements AutoCloseable {
   public String httpUrl() {
     ensureStarted();
     return "http://localhost:" + httpPort;
+  }
+
+  public String httpsUrl() {
+    ensureStarted();
+    if (httpsPort < 0) {
+      throw new IllegalStateException("httpsUrl() requires WiremockClient(\"tls12\") or tls13");
+    }
+    return "https://localhost:" + httpsPort;
   }
 
   public void stop() {
@@ -130,6 +193,8 @@ public final class WiremockClient implements AutoCloseable {
     } finally {
       process = null;
       httpPort = -1;
+      httpsPort = -1;
+      deleteSecurityPropsFile();
       if (stdoutDrain != null) {
         stdoutDrain.interrupt();
         stdoutDrain = null;
@@ -299,6 +364,114 @@ public final class WiremockClient implements AutoCloseable {
         "WireMock did not become healthy within "
             + timeout
             + (lastError != null ? " (last error: " + lastError + ")" : ""));
+  }
+
+  private void waitForHttpsHealth(Duration timeout, Duration pollInterval) {
+    long deadlineNanos = System.nanoTime() + timeout.toNanos();
+    long sleepMillis = Math.max(1L, pollInterval.toMillis());
+    Exception lastError = null;
+    while (System.nanoTime() < deadlineNanos) {
+      if (!process.isAlive()) {
+        throw new RuntimeException(
+            "WireMock process exited prematurely with code " + process.exitValue());
+      }
+      try {
+        HttpsURLConnection connection =
+            openTrustAllHttps("https://localhost:" + httpsPort + "/__admin/health");
+        try {
+          int status = connection.getResponseCode();
+          String body = readResponseBody(connection);
+          if (status == 200 && body.contains("\"healthy\"")) {
+            return;
+          }
+        } finally {
+          connection.disconnect();
+        }
+      } catch (IOException | RuntimeException e) {
+        lastError = e;
+      }
+      try {
+        Thread.sleep(sleepMillis);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new RuntimeException("Interrupted while waiting for WireMock HTTPS health", e);
+      }
+    }
+    throw new RuntimeException(
+        "WireMock HTTPS did not become healthy within "
+            + timeout
+            + (lastError != null ? " (last error: " + lastError + ")" : ""));
+  }
+
+  private static Path writeTlsSecurityProperties(String tlsVersion) {
+    String extraDisabled = "tls12".equals(tlsVersion) ? ", TLSv1.3" : ", TLSv1.2";
+    String content = "jdk.tls.disabledAlgorithms=" + TLS_BASE_DISABLED + extraDisabled + "\n";
+    try {
+      Path file = Files.createTempFile("wiremock-tls-", ".properties");
+      try (BufferedWriter writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
+        writer.write(content);
+      }
+      return file;
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to write TLS security properties file", e);
+    }
+  }
+
+  private void deleteSecurityPropsFile() {
+    if (securityPropsFile != null) {
+      try {
+        Files.deleteIfExists(securityPropsFile);
+      } catch (IOException ignored) {
+        // Best-effort cleanup.
+      }
+      securityPropsFile = null;
+    }
+  }
+
+  private static HttpsURLConnection openTrustAllHttps(String url) throws IOException {
+    TrustManager[] trustAll =
+        new TrustManager[] {
+          new X509TrustManager() {
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+
+            @Override
+            public X509Certificate[] getAcceptedIssuers() {
+              return new X509Certificate[0];
+            }
+          }
+        };
+    try {
+      SSLContext sslContext = SSLContext.getInstance("TLS");
+      sslContext.init(null, trustAll, new SecureRandom());
+      HttpsURLConnection connection = (HttpsURLConnection) new URL(url).openConnection();
+      connection.setSSLSocketFactory(sslContext.getSocketFactory());
+      HostnameVerifier allowAll = (hostname, session) -> true;
+      connection.setHostnameVerifier(allowAll);
+      connection.setConnectTimeout((int) DEFAULT_HEALTH_TIMEOUT.toMillis());
+      connection.setReadTimeout((int) DEFAULT_HEALTH_TIMEOUT.toMillis());
+      return connection;
+    } catch (Exception e) {
+      throw new IOException("Failed to open trust-all HTTPS connection to " + url, e);
+    }
+  }
+
+  private static String readResponseBody(HttpsURLConnection connection) throws IOException {
+    InputStream stream =
+        connection.getResponseCode() >= 400
+            ? connection.getErrorStream()
+            : connection.getInputStream();
+    if (stream == null) {
+      return "";
+    }
+    try (InputStream in = stream) {
+      byte[] bytes = new byte[4096];
+      int read = in.read(bytes);
+      return read > 0 ? new String(bytes, 0, read, StandardCharsets.UTF_8) : "";
+    }
   }
 
   private static int findFreePort() {

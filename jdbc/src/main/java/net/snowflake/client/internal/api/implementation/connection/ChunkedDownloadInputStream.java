@@ -2,8 +2,8 @@ package net.snowflake.client.internal.api.implementation.connection;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.sql.SQLException;
 import java.util.Set;
+import net.snowflake.client.internal.api.implementation.exception.DriverRuntimeException;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
@@ -72,7 +72,7 @@ class ChunkedDownloadInputStream extends InputStream {
       buffer = chunk.getData().toByteArray();
       bufferPos = 0;
       eof = chunk.getEof();
-    } catch (SQLException e) {
+    } catch (DriverRuntimeException e) {
       throw new IOException("Failed to read download stream chunk: " + e.getMessage(), e);
     }
   }
@@ -85,7 +85,7 @@ class ChunkedDownloadInputStream extends InputStream {
     }
     try {
       coreDriverApi.connectionDownloadStreamClose(downloadHandle);
-    } catch (SQLException e) {
+    } catch (DriverRuntimeException e) {
       throw new IOException("Failed to close download stream: " + e.getMessage(), e);
     } finally {
       closed = true;

@@ -3146,8 +3146,8 @@ mod tests {
         }
     }
 
-    /// A 9 MiB SSE body splits into three Azure blocks (4 + 4 + 1 MiB) at the
-    /// 4 MiB default block size: `Put Block` ×3 then one `Put Block List`.
+    /// A 9 MiB SSE body splits into two Azure blocks (8 + 1 MiB) at the
+    /// 8 MiB default block size: `Put Block` ×2 then one `Put Block List`.
     #[tokio::test(flavor = "multi_thread")]
     async fn azure_block_blob_upload_stages_blocks_then_commits() {
         // Derive the block count from the SAME part-size logic production uses,
@@ -3269,8 +3269,8 @@ mod tests {
             StageInfoSnapshot::creds_only(azure_creds("fresh-rotated")),
         );
 
-        // 9 MiB → 3 blocks (4+4+1) at the 4 MiB default; concurrency 4 ≥ 3, so
-        // all three fire their first (stale) PUT concurrently.
+        // 9 MiB → 2 blocks (8+1) at the 8 MiB default; concurrency 4 ≥ 2, so
+        // both fire their first (stale) PUT concurrently.
         let prepared = PreparedUpload {
             source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
                 7u8;
@@ -3542,7 +3542,7 @@ mod tests {
     /// with the `error!` "upload aborted" log — proving the block error survives
     /// the terminal-`Other` flip + outer fold (the multipart analogue of
     /// `put_refresh_mechanism_failure_logs_at_error_naming_reason`). A single
-    /// block (2 MiB < the 4 MiB block size) keeps the outcome deterministic:
+    /// block (2 MiB < the 8 MiB block size) keeps the outcome deterministic:
     /// exactly one 403 → one refresh.
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]

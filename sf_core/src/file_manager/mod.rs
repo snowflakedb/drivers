@@ -20,6 +20,9 @@ pub mod internal {
         decrypt_ciphertext_to_writer,
     };
     pub use super::gcs_transfer::download_from_gcs_streaming;
+    // Real per-cloud part-size formula, so live/e2e tests derive the expected
+    // part/range count from it instead of mirroring constants.
+    pub use super::multipart::{MultipartConfig, compute_part_size};
     pub use crate::compression::compress_to_tempfile;
 
     use super::{
@@ -167,6 +170,11 @@ pub use gcs_transfer::{
     GcsDownloadError, GcsUploadError, download_from_gcs, upload_to_gcs_or_skip,
 };
 pub use multipart::{FileTooLargeError, MultipartParams, MultipartThreshold};
+// Mirrors the Azure/GCS `pub use` above: `FileManagerError::S3Upload`/
+// `S3Download` carry a `pub source: UploadFileError`/`DownloadFileError`, so
+// the type must be reachable for external callers (including tests) to
+// pattern-match on it.
+pub use s3_transfer::{DownloadFileError, UploadFileError};
 pub(crate) use spool::{SPOOL_MEM_THRESHOLD, SpooledBuffer};
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
@@ -185,8 +193,8 @@ use flate2::write::GzDecoder;
 use gcs_transfer::{download_from_gcs_streaming, gcs_get_streaming, gcs_retry_policy};
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{
-    DownloadFileError, S3Download, S3DownloadBody, S3StreamingDownload, UploadFileError,
-    download_from_s3, download_from_s3_streaming, upload_to_s3_or_skip,
+    S3Download, S3DownloadBody, S3StreamingDownload, download_from_s3, download_from_s3_streaming,
+    upload_to_s3_or_skip,
 };
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;

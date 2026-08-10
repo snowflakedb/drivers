@@ -4,11 +4,11 @@ import com.google.protobuf.ByteString;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
@@ -77,8 +77,7 @@ final class PreparedStatementBindingSerializer {
 
   private PreparedStatementBindingSerializer() {}
 
-  static NativeBindings serialize(Map<Integer, ParameterValue> parameterValues)
-      throws SQLException {
+  static NativeBindings serialize(Map<Integer, ParameterValue> parameterValues) {
     if (parameterValues.isEmpty()) {
       logger.debug("No parameter values bound, skipping bindings serialization.");
       return new NativeBindings(null, null);
@@ -89,8 +88,7 @@ final class PreparedStatementBindingSerializer {
     return allocateNativeBindings(jsonBytes);
   }
 
-  private static byte[] buildBindingsJson(Map<Integer, ParameterValue> parameterValues)
-      throws SQLException {
+  private static byte[] buildBindingsJson(Map<Integer, ParameterValue> parameterValues) {
     JSONStringer jsonStringer = new JSONStringer();
     jsonStringer.object();
     // Emit every bound value, keyed by parameter index and ordered for a deterministic payload.
@@ -108,8 +106,7 @@ final class PreparedStatementBindingSerializer {
     return jsonStringer.toString().getBytes(StandardCharsets.UTF_8);
   }
 
-  private static void writeBindingValue(JSONStringer json, int parameterIndex, Object value)
-      throws SQLException {
+  private static void writeBindingValue(JSONStringer json, int parameterIndex, Object value) {
     if (value == null || value instanceof String) {
       json.value(value);
       return;
@@ -126,16 +123,15 @@ final class PreparedStatementBindingSerializer {
     throw unsupportedBindingValue(parameterIndex, value, "binding");
   }
 
-  private static void requireNullOrString(Object element, int parameterIndex, String context)
-      throws SQLException {
+  private static void requireNullOrString(Object element, int parameterIndex, String context) {
     if (element != null && !(element instanceof String)) {
       throw unsupportedBindingValue(parameterIndex, element, context);
     }
   }
 
-  private static SQLException unsupportedBindingValue(
+  private static SFSQLException unsupportedBindingValue(
       int parameterIndex, Object value, String context) {
-    return new SQLException(
+    return new SFSQLException(
         "Internal error: "
             + context
             + " for parameter "
@@ -145,7 +141,7 @@ final class PreparedStatementBindingSerializer {
             + ")");
   }
 
-  private static NativeBindings allocateNativeBindings(byte[] jsonBytes) throws SQLException {
+  private static NativeBindings allocateNativeBindings(byte[] jsonBytes) {
     NativeBuffer nativeBuffer = NativeBuffer.fromBytes(jsonBytes);
     boolean success = false;
     try {
@@ -180,7 +176,7 @@ final class PreparedStatementBindingSerializer {
       this.address = address;
     }
 
-    private static NativeBuffer fromBytes(byte[] source) throws SQLException {
+    private static NativeBuffer fromBytes(byte[] source) {
       ArrowBuf arrowBuf = null;
       boolean success = false;
       try {
@@ -190,7 +186,7 @@ final class PreparedStatementBindingSerializer {
         if (address == 0L) {
           logger.warn(
               "Failed to allocate native memory for binding data: payloadBytes={}", source.length);
-          throw new SQLException("Failed to allocate native memory for binding data");
+          throw new SFSQLException("Failed to allocate native memory for binding data");
         }
         logger.debug("Allocated native binding buffer: payloadBytes={}", source.length);
         success = true;

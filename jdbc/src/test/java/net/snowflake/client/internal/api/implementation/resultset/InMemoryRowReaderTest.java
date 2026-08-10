@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
-import java.sql.SQLException;
 import java.sql.Time;
 import java.sql.Timestamp;
 import org.junit.jupiter.api.Test;
@@ -28,7 +27,7 @@ class InMemoryRowReaderTest {
   }
 
   @Test
-  void shouldAdvanceThroughAllRows() throws SQLException {
+  void shouldAdvanceThroughAllRows() {
     InMemoryRowReader reader = twoRowReader();
 
     assertTrue(reader.next());
@@ -42,7 +41,7 @@ class InMemoryRowReaderTest {
   }
 
   @Test
-  void shouldReportIsLastOnFinalRow() throws SQLException {
+  void shouldReportIsLastOnFinalRow() {
     InMemoryRowReader reader = twoRowReader();
     assertFalse(reader.isLast());
 
@@ -83,7 +82,7 @@ class InMemoryRowReaderTest {
   // --- Column metadata ---
 
   @Test
-  void shouldExposeColumnMetadata() throws SQLException {
+  void shouldExposeColumnMetadata() {
     InMemoryRowReader reader =
         new InMemoryRowReader(new String[] {"A", "B"}, new Object[][] {{"x", "y"}});
     assertEquals(2, reader.getColumnCount());
@@ -92,11 +91,11 @@ class InMemoryRowReaderTest {
   }
 
   @Test
-  void shouldThrowOnOutOfBoundsColumnIndex() throws SQLException {
+  void shouldThrowOnOutOfBoundsColumnIndex() {
     InMemoryRowReader reader = new InMemoryRowReader(new String[] {"C"}, new Object[][] {{"v"}});
     reader.next();
-    assertThrows(SQLException.class, () -> reader.getString(0));
-    assertThrows(SQLException.class, () -> reader.getString(2));
+    assertThrows(IllegalArgumentException.class, () -> reader.getString(0));
+    assertThrows(IllegalArgumentException.class, () -> reader.getString(2));
   }
 
   // --- Access guards ---
@@ -104,20 +103,20 @@ class InMemoryRowReaderTest {
   @Test
   void shouldThrowOnColumnAccessBeforeNext() {
     InMemoryRowReader reader = twoRowReader();
-    assertThrows(SQLException.class, () -> reader.getString(1));
+    assertThrows(IllegalStateException.class, () -> reader.getString(1));
   }
 
   @Test
-  void shouldThrowOnColumnAccessAfterLast() throws SQLException {
+  void shouldThrowOnColumnAccessAfterLast() {
     InMemoryRowReader reader = twoRowReader();
     while (reader.next()) {}
-    assertThrows(SQLException.class, () -> reader.getString(1));
+    assertThrows(IllegalStateException.class, () -> reader.getString(1));
   }
 
   // --- Typed accessors: happy path ---
 
   @Test
-  void shouldReturnNullForNullCell() throws SQLException {
+  void shouldReturnNullForNullCell() {
     InMemoryRowReader reader = new InMemoryRowReader(new String[] {"C"}, new Object[][] {{null}});
     reader.next();
     assertNull(reader.getString(1));
@@ -125,70 +124,70 @@ class InMemoryRowReaderTest {
   }
 
   @Test
-  void shouldReturnString() throws SQLException {
+  void shouldReturnString() {
     InMemoryRowReader reader = readerWith("hello");
     assertEquals("hello", reader.getString(1));
     assertEquals("hello", reader.getObject(1));
   }
 
   @Test
-  void shouldReturnBoolean() throws SQLException {
+  void shouldReturnBoolean() {
     InMemoryRowReader reader = readerWith(true);
     assertTrue(reader.getBoolean(1));
   }
 
   @Test
-  void shouldReturnByte() throws SQLException {
+  void shouldReturnByte() {
     InMemoryRowReader reader = readerWith((byte) 42);
     assertEquals((byte) 42, reader.getByte(1));
   }
 
   @Test
-  void shouldReturnShort() throws SQLException {
+  void shouldReturnShort() {
     InMemoryRowReader reader = readerWith((short) 1000);
     assertEquals((short) 1000, reader.getShort(1));
   }
 
   @Test
-  void shouldReturnInt() throws SQLException {
+  void shouldReturnInt() {
     InMemoryRowReader reader = readerWith(99);
     assertEquals(99, reader.getInt(1));
   }
 
   @Test
-  void shouldReturnLong() throws SQLException {
+  void shouldReturnLong() {
     InMemoryRowReader reader = readerWith(123456789L);
     assertEquals(123456789L, reader.getLong(1));
   }
 
   @Test
-  void shouldReturnFloat() throws SQLException {
+  void shouldReturnFloat() {
     InMemoryRowReader reader = readerWith(1.5f);
     assertEquals(1.5f, reader.getFloat(1));
   }
 
   @Test
-  void shouldReturnDouble() throws SQLException {
+  void shouldReturnDouble() {
     InMemoryRowReader reader = readerWith(3.14);
     assertEquals(3.14, reader.getDouble(1));
   }
 
   @Test
-  void shouldReturnBigDecimal() throws SQLException {
+  void shouldReturnBigDecimal() {
     BigDecimal val = new BigDecimal("12345.678");
     InMemoryRowReader reader = readerWith(val);
     assertEquals(val, reader.getBigDecimal(1));
   }
 
   @Test
-  void shouldReturnBytes() throws SQLException {
+  void shouldReturnBytes() {
     byte[] val = {1, 2, 3};
     InMemoryRowReader reader = readerWith(val);
     assertArrayEquals(val, reader.getBytes(1));
   }
 
   @Test
-  void shouldReturnDate() throws SQLException {
+  void shouldReturnDate() {
     Date val = Date.valueOf("2024-01-15");
     InMemoryRowReader reader = readerWith(val);
     assertEquals(val, reader.getDate(1));
@@ -196,14 +195,14 @@ class InMemoryRowReaderTest {
   }
 
   @Test
-  void shouldReturnTime() throws SQLException {
+  void shouldReturnTime() {
     Time val = Time.valueOf("10:30:00");
     InMemoryRowReader reader = readerWith(val);
     assertEquals(val, reader.getTime(1));
   }
 
   @Test
-  void shouldReturnTimestamp() throws SQLException {
+  void shouldReturnTimestamp() {
     Timestamp val = Timestamp.valueOf("2024-01-15 10:30:00");
     InMemoryRowReader reader = readerWith(val);
     assertEquals(val, reader.getTimestamp(1));
@@ -212,7 +211,7 @@ class InMemoryRowReaderTest {
   // --- Null handling: numeric types return 0, boolean returns false ---
 
   @Test
-  void shouldReturnZeroForNullNumericCells() throws SQLException {
+  void shouldReturnZeroForNullNumericCells() {
     InMemoryRowReader reader = readerWith(null);
     assertEquals(0, reader.getByte(1));
     reader = readerWith(null);
@@ -228,34 +227,34 @@ class InMemoryRowReaderTest {
   }
 
   @Test
-  void shouldReturnFalseForNullBoolean() throws SQLException {
+  void shouldReturnFalseForNullBoolean() {
     InMemoryRowReader reader = readerWith(null);
     assertFalse(reader.getBoolean(1));
   }
 
   @Test
-  void shouldReturnNullForNullBigDecimal() throws SQLException {
+  void shouldReturnNullForNullBigDecimal() {
     InMemoryRowReader reader = readerWith(null);
     assertNull(reader.getBigDecimal(1));
   }
 
   @Test
-  void shouldThrowForNullBytes() throws SQLException {
+  void shouldThrowForNullBytes() {
     InMemoryRowReader reader = readerWith(null);
-    assertThrows(SQLException.class, () -> reader.getBytes(1));
+    assertThrows(IllegalStateException.class, () -> reader.getBytes(1));
   }
 
   // --- wasNull tracking ---
 
   @Test
-  void shouldReportWasNullAfterNullCell() throws SQLException {
+  void shouldReportWasNullAfterNullCell() {
     InMemoryRowReader reader = readerWith(null);
     reader.getString(1);
     assertTrue(reader.wasNull());
   }
 
   @Test
-  void shouldReportWasNotNullAfterNonNullCell() throws SQLException {
+  void shouldReportWasNotNullAfterNonNullCell() {
     InMemoryRowReader reader = readerWith("hello");
     reader.getString(1);
     assertFalse(reader.wasNull());
@@ -264,37 +263,37 @@ class InMemoryRowReaderTest {
   // --- Numeric cross-type conversions ---
 
   @Test
-  void shouldReadIntegerAsShort() throws SQLException {
+  void shouldReadIntegerAsShort() {
     InMemoryRowReader reader = readerWith(1);
     assertEquals((short) 1, reader.getShort(1));
   }
 
   @Test
-  void shouldReadShortAsInt() throws SQLException {
+  void shouldReadShortAsInt() {
     InMemoryRowReader reader = readerWith((short) 42);
     assertEquals(42, reader.getInt(1));
   }
 
   @Test
-  void shouldReadIntegerAsLong() throws SQLException {
+  void shouldReadIntegerAsLong() {
     InMemoryRowReader reader = readerWith(100);
     assertEquals(100L, reader.getLong(1));
   }
 
   @Test
-  void shouldReadLongAsDouble() throws SQLException {
+  void shouldReadLongAsDouble() {
     InMemoryRowReader reader = readerWith(7L);
     assertEquals(7.0, reader.getDouble(1));
   }
 
   @Test
-  void shouldReadIntegerAsByte() throws SQLException {
+  void shouldReadIntegerAsByte() {
     InMemoryRowReader reader = readerWith(127);
     assertEquals((byte) 127, reader.getByte(1));
   }
 
   @Test
-  void shouldReadDoubleAsFloat() throws SQLException {
+  void shouldReadDoubleAsFloat() {
     InMemoryRowReader reader = readerWith(1.5);
     assertEquals(1.5f, reader.getFloat(1), 0.001f);
   }
@@ -302,57 +301,57 @@ class InMemoryRowReaderTest {
   // --- String-to-number parsing ---
 
   @Test
-  void shouldParseIntFromString() throws SQLException {
+  void shouldParseIntFromString() {
     InMemoryRowReader reader = readerWith("42");
     assertEquals(42, reader.getInt(1));
   }
 
   @Test
-  void shouldParseShortFromString() throws SQLException {
+  void shouldParseShortFromString() {
     InMemoryRowReader reader = readerWith("1000");
     assertEquals((short) 1000, reader.getShort(1));
   }
 
   @Test
-  void shouldParseLongFromString() throws SQLException {
+  void shouldParseLongFromString() {
     InMemoryRowReader reader = readerWith("9876543210");
     assertEquals(9876543210L, reader.getLong(1));
   }
 
   @Test
-  void shouldParseFloatFromString() throws SQLException {
+  void shouldParseFloatFromString() {
     InMemoryRowReader reader = readerWith("1.5");
     assertEquals(1.5f, reader.getFloat(1), 0.001f);
   }
 
   @Test
-  void shouldParseDoubleFromString() throws SQLException {
+  void shouldParseDoubleFromString() {
     InMemoryRowReader reader = readerWith("3.14");
     assertEquals(3.14, reader.getDouble(1), 0.0001);
   }
 
   @Test
-  void shouldParseByteFromString() throws SQLException {
+  void shouldParseByteFromString() {
     InMemoryRowReader reader = readerWith("127");
     assertEquals((byte) 127, reader.getByte(1));
   }
 
   @Test
-  void shouldThrowOnUnparsableLongString() throws SQLException {
+  void shouldThrowOnUnparsableLongString() {
     InMemoryRowReader reader = readerWith("not-a-long");
-    assertThrows(SQLException.class, () -> reader.getLong(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getLong(1));
   }
 
   // --- Boolean conversions ---
 
   @Test
-  void shouldReturnTrueForString1() throws SQLException {
+  void shouldReturnTrueForString1() {
     InMemoryRowReader reader = readerWith("1");
     assertTrue(reader.getBoolean(1));
   }
 
   @Test
-  void shouldReturnFalseForNonOneString() throws SQLException {
+  void shouldReturnFalseForNonOneString() {
     InMemoryRowReader reader = readerWith("true");
     assertFalse(reader.getBoolean(1));
     reader = readerWith("0");
@@ -360,7 +359,7 @@ class InMemoryRowReaderTest {
   }
 
   @Test
-  void shouldReturnTrueForPositiveInteger() throws SQLException {
+  void shouldReturnTrueForPositiveInteger() {
     InMemoryRowReader reader = readerWith(1);
     assertTrue(reader.getBoolean(1));
     reader = readerWith(42);
@@ -368,7 +367,7 @@ class InMemoryRowReaderTest {
   }
 
   @Test
-  void shouldReturnFalseForZeroOrNegativeInteger() throws SQLException {
+  void shouldReturnFalseForZeroOrNegativeInteger() {
     InMemoryRowReader reader = readerWith(0);
     assertFalse(reader.getBoolean(1));
     reader = readerWith(-1);
@@ -378,13 +377,13 @@ class InMemoryRowReaderTest {
   // --- BigDecimal from string and other numeric types ---
 
   @Test
-  void shouldParseBigDecimalFromString() throws SQLException {
+  void shouldParseBigDecimalFromString() {
     InMemoryRowReader reader = readerWith("12345.678");
     assertEquals(new BigDecimal("12345.678"), reader.getBigDecimal(1));
   }
 
   @Test
-  void shouldParseBigDecimalFromInteger() throws SQLException {
+  void shouldParseBigDecimalFromInteger() {
     InMemoryRowReader reader = readerWith(42);
     assertEquals(new BigDecimal("42"), reader.getBigDecimal(1));
   }
@@ -392,7 +391,7 @@ class InMemoryRowReaderTest {
   // --- getBytes from String (UTF-8 encoding) ---
 
   @Test
-  void shouldReturnBytesFromString() throws SQLException {
+  void shouldReturnBytesFromString() {
     InMemoryRowReader reader = readerWith("hello");
     assertArrayEquals("hello".getBytes(StandardCharsets.UTF_8), reader.getBytes(1));
   }
@@ -400,33 +399,33 @@ class InMemoryRowReaderTest {
   // --- Typed accessors: type mismatch ---
 
   @Test
-  void shouldThrowOnBooleanTypeMismatch() throws SQLException {
+  void shouldThrowOnBooleanTypeMismatch() {
     InMemoryRowReader reader = readerWith(Date.valueOf("2024-01-01"));
-    assertThrows(SQLException.class, () -> reader.getBoolean(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getBoolean(1));
   }
 
   @Test
-  void shouldThrowOnIntTypeMismatch() throws SQLException {
+  void shouldThrowOnIntTypeMismatch() {
     InMemoryRowReader reader = readerWith("not-an-int");
-    assertThrows(SQLException.class, () -> reader.getInt(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getInt(1));
   }
 
   @Test
-  void shouldThrowOnLongTypeMismatch() throws SQLException {
+  void shouldThrowOnLongTypeMismatch() {
     InMemoryRowReader reader = readerWith("not-a-long");
-    assertThrows(SQLException.class, () -> reader.getLong(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getLong(1));
   }
 
   @Test
-  void shouldThrowOnDateTypeMismatch() throws SQLException {
+  void shouldThrowOnDateTypeMismatch() {
     InMemoryRowReader reader = readerWith("not-a-date");
-    assertThrows(SQLException.class, () -> reader.getDate(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getDate(1));
   }
 
   @Test
-  void shouldThrowOnTimestampTypeMismatch() throws SQLException {
+  void shouldThrowOnTimestampTypeMismatch() {
     InMemoryRowReader reader = readerWith("not-a-timestamp");
-    assertThrows(SQLException.class, () -> reader.getTimestamp(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getTimestamp(1));
   }
 
   // --- Helpers ---

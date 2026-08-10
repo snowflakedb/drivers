@@ -1,8 +1,9 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
 import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertConnectionClosedClientInfoException;
-import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertConnectionClosedSqlException;
+import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertConnectionClosedException;
 import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertFeatureNotSupported;
+import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.boundary;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -34,6 +35,9 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.SFClientInfoException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
@@ -43,6 +47,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
@@ -116,14 +121,14 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void releasesHandlesEvenWhenConnectionCloseThrows() throws Exception {
-      when(mockCoreApi.connectionClose(any())).thenThrow(new SQLException("server error"));
+      when(mockCoreApi.connectionClose(any())).thenThrow(driverException("server error"));
       when(mockCoreApi.connectionRelease(any()))
           .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
       when(mockCoreApi.databaseRelease(any()))
           .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
 
       Connection conn = createConnection();
-      assertThrows(SQLException.class, conn::close);
+      assertThrows(CoreException.class, conn::close);
 
       verify(mockCoreApi).connectionRelease(any());
       verify(mockCoreApi).databaseRelease(any());
@@ -135,9 +140,9 @@ class SnowflakeConnectionImplTest {
       Connection conn = createConnection();
       conn.close();
 
-      assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::createStatement));
-      assertConnectionClosedSqlException(
-          assertThrows(SQLException.class, () -> conn.prepareStatement("SELECT 1")));
+      assertConnectionClosedException(assertThrows(SFSQLException.class, conn::createStatement));
+      assertConnectionClosedException(
+          assertThrows(SFSQLException.class, () -> conn.prepareStatement("SELECT 1")));
     }
 
     @Test
@@ -260,7 +265,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void returnsFalseWhenHeartbeatThrows() throws Exception {
       when(mockCoreApi.connectionHeartbeat(any(), anyInt()))
-          .thenThrow(new SQLException("session expired"));
+          .thenThrow(driverException("session expired"));
 
       try (Connection conn = createConnection()) {
         assertFalse(conn.isValid(0));
@@ -279,7 +284,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void throwsOnNegativeTimeout() throws Exception {
       try (Connection conn = createConnection()) {
-        assertThrows(SQLException.class, () -> conn.isValid(-1));
+        assertThrows(SFSQLException.class, () -> conn.isValid(-1));
       }
     }
 
@@ -337,7 +342,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldFallBackToTrueWhenServerParameterLookupFails() throws Exception {
       when(mockCoreApi.connectionGetParameter(any(), eq("AUTOCOMMIT")))
-          .thenThrow(new SQLException("parameter lookup failed"));
+          .thenThrow(driverException("parameter lookup failed"));
       try (Connection conn = createConnection()) {
         assertTrue(conn.getAutoCommit());
       }
@@ -347,7 +352,7 @@ class SnowflakeConnectionImplTest {
     void shouldThrowOnGetAutoCommitAfterClose() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getAutoCommit));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getAutoCommit));
       }
     }
 
@@ -383,8 +388,8 @@ class SnowflakeConnectionImplTest {
     void shouldThrowOnSetAutoCommitAfterClose() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.setAutoCommit(false)));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.setAutoCommit(false)));
       }
     }
 
@@ -392,8 +397,8 @@ class SnowflakeConnectionImplTest {
     void shouldUpdateCacheBeforeRpcEvenWhenRpcFails() throws Exception {
       try (Connection conn = createConnection()) {
         when(mockCoreApi.connectionSetAutocommit(any(), anyBoolean()))
-            .thenThrow(new SQLException("simulated set-autocommit failure"));
-        assertThrows(SQLException.class, () -> conn.setAutoCommit(false));
+            .thenThrow(driverException("simulated set-autocommit failure"));
+        assertThrows(CoreException.class, () -> conn.setAutoCommit(false));
         assertFalse(conn.getAutoCommit());
       }
     }
@@ -403,8 +408,8 @@ class SnowflakeConnectionImplTest {
       try (Connection conn = createConnection()) {
         conn.setAutoCommit(false);
         when(mockCoreApi.connectionSetAutocommit(any(), eq(true)))
-            .thenThrow(new SQLException("simulated set-autocommit failure"));
-        assertThrows(SQLException.class, () -> conn.setAutoCommit(true));
+            .thenThrow(driverException("simulated set-autocommit failure"));
+        assertThrows(CoreException.class, () -> conn.setAutoCommit(true));
         assertTrue(conn.getAutoCommit());
       }
     }
@@ -444,7 +449,7 @@ class SnowflakeConnectionImplTest {
     void shouldThrowOnCommitAfterClose() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::commit));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::commit));
       }
     }
 
@@ -452,7 +457,7 @@ class SnowflakeConnectionImplTest {
     void shouldThrowOnRollbackAfterClose() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::rollback));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::rollback));
       }
     }
 
@@ -479,36 +484,36 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldPropagateCommitRpcFailure() throws Exception {
       when(mockCoreApi.connectionCommit(any()))
-          .thenThrow(new SQLException("commit failed", "40001", 100));
+          .thenThrow(driverException("commit failed", "40001", 100));
       try (Connection conn = createConnection()) {
         conn.setAutoCommit(false);
-        SQLException ex = assertThrows(SQLException.class, conn::commit);
-        assertEquals("40001", ex.getSQLState());
-        assertEquals(100, ex.getErrorCode());
+        CoreException ex = assertThrows(CoreException.class, conn::commit);
+        assertEquals("40001", ex.getError().getSqlState());
+        assertEquals(100, ex.getError().getVendorCode());
       }
     }
 
     @Test
     void shouldPropagateRollbackRpcFailure() throws Exception {
       when(mockCoreApi.connectionRollback(any()))
-          .thenThrow(new SQLException("rollback failed", "40001", 101));
+          .thenThrow(driverException("rollback failed", "40001", 101));
       try (Connection conn = createConnection()) {
         conn.setAutoCommit(false);
-        SQLException ex = assertThrows(SQLException.class, conn::rollback);
-        assertEquals("40001", ex.getSQLState());
-        assertEquals(101, ex.getErrorCode());
+        CoreException ex = assertThrows(CoreException.class, conn::rollback);
+        assertEquals("40001", ex.getError().getSqlState());
+        assertEquals(101, ex.getError().getVendorCode());
       }
     }
 
     @Test
     void shouldPropagateCommitRpcFailureUnderAutoCommit() throws Exception {
       when(mockCoreApi.connectionCommit(any()))
-          .thenThrow(new SQLException("commit failed", "40001", 100));
+          .thenThrow(driverException("commit failed", "40001", 100));
       try (Connection conn = createConnection()) {
         assertTrue(conn.getAutoCommit());
-        SQLException ex = assertThrows(SQLException.class, conn::commit);
-        assertEquals("40001", ex.getSQLState());
-        assertEquals(100, ex.getErrorCode());
+        CoreException ex = assertThrows(CoreException.class, conn::commit);
+        assertEquals("40001", ex.getError().getSqlState());
+        assertEquals(100, ex.getError().getVendorCode());
         assertTrue(conn.getAutoCommit());
       }
     }
@@ -516,12 +521,12 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldPropagateRollbackRpcFailureUnderAutoCommit() throws Exception {
       when(mockCoreApi.connectionRollback(any()))
-          .thenThrow(new SQLException("rollback failed", "40001", 101));
+          .thenThrow(driverException("rollback failed", "40001", 101));
       try (Connection conn = createConnection()) {
         assertTrue(conn.getAutoCommit());
-        SQLException ex = assertThrows(SQLException.class, conn::rollback);
-        assertEquals("40001", ex.getSQLState());
-        assertEquals(101, ex.getErrorCode());
+        CoreException ex = assertThrows(CoreException.class, conn::rollback);
+        assertEquals("40001", ex.getError().getSqlState());
+        assertEquals(101, ex.getError().getVendorCode());
         assertTrue(conn.getAutoCommit());
       }
     }
@@ -595,12 +600,12 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldThrowWhenSetCatalogFails() throws Exception {
       when(mockCoreApi.connectionUseDatabase(any(), any()))
-          .thenThrow(new SQLException("Object does not exist", "42000", 2003));
+          .thenThrow(driverException("Object does not exist", "42000", 2003));
 
       try (Connection conn = createConnection()) {
-        SQLException ex = assertThrows(SQLException.class, () -> conn.setCatalog("MISSING_DB"));
-        assertEquals("42000", ex.getSQLState());
-        assertEquals(2003, ex.getErrorCode());
+        CoreException ex = assertThrows(CoreException.class, () -> conn.setCatalog("MISSING_DB"));
+        assertEquals("42000", ex.getError().getSqlState());
+        assertEquals(2003, ex.getError().getVendorCode());
       }
     }
 
@@ -608,10 +613,10 @@ class SnowflakeConnectionImplTest {
     void shouldThrowWhenClosed() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        SQLException ex = assertThrows(SQLException.class, conn::getCatalog);
-        assertConnectionClosedSqlException(ex);
-        ex = assertThrows(SQLException.class, () -> conn.setCatalog("OTHER_DB"));
-        assertConnectionClosedSqlException(ex);
+        SFSQLException ex = assertThrows(SFSQLException.class, conn::getCatalog);
+        assertConnectionClosedException(ex);
+        ex = assertThrows(SFSQLException.class, () -> conn.setCatalog("OTHER_DB"));
+        assertConnectionClosedException(ex);
       }
     }
   }
@@ -673,12 +678,13 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldThrowWhenSetSchemaFails() throws Exception {
       when(mockCoreApi.connectionUseSchema(any(), any()))
-          .thenThrow(new SQLException("Object does not exist", "42000", 2003));
+          .thenThrow(driverException("Object does not exist", "42000", 2003));
 
       try (Connection conn = createConnection()) {
-        SQLException ex = assertThrows(SQLException.class, () -> conn.setSchema("MISSING_SCHEMA"));
-        assertEquals("42000", ex.getSQLState());
-        assertEquals(2003, ex.getErrorCode());
+        CoreException ex =
+            assertThrows(CoreException.class, () -> conn.setSchema("MISSING_SCHEMA"));
+        assertEquals("42000", ex.getError().getSqlState());
+        assertEquals(2003, ex.getError().getVendorCode());
       }
     }
 
@@ -686,9 +692,9 @@ class SnowflakeConnectionImplTest {
     void shouldThrowWhenClosed() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getSchema));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.setSchema("OTHER_SCHEMA")));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getSchema));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.setSchema("OTHER_SCHEMA")));
       }
     }
   }
@@ -727,7 +733,7 @@ class SnowflakeConnectionImplTest {
       clientInfo.setProperty("name", "Peter");
       clientInfo.setProperty("description", "SNOWFLAKE JDBC");
 
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         SQLClientInfoException ex =
             assertThrows(SQLClientInfoException.class, () -> conn.setClientInfo(clientInfo));
         assertEquals(ErrorCode.INVALID_PARAMETER_VALUE.getSqlState(), ex.getSQLState());
@@ -742,7 +748,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectSetClientInfoSingleUnknownProperty() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         SQLClientInfoException ex =
             assertThrows(
                 SQLClientInfoException.class,
@@ -772,7 +778,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldThrowClientInfoExceptionWhenClosedWithSingleProperty() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         conn.close();
         SQLClientInfoException ex =
             assertThrows(
@@ -790,7 +796,7 @@ class SnowflakeConnectionImplTest {
       clientInfo.setProperty("a", "1");
       clientInfo.setProperty("b", "2");
 
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         conn.close();
         SQLClientInfoException ex =
             assertThrows(SQLClientInfoException.class, () -> conn.setClientInfo(clientInfo));
@@ -801,7 +807,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldThrowClientInfoExceptionWhenClosedWithNullProperties() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         conn.close();
         SQLClientInfoException ex =
             assertThrows(SQLClientInfoException.class, () -> conn.setClientInfo((Properties) null));
@@ -814,8 +820,8 @@ class SnowflakeConnectionImplTest {
     void shouldThrowWhenGetClientInfoAfterClose() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        SQLException ex = assertThrows(SQLException.class, conn::getClientInfo);
-        assertConnectionClosedSqlException(ex);
+        SFSQLException ex = assertThrows(SFSQLException.class, conn::getClientInfo);
+        assertConnectionClosedException(ex);
       }
     }
 
@@ -823,8 +829,8 @@ class SnowflakeConnectionImplTest {
     void shouldThrowWhenGetClientInfoKeyAfterClose() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        SQLException ex = assertThrows(SQLException.class, () -> conn.getClientInfo("key"));
-        assertConnectionClosedSqlException(ex);
+        SFSQLException ex = assertThrows(SFSQLException.class, () -> conn.getClientInfo("key"));
+        assertConnectionClosedException(ex);
       }
     }
   }
@@ -848,39 +854,48 @@ class SnowflakeConnectionImplTest {
       try (Connection conn = createConnection()) {
         conn.close();
 
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getMetaData));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getAutoCommit));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::commit));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::rollback));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::isReadOnly));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getCatalog));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getSchema));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, conn::getTransactionIsolation));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getWarnings));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::clearWarnings));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.nativeSQL("select 1")));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.setAutoCommit(false)));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.setReadOnly(false)));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.setCatalog("db")));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.setSchema("sch")));
-        assertConnectionClosedSqlException(
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getMetaData));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getAutoCommit));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::commit));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::rollback));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::isReadOnly));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getCatalog));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getSchema));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, conn::getTransactionIsolation));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getWarnings));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::clearWarnings));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.nativeSQL("select 1")));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.setAutoCommit(false)));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.setReadOnly(false)));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.setCatalog("db")));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.setSchema("sch")));
+        assertConnectionClosedException(
             assertThrows(
-                SQLException.class,
+                SFSQLException.class,
                 () -> conn.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED)));
+        // ClosedConnectionGuard is a white-box check that every guarded method surfaces the runtime
+        // closed carrier on the raw impl; setClientInfo's carrier is SFClientInfoException, which
+        // the
+        // boundary would translate to the SQLClientInfoException asserted here.
         assertConnectionClosedClientInfoException(
-            assertThrows(SQLClientInfoException.class, () -> conn.setClientInfo(new Properties())));
+            (SQLClientInfoException)
+                assertThrows(
+                        SFClientInfoException.class, () -> conn.setClientInfo(new Properties()))
+                    .toSQLException());
         assertConnectionClosedClientInfoException(
-            assertThrows(SQLClientInfoException.class, () -> conn.setClientInfo("name", "value")));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.prepareCall("call foo()")));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.createArrayOf("INT", new Object[] {1})));
+            (SQLClientInfoException)
+                assertThrows(SFClientInfoException.class, () -> conn.setClientInfo("name", "value"))
+                    .toSQLException());
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.prepareCall("call foo()")));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.createArrayOf("INT", new Object[] {1})));
       }
     }
   }
@@ -924,7 +939,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectSerializable() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -934,7 +949,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectRepeatableRead() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -944,7 +959,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectReadUncommitted() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -956,11 +971,11 @@ class SnowflakeConnectionImplTest {
     void shouldThrowWhenClosed() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, conn::getTransactionIsolation));
-        assertConnectionClosedSqlException(
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, conn::getTransactionIsolation));
+        assertConnectionClosedException(
             assertThrows(
-                SQLException.class,
+                SFSQLException.class,
                 () -> conn.setTransactionIsolation(Connection.TRANSACTION_NONE)));
       }
     }
@@ -996,7 +1011,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectSetTypeMap() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1008,9 +1023,9 @@ class SnowflakeConnectionImplTest {
     void shouldThrowWhenClosed() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.nativeSQL("select 1")));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getTypeMap));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.nativeSQL("select 1")));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getTypeMap));
       }
     }
   }
@@ -1062,11 +1077,11 @@ class SnowflakeConnectionImplTest {
     void shouldThrowWhenClosed() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::isReadOnly));
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.setReadOnly(true)));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getWarnings));
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::clearWarnings));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::isReadOnly));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.setReadOnly(true)));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getWarnings));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::clearWarnings));
       }
     }
   }
@@ -1112,7 +1127,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectSetSavepoint() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(SQLFeatureNotSupportedException.class, conn::setSavepoint));
       }
@@ -1120,7 +1135,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectSetSavepointWithName() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(SQLFeatureNotSupportedException.class, () -> conn.setSavepoint("sp")));
       }
@@ -1129,7 +1144,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectRollbackToSavepoint() throws Exception {
       Savepoint savepoint = new FakeSavepoint();
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(SQLFeatureNotSupportedException.class, () -> conn.rollback(savepoint)));
       }
@@ -1138,7 +1153,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectReleaseSavepoint() throws Exception {
       Savepoint savepoint = new FakeSavepoint();
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class, () -> conn.releaseSavepoint(savepoint)));
@@ -1147,7 +1162,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectPrepareStatementWithColumnIndexes() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1157,7 +1172,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectPrepareStatementWithColumnNames() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1167,7 +1182,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectPrepareStatementWithGeneratedKeys() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1177,7 +1192,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectCreateBlob() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(SQLFeatureNotSupportedException.class, conn::createBlob));
       }
@@ -1185,7 +1200,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectCreateNClob() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(SQLFeatureNotSupportedException.class, conn::createNClob));
       }
@@ -1193,7 +1208,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectCreateSQLXML() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(SQLFeatureNotSupportedException.class, conn::createSQLXML));
       }
@@ -1201,7 +1216,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectCreateStruct() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1234,7 +1249,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectScrollSensitiveCreateStatement() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1246,7 +1261,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectUpdatableConcurrencyCreateStatement() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1257,7 +1272,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectScrollSensitivePrepareStatement() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1269,7 +1284,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectScrollSensitivePrepareCall() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1283,7 +1298,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectScrollInsensitiveCreateStatement() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1295,7 +1310,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectUpdatableConcurrencyPrepareStatement() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1307,7 +1322,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectUpdatableConcurrencyPrepareCall() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1367,7 +1382,7 @@ class SnowflakeConnectionImplTest {
     void shouldThrowWhenCreateClobAfterClose() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::createClob));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::createClob));
       }
     }
   }
@@ -1394,8 +1409,8 @@ class SnowflakeConnectionImplTest {
     void shouldThrowAfterCloseWhenSettingNetworkTimeout() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, () -> conn.setNetworkTimeout(null, 1000)));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, () -> conn.setNetworkTimeout(null, 1000)));
       }
     }
 
@@ -1403,8 +1418,8 @@ class SnowflakeConnectionImplTest {
     void shouldThrowAfterCloseWhenGettingNetworkTimeout() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(
-            assertThrows(SQLException.class, conn::getNetworkTimeout));
+        assertConnectionClosedException(
+            assertThrows(SFSQLException.class, conn::getNetworkTimeout));
       }
     }
   }
@@ -1429,7 +1444,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldPreserveDefaultHoldabilityAfterRejectedSet() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1441,13 +1456,13 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectInvalidHoldabilityConstant() throws Exception {
       try (Connection conn = createConnection()) {
-        assertThrows(SQLException.class, () -> conn.setHoldability(999));
+        assertThrows(SFSQLException.class, () -> conn.setHoldability(999));
       }
     }
 
     @Test
     void shouldRejectUnsupportedHoldability() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1477,9 +1492,10 @@ class SnowflakeConnectionImplTest {
     void shouldThrowAfterCloseWhenSettingHoldability() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(
+        assertConnectionClosedException(
             assertThrows(
-                SQLException.class, () -> conn.setHoldability(ResultSet.CLOSE_CURSORS_AT_COMMIT)));
+                SFSQLException.class,
+                () -> conn.setHoldability(ResultSet.CLOSE_CURSORS_AT_COMMIT)));
       }
     }
 
@@ -1487,13 +1503,13 @@ class SnowflakeConnectionImplTest {
     void shouldThrowAfterCloseWhenGettingHoldability() throws Exception {
       try (Connection conn = createConnection()) {
         conn.close();
-        assertConnectionClosedSqlException(assertThrows(SQLException.class, conn::getHoldability));
+        assertConnectionClosedException(assertThrows(SFSQLException.class, conn::getHoldability));
       }
     }
 
     @Test
     void shouldRejectUnsupportedHoldabilityWhenCreatingStatement() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1507,7 +1523,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectUnsupportedHoldabilityWhenPreparingStatement() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1522,7 +1538,7 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void shouldRejectUnsupportedHoldabilityWhenPreparingCall() throws Exception {
-      try (Connection conn = createConnection()) {
+      try (Connection conn = boundary(createConnection())) {
         assertFeatureNotSupported(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
@@ -1534,6 +1550,20 @@ class SnowflakeConnectionImplTest {
                         ResultSet.HOLD_CURSORS_OVER_COMMIT)));
       }
     }
+  }
+
+  private static CoreException driverException(String message) {
+    return new CoreException(DriverException.newBuilder().setMessage(message).build(), null);
+  }
+
+  private static CoreException driverException(String message, String sqlState, int vendorCode) {
+    return new CoreException(
+        DriverException.newBuilder()
+            .setMessage(message)
+            .setSqlState(sqlState)
+            .setVendorCode(vendorCode)
+            .build(),
+        null);
   }
 
   private static final class FakeSavepoint implements Savepoint {

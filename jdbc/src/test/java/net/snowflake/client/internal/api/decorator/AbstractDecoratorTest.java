@@ -11,8 +11,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.function.Supplier;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -111,12 +111,12 @@ public class AbstractDecoratorTest {
                 decorator.instrumentedCall(
                     "Statement.execute",
                     () -> {
-                      throw new SFException(ErrorCode.CONNECTION_CLOSED);
+                      throw SFSQLException.fromErrorCode(ErrorCode.CONNECTION_CLOSED);
                     }));
     assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), thrown.getSQLState());
     assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), thrown.getErrorCode());
     // The decorator forwards the raw caught throwable to the telemetry layer for classification.
-    assertEquals(Arrays.asList("SFException"), telemetry.wrapperErrors);
+    assertEquals(Arrays.asList("SFSQLException"), telemetry.wrapperErrors);
   }
 
   @Test
@@ -135,15 +135,15 @@ public class AbstractDecoratorTest {
                         return inner.instrumentedCall(
                             "Statement.execute",
                             () -> {
-                              throw new SFException(ErrorCode.INVALID_PARAMETER_VALUE);
+                              throw SFSQLException.fromErrorCode(ErrorCode.INVALID_PARAMETER_VALUE);
                             });
                       } catch (SQLException e) {
-                        throw new SFException(ErrorCode.CONNECTION_CLOSED);
+                        throw SFSQLException.fromErrorCode(ErrorCode.CONNECTION_CLOSED);
                       }
                     }));
     assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), thrown.getSQLState());
     assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), thrown.getErrorCode());
-    assertEquals(Arrays.asList("SFException"), telemetry.wrapperErrors);
+    assertEquals(Arrays.asList("SFSQLException"), telemetry.wrapperErrors);
   }
 
   @Test
@@ -154,7 +154,7 @@ public class AbstractDecoratorTest {
             decorator.instrumentedRun(
                 "Statement.execute",
                 () -> {
-                  throw new SFException(ErrorCode.INVALID_PARAMETER_VALUE);
+                  throw SFSQLException.fromErrorCode(ErrorCode.INVALID_PARAMETER_VALUE);
                 }));
     // A leaked guard would make this second call look nested and record nothing.
     decorator.instrumentedCall("Statement.getResultSet", () -> "ok");

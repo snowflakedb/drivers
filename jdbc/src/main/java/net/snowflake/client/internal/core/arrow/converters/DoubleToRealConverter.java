@@ -3,8 +3,8 @@ package net.snowflake.client.internal.core.arrow.converters;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.ValueVector;
@@ -53,24 +53,24 @@ public class DoubleToRealConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public boolean toBoolean(int index) throws SFException {
+  public boolean toBoolean(int index) {
     if (isNull(index)) {
       return false;
     }
     double val = toDouble(index);
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BOOLEAN_STR, val);
   }
 
   @Override
-  public short toShort(int rowIndex) throws SFException {
+  public short toShort(int rowIndex) {
     try {
       if (isNull(rowIndex)) {
         return 0;
       }
       return (short) toDouble(rowIndex);
     } catch (ClassCastException ex) {
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT,
           logicalTypeStr,
           SnowflakeUtil.SHORT_STR,
@@ -79,14 +79,14 @@ public class DoubleToRealConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public int toInt(int rowIndex) throws SFException {
+  public int toInt(int rowIndex) {
     try {
       if (isNull(rowIndex)) {
         return 0;
       }
       return (int) toDouble(rowIndex);
     } catch (ClassCastException ex) {
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT,
           logicalTypeStr,
           SnowflakeUtil.INT_STR,
@@ -95,14 +95,14 @@ public class DoubleToRealConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public long toLong(int rowIndex) throws SFException {
+  public long toLong(int rowIndex) {
     try {
       if (isNull(rowIndex)) {
         return 0;
       }
       return (long) toDouble(rowIndex);
     } catch (ClassCastException ex) {
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT,
           logicalTypeStr,
           SnowflakeUtil.LONG_STR,

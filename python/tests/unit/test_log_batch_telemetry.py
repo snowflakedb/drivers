@@ -54,6 +54,20 @@ class TestLogBatchAlias:
         client._log_batch()  # must not raise
 
 
+def _api_methods_for_handle(mock_core_driver, conn_handle: ConnectionHandle) -> list[str]:
+    """api_method values recorded for ``conn_handle`` only.
+
+    The fixture replaces the process-global ``core_driver.client``, so other
+    connections' teardown (e.g. ``Connection.is_closed``) can land on the same
+    mock. Filter by handle so those stray calls don't flake ``assert_called_once``.
+    """
+    return [
+        call.args[0].api_method
+        for call in mock_core_driver.telemetry_send_api_usage.call_args_list
+        if call.args and call.args[0].conn_handle.id == conn_handle.id
+    ]
+
+
 class TestSendLogBatchDoesNotAffectOtherTelemetry:
     """send_log_batch must not disrupt normal RPC-based telemetry."""
 
@@ -69,10 +83,10 @@ class TestSendLogBatchDoesNotAffectOtherTelemetry:
         client = TelemetryClient(conn_handle=_CONN_HANDLE)
         client.send_log_batch()
         client.send_api_usage("Connection.cursor")
-        mock_core_driver.telemetry_send_api_usage.assert_called_once()
+        assert _api_methods_for_handle(mock_core_driver, _CONN_HANDLE) == ["Connection.cursor"]
 
     def test_log_batch_alias_does_not_disrupt_send_api_usage(self, mock_core_driver):
         client = TelemetryClient(conn_handle=_CONN_HANDLE)
         client._log_batch()
         client.send_api_usage("Connection.close")
-        mock_core_driver.telemetry_send_api_usage.assert_called_once()
+        assert _api_methods_for_handle(mock_core_driver, _CONN_HANDLE) == ["Connection.close"]

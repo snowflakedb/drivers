@@ -12,16 +12,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
-import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Arrays;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ArrowArrayStreamPtr;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetReleaseResponse;
@@ -58,12 +59,12 @@ class ResultSetFactoryTest {
 
   @Test
   void shouldCreateReleasesHandleWhenGetStreamThrows() throws Exception {
-    SQLException fetchError = new SQLException("stream fetch failed");
+    CoreException fetchError = driverException("stream fetch failed");
     when(mockCoreApi.resultSetGetStream(HANDLE)).thenThrow(fetchError);
 
-    SQLException thrown =
+    CoreException thrown =
         assertThrows(
-            SQLException.class,
+            CoreException.class,
             () -> ResultSetFactory.create(mockCoreApi, mockStatement, QUERY_ID, RESPONSE));
 
     assertSame(fetchError, thrown);
@@ -72,13 +73,15 @@ class ResultSetFactoryTest {
 
   @Test
   void shouldCreatePropagatesOriginalExceptionWhenBothGetStreamAndReleaseThrow() throws Exception {
-    SQLException fetchError = new SQLException("stream fetch failed");
+    CoreException fetchError = driverException("stream fetch failed");
     when(mockCoreApi.resultSetGetStream(HANDLE)).thenThrow(fetchError);
-    when(mockCoreApi.resultSetRelease(HANDLE)).thenThrow(new SQLException("release also failed"));
+    // Release failures reach the factory as CoreException (what CoreDriverApi throws), which
+    // CoreResultSetProvider.release() logs instead of rethrowing.
+    when(mockCoreApi.resultSetRelease(HANDLE)).thenThrow(new CoreException("release also failed"));
 
-    SQLException thrown =
+    CoreException thrown =
         assertThrows(
-            SQLException.class,
+            CoreException.class,
             () -> ResultSetFactory.create(mockCoreApi, mockStatement, QUERY_ID, RESPONSE));
 
     assertSame(
@@ -123,12 +126,12 @@ class ResultSetFactoryTest {
 
   @Test
   void shouldCreateIfHasStreamReleasesHandleWhenGetStreamThrows() throws Exception {
-    SQLException fetchError = new SQLException("stream fetch failed");
+    CoreException fetchError = driverException("stream fetch failed");
     when(mockCoreApi.resultSetGetStream(HANDLE)).thenThrow(fetchError);
 
-    SQLException thrown =
+    CoreException thrown =
         assertThrows(
-            SQLException.class,
+            CoreException.class,
             () ->
                 ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, RESPONSE));
 
@@ -167,5 +170,9 @@ class ResultSetFactoryTest {
     assertTrue(result.isAfterLast());
     assertEquals(2, result.getMetaData().getColumnCount());
     assertEquals("TABLE_SCHEM", result.getMetaData().getColumnName(1));
+  }
+
+  private static CoreException driverException(String message) {
+    return new CoreException(DriverException.newBuilder().setMessage(message).build(), null);
   }
 }

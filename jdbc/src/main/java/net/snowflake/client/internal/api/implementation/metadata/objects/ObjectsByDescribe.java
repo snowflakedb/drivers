@@ -7,9 +7,6 @@ import static net.snowflake.client.internal.util.SnowflakeTypeHelper.convertStri
 import static net.snowflake.client.internal.util.StringUtil.isNullOrEmpty;
 
 import java.sql.DatabaseMetaData;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,13 +15,15 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
+import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
+import net.snowflake.client.internal.api.implementation.statement.InternalStatement;
 import net.snowflake.common.util.Wildcard;
 
 @RequiredArgsConstructor
 class ObjectsByDescribe {
 
   private final MetaDataLimits limits;
-  private final Statement stmt;
+  private final InternalStatement stmt;
   private final String sqlQuery;
 
   // TODO(SNOW-3740740): consider replacing that with a streaming approach
@@ -32,12 +31,11 @@ class ObjectsByDescribe {
   //  row per parameter/result column. The streaming RowConverter path is 1:1, so we materialize
   //  eagerly here (like in the snowflake--jdbc).
   Object[][] showAndDescribeProcedures(
-      String catalog, String schemaPattern, String procedureNamePattern, String columnNamePattern)
-      throws SQLException {
+      String catalog, String schemaPattern, String procedureNamePattern, String columnNamePattern) {
     Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schemaPattern, true);
     Pattern compiledProcedurePattern = Wildcard.toRegexPattern(procedureNamePattern, true);
     List<Object[]> rows = new ArrayList<>();
-    ResultSet rs = executeShowQuery();
+    InternalResultSet rs = executeShowQuery();
     if (rs == null) {
       return new Object[0][];
     }
@@ -172,10 +170,9 @@ class ObjectsByDescribe {
   //  per parameter/result column. The streaming RowConverter path is 1:1, so we materialize
   //  eagerly here (like in the snowflake--jdbc).
   Object[][] showAndDescribeFunctions(
-      String catalog, String schemaPattern, String functionNamePattern, String columnNamePattern)
-      throws SQLException {
+      String catalog, String schemaPattern, String functionNamePattern, String columnNamePattern) {
     List<Object[]> rows = new ArrayList<>();
-    ResultSet rs = executeShowQuery();
+    InternalResultSet rs = executeShowQuery();
     if (rs == null) {
       return new Object[0][];
     }
@@ -286,9 +283,9 @@ class ObjectsByDescribe {
   }
 
   private ParsedParams describeAndParseParams(
-      String catalog, String schema, String nameUnparsed, String type) throws SQLException {
+      String catalog, String schema, String nameUnparsed, String type) {
     String sql = buildDescribeCommand(catalog, schema, nameUnparsed, type);
-    try (ResultSet rs = describe(sql, type)) {
+    try (InternalResultSet rs = describe(sql, type)) {
       if (rs == null || !rs.next()) {
         return null;
       }
@@ -299,9 +296,9 @@ class ObjectsByDescribe {
     }
   }
 
-  private ResultSet describe(String sql, String routineType) throws SQLException {
+  private InternalResultSet describe(String sql, String routineType) {
     try {
-      return stmt.executeQuery(sql);
+      return stmt.executeQueryInternal(sql);
     } catch (Throwable e) {
       // Legacy behavior: only swallow syntax errors for functions, as some have odd signatures
       // that fail DESCRIBE. For procedures, surface the error so bugs aren't silently masked.
@@ -315,9 +312,9 @@ class ObjectsByDescribe {
     }
   }
 
-  private ResultSet executeShowQuery() throws SQLException {
+  private InternalResultSet executeShowQuery() {
     try {
-      return stmt.executeQuery(sqlQuery);
+      return stmt.executeQueryInternal(sqlQuery);
     } catch (Throwable e) {
       if (isMissingMetadataObject(e)) {
         return null;

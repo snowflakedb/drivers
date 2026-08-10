@@ -47,7 +47,7 @@ class TestAsyncWritePandas:
 
         async def _run():
             async with aio.connect(config=config) as conn:
-                cur = await conn.cursor()
+                cur = conn.cursor()
                 try:
                     await cur.execute(
                         "CREATE OR REPLACE TEMPORARY TABLE IDENTIFIER(?) (NAME STRING, SCORE INT)",
@@ -70,7 +70,7 @@ class TestAsyncWritePandas:
                     )
                     rows = await cur.fetchall()
                 finally:
-                    await cur.close()
+                    cur.close()
             return success, nchunks, nrows, rows
 
         success, nchunks, nrows, rows = loop.run(_run())
@@ -102,7 +102,7 @@ class TestAsyncWritePandas:
                     auto_create_table=True,
                     table_type="temp",
                 )
-                cur = await conn.cursor()
+                cur = conn.cursor()
                 try:
                     await cur.execute(
                         "SELECT * FROM IDENTIFIER(?)",
@@ -111,7 +111,7 @@ class TestAsyncWritePandas:
                     )
                     rows = await cur.fetchall()
                 finally:
-                    await cur.close()
+                    cur.close()
             return success, nchunks, nrows, rows
 
         success, nchunks, nrows, rows = loop.run(_run())
@@ -134,7 +134,7 @@ class TestAsyncWritePandas:
 
         async def _run():
             async with aio.connect(config=config) as conn:
-                cur = await conn.cursor()
+                cur = conn.cursor()
                 try:
                     await cur.execute(
                         "CREATE OR REPLACE TEMPORARY TABLE IDENTIFIER(?) (NAME STRING, SCORE INT)",
@@ -152,7 +152,7 @@ class TestAsyncWritePandas:
                         chunk_size=chunk_size,
                     )
                 finally:
-                    await cur.close()
+                    cur.close()
             return success, nchunks, nrows
 
         success, nchunks, nrows = loop.run(_run())

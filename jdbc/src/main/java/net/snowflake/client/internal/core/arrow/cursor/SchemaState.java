@@ -1,11 +1,12 @@
 package net.snowflake.client.internal.core.arrow.cursor;
 
-import java.sql.SQLException;
+import static net.snowflake.client.api.exception.ErrorCode.INTERNAL_ERROR;
+
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverter;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverterUtil;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
@@ -30,11 +31,11 @@ public final class SchemaState {
   private int[] columnScales;
   private ArrowVectorConverter[] converterCache;
 
-  public SchemaState(VectorSchemaRoot root) throws SQLException {
+  public SchemaState(VectorSchemaRoot root) {
     this(root, EMPTY_CONTEXT);
   }
 
-  public SchemaState(VectorSchemaRoot root, DataConversionContext context) throws SQLException {
+  public SchemaState(VectorSchemaRoot root, DataConversionContext context) {
     this.context = context;
     List<Field> fields = root.getSchema().getFields();
     columnNames = new String[fields.size()];
@@ -95,11 +96,10 @@ public final class SchemaState {
     return columnNames.length;
   }
 
-  public ArrowVectorConverter getConverter(int columnIndex, VectorSchemaRoot root)
-      throws SQLException {
+  public ArrowVectorConverter getConverter(int columnIndex, VectorSchemaRoot root) {
     int index = columnIndex - 1;
     if (index < 0 || index >= converterCache.length) {
-      throw new SQLException("Invalid column index: " + columnIndex);
+      throw SFSQLException.fromErrorCode(INTERNAL_ERROR, "Invalid column index: " + columnIndex);
     }
     ArrowVectorConverter cached = converterCache[index];
     if (cached != null) {
@@ -111,8 +111,9 @@ public final class SchemaState {
           ArrowVectorConverterUtil.initConverter(vector, context, index);
       converterCache[index] = converter;
       return converter;
-    } catch (SnowflakeSQLException e) {
-      throw new SQLException("Unable to create converter for column " + columnIndex, e);
+    } catch (SFSQLException e) {
+      throw SFSQLException.fromErrorCode(
+          INTERNAL_ERROR, "Unable to create converter for column " + columnIndex, e);
     }
   }
 
@@ -122,7 +123,7 @@ public final class SchemaState {
     }
   }
 
-  void resetConverterCache() throws SQLException {
+  void resetConverterCache() {
     clearConverterCache();
   }
 

@@ -1,8 +1,10 @@
+use crate::apis::operation_ctx::OperationCtx;
 use crate::protobuf::apis::database_driver_v1::{DatabaseDriverImpl, DriverProviders};
 use crate::protobuf::generated::database_driver_v1::{
-    DatabaseDriverServer, DriverException, StatusCode,
+    DatabaseDriverServer, DriverException, StatusCode, observes_cancellation,
 };
 use crate::utils::sync::MutexRecoverExt;
+use der::Encode;
 use proto_utils::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,7 +41,29 @@ impl RustTransport {
         self.driver.is_troubleshooting()
     }
 
-    /// Mint an operation handle + [`CancellationToken`]; see [`CancellationRegistry::register`].
+    /// Route a decoded RPC to its service. Shared by both [`Transport`] entry
+    /// points so they cannot diverge in how they dispatch.
+    async fn dispatch(
+        &self,
+        ctx: Option<&OperationCtx>,
+        service: &str,
+        method: &str,
+        message: Vec<u8>,
+    ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
+        match service {
+            "DatabaseDriver" => self.driver.handle_message(ctx, method, message).await,
+            _ => Err(ProtoError::Transport(format!("Unknown API: {}", service))),
+        }
+    }
+
+    /// Mint an operation handle and register a token for it; see
+    /// [`CancellationRegistry::register`].
+    ///
+    /// The token comes back as well as the handle so an in-process caller can
+    /// tie cancellation to a lifetime — `python_bridge` arms a
+    /// [`tokio_util::sync::CancellationToken::drop_guard`] with it, so dropping
+    /// the Python awaitable cancels the operation. Callers that only need to
+    /// cancel explicitly can ignore it and use [`Self::cancel`].
     pub fn register(&self) -> (u64, CancellationToken) {
         self.cancellations.register()
     }
@@ -49,43 +73,21 @@ impl RustTransport {
     pub fn cancel(&self, handle: u64) {
         self.cancellations.cancel(handle);
     }
-
-    /// Runs an operation registered under `handle` (via [`Self::register`]),
-    /// racing the work against `token` and deregistering `handle` on completion.
-    ///
-    /// Completion wins ties: if the operation finishes it returns the real
-    /// result, even if a cancel raced in. Only if `token` is cancelled *before*
-    /// the work completes is the in-flight `handle_message` future dropped —
-    /// aborting the current HTTP request (best-effort, future-drop) — and the
-    /// call resolves to an application error carrying a [`DriverException`] with
-    /// `STATUS_CODE_CANCELLED`. Used by bridges that expose async-first,
-    /// cancellable RPCs (the JDBC bridge, the async C API).
-    pub async fn handle_message_cancellable(
-        &self,
-        handle: u64,
-        service: &str,
-        method: &str,
-        message: Vec<u8>,
-        token: CancellationToken,
-    ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
-        // Deregister `handle` on completion — success, error, cancel, or panic —
-        // so callers never have to pair register/deregister themselves.
-        let _guard = self.cancellations.deregister_guard(handle);
-        // TODO(SNOW-3675196): handle_message should accept the CancellationToken and
-        //       pass it down the stack, so every operation can race against this token
-        //       and cancel at a proper checkpoint instead of only via future-drop.
-        match token
-            .run_until_cancelled(self.handle_message(service, method, message))
-            .await
-        {
-            Some(result) => result,
-            None => Err(ProtoError::Application(encode_cancelled())),
-        }
-    }
 }
 
-/// Encode a `DriverException { status_code: CANCELLED }` — the response bytes a
-/// cancelled operation surfaces through the application-error path.
+/// Encode a `DriverException { status_code: CANCELLED }` for the case where an
+/// operation could not even be started under its handle.
+///
+/// The normal cancelled response does **not** come from here: an operation that
+/// observes its token returns `ApiError::Cancelled`, which the regular
+/// `ApiError → DriverException` converter maps to `STATUS_CODE_CANCELLED`. This
+/// covers only the pre-dispatch race where the handle was cancelled (or had
+/// already completed) before the ctx could be built, plus the unmarked-RPC
+/// fallback above.
+///
+/// TODO(SNOW-3675196): goes away with that fallback, leaving the pre-dispatch
+/// race as the only caller — at which point returning `ApiError::Cancelled`
+/// through the converter would cover it too.
 fn encode_cancelled() -> Vec<u8> {
     use prost::Message as _;
     DriverException {
@@ -128,6 +130,11 @@ impl CancellationRegistry {
         (handle, token)
     }
 
+    /// The token registered for `handle`, if the operation is still in flight.
+    fn token(&self, handle: u64) -> Option<CancellationToken> {
+        self.tokens().get(&handle).cloned()
+    }
+
     /// The entry is left in place so a canceller racing an in-flight await still
     /// finds the token; [`Self::deregister`] removes it on completion.
     fn cancel(&self, handle: u64) {
@@ -163,16 +170,77 @@ impl Drop for DeregisterGuard<'_> {
 }
 
 impl Transport for RustTransport {
+    /// Dispatch without a cancellation trigger: the operation gets no ctx, so
+    /// nothing can cancel it.
     async fn handle_message(
         &self,
         service: &str,
         method: &str,
         message: Vec<u8>,
     ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
-        match service {
-            "DatabaseDriver" => self.driver.handle_message(method, message).await,
-            _ => Err(ProtoError::Transport(format!("Unknown API: {}", service))),
+        self.dispatch(None, service, method, message).await
+    }
+}
+
+/// Cancellation entry point. Inherent rather than part of [`Transport`]: every
+/// bridge holds the concrete `RustTransport`, so nothing needs to reach it
+/// through the trait, and `proto_utils` — which has no dependencies at all —
+/// would otherwise have to know about cancellation to declare it.
+impl RustTransport {
+    /// Dispatch under `operation`'s registered token.
+    ///
+    /// Two shapes, picked by the proto's `async_first` marker via the generated
+    /// [`observes_cancellation`]:
+    ///
+    /// * **Marked** — the ctx is handed down and the operation
+    ///   observes the token itself, where it still has the state to unwind
+    ///   cleanly. Deliberately *not* raced here as well: this layer would resolve
+    ///   in nanoseconds and drop the operation before any cleanup could finish.
+    /// * **Unmarked** — no operation to observe the token, so this layer keeps the
+    ///   pre-existing race: the work is dropped and the call reports cancelled.
+    ///   This is what preserves today's behaviour for every RPC not yet marked.
+    ///
+    /// The handle is deregistered on every exit — success, error, cancel, or
+    /// panic — so callers never pair register/deregister themselves. An unknown
+    /// handle means the operation was cancelled or completed before dispatch,
+    /// and resolves straight to a cancelled response.
+    pub async fn handle_message_cancellable(
+        &self,
+        service: &str,
+        method: &str,
+        message: Vec<u8>,
+        operation: u64,
+    ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
+        let _guard = self.cancellations.deregister_guard(operation);
+        let Some(token) = self.cancellations.token(operation) else {
+            return Err(ProtoError::Application(encode_cancelled()));
+        };
+
+        let marked = observes_cancellation(method);
+        let ctx = marked.then(|| OperationCtx::from_registered(operation, token.clone()));
+
+        // One instantiation of the dispatch future, awaited by whichever branch
+        // below applies.
+        let dispatched = self.dispatch(ctx.as_ref(), service, method, message);
+
+        if marked {
+            return dispatched.await;
         }
+
+        // TODO(SNOW-3675196): remove this fallback once every RPC that can block
+        // is marked `async_first` and therefore observes cancellation itself.
+        //
+        // It exists only to keep unmarked RPCs behaving exactly as they did
+        // before cancellation moved into the operation layer — Python's aio
+        // client routes all of its RPCs through here, so dropping it early would
+        // silently turn cancellation into a no-op for everything not yet marked.
+        // What is left unmarked at the end (setters, handle allocators) cannot
+        // block, so racing those achieves nothing and this branch — along with
+        // `encode_cancelled` — can then go away entirely.
+        token
+            .run_until_cancelled(dispatched)
+            .await
+            .unwrap_or_else(|| Err(ProtoError::Application(encode_cancelled())))
     }
 }
 
@@ -181,16 +249,7 @@ mod tests {
     use super::*;
     use prost::Message as _;
 
-    #[tokio::test]
-    async fn cancelled_token_yields_cancelled_driver_exception() {
-        let transport = RustTransport::new();
-        let (handle, token) = transport.register();
-        token.cancel(); // already cancelled before the call starts
-
-        let result = transport
-            .handle_message_cancellable(handle, "DatabaseDriver", "connection_new", vec![], token)
-            .await;
-
+    fn assert_cancelled(result: Result<Vec<u8>, ProtoError<Vec<u8>>>) {
         match result {
             Err(ProtoError::Application(bytes)) => {
                 let ex = DriverException::decode(&bytes[..]).expect("decodes as DriverException");
@@ -201,12 +260,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn uncancelled_token_delegates_to_handle_message() {
+    async fn cancelling_before_dispatch_yields_a_cancelled_driver_exception() {
         let transport = RustTransport::new();
-        let (handle, token) = transport.register(); // never cancelled
+        let (handle, _token) = transport.register();
+        transport.cancel(handle); // already cancelled before the call starts
+
+        assert_cancelled(
+            transport
+                .handle_message_cancellable("DatabaseDriver", "connection_new", vec![], handle)
+                .await,
+        );
+    }
+
+    /// An unknown handle means the operation was cancelled (or already
+    /// completed) before dispatch could resolve it, so it must not silently run
+    /// uncancellably.
+    #[tokio::test]
+    async fn unknown_handle_yields_a_cancelled_driver_exception() {
+        let transport = RustTransport::new();
+
+        assert_cancelled(
+            transport
+                .handle_message_cancellable("DatabaseDriver", "connection_new", vec![], u64::MAX)
+                .await,
+        );
+    }
+
+    #[tokio::test]
+    async fn live_handle_dispatches_normally() {
+        let transport = RustTransport::new();
+        let (handle, _token) = transport.register(); // never cancelled
 
         let result = transport
-            .handle_message_cancellable(handle, "UnknownService", "whatever", vec![], token)
+            .handle_message_cancellable("UnknownService", "whatever", vec![], handle)
             .await;
 
         match result {
@@ -215,18 +301,47 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn plain_handle_message_is_never_cancellable() {
+        let transport = RustTransport::new();
+
+        // No handle, so nothing can cancel it: the detached ctx's token has no
+        // canceller and the call must dispatch normally.
+        let result = transport
+            .handle_message("UnknownService", "whatever", vec![])
+            .await;
+
+        match result {
+            Err(ProtoError::Transport(msg)) => assert!(msg.contains("Unknown API")),
+            _ => panic!("expected the passed-through transport error"),
+        }
+    }
+
+    /// The handle is deregistered on every exit, so a cancel arriving after the
+    /// operation finished is a no-op rather than affecting a later operation.
+    #[tokio::test]
+    async fn handle_is_deregistered_once_the_operation_completes() {
+        let transport = RustTransport::new();
+        let (handle, _token) = transport.register();
+
+        let _ = transport
+            .handle_message_cancellable("UnknownService", "whatever", vec![], handle)
+            .await;
+
+        assert!(transport.cancellations.token(handle).is_none());
+    }
+
     #[test]
     fn register_mints_distinct_handles() {
         let transport = RustTransport::new();
-        let (h1, _t1) = transport.register();
-        let (h2, _t2) = transport.register();
-        assert_ne!(h1, h2);
+        assert_ne!(transport.register().0, transport.register().0);
     }
 
     #[test]
     fn cancel_flips_the_registered_token() {
         let transport = RustTransport::new();
         let (handle, token) = transport.register();
+
         assert!(!token.is_cancelled());
         transport.cancel(handle);
         assert!(token.is_cancelled());
@@ -238,12 +353,30 @@ mod tests {
         transport.cancel(u64::MAX); // must not panic
     }
 
+    /// The proto's `async_first` marker is the single source of truth for which
+    /// operations observe cancellation themselves. If this drifts, an operation
+    /// either loses its ctx or gets raced at two layers at once.
+    #[test]
+    fn marked_set_follows_the_proto_marker() {
+        assert!(
+            observes_cancellation("connection_init"),
+            "connection_init is marked async_first in the proto"
+        );
+        assert!(
+            !observes_cancellation("connection_new"),
+            "unmarked RPCs must not claim to observe cancellation themselves"
+        );
+        assert!(!observes_cancellation("no_such_method"));
+    }
+
     #[test]
     fn deregister_guard_removes_entry_on_drop() {
         let registry = CancellationRegistry::new();
         let (handle, token) = registry.register();
+
         drop(registry.deregister_guard(handle));
         registry.cancel(handle);
+
         assert!(!token.is_cancelled());
     }
 }

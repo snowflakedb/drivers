@@ -7,10 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
-import java.sql.SQLException;
 import java.sql.Types;
 import java.util.HashMap;
 import java.util.Map;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -40,7 +40,11 @@ public class SchemaStateTest {
       assertEquals(1, schema.getColumnCount());
       assertNotNull(schema.getConverter(1, root));
 
-      SQLException exception = assertThrows(SQLException.class, () -> schema.getConverter(2, root));
+      // SchemaState is internal core-arrow plumbing (not a @JdbcBoundary); getConverter surfaces
+      // the runtime carrier directly. The boundary translates it to a checked SQLException
+      // upstream.
+      SFSQLException exception =
+          assertThrows(SFSQLException.class, () -> schema.getConverter(2, root));
       assertTrue(exception.getMessage().contains("Invalid column index"));
     }
   }

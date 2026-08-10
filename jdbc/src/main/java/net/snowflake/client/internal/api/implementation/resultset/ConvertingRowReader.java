@@ -3,7 +3,6 @@ package net.snowflake.client.internal.api.implementation.resultset;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
-import java.sql.SQLException;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.TimeZone;
@@ -47,7 +46,7 @@ class ConvertingRowReader implements RowReader {
   // --- RowCursor ---
 
   @Override
-  public boolean next() throws SQLException {
+  public boolean next() {
     Object[] row;
     if (hasPendingRow) {
       row = pendingRow;
@@ -71,7 +70,7 @@ class ConvertingRowReader implements RowReader {
    * {@code null} once the delegate is exhausted. Rows the converter drops (returns {@code null})
    * are skipped.
    */
-  private Object[] nextProjectedRow() throws SQLException {
+  private Object[] nextProjectedRow() {
     while (delegate.next()) {
       Object[] projected = converter.convert(delegate);
       if (projected != null) {
@@ -82,7 +81,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public void close() throws SQLException {
+  public void close() {
     closed = true;
     delegate.close();
   }
@@ -108,7 +107,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public boolean isLast() throws SQLException {
+  public boolean isLast() {
     // The converter may drop rows, so the delegate's row count does not map to the projected count.
     // Peek one projected row ahead (buffering it for the next next()) and report last when none
     // follows the current position.
@@ -143,21 +142,21 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public String getColumnName(int columnIndex) throws SQLException {
+  public String getColumnName(int columnIndex) {
     if (columnIndex < 1 || columnIndex > columnNames.length) {
-      throw new SQLException("Column index out of range: " + columnIndex);
+      throw new IllegalArgumentException("Column index out of range: " + columnIndex);
     }
     return columnNames[columnIndex - 1];
   }
 
   @Override
-  public String getString(int columnIndex) throws SQLException {
+  public String getString(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     return obj == null ? null : obj.toString();
   }
 
   @Override
-  public boolean getBoolean(int columnIndex) throws SQLException {
+  public boolean getBoolean(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return false;
@@ -173,7 +172,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public byte getByte(int columnIndex) throws SQLException {
+  public byte getByte(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return 0;
@@ -185,7 +184,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public short getShort(int columnIndex) throws SQLException {
+  public short getShort(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return 0;
@@ -197,7 +196,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public int getInt(int columnIndex) throws SQLException {
+  public int getInt(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return 0;
@@ -209,7 +208,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public long getLong(int columnIndex) throws SQLException {
+  public long getLong(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return 0;
@@ -221,7 +220,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public float getFloat(int columnIndex) throws SQLException {
+  public float getFloat(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return 0;
@@ -233,7 +232,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public double getDouble(int columnIndex) throws SQLException {
+  public double getDouble(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return 0;
@@ -245,7 +244,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public BigDecimal getBigDecimal(int columnIndex) throws SQLException {
+  public BigDecimal getBigDecimal(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return null;
@@ -257,13 +256,13 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public byte[] getBytes(int columnIndex) throws SQLException {
+  public byte[] getBytes(int columnIndex) {
     String str = getString(columnIndex);
     return str == null ? null : str.getBytes(StandardCharsets.UTF_8);
   }
 
   @Override
-  public Date getDate(int columnIndex) throws SQLException {
+  public Date getDate(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return null;
@@ -275,7 +274,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public Date getDate(int columnIndex, TimeZone tz) throws SQLException {
+  public Date getDate(int columnIndex, TimeZone tz) {
     // Projected rows hold already-materialized java.sql.Date values; the timezone shift was applied
     // (or not) by the delegate when the value was produced, so tz is not re-applied here.
     return getDate(columnIndex);
@@ -287,7 +286,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public Time getTime(int columnIndex) throws SQLException {
+  public Time getTime(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return null;
@@ -299,7 +298,7 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public Timestamp getTimestamp(int columnIndex) throws SQLException {
+  public Timestamp getTimestamp(int columnIndex) {
     Object obj = getObjectInternal(columnIndex);
     if (obj == null) {
       return null;
@@ -311,23 +310,23 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
-  public Timestamp getTimestamp(int columnIndex, TimeZone tz) throws SQLException {
+  public Timestamp getTimestamp(int columnIndex, TimeZone tz) {
     // Projected rows hold already-materialized java.sql.Timestamp values; the timezone was applied
     // (or not) by the delegate when the value was produced, so tz is not re-applied here.
     return getTimestamp(columnIndex);
   }
 
   @Override
-  public Object getObject(int columnIndex) throws SQLException {
+  public Object getObject(int columnIndex) {
     return getObjectInternal(columnIndex);
   }
 
-  private Object getObjectInternal(int columnIndex) throws SQLException {
+  private Object getObjectInternal(int columnIndex) {
     if (currentRow == null) {
-      throw new SQLException("No row found.");
+      throw new IllegalStateException("No row found.");
     }
     if (columnIndex < 1 || columnIndex > currentRow.length) {
-      throw new SQLException("Invalid column index: " + columnIndex);
+      throw new IllegalArgumentException("Invalid column index: " + columnIndex);
     }
     Object value = currentRow[columnIndex - 1];
     wasNull = (value == null);

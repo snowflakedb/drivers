@@ -265,6 +265,50 @@ impl SnowflakeTestClient {
         result
     }
 
+    /// Execute `stmt`'s query with CSV (stage-binding) bindings — the wire-level
+    /// counterpart to `execute_statement_query_with_bindings`'s JSON path.
+    ///
+    /// The JSON-vs-CSV choice is made per-wrapper (e.g. ODBC's
+    /// `select_binding_mode`/`stage_binding_threshold`, Python's
+    /// `parse_stage_binding_threshold`) based on the `CLIENT_STAGE_ARRAY_BINDING_THRESHOLD`
+    /// session parameter — `sf_core` itself never decides this, it just uploads
+    /// whatever `BindingType` it is handed. This helper sends `csv_bindings`
+    /// as `BindingType::Csv` directly, the same way a wrapper does once it has
+    /// already decided to stage-bind, driving `sf_core::stage_binding::upload_csv_bindings`.
+    ///
+    /// Returns `Err` (rather than panicking) on failure so callers can assert
+    /// on failure paths (e.g. a dead proxy) — see `execute_query_no_unwrap`.
+    pub fn execute_statement_query_with_csv_bindings_no_unwrap(
+        &self,
+        stmt: &StatementHandle,
+        csv_bindings: &[u8],
+    ) -> Result<execute_query_response::Result, String> {
+        let ptr = csv_bindings.as_ptr() as u64;
+        let bindings = Some(QueryBindings {
+            binding_type: Some(query_bindings::BindingType::Csv(BinaryDataPtr {
+                value: ptr.to_le_bytes().to_vec(),
+                length: csv_bindings.len() as i64,
+            })),
+        });
+        match self
+            .client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                stmt_handle: Some(*stmt),
+                bindings,
+                timeout_seconds: None,
+            }) {
+            Ok(response) => {
+                let result = response.result.unwrap();
+                self.track_result_handles(&result);
+                Ok(result)
+            }
+            Err(e) => match *e {
+                ProtoError::Application(e) => Err(format!("Failed to execute query: {e:?}")),
+                ProtoError::Transport(e) => Err(format!("Transport error: {e:?}")),
+            },
+        }
+    }
+
     /// Submit a statement without waiting for it to complete, returning its
     /// query id immediately. Unlike `execute_statement_query`, this does not
     /// poll the server for a result, so the query is typically still running
@@ -594,6 +638,90 @@ impl SnowflakeTestClient {
         close_result?;
 
         Ok(bytes)
+    }
+
+    /// Chunked streaming PUT: opens a session with `sql`, appends `data` as a
+    /// single chunk, then finishes the upload (runs the PUT against the
+    /// stage). Mirrors how a wrapper drives the chunked
+    /// Begin/Chunk/Finish RPC — the direct replacement for the old
+    /// single-shot `connection_upload_stream` RPC main removed. Discards the
+    /// `ResultSetHandle`/descriptor on success since callers here only need
+    /// to know the upload succeeded, not read its result rowset.
+    pub fn connection_upload_stream(&self, sql: &str, data: Vec<u8>) -> Result<(), String> {
+        let begin = self
+            .client
+            .connection_upload_stream_begin_blocking(ConnectionUploadStreamBeginRequest {
+                conn_handle: Some(self.conn_handle),
+                sql: sql.to_string(),
+            })
+            .map_err(|e| format!("{e:?}"))?;
+        let upload_handle = begin.upload_handle;
+
+        self.client
+            .connection_upload_stream_chunk_blocking(ConnectionUploadStreamChunkRequest {
+                upload_handle,
+                data,
+            })
+            .map_err(|e| format!("{e:?}"))?;
+
+        self.client
+            .connection_upload_stream_finish_blocking(ConnectionUploadStreamFinishRequest {
+                upload_handle,
+            })
+            .map_err(|e| format!("{e:?}"))?;
+
+        Ok(())
+    }
+
+    /// Chunked streaming GET (S3-only `downloadStreamBegin` path): opens a
+    /// session, drains it with `downloadStreamChunk` until EOF, then closes it,
+    /// returning the full payload. Mirrors how a wrapper drives the chunked RPC.
+    pub fn connection_download_stream_chunked(
+        &self,
+        stage_name: &str,
+        source_filename: &str,
+        decompress: bool,
+    ) -> Result<Vec<u8>, String> {
+        let begin = self
+            .client
+            .connection_download_stream_begin_blocking(ConnectionDownloadStreamBeginRequest {
+                conn_handle: Some(self.conn_handle),
+                stage_name: stage_name.to_string(),
+                source_filename: source_filename.to_string(),
+                decompress,
+            })
+            .map_err(|e| format!("{e:?}"))?;
+        let handle = begin.download_handle;
+
+        // Always close the handle after the loop, even if a chunk read fails,
+        // so a mid-stream error doesn't leak the handle server-side. The loop
+        // result is captured first and propagated only after the close call.
+        let read_result: Result<Vec<u8>, String> = (|| {
+            let mut out = Vec::new();
+            loop {
+                let chunk = self
+                    .client
+                    .connection_download_stream_chunk_blocking(
+                        ConnectionDownloadStreamChunkRequest {
+                            download_handle: handle,
+                            max_len: 64 * 1024,
+                        },
+                    )
+                    .map_err(|e| format!("{e:?}"))?;
+                out.extend_from_slice(&chunk.data);
+                if chunk.eof {
+                    break;
+                }
+            }
+            Ok(out)
+        })();
+
+        self.client
+            .connection_download_stream_close_blocking(ConnectionDownloadStreamCloseRequest {
+                download_handle: handle,
+            })
+            .map_err(|e| format!("{e:?}"))?;
+        read_result
     }
 
     pub fn result_set_get_stream(&self, rs_handle: &ResultSetHandle) -> ResultSetGetStreamResponse {

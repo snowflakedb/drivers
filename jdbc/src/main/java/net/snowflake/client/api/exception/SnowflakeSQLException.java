@@ -21,13 +21,23 @@ public class SnowflakeSQLException extends SQLException {
   }
 
   public SnowflakeSQLException(String message, Throwable cause) {
+    this(message, cause, null);
+  }
+
+  /** As {@link #SnowflakeSQLException(String, Throwable)} but also carrying a query id. */
+  public SnowflakeSQLException(String message, Throwable cause, String queryId) {
     super(message, cause);
-    this.queryId = null;
+    this.queryId = queryId;
   }
 
   public SnowflakeSQLException(ErrorCode errorCode, String message) {
+    this(errorCode, message, null);
+  }
+
+  /** As {@link #SnowflakeSQLException(ErrorCode, String)} but also carrying a query id. */
+  public SnowflakeSQLException(ErrorCode errorCode, String message, String queryId) {
     super(message, errorCode.getSqlState(), errorCode.getMessageCode());
-    this.queryId = null;
+    this.queryId = queryId;
   }
 
   public SnowflakeSQLException(DatabaseDriverV1.DriverException error, Throwable cause) {
@@ -45,14 +55,5 @@ public class SnowflakeSQLException extends SQLException {
           (DatabaseDriverV1.DriverException) exception.error, exception);
     }
     return new SnowflakeSQLException(exception.getMessage(), exception);
-  }
-
-  /**
-   * Canonical {@code SFException -> SnowflakeSQLException} conversion. The cause is intentionally
-   * dropped: the {@code (ErrorCode, message)} constructor already carries the SQLState and vendor
-   * code, and legacy parity rendering depends on the absence of a cause chain.
-   */
-  public static SnowflakeSQLException fromSFException(SFException e) {
-    return new SnowflakeSQLException(e.getErrorCode(), e.getMessage());
   }
 }
