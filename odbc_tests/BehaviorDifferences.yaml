@@ -2102,3 +2102,71 @@ behavior_differences:
       identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
       split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
       legacy empty result set).
+
+  114:
+    name: "SQLGetDiagField(SQL_DIAG_SERVER_NAME) is populated instead of returning an empty string"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLGetDiagField(SQL_DIAG_SERVER_NAME) returns an empty string after a diagnostic is raised
+      on a connected statement/connection.
+    new_driver_behavior: |
+      SQLGetDiagField(SQL_DIAG_SERVER_NAME) returns the server/DSN name of the connection, matching
+      the ODBC definition of the field.
+    description: |
+      Additive: applications reading SQL_DIAG_SERVER_NAME now receive the connection's server name
+      where the old driver returned "". Verified in
+      odbc-api/diagnostic/diag_field_tests.cpp via NEW_DRIVER_ONLY/OLD_DRIVER_ONLY("BD#114").
+
+  115:
+    name: "SQLGetDiagField(SQL_DIAG_DYNAMIC_FUNCTION_CODE) classifies the statement instead of returning 0/unknown"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLGetDiagField(SQL_DIAG_DYNAMIC_FUNCTION_CODE) returns 0 (SQL_DIAG_UNKNOWN_STATEMENT) and
+      SQL_DIAG_DYNAMIC_FUNCTION returns an empty string after execution.
+    new_driver_behavior: |
+      The fields are populated from the statement type: a SELECT reports
+      SQL_DIAG_DYNAMIC_FUNCTION_CODE = 85 (SQL_DIAG_SELECT_CURSOR); INSERT/UPDATE/DELETE/CALL map to
+      their ODBC-spec codes.
+    description: |
+      Additive: applications reading SQL_DIAG_DYNAMIC_FUNCTION_CODE now get the classified code where
+      the old driver returned 0. Verified in odbc-api/diagnostic/diag_field_tests.cpp via
+      NEW_DRIVER_ONLY/OLD_DRIVER_ONLY("BD#115").
+
+  116:
+    name: "Statement header diagnostic fields are not readable through iODBC's wide SQLGetDiagFieldW entry point"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Reading a statement-only header diagnostic field through iODBC's wide entry point
+      (SQLGetDiagFieldW) is mishandled: SQL_DIAG_ROW_COUNT and SQL_DIAG_CURSOR_ROW_COUNT abort the
+      process (a pthread_mutex assertion in Simba::ODBC::DiagManager::SQLGetDiagFieldW), and
+      SQL_DIAG_DYNAMIC_FUNCTION_CODE returns a non-success code. The same reads succeed through
+      unixODBC (the narrow entry point).
+    new_driver_behavior: |
+      The driver itself writes the correct value and returns SQL_SUCCESS for these fields regardless
+      of the ANSI/wide entry point (the numeric header writes in get_diag_field are
+      encoding-independent). But iODBC's wide SQLGetDiagFieldW does not deliver statement header
+      fields to the caller: SQL_DIAG_ROW_COUNT, SQL_DIAG_CURSOR_ROW_COUNT and
+      SQL_DIAG_DYNAMIC_FUNCTION_CODE return SQL_ERROR before the driver's value reaches the
+      application. The same reads succeed through iODBC's narrow entry point and through unixODBC.
+    description: |
+      This is an iODBC driver-manager limitation in its wide (UTF-16/UTF-32) SQLGetDiagFieldW path,
+      not a defect in the new driver: the driver returns the correct value, but iODBC's wide entry
+      point does not surface these statement header fields (the old driver additionally aborts or
+      errors inside its own DiagManager on the same path). Because the failure is at the DM boundary
+      it affects both drivers under iODBC, so the three affected reads in
+      odbc-api/diagnostic/diag_field_tests.cpp (SQL_DIAG_ROW_COUNT, SQL_DIAG_CURSOR_ROW_COUNT,
+      SQL_DIAG_DYNAMIC_FUNCTION_CODE) are gated with SKIP_IODBC("BD#116 - ..."). Full coverage of
+      these fields for both drivers remains on the unixODBC lanes (Linux, macOS Universal) and on
+      Windows.
