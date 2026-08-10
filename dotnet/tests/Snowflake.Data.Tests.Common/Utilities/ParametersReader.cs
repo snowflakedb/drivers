@@ -20,6 +20,14 @@ public static class ParametersReader
     private static Dictionary<string, string> LoadParameters()
     {
         var parameterPath = Environment.GetEnvironmentVariable("PARAMETER_PATH");
+        parameterPath = parameterPath?.Replace('/', Path.DirectorySeparatorChar);
+
+        if (!string.IsNullOrEmpty(parameterPath) && !File.Exists(parameterPath))
+        {
+            _testOutputHelper?.WriteLine($"Specified path does not contain parameters.json");
+            parameterPath = null;
+        }
+
         if (string.IsNullOrEmpty(parameterPath))
         {
             // Walk up from the test assembly to find the repo root parameters.json
@@ -35,15 +43,13 @@ public static class ParametersReader
                     parameterPath = candidate;
                     break;
                 }
-                dir = Path.GetDirectoryName(dir) ?? dir;
+
+                dir = Directory.GetParent(dir)?.FullName ?? dir;
 
                 if (i++ == MaxDirLevels)
-                    throw new FileNotFoundException("No parameters file!");
+                    throw new FileNotFoundException($"Explored {MaxDirLevels} dirs and found no parameters file!");
             }
         }
-
-        if (string.IsNullOrEmpty(parameterPath) || !File.Exists(parameterPath))
-            throw new FileLoadException("No parameters file!");
 
         var json = File.ReadAllText(parameterPath);
         using var doc = JsonDocument.Parse(json);
