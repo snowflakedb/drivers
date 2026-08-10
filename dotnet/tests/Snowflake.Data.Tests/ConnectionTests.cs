@@ -13,6 +13,14 @@ public sealed class ConnectionTests : IClassFixture<ITFixture>
     }
 
     [SnowflakeFact]
+    public async Task ConnectsAsyncWithValidCredentials()
+    {
+        using var connection = TestConnectionFactory.Create(_testOutputHelper);
+        await connection.OpenAsync();
+        Assert.Equal(ConnectionState.Open, connection.State);
+    }
+
+    [SnowflakeFact]
     public void ConnectsWithValidCredentials()
     {
         using var connection = TestConnectionFactory.Create(_testOutputHelper);

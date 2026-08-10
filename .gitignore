@@ -61,6 +61,7 @@ dotnet/src/Snowflake.Data.Proto/DatabaseDriver/IDatabaseDriverService.cs
 dotnet/src/Snowflake.Data.Proto/DatabaseDriver/ServiceClient.cs
 dotnet/src/Snowflake.Data.Proto/Exceptions/ServiceException.cs
 dotnet/src/Snowflake.Data.Proto/Exceptions/TransportException.cs
+dotnet/src/Snowflake.Data.Proto/GeneralErrorParser.cs
 
 .DS_Store
 tests/test_data/generated_test_data/chunks/

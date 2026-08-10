@@ -3,13 +3,15 @@ namespace Snowflake.Data.Interop;
 /// <summary>
 /// Abstraction over the raw sf_core native library calls.
 /// </summary>
-internal unsafe interface INativeInterop
+internal unsafe interface ISfCoreInterop
 {
     void Initialize();
 
     nuint CallProto(string api, string method, byte* request, nuint requestLen, byte** response, nuint* responseLen);
 
-    void FreeBuffer(byte* buffer, nuint len);
+    ulong CallProtoAsync(string api, string method, byte* request, nuint requestLen, void* userData);
 
-    string PtrToStringUtf8(byte* ptr);
+    void CallProtoCancel(ulong asyncHandle);
+
+    void CallFreeBuffer(byte* buffer, UIntPtr responseLen);
 }

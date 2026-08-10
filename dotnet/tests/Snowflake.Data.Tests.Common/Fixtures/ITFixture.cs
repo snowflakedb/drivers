@@ -96,14 +96,12 @@ public sealed class ITFixture
     {
         using var connection = TestConnectionFactory.Create(TestOutputHelper);
 
-        // TODO async - future milestones
-        connection.Open();
+        await connection.OpenAsync().ConfigureAwait(false);
 
         using var cmd = connection.CreateCommand();
         cmd.CommandText = $"{action} SCHEMA {schemaName}";
 
-        // TODO async - future milestones
-        cmd.ExecuteNonQuery();
+        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     private static void InitializeEnvironment()
@@ -126,7 +124,7 @@ public sealed class ITFixture
                 break;
             }
 
-            currentDirectoryPath = $"{currentDirectoryPath}{Path.DirectorySeparatorChar}..";
+            currentDirectoryPath = new DirectoryInfo(currentDirectoryPath).Parent?.FullName ?? string.Empty;
 
             if (nestedDirCount++ > 10)
                 throw new InvalidOperationException($"Did not found root directory after stepping 10 levels!");
