@@ -32,6 +32,7 @@ import net.snowflake.client.internal.api.implementation.statement.InternalStatem
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.common.util.Wildcard;
 
 /**
@@ -946,13 +947,16 @@ public class MetaDataObjects {
       SnowflakeResultSetMetaDataImpl metaData = rsFormat.metaData(queryId);
 
       return ResultSetFactory.wrapWithConverter(
-          statement, showResult.unwrap(SnowflakeResultSetImpl.class), metaData, rowConverter);
-    } catch (Throwable e) {
+          statement,
+          DelegatingWrapper.unwrapUnchecked(showResult, SnowflakeResultSetImpl.class),
+          metaData,
+          rowConverter);
+    } catch (RuntimeException e) {
       statement.close();
       if (isMissingMetadataObject(e)) {
         return emptyResultSet(rsFormat);
       }
-      throw new RuntimeException(e);
+      throw e;
     }
   }
 

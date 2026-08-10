@@ -2,7 +2,6 @@ package net.snowflake.client.internal.api.implementation;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Statement;
 import net.snowflake.client.api.datasource.SnowflakeDataSource;
 import net.snowflake.client.internal.api.decorator.AbstractDecorator;
@@ -21,6 +20,7 @@ import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowf
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 
 /**
  * Wraps a raw impl in its generated {@code Decorated*} boundary before it leaves an impl method. A
@@ -75,11 +75,8 @@ public final class Decorators {
   }
 
   public static Telemetry telemetryOf(Connection connection) {
-    try {
-      return connection.unwrap(SnowflakeConnectionImpl.class).getTelemetry();
-    } catch (SQLException e) {
-      throw new RuntimeException(e);
-    }
+    return DelegatingWrapper.unwrapUnchecked(connection, SnowflakeConnectionImpl.class)
+        .getTelemetry();
   }
 
   public static Telemetry telemetryOf(SnowflakeStatementImpl statement) {

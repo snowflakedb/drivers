@@ -16,6 +16,7 @@ import net.snowflake.client.internal.api.implementation.exception.SFSQLException
 import net.snowflake.client.internal.codegen.JdbcBoundary;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 
 @JdbcBoundary
 public class SnowflakePooledConnection implements PooledConnection {
@@ -33,31 +34,20 @@ public class SnowflakePooledConnection implements PooledConnection {
 
   public SnowflakePooledConnection(Connection physicalConnection) {
     this.physicalConnection = physicalConnection;
-    SnowflakeConnectionImpl sfConnection = null;
-    try {
-      sfConnection = physicalConnection.unwrap(SnowflakeConnectionImpl.class);
-    } catch (SQLException e) {
-      throw new RuntimeException(e);
-    }
     logger.debug(
-        "Creating new pooled connection with session id: {}", safeGetSessionID(sfConnection));
+        "Creating new pooled connection with session id: {}", safeGetSessionID(physicalConnection));
     this.eventListeners = new CopyOnWriteArraySet<>();
   }
 
   @Override
   public Connection getConnection() {
     Connection currentPhysicalConnection = getPhysicalConnection();
-    SnowflakeConnectionImpl sfConnection = null;
-    LogicalConnection newHandle;
-    try {
-      sfConnection = currentPhysicalConnection.unwrap(SnowflakeConnectionImpl.class);
-      logger.debug(
-          "Creating new Logical Connection based on pooled connection with session id: {}",
-          safeGetSessionID(sfConnection));
-      newHandle = new LogicalConnection(this);
-    } catch (SQLException e) {
-      throw new RuntimeException(e);
-    }
+    SnowflakeConnectionImpl sfConnection =
+        DelegatingWrapper.unwrapUnchecked(currentPhysicalConnection, SnowflakeConnectionImpl.class);
+    logger.debug(
+        "Creating new Logical Connection based on pooled connection with session id: {}",
+        safeGetSessionID(sfConnection));
+    LogicalConnection newHandle = new LogicalConnection(this);
     // The javax.sql.PooledConnection contract allows at most one active logical handle per pooled
     // connection: borrowing a new handle must invalidate any previously returned, still-open one so
     // two handles can never drive the same physical session. Invalidate silently (no
@@ -87,7 +77,7 @@ public class SnowflakePooledConnection implements PooledConnection {
         throw new SFSQLException(CONNECTION_CLOSED, "Connection is closed");
       }
     } catch (SQLException e) {
-      throw new RuntimeException(e);
+      throw new SFSQLException("Failed to check whether the physical connection is closed", e);
     }
     return currentPhysicalConnection;
   }
@@ -154,14 +144,12 @@ public class SnowflakePooledConnection implements PooledConnection {
     // registered on a pooled connection whose physical reference is already gone.
     try {
       if (connectionToClose != null) {
-        SnowflakeConnectionImpl sfConnection = null;
+        logger.debug(
+            "Closing pooled connection with session id: {}", safeGetSessionID(connectionToClose));
         try {
-          sfConnection = connectionToClose.unwrap(SnowflakeConnectionImpl.class);
-          logger.debug(
-              "Closing pooled connection with session id: {}", safeGetSessionID(sfConnection));
           connectionToClose.close();
         } catch (SQLException e) {
-          throw new RuntimeException(e);
+          throw new SFSQLException("Failed to close the pooled physical connection", e);
         }
       }
     } finally {
@@ -183,6 +171,11 @@ public class SnowflakePooledConnection implements PooledConnection {
   @Override
   public void removeStatementEventListener(StatementEventListener eventListener) {
     // not supported
+  }
+
+  private static String safeGetSessionID(Connection physicalConnection) {
+    return safeGetSessionID(
+        DelegatingWrapper.unwrapUnchecked(physicalConnection, SnowflakeConnectionImpl.class));
   }
 
   /**
