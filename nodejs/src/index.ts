@@ -9,6 +9,7 @@ import {
   type StreamOptions,
   type DataType,
   type FetchRowsOptions,
+  type Column,
 } from './query-result/RowStatement.js';
 
 export {
@@ -17,6 +18,7 @@ export {
   type StreamOptions,
   type DataType,
   type FetchRowsOptions,
+  type Column,
 };
 
 // TODO: implement ConnectionOptions like in old driver

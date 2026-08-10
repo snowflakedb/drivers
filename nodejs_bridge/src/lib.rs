@@ -20,7 +20,7 @@ mod sql_value;
 mod statement;
 
 pub use connection::Connection;
-pub use statement::Statement;
+pub use statement::{Column, Statement};
 
 use sf_core::apis::database_driver_v1::DatabaseDriverV1;
 use std::sync::LazyLock;

@@ -1,6 +1,9 @@
+mod column;
 mod column_reader;
 mod result;
 mod stream_state;
+
+pub use column::Column;
 
 use crate::DRIVER;
 use crate::error::to_napi_err;
@@ -79,6 +82,44 @@ impl Statement {
         match self.result.get() {
             None => Ok(None),
             Some(Ok(data)) => Ok(data.result_set_descriptor.row_count),
+            Some(Err(error)) => Err(to_napi_err(error)),
+        }
+    }
+
+    #[napi]
+    pub fn get_columns(&self) -> Result<Option<Vec<Column>>> {
+        match self.result.get() {
+            None => Ok(None),
+            Some(Ok(data)) => Ok(Some(
+                data.result_set_descriptor
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, meta)| Column::from_metadata(i as u32, meta))
+                    .collect(),
+            )),
+            Some(Err(error)) => Err(to_napi_err(error)),
+        }
+    }
+
+    #[napi]
+    pub fn get_column(&self, identifier: Either<String, u32>) -> Result<Option<Column>> {
+        match self.result.get() {
+            None => Ok(None),
+            Some(Ok(data)) => {
+                let columns = &data.result_set_descriptor.columns;
+                let column = match identifier {
+                    Either::A(name) => columns
+                        .iter()
+                        .enumerate()
+                        .find(|(_, meta)| meta.name == name)
+                        .map(|(i, meta)| Column::from_metadata(i as u32, meta)),
+                    Either::B(index) => columns
+                        .get(index as usize)
+                        .map(|meta| Column::from_metadata(index, meta)),
+                };
+                Ok(column)
+            }
             Some(Err(error)) => Err(to_napi_err(error)),
         }
     }

@@ -1,5 +1,5 @@
 import type { Readable } from 'node:stream';
-import type { CoreStatementInstance } from '../core/index.js';
+import type { CoreColumnInstance, CoreStatementInstance } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
 import { createRowStream } from './rows.js';
 
@@ -10,6 +10,8 @@ export type StatementCallback = (
 ) => void;
 
 export type DataType = 'String' | 'Boolean' | 'Number' | 'Date' | 'JSON' | 'Buffer';
+
+export type Column = CoreColumnInstance;
 
 export interface StreamOptions {
   start?: number;
@@ -40,6 +42,14 @@ export class RowStatement {
 
   getQueryId(): string | undefined {
     return this.#core.getQueryId() ?? undefined;
+  }
+
+  getColumns(): Column[] | undefined {
+    return this.#core.getColumns() ?? undefined;
+  }
+
+  getColumn(columnIdentifier: string | number): Column | undefined {
+    return this.#core.getColumn(columnIdentifier) ?? undefined;
   }
 
   // TODO: decide how to handle a case where user didn't set the streamResult: true
