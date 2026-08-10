@@ -1,9 +1,9 @@
 //! Catalog functions: SQLTables, SQLGetTypeInfo, and related.
 //!
-//! The wrapper reads ODBC string arguments, maps them to patterns (via
-//! `catalog_arg_to_pattern`), dispatches to the core `ConnectionGetObjects`
-//! RPC, then flattens the nested ADBC-shaped Arrow result into the flat
-//! 5-column ODBC result set.
+//! `SQLTables` runs wrapper-owned `SHOW` queries (`SHOW DATABASES` /
+//! `SHOW SCHEMAS` / `SHOW OBJECTS`), then maps rows into the flat 5-column
+//! ODBC result set. Pattern-mode filters use the local case-sensitive
+//! [`like_match`].
 //!
 //! `SQLGetTypeInfo` is entirely static — it returns a hard-coded table of the
 //! 23 Snowflake SQL types, matching the legacy driver's `InitializeData()` in
@@ -19,7 +19,7 @@ use crate::api::runtime::global;
 use crate::api::statement::{
     collect_nested_batch, execute_show_query_collect_batch, set_state_for_catalog,
 };
-use crate::api::utils::{ApiExitLog, catalog_arg_to_pattern, escape_like_wildcards};
+use crate::api::utils::{ApiExitLog, ESCAPE_CHAR, catalog_arg_to_pattern, escape_like_wildcards};
 use crate::api::{
     ConnectionState, ExecutionOrigin, OdbcResult, StatementInner, StatementState, stmt_from_handle,
 };
@@ -36,12 +36,11 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::apis::database_driver_v1::{
-    DEPTH_CATALOGS, DEPTH_COLUMNS, DEPTH_DB_SCHEMAS, DEPTH_TABLES, FIELD_CATALOG_DB_SCHEMAS,
-    FIELD_CATALOG_NAME, FIELD_COLUMN_BYTE_LENGTH, FIELD_COLUMN_CHAR_LENGTH, FIELD_COLUMN_DEF,
+    DEPTH_COLUMNS, FIELD_COLUMN_BYTE_LENGTH, FIELD_COLUMN_CHAR_LENGTH, FIELD_COLUMN_DEF,
     FIELD_COLUMN_LOGICAL_TYPE, FIELD_COLUMN_NAME, FIELD_COLUMN_NULLABLE,
     FIELD_COLUMN_ORDINAL_POSITION, FIELD_COLUMN_PRECISION, FIELD_COLUMN_REMARKS,
     FIELD_COLUMN_SCALE, FIELD_DB_SCHEMA_NAME, FIELD_DB_SCHEMA_TABLES, FIELD_TABLE_COLUMNS,
-    FIELD_TABLE_NAME, FIELD_TABLE_TYPE,
+    FIELD_TABLE_NAME,
 };
 use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionGetInfoRequest, ConnectionGetObjectsRequest, ConnectionGetParameterRequest,
@@ -168,6 +167,7 @@ pub fn tables<E: OdbcEncoding>(
     };
 
     let metadata_id = inner.metadata_id;
+    let stmt_handle = guard.stmt_handle;
     drop(conn);
 
     let is_empty_str = |s: &Option<String>| s.as_deref() == Some("");
@@ -178,15 +178,7 @@ pub fn tables<E: OdbcEncoding>(
         && is_empty_str(&table_raw)
         && is_empty_str(&type_raw)
     {
-        return execute_get_objects_and_flatten(
-            &mut inner,
-            conn_handle,
-            DEPTH_CATALOGS,
-            None,
-            None,
-            None,
-            vec![],
-        );
+        return execute_show_all_catalogs(&mut inner, stmt_handle);
     }
 
     // SQL_ALL_SCHEMAS special case: schema="%", catalog="", table="", type=""
@@ -195,15 +187,7 @@ pub fn tables<E: OdbcEncoding>(
         && is_empty_str(&table_raw)
         && is_empty_str(&type_raw)
     {
-        return execute_get_objects_and_flatten(
-            &mut inner,
-            conn_handle,
-            DEPTH_DB_SCHEMAS,
-            None,
-            None,
-            None,
-            vec![],
-        );
+        return execute_show_all_schemas(&mut inner, stmt_handle);
     }
 
     // SQL_ALL_TABLE_TYPES special case: type="%", catalog="", schema="", table=""
@@ -219,24 +203,53 @@ pub fn tables<E: OdbcEncoding>(
     //
     // Substitute a NULL catalog with the connection's current database (see
     // resolve_null_catalog_to_connection_context). A NULL schema is deliberately
-    // left NULL so it matches every schema in that database. Identifier mode
+    // left NULL so it matches every schema in that database, unless
+    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it below. Identifier mode
     // (metadata_id=TRUE) still requires non-NULL args → HY009.
     let catalog_raw = if metadata_id {
         catalog_raw
     } else {
         resolve_null_catalog_to_connection_context(catalog_raw, conn_handle)?
     };
-    let catalog_pattern = catalog_arg_to_pattern(catalog_raw.as_deref(), metadata_id)?;
-    let schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
+    let mut catalog_pattern = catalog_arg_to_pattern(catalog_raw.as_deref(), metadata_id)?;
+    let mut schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
     let table_pattern = catalog_arg_to_pattern(table_raw.as_deref(), metadata_id)?;
 
     // TableType is always a value list, not a pattern
     let table_types = parse_table_type_list(type_raw.as_deref());
 
-    execute_get_objects_and_flatten(
+    // Core GetObjects applied CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX after
+    // the ODBC NULL-catalog substitution: fill any still-NULL catalog/schema from
+    // the session (same as apply_connection_context). Do not gate solely on
+    // schema — a supplied schema must not skip catalog fill when catalog is
+    // still unresolved.
+    if (catalog_pattern.is_none() || schema_pattern.is_none())
+        && metadata_request_use_connection_ctx(conn_handle)?
+    {
+        let rt = global().context(OdbcRuntimeSnafu)?;
+        let info = rt.block_on(async |c| {
+            c.connection_get_info(ConnectionGetInfoRequest {
+                conn_handle: Some(conn_handle),
+                info_codes: vec![],
+                include_master_token: false,
+            })
+            .await
+        })?;
+        if catalog_pattern.is_none()
+            && let Some(db) = info.database
+        {
+            catalog_pattern = Some(escape_like_wildcards(&db));
+        }
+        if schema_pattern.is_none()
+            && let Some(sch) = info.schema
+        {
+            schema_pattern = Some(escape_like_wildcards(&sch));
+        }
+    }
+
+    execute_show_tables(
         &mut inner,
-        conn_handle,
-        DEPTH_TABLES,
+        stmt_handle,
         catalog_pattern,
         schema_pattern,
         table_pattern,
@@ -246,14 +259,12 @@ pub fn tables<E: OdbcEncoding>(
 
 /// Substitute a NULL catalog with the connection's current database.
 ///
-/// ODBC NULL means "use connection context" for catalog functions; the core
-/// engine treats NULL as account-wide, which omits databases the role can't see
-/// via account-wide SHOW. This mirrors the legacy driver's
-/// `SFSemantics::GetFilterForNullCatalog` (gated by its `UseCurrentCatalog`
-/// config): it substitutes the **catalog only**. A NULL schema is left NULL so it
-/// matches all schemas in the database — legacy has no equivalent
-/// null-schema override, and schema-from-session is the core's
-/// `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` path, which we leave to the core.
+/// ODBC NULL means "use connection context" for catalog functions; an
+/// account-wide SHOW omits databases the role can't see. This mirrors the
+/// legacy driver's `SFSemantics::GetFilterForNullCatalog` (gated by its
+/// `UseCurrentCatalog` config): it substitutes the **catalog only**. A NULL
+/// schema is left NULL so it matches all schemas in the database — unless
+/// `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` fills it in `tables()`.
 fn resolve_null_catalog_to_connection_context(
     catalog_raw: Option<String>,
     conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
@@ -273,7 +284,7 @@ fn resolve_null_catalog_to_connection_context(
     })?;
 
     // The server name is a literal identifier, not a user pattern; escape LIKE
-    // metacharacters so the core's is_exact() recovers it and issues IN DATABASE
+    // metacharacters so is_exact_pattern() recovers it and issues IN DATABASE
     // rather than falling through to IN ACCOUNT when the name contains _ or %.
     Ok(info.database.map(|db| escape_like_wildcards(&db)))
 }
@@ -1370,6 +1381,27 @@ fn is_procedures_empty_result_sql_state(state: &str) -> bool {
     state == "02000" || is_object_not_found_sql_state(state)
 }
 
+/// SQLSTATEs that `SQLTables` SHOW paths map to an empty result set instead of
+/// an error. Matches core GetObjects `SHOW_NOT_FOUND_SQLSTATES` (`02000` /
+/// `42000` / `42S02`) — the legacy "no metadata" treatment for SHOW queries.
+/// Kept separate from [`is_object_not_found_sql_state`] so widening with `02000`
+/// does not change `SQLPrimaryKeys`/`SQLForeignKeys` behavior.
+///
+/// `42000` specifically: Snowflake raises it when a `SHOW … IN DATABASE/SCHEMA`
+/// names an object that does not exist or the role cannot see (e.g. a catalog
+/// argument resolving to a dropped/invisible database). ODBC contract is to
+/// return zero rows there, not an error, and legacy/core behave the same — so we
+/// keep parity. The residual risk is that these SHOW statements are now
+/// wrapper-constructed (see [`build_show_objects_sql`]): a *builder* bug that
+/// emits malformed SQL would also surface as `42000` and be swallowed as an
+/// empty result rather than a diagnosable error. That path is covered by the
+/// `build_show_objects_sql` / `build_show_columns_sql` unit tests (which pin the
+/// exact emitted SQL, including identifier escaping) so a builder regression is
+/// caught there rather than silently degrading to "no tables" at runtime.
+fn is_tables_empty_result_sql_state(state: &str) -> bool {
+    state == "02000" || is_object_not_found_sql_state(state)
+}
+
 /// A procedure is table-valued (`NUM_RESULT_SETS = 1`) iff its return `data_type`
 /// begins with `TABLE` (case-insensitive), e.g. `TABLE (ID NUMBER, NAME VARCHAR)`.
 fn returns_table(data_type: &str) -> bool {
@@ -1859,6 +1891,11 @@ fn field_from_sql_type_string(type_str: &str, numeric_settings: &NumericSettings
 /// silently make pattern mode case-insensitive (the `SQLTables`/`SQLColumns`
 /// divergence tracked separately).
 fn like_match(pattern: &str, text: &str) -> bool {
+    // Empty pattern never matches (aligned with core like_pattern::matches and
+    // Snowflake identifiers — none are named "").
+    if pattern.is_empty() {
+        return false;
+    }
     let p: Vec<char> = pattern.chars().collect();
     let t: Vec<char> = text.chars().collect();
     let (mut pi, mut ti) = (0usize, 0usize);
@@ -2283,87 +2320,446 @@ pub fn procedure_columns<E: OdbcEncoding>(
 }
 
 // ============================================================================
-// Call core ConnectionGetObjects, fetch stream, flatten, set state
+// Wrapper-owned SHOW paths
 // ============================================================================
 
-fn execute_get_objects_and_flatten(
+fn execute_show_all_catalogs(
     inner: &mut StatementInner,
-    conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
-    depth: i32,
-    catalog: Option<String>,
-    db_schema: Option<String>,
-    table_name: Option<String>,
-    table_type: Vec<String>,
+    stmt_handle: StatementHandle,
 ) -> OdbcResult<()> {
-    let rt = global().context(OdbcRuntimeSnafu)?;
+    // ODBC SQL_ALL_CATALOGS is an unconditional catalog enumeration — do not
+    // narrow via CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX (unlike the old
+    // GetObjects path, which applied apply_connection_context to every depth).
+    let show_batch =
+        match execute_show_query_collect_batch(stmt_handle, "SHOW DATABASES IN ACCOUNT") {
+            Ok(batch) => batch,
+            Err(e) => {
+                if e.server_sql_state()
+                    .is_some_and(is_tables_empty_result_sql_state)
+                {
+                    return set_static_empty_catalog_result(inner, flat_tables_schema());
+                }
+                return Err(e);
+            }
+        };
 
-    let response = rt.block_on(async |c| {
-        c.connection_get_objects(ConnectionGetObjectsRequest {
-            conn_handle: Some(conn_handle),
-            depth,
-            catalog,
-            db_schema,
-            table_name,
-            table_type,
-            column_name: None,
-        })
-        .await
+    let name_idx = column_index_by_name(&show_batch.schema(), "name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW DATABASES result missing 'name' column".to_string(),
+            location: snafu::location!(),
+        }
     })?;
 
-    let rs_handle: ResultSetHandle =
-        response
-            .result_set_handle
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: "ConnectionGetObjects: missing result_set_handle".to_string(),
-                location: snafu::location!(),
-            })?;
+    let mut cats: Vec<Option<String>> = Vec::with_capacity(show_batch.num_rows());
+    let mut nones: Vec<Option<String>> = Vec::with_capacity(show_batch.num_rows());
+    for row in 0..show_batch.num_rows() {
+        cats.push(utf8_value_at(&show_batch, name_idx, row));
+        nones.push(None);
+    }
 
-    // Fetch the Arrow stream from the result set handle
-    let stream_ptr = {
-        let stream_resp = rt.block_on(async |c| {
-            c.result_set_get_stream(ResultSetGetStreamRequest {
-                result_set_handle: Some(rs_handle),
-            })
-            .await
-        })?;
-        // Release is best-effort
-        let _ = rt.block_on(async |c| {
-            c.result_set_release(ResultSetReleaseRequest {
-                result_set_handle: Some(rs_handle),
-            })
-            .await
-        });
-        stream_resp
-            .stream
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: "ConnectionGetObjects: missing stream".to_string(),
-                location: snafu::location!(),
-            })?
+    let schema = flat_tables_schema();
+    let flat_batch = build_flat_batch(
+        schema.clone(),
+        cats,
+        nones.clone(),
+        nones.clone(),
+        nones.clone(),
+        nones,
+    )?;
+    install_catalog_batch(inner, flat_batch, schema)
+}
+
+fn execute_show_all_schemas(
+    inner: &mut StatementInner,
+    stmt_handle: StatementHandle,
+) -> OdbcResult<()> {
+    // ODBC SQL_ALL_SCHEMAS is an unconditional schema enumeration — do not
+    // narrow via CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX (unlike the old
+    // GetObjects path, which applied apply_connection_context to every depth).
+    let show_batch = match execute_show_query_collect_batch(stmt_handle, "SHOW SCHEMAS IN ACCOUNT")
+    {
+        Ok(batch) => batch,
+        Err(e) => {
+            if e.server_sql_state()
+                .is_some_and(is_tables_empty_result_sql_state)
+            {
+                return set_static_empty_catalog_result(inner, flat_tables_schema());
+            }
+            return Err(e);
+        }
     };
 
-    // Convert to ArrowArrayStreamReader
-    let raw_ptr: *mut FFI_ArrowArrayStream = stream_ptr.into();
-    let owned_stream = unsafe { FFI_ArrowArrayStream::from_raw(raw_ptr) };
-    let reader = ArrowArrayStreamReader::try_new(owned_stream)
-        .context(ArrowArrayStreamReaderCreationSnafu)?;
+    let input = show_batch.schema();
+    let db_idx = column_index_by_name(&input, "database_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW SCHEMAS result missing 'database_name' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let name_idx = column_index_by_name(&input, "name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW SCHEMAS result missing 'name' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
 
-    // Read all batches from the nested Arrow stream
-    let nested_batch = collect_nested_batch(Box::new(reader))?;
+    let mut cats: Vec<Option<String>> = Vec::with_capacity(show_batch.num_rows());
+    let mut schms: Vec<Option<String>> = Vec::with_capacity(show_batch.num_rows());
+    let mut nones: Vec<Option<String>> = Vec::with_capacity(show_batch.num_rows());
+    for row in 0..show_batch.num_rows() {
+        cats.push(utf8_value_at(&show_batch, db_idx, row));
+        schms.push(utf8_value_at(&show_batch, name_idx, row));
+        nones.push(None);
+    }
 
-    // Flatten the nested batch into the flat 5-col ODBC result
-    let flat_batch = flatten_to_odbc(nested_batch, depth)?;
+    let schema = flat_tables_schema();
+    let flat_batch = build_flat_batch(
+        schema.clone(),
+        cats,
+        schms,
+        nones.clone(),
+        nones.clone(),
+        nones,
+    )?;
+    install_catalog_batch(inner, flat_batch, schema)
+}
 
-    // Create an ArrowArrayStreamReader from the flat RecordBatch
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TableTypeFilter {
+    All,
+    Explicit(Vec<String>),
+    /// Caller supplied table-type keywords, but none were TABLE or VIEW.
+    Unsupported,
+}
+
+fn normalize_table_types(types: &[String]) -> TableTypeFilter {
+    if types.is_empty() {
+        return TableTypeFilter::All;
+    }
+    if types.len() == 1 && types[0].trim() == "%" {
+        return TableTypeFilter::All;
+    }
+    let normalized: Vec<String> = types
+        .iter()
+        .map(|t| t.trim().to_uppercase())
+        .filter(|t| t == "TABLE" || t == "VIEW")
+        .collect();
+
+    if normalized.is_empty() {
+        TableTypeFilter::Unsupported
+    } else {
+        TableTypeFilter::Explicit(normalized)
+    }
+}
+
+/// Map a `SHOW OBJECTS` `kind` value to an ODBC `TABLE_TYPE`.
+///
+/// `SHOW OBJECTS.kind` is documented to return `TABLE`, `VIEW`, or
+/// `PERSONAL DATABASE`; the finer table variants (transient/iceberg/…) come
+/// from `SHOW TABLES`/`SHOW VIEWS` and are kept here defensively. Values that
+/// are not a table or view (e.g. `PERSONAL DATABASE`, surfaced only under an
+/// account-wide scan by a privileged role) return `None` so the caller skips
+/// the row rather than reporting a non-table object as a queryable `TABLE`.
+fn normalize_kind(kind: &str) -> Option<&'static str> {
+    match kind.to_uppercase().as_str() {
+        "TABLE" | "TRANSIENT TABLE" | "TEMPORARY TABLE" | "EXTERNAL TABLE" | "ICEBERG TABLE"
+        | "EVENT TABLE" | "HYBRID TABLE" | "MATERIALIZED TABLE" => Some("TABLE"),
+        "VIEW" | "MATERIALIZED VIEW" | "SECURE VIEW" => Some("VIEW"),
+        "PERSONAL DATABASE" => None,
+        // Unknown kinds default to TABLE (matches the prior permissive behavior
+        // for table-like objects not yet enumerated above). Log so an
+        // unexpected/new SHOW kind is diagnosable rather than silently
+        // mislabeled as a TABLE to the application.
+        _ => {
+            tracing::debug!(
+                kind = %kind,
+                "SQLTables: unrecognized SHOW OBJECTS kind; defaulting TABLE_TYPE to TABLE"
+            );
+            Some("TABLE")
+        }
+    }
+}
+
+/// Returns `Some(literal)` when `pattern` has no unescaped `%`/`_`.
+///
+/// Recognized escapes match [`strip_escapes_for_show_like`]: `\%`, `\_`, `\\`,
+/// and `\"`. Treating `\"` as a literal quote (rather than keeping the
+/// backslash) keeps SHOW scope (`IN DATABASE "…"`) aligned with the coarse
+/// LIKE pushdown built from the same pattern.
+fn is_exact_pattern(pattern: &str) -> Option<String> {
+    if pattern.is_empty() {
+        return Some(String::new());
+    }
+    let mut result = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ESCAPE_CHAR {
+            match chars.next() {
+                Some('%') => result.push('%'),
+                Some('_') => result.push('_'),
+                Some('\\') => result.push('\\'),
+                Some('"') => result.push('"'),
+                Some(other) => {
+                    result.push(ESCAPE_CHAR);
+                    result.push(other);
+                }
+                None => result.push(ESCAPE_CHAR),
+            }
+        } else if c == '%' || c == '_' {
+            return None;
+        } else {
+            result.push(c);
+        }
+    }
+    Some(result)
+}
+
+fn strip_escapes_for_show_like(pattern: &str) -> String {
+    let mut result = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ESCAPE_CHAR {
+            match chars.peek().copied() {
+                Some(escaped @ ('%' | '_' | '\\' | '"')) => {
+                    chars.next();
+                    result.push(escaped);
+                }
+                _ => result.push(ESCAPE_CHAR),
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Escape a pattern for embedding in a single-quoted Snowflake `LIKE '…'`
+/// literal. Delegates to [`escape_sql_string_literal`] (doubles `\` then `'`)
+/// so SHOW LIKE pushdown uses the same SQL-string convention as the procedures
+/// path rather than a parallel `\'`-style escape.
+fn escape_show_like(pattern: &str) -> String {
+    escape_sql_string_literal(pattern)
+}
+
+fn build_like_clause(pattern: Option<&str>) -> String {
+    match pattern {
+        None | Some("") => String::new(),
+        Some(p) => {
+            let coarse = strip_escapes_for_show_like(p);
+            format!("LIKE '{}'", escape_show_like(&coarse))
+        }
+    }
+}
+
+fn format_show_sql(show_cmd: &str, like_clause: &str, scope: &str) -> String {
+    if like_clause.is_empty() {
+        format!("{show_cmd} {scope}")
+    } else {
+        format!("{show_cmd} {like_clause} {scope}")
+    }
+}
+
+fn build_show_objects_sql(
+    catalog: Option<&str>,
+    schema: Option<&str>,
+    table_name: Option<&str>,
+) -> String {
+    let exact_catalog = catalog.and_then(is_exact_pattern).filter(|s| !s.is_empty());
+    let exact_schema = schema.and_then(is_exact_pattern).filter(|s| !s.is_empty());
+
+    let like_clause = build_like_clause(table_name);
+    let scope = match (&exact_catalog, &exact_schema) {
+        (Some(cat), Some(sch)) => {
+            format!(
+                "IN SCHEMA \"{}\".\"{}\"",
+                escape_snowflake_identifier(cat),
+                escape_snowflake_identifier(sch)
+            )
+        }
+        (Some(cat), None) => {
+            format!("IN DATABASE \"{}\"", escape_snowflake_identifier(cat))
+        }
+        _ => "IN ACCOUNT".to_string(),
+    };
+    format_show_sql("SHOW OBJECTS", &like_clause, &scope)
+}
+
+/// Optional pattern filter: `None` matches all; otherwise case-sensitive LIKE.
+fn pattern_matches(pattern: Option<&str>, value: &str) -> bool {
+    match pattern {
+        None => true,
+        Some(p) => like_match(p, value),
+    }
+}
+
+fn execute_show_tables(
+    inner: &mut StatementInner,
+    stmt_handle: StatementHandle,
+    catalog: Option<String>,
+    schema: Option<String>,
+    table_name: Option<String>,
+    table_types: Vec<String>,
+) -> OdbcResult<()> {
+    let type_filter = normalize_table_types(&table_types);
+    if matches!(type_filter, TableTypeFilter::Unsupported) {
+        return set_static_empty_catalog_result(inner, flat_tables_schema());
+    }
+    // An empty-string catalog, schema, or table pattern matches nothing
+    // (`like_match("", non-empty)` is false), so the result is provably empty.
+    // Short-circuit before issuing the SHOW — otherwise an empty catalog/schema
+    // falls through `build_show_objects_sql` to an account-wide `IN ACCOUNT`
+    // scan whose rows are all filtered out client-side anyway.
+    if matches!(catalog.as_deref(), Some(""))
+        || matches!(schema.as_deref(), Some(""))
+        || matches!(table_name.as_deref(), Some(""))
+    {
+        return set_static_empty_catalog_result(inner, flat_tables_schema());
+    }
+
+    let sql = build_show_objects_sql(catalog.as_deref(), schema.as_deref(), table_name.as_deref());
+    let show_batch = match execute_show_query_collect_batch(stmt_handle, &sql) {
+        Ok(batch) => batch,
+        Err(e) => {
+            if e.server_sql_state()
+                .is_some_and(is_tables_empty_result_sql_state)
+            {
+                return set_static_empty_catalog_result(inner, flat_tables_schema());
+            }
+            return Err(e);
+        }
+    };
+
+    let flat_batch = map_show_objects_to_odbc(
+        show_batch,
+        catalog.as_deref(),
+        schema.as_deref(),
+        table_name.as_deref(),
+        &type_filter,
+    )?;
     let schema = flat_batch.schema();
+    install_catalog_batch(inner, flat_batch, schema)
+}
+
+fn map_show_objects_to_odbc(
+    batch: RecordBatch,
+    catalog_filter: Option<&str>,
+    schema_filter: Option<&str>,
+    table_name_filter: Option<&str>,
+    table_types: &TableTypeFilter,
+) -> OdbcResult<RecordBatch> {
+    let out_schema = flat_tables_schema();
+    if batch.num_rows() == 0 {
+        return Ok(RecordBatch::new_empty(out_schema));
+    }
+
+    let input = batch.schema();
+    let db_idx = column_index_by_name(&input, "database_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW OBJECTS result missing 'database_name' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let sch_idx = column_index_by_name(&input, "schema_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW OBJECTS result missing 'schema_name' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let name_idx = column_index_by_name(&input, "name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW OBJECTS result missing 'name' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let kind_idx = column_index_by_name(&input, "kind");
+
+    let mut rows: Vec<FlatTableRow> = Vec::new();
+    for row in 0..batch.num_rows() {
+        let Some(db_name) = utf8_value_at(&batch, db_idx, row) else {
+            continue;
+        };
+        let Some(sch_name) = utf8_value_at(&batch, sch_idx, row) else {
+            continue;
+        };
+        let Some(tbl_name) = utf8_value_at(&batch, name_idx, row) else {
+            continue;
+        };
+        let kind = kind_idx
+            .and_then(|i| utf8_value_at(&batch, i, row))
+            .unwrap_or_else(|| "TABLE".to_string());
+        // Skip objects that are neither a TABLE nor a VIEW (e.g. PERSONAL DATABASE).
+        let Some(normalized_type) = normalize_kind(&kind).map(str::to_string) else {
+            continue;
+        };
+
+        if !pattern_matches(catalog_filter, &db_name) {
+            continue;
+        }
+        if !pattern_matches(schema_filter, &sch_name) {
+            continue;
+        }
+        if !pattern_matches(table_name_filter, &tbl_name) {
+            continue;
+        }
+        if let TableTypeFilter::Explicit(allowed) = table_types
+            && !allowed.contains(&normalized_type)
+        {
+            continue;
+        }
+
+        rows.push((
+            Some(db_name),
+            Some(sch_name),
+            Some(tbl_name),
+            Some(normalized_type),
+            Some(String::new()),
+        ));
+    }
+
+    rows.sort_by(|a, b| {
+        let ta = a.3.as_deref().unwrap_or("");
+        let tb = b.3.as_deref().unwrap_or("");
+        let ca = a.0.as_deref().unwrap_or("");
+        let cb = b.0.as_deref().unwrap_or("");
+        let sa = a.1.as_deref().unwrap_or("");
+        let sb = b.1.as_deref().unwrap_or("");
+        let na = a.2.as_deref().unwrap_or("");
+        let nb = b.2.as_deref().unwrap_or("");
+        ta.cmp(tb)
+            .then(ca.cmp(cb))
+            .then(sa.cmp(sb))
+            .then(na.cmp(nb))
+    });
+
+    let mut cats = Vec::with_capacity(rows.len());
+    let mut schms = Vec::with_capacity(rows.len());
+    let mut tbls = Vec::with_capacity(rows.len());
+    let mut types = Vec::with_capacity(rows.len());
+    let mut remarks = Vec::with_capacity(rows.len());
+    for (c, s, t, ty, r) in rows {
+        cats.push(c);
+        schms.push(s);
+        tbls.push(t);
+        types.push(ty);
+        remarks.push(r);
+    }
+    build_flat_batch(out_schema, cats, schms, tbls, types, remarks)
+}
+
+fn install_catalog_batch(
+    inner: &mut StatementInner,
+    flat_batch: RecordBatch,
+    schema: SchemaRef,
+) -> OdbcResult<()> {
     let flat_reader = reader_from_record_batch(flat_batch, schema)?;
-
-    let new_state = StatementState::QueryExecuted {
-        reader: flat_reader,
-        rows_affected: Some(-1),
-        origin: ExecutionOrigin::Direct,
-    };
-    set_state_for_catalog(inner, new_state);
-
+    set_state_for_catalog(
+        inner,
+        StatementState::QueryExecuted {
+            reader: flat_reader,
+            rows_affected: Some(-1),
+            origin: ExecutionOrigin::Direct,
+        },
+    );
     Ok(())
 }
 
@@ -2944,226 +3340,6 @@ fn reader_from_record_batch(
     // `Box::into_raw` + `from_raw` round-trip would leak the heap box, since
     // `from_raw` moves the struct out without reclaiming the allocation.
     ArrowArrayStreamReader::try_new(ffi_stream).context(ArrowArrayStreamReaderCreationSnafu)
-}
-
-// ============================================================================
-// Flatten nested ADBC Arrow → flat 5-col ODBC result
-// ============================================================================
-
-fn flatten_to_odbc(batch: RecordBatch, depth: i32) -> OdbcResult<RecordBatch> {
-    let schema = flat_tables_schema();
-
-    let mut cats: Vec<Option<String>> = Vec::new();
-    let mut schms: Vec<Option<String>> = Vec::new();
-    let mut tbls: Vec<Option<String>> = Vec::new();
-    let mut types: Vec<Option<String>> = Vec::new();
-    let mut remarks: Vec<Option<String>> = Vec::new();
-
-    if batch.num_rows() == 0 {
-        return build_flat_batch(schema, cats, schms, tbls, types, remarks);
-    }
-
-    // catalog_name column (index 0)
-    let cat_arr = batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-            message: format!(
-                "Expected StringArray for {}, got {:?}",
-                FIELD_CATALOG_NAME,
-                batch.column(0).data_type()
-            ),
-            location: snafu::location!(),
-        })?;
-
-    // catalog_db_schemas column (index 1) as LargeListArray
-    let schemas_list = batch
-        .column(1)
-        .as_any()
-        .downcast_ref::<LargeListArray>()
-        .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-            message: format!(
-                "Expected LargeListArray for {}, got {:?}",
-                FIELD_CATALOG_DB_SCHEMAS,
-                batch.column(1).data_type()
-            ),
-            location: snafu::location!(),
-        })?;
-
-    for cat_idx in 0..batch.num_rows() {
-        let cat_name = if cat_arr.is_null(cat_idx) {
-            None
-        } else {
-            Some(cat_arr.value(cat_idx).to_string())
-        };
-
-        if depth == DEPTH_CATALOGS {
-            cats.push(cat_name);
-            schms.push(None);
-            tbls.push(None);
-            types.push(None);
-            remarks.push(None);
-            continue;
-        }
-
-        if schemas_list.is_null(cat_idx) {
-            continue;
-        }
-
-        let sch_start = schemas_list.value_offsets()[cat_idx] as usize;
-        let sch_end = schemas_list.value_offsets()[cat_idx + 1] as usize;
-
-        use arrow::array::StructArray;
-        let schemas_struct = schemas_list
-            .values()
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: "Expected StructArray for catalog_db_schemas values".to_string(),
-                location: snafu::location!(),
-            })?;
-
-        let schema_name_arr = schemas_struct
-            .column_by_name(FIELD_DB_SCHEMA_NAME)
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: format!("Missing {} column", FIELD_DB_SCHEMA_NAME),
-                location: snafu::location!(),
-            })?
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: format!("Expected StringArray for {}", FIELD_DB_SCHEMA_NAME),
-                location: snafu::location!(),
-            })?;
-
-        let tables_list = schemas_struct
-            .column_by_name(FIELD_DB_SCHEMA_TABLES)
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: format!("Missing {} column", FIELD_DB_SCHEMA_TABLES),
-                location: snafu::location!(),
-            })?
-            .as_any()
-            .downcast_ref::<LargeListArray>()
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: format!("Expected LargeListArray for {}", FIELD_DB_SCHEMA_TABLES),
-                location: snafu::location!(),
-            })?;
-
-        for sch_idx in sch_start..sch_end {
-            let sch_name = if schema_name_arr.is_null(sch_idx) {
-                None
-            } else {
-                Some(schema_name_arr.value(sch_idx).to_string())
-            };
-
-            if depth == DEPTH_DB_SCHEMAS {
-                cats.push(cat_name.clone());
-                schms.push(sch_name);
-                tbls.push(None);
-                types.push(None);
-                remarks.push(None);
-                continue;
-            }
-
-            // DEPTH_TABLES
-            if tables_list.is_null(sch_idx) {
-                continue;
-            }
-
-            let tbl_start = tables_list.value_offsets()[sch_idx] as usize;
-            let tbl_end = tables_list.value_offsets()[sch_idx + 1] as usize;
-
-            let tables_struct = tables_list
-                .values()
-                .as_any()
-                .downcast_ref::<StructArray>()
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: "Expected StructArray for table values".to_string(),
-                    location: snafu::location!(),
-                })?;
-
-            let tbl_name_arr = tables_struct
-                .column_by_name(FIELD_TABLE_NAME)
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: format!("Missing {} column", FIELD_TABLE_NAME),
-                    location: snafu::location!(),
-                })?
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: format!("Expected StringArray for {}", FIELD_TABLE_NAME),
-                    location: snafu::location!(),
-                })?;
-
-            let tbl_type_arr = tables_struct
-                .column_by_name(FIELD_TABLE_TYPE)
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: format!("Missing {} column", FIELD_TABLE_TYPE),
-                    location: snafu::location!(),
-                })?
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: format!("Expected StringArray for {}", FIELD_TABLE_TYPE),
-                    location: snafu::location!(),
-                })?;
-
-            for tbl_idx in tbl_start..tbl_end {
-                let tbl_name = if tbl_name_arr.is_null(tbl_idx) {
-                    None
-                } else {
-                    Some(tbl_name_arr.value(tbl_idx).to_string())
-                };
-                let tbl_type = if tbl_type_arr.is_null(tbl_idx) {
-                    None
-                } else {
-                    Some(tbl_type_arr.value(tbl_idx).to_string())
-                };
-
-                cats.push(cat_name.clone());
-                schms.push(sch_name.clone());
-                tbls.push(tbl_name);
-                types.push(tbl_type);
-                remarks.push(Some(String::new()));
-            }
-        }
-    }
-
-    // Sort by TABLE_TYPE, TABLE_CAT, TABLE_SCHEM, TABLE_NAME per ODBC spec
-    if depth == DEPTH_TABLES && !cats.is_empty() {
-        let mut rows: Vec<FlatTableRow> = cats
-            .drain(..)
-            .zip(schms.drain(..))
-            .zip(tbls.drain(..))
-            .zip(types.drain(..))
-            .zip(remarks.drain(..))
-            .map(|((((c, s), t), ty), r)| (c, s, t, ty, r))
-            .collect();
-        rows.sort_by(|a, b| {
-            let ta = a.3.as_deref().unwrap_or("");
-            let tb = b.3.as_deref().unwrap_or("");
-            let ca = a.0.as_deref().unwrap_or("");
-            let cb = b.0.as_deref().unwrap_or("");
-            let sa = a.1.as_deref().unwrap_or("");
-            let sb = b.1.as_deref().unwrap_or("");
-            let na = a.2.as_deref().unwrap_or("");
-            let nb = b.2.as_deref().unwrap_or("");
-            ta.cmp(tb)
-                .then(ca.cmp(cb))
-                .then(sa.cmp(sb))
-                .then(na.cmp(nb))
-        });
-        for (c, s, t, ty, r) in rows {
-            cats.push(c);
-            schms.push(s);
-            tbls.push(t);
-            types.push(ty);
-            remarks.push(r);
-        }
-    }
-
-    build_flat_batch(schema, cats, schms, tbls, types, remarks)
 }
 
 fn build_flat_batch(
@@ -4603,6 +4779,8 @@ mod procedure_columns_tests {
         assert!(like_match("%", "PNAME"));
         assert!(like_match("PNAME", "PNAME"));
         assert!(!like_match("PNAME", ""));
+        assert!(!like_match("", ""));
+        assert!(!like_match("", "PNAME"));
         assert!(!like_match("PNAME", "PAGE"));
         assert!(like_match("P%", "PAGE"));
         assert!(like_match("P_GE", "PAGE"));
@@ -4704,5 +4882,160 @@ mod procedure_columns_tests {
         let out = map_procedure_columns_to_odbc(empty, None, &ns).expect("map failed");
         assert_eq!(out.num_columns(), 21);
         assert_eq!(out.num_rows(), 0);
+    }
+}
+
+#[cfg(test)]
+mod sqltables_tests {
+    use super::*;
+
+    #[test]
+    fn like_match_is_case_sensitive() {
+        // SNOW-3780463: pattern mode must not fold case.
+        assert!(like_match("BASICTABLE", "BASICTABLE"));
+        assert!(!like_match("basictable", "BASICTABLE"));
+        assert!(!like_match("BASICTABLE", "basictable"));
+        assert!(like_match("basic%", "basictable"));
+        assert!(!like_match("basic%", "BASICTABLE"));
+    }
+
+    #[test]
+    fn normalize_kind_maps_table_and_view_variants() {
+        assert_eq!(normalize_kind("TABLE"), Some("TABLE"));
+        assert_eq!(normalize_kind("TRANSIENT TABLE"), Some("TABLE"));
+        assert_eq!(normalize_kind("ICEBERG TABLE"), Some("TABLE"));
+        assert_eq!(normalize_kind("VIEW"), Some("VIEW"));
+        assert_eq!(normalize_kind("MATERIALIZED VIEW"), Some("VIEW"));
+        assert_eq!(normalize_kind("SECURE VIEW"), Some("VIEW"));
+        assert_eq!(normalize_kind("unknown"), Some("TABLE"));
+    }
+
+    #[test]
+    fn normalize_kind_skips_non_table_view_objects() {
+        assert_eq!(normalize_kind("PERSONAL DATABASE"), None);
+        assert_eq!(normalize_kind("personal database"), None);
+    }
+
+    #[test]
+    fn normalize_table_types_empty_and_percent_mean_all() {
+        assert_eq!(normalize_table_types(&[]), TableTypeFilter::All);
+        assert_eq!(
+            normalize_table_types(&["%".to_string()]),
+            TableTypeFilter::All
+        );
+    }
+
+    #[test]
+    fn normalize_table_types_explicit_and_unsupported() {
+        assert_eq!(
+            normalize_table_types(&["table".to_string(), "VIEW".to_string()]),
+            TableTypeFilter::Explicit(vec!["TABLE".to_string(), "VIEW".to_string()])
+        );
+        assert_eq!(
+            normalize_table_types(&["SYNONYM".to_string()]),
+            TableTypeFilter::Unsupported
+        );
+    }
+
+    #[test]
+    fn format_show_sql_like_precedes_scope() {
+        assert_eq!(
+            format_show_sql("SHOW OBJECTS", "LIKE 'T%'", "IN SCHEMA \"DB\".\"SCH\""),
+            "SHOW OBJECTS LIKE 'T%' IN SCHEMA \"DB\".\"SCH\""
+        );
+        assert_eq!(
+            format_show_sql("SHOW OBJECTS", "", "IN DATABASE \"DB\""),
+            "SHOW OBJECTS IN DATABASE \"DB\""
+        );
+    }
+
+    #[test]
+    fn build_show_objects_sql_picks_tightest_exact_scope() {
+        assert_eq!(
+            build_show_objects_sql(Some("DB"), Some("SCH"), Some("T%")),
+            "SHOW OBJECTS LIKE 'T%' IN SCHEMA \"DB\".\"SCH\""
+        );
+        assert_eq!(
+            build_show_objects_sql(Some("DB"), None, None),
+            "SHOW OBJECTS IN DATABASE \"DB\""
+        );
+        assert_eq!(
+            build_show_objects_sql(Some("DB%"), None, None),
+            "SHOW OBJECTS IN ACCOUNT"
+        );
+        // Escaped underscore is exact (is_exact_pattern recovers the literal).
+        assert_eq!(
+            build_show_objects_sql(Some("SNOWFLAKE\\_SAMPLE\\_DATA"), None, None),
+            "SHOW OBJECTS IN DATABASE \"SNOWFLAKE_SAMPLE_DATA\""
+        );
+        // Injection-critical: a double quote in an exact catalog/schema name must
+        // be doubled ("" ) by escape_snowflake_identifier so it cannot break out
+        // of the quoted IN DATABASE/IN SCHEMA identifier.
+        assert_eq!(
+            build_show_objects_sql(Some("D\"B"), None, None),
+            "SHOW OBJECTS IN DATABASE \"D\"\"B\""
+        );
+        assert_eq!(
+            build_show_objects_sql(Some("A\"B"), Some("C\"D"), Some("T%")),
+            "SHOW OBJECTS LIKE 'T%' IN SCHEMA \"A\"\"B\".\"C\"\"D\""
+        );
+    }
+
+    #[test]
+    fn build_like_clause_strips_escapes_for_coarse_pushdown() {
+        assert_eq!(build_like_clause(None), "");
+        assert_eq!(build_like_clause(Some("")), "");
+        assert_eq!(build_like_clause(Some("MY\\_TABLE")), "LIKE 'MY_TABLE'");
+        assert_eq!(build_like_clause(Some("100\\%")), "LIKE '100%'");
+        // Trailing backslash must not escape the closing quote.
+        assert_eq!(build_like_clause(Some("AB\\")), "LIKE 'AB\\\\'");
+        // Injection-critical: an embedded apostrophe must be doubled so it cannot
+        // close the LIKE '…' literal early.
+        assert_eq!(build_like_clause(Some("O'Brien")), "LIKE 'O''Brien'");
+    }
+
+    #[test]
+    fn is_exact_pattern_detects_wildcards_and_unescapes() {
+        assert_eq!(is_exact_pattern("FOO"), Some("FOO".to_string()));
+        assert_eq!(is_exact_pattern("FOO%"), None);
+        assert_eq!(is_exact_pattern("FOO\\_BAR"), Some("FOO_BAR".to_string()));
+        assert_eq!(is_exact_pattern(""), Some(String::new()));
+        // Escaped quote must strip like strip_escapes_for_show_like, so SHOW
+        // scope and coarse LIKE agree on the literal identifier.
+        assert_eq!(is_exact_pattern("FOO\\\"BAR"), Some("FOO\"BAR".to_string()));
+        assert_eq!(
+            is_exact_pattern("FOO\\\"BAR"),
+            Some(strip_escapes_for_show_like("FOO\\\"BAR"))
+        );
+    }
+
+    #[test]
+    fn escape_show_like_matches_sql_string_literal_escaping() {
+        assert_eq!(
+            escape_show_like("O'Brien"),
+            escape_sql_string_literal("O'Brien")
+        );
+        assert_eq!(escape_show_like("a\\b"), escape_sql_string_literal("a\\b"));
+        // Quote-doubling (not backslash-quote) for the embedded apostrophe.
+        assert_eq!(escape_show_like("O'Brien"), "O''Brien");
+    }
+
+    #[test]
+    fn pattern_matches_none_matches_all_and_empty_matches_nothing() {
+        assert!(pattern_matches(None, "ANY"));
+        assert!(!pattern_matches(Some(""), "ANY"));
+        assert!(!pattern_matches(Some(""), ""));
+        assert!(pattern_matches(Some("%"), "ANY"));
+        assert!(!pattern_matches(Some("basictable"), "BASICTABLE"));
+    }
+
+    #[test]
+    fn tables_empty_result_sql_states_include_no_data() {
+        assert!(is_tables_empty_result_sql_state("02000"));
+        assert!(is_tables_empty_result_sql_state("42000"));
+        assert!(is_tables_empty_result_sql_state("42S02"));
+        assert!(!is_tables_empty_result_sql_state("22007"));
+        // Keys matcher must stay narrower (no 02000).
+        assert!(!is_object_not_found_sql_state("02000"));
     }
 }

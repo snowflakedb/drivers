@@ -2072,3 +2072,32 @@ behavior_differences:
       corroborating the pattern at the server side too. Kept deliberately: matching
       "Java 5.3.0" would misidentify which implementation produced the blob, valuable for
       diagnostics during the mixed-fleet rollout period.
+  113:
+    name: "SQLTables case-fold unquoted identifiers in identifier mode"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
+      ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
+      preserves case). The universal driver folds unquoted catalog/schema/table identifiers to
+      uppercase via catalog_arg_to_pattern before SHOW OBJECTS and the case-sensitive client-side
+      like_match re-filter. The legacy driver re-filters SHOW results case-sensitively against the
+      caller's raw (lowercase) argument, so a lowercase identifier matches nothing. Related pattern-
+      mode case-sensitivity fix: SNOW-3780463.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      With SQL_ATTR_METADATA_ID=SQL_TRUE and a lowercase (unquoted) catalog/schema/table identifier,
+      the legacy driver compares the identifier case-sensitively against the uppercase names returned
+      by SHOW and drops every row, yielding an empty result set.
+    new_driver_behavior: |
+      Unquoted identifiers are folded to uppercase before SHOW and the client-side re-filter, so a
+      lowercase identifier matches the uppercase stored name and the expected row(s) are returned.
+      Double-quoted identifiers remain case-sensitive. In pattern mode (SQL_ATTR_METADATA_ID=SQL_FALSE,
+      the default) names stay case-sensitive, matching the reference driver (SNOW-3780463).
+    description: |
+      Applications that relied on the legacy case-sensitive behavior of unquoted identifiers under
+      identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
+      split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
+      legacy empty result set).
