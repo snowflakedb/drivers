@@ -3,6 +3,7 @@
 #include <sqltypes.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -29,6 +30,12 @@ struct ColumnValue {
   bool is_null() const { return indicator == SQL_NULL_DATA; }
   bool is_present() const { return indicator > 0 || indicator == SQL_NTS; }
 };
+
+std::string to_lower_copy(const std::string& s) {
+  std::string out = s;
+  std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return std::tolower(c); });
+  return out;
+}
 
 // Reads a CHAR column with the hygiene the ODBC-tests ruleset requires:
 //   - a 0xFF sentinel fill so a driver that returns success but writes nothing
@@ -459,6 +466,53 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: metadata_id=TRUE with NULL C
 
   // Then HY009 (Invalid use of null pointer) is returned
   REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+// Identifier mode folds unquoted identifiers to uppercase, so a lowercase
+// TableName must still match the uppercase stored name. The new driver folds
+// (ODBC-spec compliant); the legacy driver re-filters case-sensitively and
+// returns nothing (BD#113).
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: metadata_id=TRUE matches unquoted TableName case-insensitively",
+                 "[odbc-api][catalog][tables]") {
+  // Given SQL_ATTR_METADATA_ID is enabled (identifier mode)
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const std::string cat = to_lower_copy(database_name());
+  const std::string sch = to_lower_copy(schema_name());
+  const std::string tbl = to_lower_copy(readonly_db::BASIC_TABLE);
+
+  // When SQLTables is called with lowercase unquoted identifiers
+  ret = SQLTables(stmt_handle(), sqlchar(cat.c_str()), SQL_NTS, sqlchar(sch.c_str()), SQL_NTS, sqlchar(tbl.c_str()),
+                  SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  NEW_DRIVER_ONLY("BD#113") {
+    // Then the uppercase table is returned
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(sqltables_get_column(stmt_handle(), 3).text == readonly_db::BASIC_TABLE);
+
+    ret = SQLFetch(stmt_handle());
+    CHECK(ret == SQL_NO_DATA);
+  }
+  OLD_DRIVER_ONLY("BD#113") { REQUIRE(ret == SQL_NO_DATA); }
+}
+
+// In pattern mode (default) a lowercase TableName must NOT match the uppercase name.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: metadata_id=FALSE treats TableName case-sensitively",
+                 "[odbc-api][catalog][tables]") {
+  // Given a lowercase TableName pattern while METADATA_ID is SQL_FALSE (default)
+  const std::string tbl = to_lower_copy(readonly_db::BASIC_TABLE);
+
+  // When SQLTables is called in pattern mode
+  SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                            sqlchar(tbl.c_str()), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then no rows are returned (case is significant)
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
 }
 
 // ============================================================================

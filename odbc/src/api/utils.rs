@@ -14,9 +14,14 @@ use crate::conversion::{
 };
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
-use sf_core::apis::database_driver_v1::ESCAPE_CHAR;
 use snafu::ResultExt;
 use tracing;
+
+/// LIKE-pattern escape character used across the ODBC catalog functions.
+///
+/// Wrapper-owned (matches Snowflake's `\`) so the catalog paths do not reach
+/// into `sf_core`'s GetObjects internals for a single constant.
+pub(crate) const ESCAPE_CHAR: char = '\\';
 
 /// Logs `"{name}: exit"` at INFO when dropped — pair with a matching
 /// `tracing::info!("{name}: entry")` at the top of a public wrapper API
