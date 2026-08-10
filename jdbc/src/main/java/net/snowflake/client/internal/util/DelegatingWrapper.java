@@ -52,6 +52,24 @@ public interface DelegatingWrapper extends Wrapper {
     throw new SFSQLException("Cannot unwrap to " + iface.getName());
   }
 
+  // De-checked plain pass-throughs to Wrapper.unwrap/isWrapperFor: no self/delegate instanceof
+  // short-circuit (unlike resolve*), so a caller's existing unwrap semantics are preserved.
+  static <T> T unwrapUnchecked(Wrapper target, Class<T> iface) {
+    try {
+      return target.unwrap(iface);
+    } catch (SQLException e) {
+      throw new SFSQLException(e.getMessage(), e);
+    }
+  }
+
+  static boolean isWrapperForUnchecked(Wrapper target, Class<?> iface) {
+    try {
+      return target.isWrapperFor(iface);
+    } catch (SQLException e) {
+      throw new SFSQLException(e.getMessage(), e);
+    }
+  }
+
   /** Shared {@code isWrapperFor} logic; see {@link #resolveUnwrap}. */
   static boolean resolveIsWrapperFor(Object self, Object delegate, Class<?> iface) {
     // check if this object matches

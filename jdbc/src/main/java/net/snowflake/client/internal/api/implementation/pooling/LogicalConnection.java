@@ -29,6 +29,7 @@ import net.snowflake.client.internal.api.implementation.exception.SFClientInfoEx
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.codegen.JdbcBoundary;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 
 @JdbcBoundary
 class LogicalConnection implements Connection {
@@ -50,7 +51,7 @@ class LogicalConnection implements Connection {
         throw new SFSQLException(CONNECTION_CLOSED, "Connection is closed");
       }
     } catch (SQLException e) {
-      throw new RuntimeException(e);
+      throw new SFSQLException("Failed to check whether the physical connection is closed", e);
     }
   }
 
@@ -551,21 +552,13 @@ class LogicalConnection implements Connection {
   @Override
   public boolean isWrapperFor(Class<?> iface) {
     throwExceptionIfClosed();
-    try {
-      return physicalConnection.isWrapperFor(iface);
-    } catch (SQLException e) {
-      throw new SFSQLException(e.getMessage(), e);
-    }
+    return DelegatingWrapper.isWrapperForUnchecked(physicalConnection, iface);
   }
 
   @Override
   public <T> T unwrap(Class<T> iface) {
     throwExceptionIfClosed();
-    try {
-      return physicalConnection.unwrap(iface);
-    } catch (SQLException e) {
-      throw new SFSQLException(e.getMessage(), e);
-    }
+    return DelegatingWrapper.unwrapUnchecked(physicalConnection, iface);
   }
 
   private void throwExceptionIfClosed() {
