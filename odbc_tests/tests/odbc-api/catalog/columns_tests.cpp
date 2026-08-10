@@ -3,6 +3,7 @@
 #include <sqltypes.h>
 
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -154,6 +155,54 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Returns correct data types 
   }
 
   REQUIRE(rowCount == 2);
+}
+
+// SNOW-3899531: SQLColumns col 6 (TYPE_NAME) is a catalog cell value that must
+// report Snowflake external / friendly names (BOOLEAN, TIMESTAMP, VARIANT,
+// STRUCT, ARRAY, GEOGRAPHY, …), matching the reference driver — NOT the SDK
+// labels (BIT / TYPE_DATE / TYPE_TIMESTAMP) that SQLColAttribute reports on
+// query columns (covered by e2e/query/sql_col_attribute.cpp; must stay as-is).
+// Regression guard: semi-structured types must not collapse to VARCHAR, and
+// GEOGRAPHY must not come back NULL.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: TYPE_NAME matches reference driver for each Snowflake type",
+                 "[odbc-api][columns][catalog]") {
+  // ALLDATATYPES lives in the second schema (DATATYPETESTS), not the
+  // connection's default schema, so pass it explicitly.
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
+                             SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // COLUMN_NAME -> external TYPE_NAME expected on the NEW driver, mirroring OLD.
+  const std::map<std::string, std::string> expected = {
+      {"ROWKIND", "VARCHAR"},    {"INTVAL", "DECIMAL"},     {"BIGINTVAL", "DECIMAL"},   {"SMALLINTVAL", "DECIMAL"},
+      {"TINYINTVAL", "DECIMAL"}, {"NUM38", "DECIMAL"},      {"NUM18S6", "DECIMAL"},     {"FLOATVAL", "DOUBLE"},
+      {"DOUBLEVAL", "DOUBLE"},   {"REALVAL", "DOUBLE"},     {"VARCHARVAL", "VARCHAR"},  {"TEXTVAL", "VARCHAR"},
+      {"CHARVAL", "VARCHAR"},    {"BINARYVAL", "BINARY"},   {"VARBINARYVAL", "BINARY"}, {"BOOLVAL", "BOOLEAN"},
+      {"DATEVAL", "DATE"},       {"TIMEVAL", "TIME"},       {"TSNTZ", "TIMESTAMP"},     {"TSLTZ", "TIMESTAMP"},
+      {"TSTZ", "TIMESTAMP"},     {"VARIANTVAL", "VARIANT"}, {"OBJECTVAL", "STRUCT"},    {"ARRAYVAL", "ARRAY"},
+      {"GEOVAL", "GEOGRAPHY"},
+  };
+
+  std::map<std::string, std::string> actual;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+    const auto typeName = sqlcolumns_get_column(stmt_handle(), 6);
+    // Every column has a data-source type name; none should be NULL (the
+    // GEOGRAPHY regression this test guards against).
+    REQUIRE_FALSE(typeName.is_null());
+    actual.emplace(columnName.text, typeName.text);
+  }
+
+  for (const auto& [column, wantType] : expected) {
+    const auto it = actual.find(column);
+    REQUIRE(it != actual.end());
+    INFO("column " << column);
+    CHECK(it->second == wantType);
+  }
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: ORDINAL_POSITION is sequential starting from 1",

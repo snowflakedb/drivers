@@ -2477,6 +2477,41 @@ fn rehydrate_field(
     Field::new("col", DataType::Utf8, nullable).with_metadata(meta)
 }
 
+/// Maps a Snowflake logical type to the external / friendly name that
+/// `SQLColumns` column 6 (`TYPE_NAME`) must report, mirroring the reference
+/// driver's `ColumnMetadata::deriveODBCTypeInfo` / `getExtTypeName` (default
+/// ODBC-v3 path, no custom SQL data types).
+///
+/// This is deliberately **separate** from `SnowflakeFieldType::type_name`
+/// (the `SQLColAttribute(SQL_DESC_TYPE_NAME)` path on query columns), which
+/// returns SDK-style labels (`BIT`, `TYPE_DATE`, `TYPE_TIMESTAMP`, …) and must
+/// not change. Excel Power Query Navigator and the legacy Simba driver depend
+/// on the external names here; routing SQLColumns through the ColAttribute
+/// helper collapsed semi-structured types to `VARCHAR` and turned `GEOGRAPHY`
+/// into `NULL`. See SNOW-3899531.
+fn catalog_type_name_from_logical_type(logical_type: &str) -> String {
+    match logical_type {
+        "TEXT" => "VARCHAR",
+        "FIXED" => "DECIMAL",
+        "REAL" => "DOUBLE",
+        "BINARY" => "BINARY",
+        "BOOLEAN" => "BOOLEAN",
+        "DATE" => "DATE",
+        "TIME" => "TIME",
+        "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" | "TIMESTAMP" => "TIMESTAMP",
+        "VARIANT" => "VARIANT",
+        "ARRAY" => "ARRAY",
+        "OBJECT" => "STRUCT",
+        "GEOGRAPHY" => "GEOGRAPHY",
+        "GEOMETRY" => "GEOMETRY",
+        // Absent logical type → safe VARCHAR fallback; any other exotic/unknown
+        // type → its uppercased logical name (matching OLD's else branch).
+        "" => "VARCHAR",
+        other => return other.to_ascii_uppercase(),
+    }
+    .to_string()
+}
+
 /// Returns the datetime subcode for `SQL_DATETIME_SUB` (col 15), or `None`
 /// for types where `SQL_DATA_TYPE != SQL_DATETIME`.
 fn sql_datetime_sub_from_logical_type(logical_type: &str) -> Option<i16> {
@@ -2752,9 +2787,11 @@ fn flatten_columns_to_odbc(
                     let data_type_val = sql_type_from_field(&field, numeric_settings)
                         .ok()
                         .map(|t| t.0.to_string());
-                    let type_name_val = type_name_from_field(&field, numeric_settings)
-                        .ok()
-                        .map(|s| s.to_string());
+                    // TYPE_NAME (col 6) reports the Snowflake external / friendly
+                    // name (BOOLEAN, TIMESTAMP, VARIANT, STRUCT, ARRAY, GEOGRAPHY,
+                    // …) — NOT the SDK label from `type_name_from_field`, which is
+                    // the SQLColAttribute(SQL_DESC_TYPE_NAME) contract. SNOW-3899531.
+                    let type_name_val = Some(catalog_type_name_from_logical_type(logical_type));
                     let col_size_val = column_size_from_field(&field, numeric_settings)
                         .ok()
                         .map(|s| s.to_string());
@@ -4514,6 +4551,48 @@ mod procedure_columns_tests {
         let f = field_from_sql_type_string("TIMESTAMP", &ns);
         assert_eq!(meta(&f, "logicalType"), Some("TIMESTAMP_NTZ"));
         assert_eq!(meta(&f, "scale"), Some("9"));
+    }
+
+    #[test]
+    fn catalog_type_name_maps_logical_types_to_external_names() {
+        // SNOW-3899531: SQLColumns TYPE_NAME must report Snowflake external /
+        // friendly names, matching the reference driver — NOT the SDK labels
+        // (BIT / TYPE_DATE / TYPE_TIMESTAMP) used by SQLColAttribute.
+        let cases = [
+            ("TEXT", "VARCHAR"),
+            ("FIXED", "DECIMAL"),
+            ("REAL", "DOUBLE"),
+            ("BINARY", "BINARY"),
+            ("BOOLEAN", "BOOLEAN"),
+            ("DATE", "DATE"),
+            ("TIME", "TIME"),
+            ("TIMESTAMP_NTZ", "TIMESTAMP"),
+            ("TIMESTAMP_LTZ", "TIMESTAMP"),
+            ("TIMESTAMP_TZ", "TIMESTAMP"),
+            ("TIMESTAMP", "TIMESTAMP"),
+            ("VARIANT", "VARIANT"),
+            ("ARRAY", "ARRAY"),
+            ("OBJECT", "STRUCT"),
+            ("GEOGRAPHY", "GEOGRAPHY"),
+            ("GEOMETRY", "GEOMETRY"),
+        ];
+        for (logical, expected) in cases {
+            assert_eq!(
+                catalog_type_name_from_logical_type(logical),
+                expected,
+                "logical type {logical} should map to {expected}"
+            );
+        }
+
+        // Semi-structured types must not collapse to VARCHAR, and GEOGRAPHY
+        // must not be NULL — the two regressions this fix targets.
+        assert_ne!(catalog_type_name_from_logical_type("OBJECT"), "VARCHAR");
+        assert_ne!(catalog_type_name_from_logical_type("VARIANT"), "VARCHAR");
+
+        // Absent logical type → safe VARCHAR fallback; unknown exotic type →
+        // its uppercased logical name (OLD's else branch).
+        assert_eq!(catalog_type_name_from_logical_type(""), "VARCHAR");
+        assert_eq!(catalog_type_name_from_logical_type("vector"), "VECTOR");
     }
 
     #[test]
