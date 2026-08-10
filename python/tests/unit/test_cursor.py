@@ -1267,6 +1267,13 @@ class TestFetchArrowBatches:
             stream_ptr=42, context=ANY, force_microsecond_precision=True, number_to_decimal=ANY
         )
 
+    def test_rejects_unknown_pandas_kwarg(self, cursor):
+        # Arrow fetch stays clean: pyarrow to_pandas kwargs (split_blocks) belong on
+        # fetch_pandas_*, not here — matching legacy's clean arrow signature.
+        cursor._result_set = MagicMock(get_arrow_stream_ptr=MagicMock(return_value=42))
+        with pytest.raises(TypeError):
+            list(cursor.fetch_arrow_batches(split_blocks=True))
+
 
 class TestFetchArrowAll:
     """Unit tests for fetch_arrow_all."""
@@ -1349,6 +1356,13 @@ class TestFetchArrowAll:
             stream_ptr=42, context=ANY, force_microsecond_precision=True, number_to_decimal=ANY
         )
 
+    def test_rejects_unknown_pandas_kwarg(self, cursor):
+        # Arrow fetch stays clean: pyarrow to_pandas kwargs (split_blocks) belong on
+        # fetch_pandas_*, not here — matching legacy's clean arrow signature.
+        cursor._result_set = MagicMock(get_arrow_stream_ptr=MagicMock(return_value=42))
+        with pytest.raises(TypeError):
+            cursor.fetch_arrow_all(split_blocks=True)
+
 
 class TestFetchPandasBatches:
     """Unit tests for fetch_pandas_batches."""
@@ -1380,6 +1394,22 @@ class TestFetchPandasBatches:
         assert dfs == [df1, df2]
         table1.to_pandas.assert_called_once()
         table2.to_pandas.assert_called_once()
+
+    def test_split_blocks_forwarded_to_to_pandas(self, cursor):
+        # pyarrow kwargs (split_blocks) route to Table.to_pandas, not the arrow fetch.
+        table = MagicMock()
+        with patch.object(cursor, "fetch_arrow_batches", return_value=iter([table])) as mock_arrow:
+            list(cursor.fetch_pandas_batches(split_blocks=True))
+        mock_arrow.assert_called_once_with(force_microsecond_precision=False)
+        table.to_pandas.assert_called_once_with(split_blocks=True)
+
+    def test_force_microsecond_precision_routes_to_arrow(self, cursor):
+        # force_microsecond_precision governs the arrow conversion, not to_pandas.
+        table = MagicMock()
+        with patch.object(cursor, "fetch_arrow_batches", return_value=iter([table])) as mock_arrow:
+            list(cursor.fetch_pandas_batches(force_microsecond_precision=True))
+        mock_arrow.assert_called_once_with(force_microsecond_precision=True)
+        table.to_pandas.assert_called_once_with()
 
     def test_raises_when_pandas_not_installed(self, cursor):
         missing = MissingOptionalDependency(dep="pandas")
@@ -1420,6 +1450,14 @@ class TestFetchPandasAll:
         assert result is mock_df
         mock_table.to_pandas.assert_called_once()
 
+    def test_split_blocks_forwarded_to_to_pandas(self, cursor):
+        # pyarrow kwargs (split_blocks) route to Table.to_pandas, not the arrow fetch.
+        table = MagicMock()
+        with patch.object(cursor, "fetch_arrow_all", return_value=table) as mock_arrow:
+            cursor.fetch_pandas_all(split_blocks=True)
+        mock_arrow.assert_called_once_with(force_return_table=True, force_microsecond_precision=False)
+        table.to_pandas.assert_called_once_with(split_blocks=True)
+
     def test_returns_empty_dataframe_for_empty_stream(self, cursor):
         mock_empty_table = MagicMock()
         mock_empty_df = MagicMock()
@@ -1429,7 +1467,7 @@ class TestFetchPandasAll:
             result = cursor.fetch_pandas_all()
 
         assert result is mock_empty_df
-        mock_fetch.assert_called_once_with(force_return_table=True)
+        mock_fetch.assert_called_once_with(force_return_table=True, force_microsecond_precision=False)
         mock_empty_table.to_pandas.assert_called_once()
 
     def test_raises_when_pandas_not_installed(self, cursor):
@@ -3045,3 +3083,54 @@ class TestDownloadStream:
             assert out.read(5) == b"bar"
         finally:
             out.close()
+
+
+class TestAsyncFetchPandasKwargs:
+    """Async parity: fetch_pandas_* forward pyarrow kwargs (e.g. ``split_blocks``)
+    to ``to_pandas_async`` and route ``force_microsecond_precision`` to the arrow fetch.
+    """
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.is_closed = MagicMock(return_value=False)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return AsyncSnowflakeCursor(mock_connection)
+
+    @pytest.fixture(autouse=True)
+    def _patch_deps(self):
+        with patch("snowflake.connector._internal.extras.check_dependency"):
+            yield
+
+    def test_fetch_pandas_all_forwards_split_blocks(self, cursor):
+        table = MagicMock()
+        with (
+            patch.object(cursor, "fetch_arrow_all", new=AsyncMock(return_value=table)) as mock_arrow,
+            patch("snowflake.connector.aio.cursor._base.to_pandas_async", new=AsyncMock(return_value="df")) as mock_tp,
+        ):
+            result = asyncio.run(cursor.fetch_pandas_all(split_blocks=True))
+        assert result == "df"
+        mock_arrow.assert_awaited_once_with(force_return_table=True, force_microsecond_precision=False)
+        mock_tp.assert_awaited_once_with(table, split_blocks=True)
+
+    def test_fetch_pandas_batches_forwards_split_blocks(self, cursor):
+        table = MagicMock()
+
+        async def _agen(**_kwargs):
+            yield table
+
+        with (
+            patch.object(cursor, "fetch_arrow_batches", return_value=_agen()) as mock_arrow,
+            patch("snowflake.connector.aio.cursor._base.to_pandas_async", new=AsyncMock(return_value="df")) as mock_tp,
+        ):
+
+            async def _collect():
+                return [df async for df in cursor.fetch_pandas_batches(split_blocks=True)]
+
+            result = asyncio.run(_collect())
+        assert result == ["df"]
+        mock_arrow.assert_called_once_with(force_microsecond_precision=False)
+        mock_tp.assert_awaited_once_with(table, split_blocks=True)
