@@ -141,7 +141,7 @@ class MetaDataQueryBuilder {
     return unescapedString;
   }
 
-  /** This guards against SQL injections by ensuring that any single quote is escaped properly. */
+  /** Ensures that any single quote is escaped properly for embedding in a LIKE literal. */
   private static String escapeSingleQuoteForLikeCommand(String arg) {
     if (arg == null) {
       return null;

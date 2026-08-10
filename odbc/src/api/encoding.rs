@@ -104,10 +104,10 @@ pub(crate) fn negotiate_from_config() {
     // Now that the configured encoding is fixed, probe the driver
     // manager we were actually loaded by. If its identity disagrees
     // with `DriverManagerEncoding`, latch `MISMATCH_DETECTED` before
-    // any wide-string write can drive the caller into a stack overflow
-    // (SNOW-3741307). The probe is a best-effort dlsym+dladdr against
-    // the currently-loaded process image; if it can't identify the DM
-    // we leave detection to `detect_wchar_encoding_from_bytes`.
+    // any wide-string write (SNOW-3741307). The probe is a best-effort
+    // dlsym+dladdr against the currently-loaded process image; if it
+    // can't identify the DM we leave detection to
+    // `detect_wchar_encoding_from_bytes`.
     probe_driver_manager_identity(enc);
 }
 
@@ -169,7 +169,7 @@ fn probe_driver_manager_identity(configured: WCharEncoding) {
             detected = %detected,
             "The driver manager loaded into this process expects {detected} \
              SQLWCHAR, but the driver is configured for {configured}. This causes \
-             a {}x stack-buffer overflow on every wide-string write to the DM and \
+             a {}x byte-width mismatch on every wide-string write to the DM and \
              will abort the process inside `extract_diag_error_w` on the first \
              error diagnostic. Wide writes are refused until the config is \
              corrected. Set `{DRIVER_MANAGER_ENCODING_KEY}={detected}` in \
@@ -205,8 +205,7 @@ pub(crate) fn wchar_byte_size() -> usize {
 
 /// True once [`probe_driver_manager_identity`] has confirmed the loaded
 /// driver manager disagrees with the configured encoding. Wide-string
-/// writes short-circuit while this is set to avoid the stack-buffer
-/// overflow described on [`MISMATCH_DETECTED`].
+/// writes short-circuit while this is set.
 #[inline]
 pub(crate) fn wchar_mismatch_detected() -> bool {
     MISMATCH_DETECTED.load(Ordering::Relaxed)
@@ -397,11 +396,9 @@ pub(crate) unsafe fn write_wide_buffer_in(
         return 0;
     }
     // Refuse to write past this point once the driver manager's byte
-    // pattern has been shown to disagree with our configured encoding.
-    // Writing anyway would overflow the caller's buffer by 2x-4x and
-    // crash the process inside the DM's diag-record path (SNOW-3741307).
-    // Callers see zero units written, which surfaces to applications as
-    // an obviously-empty result rather than silent memory corruption.
+    // pattern has been shown to disagree with our configured encoding
+    // (SNOW-3741307). Callers see zero units written, which surfaces to
+    // applications as an obviously-empty result.
     if wchar_mismatch_detected() {
         return 0;
     }
@@ -459,9 +456,8 @@ pub(crate) unsafe fn write_wide_buffer(
 /// be a valid writable address.
 #[doc(hidden)]
 pub(crate) unsafe fn write_wide_null_in(buf: *mut WideChar, pos: usize, enc: WCharEncoding) {
-    // Match the short-circuit in [`write_wide_buffer_in`]. Writing a
-    // 4-byte UTF-32 null into a 2-byte-per-slot buffer still overflows
-    // by two bytes when `pos == 0` and the DM allocated only one slot.
+    // Match the short-circuit in [`write_wide_buffer_in`] when the DM
+    // byte width disagrees with the configured encoding.
     if wchar_mismatch_detected() {
         return;
     }
@@ -1412,9 +1408,8 @@ mod tests {
 
     /// Once [`MISMATCH_DETECTED`] is set, `write_wide_buffer_in` must
     /// refuse to write anything and return zero units — regardless of
-    /// requested encoding — so a UTF-32 driver against a unixODBC
-    /// (2-byte SQLWCHAR) manager can't drive its stack-buffer overflow
-    /// (SNOW-3741307).
+    /// requested encoding — for a UTF-32 driver against a unixODBC
+    /// (2-byte SQLWCHAR) manager (SNOW-3741307).
     #[test]
     fn write_wide_buffer_in_refuses_writes_after_mismatch_utf32() {
         set_mismatch_detected_for_test(true);
@@ -1449,9 +1444,8 @@ mod tests {
         assert!(buf.iter().all(|&u| u == 0));
     }
 
-    /// `write_wide_null_in` must also short-circuit — a 4-byte UTF-32
-    /// null at `pos == 0` still overflows a 1-slot 2-byte-per-unit
-    /// buffer by two bytes.
+    /// `write_wide_null_in` must also short-circuit when the DM byte
+    /// width disagrees with the configured encoding.
     #[test]
     fn write_wide_null_in_refuses_writes_after_mismatch() {
         set_mismatch_detected_for_test(true);

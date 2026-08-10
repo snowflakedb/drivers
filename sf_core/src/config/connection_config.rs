@@ -166,8 +166,7 @@ fn non_empty_string(settings: &ParamStore, key: crate::config::ParamKey) -> Opti
 /// Characters permitted in a Snowflake account identifier: ASCII alphanumerics
 /// plus `.`, `-`, and `_` (underscores are normalized to hyphens in the derived
 /// host). Used by `validate_settings` to reject account values carrying
-/// URL-significant characters before any host is derived (SNOW-3663586,
-/// CWE-918).
+/// URL-significant characters before any host is derived (SNOW-3663586).
 fn is_allowed_account_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')
 }
@@ -662,7 +661,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         });
     }
 
-    // --- InvalidValue: account identifier characters (SNOW-3663586, CWE-918) ---
+    // --- InvalidValue: account identifier characters (SNOW-3663586) ---
     // `account` is interpolated into the derived host, so restrict it to the
     // characters a Snowflake account identifier actually uses — ASCII
     // alphanumerics plus `.`, `-`, and `_` (underscores are normalized to
@@ -2003,7 +2002,7 @@ mod tests {
         assert!(!account_issues.is_empty());
     }
 
-    // SNOW-3663586 (CWE-918): account identifiers carrying characters outside
+    // SNOW-3663586: account identifiers carrying characters outside
     // the allow-list must be rejected before the host is derived.
     #[test]
     fn validate_account_with_url_metacharacters_reports_issue() {
