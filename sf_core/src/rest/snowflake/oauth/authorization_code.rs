@@ -157,7 +157,7 @@ fn default_browser_launch() -> BrowserLaunchFn {
 /// Contract (SNOW-3649282):
 /// * URL fails validation ⇒ refuse; `open` is **not** called and the paste
 ///   `fallback` is **not** shown (printing it would invite the user to
-///   hand-open the very URL we rejected as a possible injection).
+///   hand-open the very URL we rejected).
 /// * URL is valid ⇒ hand it to `open`; only if that *launch* fails do we
 ///   show the manual-paste `fallback`.
 fn launch_authorize_url(
@@ -996,7 +996,7 @@ mod tests {
         assert!(
             !fell_back.get(),
             "a rejected URL must NOT be printed as a paste fallback (would invite the user \
-             to hand-open the injection payload)"
+             to hand-open the rejected URL)"
         );
     }
 

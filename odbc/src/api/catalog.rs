@@ -1314,8 +1314,9 @@ fn procedures_schema() -> SchemaRef {
 ///
 /// Snowflake processes backslash escape sequences inside `'...'` literals, so
 /// the backslash must be doubled *before* the single quote is doubled. Escaping
-/// only `'` would (a) allow injection via a `\'` payload in pattern mode, where
-/// `catalog_arg_to_pattern` passes the argument through verbatim, and (b) break
+/// only `'` would (a) let a `\'` sequence close the literal early in pattern
+/// mode, where `catalog_arg_to_pattern` passes the argument through verbatim,
+/// and (b) break
 /// exact-match in identifier mode, where `escape_like_wildcards` has already
 /// backslash-escaped `_`/`%`: the string layer would strip that backslash and
 /// re-expose the wildcard to `LIKE`. Doubling the backslash preserves it through
@@ -4517,7 +4518,7 @@ mod procedures_tests {
 
     #[test]
     fn escape_sql_string_literal_escapes_backslash_before_quote() {
-        // Injection payload: the escaped quote must not close the literal.
+        // The escaped quote must not close the literal.
         assert_eq!(
             escape_sql_string_literal("a\\' union all"),
             "a\\\\'' union all"

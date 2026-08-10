@@ -848,11 +848,9 @@ fn on_download_file_error(
     })
 }
 
-/// GET path guard layer 1 (CWE-73, SNOW-3663590; mirrors JDBC
+/// GET path guard layer 1 (SNOW-3663590; mirrors JDBC
 /// `extractSafeDestFileName`): reduce the server-controlled `src_location` to a
-/// single safe basename, rejecting empty / `.` / `..` / NUL / separators / `:`.
-/// Replaces the old `file_name().unwrap_or(raw)` fallback that leaked the raw
-/// (possibly absolute) tainted string into `Path::join`.
+/// single basename, rejecting empty / `.` / `..` / NUL / separators / `:`.
 fn safe_download_file_name(src_location: &str) -> Result<&str, FileManagerError> {
     let name = match src_location.rfind(['/', '\\']) {
         Some(idx) => &src_location[idx + 1..],
@@ -1940,8 +1938,8 @@ pub enum FileManagerError {
         location: Location,
     },
     /// A GET download was refused because the resolved output path is not a
-    /// safe, contained child of the target directory (CWE-73, SNOW-3663590).
-    /// Kept distinct from `Io` so the security refusal is discriminable.
+    /// contained child of the target directory (SNOW-3663590).
+    /// Kept distinct from `Io` so the refusal is discriminable.
     #[snafu(display(
         "Refusing to write GET download outside the target directory \
          (src_location={src_location:?}, local_location={local_location:?})"
@@ -2603,8 +2601,8 @@ mod tests {
         }
     }
 
-    // CWE-73 (SNOW-3663590) — GET download path guard. Layer 1 strips to a
-    // safe basename; layer 2 confirms containment in the target dir. Mirrors
+    // SNOW-3663590 — GET download path guard. Layer 1 strips to a
+    // basename; layer 2 confirms containment in the target dir. Mirrors
     // JDBC's `DownloadPathValidatorTest`.
 
     #[test]
@@ -2624,8 +2622,7 @@ mod tests {
 
     #[test]
     fn safe_download_file_name_strips_absolute_path_to_basename() {
-        // Pre-fix this leaked the raw path into `Path::join`; now only the
-        // basename survives, so it can never escape `local_location`.
+        // Only the basename survives, contained within `local_location`.
         assert_eq!(safe_download_file_name("/etc/passwd").unwrap(), "passwd");
     }
 

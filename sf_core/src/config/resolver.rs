@@ -68,8 +68,8 @@ pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
         return;
     };
 
-    // SECURITY (SNOW-3663586, CWE-918): `account` is interpolated into the host
-    // verbatim, so its character set is restricted to a safe allow-list in
+    // SNOW-3663586: `account` is interpolated into the host verbatim, so its
+    // character set is restricted to an allow-list in
     // `connection_config::validate_settings`, which runs in
     // `ConnectionConfig::build` before any network I/O.
     let host = format!("{account}.snowflakecomputing.com");

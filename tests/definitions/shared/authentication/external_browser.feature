@@ -64,7 +64,7 @@ Feature: External Browser Authentication
   # =============================================================================
 
   @core_int
-  Scenario: should reject malicious sso url before opening browser
+  Scenario: should validate browser url
     Given Wiremock returns an ssoUrl containing a shell metacharacter
     When Trying to Connect
     Then Connection fails before the browser is opened
