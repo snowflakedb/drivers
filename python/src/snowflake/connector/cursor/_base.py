@@ -769,17 +769,30 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @api_telemetry
     @requires_open
     def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[DataFrame]:
-        """Fetch Pandas DataFrames in batches."""
-        for table in self.fetch_arrow_batches(**kwargs):
-            yield table.to_pandas()
+        """Fetch Pandas DataFrames in batches.
+
+        ``force_microsecond_precision`` (if present) governs the Arrow
+        conversion; all other kwargs are forwarded to ``pyarrow.Table.to_pandas``
+        (e.g. ``split_blocks``), matching snowflake-connector-python.
+        """
+        force_microsecond_precision = kwargs.pop("force_microsecond_precision", False)
+        for table in self.fetch_arrow_batches(force_microsecond_precision=force_microsecond_precision):
+            yield table.to_pandas(**kwargs)
 
     @requires_dependency(pandas)
     @api_telemetry
     @requires_open
     def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
-        """Fetch all results as a single Pandas DataFrame."""
-        table: Table = self.fetch_arrow_all(force_return_table=True, **kwargs)
-        return table.to_pandas()
+        """Fetch all results as a single Pandas DataFrame.
+
+        ``force_microsecond_precision`` (if present) governs the Arrow
+        conversion; all other kwargs are forwarded to ``pyarrow.Table.to_pandas``.
+        """
+        force_microsecond_precision = kwargs.pop("force_microsecond_precision", False)
+        table: Table = self.fetch_arrow_all(
+            force_return_table=True, force_microsecond_precision=force_microsecond_precision
+        )
+        return table.to_pandas(**kwargs)
 
     # ------------------------------------------------------------------
     # Distributed fetch

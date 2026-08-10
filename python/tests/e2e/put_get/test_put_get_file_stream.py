@@ -122,16 +122,16 @@ def test_should_file_stream_auto_compress(connection):
 
 
 def test_should_file_stream_non_put_diverges_by_driver(connection):
-    """file_stream on a non-PUT statement: UD raises ProgrammingError; the reference silently ignores it (BD#43)."""
+    """file_stream on a non-PUT statement: UD raises ProgrammingError; the reference silently ignores it (BD#49)."""
     with connection.cursor() as cursor:
         # Given a file_stream supplied alongside a non-PUT statement
         stream = io.BytesIO(b"data")
-        if NEW_DRIVER_ONLY("BD#43"):
+        if NEW_DRIVER_ONLY("BD#49"):
             # When the non-PUT statement is executed with file_stream
             # Then the universal driver rejects it with ProgrammingError
             with pytest.raises(ProgrammingError):
                 cursor.execute("SELECT 1", file_stream=stream)
-        elif OLD_DRIVER_ONLY("BD#43"):
+        elif OLD_DRIVER_ONLY("BD#49"):
             # When the non-PUT statement is executed with file_stream
             cursor.execute("SELECT 1", file_stream=stream)
             # Then the reference driver silently ignores file_stream and runs the SQL normally
