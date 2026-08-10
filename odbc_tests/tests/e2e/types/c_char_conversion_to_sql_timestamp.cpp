@@ -7,11 +7,13 @@
 // well-formed literals round-trip through a TIMESTAMP_NTZ column unchanged.
 //
 // The new driver stores the literal verbatim in the timezone-naive TIMESTAMP_NTZ
-// column. The legacy driver instead applies a (host-/session-timezone-dependent)
-// offset to the wall-clock value, so the positive round-trip cases are gated off
-// the reference driver via SKIP_OLD_DRIVER (BD#74). Malformed literals are rejected
-// by both drivers (the new driver surfaces SQLSTATE 07006, the legacy driver 22018),
-// so the negative case asserts the error surfaces one of those two conversion SQLSTATEs.
+// column. The legacy driver instead shifts the wall-clock value by the session
+// timezone offset before storing (BD#74): with the session pinned to Asia/Dubai
+// (UTC+4), "14:30:45" is stored as "18:30:45". The shift depends only on the session
+// timezone, not the host, so the stored value is deterministic and both drivers'
+// read-backs are asserted exactly under OLD_DRIVER_ONLY / NEW_DRIVER_ONLY.
+// Malformed literals are rejected by both drivers (the new driver surfaces SQLSTATE
+// 07006, the legacy driver 22018), so the negative case asserts one of those two.
 //
 // Per ODBC Appendix G ("Driver Guidelines for Backward Compatibility"), the
 // ODBC 3.x code SQL_TYPE_TIMESTAMP (93) and its ODBC 2.x predecessor
@@ -41,13 +43,12 @@
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR timestamp string to SQL_TYPE_TIMESTAMP and read back",
                  "[c_char][conversion][sql_timestamp]") {
-  SKIP_OLD_DRIVER("BD#74",
-                  "Legacy driver applies a timezone offset when binding a character literal as SQL_TYPE_TIMESTAMP "
-                  "(TIMESTAMP_NTZ), shifting the stored wall-clock value; the new driver stores it verbatim");
   const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
   CAPTURE(sql_type);
 
-  // Given a TIMESTAMP_NTZ column
+  // Given a TIMESTAMP_NTZ column; session timezone pinned to Asia/Dubai (UTC+4) so the old driver's
+  // timezone-shifted stored value is deterministic and distinguishable from the new driver's verbatim value
+  conn.execute("ALTER SESSION SET TIMEZONE = 'Asia/Dubai'");
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
   // When SQL_C_CHAR "2024-01-15 14:30:45" is bound as the TIMESTAMP target and inserted
@@ -61,30 +62,35 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR timestamp string to 
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then the timestamp is read back correctly, both as text and as a typed TIMESTAMP struct
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2024-01-15 14:30:45");
-  auto struct_stmt = conn.execute_fetch("SELECT col FROM t");
-  const SQL_TIMESTAMP_STRUCT ts = get_data<SQL_C_TYPE_TIMESTAMP>(struct_stmt, 1);
-  CHECK(ts.year == 2024);
-  CHECK(ts.month == 1);
-  CHECK(ts.day == 15);
-  CHECK(ts.hour == 14);
-  CHECK(ts.minute == 30);
-  CHECK(ts.second == 45);
-  CHECK(ts.fraction == 0);
+  OLD_DRIVER_ONLY("BD#74") {
+    // Then the old driver stores the value shifted by the session TZ offset (+4h for Asia/Dubai)
+    auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2024-01-15 18:30:45");
+  }
+  NEW_DRIVER_ONLY("BD#74") {
+    // Then the timestamp is read back correctly, both as text and as a typed TIMESTAMP struct
+    auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2024-01-15 14:30:45");
+    auto struct_stmt = conn.execute_fetch("SELECT col FROM t");
+    const SQL_TIMESTAMP_STRUCT ts = get_data<SQL_C_TYPE_TIMESTAMP>(struct_stmt, 1);
+    CHECK(ts.year == 2024);
+    CHECK(ts.month == 1);
+    CHECK(ts.day == 15);
+    CHECK(ts.hour == 14);
+    CHECK(ts.minute == 30);
+    CHECK(ts.second == 45);
+    CHECK(ts.fraction == 0);
+  }
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture,
                  "should bind SQL_C_CHAR timestamp string with fractional seconds to SQL_TYPE_TIMESTAMP",
                  "[c_char][conversion][sql_timestamp]") {
-  SKIP_OLD_DRIVER("BD#74",
-                  "Legacy driver applies a timezone offset when binding a character literal as SQL_TYPE_TIMESTAMP "
-                  "(TIMESTAMP_NTZ), shifting the stored wall-clock value; the new driver stores it verbatim");
   const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
   CAPTURE(sql_type);
 
-  // Given a TIMESTAMP_NTZ(9) column that preserves the fractional-seconds component
+  // Given a TIMESTAMP_NTZ(9) column; session timezone pinned to Asia/Dubai (UTC+4)
+  conn.execute("ALTER SESSION SET TIMEZONE = 'Asia/Dubai'");
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ(9))");
 
   // When SQL_C_CHAR "2024-01-15 14:30:45.123456789" is bound as the TIMESTAMP target and inserted
@@ -98,19 +104,26 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then the timestamp with fractional seconds is read back correctly, both as text and
-  // as a typed TIMESTAMP struct (fraction is expressed in nanoseconds)
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2024-01-15 14:30:45.123456789");
-  auto struct_stmt = conn.execute_fetch("SELECT col FROM t");
-  const SQL_TIMESTAMP_STRUCT ts = get_data<SQL_C_TYPE_TIMESTAMP>(struct_stmt, 1);
-  CHECK(ts.year == 2024);
-  CHECK(ts.month == 1);
-  CHECK(ts.day == 15);
-  CHECK(ts.hour == 14);
-  CHECK(ts.minute == 30);
-  CHECK(ts.second == 45);
-  CHECK(ts.fraction == 123456789);
+  OLD_DRIVER_ONLY("BD#74") {
+    // Then the old driver stores the value shifted by the session TZ offset (+4h for Asia/Dubai)
+    auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2024-01-15 18:30:45.123456789");
+  }
+  NEW_DRIVER_ONLY("BD#74") {
+    // Then the timestamp with fractional seconds is read back correctly, both as text and
+    // as a typed TIMESTAMP struct (fraction is expressed in nanoseconds)
+    auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2024-01-15 14:30:45.123456789");
+    auto struct_stmt = conn.execute_fetch("SELECT col FROM t");
+    const SQL_TIMESTAMP_STRUCT ts = get_data<SQL_C_TYPE_TIMESTAMP>(struct_stmt, 1);
+    CHECK(ts.year == 2024);
+    CHECK(ts.month == 1);
+    CHECK(ts.day == 15);
+    CHECK(ts.hour == 14);
+    CHECK(ts.minute == 30);
+    CHECK(ts.second == 45);
+    CHECK(ts.fraction == 123456789);
+  }
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR malformed timestamp string for SQL_TYPE_TIMESTAMP",
@@ -143,13 +156,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR malformed timestam
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR timestamp string to SQL_TYPE_TIMESTAMP and read back",
                  "[c_char][conversion][sql_timestamp]") {
-  SKIP_OLD_DRIVER("BD#74",
-                  "Legacy driver applies a timezone offset when binding a character literal as SQL_TYPE_TIMESTAMP "
-                  "(TIMESTAMP_NTZ), shifting the stored wall-clock value; the new driver stores it verbatim");
   const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
   CAPTURE(sql_type);
 
-  // Given a TIMESTAMP_NTZ column
+  // Given a TIMESTAMP_NTZ column; session timezone pinned to Asia/Dubai (UTC+4) so the old driver's
+  // timezone-shifted stored value is deterministic and distinguishable from the new driver's verbatim value
+  conn.execute("ALTER SESSION SET TIMEZONE = 'Asia/Dubai'");
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
   // When SQL_C_WCHAR "2024-01-15 14:30:45" is bound as the TIMESTAMP target and inserted
@@ -163,18 +175,25 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR timestamp string to
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then the timestamp is read back correctly, both as text and as a typed TIMESTAMP struct
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2024-01-15 14:30:45");
-  auto struct_stmt = conn.execute_fetch("SELECT col FROM t");
-  const SQL_TIMESTAMP_STRUCT ts = get_data<SQL_C_TYPE_TIMESTAMP>(struct_stmt, 1);
-  CHECK(ts.year == 2024);
-  CHECK(ts.month == 1);
-  CHECK(ts.day == 15);
-  CHECK(ts.hour == 14);
-  CHECK(ts.minute == 30);
-  CHECK(ts.second == 45);
-  CHECK(ts.fraction == 0);
+  OLD_DRIVER_ONLY("BD#74") {
+    // Then the old driver stores the value shifted by the session TZ offset (+4h for Asia/Dubai)
+    auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2024-01-15 18:30:45");
+  }
+  NEW_DRIVER_ONLY("BD#74") {
+    // Then the timestamp is read back correctly, both as text and as a typed TIMESTAMP struct
+    auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2024-01-15 14:30:45");
+    auto struct_stmt = conn.execute_fetch("SELECT col FROM t");
+    const SQL_TIMESTAMP_STRUCT ts = get_data<SQL_C_TYPE_TIMESTAMP>(struct_stmt, 1);
+    CHECK(ts.year == 2024);
+    CHECK(ts.month == 1);
+    CHECK(ts.day == 15);
+    CHECK(ts.hour == 14);
+    CHECK(ts.minute == 30);
+    CHECK(ts.second == 45);
+    CHECK(ts.fraction == 0);
+  }
 }
 
 // ============================================================================

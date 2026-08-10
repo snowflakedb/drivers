@@ -67,7 +67,6 @@ TEST_CASE("TIME to SQL_C_CHAR exact buffer fit", "[time][conversion][c_char]") {
 }
 
 TEST_CASE("TIME to SQL_C_CHAR chunked retrieval", "[time][conversion][c_char]") {
-  SKIP_OLD_DRIVER("BD#38", "Old driver returns 22003 instead of 01004 for TIME partial truncation");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -78,21 +77,28 @@ TEST_CASE("TIME to SQL_C_CHAR chunked retrieval", "[time][conversion][c_char]") 
   SQLLEN ind1 = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buf1, sizeof(buf1), &ind1);
 
-  // Then The first call returns partial data with 01004 and the second call returns the remainder
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  // Then Both drivers report the same total length, but write different partial values
   CHECK(ind1 == 18);
-  CHECK(std::string(buf1) == "10:30:00.");
 
   char buf2[10] = {};
   SQLLEN ind2 = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buf2, sizeof(buf2), &ind2);
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(ind2 == 9);
-  CHECK(std::string(buf2) == "123456789");
+
+  // BD#38: the old driver stops at the seconds boundary even though a 9th byte was free
+  OLD_DRIVER_ONLY("BD#38") {
+    CHECK(ret == SQL_SUCCESS);
+    CHECK(std::string(buf1) == "10:30:00");
+    CHECK(SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buf2, sizeof(buf2), &ind2) == SQL_NO_DATA);
+  }
+  NEW_DRIVER_ONLY("BD#38") {
+    CHECK(ret == SQL_SUCCESS_WITH_INFO);
+    CHECK(std::string(buf1) == "10:30:00.");
+    CHECK(SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buf2, sizeof(buf2), &ind2) == SQL_SUCCESS);
+    CHECK(ind2 == 9);
+    CHECK(std::string(buf2) == "123456789");
+  }
 }
 
 TEST_CASE("TIME to SQL_C_CHAR fractional truncation", "[time][conversion][c_char][01004]") {
-  SKIP_OLD_DRIVER("BD#38", "Old driver returns 22003 instead of 01004 for TIME partial truncation");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -102,17 +108,25 @@ TEST_CASE("TIME to SQL_C_CHAR fractional truncation", "[time][conversion][c_char
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
 
-  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004 and fractional part truncated
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  CHECK(indicator == 18);
-  auto records = get_diag_rec(stmt);
-  CHECK(!records.empty());
-  CHECK(records[0].sqlState == "01004");
-  CHECK(std::string(buffer) == "10:30:00");
+  OLD_DRIVER_ONLY("BD#38") {
+    CHECK(ret == SQL_ERROR);
+    auto records = get_diag_rec(stmt);
+    CHECK(!records.empty());
+    CHECK(records[0].sqlState == "22003");
+  }
+  NEW_DRIVER_ONLY("BD#38") {
+    // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004 and fractional part truncated
+    CHECK(ret == SQL_SUCCESS_WITH_INFO);
+    CHECK(indicator == 18);
+    auto records = get_diag_rec(stmt);
+    CHECK(!records.empty());
+    CHECK(records[0].sqlState == "01004");
+    CHECK(std::string(buffer) == "10:30:00");
+  }
 }
 
 TEST_CASE("TIME to SQL_C_CHAR buffer too small", "[time][conversion][c_char][22003]") {
-  SKIP_OLD_DRIVER("BD#38", "Old driver returns SQL_SUCCESS instead of SQL_ERROR for TIME buffer too small");
+  SKIP_OLD_DRIVER("BD#38", "old driver has undefined behavior on undersized CHAR buffers (SIGABRT)");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -189,7 +203,6 @@ TEST_CASE("TIME to SQL_C_WCHAR exact buffer fit", "[time][conversion][c_wchar]")
 }
 
 TEST_CASE("TIME to SQL_C_WCHAR fractional truncation", "[time][conversion][c_wchar][01004]") {
-  SKIP_OLD_DRIVER("BD#38", "Old driver returns 22003 instead of 01004 for TIME partial truncation");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -199,11 +212,20 @@ TEST_CASE("TIME to SQL_C_WCHAR fractional truncation", "[time][conversion][c_wch
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 
-  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  auto records = get_diag_rec(stmt);
-  CHECK(!records.empty());
-  CHECK(records[0].sqlState == "01004");
+  OLD_DRIVER_ONLY("BD#38") {
+    CHECK(ret == SQL_ERROR);
+    auto records = get_diag_rec(stmt);
+    CHECK(!records.empty());
+    CHECK(records[0].sqlState == "22003");
+  }
+  NEW_DRIVER_ONLY("BD#38") {
+    // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
+    CHECK(ret == SQL_SUCCESS_WITH_INFO);
+    auto records = get_diag_rec(stmt);
+    CHECK(!records.empty());
+    CHECK(records[0].sqlState == "01004");
+    CHECK(sf::wide::decode_wide_cstr(buffer) == U"10:30:00");
+  }
 }
 
 TEST_CASE("TIME to SQL_C_WCHAR buffer too small", "[time][conversion][c_wchar][22003]") {

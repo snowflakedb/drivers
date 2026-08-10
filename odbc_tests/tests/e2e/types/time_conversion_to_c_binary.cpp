@@ -12,7 +12,6 @@
 #include "get_diag_rec.hpp"
 
 TEST_CASE("TIME to SQL_C_BINARY", "[time][conversion][c_binary]") {
-  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -22,30 +21,38 @@ TEST_CASE("TIME to SQL_C_BINARY", "[time][conversion][c_binary]") {
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, &time, sizeof(time), &indicator);
 
-  // Then SQL_TIME_STRUCT fields match the source time
-  REQUIRE(ret == SQL_SUCCESS);
-  CHECK(indicator == sizeof(SQL_TIME_STRUCT));
-  CHECK(time.hour == 14);
-  CHECK(time.minute == 30);
-  CHECK(time.second == 45);
+  OLD_DRIVER_ONLY("BD#43") { CHECK(ret == SQL_ERROR); }
+  NEW_DRIVER_ONLY("BD#43") {
+    // Then SQL_TIME_STRUCT fields match the source time
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(indicator == sizeof(SQL_TIME_STRUCT));
+    CHECK(time.hour == 14);
+    CHECK(time.minute == 30);
+    CHECK(time.second == 45);
+  }
 }
 
 TEST_CASE("TIME to SQL_C_BINARY struct field verification", "[time][conversion][c_binary]") {
-  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 
   {
     // When midnight TIME is fetched as SQL_C_BINARY
     auto stmt = conn.execute_fetch("SELECT '00:00:00'::TIME");
-    SQL_TIME_STRUCT time = {};
+    // Pre-fill with a non-zero sentinel: the expected fields are all zero, so a driver that returns
+    // SQL_SUCCESS without writing the struct would otherwise pass the CHECKs silently
+    SQL_TIME_STRUCT time;
+    std::memset(&time, 0xFF, sizeof(time));
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, &time, sizeof(time), &indicator);
-    // Then SQL_TIME_STRUCT fields match
-    REQUIRE(ret == SQL_SUCCESS);
-    CHECK(time.hour == 0);
-    CHECK(time.minute == 0);
-    CHECK(time.second == 0);
+    OLD_DRIVER_ONLY("BD#43") { CHECK(ret == SQL_ERROR); }
+    NEW_DRIVER_ONLY("BD#43") {
+      // Then SQL_TIME_STRUCT fields match
+      REQUIRE(ret == SQL_SUCCESS);
+      CHECK(time.hour == 0);
+      CHECK(time.minute == 0);
+      CHECK(time.second == 0);
+    }
   }
 
   {
@@ -54,11 +61,14 @@ TEST_CASE("TIME to SQL_C_BINARY struct field verification", "[time][conversion][
     SQL_TIME_STRUCT time = {};
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, &time, sizeof(time), &indicator);
-    // Then SQL_TIME_STRUCT fields match
-    REQUIRE(ret == SQL_SUCCESS);
-    CHECK(time.hour == 23);
-    CHECK(time.minute == 59);
-    CHECK(time.second == 59);
+    OLD_DRIVER_ONLY("BD#43") { CHECK(ret == SQL_ERROR); }
+    NEW_DRIVER_ONLY("BD#43") {
+      // Then SQL_TIME_STRUCT fields match
+      REQUIRE(ret == SQL_SUCCESS);
+      CHECK(time.hour == 23);
+      CHECK(time.minute == 59);
+      CHECK(time.second == 59);
+    }
   }
 
   {
@@ -67,11 +77,14 @@ TEST_CASE("TIME to SQL_C_BINARY struct field verification", "[time][conversion][
     SQL_TIME_STRUCT time = {};
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, &time, sizeof(time), &indicator);
-    // Then SQL_TIME_STRUCT fields match
-    REQUIRE(ret == SQL_SUCCESS);
-    CHECK(time.hour == 1);
-    CHECK(time.minute == 2);
-    CHECK(time.second == 3);
+    OLD_DRIVER_ONLY("BD#43") { CHECK(ret == SQL_ERROR); }
+    NEW_DRIVER_ONLY("BD#43") {
+      // Then SQL_TIME_STRUCT fields match
+      REQUIRE(ret == SQL_SUCCESS);
+      CHECK(time.hour == 1);
+      CHECK(time.minute == 2);
+      CHECK(time.second == 3);
+    }
   }
 
   {
@@ -80,16 +93,18 @@ TEST_CASE("TIME to SQL_C_BINARY struct field verification", "[time][conversion][
     SQL_TIME_STRUCT time = {};
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, &time, sizeof(time), &indicator);
-    // Then SQL_TIME_STRUCT fields match (fractional seconds dropped)
-    REQUIRE(ret == SQL_SUCCESS);
-    CHECK(time.hour == 10);
-    CHECK(time.minute == 30);
-    CHECK(time.second == 0);
+    OLD_DRIVER_ONLY("BD#43") { CHECK(ret == SQL_ERROR); }
+    NEW_DRIVER_ONLY("BD#43") {
+      // Then SQL_TIME_STRUCT fields match (fractional seconds dropped)
+      REQUIRE(ret == SQL_SUCCESS);
+      CHECK(time.hour == 10);
+      CHECK(time.minute == 30);
+      CHECK(time.second == 0);
+    }
   }
 }
 
 TEST_CASE("TIME to SQL_C_BINARY exact buffer fit", "[time][conversion][c_binary]") {
-  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -99,19 +114,21 @@ TEST_CASE("TIME to SQL_C_BINARY exact buffer fit", "[time][conversion][c_binary]
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
 
-  // Then SQL_SUCCESS is returned with correct struct fields
-  REQUIRE(ret == SQL_SUCCESS);
-  CHECK(indicator == sizeof(SQL_TIME_STRUCT));
+  OLD_DRIVER_ONLY("BD#43") { CHECK(ret == SQL_ERROR); }
+  NEW_DRIVER_ONLY("BD#43") {
+    // Then SQL_SUCCESS is returned with correct struct fields
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(indicator == sizeof(SQL_TIME_STRUCT));
 
-  SQL_TIME_STRUCT time;
-  std::memcpy(&time, buffer, sizeof(time));
-  CHECK(time.hour == 14);
-  CHECK(time.minute == 30);
-  CHECK(time.second == 45);
+    SQL_TIME_STRUCT time;
+    std::memcpy(&time, buffer, sizeof(time));
+    CHECK(time.hour == 14);
+    CHECK(time.minute == 30);
+    CHECK(time.second == 45);
+  }
 }
 
 TEST_CASE("TIME to SQL_C_BINARY buffer too small", "[time][conversion][c_binary][22003]") {
-  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -129,7 +146,6 @@ TEST_CASE("TIME to SQL_C_BINARY buffer too small", "[time][conversion][c_binary]
 }
 
 TEST_CASE("TIME to SQL_C_BINARY consistent size", "[time][conversion][c_binary]") {
-  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -137,16 +153,24 @@ TEST_CASE("TIME to SQL_C_BINARY consistent size", "[time][conversion][c_binary]"
   auto stmt1 = conn.execute_fetch("SELECT '14:30:45'::TIME");
   SQL_TIME_STRUCT t1 = {};
   SQLLEN ind1 = 0;
-  REQUIRE(SQLGetData(stmt1.getHandle(), 1, SQL_C_BINARY, &t1, sizeof(t1), &ind1) == SQL_SUCCESS);
+  SQLRETURN ret1 = SQLGetData(stmt1.getHandle(), 1, SQL_C_BINARY, &t1, sizeof(t1), &ind1);
 
   auto stmt2 = conn.execute_fetch("SELECT '00:00:00'::TIME");
   SQL_TIME_STRUCT t2 = {};
   SQLLEN ind2 = 0;
-  REQUIRE(SQLGetData(stmt2.getHandle(), 1, SQL_C_BINARY, &t2, sizeof(t2), &ind2) == SQL_SUCCESS);
+  SQLRETURN ret2 = SQLGetData(stmt2.getHandle(), 1, SQL_C_BINARY, &t2, sizeof(t2), &ind2);
 
-  // Then The indicator equals sizeof(SQL_TIME_STRUCT) for all times
-  CHECK(ind1 == ind2);
-  CHECK(ind1 == sizeof(SQL_TIME_STRUCT));
+  OLD_DRIVER_ONLY("BD#43") {
+    CHECK(ret1 == SQL_ERROR);
+    CHECK(ret2 == SQL_ERROR);
+  }
+  NEW_DRIVER_ONLY("BD#43") {
+    REQUIRE(ret1 == SQL_SUCCESS);
+    REQUIRE(ret2 == SQL_SUCCESS);
+    // Then The indicator equals sizeof(SQL_TIME_STRUCT) for all times
+    CHECK(ind1 == ind2);
+    CHECK(ind1 == sizeof(SQL_TIME_STRUCT));
+  }
 }
 
 TEST_CASE("TIME NULL to SQL_C_BINARY", "[time][conversion][c_binary][null]") {
