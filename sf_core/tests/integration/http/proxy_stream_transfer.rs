@@ -28,10 +28,12 @@
 use flate2::read::GzDecoder;
 use serde_json::json;
 use std::io::Read;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wiremock::matchers::{body_string_contains, method, path, path_regex};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use crate::common::connect_proxy::ConnectProxy;
+use crate::common::dead_proxy::{assert_connect_fails_through_dead_proxy, dead_loopback_port};
 use crate::common::mocks;
 use crate::common::private_key_helper::{self, PrivateKeyFile};
 use crate::common::snowflake_test_client::SnowflakeTestClient;
@@ -40,6 +42,7 @@ use crate::common::tls_proxy::TlsProxy;
 const S3_HOST: &str = "s3.snowflake-proxy-test.invalid";
 const S3_BUCKET: &str = "test-bucket";
 const GCS_HOST: &str = "storage.googleapis.snowflake-proxy-test.invalid";
+const AZURE_HOST: &str = "testaccount.blob.core.snowflake-proxy-test.invalid";
 const UPLOAD_PAYLOAD: &[u8] = b"proxy-stream-upload-payload";
 // Injected by the tunnel's TLS-terminating hop only. Its presence at the
 // backend is an independent proof-of-transit signal (separate from
@@ -256,6 +259,136 @@ fn strip_aws_chunked_framing(body: &[u8]) -> Vec<u8> {
     body[data_start..data_start + chunk_len].to_vec()
 }
 
+/// Mount a GS PUT response whose Azure `stageInfo` pins `endPoint` at
+/// `azure_endpoint` (an `https://…invalid` origin, taken verbatim per
+/// `build_azure_url`'s scheme-detection branch), with no client-side
+/// encryption and `OVERWRITE=TRUE` so the upload is a single, un-probed PUT
+/// Blob — mirrors `mount_s3_put_pointing_at`.
+async fn mount_azure_put_pointing_at(server: &MockServer, azure_endpoint: &str) {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .and(body_string_contains("PUT"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "success": true,
+                    "data": {
+                        "command": "UPLOAD",
+                        "stageInfo": {
+                            "locationType": "AZURE",
+                            "location": "test-container/",
+                            "path": "",
+                            "region": "eastus2",
+                            "endPoint": azure_endpoint,
+                            "storageAccount": "testaccount",
+                            "isClientSideEncrypted": false,
+                            "creds": {
+                                "AZURE_SAS_TOKEN": "sv=2099-01-01&sig=mock-sig&se=2099-12-31"
+                            }
+                        },
+                        "src_locations": ["data.bin"],
+                        "autoCompress": false,
+                        "overwrite": true,
+                        "sourceCompression": "NONE"
+                    }
+                }))
+                .insert_header("Content-Type", "application/json"),
+        )
+        .mount(server)
+        .await;
+}
+
+/// Counter-backed GS PUT-SQL responder for the S3 credential-refresh test:
+/// the first call returns the stage `AWS_KEY_ID` used by
+/// `mount_s3_put_pointing_at`; every call after returns a *different* key id.
+/// `S3StsRefresher::refresh` declines to retry when the refreshed key id is
+/// unchanged from the last-seen one (it treats that as a coalesced no-op), so
+/// the refresh SQL re-issue must hand back new-looking credentials for the
+/// retry to actually happen.
+struct S3PutSqlThenRefreshedResponder {
+    calls: AtomicUsize,
+    s3_endpoint: String,
+}
+
+impl S3PutSqlThenRefreshedResponder {
+    fn new(s3_endpoint: &str) -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            s3_endpoint: s3_endpoint.to_string(),
+        }
+    }
+}
+
+impl Respond for S3PutSqlThenRefreshedResponder {
+    fn respond(&self, _req: &Request) -> ResponseTemplate {
+        let n = self.calls.fetch_add(1, Ordering::Relaxed);
+        let aws_key_id = if n == 0 {
+            "AKIAIOSFODNN7EXAMPLE"
+        } else {
+            "AKIAIOSFODNN7REFRESH"
+        };
+        ResponseTemplate::new(200)
+            .set_body_json(json!({
+                "success": true,
+                "data": {
+                    "command": "UPLOAD",
+                    "stageInfo": {
+                        "locationType": "S3",
+                        "location": format!("{S3_BUCKET}/"),
+                        "path": "",
+                        "region": "us-east-1",
+                        "endPoint": self.s3_endpoint,
+                        "isClientSideEncrypted": false,
+                        "creds": {
+                            "AWS_KEY_ID": aws_key_id,
+                            "AWS_SECRET_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                            "AWS_TOKEN": ""
+                        }
+                    },
+                    "src_locations": ["data.bin"],
+                    "autoCompress": false,
+                    "overwrite": true,
+                    "sourceCompression": "NONE"
+                }
+            }))
+            .insert_header("Content-Type", "application/json")
+    }
+}
+
+/// Mounts [`S3PutSqlThenRefreshedResponder`] at the GS query-request endpoint.
+async fn mount_s3_put_then_refreshed(server: &MockServer, s3_endpoint: &str) {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .and(body_string_contains("PUT"))
+        .respond_with(S3PutSqlThenRefreshedResponder::new(s3_endpoint))
+        .mount(server)
+        .await;
+}
+
+/// Counter-backed S3 `PutObject` responder for the credential-refresh test:
+/// the first call returns AWS's `ExpiredToken` error; every call after
+/// succeeds. Both calls hit the identical bucket/key, so the test tells them
+/// apart by `cloud.received_requests()` arrival order, not path.
+#[derive(Default)]
+struct S3PutThenRefreshedResponder {
+    calls: AtomicUsize,
+}
+
+impl Respond for S3PutThenRefreshedResponder {
+    fn respond(&self, _req: &Request) -> ResponseTemplate {
+        let n = self.calls.fetch_add(1, Ordering::Relaxed);
+        if n == 0 {
+            ResponseTemplate::new(400)
+                .set_body_string(
+                    r#"<?xml version="1.0" encoding="UTF-8"?><Error><Code>ExpiredToken</Code><Message>The provided token has expired.</Message><RequestId>test-request-id</RequestId><HostId>test-host-id</HostId></Error>"#,
+                )
+                .insert_header("Content-Type", "application/xml")
+        } else {
+            ResponseTemplate::new(200).insert_header("ETag", "\"mock-etag-refreshed\"")
+        }
+    }
+}
+
 /// Writes the TlsProxy cert to a temp file and returns (dir, path-string). The
 /// dir must be kept alive until the transfer completes.
 fn write_ca(tls_proxy: &TlsProxy) -> (tempfile::TempDir, String) {
@@ -276,6 +409,19 @@ fn proxied_jwt_client(
     proxy_port: u16,
     ca_path: Option<&str>,
 ) -> (SnowflakeTestClient, PrivateKeyFile) {
+    proxied_jwt_client_with_no_proxy(gs_uri, proxy_port, ca_path, "127.0.0.1,localhost")
+}
+
+/// Like [`proxied_jwt_client`] but with a caller-supplied `no_proxy` value.
+/// Used by the dead-proxy-vs-reachable-backend negative control, which needs
+/// to exclude GS from the proxy without also excluding a cloud target that
+/// deliberately shares GS's loopback IP.
+fn proxied_jwt_client_with_no_proxy(
+    gs_uri: &str,
+    proxy_port: u16,
+    ca_path: Option<&str>,
+    no_proxy: &str,
+) -> (SnowflakeTestClient, PrivateKeyFile) {
     let key_file = private_key_helper::get_test_private_key_file().expect("test key");
     let client = SnowflakeTestClient::with_int_tests_params(Some(gs_uri));
     client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
@@ -285,7 +431,7 @@ fn proxied_jwt_client(
     // Pin routing so an ambient HTTP(S)_PROXY can't change it, and keep the mock
     // GS (loopback, plain HTTP) off the proxy so only the cloud transfer tunnels.
     client.set_connection_option_bool("use_proxy_env", false);
-    client.set_connection_option("no_proxy", "127.0.0.1,localhost");
+    client.set_connection_option("no_proxy", no_proxy);
     if let Some(ca) = ca_path {
         client.set_connection_option("custom_root_store_path", ca);
     }
@@ -294,33 +440,54 @@ fn proxied_jwt_client(
     (client, key_file)
 }
 
-/// A loopback port with nothing listening (bind then drop) for the dead-proxy
-/// controls.
-async fn dead_loopback_port() -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
+/// Cloud selector for [`UploadStreamProxyCase`] — picks which GS stage shape
+/// (and therefore which storage backend) a case drives.
+#[derive(Clone, Copy)]
+enum ProxiedUploadCloud {
+    S3,
+    Azure,
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn should_route_s3_upload_stream_through_proxy() {
+/// Case parameters for [`assert_upload_stream_routes_through_proxy`],
+/// covering the handful of points where the S3 and Azure
+/// upload-stream-through-proxy tests diverge; everything else (GS/cloud mock
+/// wiring, CONNECT + backend assertions) is shared. Add a GCS variant here
+/// (plus a `mount_gcs_put_pointing_at` stage mount) to extend coverage.
+struct UploadStreamProxyCase {
+    cloud: ProxiedUploadCloud,
+    /// SANs the TLS-terminating proxy hop presents — the cloud host(s) the
+    /// client must CONNECT through.
+    sans: Vec<String>,
+    /// `https://…` origin the GS response pins the stage's `endPoint` to.
+    stage_endpoint: String,
+    /// Exact `host:port` the `ConnectProxy` is expected to have tunneled to.
+    expected_connect_target: String,
+    /// Backend's success response to the single expected PUT.
+    cloud_response: ResponseTemplate,
+    /// Path component the backend PUT is expected to target.
+    expected_upload_path: &'static str,
+}
+
+/// Drives `connection_upload_stream` through the proxy tunnel per `case` and
+/// asserts (a) the transfer succeeded, (b) the `ConnectProxy` recorded
+/// exactly the expected CONNECT target, and (c) the backend received exactly
+/// one PUT at the expected key, carrying the tunnel marker and the uploaded
+/// bytes verbatim. Shared by the S3 and Azure upload-stream-through-proxy
+/// tests, which differ only in `case`.
+async fn assert_upload_stream_routes_through_proxy(case: UploadStreamProxyCase) {
     let gs = MockServer::start().await;
     let cloud = MockServer::start().await;
-    let tls_proxy = TlsProxy::start_with_sans_and_marker(
-        *cloud.address(),
-        vec![S3_HOST.to_string(), format!("{S3_BUCKET}.{S3_HOST}")],
-        tunnel_marker(),
-    )
-    .await;
+    let tls_proxy =
+        TlsProxy::start_with_sans_and_marker(*cloud.address(), case.sans, tunnel_marker()).await;
     let connect_proxy = ConnectProxy::start(tls_proxy.addr()).await;
 
     mocks::auth::mount_jwt_login_success(&gs).await;
-    mount_s3_put_pointing_at(&gs, &format!("https://{S3_HOST}")).await;
+    match case.cloud {
+        ProxiedUploadCloud::S3 => mount_s3_put_pointing_at(&gs, &case.stage_endpoint).await,
+        ProxiedUploadCloud::Azure => mount_azure_put_pointing_at(&gs, &case.stage_endpoint).await,
+    }
     Mock::given(method("PUT"))
-        .respond_with(ResponseTemplate::new(200).insert_header("ETag", "\"mock-etag\""))
+        .respond_with(case.cloud_response)
         .mount(&cloud)
         .await;
 
@@ -342,10 +509,10 @@ async fn should_route_s3_upload_stream_through_proxy() {
     result.expect("upload_stream via proxy should succeed");
     assert_eq!(
         connect_proxy.observed_connects(),
-        vec![format!("{S3_BUCKET}.{S3_HOST}:443")],
+        vec![case.expected_connect_target],
     );
     // Backend-side correctness: the mock accepts any PUT, so assert on the
-    // captured request that the proxied upload hit the exact S3 key and carried
+    // captured request that the proxied upload hit the exact key and carried
     // the uploaded bytes — not merely that "some PUT succeeded".
     let recorded = cloud.received_requests().await.unwrap_or_default();
     let puts: Vec<_> = recorded
@@ -359,8 +526,8 @@ async fn should_route_s3_upload_stream_through_proxy() {
     );
     assert_eq!(
         puts[0].url.path(),
-        "/data.bin",
-        "PUT must target the S3 key"
+        case.expected_upload_path,
+        "PUT must target the exact upload key"
     );
     // Unencrypted, uncompressed upload — the backend body must equal the
     // payload exactly (exact-eq also catches leading/trailing corruption a
@@ -371,6 +538,19 @@ async fn should_route_s3_upload_stream_through_proxy() {
         "recorded PUT body must equal the uploaded payload exactly"
     );
     assert_has_marker(puts[0]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_route_s3_upload_stream_through_proxy() {
+    assert_upload_stream_routes_through_proxy(UploadStreamProxyCase {
+        cloud: ProxiedUploadCloud::S3,
+        sans: vec![S3_HOST.to_string(), format!("{S3_BUCKET}.{S3_HOST}")],
+        stage_endpoint: format!("https://{S3_HOST}"),
+        expected_connect_target: format!("{S3_BUCKET}.{S3_HOST}:443"),
+        cloud_response: ResponseTemplate::new(200).insert_header("ETag", "\"mock-etag\""),
+        expected_upload_path: "/data.bin",
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -497,23 +677,24 @@ async fn should_fail_download_stream_begin_when_proxy_port_dead() {
     let gs = MockServer::start().await;
     mocks::auth::mount_jwt_login_success(&gs).await;
     mount_s3_get_pointing_at(&gs, &format!("https://{S3_HOST}")).await;
-
     let gs_uri = gs.uri();
-    let dead_port = dead_loopback_port().await;
 
-    let result = tokio::task::spawn_blocking(move || {
-        let (client, _key) = proxied_jwt_client(&gs_uri, dead_port, None);
-        client
-            .connect()
-            .expect("login bypasses the dead proxy via no_proxy");
-        client.connection_download_stream_chunked("@mock_stage", "file.csv", false)
+    tokio::task::spawn_blocking(move || {
+        assert_connect_fails_through_dead_proxy(
+            |dead_port| {
+                let (client, _key) = proxied_jwt_client(&gs_uri, dead_port, None);
+                client
+                    .connect()
+                    .expect("login bypasses the dead proxy via no_proxy");
+                // The chunked path fails at stream-open (the GetObject) through the
+                // dead proxy, before any chunk is served.
+                client.connection_download_stream_chunked("@mock_stage", "file.csv", false)
+            },
+            |_err| {},
+        );
     })
     .await
     .unwrap();
-
-    // The chunked path fails at stream-open (the GetObject) through the dead
-    // proxy, before any chunk is served.
-    result.expect_err("download_stream_begin through a dead proxy port must fail");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -521,29 +702,29 @@ async fn should_fail_upload_stream_when_proxy_port_dead() {
     let gs = MockServer::start().await;
     mocks::auth::mount_jwt_login_success(&gs).await;
     mount_s3_put_pointing_at(&gs, &format!("https://{S3_HOST}")).await;
-
     let gs_uri = gs.uri();
-    let dead_port = dead_loopback_port().await;
 
-    let result = tokio::task::spawn_blocking(move || {
-        // No trust anchor needed: a dead proxy fails at connect, before TLS.
-        let (client, _key) = proxied_jwt_client(&gs_uri, dead_port, None);
-        client
-            .connect()
-            .expect("login bypasses the dead proxy via no_proxy");
-        client.connection_upload_stream(
-            "PUT file:///tmp/data.bin @mock_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE",
-            b"proxy-stream-upload-payload".to_vec(),
-        )
+    tokio::task::spawn_blocking(move || {
+        assert_connect_fails_through_dead_proxy(
+            |dead_port| {
+                let (client, _key) = proxied_jwt_client(&gs_uri, dead_port, None);
+                client
+                    .connect()
+                    .expect("login bypasses the dead proxy via no_proxy");
+                // Login succeeds (loopback bypasses the proxy); only the cloud
+                // upload, which must transit the dead proxy, fails. A bypassed
+                // proxy would instead dial the unresolvable host and also fail —
+                // the positive test is what distinguishes the two.
+                client.connection_upload_stream(
+                    "PUT file:///tmp/data.bin @mock_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE",
+                    b"proxy-stream-upload-payload".to_vec(),
+                )
+            },
+            |_err| {},
+        );
     })
     .await
     .unwrap();
-
-    // Login succeeds (loopback bypasses the proxy); only the cloud upload, which
-    // must transit the dead proxy, fails. A bypassed proxy would instead dial the
-    // unresolvable host and also fail — the positive test is what distinguishes
-    // the two.
-    result.expect_err("upload_stream through a dead proxy port must fail");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -632,21 +813,214 @@ async fn should_fail_download_stream_when_proxy_port_dead() {
     let gs = MockServer::start().await;
     mocks::auth::mount_jwt_login_success(&gs).await;
     mount_gcs_get_pointing_at(&gs, &format!("https://{GCS_HOST}/file")).await;
-
     let gs_uri = gs.uri();
-    let dead_port = dead_loopback_port().await;
+
+    tokio::task::spawn_blocking(move || {
+        assert_connect_fails_through_dead_proxy(
+            |dead_port| {
+                let (client, _key) = proxied_jwt_client(&gs_uri, dead_port, None);
+                client
+                    .connect()
+                    .expect("login bypasses the dead proxy via no_proxy");
+                client.download_stream("@mock_stage", "file.csv", false)
+            },
+            |_err| {},
+        );
+    })
+    .await
+    .unwrap();
+}
+
+/// Forces a mid-transfer stage-info refresh (S3 `ExpiredToken`) inside a
+/// proxied `connection_upload_stream` and re-checks both proofs — exact-host
+/// CONNECT and the tunnel marker — on the POST-refresh request, not just the
+/// pre-refresh one.
+///
+/// S3 is the target here, not GCS/Azure: its retry closure rebuilds
+/// `create_s3_client` fresh on every attempt via `with_creds`
+/// (`file_manager/s3_transfer.rs`), the same clone-and-overlay-creds shape as
+/// `StageInfo::with_snapshot`. GCS and Azure build their HTTP client once per
+/// call and reuse it across retries, so the same kind of regression wouldn't
+/// move those tests.
+#[tokio::test(flavor = "multi_thread")]
+async fn should_recover_stage_info_refresh_mid_upload_stream_and_stay_proxied() {
+    let gs = MockServer::start().await;
+    let cloud = MockServer::start().await;
+    let tls_proxy = TlsProxy::start_with_sans_and_marker(
+        *cloud.address(),
+        vec![S3_HOST.to_string(), format!("{S3_BUCKET}.{S3_HOST}")],
+        tunnel_marker(),
+    )
+    .await;
+    let connect_proxy = ConnectProxy::start(tls_proxy.addr()).await;
+
+    mocks::auth::mount_jwt_login_success(&gs).await;
+    mount_s3_put_then_refreshed(&gs, &format!("https://{S3_HOST}")).await;
+    // First PutObject: AWS `ExpiredToken`, forcing `S3StsRefresher::refresh`.
+    // Second (post-refresh, with the rotated `AWS_KEY_ID`): succeeds.
+    Mock::given(method("PUT"))
+        .respond_with(S3PutThenRefreshedResponder::default())
+        .mount(&cloud)
+        .await;
+
+    let (_ca_dir, ca_path) = write_ca(&tls_proxy);
+    let gs_uri = gs.uri();
+    let connect_port = connect_proxy.port();
 
     let result = tokio::task::spawn_blocking(move || {
-        let (client, _key) = proxied_jwt_client(&gs_uri, dead_port, None);
+        let (client, _key) = proxied_jwt_client(&gs_uri, connect_port, Some(&ca_path));
+        client.connect().expect("connect via mock GS through proxy");
+        client.connection_upload_stream(
+            "PUT file:///tmp/data.bin @mock_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE",
+            UPLOAD_PAYLOAD.to_vec(),
+        )
+    })
+    .await
+    .unwrap();
+
+    result.expect("upload should recover via stage-info refresh and stay proxied");
+    let connects = connect_proxy.observed_connects();
+    assert_eq!(
+        connects,
+        vec![
+            format!("{S3_BUCKET}.{S3_HOST}:443"),
+            format!("{S3_BUCKET}.{S3_HOST}:443"),
+        ],
+        "expected one CONNECT per attempt (pre- and post-refresh), both to the exact origin host",
+    );
+    // Both PUTs hit the identical bucket/key, so arrival order — not path —
+    // distinguishes pre-refresh (index 0, the ExpiredToken attempt) from
+    // post-refresh (index 1, the retry).
+    let recorded = cloud.received_requests().await.unwrap_or_default();
+    let puts: Vec<_> = recorded
+        .iter()
+        .filter(|r| r.method.as_str() == "PUT")
+        .collect();
+    assert_eq!(
+        puts.len(),
+        2,
+        "expected exactly one pre-refresh and one post-refresh PUT, saw: {recorded:?}"
+    );
+    // The pre-refresh request transited the tunnel too (expected — it must
+    // reach S3 to receive the `ExpiredToken` that triggers the refresh)...
+    assert_has_marker(puts[0]);
+    // ...but the load-bearing check is the POST-refresh request: this is
+    // what a broken `with_creds`/`with_snapshot`-style preservation (proxy/TLS
+    // config lost across the refresh) would take down while leaving the
+    // pre-refresh request untouched.
+    assert_has_marker(puts[1]);
+    assert_eq!(
+        puts[1].body.as_slice(),
+        UPLOAD_PAYLOAD,
+        "the retried PUT must still carry the original payload"
+    );
+}
+
+/// Distinguishes "the proxy was dialed and failed" from "the client silently
+/// fell back to a direct dial" — the existing dead-proxy negative controls
+/// target an unresolvable `.invalid` host, where a hypothetical fallback
+/// would also fail on DNS, making the two failure modes indistinguishable.
+///
+/// Here the presigned URL instead targets a real, directly-reachable backend
+/// (the same `TlsProxy` address the positive tests dial through
+/// `ConnectProxy`) with a dead proxy port: correct behavior still fails (it
+/// dials the dead proxy), while a silent `proxy_config` bypass would reach
+/// the backend directly and succeed. GS is addressed as `localhost` and the
+/// cloud target as the literal `127.0.0.1` so `no_proxy` (a literal
+/// host-string match, not a DNS lookup) can exclude GS's login traffic
+/// without also exempting the cloud target.
+#[tokio::test(flavor = "multi_thread")]
+async fn should_fail_download_stream_through_dead_proxy_even_when_backend_is_directly_reachable() {
+    let gs = MockServer::start().await;
+    let cloud = MockServer::start().await;
+    let tls_proxy = TlsProxy::start_with_sans_and_marker(
+        *cloud.address(),
+        vec!["127.0.0.1".to_string()],
+        tunnel_marker(),
+    )
+    .await;
+    let real_backend_port = tls_proxy.addr().port();
+    let dead_proxy_port = dead_loopback_port();
+
+    mocks::auth::mount_jwt_login_success(&gs).await;
+    let presigned = format!("https://127.0.0.1:{real_backend_port}/file");
+    mount_gcs_get_pointing_at(&gs, &presigned).await;
+    Mock::given(method("GET"))
+        .and(path("/file"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"should-never-be-served".to_vec())
+                .insert_header("x-goog-meta-sfc-digest", "test-digest"),
+        )
+        .mount(&cloud)
+        .await;
+
+    let (_ca_dir, ca_path) = write_ca(&tls_proxy);
+    // GS on "localhost", cloud target on literal "127.0.0.1" — see doc comment.
+    let gs_uri = gs.uri().replace("127.0.0.1", "localhost");
+
+    let result = tokio::task::spawn_blocking(move || {
+        let (client, _key) =
+            proxied_jwt_client_with_no_proxy(&gs_uri, dead_proxy_port, Some(&ca_path), "localhost");
         client
             .connect()
-            .expect("login bypasses the dead proxy via no_proxy");
+            .expect("login excluded from the proxy via no_proxy=localhost");
         client.download_stream("@mock_stage", "file.csv", false)
     })
     .await
     .unwrap();
 
-    result.expect_err("download_stream through a dead proxy port must fail");
+    result.expect_err(
+        "a directly-reachable backend must still fail through a dead proxy port; \
+         success here would mean the client silently bypassed proxy_config",
+    );
+    assert!(
+        cloud
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "the backend must never be reached when the proxy is dead and no bypass exists",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_route_azure_upload_stream_through_proxy() {
+    assert_upload_stream_routes_through_proxy(UploadStreamProxyCase {
+        cloud: ProxiedUploadCloud::Azure,
+        sans: vec![AZURE_HOST.to_string()],
+        stage_endpoint: format!("https://{AZURE_HOST}"),
+        expected_connect_target: format!("{AZURE_HOST}:443"),
+        cloud_response: ResponseTemplate::new(201),
+        expected_upload_path: "/test-container/data.bin",
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_fail_azure_upload_stream_when_proxy_port_dead() {
+    let gs = MockServer::start().await;
+    mocks::auth::mount_jwt_login_success(&gs).await;
+    mount_azure_put_pointing_at(&gs, &format!("https://{AZURE_HOST}")).await;
+    let gs_uri = gs.uri();
+
+    tokio::task::spawn_blocking(move || {
+        assert_connect_fails_through_dead_proxy(
+            |dead_port| {
+                let (client, _key) = proxied_jwt_client(&gs_uri, dead_port, None);
+                client
+                    .connect()
+                    .expect("login bypasses the dead proxy via no_proxy");
+                client.connection_upload_stream(
+                    "PUT file:///tmp/data.bin @mock_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE",
+                    UPLOAD_PAYLOAD.to_vec(),
+                )
+            },
+            |_err| {},
+        );
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -726,7 +1100,7 @@ async fn should_fail_bind_stage_csv_upload_when_proxy_port_dead() {
     mount_s3_put_pointing_at(&gs, &format!("https://{S3_HOST}")).await;
 
     let gs_uri = gs.uri();
-    let dead_port = dead_loopback_port().await;
+    let dead_port = dead_loopback_port();
     let csv_bindings = build_bind_stage_csv();
 
     let result = tokio::task::spawn_blocking(move || {
