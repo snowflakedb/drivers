@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use sf_params_spec::DefaultValue;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Setting {
     String(String),
@@ -7,6 +9,21 @@ pub enum Setting {
     Int(i64),
     Double(f64),
     Bool(bool),
+}
+
+/// Materialize a registry [`DefaultValue`] (the `sf_core`-independent IR from
+/// [`sf_params_spec`]) into a runtime [`Setting`]. This is the single boundary
+/// where the borrowed, `'static` default data becomes an owned `Setting`.
+impl From<DefaultValue> for Setting {
+    fn from(value: DefaultValue) -> Self {
+        match value {
+            DefaultValue::String(s) => Setting::String(s.to_owned()),
+            DefaultValue::Bytes(b) => Setting::Bytes(b.to_vec()),
+            DefaultValue::Int(i) => Setting::Int(i),
+            DefaultValue::Double(d) => Setting::Double(d),
+            DefaultValue::Bool(b) => Setting::Bool(b),
+        }
+    }
 }
 
 impl Setting {
