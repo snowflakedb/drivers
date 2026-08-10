@@ -938,7 +938,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         proto carries no nested column list for structured types — BD#43).
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
-        await self.reset()
+        self.reset()
         query, _ = self._prepare_query(operation, parameters)
         prepare_result: PrepareResult | None = None
         async with async_statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]

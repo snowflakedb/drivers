@@ -2894,7 +2894,7 @@ class TestAsyncDescribeInternal:
     def mock_connection(self):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
-        conn.is_closed = AsyncMock(return_value=False)
+        conn.is_closed = MagicMock(return_value=False)
         return conn
 
     @pytest.fixture
@@ -2947,12 +2947,12 @@ class TestAsyncDescribeInternal:
 
     def test_raises_when_cursor_closed(self, cursor, mock_connection):
         """Async _describe_internal rejects a closed cursor and a closed connection."""
-        asyncio.run(cursor.close())
+        cursor.close()
         with pytest.raises(InterfaceError):
             asyncio.run(cursor._describe_internal("SELECT 1"))
 
         fresh = AsyncSnowflakeCursor(mock_connection)
-        mock_connection.is_closed = AsyncMock(return_value=True)
+        mock_connection.is_closed = MagicMock(return_value=True)
         with pytest.raises(InterfaceError):
             asyncio.run(fresh._describe_internal("SELECT 1"))
 
@@ -3292,7 +3292,7 @@ class TestAsyncFetchPandasKwargs:
     @pytest.fixture
     def mock_connection(self):
         conn = MagicMock()
-        conn.is_closed = AsyncMock(return_value=False)
+        conn.is_closed = MagicMock(return_value=False)
         return conn
 
     @pytest.fixture
