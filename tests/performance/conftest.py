@@ -404,7 +404,11 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_download_url: str = None,  # S3 URL for PUT/GET tests
         s3_download_dir: str = None,  # Local directory for downloaded files
         fetch_mode: str = "fetchmany",  # Cursor fetch strategy for SELECT tests (e2e only)
+        bind_mode: str = "char",  # ODBC: "char" (SQL_C_CHAR) or "default" (SQL_C_DEFAULT)
     ):
+        if bind_mode not in ("char", "default"):
+            raise ValueError(f"Invalid bind_mode '{bind_mode}'. Supported: char, default")
+
         # Prepare test parameters
         if test_name is None:
             test_name = _derive_test_name(request.node.name)
@@ -429,6 +433,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 s3_files_dir=s3_files_dir,
                 is_comparison=is_comparison,
                 test_type=test_type,
+                bind_mode=bind_mode,
             )
         else:
             result = _run_e2e_test(
@@ -439,6 +444,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 s3_files_dir=s3_files_dir,
                 is_comparison=is_comparison,
                 fetch_mode=fetch_mode,
+                bind_mode=bind_mode,
             )
 
         # Performance history comparison
@@ -453,6 +459,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_files_dir,
         is_comparison: bool,
         test_type: PerfTestType = PerfTestType.SELECT_RECORDED_HTTP,
+        bind_mode: str = "char",
     ):
         """Run WireMock test (recorded HTTP traffic)."""
         _validate_wiremock_old_driver(driver, driver_type)
@@ -481,6 +488,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 preserve_mappings=preserve_mappings,
                 reuse_mappings_dir=reuse_mappings_dir,
                 test_type=container_test_type,
+                bind_mode=bind_mode,
             )
         else:
             from runner.modes.wiremock_runner import run_wiremock_performance_test
@@ -500,6 +508,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 preserve_mappings=preserve_mappings,
                 reuse_mappings_dir=reuse_mappings_dir,
                 test_type=container_test_type,
+                bind_mode=bind_mode,
             )
     
     def _run_e2e_test(
@@ -510,6 +519,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_files_dir,
         is_comparison: bool,
         fetch_mode: str = "fetchmany",
+        bind_mode: str = "char",
     ):
         """Run E2E test (real Snowflake connection)."""
         if is_comparison:
@@ -525,6 +535,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 driver=driver,
                 s3_files_dir=s3_files_dir,
                 fetch_mode=fetch_mode,
+                bind_mode=bind_mode,
             )
         else:
             return run_performance_test(
@@ -541,6 +552,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 use_local_binary=use_local_binary,
                 s3_files_dir=s3_files_dir,
                 fetch_mode=fetch_mode,
+                bind_mode=bind_mode,
             )
     
     def _compare_local_results(result, test_name, driver, driver_type, is_comparison, results_dir):

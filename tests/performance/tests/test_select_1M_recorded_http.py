@@ -1,171 +1,53 @@
-"""Performance test for 1M rows with WireMock - for stability testing"""
+"""Performance test for 1M rows with WireMock - for stability testing.
+
+Bind-mode matrix (ODBC):
+  * no suffix / existing names — SQL_C_CHAR (to_string); historical BenchDash baselines
+  * `_default` before `_recorded_http` — SQL_C_DEFAULT; separate charts
+
+A single run of this file (or of tests/) executes the complete type × bind_mode matrix.
+Ordered variants stay CHAR-only (historical baselines).
+
+Test function names stay stable for Jenkins `-k` / node-id filters; SQL is shared via
+select_1m_queries.
+"""
 import pytest
 from runner.test_types import PerfTestType
+from select_1m_queries import ORDERED_QUERIES, TYPE_QUERIES
 
 ITERATIONS = 10
 WARMUP_ITERATIONS = 2
 
 
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_string_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
+def _make_recorded_test(sql: str, bind_mode: str = "char"):
+    @pytest.mark.iterations(ITERATIONS)
+    @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+    def test_fn(perf_test, _sql=sql, _bind_mode=bind_mode):
+        kwargs = {
+            "test_type": PerfTestType.SELECT_RECORDED_HTTP,
+            "sql_command": _sql,
+        }
+        if _bind_mode != "char":
+            kwargs["bind_mode"] = _bind_mode
+        perf_test(**kwargs)
+
+    if bind_mode == "default":
+        test_fn = pytest.mark.supported_drivers("odbc")(test_fn)
+    return test_fn
 
 
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_number_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT L_LINENUMBER::INT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
+for type_key, sql in TYPE_QUERIES:
+    char_name = f"test_select_{type_key}_1M_arrow_recorded_http"
+    globals()[char_name] = _make_recorded_test(sql, "char")
+    globals()[char_name].__name__ = char_name
+    globals()[char_name].__qualname__ = char_name
 
+    default_name = f"test_select_{type_key}_1M_arrow_default_recorded_http"
+    globals()[default_name] = _make_recorded_test(sql, "default")
+    globals()[default_name].__name__ = default_name
+    globals()[default_name].__qualname__ = default_name
 
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_date_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT L_SHIPDATE FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_float_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT L_EXTENDEDPRICE FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_double_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT L_EXTENDEDPRICE::DOUBLE FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_boolean_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT (L_TAX > 0.04)::BOOLEAN FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_timestamp_ntz_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT L_SHIPDATE::TIMESTAMP_NTZ FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_timestamp_tz_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT L_SHIPDATE::TIMESTAMP_TZ FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_time_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT TIME_FROM_PARTS(MOD(L_ORDERKEY, 24), MOD(L_PARTKEY, 60), MOD(L_SUPPKEY, 60)) FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_binary_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT TO_BINARY(L_COMMENT, 'UTF-8') FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_15columns_1M_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="""
-            SELECT 
-                L_ORDERKEY,
-                L_PARTKEY,
-                L_SUPPKEY,
-                L_LINENUMBER,
-                L_QUANTITY,
-                L_EXTENDEDPRICE,
-                L_DISCOUNT,
-                L_TAX,
-                L_RETURNFLAG,
-                L_LINESTATUS,
-                L_SHIPDATE,
-                L_COMMITDATE,
-                L_RECEIPTDATE,
-                L_SHIPINSTRUCT,
-                L_COMMENT
-            FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM 
-            LIMIT 1000000
-        """,
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_string_1M_ordered_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_number_1M_ordered_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="SELECT L_LINENUMBER::INT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 1000000",
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_15columns_1M_ordered_arrow_recorded_http(perf_test):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command="""
-            SELECT 
-                L_ORDERKEY,
-                L_PARTKEY,
-                L_SUPPKEY,
-                L_LINENUMBER,
-                L_QUANTITY,
-                L_EXTENDEDPRICE,
-                L_DISCOUNT,
-                L_TAX,
-                L_RETURNFLAG,
-                L_LINESTATUS,
-                L_SHIPDATE,
-                L_COMMITDATE,
-                L_RECEIPTDATE,
-                L_SHIPINSTRUCT,
-                L_COMMENT
-            FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM 
-            ORDER BY L_ORDERKEY
-            LIMIT 1000000
-        """,
-    )
+for type_key, sql in ORDERED_QUERIES:
+    ordered_name = f"test_select_{type_key}_1M_ordered_arrow_recorded_http"
+    globals()[ordered_name] = _make_recorded_test(sql, "char")
+    globals()[ordered_name].__name__ = ordered_name
+    globals()[ordered_name].__qualname__ = ordered_name

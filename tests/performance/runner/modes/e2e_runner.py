@@ -22,6 +22,7 @@ def run_performance_test(
     use_local_binary: bool = False,
     s3_files_dir: Path = None,
     fetch_mode: str = "fetchmany",
+    bind_mode: str = "char",
 ) -> list[Path]:
     """
     Run a performance test with the specified configuration.
@@ -59,6 +60,8 @@ def run_performance_test(
         env_vars["EXPECTED_ROW_COUNT"] = str(expected)
     if fetch_mode != "fetchmany":
         env_vars["FETCH_MODE"] = fetch_mode
+    if bind_mode != "char":
+        env_vars["BIND_MODE"] = bind_mode
 
     execute_test(
         test_name=test_name,
@@ -97,6 +100,7 @@ def run_comparison_test(
     test_type: PerfTestType = PerfTestType.SELECT,
     s3_files_dir: Path = None,
     fetch_mode: str = "fetchmany",
+    bind_mode: str = "char",
 ) -> dict[str, list[Path]]:
     """
     Run the same test on both universal and old driver implementations.
@@ -138,6 +142,7 @@ def run_comparison_test(
         test_type=test_type,
         s3_files_dir=s3_files_dir,
         fetch_mode=fetch_mode,
+        bind_mode=bind_mode,
     )
 
     # Run Old driver second
@@ -157,6 +162,7 @@ def run_comparison_test(
         test_type=test_type,
         s3_files_dir=s3_files_dir,
         fetch_mode=fetch_mode,
+        bind_mode=bind_mode,
     )
 
     return results
