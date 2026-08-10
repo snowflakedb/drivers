@@ -13,30 +13,31 @@ export type StatementCallback = (
 // driver methods from Rust or that using so many FFI calls won't be efficient.
 // Refactor if that won't be the case.
 export class RowStatement {
-  #core?: CoreStatementInstance;
+  #core: CoreStatementInstance;
 
-  constructor(coreStatement: Promise<CoreStatementInstance>) {
-    coreStatement
-      .then((core) => {
-        this.#core = core;
-      })
-      .catch(() => {
-        // Failure here is no-op
-      });
+  constructor(core: CoreStatementInstance) {
+    this.#core = core;
   }
 
   getNumRows(): number | undefined {
-    return this.#core?.getNumRows() ?? undefined;
+    return this.#core.getNumRows() ?? undefined;
   }
 
   getQueryId(): string | undefined {
-    return this.#core?.getQueryId() ?? undefined;
+    return this.#core.getQueryId() ?? undefined;
+  }
+
+  cancel(callback?: StatementCallback): void {
+    this.#core
+      .cancel()
+      .then(() => callback?.(undefined, this, undefined))
+      .catch((err: Error) => callback?.(err as SnowflakeError, this, undefined));
   }
 }
 
 export class FileAndStageBindStatement extends RowStatement {
-  constructor(coreStatement: Promise<CoreStatementInstance>) {
-    super(coreStatement);
+  constructor() {
+    super(undefined as unknown as CoreStatementInstance);
     throw new Error('FileAndStageBindStatement is not implemented');
   }
 }
