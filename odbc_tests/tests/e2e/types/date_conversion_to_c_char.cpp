@@ -94,7 +94,6 @@ TEST_CASE("DATE to SQL_C_CHAR exact buffer fit", "[date][conversion][c_char]") {
 }
 
 TEST_CASE("DATE to SQL_C_CHAR buffer too small", "[date][conversion][c_char][22003]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver returns 07006 instead of 22003 for undersized date buffer");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -197,7 +196,6 @@ TEST_CASE("DATE to SQL_C_WCHAR exact buffer fit", "[date][conversion][c_wchar]")
 }
 
 TEST_CASE("DATE to SQL_C_WCHAR buffer too small", "[date][conversion][c_wchar][22003]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver returns 07006 instead of 22003 for undersized date buffer");
   // Given Snowflake client is logged in
   Connection conn;
 
