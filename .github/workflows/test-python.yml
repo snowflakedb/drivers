@@ -212,7 +212,11 @@ jobs:
     needs: [detect-changes]
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python_packaging == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A core-target cache miss forces a cold `cargo build --release` of the
+    # full workspace inside the sdist install step (see SDIST_INSTALL_TIMEOUT
+    # in test_sdist.py); 30 minutes doesn't leave room for that plus the
+    # cache restore/save steps that bracket it.
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -264,7 +268,11 @@ jobs:
 
       - name: Run sdist packaging test
         working-directory: ./python
-        run: hatch run packaging.py3.13:test -v --timeout=900 tests/packaging/test_sdist.py
+        # pytest-timeout's --timeout must exceed SDIST_INSTALL_TIMEOUT (see
+        # test_sdist.py) plus headroom for sdist build/venv/verify steps in
+        # the same test, or it kills the test before the subprocess-level
+        # timeout can produce a diagnosable failure.
+        run: hatch run packaging.py3.13:test -v --timeout=1800 tests/packaging/test_sdist.py
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           CORE_CARGO_TARGET_DIR: ${{ github.workspace }}/core-target

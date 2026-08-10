@@ -23,6 +23,13 @@ def get_python_dir() -> Path:
     return Path(__file__).parent.parent.parent
 
 
+# A cold `cargo build --release` of the full workspace (triggered when the
+# core-target cache misses) routinely takes longer than 10 minutes on shared
+# CI runners. Configurable via env var so CI can raise it without a code
+# change; default is generous enough to cover a genuinely cold build.
+SDIST_INSTALL_TIMEOUT = int(os.environ.get("SDIST_INSTALL_TIMEOUT", "1500"))
+
+
 class TestSdistPackaging:
     """Tests for sdist build and installation."""
 
@@ -44,14 +51,19 @@ class TestSdistPackaging:
         if env:
             full_env.update(env)
 
-        result = subprocess.run(
-            cmd,
-            cwd=cwd,
-            env=full_env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=cwd,
+                env=full_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            pytest.fail(
+                f"Command timed out after {timeout}s: {' '.join(cmd)}\nstdout: {exc.stdout}\nstderr: {exc.stderr}"
+            )
         return result
 
     def _create_venv(self, venv_path: Path) -> Path:
@@ -97,7 +109,7 @@ class TestSdistPackaging:
         # Install the sdist (this will build from source)
         result = self._run_command(
             [str(pip_exe), "install", str(sdist_path), "--verbose"],
-            timeout=600,  # Rust compilation can take a while
+            timeout=SDIST_INSTALL_TIMEOUT,
         )
 
         if result.returncode != 0:
