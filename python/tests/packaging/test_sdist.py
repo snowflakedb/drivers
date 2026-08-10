@@ -191,6 +191,8 @@ class TestSdistPackaging:
                 "sf_core/src/lib.rs",
                 "python_bridge/Cargo.toml",
                 "python_bridge/src/lib.rs",
+                "sf_params_spec/Cargo.toml",
+                "sf_params_spec/src/lib.rs",
                 "proto_utils/Cargo.toml",
                 "proto_utils/src/lib.rs",
                 "proto_generator/Cargo.toml",
@@ -206,23 +208,18 @@ class TestSdistPackaging:
                 matches = [n for n in names if n.endswith(pattern)]
                 assert matches, f"Missing required file pattern: {pattern}"
 
-            # Verify Cargo.toml is the minimal version (not full workspace)
-            cargo_toml_entry = next(
-                n
-                for n in names
-                if n.endswith("/Cargo.toml")
-                and "sf_core" not in n
-                and "python_bridge" not in n
-                and "proto_utils" not in n
-                and "proto_generator" not in n
-                and "error_trace" not in n
-            )
+            # Verify Cargo.toml is the minimal version (not full workspace).
+            # Anchor on archive depth rather than excluding member-crate names:
+            # a name blocklist silently repoints this at a member's manifest the
+            # first time a workspace member is added.
+            cargo_toml_entry = next(n for n in names if n.endswith("/Cargo.toml") and n.count("/") == 1)
             cargo_content = tar.extractfile(cargo_toml_entry)
             assert cargo_content is not None
             content = cargo_content.read().decode("utf-8")
 
             assert "sf_core" in content
             assert "python_bridge" in content
+            assert "sf_params_spec" in content
             assert "proto_utils" in content
             assert "error_trace" in content
             assert "error_trace_derive" in content

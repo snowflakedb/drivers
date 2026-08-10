@@ -5051,6 +5051,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sf_core",
+ "sf_params_spec",
  "sha2",
  "signature 2.2.0",
  "snafu 0.8.9",
@@ -5096,6 +5097,17 @@ version = "0.0.1"
 dependencies = [
  "sf_mini_core",
 ]
+
+[[package]]
+name = "sf_params_codegen"
+version = "0.0.0"
+dependencies = [
+ "sf_params_spec",
+]
+
+[[package]]
+name = "sf_params_spec"
+version = "0.0.0"
 
 [[package]]
 name = "sha1"

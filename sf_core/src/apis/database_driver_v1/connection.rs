@@ -2172,7 +2172,10 @@ impl DatabaseDriverV1 {
                     {
                         return Ok(Some(s));
                     }
-                    return Ok(resolved_or_seed_string(&conn, ParamKey(d.canonical_name)));
+                    return Ok(resolved_or_seed_string(
+                        &conn,
+                        ParamKey::new(d.canonical_name),
+                    ));
                 }
 
                 if let Some(s) = conn

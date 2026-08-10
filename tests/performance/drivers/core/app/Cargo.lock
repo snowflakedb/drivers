@@ -4246,6 +4246,7 @@ dependencies = [
  "rustls-webpki 0.102.8",
  "serde",
  "serde_json",
+ "sf_params_spec",
  "sha2 0.10.9",
  "signature",
  "snafu 0.8.9",
@@ -4271,6 +4272,10 @@ dependencies = [
  "x509-parser",
  "zeroize",
 ]
+
+[[package]]
+name = "sf_params_spec"
+version = "0.0.0"
 
 [[package]]
 name = "sha1"

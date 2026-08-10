@@ -1,0 +1,7 @@
+[package]
+name = "sf_params_spec"
+edition = "2024"
+rust-version = "1.94"
+
+[lib]
+name = "sf_params_spec"

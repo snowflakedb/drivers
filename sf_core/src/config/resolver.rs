@@ -142,8 +142,8 @@ pub fn resolve_with_paths(
 
     // Layer 4: Registry defaults (lowest priority)
     for param in param_registry::registry().all_params() {
-        if let Some(default_fn) = param.default {
-            merged.insert(param.canonical_name.to_owned(), default_fn());
+        if let Some(default) = param.default {
+            merged.insert(param.canonical_name.to_owned(), default.into());
         }
     }
 
