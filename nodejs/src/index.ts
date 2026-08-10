@@ -19,11 +19,13 @@ export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connect
 export interface StatementOption {
   sqlText: string;
   complete?: StatementCallback;
+  streamResult?: boolean;
 }
 
 export interface FetchResultOptions {
   queryId: string;
   complete?: StatementCallback;
+  streamResult?: boolean;
 }
 
 // TODO:
@@ -51,21 +53,35 @@ export class Connection {
   }
 
   execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
-    return this.#runStatement(this.#core.execute(options.sqlText), options.complete);
+    return this.#runStatement(
+      this.#core.execute(options.sqlText),
+      options.complete,
+      options.streamResult,
+    );
   }
 
   fetchResult(options: FetchResultOptions): RowStatement | FileAndStageBindStatement {
-    return this.#runStatement(this.#core.getQueryResult(options.queryId), options.complete);
+    return this.#runStatement(
+      this.#core.getQueryResult(options.queryId),
+      options.complete,
+      options.streamResult,
+    );
   }
 
   #runStatement(
     coreStatement: CoreStatementInstance,
     complete?: StatementCallback,
+    streamResult?: boolean,
   ): RowStatement | FileAndStageBindStatement {
     const statement = new RowStatement(coreStatement);
     (async () => {
       try {
-        complete?.(undefined, statement, await collectRows(coreStatement));
+        if (streamResult === true) {
+          await coreStatement.wait();
+          complete?.(undefined, statement, undefined);
+        } else {
+          complete?.(undefined, statement, await collectRows(coreStatement));
+        }
       } catch (err) {
         complete?.(err as SnowflakeError, statement, undefined);
       }

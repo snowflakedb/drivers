@@ -37,6 +37,12 @@ impl Statement {
         }
     }
 
+    #[napi]
+    pub async fn wait(&self) -> Result<()> {
+        self.result.wait().await.as_ref().map_err(to_napi_err)?;
+        Ok(())
+    }
+
     // TODO:
     // - Benchmark per-row vs per-batch returns across NAPI for large results.
     //   Per-row keeps peak JS memory lower; per-batch cuts FFI crossings.
