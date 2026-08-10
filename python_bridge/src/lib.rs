@@ -6,13 +6,12 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use pyo3_async_runtimes::tokio::future_into_py;
 use sf_core::apis::database_driver_v1::{DriverProviders, WrapperPresets};
-use sf_core::logging::{CallbackLayer, LogManager, LoggingConfig};
+use sf_core::logging::{CallbackLayer, LogManager, LoggingConfig, NormalizedEvent};
 use sf_core::perf_timing;
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::telemetry::snowflake_exporter::SessionRegistry;
 
 static BRIDGE: OnceLock<Bridge> = OnceLock::new();
-static PY_LOG_CALLBACK: OnceLock<Py<PyAny>> = OnceLock::new();
 
 struct Bridge {
     runtime: tokio::runtime::Runtime,
@@ -21,8 +20,8 @@ struct Bridge {
 }
 
 impl Bridge {
-    fn new() -> Self {
-        let layer = CallbackLayer::new(python_log_callback);
+    fn new(logger_callback: Py<PyAny>) -> Self {
+        let layer = CallbackLayer::new(move |event| python_log_callback(&logger_callback, event));
         let sessions = SessionRegistry::default();
         let lm = LogManager::with_app_sink(LoggingConfig::default(), layer, sessions)
             .expect("Failed to initialize logging");
@@ -43,55 +42,33 @@ impl Bridge {
     }
 }
 
-/// C callback registered with [`CallbackLayer`] that forwards core tracing events
-/// to the Python logger callable stored by [`init`].
+/// Forwards a core tracing event to the Python logger callable from [`init`].
 ///
-/// Level encoding matches [`sf_core::logging::CLogCallback`]:
-/// 0=ERROR, 1=WARN, 2=INFO, 3 or higher=DEBUG.
+/// Level encoding: 0=ERROR, 1=WARN, 2=INFO, 3 or higher=DEBUG.
+/// `logger_name` is empty for core-originated events (Python uses
+/// `snowflake.connector._core`); set for wrapper round-trip events.
 ///
-/// `logger_name` is empty for core-originated events (e.g. Python uses
-/// `snowflake.connector._core`). Wrapper round-trip events set it so the
-/// wrapper can dispatch to that module logger.
-///
-/// # Safety
-/// All C string pointers must be valid for the duration of this call.
-unsafe extern "C" fn python_log_callback(
-    level: u32,
-    message: *const std::ffi::c_char,
-    filename: *const std::ffi::c_char,
-    line: u32,
-    function: *const std::ffi::c_char,
-    logger_name: *const std::ffi::c_char,
-) -> u32 {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let Some(callback) = PY_LOG_CALLBACK.get() else {
-            return 1;
-        };
-
-        let msg = unsafe { std::ffi::CStr::from_ptr(message) }
-            .to_string_lossy()
-            .into_owned();
-        let file = unsafe { std::ffi::CStr::from_ptr(filename) }
-            .to_string_lossy()
-            .into_owned();
-        let func = unsafe { std::ffi::CStr::from_ptr(function) }
-            .to_string_lossy()
-            .into_owned();
-        let name = unsafe { std::ffi::CStr::from_ptr(logger_name) }
-            .to_string_lossy()
-            .into_owned();
-
+/// Uses `eprintln` on failure — must not use tracing here (would recurse into this sink).
+fn python_log_callback(logger_callback: &Py<PyAny>, event: NormalizedEvent) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         Python::attach(|py| {
-            if let Err(e) = callback.call(py, (level, msg, file, line, func, name), None) {
+            if let Err(e) = logger_callback.call(
+                py,
+                (
+                    event.level,
+                    event.message,
+                    event.file,
+                    event.line,
+                    event.function,
+                    event.logger_name,
+                ),
+                None,
+            ) {
                 eprintln!("python log callback failed: {e}");
             }
         });
-        0
     }))
-    .unwrap_or_else(|_| {
-        eprintln!("python log callback panicked");
-        1
-    })
+    .inspect_err(|_| eprintln!("python log callback panicked"));
 }
 
 /// Initialize the core state: logging, tokio runtime, and transport.
@@ -107,15 +84,14 @@ unsafe extern "C" fn python_log_callback(
 /// without creating another [`Bridge`].
 #[pyfunction]
 fn init(_py: Python, logger_callback: Py<PyAny>) -> (u32, bool) {
-    let _ = PY_LOG_CALLBACK.set(logger_callback);
     // Prevent unwinding across the FFI boundary; any panic becomes status 1.
     // Detail stays on stderr via expect messages; Python raises from the status.
-    std::panic::catch_unwind(|| {
-        let bridge = BRIDGE.get_or_init(Bridge::new);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let bridge = BRIDGE.get_or_init(|| Bridge::new(logger_callback));
         // Register Bridge's runtime with pyo3-async-runtimes, otherwise it lazily builds a pool
         let _ = pyo3_async_runtimes::tokio::init_with_runtime(&bridge.runtime);
         (0, bridge.transport.is_troubleshooting())
-    })
+    }))
     .unwrap_or_else(|_| {
         eprintln!("Failed to initialize core");
         (1, false)
@@ -124,7 +100,7 @@ fn init(_py: Python, logger_callback: Py<PyAny>) -> (u32, bool) {
 
 /// Emit a wrapper-originated log event through the tracing pipeline.
 ///
-/// Uses the same level encoding as the inbound [`sf_core::logging::CLogCallback`]:
+/// Uses the same level encoding as the inbound wrapper log callback:
 /// 0=ERROR, 1=WARN, 2=INFO, 3 or higher=DEBUG.
 ///
 /// Returns `0` on success, `1` when the pipeline is uninitialised, and `2` if the body panics.

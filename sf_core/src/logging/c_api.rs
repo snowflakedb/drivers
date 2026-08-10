@@ -34,7 +34,7 @@ fn cstr_or_empty<'a>(ptr: *const c_char) -> &'a str {
 pub extern "C" fn sf_core_init(callback: logging::CLogCallback) -> SfCoreInitResult {
     let wrapper_presets = WrapperPresets::python();
 
-    let layer = logging::CallbackLayer::new(callback);
+    let layer = logging::CallbackLayer::from_c(callback);
     let sessions = SessionRegistry::default();
 
     match LogManager::with_app_sink(LoggingConfig::default(), layer, sessions) {
