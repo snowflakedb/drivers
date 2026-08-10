@@ -6,9 +6,18 @@ import {
   RowStatement,
   FileAndStageBindStatement,
   type StatementCallback,
+  type StreamOptions,
+  type DataType,
+  type FetchRowsOptions,
 } from './query-result/RowStatement.js';
 
-export { RowStatement, type StatementCallback };
+export {
+  RowStatement,
+  type StatementCallback,
+  type StreamOptions,
+  type DataType,
+  type FetchRowsOptions,
+};
 
 // TODO: implement ConnectionOptions like in old driver
 export type ConnectionOptions = Record<string, string>;

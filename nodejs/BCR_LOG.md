@@ -11,6 +11,15 @@ The following methods are wrong because the old driver actually returns `undefin
 - `getNumRows(): number;`
 - `getQueryId(): string;`
 
+### statement.fetchRows and statement.streamRows have wrong TypeScript typing
+
+The old driver types both as `(options?: StreamOptions): Readable`, but this is inaccurate:
+
+- `fetchRows` is a callback API, not a stream. `options`, `options.each`, and `options.end` are all required at runtime (it throws `ERR_STMT_FETCH_ROWS_MISSING_OPTIONS` / `_MISSING_EACH` / `_MISSING_END` otherwise). `each(row)` is invoked per row (returning `false` stops iteration) and `end(err, statement)` is invoked once at completion or on error. The returned value is not a consumable `Readable`.
+- `StreamOptions.end` is typed as `number` (a row-range index), but `fetchRows` requires `end` to be a completion **function**. The same field means two different things across the two methods, so they cannot faithfully share `StreamOptions`.
+- `StreamOptions.each` is never read by `streamRows`: its `RowStream` destructures only `start`, `end`, and `fetchAsString`. `each` was only present because both methods were typed with one shared interface.
+- In the new driver, `fetchRows` gets a dedicated `FetchRowsOptions` (required `each` / `end` callbacks, no misleading `Readable` return), and `each` is removed from `StreamOptions` since `streamRows` does not use it.
+
 ### connection.fetchResult and connection.getResultsFromQueryId has wrong TypeScript typing
 
 - they both require `queryId` which is optional in StatementOption

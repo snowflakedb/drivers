@@ -30,11 +30,10 @@ function destroyConnectionAsync(connection: snowflake.Connection) {
   });
 }
 
-function executeAsync(sqlText: string) {
+function executeAsync(options: snowflake.StatementOption) {
   return new Promise<{ stmt: snowflake.RowStatement; rows: unknown[] | undefined }>(
     (resolve, reject) => {
       connection.execute({
-        sqlText,
         complete: (err, stmt, rows) => {
           if (err) {
             reject(err);
@@ -42,22 +41,26 @@ function executeAsync(sqlText: string) {
             resolve({ stmt, rows });
           }
         },
+        ...options,
       });
     },
   );
 }
+
+const SQL_TEXT = `\
+  SELECT CAST(NULL AS INT), CAST(23 AS INT), true
+  UNION ALL
+  SELECT CAST(42 AS INT), CAST(NULL AS INT), false
+`;
 
 (async () => {
   await connection.connectAsync();
 
   console.log('connected--------------------------------');
   // await testCancelQuery();
+  await testStreaming();
 
-  const { stmt, rows } = await executeAsync(`
-    SELECT CAST(NULL AS INT), CAST(23 AS INT), true
-    UNION ALL
-    SELECT CAST(42 AS INT), CAST(NULL AS INT), false
-  `);
+  const { stmt, rows } = await executeAsync({ sqlText: SQL_TEXT });
   console.log('row count:', rows?.length);
   console.log(stmt.getQueryId(), stmt.getNumRows());
 
@@ -80,6 +83,24 @@ function executeAsync(sqlText: string) {
   console.log('destroying connection--------------------------------');
   await destroyConnectionAsync(connection);
 })();
+
+async function testStreaming() {
+  const { stmt } = await executeAsync({ sqlText: SQL_TEXT, streamResult: true });
+  await new Promise<void>((resolve, reject) => {
+    stmt
+      .streamRows()
+      .on('data', (row) => {
+        console.log('row', row);
+      })
+      .on('error', (err) => {
+        reject(err);
+      })
+      .on('end', () => {
+        console.log('streaming complete--------------------------------');
+        resolve();
+      });
+  });
+}
 
 // TODO: check actually how same case behaves in old driver and whether we have
 // proper test coverage for it.
