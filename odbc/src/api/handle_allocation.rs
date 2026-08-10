@@ -495,3 +495,345 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
         _ => InvalidHandleSnafu.fail(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sf_core::protobuf::generated::database_driver_v1::{
+        ConnectionNewRequest, DatabaseHandle as TDatabaseHandle,
+    };
+
+    fn with_env<F, R>(f: F) -> R
+    where
+        F: FnOnce(sql::Handle, HandleId) -> R,
+    {
+        let env_handle = alloc_environment().expect("alloc_environment");
+        let env_id = HandleId::from(env_handle);
+        let result = f(env_handle, env_id);
+        free_environment(env_handle).expect("free_environment — free child dbcs first");
+        result
+    }
+
+    fn alloc_tracked_dbc(env_id: HandleId) -> sql::Handle {
+        alloc_connection(env_id).expect("alloc_connection")
+    }
+
+    fn mark_dbc_connected(dbc_handle: sql::Handle) {
+        let g = global().expect("globals");
+        let conn_handle = g.block_on(async |c| {
+            c.connection_new(ConnectionNewRequest {})
+                .await
+                .expect("connection_new")
+                .conn_handle
+                .expect("conn_handle present")
+        });
+        let dbc = g
+            .dbc_registry
+            .get(HandleId::from(dbc_handle))
+            .expect("dbc in registry");
+        dbc.mark_connected(
+            &mut dbc.connection.lock(),
+            TDatabaseHandle::default(),
+            conn_handle,
+        );
+    }
+
+    fn mark_dbc_disconnected(dbc_handle: sql::Handle) {
+        let g = global().expect("globals");
+        let dbc = g
+            .dbc_registry
+            .get(HandleId::from(dbc_handle))
+            .expect("dbc in registry");
+        dbc.mark_disconnected(&mut dbc.connection.lock());
+    }
+
+    fn env_connections(env_id: HandleId) -> Vec<HandleId> {
+        let g = global().expect("globals");
+        let env = g.env_registry.get(env_id).expect("env in registry");
+        env.environment.lock().connections.clone()
+    }
+
+    fn child_statements(dbc_handle: sql::Handle) -> Vec<HandleId> {
+        let g = global().expect("globals");
+        let dbc = g
+            .dbc_registry
+            .get(HandleId::from(dbc_handle))
+            .expect("dbc in registry");
+        dbc.connection.lock().child_statements.clone()
+    }
+
+    fn stmt_desc_handles(stmt_handle: sql::Handle) -> [HandleId; 4] {
+        let g = global().expect("globals");
+        let stmt = g
+            .stmt_registry
+            .get(HandleId::from(stmt_handle))
+            .expect("stmt in registry");
+        let inner = stmt.inner.lock();
+        [
+            inner.ard_handle,
+            inner.ird_handle,
+            inner.apd_handle,
+            inner.ipd_handle,
+        ]
+    }
+
+    fn assert_implicit_descs_registered(stmt_id: HandleId, descs: [HandleId; 4]) {
+        let g = global().expect("globals");
+        let kinds = [
+            DescriptorKind::Ard,
+            DescriptorKind::Ird,
+            DescriptorKind::Apd,
+            DescriptorKind::Ipd,
+        ];
+        for (desc_id, kind) in descs.into_iter().zip(kinds) {
+            let lookup = g
+                .desc_manager
+                .get(desc_id)
+                .unwrap_or_else(|_| panic!("desc {desc_id:?} must be registered"));
+            match *lookup {
+                DescLookup::Implicit {
+                    stmt_id: sid,
+                    kind: k,
+                } if sid == stmt_id && k == kind => {}
+                other => panic!(
+                    "expected Implicit {{ stmt_id: {stmt_id:?}, kind: {kind:?} }}, got {other:?}"
+                ),
+            }
+        }
+    }
+
+    fn assert_handles_gone_from_registries(stmt_ids: &[HandleId], desc_ids: &[HandleId]) {
+        let g = global().expect("globals");
+        for &stmt_id in stmt_ids {
+            assert!(
+                g.stmt_registry.get(stmt_id).is_err(),
+                "stmt {stmt_id:?} must be removed from stmt_registry"
+            );
+        }
+        for &desc_id in desc_ids {
+            assert!(
+                g.desc_manager.get(desc_id).is_err(),
+                "desc {desc_id:?} must be removed from desc_manager"
+            );
+        }
+    }
+
+    #[test]
+    fn alloc_connection_registers_in_parent_env_connections() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            let dbc_id = HandleId::from(dbc_handle);
+            let connections = env_connections(env_id);
+            assert!(
+                connections.contains(&dbc_id),
+                "env.connections must track allocated dbc {dbc_id:?}; got {connections:?}"
+            );
+            free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+
+    #[test]
+    fn free_connection_removes_handle_from_env_connections() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            let dbc_id = HandleId::from(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection");
+            let connections = env_connections(env_id);
+            assert!(
+                !connections.contains(&dbc_id),
+                "env.connections must drop freed dbc {dbc_id:?}; got {connections:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn alloc_statement_registers_in_parent_conn_child_statements() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+            let stmt_id = HandleId::from(stmt_handle);
+            let stmts = child_statements(dbc_handle);
+            assert!(
+                stmts.contains(&stmt_id),
+                "child_statements must track allocated stmt {stmt_id:?}; got {stmts:?}"
+            );
+
+            free_statement(stmt_handle).expect("free_statement");
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+
+    #[test]
+    fn free_statement_removes_handle_from_conn_child_statements() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+            let stmt_id = HandleId::from(stmt_handle);
+            free_statement(stmt_handle).expect("free_statement");
+
+            let stmts = child_statements(dbc_handle);
+            assert!(
+                !stmts.contains(&stmt_id),
+                "child_statements must drop freed stmt {stmt_id:?}; got {stmts:?}"
+            );
+
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+
+    #[test]
+    fn parent_child_invariants_hold_across_repeated_alloc_free_cycles() {
+        with_env(|_env_handle, env_id| {
+            for round in 0..2 {
+                let dbc_handle = alloc_tracked_dbc(env_id);
+                let dbc_id = HandleId::from(dbc_handle);
+                assert!(
+                    env_connections(env_id).contains(&dbc_id),
+                    "round {round}: env must track dbc {dbc_id:?}"
+                );
+
+                mark_dbc_connected(dbc_handle);
+                let mut stmt_ids = Vec::new();
+                for _ in 0..2 {
+                    let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+                    let stmt_id = HandleId::from(stmt_handle);
+                    assert!(
+                        child_statements(dbc_handle).contains(&stmt_id),
+                        "round {round}: conn must track stmt {stmt_id:?}"
+                    );
+                    stmt_ids.push(stmt_handle);
+                }
+
+                for stmt_handle in stmt_ids {
+                    let stmt_id = HandleId::from(stmt_handle);
+                    free_statement(stmt_handle).expect("free_statement");
+                    assert!(
+                        !child_statements(dbc_handle).contains(&stmt_id),
+                        "round {round}: conn must drop stmt {stmt_id:?}"
+                    );
+                }
+                assert!(
+                    child_statements(dbc_handle).is_empty(),
+                    "round {round}: child_statements must be empty after freeing all stmts"
+                );
+
+                mark_dbc_disconnected(dbc_handle);
+                free_connection(dbc_handle).expect("free_connection");
+                assert!(
+                    !env_connections(env_id).contains(&dbc_id),
+                    "round {round}: env must drop dbc {dbc_id:?}"
+                );
+            }
+
+            assert!(
+                env_connections(env_id).is_empty(),
+                "env.connections must be empty after all cycles"
+            );
+        });
+    }
+
+    #[test]
+    fn free_connection_releases_orphaned_child_statements() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            let stmt_a = alloc_statement(dbc_handle).expect("alloc_statement a");
+            let stmt_b = alloc_statement(dbc_handle).expect("alloc_statement b");
+            let stmt_ids = [HandleId::from(stmt_a), HandleId::from(stmt_b)];
+            let mut desc_ids = Vec::new();
+            desc_ids.extend(stmt_desc_handles(stmt_a));
+            desc_ids.extend(stmt_desc_handles(stmt_b));
+
+            assert_eq!(
+                child_statements(dbc_handle).len(),
+                2,
+                "both statements must be tracked before free_connection"
+            );
+
+            // Intentionally skip free_statement — free_connection must drain orphans.
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection with orphaned statements");
+
+            assert_handles_gone_from_registries(&stmt_ids, &desc_ids);
+        });
+    }
+
+    #[test]
+    fn free_connection_fails_when_still_connected() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            let err = free_connection(dbc_handle).expect_err("must reject Connected dbc");
+            assert!(
+                matches!(err, crate::api::OdbcError::ConnectionStillConnected { .. }),
+                "expected ConnectionStillConnected, got {err:?}"
+            );
+
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection after disconnect");
+        });
+    }
+
+    #[test]
+    fn free_environment_fails_when_connections_non_empty() {
+        let env_handle = alloc_environment().expect("alloc_environment");
+        let env_id = HandleId::from(env_handle);
+        let dbc_handle = alloc_tracked_dbc(env_id);
+
+        let err = free_environment(env_handle).expect_err("must reject env with connections");
+        assert!(
+            matches!(err, crate::api::OdbcError::EnvironmentHasConnections { .. }),
+            "expected EnvironmentHasConnections, got {err:?}"
+        );
+
+        free_connection(dbc_handle).expect("free_connection");
+        free_environment(env_handle).expect("free_environment after last connection freed");
+    }
+
+    #[test]
+    fn alloc_statement_registers_four_implicit_descriptors() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+            let stmt_id = HandleId::from(stmt_handle);
+            let descs = stmt_desc_handles(stmt_handle);
+            assert!(
+                descs.iter().all(|id| *id != HandleId::default()),
+                "implicit desc handles must be non-default; got {descs:?}"
+            );
+            assert_implicit_descs_registered(stmt_id, descs);
+
+            free_statement(stmt_handle).expect("free_statement");
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+
+    #[test]
+    fn free_statement_tears_down_implicit_descriptors() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+            let stmt_id = HandleId::from(stmt_handle);
+            let descs = stmt_desc_handles(stmt_handle);
+
+            free_statement(stmt_handle).expect("free_statement");
+            assert_handles_gone_from_registries(&[stmt_id], &descs);
+
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+}
