@@ -1,4 +1,4 @@
-@python @core_not_needed
+@python @jdbc @core_not_needed
 Feature: GEOMETRY type support
   # Snowflake GEOMETRY type represents geospatial data in a planar coordinate system.
   # Values are returned as strings by default (GeoJSON format).
@@ -12,7 +12,7 @@ Feature: GEOMETRY type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario Outline: should select <shape> geometry literal
     Given Snowflake client is logged in
     When Query "SELECT <query_value>" is executed
@@ -28,7 +28,7 @@ Feature: GEOMETRY type support
   #                     Type casting per output format                          #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario Outline: should cast geometry to <expected_type> for <format> output format
     Given Snowflake client is logged in
     And Session parameter GEOMETRY_OUTPUT_FORMAT is set to <format>
@@ -47,14 +47,14 @@ Feature: GEOMETRY type support
   #                           Table operations                                  #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select geometry values from table
     Given Snowflake client is logged in
     And Table with GEOMETRY column exists with WKT values
     When Query "SELECT * FROM <table> ORDER BY id" is executed
     Then Result should contain the expected GeoJSON values
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle NULL geometry values from table
     Given Snowflake client is logged in
     And Table with GEOMETRY column exists containing NULLs and values
@@ -65,7 +65,7 @@ Feature: GEOMETRY type support
   #                       Multiple chunks downloading                           #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should download geometry data in multiple chunks
     # skip_for_json_result_set
     Given Snowflake client is logged in
@@ -76,7 +76,7 @@ Feature: GEOMETRY type support
   #                           Parameter binding                                 #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario Outline: should select geometry using parameter binding with <input_type> value
     Given Snowflake client is logged in
     When Query "SELECT TO_GEOMETRY(?)" is executed with bound <input_type> value
@@ -87,7 +87,7 @@ Feature: GEOMETRY type support
       | WKT string | contain a GeoJSON Point value |
       | NULL       | be NULL                       |
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert geometry using parameter binding
     Given Snowflake client is logged in
     And Table with GEOMETRY column exists
