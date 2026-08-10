@@ -1,13 +1,12 @@
 package net.snowflake.client.internal.unicore;
 
 import com.google.protobuf.UnsafeByteOperations;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import lombok.RequiredArgsConstructor;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
@@ -78,6 +77,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultChunk;
@@ -112,7 +112,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Wrapp
 
 /**
  * Facade over {@link DatabaseDriverService} that encapsulates protobuf request construction and
- * provides centralized error conversion from core driver exceptions to {@link SQLException}.
+ * provides centralized error conversion from core driver exceptions to a runtime {@link
+ * net.snowflake.client.internal.api.implementation.exception.CoreException} carrier.
  *
  * <p>Callers interact with domain-level parameters (handles, strings, maps) and never need to
  * import or construct {@code *Request} protobuf objects directly.
@@ -126,17 +127,17 @@ class CoreDriverApiImpl implements CoreDriverApi {
   // Database lifecycle
   // =========================================================================
 
-  public DatabaseNewResponse databaseNew() throws SQLException {
+  public DatabaseNewResponse databaseNew() {
     DatabaseNewRequest request = DatabaseNewRequest.getDefaultInstance();
     return invoke(() -> client.databaseNew(request));
   }
 
-  public DatabaseInitResponse databaseInit(DatabaseHandle dbHandle) throws SQLException {
+  public DatabaseInitResponse databaseInit(DatabaseHandle dbHandle) {
     DatabaseInitRequest request = DatabaseInitRequest.newBuilder().setDbHandle(dbHandle).build();
     return invoke(() -> client.databaseInit(request));
   }
 
-  public DatabaseReleaseResponse databaseRelease(DatabaseHandle dbHandle) throws SQLException {
+  public DatabaseReleaseResponse databaseRelease(DatabaseHandle dbHandle) {
     DatabaseReleaseRequest request =
         DatabaseReleaseRequest.newBuilder().setDbHandle(dbHandle).build();
     return invoke(() -> client.databaseRelease(request));
@@ -146,14 +147,13 @@ class CoreDriverApiImpl implements CoreDriverApi {
   // Connection lifecycle
   // =========================================================================
 
-  public ConnectionNewResponse connectionNew() throws SQLException {
+  public ConnectionNewResponse connectionNew() {
     ConnectionNewRequest request = ConnectionNewRequest.getDefaultInstance();
     return invoke(() -> client.connectionNew(request));
   }
 
   public ConnectionInitResponse connectionInit(
-      ConnectionHandle connHandle, DatabaseHandle dbHandle, WrapperIdentity wrapperIdentity)
-      throws SQLException {
+      ConnectionHandle connHandle, DatabaseHandle dbHandle, WrapperIdentity wrapperIdentity) {
     ConnectionInitRequest request =
         ConnectionInitRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -166,7 +166,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   }
 
   public ConnectionSetOptionsResponse connectionSetOptions(
-      ConnectionHandle connHandle, Map<String, ConfigSetting> options) throws SQLException {
+      ConnectionHandle connHandle, Map<String, ConfigSetting> options) {
     ConnectionSetOptionsRequest request =
         ConnectionSetOptionsRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -176,7 +176,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   }
 
   public ConnectionSetAutocommitResponse connectionSetAutocommit(
-      ConnectionHandle connHandle, boolean autocommit) throws SQLException {
+      ConnectionHandle connHandle, boolean autocommit) {
     ConnectionSetAutocommitRequest request =
         ConnectionSetAutocommitRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -185,22 +185,20 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.connectionSetAutocommit(request));
   }
 
-  public ConnectionCommitResponse connectionCommit(ConnectionHandle connHandle)
-      throws SQLException {
+  public ConnectionCommitResponse connectionCommit(ConnectionHandle connHandle) {
     ConnectionCommitRequest request =
         ConnectionCommitRequest.newBuilder().setConnHandle(connHandle).build();
     return invoke(() -> client.connectionCommit(request));
   }
 
-  public ConnectionRollbackResponse connectionRollback(ConnectionHandle connHandle)
-      throws SQLException {
+  public ConnectionRollbackResponse connectionRollback(ConnectionHandle connHandle) {
     ConnectionRollbackRequest request =
         ConnectionRollbackRequest.newBuilder().setConnHandle(connHandle).build();
     return invoke(() -> client.connectionRollback(request));
   }
 
   public ConnectionSetSessionParametersResponse connectionSetSessionParameters(
-      ConnectionHandle connHandle, Map<String, String> parameters) throws SQLException {
+      ConnectionHandle connHandle, Map<String, String> parameters) {
     ConnectionSetSessionParametersRequest request =
         ConnectionSetSessionParametersRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -209,28 +207,26 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.connectionSetSessionParameters(request));
   }
 
-  public ConnectionCloseResponse connectionClose(ConnectionHandle connHandle) throws SQLException {
+  public ConnectionCloseResponse connectionClose(ConnectionHandle connHandle) {
     ConnectionCloseRequest request =
         ConnectionCloseRequest.newBuilder().setConnHandle(connHandle).build();
     return invoke(() -> client.connectionClose(request));
   }
 
-  public ConnectionReleaseResponse connectionRelease(ConnectionHandle connHandle)
-      throws SQLException {
+  public ConnectionReleaseResponse connectionRelease(ConnectionHandle connHandle) {
     ConnectionReleaseRequest request =
         ConnectionReleaseRequest.newBuilder().setConnHandle(connHandle).build();
     return invoke(() -> client.connectionRelease(request));
   }
 
-  public ConnectionIsClosedResponse connectionIsClosed(ConnectionHandle connHandle)
-      throws SQLException {
+  public ConnectionIsClosedResponse connectionIsClosed(ConnectionHandle connHandle) {
     ConnectionIsClosedRequest request =
         ConnectionIsClosedRequest.newBuilder().setConnHandle(connHandle).build();
     return invoke(() -> client.connectionIsClosed(request));
   }
 
   public ConnectionHeartbeatResponse connectionHeartbeat(
-      ConnectionHandle connHandle, int timeoutSeconds) throws SQLException {
+      ConnectionHandle connHandle, int timeoutSeconds) {
     ConnectionHeartbeatRequest.Builder builder =
         ConnectionHeartbeatRequest.newBuilder().setConnHandle(connHandle);
     if (timeoutSeconds > 0) {
@@ -239,15 +235,14 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.connectionHeartbeat(builder.build()));
   }
 
-  public ConnectionGetInfoResponse connectionGetInfo(ConnectionHandle connHandle)
-      throws SQLException {
+  public ConnectionGetInfoResponse connectionGetInfo(ConnectionHandle connHandle) {
     ConnectionGetInfoRequest request =
         ConnectionGetInfoRequest.newBuilder().setConnHandle(connHandle).build();
     return invoke(() -> client.connectionGetInfo(request));
   }
 
   public ConnectionUseDatabaseResponse connectionUseDatabase(
-      ConnectionHandle connHandle, String database) throws SQLException {
+      ConnectionHandle connHandle, String database) {
     ConnectionUseDatabaseRequest request =
         ConnectionUseDatabaseRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -256,15 +251,15 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.connectionUseDatabase(request));
   }
 
-  public ConnectionUseSchemaResponse connectionUseSchema(ConnectionHandle connHandle, String schema)
-      throws SQLException {
+  public ConnectionUseSchemaResponse connectionUseSchema(
+      ConnectionHandle connHandle, String schema) {
     ConnectionUseSchemaRequest request =
         ConnectionUseSchemaRequest.newBuilder().setConnHandle(connHandle).setSchema(schema).build();
     return invoke(() -> client.connectionUseSchema(request));
   }
 
   public ConnectionGetQueryStatusResponse connectionGetQueryStatus(
-      ConnectionHandle connHandle, String queryId) throws SQLException {
+      ConnectionHandle connHandle, String queryId) {
     ConnectionGetQueryStatusRequest request =
         ConnectionGetQueryStatusRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -277,8 +272,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   // Connection data & queries
   // =========================================================================
 
-  public ResultSetResponse connectionGetResultSet(ConnectionHandle connHandle, String queryId)
-      throws SQLException {
+  public ResultSetResponse connectionGetResultSet(ConnectionHandle connHandle, String queryId) {
     ConnectionGetResultSetRequest request =
         ConnectionGetResultSetRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -287,8 +281,8 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.connectionGetResultSet(request));
   }
 
-  public ExecuteQueryResponse connectionGetQueryResult(ConnectionHandle connHandle, String queryId)
-      throws SQLException {
+  public ExecuteQueryResponse connectionGetQueryResult(
+      ConnectionHandle connHandle, String queryId) {
     ConnectionGetQueryResultRequest request =
         ConnectionGetQueryResultRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -298,7 +292,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   }
 
   public ConnectionAbortQueryResponse connectionAbortQuery(
-      ConnectionHandle connHandle, String queryId) throws SQLException {
+      ConnectionHandle connHandle, String queryId) {
     ConnectionAbortQueryRequest request =
         ConnectionAbortQueryRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -307,8 +301,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.connectionAbortQuery(request));
   }
 
-  public ConnectionSendHttpResponse connectionSendHttp(ConnectionSendHttpRequest request)
-      throws SQLException {
+  public ConnectionSendHttpResponse connectionSendHttp(ConnectionSendHttpRequest request) {
     return invoke(() -> client.connectionSendHttp(request));
   }
 
@@ -317,7 +310,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   // =========================================================================
 
   public ConnectionTokenResponse connectionRequestToken(
-      ConnectionHandle connHandle, TokenRequestType requestType) throws SQLException {
+      ConnectionHandle connHandle, TokenRequestType requestType) {
     ConnectionTokenRequest request =
         ConnectionTokenRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -327,14 +320,14 @@ class CoreDriverApiImpl implements CoreDriverApi {
   }
 
   public ConnectionGetParameterResponse connectionGetParameter(
-      ConnectionHandle connHandle, String key) throws SQLException {
+      ConnectionHandle connHandle, String key) {
     ConnectionGetParameterRequest request =
         ConnectionGetParameterRequest.newBuilder().setConnHandle(connHandle).setKey(key).build();
     return invoke(() -> client.connectionGetParameter(request));
   }
 
-  public ConnectionGetAllParametersResponse connectionGetAllParameters(ConnectionHandle connHandle)
-      throws SQLException {
+  public ConnectionGetAllParametersResponse connectionGetAllParameters(
+      ConnectionHandle connHandle) {
     ConnectionGetAllParametersRequest request =
         ConnectionGetAllParametersRequest.newBuilder().setConnHandle(connHandle).build();
     return invoke(() -> client.connectionGetAllParameters(request));
@@ -344,27 +337,26 @@ class CoreDriverApiImpl implements CoreDriverApi {
   // Statement lifecycle
   // =========================================================================
 
-  public StatementNewResponse statementNew(ConnectionHandle connHandle) throws SQLException {
+  public StatementNewResponse statementNew(ConnectionHandle connHandle) {
     StatementNewRequest request =
         StatementNewRequest.newBuilder().setConnHandle(connHandle).build();
     return invoke(() -> client.statementNew(request));
   }
 
-  public StatementSetSqlQueryResponse statementSetSqlQuery(StatementHandle stmtHandle, String sql)
-      throws SQLException {
+  public StatementSetSqlQueryResponse statementSetSqlQuery(StatementHandle stmtHandle, String sql) {
     StatementSetSqlQueryRequest request =
         StatementSetSqlQueryRequest.newBuilder().setStmtHandle(stmtHandle).setQuery(sql).build();
     return invoke(() -> client.statementSetSqlQuery(request));
   }
 
-  public StatementPrepareResponse statementPrepare(StatementHandle stmtHandle) throws SQLException {
+  public StatementPrepareResponse statementPrepare(StatementHandle stmtHandle) {
     StatementPrepareRequest request =
         StatementPrepareRequest.newBuilder().setStmtHandle(stmtHandle).build();
     return invoke(() -> client.statementPrepare(request));
   }
 
   public StatementSetOptionsResponse statementSetOptions(
-      StatementHandle stmtHandle, Map<String, ConfigSetting> options) throws SQLException {
+      StatementHandle stmtHandle, Map<String, ConfigSetting> options) {
     StatementSetOptionsRequest request =
         StatementSetOptionsRequest.newBuilder()
             .setStmtHandle(stmtHandle)
@@ -374,7 +366,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   }
 
   public ExecuteQueryResponse statementExecuteQuery(
-      StatementHandle stmtHandle, QueryBindings bindings) throws SQLException {
+      StatementHandle stmtHandle, QueryBindings bindings) {
     StatementExecuteQueryRequest.Builder builder =
         StatementExecuteQueryRequest.newBuilder().setStmtHandle(stmtHandle);
     if (bindings != null) {
@@ -385,7 +377,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   }
 
   public StatementExecuteAsyncResponse statementExecuteAsync(
-      StatementHandle stmtHandle, QueryBindings bindings) throws SQLException {
+      StatementHandle stmtHandle, QueryBindings bindings) {
     StatementExecuteAsyncRequest.Builder builder =
         StatementExecuteAsyncRequest.newBuilder().setStmtHandle(stmtHandle);
     if (bindings != null) {
@@ -395,7 +387,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.statementExecuteAsync(request));
   }
 
-  public StatementReleaseResponse statementRelease(StatementHandle stmtHandle) throws SQLException {
+  public StatementReleaseResponse statementRelease(StatementHandle stmtHandle) {
     StatementReleaseRequest request =
         StatementReleaseRequest.newBuilder().setStmtHandle(stmtHandle).build();
     return invoke(() -> client.statementRelease(request));
@@ -405,22 +397,19 @@ class CoreDriverApiImpl implements CoreDriverApi {
   // Result set
   // =========================================================================
 
-  public ResultSetGetStreamResponse resultSetGetStream(ResultSetHandle resultSetHandle)
-      throws SQLException {
+  public ResultSetGetStreamResponse resultSetGetStream(ResultSetHandle resultSetHandle) {
     ResultSetGetStreamRequest request =
         ResultSetGetStreamRequest.newBuilder().setResultSetHandle(resultSetHandle).build();
     return invoke(() -> client.resultSetGetStream(request));
   }
 
-  public ResultSetGetChunksResponse resultSetGetChunks(ResultSetHandle resultSetHandle)
-      throws SQLException {
+  public ResultSetGetChunksResponse resultSetGetChunks(ResultSetHandle resultSetHandle) {
     ResultSetGetChunksRequest request =
         ResultSetGetChunksRequest.newBuilder().setResultSetHandle(resultSetHandle).build();
     return invoke(() -> client.resultSetGetChunks(request));
   }
 
-  public ResultSetReleaseResponse resultSetRelease(ResultSetHandle resultSetHandle)
-      throws SQLException {
+  public ResultSetReleaseResponse resultSetRelease(ResultSetHandle resultSetHandle) {
     ResultSetReleaseRequest request =
         ResultSetReleaseRequest.newBuilder().setResultSetHandle(resultSetHandle).build();
     return invoke(() -> client.resultSetRelease(request));
@@ -428,7 +417,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   @Override
   public DatabaseFetchChunkResponse databaseFetchChunk(
-      List<ResultChunk> chunks, List<ColumnMetadata> columnMetadata) throws SQLException {
+      List<ResultChunk> chunks, List<ColumnMetadata> columnMetadata) {
     DatabaseFetchChunkRequest request =
         DatabaseFetchChunkRequest.newBuilder()
             .addAllChunks(chunks)
@@ -441,8 +430,8 @@ class CoreDriverApiImpl implements CoreDriverApi {
   // Telemetry
   // =========================================================================
 
-  public TelemetrySendResponse telemetrySendApiUsage(ConnectionHandle connHandle, String apiMethod)
-      throws SQLException {
+  public TelemetrySendResponse telemetrySendApiUsage(
+      ConnectionHandle connHandle, String apiMethod) {
     TelemetrySendApiUsageRequest request =
         TelemetrySendApiUsageRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -452,7 +441,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   }
 
   public TelemetrySendResponse telemetrySendWrapperError(
-      ConnectionHandle connHandle, String exceptionType, String errorSource) throws SQLException {
+      ConnectionHandle connHandle, String exceptionType, String errorSource) {
     TelemetrySendWrapperErrorRequest request =
         TelemetrySendWrapperErrorRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -468,7 +457,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   @Override
   public ConnectionUploadStreamBeginResponse connectionUploadStreamBegin(
-      ConnectionHandle connHandle, String sql) throws SQLException {
+      ConnectionHandle connHandle, String sql) {
     ConnectionUploadStreamBeginRequest request =
         ConnectionUploadStreamBeginRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -479,7 +468,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   @Override
   public ConnectionUploadStreamChunkResponse connectionUploadStreamChunk(
-      UploadStreamHandle uploadHandle, byte[] data, int offset, int length) throws SQLException {
+      UploadStreamHandle uploadHandle, byte[] data, int offset, int length) {
     ConnectionUploadStreamChunkRequest request =
         ConnectionUploadStreamChunkRequest.newBuilder()
             .setUploadHandle(uploadHandle)
@@ -490,7 +479,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   @Override
   public ConnectionUploadStreamFinishResponse connectionUploadStreamFinish(
-      UploadStreamHandle uploadHandle) throws SQLException {
+      UploadStreamHandle uploadHandle) {
     ConnectionUploadStreamFinishRequest request =
         ConnectionUploadStreamFinishRequest.newBuilder().setUploadHandle(uploadHandle).build();
     return invoke(() -> client.connectionUploadStreamFinish(request));
@@ -498,7 +487,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   @Override
   public ConnectionUploadStreamAbortResponse connectionUploadStreamAbort(
-      UploadStreamHandle uploadHandle) throws SQLException {
+      UploadStreamHandle uploadHandle) {
     ConnectionUploadStreamAbortRequest request =
         ConnectionUploadStreamAbortRequest.newBuilder().setUploadHandle(uploadHandle).build();
     return invoke(() -> client.connectionUploadStreamAbort(request));
@@ -506,8 +495,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   @Override
   public ConnectionDownloadStreamBeginResponse connectionDownloadStreamBegin(
-      ConnectionHandle connHandle, String stageName, String sourceFilename, boolean decompress)
-      throws SQLException {
+      ConnectionHandle connHandle, String stageName, String sourceFilename, boolean decompress) {
     ConnectionDownloadStreamBeginRequest request =
         ConnectionDownloadStreamBeginRequest.newBuilder()
             .setConnHandle(connHandle)
@@ -520,7 +508,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   @Override
   public ConnectionDownloadStreamChunkResponse connectionDownloadStreamChunk(
-      DownloadStreamHandle downloadHandle, long maxLen) throws SQLException {
+      DownloadStreamHandle downloadHandle, long maxLen) {
     ConnectionDownloadStreamChunkRequest request =
         ConnectionDownloadStreamChunkRequest.newBuilder()
             .setDownloadHandle(downloadHandle)
@@ -531,7 +519,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   @Override
   public ConnectionDownloadStreamCloseResponse connectionDownloadStreamClose(
-      DownloadStreamHandle downloadHandle) throws SQLException {
+      DownloadStreamHandle downloadHandle) {
     ConnectionDownloadStreamCloseRequest request =
         ConnectionDownloadStreamCloseRequest.newBuilder().setDownloadHandle(downloadHandle).build();
     return invoke(() -> client.connectionDownloadStreamClose(request));
@@ -546,42 +534,51 @@ class CoreDriverApiImpl implements CoreDriverApi {
     T call() throws ServiceException, TransportException;
   }
 
-  private <T> T invoke(ServiceCall<T> callable) throws SQLException {
+  private <T> T invoke(ServiceCall<T> callable) {
     try {
       return callable.call();
     } catch (ServiceException | TransportException e) {
-      throw toSqlException(e);
+      throw toCoreException(e);
     }
   }
 
   /**
-   * Block on an async-first RPC future, mapping its failure to a {@link SQLException}. {@link
-   * CoreFuture#get()} wraps the decoder's {@code ServiceException} / {@code TransportException} in
-   * an {@link ExecutionException}, so unwrap the cause here.
+   * Block on an async-first RPC future, mapping its failure to a {@link CoreException} runtime
+   * carrier. {@link CoreFuture#get()} wraps the decoder's {@code ServiceException} / {@code
+   * TransportException} in an {@link ExecutionException}, so unwrap the cause here.
    */
-  private <T> T await(Future<T> future) throws SQLException {
+  private <T> T await(Future<T> future) {
     try {
       return future.get();
     } catch (ExecutionException e) {
-      throw toSqlException(e.getCause());
+      Throwable cause = e.getCause();
+      if (cause instanceof ServiceException || cause instanceof TransportException) {
+        throw toCoreException((RuntimeException) cause);
+      }
+      throw new CoreException(
+          "Driver error: " + (cause != null ? cause.getMessage() : "unknown"),
+          cause != null ? cause : e);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      throw new SQLException("Interrupted while waiting for connection init", e);
+      throw new CoreException("Interrupted while waiting for connection init", e);
     }
   }
 
   /**
    * Map an RPC failure — thrown directly by a blocking call or unwrapped from an {@link
-   * ExecutionException} on the async path — to a {@link SQLException}.
+   * ExecutionException} on the async path — to a {@link CoreException} runtime carrier. Any {@link
+   * DriverException} payload is preserved verbatim so the decorator boundary can reconstruct the
+   * core-reported SQLState / vendor code / query id.
    */
-  private static SQLException toSqlException(Throwable cause) {
-    if (cause instanceof ServiceException) {
-      return SnowflakeSQLException.fromServiceException((ServiceException) cause);
+  private static CoreException toCoreException(RuntimeException e) {
+    if (e instanceof ServiceException) {
+      Object error = ((ServiceException) e).error;
+      if (error instanceof DriverException) {
+        return new CoreException((DriverException) error, e);
+      }
+      return new CoreException(e.getMessage(), e);
     }
-    if (cause instanceof TransportException) {
-      return new SQLException("Driver communication error: " + cause.getMessage(), cause);
-    }
-    return new SQLException(
-        "Driver error: " + (cause != null ? cause.getMessage() : "unknown"), cause);
+    // TransportException
+    return new CoreException("Driver communication error: " + e.getMessage(), e);
   }
 }

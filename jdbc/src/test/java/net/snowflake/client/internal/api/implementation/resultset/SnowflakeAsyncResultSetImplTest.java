@@ -11,10 +11,12 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.UUID;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.api.resultset.SnowflakeResultSet;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +37,14 @@ class SnowflakeAsyncResultSetImplTest {
 
   private SnowflakeAsyncResultSetImpl createAsyncResultSet() {
     return new SnowflakeAsyncResultSetImpl(queryId, mockConnection, mockStatement, false);
+  }
+
+  /**
+   * Public JDBC view of the same result set: the impl throws unchecked carriers, and the generated
+   * decorator is what turns them into the checked {@link SQLException} callers see.
+   */
+  private ResultSet createDecoratedAsyncResultSet() {
+    return new DecoratedSnowflakeAsyncResultSetImpl(createAsyncResultSet(), Telemetry.NOOP);
   }
 
   private static QueryStatus successStatus() {
@@ -135,7 +145,7 @@ class SnowflakeAsyncResultSetImplTest {
 
   @Test
   void shouldCloseDelegateWhenMaterialized() throws Exception {
-    InternalResultSet mockDelegate = mock(InternalResultSet.class);
+    SnowflakeResultSetImpl mockDelegate = mock(SnowflakeResultSetImpl.class);
     when(mockConnection.getQueryStatus(queryId)).thenReturn(successStatus());
     when(mockConnection.createResultSetFromSfqid(eq(queryId), eq(mockStatement)))
         .thenReturn(mockDelegate);
@@ -178,7 +188,7 @@ class SnowflakeAsyncResultSetImplTest {
 
   @Test
   void shouldThrowOnOperationsAfterClose() throws Exception {
-    SnowflakeAsyncResultSetImpl rs = createAsyncResultSet();
+    ResultSet rs = createDecoratedAsyncResultSet();
     rs.close();
 
     assertThrows(SQLException.class, rs::next);
@@ -201,13 +211,15 @@ class SnowflakeAsyncResultSetImplTest {
   @Test
   void shouldReturnOwningStatement() throws Exception {
     try (SnowflakeAsyncResultSetImpl rs = createAsyncResultSet()) {
-      assertEquals(mockStatement, rs.getStatement());
+      // getStatement() now hands back the decorated boundary; the owning raw statement is reached
+      // through unwrap().
+      assertEquals(mockStatement, rs.getStatement().unwrap(SnowflakeStatementImpl.class));
     }
   }
 
   @Test
   void shouldThrowOnPositionMethodsAfterClose() throws Exception {
-    SnowflakeAsyncResultSetImpl rs = createAsyncResultSet();
+    ResultSet rs = createDecoratedAsyncResultSet();
     rs.close();
 
     assertThrows(SQLException.class, rs::isBeforeFirst);

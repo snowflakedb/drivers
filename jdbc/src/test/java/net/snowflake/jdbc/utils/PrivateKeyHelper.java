@@ -86,4 +86,8 @@ public class PrivateKeyHelper {
     byte[] keyBytes = Files.readAllBytes(encryptedKeyFile);
     return Base64.getEncoder().encodeToString(keyBytes);
   }
+
+  public String getPemContent() throws Exception {
+    return new String(Files.readAllBytes(encryptedKeyFile), StandardCharsets.UTF_8);
+  }
 }

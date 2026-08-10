@@ -115,8 +115,26 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
+      - name: Restore Cargo cache (sf_core)
+        id: sf-core-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "sf-core"
+
       - name: Build Rust components
         run: cargo build --package sf_core ${{ matrix.cargo_flags }}
+
+      - name: Save Cargo cache (sf_core)
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "sf-core"
+          registry-cache-hit: ${{ steps.sf-core-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.sf-core-cache.outputs.target-cache-hit }}
 
       - name: Copy native lib to test output directory
         if: matrix.copy_native_lib
@@ -250,8 +268,26 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
+      - name: Restore Cargo cache (sf_core)
+        id: sf-core-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "sf-core"
+
       - name: Build Rust components
         run: cargo build --package sf_core
+
+      - name: Save Cargo cache (sf_core)
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "sf-core"
+          registry-cache-hit: ${{ steps.sf-core-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.sf-core-cache.outputs.target-cache-hit }}
 
       - name: Run reference tests (new driver)
         run: dotnet run --no-build --framework net10.0

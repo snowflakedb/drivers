@@ -22,6 +22,8 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.util.Base64;
 import java.util.Properties;
 import java.util.stream.Stream;
+import javax.sql.DataSource;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -48,7 +50,7 @@ public class SnowflakeBasicDataSourceTest {
     }
 
     @Override
-    protected Connection openConnection(String url, Properties properties) throws SQLException {
+    protected Connection openConnection(String url, Properties properties) {
       this.lastUrl = url;
       this.lastProperties = new Properties();
       this.lastProperties.putAll(properties);
@@ -57,6 +59,15 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   private SnowflakeBasicDataSource dataSource;
+
+  // SnowflakeBasicDataSource is a @JdbcBoundary: its generated decorator is the public contract,
+  // translating the impl's runtime carriers (SFSQLFeatureNotSupportedException, SFSQLException) and
+  // foreign runtime exceptions (the IllegalStateException raised for an unset URL) into the checked
+  // SQLException JDBC promises. Tests asserting that contract go through the decorator; tests
+  // asserting internal behavior (captured url/properties, getters) stay on the raw impl.
+  private static DataSource decorated(SnowflakeBasicDataSource dataSource) {
+    return new DecoratedSnowflakeBasicDataSource(dataSource, Telemetry.NOOP);
+  }
 
   private Connection createDummyConnection() {
     return (Connection)
@@ -165,7 +176,8 @@ public class SnowflakeBasicDataSourceTest {
     blankUrlDataSource.setUrl("   ");
 
     SQLException ex =
-        assertThrows(SQLException.class, () -> blankUrlDataSource.getConnection("user", "pass"));
+        assertThrows(
+            SQLException.class, () -> decorated(blankUrlDataSource).getConnection("user", "pass"));
     assertEquals("URL is not set.", ex.getMessage());
   }
 
@@ -175,7 +187,8 @@ public class SnowflakeBasicDataSourceTest {
     unsetUrlDataSource.setUser("user");
     unsetUrlDataSource.setPassword("pass");
 
-    SQLException ex = assertThrows(SQLException.class, unsetUrlDataSource::getConnection);
+    SQLException ex =
+        assertThrows(SQLException.class, decorated(unsetUrlDataSource)::getConnection);
     assertEquals("URL is not set.", ex.getMessage());
   }
 
@@ -186,7 +199,8 @@ public class SnowflakeBasicDataSourceTest {
         (TestableSnowflakeBasicDataSource) unsetUrlDataSource;
     testable.setNextConnection(createDummyConnection());
 
-    assertThrows(SQLException.class, () -> unsetUrlDataSource.getConnection("user", "pass"));
+    assertThrows(
+        SQLException.class, () -> decorated(unsetUrlDataSource).getConnection("user", "pass"));
     assertNull(testable.getLastUrl());
   }
 
@@ -197,7 +211,8 @@ public class SnowflakeBasicDataSourceTest {
     blankUrlDataSource.setUser("user");
     blankUrlDataSource.setPassword("pass");
 
-    SQLException ex = assertThrows(SQLException.class, blankUrlDataSource::getConnection);
+    SQLException ex =
+        assertThrows(SQLException.class, decorated(blankUrlDataSource)::getConnection);
     assertEquals("URL is not set.", ex.getMessage());
   }
 
@@ -207,7 +222,8 @@ public class SnowflakeBasicDataSourceTest {
     emptyUrlDataSource.setUrl("");
 
     SQLException ex =
-        assertThrows(SQLException.class, () -> emptyUrlDataSource.getConnection("user", "pass"));
+        assertThrows(
+            SQLException.class, () -> decorated(emptyUrlDataSource).getConnection("user", "pass"));
     assertEquals("URL is not set.", ex.getMessage());
   }
 
@@ -219,7 +235,8 @@ public class SnowflakeBasicDataSourceTest {
         (TestableSnowflakeBasicDataSource) blankUrlDataSource;
     testable.setNextConnection(createDummyConnection());
 
-    assertThrows(SQLException.class, () -> blankUrlDataSource.getConnection("user", "pass"));
+    assertThrows(
+        SQLException.class, () -> decorated(blankUrlDataSource).getConnection("user", "pass"));
     assertNull(testable.getLastUrl());
   }
 
@@ -229,7 +246,8 @@ public class SnowflakeBasicDataSourceTest {
     nullUrlDataSource.setUrl(null);
 
     SQLException ex =
-        assertThrows(SQLException.class, () -> nullUrlDataSource.getConnection("user", "pass"));
+        assertThrows(
+            SQLException.class, () -> decorated(nullUrlDataSource).getConnection("user", "pass"));
     assertEquals("URL is not set.", ex.getMessage());
     assertInstanceOf(IllegalStateException.class, ex.getCause());
   }
@@ -241,7 +259,8 @@ public class SnowflakeBasicDataSourceTest {
     emptyUrlDataSource.setUser("user");
     emptyUrlDataSource.setPassword("pass");
 
-    SQLException ex = assertThrows(SQLException.class, emptyUrlDataSource::getConnection);
+    SQLException ex =
+        assertThrows(SQLException.class, decorated(emptyUrlDataSource)::getConnection);
     assertEquals("URL is not set.", ex.getMessage());
   }
 
@@ -252,7 +271,7 @@ public class SnowflakeBasicDataSourceTest {
         (TestableSnowflakeBasicDataSource) unsetUrlDataSource;
     testable.setNextConnection(createDummyConnection());
 
-    assertThrows(SQLException.class, unsetUrlDataSource::getConnection);
+    assertThrows(SQLException.class, decorated(unsetUrlDataSource)::getConnection);
     assertNull(testable.getLastUrl());
   }
 
@@ -264,7 +283,8 @@ public class SnowflakeBasicDataSourceTest {
         (TestableSnowflakeBasicDataSource) emptyUrlDataSource;
     testable.setNextConnection(createDummyConnection());
 
-    assertThrows(SQLException.class, () -> emptyUrlDataSource.getConnection("user", "pass"));
+    assertThrows(
+        SQLException.class, () -> decorated(emptyUrlDataSource).getConnection("user", "pass"));
     assertNull(testable.getLastUrl());
   }
 
@@ -280,7 +300,8 @@ public class SnowflakeBasicDataSourceTest {
     SnowflakeBasicDataSource unsetUrlDataSource = new TestableSnowflakeBasicDataSource();
 
     SQLException ex =
-        assertThrows(SQLException.class, () -> unsetUrlDataSource.getConnection("user", "pass"));
+        assertThrows(
+            SQLException.class, () -> decorated(unsetUrlDataSource).getConnection("user", "pass"));
     assertEquals("URL is not set.", ex.getMessage());
   }
 
@@ -336,14 +357,14 @@ public class SnowflakeBasicDataSourceTest {
 
   @Test
   public void shouldThrowSQLFeatureNotSupportedExceptionFromGetLogWriter() {
-    assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.getLogWriter());
+    assertThrows(SQLFeatureNotSupportedException.class, () -> decorated(dataSource).getLogWriter());
   }
 
   @Test
   public void shouldThrowSQLFeatureNotSupportedExceptionFromSetLogWriter() {
     assertThrows(
         SQLFeatureNotSupportedException.class,
-        () -> dataSource.setLogWriter(new PrintWriter(System.out)));
+        () -> decorated(dataSource).setLogWriter(new PrintWriter(System.out)));
   }
 
   @Test
@@ -360,7 +381,8 @@ public class SnowflakeBasicDataSourceTest {
 
   @Test
   public void shouldThrowSQLFeatureNotSupportedExceptionFromGetParentLogger() {
-    assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.getParentLogger());
+    assertThrows(
+        SQLFeatureNotSupportedException.class, () -> decorated(dataSource).getParentLogger());
   }
 
   @Test
@@ -371,8 +393,10 @@ public class SnowflakeBasicDataSourceTest {
 
   @Test
   public void shouldThrowSQLExceptionWhenUnwrappingToUnsupportedInterface() throws Exception {
-    assertFalse(dataSource.isWrapperFor(String.class));
-    assertThrows(SQLException.class, () -> dataSource.unwrap(String.class));
+    DataSource decoratedDataSource = decorated(dataSource);
+
+    assertFalse(decoratedDataSource.isWrapperFor(String.class));
+    assertThrows(SQLException.class, () -> decoratedDataSource.unwrap(String.class));
   }
 
   @Test

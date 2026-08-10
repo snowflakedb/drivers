@@ -7,41 +7,40 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Period;
 import java.util.TimeZone;
-import net.snowflake.client.api.exception.SFException;
 
 public interface ArrowVectorConverter {
 
   boolean isNull(int index);
 
-  boolean toBoolean(int index) throws SFException;
+  boolean toBoolean(int index);
 
-  byte toByte(int index) throws SFException;
+  byte toByte(int index);
 
-  short toShort(int index) throws SFException;
+  short toShort(int index);
 
-  int toInt(int index) throws SFException;
+  int toInt(int index);
 
-  long toLong(int index) throws SFException;
+  long toLong(int index);
 
-  double toDouble(int index) throws SFException;
+  double toDouble(int index);
 
-  float toFloat(int index) throws SFException;
+  float toFloat(int index);
 
-  byte[] toBytes(int index) throws SFException;
+  byte[] toBytes(int index);
 
-  String toString(int index) throws SFException;
+  String toString(int index);
 
-  Date toDate(int index, TimeZone jvmTz, boolean useDateFormat) throws SFException;
+  Date toDate(int index, TimeZone jvmTz, boolean useDateFormat);
 
-  Time toTime(int index) throws SFException;
+  Time toTime(int index);
 
-  Timestamp toTimestamp(int index, TimeZone tz) throws SFException;
+  Timestamp toTimestamp(int index, TimeZone tz);
 
-  BigDecimal toBigDecimal(int index) throws SFException;
+  BigDecimal toBigDecimal(int index);
 
-  Period toPeriod(int index) throws SFException;
+  Period toPeriod(int index);
 
-  Duration toDuration(int index) throws SFException;
+  Duration toDuration(int index);
 
-  Object toObject(int index) throws SFException;
+  Object toObject(int index);
 }

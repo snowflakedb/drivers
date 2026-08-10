@@ -91,7 +91,6 @@ jobs:
                   "os": "windows-11-arm",
                   "container": "",
                   "cargo_lib": "sf_core_python.dll",
-                  "dest_lib": "sf_core_python.pyd",
                   "cargo_extra_args": "--config profile.release.opt-level=2 --config profile.release.strip=false",
                   "wheel_method": "manual",
                   "artifact_id": "win_arm64",
@@ -129,7 +128,6 @@ jobs:
                           "target": p["target"],
                           "os": p["os"],
                           "cargo_lib": p["cargo_lib"],
-                          "dest_lib": p["dest_lib"],
                           "cargo_extra_args": p["cargo_extra_args"],
                           "py": v,
                           "artifact_name": f"{p['artifact_id']}_py{v}",
@@ -581,7 +579,15 @@ jobs:
         with:
           arch: arm64
 
-      # ── python_bridge build ──
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python ${{ matrix.py }}
+        run: uv python install cpython-${{ matrix.py }}-windows-aarch64-none
+
+      # ── python_bridge build (per-CPython ABI, same as cibuildwheel Windows path) ──
       - name: Restore Rust cache
         id: rust-cache
         continue-on-error: true
@@ -591,16 +597,29 @@ jobs:
           shared-key: sf-core-release
 
       - name: Build python_bridge
-        shell: cmd
-        run: cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
-        env:
-          PYO3_BUILD_EXTENSION_MODULE: "1"
+        shell: pwsh
+        run: |
+          $py = uv python find ${{ matrix.py }}
+          Write-Host "Building python_bridge for py${{ matrix.py }} ($py)"
+          $env:PYO3_PYTHON = $py
+          $env:PYO3_BUILD_EXTENSION_MODULE = "1"
+          cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Place python_bridge in python package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path python/src/snowflake/connector/_core
-          Copy-Item "target/release/${{ matrix.cargo_lib }}" "python/src/snowflake/connector/_core/${{ matrix.dest_lib }}"
+          $py = uv python find ${{ matrix.py }}
+          $extSuffix = & $py -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"
+          $destDir = "python/src/snowflake/connector/_core"
+          New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+          $dest = Join-Path $destDir "sf_core_python$extSuffix"
+          Copy-Item "target/release/${{ matrix.cargo_lib }}" $dest
+          Write-Host "Placed $dest"
+          if (-not (Test-Path $dest)) {
+            Write-Error "Extension not placed at $dest"
+            exit 1
+          }
 
       - name: Save Rust cache
         if: always()
@@ -620,14 +639,6 @@ jobs:
           name: protobuf-gen
           path: python/src/snowflake/connector/_internal/protobuf_gen
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
-        with:
-          version: "0.9.28"
-
-      - name: Set up Python ${{ matrix.py }}
-        run: uv python install cpython-${{ matrix.py }}-windows-aarch64-none
-
       # ── Build ──
       # MSVC env from the earlier setup-msvc step persists across steps via
       # GITHUB_ENV, so no separate `call vcvarsall.bat` is needed here.
@@ -639,7 +650,17 @@ jobs:
       - name: Inspect wheel
         working-directory: ./python
         shell: pwsh
-        run: uv run --python ${{ matrix.py }} python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
+        run: |
+          $whl = (Get-ChildItem dist/*.whl).FullName
+          uv run --python ${{ matrix.py }} python -m zipfile -l $whl
+          uv run --python ${{ matrix.py }} python -c @'
+          import sys, zipfile
+          names = zipfile.ZipFile(sys.argv[1]).namelist()
+          core = [n for n in names if "_core/" in n and "sf_core_python" in n and n.endswith((".so", ".pyd"))]
+          if len(core) != 1:
+              raise SystemExit(f"Expected exactly one sf_core_python binary in wheel, found {core}")
+          print(f"sf_core_python in wheel: {core[0]}")
+          '@ $whl
 
       - name: Upload Python wheel
         uses: actions/upload-artifact@v4

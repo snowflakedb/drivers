@@ -22,40 +22,11 @@
 //! the SQL `THRESHOLD=` option is rejected — so a smaller file cannot exercise
 //! the multipart paths through the real PUT/GET command path.
 
-use crate::common::put_get_common::{get_file_from_stage, upload_to_stage_with_options};
+use crate::common::put_get_common::{
+    MULTIPART_FILE_LEN, file_digest, get_file_from_stage, upload_to_stage_with_options,
+    write_payload,
+};
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::file_manager::internal::compute_sha256_digest;
-use sf_core::file_manager::types::ByteSource;
-use std::io::{BufWriter, Write};
-use std::path::Path;
-
-/// Just over the server's 200 MiB threshold so the on-cloud object exceeds it on
-/// both the upload (multipart) and download (ranged) paths.
-const FILE_LEN: u64 = 210 * 1024 * 1024;
-
-/// Writes `len` deterministic, position-dependent bytes (a tiny LCG) so a
-/// mis-ordered part/range on reassembly would change the file's digest.
-fn write_payload(path: &Path, len: u64) {
-    let file = std::fs::File::create(path).expect("create payload file");
-    let mut writer = BufWriter::new(file);
-    let mut buf = vec![0u8; 1024 * 1024];
-    let mut state: u32 = 0x9e37_79b9;
-    let mut remaining = len;
-    while remaining > 0 {
-        let chunk = remaining.min(buf.len() as u64) as usize;
-        for b in buf.iter_mut().take(chunk) {
-            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            *b = (state >> 24) as u8;
-        }
-        writer.write_all(&buf[..chunk]).expect("write payload");
-        remaining -= chunk as u64;
-    }
-    writer.flush().expect("flush payload");
-}
-
-fn file_digest(path: &Path) -> String {
-    compute_sha256_digest(&ByteSource::Path(path.to_path_buf())).expect("digest")
-}
 
 #[test]
 #[ignore = "~210 MiB real-cloud multipart round-trip; belongs to the `large_` CI category, run with --ignored. Fast coverage: integration::http::s3_multipart, integration::http::azure_multipart, integration::http::gcs_multipart"]
@@ -65,7 +36,7 @@ fn should_upload_and_download_large_file_via_multipart_roundtrip() {
 
     let src_dir = tempfile::tempdir().unwrap();
     let src_path = src_dir.path().join("bigfile.bin");
-    write_payload(&src_path, FILE_LEN);
+    write_payload(&src_path, MULTIPART_FILE_LEN);
     let src_digest = file_digest(&src_path);
 
     // When File exceeding the 200 MiB threshold is uploaded via multipart PUT

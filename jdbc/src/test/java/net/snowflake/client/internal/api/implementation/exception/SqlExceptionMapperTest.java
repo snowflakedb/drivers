@@ -11,7 +11,6 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.util.NotImplementedException;
 import org.junit.jupiter.api.Test;
@@ -33,7 +32,7 @@ public class SqlExceptionMapperTest {
 
   @Test
   public void shouldTranslateSfExceptionThroughCallPreservingCodeAndState() {
-    SFException sf = new SFException(ErrorCode.CONNECTION_CLOSED);
+    SFSQLException sf = SFSQLException.fromErrorCode(ErrorCode.CONNECTION_CLOSED);
     SQLException thrown =
         assertThrows(
             SnowflakeSQLException.class,
@@ -51,7 +50,8 @@ public class SqlExceptionMapperTest {
 
   @Test
   public void shouldRenderFormattedMessageForSfExceptionWithTemplate() {
-    SFException sf = new SFException(ErrorCode.INVALID_VALUE_CONVERT, "VARIANT", "INT", "abc");
+    SFSQLException sf =
+        SFSQLException.fromErrorCode(ErrorCode.INVALID_VALUE_CONVERT, "VARIANT", "INT", "abc");
     SQLException thrown =
         assertThrows(
             SnowflakeSQLException.class,
@@ -102,7 +102,7 @@ public class SqlExceptionMapperTest {
             () ->
                 SqlExceptionMapper.run(
                     () -> {
-                      throw new SFException(ErrorCode.INVALID_PARAMETER_VALUE);
+                      throw SFSQLException.fromErrorCode(ErrorCode.INVALID_PARAMETER_VALUE);
                     }));
     assertEquals(ErrorCode.INVALID_PARAMETER_VALUE.getSqlState(), thrown.getSQLState());
     assertEquals(ErrorCode.INVALID_PARAMETER_VALUE.getMessageCode(), thrown.getErrorCode());

@@ -3,7 +3,6 @@ package net.snowflake.client.internal.api.implementation.resultset;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
-import java.sql.SQLException;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.TimeZone;
@@ -83,26 +82,26 @@ class InMemoryRowReader implements RowReader {
   }
 
   @Override
-  public String getColumnName(int columnIndex) throws SQLException {
+  public String getColumnName(int columnIndex) {
     if (columnIndex < 1 || columnIndex > columnNames.length) {
-      throw new SQLException("Column index out of range: " + columnIndex);
+      throw new IllegalArgumentException("Column index out of range: " + columnIndex);
     }
     return columnNames[columnIndex - 1];
   }
 
   @Override
-  public Object getObject(int columnIndex) throws SQLException {
+  public Object getObject(int columnIndex) {
     return cell(columnIndex);
   }
 
   @Override
-  public String getString(int columnIndex) throws SQLException {
+  public String getString(int columnIndex) {
     Object value = cell(columnIndex);
     return value == null ? null : value.toString();
   }
 
   @Override
-  public boolean getBoolean(int columnIndex) throws SQLException {
+  public boolean getBoolean(int columnIndex) {
     Object value = cell(columnIndex);
     if (value == null) {
       return false;
@@ -120,7 +119,7 @@ class InMemoryRowReader implements RowReader {
   }
 
   @Override
-  public byte getByte(int columnIndex) throws SQLException {
+  public byte getByte(int columnIndex) {
     Object value = cell(columnIndex);
     if (value == null) {
       return 0;
@@ -133,13 +132,13 @@ class InMemoryRowReader implements RowReader {
         return ((Number) value).byteValue();
       }
     } catch (NumberFormatException e) {
-      throw new SQLException("Invalid byte: " + value, e);
+      throw new IllegalArgumentException("Invalid byte: " + value, e);
     }
     throw noConversion("BYTE", value);
   }
 
   @Override
-  public short getShort(int columnIndex) throws SQLException {
+  public short getShort(int columnIndex) {
     Object value = cell(columnIndex);
     if (value == null) {
       return 0;
@@ -152,13 +151,13 @@ class InMemoryRowReader implements RowReader {
         return ((Number) value).shortValue();
       }
     } catch (NumberFormatException e) {
-      throw new SQLException("Invalid short: " + value, e);
+      throw new IllegalArgumentException("Invalid short: " + value, e);
     }
     throw noConversion("SHORT", value);
   }
 
   @Override
-  public int getInt(int columnIndex) throws SQLException {
+  public int getInt(int columnIndex) {
     Object value = cell(columnIndex);
     if (value == null) {
       return 0;
@@ -171,13 +170,13 @@ class InMemoryRowReader implements RowReader {
         return ((Number) value).intValue();
       }
     } catch (NumberFormatException e) {
-      throw new SQLException("Invalid int: " + value, e);
+      throw new IllegalArgumentException("Invalid int: " + value, e);
     }
     throw noConversion("INT", value);
   }
 
   @Override
-  public long getLong(int columnIndex) throws SQLException {
+  public long getLong(int columnIndex) {
     Object value = cell(columnIndex);
     if (value == null) {
       return 0;
@@ -190,13 +189,13 @@ class InMemoryRowReader implements RowReader {
         return ((Number) value).longValue();
       }
     } catch (NumberFormatException e) {
-      throw new SQLException("Invalid long: " + value, e);
+      throw new IllegalArgumentException("Invalid long: " + value, e);
     }
     throw noConversion("LONG", value);
   }
 
   @Override
-  public float getFloat(int columnIndex) throws SQLException {
+  public float getFloat(int columnIndex) {
     Object value = cell(columnIndex);
     if (value == null) {
       return 0;
@@ -209,13 +208,13 @@ class InMemoryRowReader implements RowReader {
         return ((Number) value).floatValue();
       }
     } catch (NumberFormatException e) {
-      throw new SQLException("Invalid float: " + value, e);
+      throw new IllegalArgumentException("Invalid float: " + value, e);
     }
     throw noConversion("FLOAT", value);
   }
 
   @Override
-  public double getDouble(int columnIndex) throws SQLException {
+  public double getDouble(int columnIndex) {
     Object value = cell(columnIndex);
     if (value == null) {
       return 0;
@@ -228,13 +227,13 @@ class InMemoryRowReader implements RowReader {
         return ((Number) value).doubleValue();
       }
     } catch (NumberFormatException e) {
-      throw new SQLException("Invalid double: " + value, e);
+      throw new IllegalArgumentException("Invalid double: " + value, e);
     }
     throw noConversion("DOUBLE", value);
   }
 
   @Override
-  public BigDecimal getBigDecimal(int columnIndex) throws SQLException {
+  public BigDecimal getBigDecimal(int columnIndex) {
     Object value = cell(columnIndex);
     if (value == null) {
       return null;
@@ -243,10 +242,10 @@ class InMemoryRowReader implements RowReader {
   }
 
   @Override
-  public byte[] getBytes(int columnIndex) throws SQLException {
+  public byte[] getBytes(int columnIndex) {
     Object value = cell(columnIndex);
     if (value == null) {
-      throw new SQLException("Cannot get bytes on null column");
+      throw new IllegalStateException("Cannot get bytes on null column");
     }
     if (value instanceof byte[]) {
       return (byte[]) value;
@@ -255,7 +254,7 @@ class InMemoryRowReader implements RowReader {
   }
 
   @Override
-  public Date getDate(int columnIndex) throws SQLException {
+  public Date getDate(int columnIndex) {
     Object value = cell(columnIndex);
     if (value instanceof Date) {
       return (Date) value;
@@ -264,7 +263,7 @@ class InMemoryRowReader implements RowReader {
   }
 
   @Override
-  public Date getDate(int columnIndex, TimeZone tz) throws SQLException {
+  public Date getDate(int columnIndex, TimeZone tz) {
     return getDate(columnIndex);
   }
 
@@ -274,7 +273,7 @@ class InMemoryRowReader implements RowReader {
   }
 
   @Override
-  public Time getTime(int columnIndex) throws SQLException {
+  public Time getTime(int columnIndex) {
     Object value = cell(columnIndex);
     if (value instanceof Time) {
       return (Time) value;
@@ -283,7 +282,7 @@ class InMemoryRowReader implements RowReader {
   }
 
   @Override
-  public Timestamp getTimestamp(int columnIndex) throws SQLException {
+  public Timestamp getTimestamp(int columnIndex) {
     Object value = cell(columnIndex);
     if (value instanceof Timestamp) {
       return (Timestamp) value;
@@ -292,24 +291,24 @@ class InMemoryRowReader implements RowReader {
   }
 
   @Override
-  public Timestamp getTimestamp(int columnIndex, TimeZone tz) throws SQLException {
+  public Timestamp getTimestamp(int columnIndex, TimeZone tz) {
     return getTimestamp(columnIndex);
   }
 
-  private Object cell(int columnIndex) throws SQLException {
+  private Object cell(int columnIndex) {
     if (currentRow < 0 || currentRow >= rows.length) {
-      throw new SQLException(NO_CURRENT_ROW);
+      throw new IllegalStateException(NO_CURRENT_ROW);
     }
     if (columnIndex < 1 || columnIndex > columnNames.length) {
-      throw new SQLException("Column index out of range: " + columnIndex);
+      throw new IllegalArgumentException("Column index out of range: " + columnIndex);
     }
     Object value = rows[currentRow][columnIndex - 1];
     wasNull = value == null;
     return value;
   }
 
-  private static SQLException noConversion(String type, Object value) {
-    return new SQLException(
+  private static IllegalArgumentException noConversion(String type, Object value) {
+    return new IllegalArgumentException(
         "Cannot convert "
             + (value == null ? "null" : value.getClass().getSimpleName())
             + " to "

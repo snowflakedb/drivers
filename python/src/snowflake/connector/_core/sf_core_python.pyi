@@ -25,7 +25,7 @@ def log_event(level: int, message: str, file: str, line: int, function: str, log
     """
     ...
 
-def call_proto(api: str, method: str, request: object) -> tuple[int, bytes]:
+def call_proto(api: str, method: str, request: bytes) -> tuple[int, bytes]:
     """Synchronous proto API call. Releases the GIL and blocks until complete.
 
     Returns `(status_code, response_bytes)` where status is:
@@ -35,31 +35,13 @@ def call_proto(api: str, method: str, request: object) -> tuple[int, bytes]:
     """
     ...
 
-def call_proto_async(api: str, method: str, request: object, callback: object) -> int:
-    """Async proto API call. Returns immediately and invokes
-    `callback(status, response_bytes)` from a tokio worker thread when complete.
+async def call_proto_async(api: str, method: str, request: bytes) -> object:
+    """Async proto API call. Returns a Python awaitable → `(status_code, response)`.
 
-    Returns a non-zero **async handle** for cancellation via [`cancel`], or `0`
-    if [`init`] has not been called (no task is spawned).
+    Same contract as [`call_proto`]: always returns `(u32, bytes)`, never raises
+    for protocol-level failures.
 
-    Unlike the sync variant, this does **not** block the caller, so multiple
-    requests run concurrently on the shared tokio runtime.
-
-    The callback fires exactly once (unless cancelled). It is called from a
-    tokio worker thread — the Python side must use `loop.call_soon_threadsafe`
-    to resolve a Future from within the callback.
-
-    Python equivalent of `sf_core_api_call_proto_async` from the C API.
-    """
-    ...
-
-def cancel(async_handle: int) -> None:
-    """Cancel the wait for an in-flight async call started by [`call_proto_async`].
-
-    Signals the call's [`CancellationToken`] so the waiter skips the Python
-    callback. Until SNOW-3675196, in-flight `handle_message` work is not aborted.
-
-    Unknown async handles (and calls before [`init`]) are silently ignored.
+    Python cancel drops the awaitable which fires the CancellationToken.
     """
     ...
 

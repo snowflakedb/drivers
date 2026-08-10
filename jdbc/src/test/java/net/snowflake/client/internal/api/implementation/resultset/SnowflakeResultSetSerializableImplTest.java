@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ArrowArrayStreamPtr;
@@ -105,9 +106,11 @@ class SnowflakeResultSetSerializableImplTest {
 
   @Test
   void shouldRejectSplitWhenChunkListIsEmpty() {
-    SQLException ex =
+    // splitBySize is internal plumbing (static, not a decorated boundary), so it surfaces the raw
+    // carrier; only getResultSet() below translates to a checked SQLException.
+    SFSQLException ex =
         assertThrows(
-            SQLException.class,
+            SFSQLException.class,
             () ->
                 SnowflakeResultSetSerializableImpl.splitBySize(
                     mockCoreApi,
@@ -124,9 +127,9 @@ class SnowflakeResultSetSerializableImplTest {
   void shouldRejectSplitWhenChunksHaveNoInlineOrRemoteData() {
     ResultChunk invalidChunk = ResultChunk.newBuilder().setRowCount(1).build();
 
-    SQLException ex =
+    SFSQLException ex =
         assertThrows(
-            SQLException.class,
+            SFSQLException.class,
             () ->
                 SnowflakeResultSetSerializableImpl.splitBySize(
                     mockCoreApi,

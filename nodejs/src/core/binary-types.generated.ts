@@ -6,6 +6,11 @@
  */
 export declare class Connection {
   constructor(options: Record<string, string>)
+  /**
+   * Cancel an in-flight [`Self::connect`] from another JS tick or thread.
+   * A no-op once connect has finished.
+   */
+  cancelConnect(): void
   connect(): Promise<void>
   execute(query: string): Promise<Statement>
   getQueryResult(queryId: string): Promise<Statement>

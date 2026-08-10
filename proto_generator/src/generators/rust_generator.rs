@@ -99,11 +99,25 @@ impl RustGenerator {
 
     /// Generate common types (ProtoError and Transport trait)
     fn generate_common_imports(&self) -> String {
+        // `OperationCtx` is threaded through the server trait so each operation
+        // can observe cancellation itself. sf_core is the only consumer of this
+        // generator (see sf_core/build.rs), so naming its module here is safe.
         r#"
 use proto_utils::*;
 use prost::Message;
+use crate::apis::operation_ctx::OperationCtx;
 "#
         .to_string()
+    }
+
+    /// True if a method is marked `async_first` in the proto: a slow, cancellable
+    /// RPC that receives an [`OperationCtx`] and observes cancellation itself.
+    fn is_async_first(method: &crate::protobuf::MethodDescriptorProto) -> bool {
+        method
+            .options
+            .as_ref()
+            .and_then(|o| o.async_first)
+            .unwrap_or(false)
     }
 
     /// Generate a service trait
@@ -162,16 +176,26 @@ use prost::Message;
         );
         let name = camel_to_snake_case(method.name.as_ref().unwrap_or(&String::new()));
 
+        // Only `async_first` (slow, cancellable) RPCs receive an `OperationCtx`.
+        // The proto is the single source of truth: marking an RPC changes this
+        // signature, so the corresponding impl must accept the ctx or the build
+        // fails, and an unmarked RPC cannot accidentally take one.
+        let ctx_param = if Self::is_async_first(method) {
+            ", ctx: Option<&OperationCtx>"
+        } else {
+            ""
+        };
+
         match method_error {
             Some(error) => {
                 format!(
-                    r#"	fn {name}(&self, input: {input_type}) -> impl std::future::Future<Output = Result<{output_type}, {error}>> + Send;
+                    r#"	fn {name}(&self{ctx_param}, input: {input_type}) -> impl std::future::Future<Output = Result<{output_type}, {error}>> + Send;
 "#
                 )
             }
             None => {
                 format!(
-                    r#"	fn {name}(&self, input: {input_type}) -> impl std::future::Future<Output = {output_type}> + Send;
+                    r#"	fn {name}(&self{ctx_param}, input: {input_type}) -> impl std::future::Future<Output = {output_type}> + Send;
 "#
                 )
             }
@@ -184,23 +208,17 @@ use prost::Message;
         service: &crate::protobuf::ServiceDescriptorProto,
         package: &str,
     ) -> String {
-        let service_error = service
-            .options
-            .as_ref()
-            .unwrap_or(&Default::default())
-            .service_error
-            .clone();
         let service_name = service.name.as_ref().unwrap_or(&String::new()).clone();
 
         let mut content = format!(
             r#"pub trait {service_name}Server : {service_name} {{
-	fn handle_message(&self, method: &str, message: Vec<u8>) -> impl std::future::Future<Output = Result<Vec<u8>, ProtoError<Vec<u8>>>> + Send where Self: Sync {{ async move {{
+	fn handle_message(&self, ctx: Option<&OperationCtx>, method: &str, message: Vec<u8>) -> impl std::future::Future<Output = Result<Vec<u8>, ProtoError<Vec<u8>>>> + Send where Self: Sync {{ async move {{
 		match method {{
 "#
         );
 
         for method in &service.method {
-            content += &self.generate_server_method_case(method, &service_error, package);
+            content += &self.generate_server_method_case(method, package);
         }
 
         content += r#"			_ => Err(ProtoError::Transport(format!("Unknown method: {}", method))),
@@ -208,6 +226,40 @@ use prost::Message;
 	} }
 }
 "#;
+
+        // Lets the transport tell whether an operation observes cancellation
+        // itself. Generated from the same `async_first` marker as the ctx
+        // parameter, so the two can never disagree: an unmarked RPC keeps the
+        // transport-level race, a marked one is left alone to unwind itself.
+        content += &format!(
+            r#"
+/// True if `method` is an `async_first` RPC, i.e. it takes an [`OperationCtx`]
+/// and observes cancellation inside the operation. Callers must NOT wrap such a
+/// method in a cancellation race of their own — that would drop it before it
+/// could finish cleaning up.
+pub fn observes_cancellation(method: &str) -> bool {{
+	matches!(method{arms})
+}}
+"#,
+            arms = {
+                let marked: Vec<String> = service
+                    .method
+                    .iter()
+                    .filter(|m| Self::is_async_first(m))
+                    .map(|m| {
+                        format!(
+                            "\"{}\"",
+                            camel_to_snake_case(m.name.as_ref().unwrap_or(&String::new()))
+                        )
+                    })
+                    .collect();
+                if marked.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {}", marked.join(" | "))
+                }
+            }
+        );
         content
     }
 
@@ -215,7 +267,6 @@ use prost::Message;
     fn generate_server_method_case(
         &self,
         method: &crate::protobuf::MethodDescriptorProto,
-        _service_error: &Option<String>,
         package: &str,
     ) -> String {
         let input_type = to_rust_message_name(
@@ -224,13 +275,23 @@ use prost::Message;
         );
         let name = camel_to_snake_case(method.name.as_ref().unwrap_or(&String::new()));
 
+        // Marked RPCs get the ctx and observe cancellation themselves, inside
+        // the operation, where they still have the state needed to unwind
+        // cleanly. Deliberately no race here: one at this layer would drop the
+        // operation before any such cleanup could finish.
+        let call_args = if Self::is_async_first(method) {
+            "ctx, input"
+        } else {
+            "input"
+        };
+
         format!(
             r#"			"{name}" => {{
 				let input = match {input_type}::decode(&message[..]) {{
 					Ok(input) => input,
 					Err(e) => return Err(ProtoError::Transport(e.to_string())),
 				}};
-				let result = Box::pin(self.{name}(input)).await;
+				let result = Box::pin(self.{name}({call_args})).await;
 				match result {{
 				Ok(output) => Ok(output.encode_to_vec()),
 				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
@@ -303,13 +364,13 @@ impl<T: Transport> {service_name}Client<T> {{
         );
         let name = camel_to_snake_case(method.name.as_ref().unwrap_or(&String::new()));
 
-        match method_error {
-            Some(error) => {
+        // Rendered separately from the signature so the decode logic stays in
+        // one place.
+        let (return_type, decode_tail) = match &method_error {
+            Some(error) => (
+                format!("Result<{output_type}, ProtoError<{error}>>"),
                 format!(
-                    r#"
-    pub async fn {name}(&self, input: {input_type}) -> Result<{output_type}, ProtoError<{error}>> {{
-        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
-        match result {{
+                    r#"        match result {{
             Ok(output) => {{
                 let output = {output_type}::decode(&output[..]);
                 match output {{
@@ -326,16 +387,13 @@ impl<T: Transport> {service_name}Client<T> {{
             }},
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }}
-    }}
 "#
-                )
-            }
-            None => {
+                ),
+            ),
+            None => (
+                format!("Result<{output_type}, ProtoError<()>>"),
                 format!(
-                    r#"
-    pub async fn {name}(&self, input: {input_type}) -> Result<{output_type}, ProtoError<()>> {{
-        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
-        match result {{
+                    r#"        match result {{
             Ok(output) => {{
                 let output = {output_type}::decode(&output[..]);
                 match output {{
@@ -346,11 +404,18 @@ impl<T: Transport> {service_name}Client<T> {{
             Err(ProtoError::Application(_)) => Err(ProtoError::Transport("Unexpected application error".to_string())),
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }}
-    }}
 "#
-                )
-            }
-        }
+                ),
+            ),
+        };
+
+        format!(
+            r#"
+    pub async fn {name}(&self, input: {input_type}) -> {return_type} {{
+        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
+{decode_tail}    }}
+"#
+        )
     }
 }
 

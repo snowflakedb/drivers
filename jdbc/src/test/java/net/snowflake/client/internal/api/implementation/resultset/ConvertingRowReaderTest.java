@@ -13,7 +13,6 @@ import static org.mockito.Mockito.when;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
-import java.sql.SQLException;
 import java.sql.Time;
 import java.sql.Timestamp;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,7 +40,7 @@ class ConvertingRowReaderTest {
   // --- cursor navigation ---
 
   @Test
-  void shouldDelegateNextToUnderlyingReader() throws SQLException {
+  void shouldDelegateNextToUnderlyingReader() {
     reader = readerWithPassthrough();
     when(delegate.next()).thenReturn(true, true, false);
     when(delegate.getInt(1)).thenReturn(1, 2);
@@ -56,7 +55,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldTransitionCursorState() throws SQLException {
+  void shouldTransitionCursorState() {
     reader = readerWithPassthrough();
     when(delegate.next()).thenReturn(true, false);
     when(delegate.getInt(1)).thenReturn(1);
@@ -81,7 +80,7 @@ class ConvertingRowReaderTest {
   // --- filtering ---
 
   @Test
-  void shouldSkipRowWhenConverterReturnsNull() throws SQLException {
+  void shouldSkipRowWhenConverterReturnsNull() {
     int[] callCount = {0};
     reader =
         new ConvertingRowReader(
@@ -104,7 +103,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnExhaustedWhenAllRowsFiltered() throws SQLException {
+  void shouldReturnExhaustedWhenAllRowsFiltered() {
     reader = new ConvertingRowReader(delegate, columnNames, row -> null);
     when(delegate.next()).thenReturn(true, true, false);
 
@@ -115,7 +114,7 @@ class ConvertingRowReaderTest {
   // --- isLast (one-row look-ahead) ---
 
   @Test
-  void shouldReportIsLastOnlyOnFinalProjectedRow() throws SQLException {
+  void shouldReportIsLastOnlyOnFinalProjectedRow() {
     reader = readerWithPassthrough();
     when(delegate.next()).thenReturn(true, true, false);
     when(delegate.getInt(1)).thenReturn(1, 2);
@@ -133,7 +132,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReportIsLastForSingleRowResult() throws SQLException {
+  void shouldReportIsLastForSingleRowResult() {
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {1});
     when(delegate.next()).thenReturn(true, false);
 
@@ -142,7 +141,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReportIsLastBeforeFirstRowOfEmptyResult() throws SQLException {
+  void shouldReportIsLastBeforeFirstRowOfEmptyResult() {
     reader = readerWithPassthrough();
     when(delegate.next()).thenReturn(false);
 
@@ -153,7 +152,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldNotReportIsLastBeforeFirstRowOfNonEmptyResult() throws SQLException {
+  void shouldNotReportIsLastBeforeFirstRowOfNonEmptyResult() {
     reader =
         new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {row.getInt(1)});
     when(delegate.next()).thenReturn(true, false);
@@ -168,7 +167,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldAccountForFilteredTrailingRowsInIsLast() throws SQLException {
+  void shouldAccountForFilteredTrailingRowsInIsLast() {
     int[] callCount = {0};
     reader =
         new ConvertingRowReader(
@@ -189,7 +188,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldNotReportIsLastWhenAKeptRowFollowsFilteredRows() throws SQLException {
+  void shouldNotReportIsLastWhenAKeptRowFollowsFilteredRows() {
     int[] callCount = {0};
     reader =
         new ConvertingRowReader(
@@ -215,7 +214,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnSameIsLastOnRepeatedCallsWithoutAdvancing() throws SQLException {
+  void shouldReturnSameIsLastOnRepeatedCallsWithoutAdvancing() {
     reader = readerWithPassthrough();
     when(delegate.next()).thenReturn(true, false);
     when(delegate.getInt(1)).thenReturn(1);
@@ -232,7 +231,7 @@ class ConvertingRowReaderTest {
   // --- column access: typed getters ---
 
   @Test
-  void shouldReturnToStringOfObjectFromGetString() throws SQLException {
+  void shouldReturnToStringOfObjectFromGetString() {
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {123});
     when(delegate.next()).thenReturn(true);
 
@@ -241,7 +240,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnNullFromGetStringForNullValue() throws SQLException {
+  void shouldReturnNullFromGetStringForNullValue() {
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {null});
     when(delegate.next()).thenReturn(true);
 
@@ -251,7 +250,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnBooleanFromBooleanObject() throws SQLException {
+  void shouldReturnBooleanFromBooleanObject() {
     reader = new ConvertingRowReader(delegate, new String[] {"B"}, row -> new Object[] {true});
     when(delegate.next()).thenReturn(true);
     reader.next();
@@ -259,7 +258,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnBooleanFromNumber() throws SQLException {
+  void shouldReturnBooleanFromNumber() {
     reader = new ConvertingRowReader(delegate, new String[] {"B"}, row -> new Object[] {1});
     when(delegate.next()).thenReturn(true);
     reader.next();
@@ -267,7 +266,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnBooleanFromStringOne() throws SQLException {
+  void shouldReturnBooleanFromStringOne() {
     reader = new ConvertingRowReader(delegate, new String[] {"B"}, row -> new Object[] {"1"});
     when(delegate.next()).thenReturn(true);
     reader.next();
@@ -275,7 +274,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnFalseFromGetBooleanForNull() throws SQLException {
+  void shouldReturnFalseFromGetBooleanForNull() {
     reader = new ConvertingRowReader(delegate, new String[] {"B"}, row -> new Object[] {null});
     when(delegate.next()).thenReturn(true);
     reader.next();
@@ -284,7 +283,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnCorrectTypesFromNumericGetters() throws SQLException {
+  void shouldReturnCorrectTypesFromNumericGetters() {
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {42});
     when(delegate.next()).thenReturn(true);
     reader.next();
@@ -299,7 +298,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnZeroForNullNumericGetters() throws SQLException {
+  void shouldReturnZeroForNullNumericGetters() {
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {null});
     when(delegate.next()).thenReturn(true);
     reader.next();
@@ -321,7 +320,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldParseNumericGettersFromString() throws SQLException {
+  void shouldParseNumericGettersFromString() {
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {"7"});
     when(delegate.next()).thenReturn(true);
     reader.next();
@@ -335,7 +334,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnUtf8BytesFromGetBytes() throws SQLException {
+  void shouldReturnUtf8BytesFromGetBytes() {
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {"hello"});
     when(delegate.next()).thenReturn(true);
     reader.next();
@@ -344,7 +343,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnNullFromGetBytesForNull() throws SQLException {
+  void shouldReturnNullFromGetBytesForNull() {
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {null});
     when(delegate.next()).thenReturn(true);
     reader.next();
@@ -354,7 +353,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldPassThroughTypedObjectsFromDateTimestampTimeGetters() throws SQLException {
+  void shouldPassThroughTypedObjectsFromDateTimestampTimeGetters() {
     Date date = Date.valueOf("2025-01-15");
     Time time = Time.valueOf("13:45:30");
     Timestamp ts = Timestamp.valueOf("2025-01-15 13:45:30");
@@ -371,7 +370,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnNullFromDateTimestampTimeGettersForNull() throws SQLException {
+  void shouldReturnNullFromDateTimestampTimeGettersForNull() {
     reader =
         new ConvertingRowReader(
             delegate, new String[] {"D", "T", "TS"}, row -> new Object[] {null, null, null});
@@ -387,7 +386,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnRawValueFromGetObject() throws SQLException {
+  void shouldReturnRawValueFromGetObject() {
     Object obj = new Object();
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {obj});
     when(delegate.next()).thenReturn(true);
@@ -405,7 +404,7 @@ class ConvertingRowReaderTest {
   }
 
   @Test
-  void shouldReturnOneBasedNameFromGetColumnName() throws SQLException {
+  void shouldReturnOneBasedNameFromGetColumnName() {
     reader = readerWithPassthrough();
     assertEquals("ID", reader.getColumnName(1));
     assertEquals("NAME", reader.getColumnName(2));
@@ -415,8 +414,8 @@ class ConvertingRowReaderTest {
   @Test
   void shouldThrowOnGetColumnNameOutOfRange() {
     reader = readerWithPassthrough();
-    assertThrows(SQLException.class, () -> reader.getColumnName(0));
-    assertThrows(SQLException.class, () -> reader.getColumnName(4));
+    assertThrows(IllegalArgumentException.class, () -> reader.getColumnName(0));
+    assertThrows(IllegalArgumentException.class, () -> reader.getColumnName(4));
   }
 
   // --- error conditions ---
@@ -424,23 +423,23 @@ class ConvertingRowReaderTest {
   @Test
   void shouldThrowOnGetObjectWhenNoCurrentRow() {
     reader = readerWithPassthrough();
-    assertThrows(SQLException.class, () -> reader.getObject(1));
+    assertThrows(IllegalStateException.class, () -> reader.getObject(1));
   }
 
   @Test
-  void shouldThrowOnGetObjectForInvalidColumnIndex() throws SQLException {
+  void shouldThrowOnGetObjectForInvalidColumnIndex() {
     reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {"x"});
     when(delegate.next()).thenReturn(true);
     reader.next();
 
-    assertThrows(SQLException.class, () -> reader.getObject(0));
-    assertThrows(SQLException.class, () -> reader.getObject(2));
+    assertThrows(IllegalArgumentException.class, () -> reader.getObject(0));
+    assertThrows(IllegalArgumentException.class, () -> reader.getObject(2));
   }
 
   // --- close ---
 
   @Test
-  void shouldDelegateCloseToUnderlyingReader() throws SQLException {
+  void shouldDelegateCloseToUnderlyingReader() {
     reader = readerWithPassthrough();
     assertFalse(reader.isClosed());
 

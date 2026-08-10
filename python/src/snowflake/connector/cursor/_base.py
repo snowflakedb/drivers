@@ -52,7 +52,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from .._internal.statement_utils import statement
 from .._internal.utils import _resolve_alias
-from ..errors import NotSupportedError, ProgrammingError
+from ..errors import ProgrammingError
 from ..result_batch import ResultBatch
 from ._chunked_download_reader import _ChunkedDownloadReader
 from ._result_set_wrapper import _ResultSetWrapper
@@ -155,31 +155,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         command, args = self._prepare_call_proc_statement(procname, args)
         self.execute(command, args)
         return args
-
-    @api_telemetry
-    @requires_open
-    def set_statement_parameter(self, key: str, value: Any) -> None:
-        """Set a sticky statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
-
-        Persists across `execute()` calls on this cursor until explicitly
-        changed. For per-call kwargs (one execute, no bleed across calls),
-        use the `statement_parameters` channel in `execute()` instead.
-
-        This must be called before execute() to take effect.
-
-        Args:
-            key: Parameter name (e.g., "MULTI_STATEMENT_COUNT").
-            value: Parameter value.
-
-        Raises:
-            InterfaceError: If cursor is closed.
-
-        Example:
-            cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
-            cursor.execute("SELECT 1; SELECT 2; SELECT 3")
-        """
-        # Store in cursor for application in _execute
-        self._set_statement_parameter(key, value)
 
     @pep249
     @api_telemetry
@@ -339,20 +314,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             return _ChunkedDownloadReader(begin.download_handle)  # type: ignore[return-value]
         finally:
             logger.info("download_stream: exit")
-
-    def _apply_statement_parameters(
-        self,
-        stmt_handle: StatementHandle,
-        statement_parameters: dict[str, Any] | None = None,
-    ) -> None:
-        """Apply sticky `_statement_parameters` merged with per-call
-        `statement_parameters` via SetOptions RPC. Per-call wins on key
-        collision and is never persisted on the cursor.
-        """
-        options = self._build_statement_parameters_options(statement_parameters)
-        if not options:
-            return
-        core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
 
     def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteQueryResponse:
         """Execute query and return ExecuteQueryResponse (single or multi)."""
@@ -748,12 +709,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
         return self
 
-    @pep249
-    @api_telemetry
-    def scroll(self, value: int, mode: str = "relative") -> None:
-        """Scroll the cursor in the result set."""
-        raise NotSupportedError("scroll is not supported")
-
     # ------------------------------------------------------------------
     # Context manager
     # ------------------------------------------------------------------
@@ -770,16 +725,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the runtime context for the cursor."""
         self.close()
-
-    @api_telemetry
-    def is_closed(self) -> bool:
-        """
-        Check if the cursor is closed.
-
-        Returns:
-            bool: True if closed, False otherwise
-        """
-        return self._closed or self._connection.is_closed()
 
     @api_telemetry
     @requires_open_cursor_not_connection
@@ -807,23 +752,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self._prefetch_hook = None
         # Clear multistatement state
         self._multi_statement = None
-
-    @pep249
-    @api_telemetry
-    def close(self) -> bool | None:
-        """Close the cursor now.
-
-        Returns whether the cursor was closed during this call.
-        """
-        try:
-            if self._closed:
-                return False
-            self.reset(closing=True)
-            self._closed = True
-            del self._messages[:]
-            return True
-        except Exception:
-            return None
 
     # ------------------------------------------------------------------
     # Fetch – Arrow / Pandas

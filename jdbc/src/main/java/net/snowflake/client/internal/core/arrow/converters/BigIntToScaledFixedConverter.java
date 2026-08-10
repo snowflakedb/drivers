@@ -2,8 +2,8 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import java.math.BigDecimal;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.ValueVector;
@@ -22,12 +22,12 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
   }
 
   @Override
-  public float toFloat(int index) throws SFException {
+  public float toFloat(int index) {
     return (float) toDouble(index);
   }
 
   @Override
-  public double toDouble(int index) throws SFException {
+  public double toDouble(int index) {
     if (isNull(index)) {
       return 0;
     }
@@ -40,12 +40,12 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
   }
 
   @Override
-  public short toShort(int index) throws SFException {
+  public short toShort(int index) {
     if (isNull(index)) {
       return 0;
     }
     BigDecimal val = toBigDecimal(index);
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT,
         logicalTypeStr,
         SnowflakeUtil.SHORT_STR,
@@ -53,12 +53,12 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
   }
 
   @Override
-  public int toInt(int index) throws SFException {
+  public int toInt(int index) {
     if (isNull(index)) {
       return 0;
     }
     BigDecimal val = toBigDecimal(index);
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT,
         logicalTypeStr,
         SnowflakeUtil.INT_STR,
@@ -66,12 +66,12 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
   }
 
   @Override
-  public long toLong(int index) throws SFException {
+  public long toLong(int index) {
     if (isNull(index)) {
       return 0;
     }
     BigDecimal val = toBigDecimal(index);
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT,
         logicalTypeStr,
         SnowflakeUtil.LONG_STR,
@@ -89,7 +89,7 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
   }
 
   @Override
-  public boolean toBoolean(int index) throws SFException {
+  public boolean toBoolean(int index) {
     if (isNull(index)) {
       return false;
     }
@@ -99,7 +99,7 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
     } else if (val.compareTo(BigDecimal.ONE) == 0) {
       return true;
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT,
         logicalTypeStr,
         SnowflakeUtil.BOOLEAN_STR,

@@ -9,8 +9,8 @@ import javax.annotation.Nullable;
 import lombok.Value;
 import lombok.experimental.UtilityClass;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 
 /**
  * Single source of truth for mapping an internal Snowflake type name to the JDBC type, external
@@ -52,8 +52,7 @@ public class SnowflakeColumnTypes {
       @Nullable String udtOutputType,
       int fixedColType,
       boolean isStructuredType,
-      boolean isVectorType)
-      throws SnowflakeSQLException {
+      boolean isVectorType) {
     SnowflakeType baseType = fromStringOrNull(internalColTypeName);
     if (baseType == null) {
       // Unknown Snowflake type (e.g. UUID) — report as OTHER with the actual type name
@@ -219,7 +218,8 @@ public class SnowflakeColumnTypes {
         break;
 
       default:
-        throw new SnowflakeSQLException(
+        // INTERNAL_ERROR carries the verbatim message (null template) — see SFSQLException.
+        throw new SFSQLException(
             ErrorCode.INTERNAL_ERROR, "Unknown column type: " + internalColTypeName);
     }
 

@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import lombok.Getter;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 
@@ -65,11 +66,6 @@ public class ConnectionString {
           .normalizeHostForUnderscoreAccount()
           .applyDefaultPortForEffectiveScheme()
           .build();
-    } catch (URISyntaxException uriEx) {
-      logger.warn(
-          "Exception thrown while parsing Snowflake connect string. Illegal character in url.",
-          uriEx);
-      return INVALID_CONNECT_STRING;
     } catch (Exception ex) {
       logger.warn("Exception thrown while parsing Snowflake connect string", ex);
       return INVALID_CONNECT_STRING;
@@ -107,12 +103,16 @@ public class ConnectionString {
       this.info = info == null ? new Properties() : info;
     }
 
-    ConnectionStringBuilder parseUri() throws Exception {
+    ConnectionStringBuilder parseUri() {
       String afterPrefix = url.substring(PREFIX.length());
       if (!afterPrefix.startsWith("http://") && !afterPrefix.startsWith("https://")) {
         afterPrefix = url.substring(url.indexOf("snowflake:"));
       }
-      this.uri = new URI(afterPrefix);
+      try {
+        this.uri = new URI(afterPrefix);
+      } catch (URISyntaxException e) {
+        throw new SFSQLException("Unable to parse connection string URI: " + afterPrefix, e);
+      }
       this.scheme = uri.getScheme();
       return this;
     }

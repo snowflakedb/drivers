@@ -1130,7 +1130,7 @@ behavior_differences:
     name: "Returns spec-correct ODBC 3.x SQLSTATEs (HY090 / HY010 / HY017 / HY092 / 07009 / HY008) under iODBC via driver-side pre-validation, instead of vendor HY000 / ODBC 2.x aliases / bare SQL_INVALID_HANDLE / extra diagnostic record"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       iODBC's DM pre-processes string-length parameters, tracks per-statement state (prepared / executed / NEED_DATA / async-busy), and validates handle types at the dispatch layer. For the old driver, that pre-processing either reshapes args into a form the driver's spec-SQLSTATE validator no longer recognises (so the driver falls through to vendor HY000), or rejects the call with an ODBC 2.x SQLSTATE alias (S1010 / S1090 / S1093) / a bare SQL_INVALID_HANDLE / SQL_ERROR (no diagnostic record posted) before forwarding, or appends an extra S1010 record alongside the driver's spec record. The new driver validates the same conditions inside the driver before any iODBC re-shaping or dispatch-time check can fire, so the spec-mandated ODBC 3.x SQLSTATE surfaces as the sole diagnostic record on both DMs.
     is_breaking_change: true
@@ -1149,11 +1149,13 @@ behavior_differences:
       Applications receive a proper state from the driver and a single spec-correct diagnostic record they can inspect for SQLSTATE / native code / message without having to scan past iODBC-side function-sequence artefacts.
   71:
     name: "SQLBindParameter SQL_C_INTERVAL_* bound to a SQL_INTERVAL_* parameter forwards the leading-field literal instead of being rejected"
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      This is a fix that extends the conversions.
     old_driver_behavior: |
       Binding any interval C source (SQL_C_INTERVAL_YEAR / _MONTH / _DAY / _HOUR / _MINUTE / _SECOND) with ParameterType set to a SQL_INTERVAL_* type fails: the reference driver does not implement binding the SQL_INTERVAL_* parameter types, so there is no path to bind a SQL_C_INTERVAL_* value to a SQL_INTERVAL_* parameter.
     new_driver_behavior: |
@@ -1164,11 +1166,13 @@ behavior_differences:
 
   72:
     name: "SQLBindParameter numeric C types to SQL_INTERVAL_* follow ODBC Appendix D 'C to SQL: Numeric' semantics"
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      Aligns the API to ODBC spec.
     old_driver_behavior: |
       The reference driver does not implement the ODBC Appendix D "C to SQL: Numeric" rules for binding numeric C types to SQL_INTERVAL_* parameters via SQLBindParameter. It rejects exact-numeric C types (SQL_C_STINYINT .. SQL_C_UBIGINT, SQL_C_NUMERIC) bound to single-field interval targets (SQL_INTERVAL_YEAR/MONTH/DAY/HOUR/MINUTE/SECOND), and it accepts approximate-numeric C types (SQL_C_FLOAT / SQL_C_DOUBLE) bound to single-field interval targets.
     new_driver_behavior: |
@@ -1180,8 +1184,8 @@ behavior_differences:
   73:
     name: "SQL_C_CHAR/WCHAR bound as a SQL_INTERVAL_* parameter is forwarded to the server instead of being rejected"
     status: allowed
-    type: bugfix
-    reviewed: false
+    type: enhancement
+    reviewed: true
     status_rationale: |
       The old driver rejecting a spec-legal conversion is the bug: ODBC Appendix D lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for every SQL_INTERVAL_* target, so the bind should succeed. The new driver forwards the literal verbatim per the spec.
     is_breaking_change: false
@@ -1195,8 +1199,9 @@ behavior_differences:
       Applications binding interval literals as SQL_C_CHAR/SQL_C_WCHAR to SQL_INTERVAL_* parameters now succeed on the new driver instead of receiving an HY000 bind-variable error.
 
   74:
+    #TODO: Verify with the Product; this seems to be a spec-correct, but is a big shift
     name: "Binding a SQL_C_CHAR/WCHAR character literal as SQL_TYPE_TIMESTAMP shifts the stored wall-clock value by a timezone offset on the old driver"
-    status: allowed
+    status: unknown
     type: bugfix
     reviewed: false
     status_rationale: |
@@ -1213,11 +1218,13 @@ behavior_differences:
 
   75:
     name: "SQLGetInfo(SQL_DRIVER_NAME) returns the driver's installed file path instead of a fixed identifier"
-    status: unknown
-    type: bugfix
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
     is_breaking_change: true
     impact: low
+    status_rationale: |
+      ODBC spec states that the filename should be returned.
     old_driver_behavior: |
       SQLGetInfo(SQL_DRIVER_NAME) returns the fixed string "Snowflake" regardless of where the driver is installed. This is non-spec — the ODBC specification defines SQL_DRIVER_NAME as "a character string with the file name of the driver used to access the data source".
     new_driver_behavior: |
@@ -1226,11 +1233,13 @@ behavior_differences:
       Applications that compared SQL_DRIVER_NAME against the literal string "Snowflake" (for driver detection or telemetry tagging) need to switch to a path-based check or to SQL_DBMS_NAME. Applications that already expected a file path — including Excel/Power Query, which uses SQL_DRIVER_NAME to populate the connection-properties dialog — now receive the spec-compliant value.
   76:
     name: "SQLGetInfo(SQL_DRIVER_VER) reports the Cargo package version verbatim instead of a zero-padded `MM.mm.bbbb` string"
-    status: unknown
-    type: enhancement
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      ODBC spec defines the return as ##.##.####.
     old_driver_behavior: |
       SQLGetInfo(SQL_DRIVER_VER) returns the version as `MM.mm.bbbb` with each field zero-padded to a fixed width (e.g. `03.17.0000`).
     new_driver_behavior: |
@@ -1240,9 +1249,11 @@ behavior_differences:
 
   77:
     name: "SQLGetDiagRec/SQLGetDiagField MessageText appends an internal error trace by default"
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Provides better visibility of errors. Can be disabled.
     old_driver_behavior: |
       `SQLGetDiagRec` / `SQLGetDiagField(SQL_DIAG_MESSAGE_TEXT)` return only the human-readable diagnostic message produced by the driver/server. No internal call-site trace is appended.
     new_driver_behavior: |
@@ -1256,9 +1267,11 @@ behavior_differences:
     name: "Stage-binding threshold comparison uses >= instead of >; arrayBindSupported and CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session params are respected"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     impact: medium
     is_breaking_change: true
+    status_rationale: |
+      Fixes a bug.
     old_driver_behavior: |
       The old driver reads the stage-bind threshold from the connection-string parameter
       `StageBindThreshold` (not from the SESSION parameter `CLIENT_STAGE_ARRAY_BINDING_THRESHOLD`).
@@ -1283,11 +1296,13 @@ behavior_differences:
 
   79:
     name: "SQL_C_WCHAR fetch encoding under iODBC depends on the source column type in the old driver"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     impact: low
     is_breaking_change: true
+    status_rationale: |
+      This was a bug in the old driver.
     old_driver_behavior: |
       Under iODBC (where the DM uses a 4-byte SQLWCHAR), the old driver's SQLGetData
       with TargetType=SQL_C_WCHAR does NOT use a uniform code-unit width. The buffer

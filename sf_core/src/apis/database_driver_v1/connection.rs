@@ -3,6 +3,7 @@ use std::future::Future;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::apis::operation_ctx::OperationCtx;
 use crate::stage_binding::{AtomicStageState, StageState};
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
@@ -276,7 +277,28 @@ impl DatabaseDriverV1 {
         Ok(())
     }
 
+    /// Establish the session for `conn_handle`.
+    ///
+    /// `ctx` is the operation's cancellation context, or `None` when the caller
+    /// reached core without an operation handle (a blocking FFI entry, an
+    /// internal caller, a test) and therefore has no way to cancel. This is the
+    /// single observation point for the operation: cancellation surfaces as
+    /// [`ApiError::Cancelled`] and propagates like any other error.
     pub async fn connection_init(
+        &self,
+        ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+        _db_handle: Handle,
+    ) -> Result<(), ApiError> {
+        crate::apis::operation_ctx::run_opt(
+            ctx,
+            "connection_init",
+            Box::pin(self.connection_init_inner(conn_handle, _db_handle)),
+        )
+        .await
+    }
+
+    async fn connection_init_inner(
         &self,
         conn_handle: Handle,
         _db_handle: Handle,

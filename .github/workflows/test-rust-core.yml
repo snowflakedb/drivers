@@ -307,15 +307,26 @@ jobs:
           cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }} \
             -- --ignored flaky_
 
+      # mitmproxy (mitmdump) is the live external proxy for both proxy lanes below:
+      # the nightly `large_` multipart round-trip and the every-run single-request
+      # e2e. Installed before both so the nightly `large_` step finds it on PATH;
+      # `mitmdump --version` fails the step loudly if pipx installed off-PATH.
+      - name: Install mitmproxy (live-proxy e2e)
+        if: matrix.os == 'ubuntu-latest' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
+        run: |
+          pipx install 'mitmproxy>=11,<13'
+          mitmdump --version
+
       # Long-running tests: real-cloud tests that are too slow for every PR but
-      # must pass on nightly. Tests opt in by being #[ignore]d AND prefixed with
-      # `large_` (parallel to the `flaky_` convention above, but blocking —
+      # must pass on nightly. Tests opt in by being #[ignore]d AND carrying `large_`
+      # in the name (parallel to the `flaky_` convention above, but blocking —
       # a failure here turns the nightly red). Scoped to schedule + aws/azure/gcp
       # now that GCS multipart support has landed (SNOW-3704984, stacked PR #643)
-      # alongside Azure (SNOW-3704958) — the same put_get_multipart_roundtrip
-      # test exercises S3 on aws, Azure block-blob multipart on azure, and GCS
-      # resumable multipart on gcp via each lane's own decoded account, no
-      # per-cloud test needed.
+      # alongside Azure (SNOW-3704958). put_get_multipart_roundtrip exercises S3 on
+      # aws, Azure block-blob on azure, and GCS resumable on gcp via each lane's
+      # decoded account; put_get_multipart_proxy_live_mitm re-runs that round-trip
+      # through mitmdump (installed above) to prove multipart transits the proxy.
+      # No per-cloud test code either way.
       # Step-level timeout caps blast radius against the job's 35-min budget.
       - name: Run long-running tests (nightly, aws + azure + gcp)
         if: github.event_name == 'schedule' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
@@ -326,6 +337,21 @@ jobs:
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo llvm-cov --no-report --package sf_core ${{ matrix.cargo_flags }} \
             -- --ignored large_
+
+      # Real PUT/GET through a genuine mitmdump proxy (see PR description for why).
+      # Runs whenever this job runs (PR, push, schedule) — the test itself is ~4s;
+      # the only real cost is the shared compile the coverage step above already pays.
+      # Filters on the `mitmdump_proxy` substring in the test *names* (not the
+      # `proxy_live_mitm` file path), so a file rename can't make this match nothing.
+      - name: Run live-proxy e2e tests (aws + azure + gcp)
+        if: matrix.os == 'ubuntu-latest' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
+        timeout-minutes: 15
+        env:
+          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo llvm-cov --no-report --package sf_core ${{ matrix.cargo_flags }} \
+            -- --ignored mitmdump_proxy
 
       # Report step is best-effort and gated on actually having coverage data. If the
       # build/run step failed at compilation (before any test ran), target/llvm-cov-target/

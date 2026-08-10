@@ -4,6 +4,7 @@ use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
+use crate::apis::operation_ctx::OperationCtx;
 use crate::chunks::ChunkFormatKind;
 use crate::config::config_manager;
 use crate::config::path_resolver;
@@ -208,9 +209,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_init", skip(self, input))]
+    #[instrument(name = "DatabaseDriverV1::connection_init", skip(self, ctx, input))]
     async fn connection_init(
         &self,
+        ctx: Option<&OperationCtx>,
         input: ConnectionInitRequest,
     ) -> Result<ConnectionInitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -245,7 +247,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         }
 
         self.driver
-            .connection_init(conn_handle.into(), db_handle.into())
+            .connection_init(ctx, conn_handle.into(), db_handle.into())
             .await
             .to_protobuf()?;
         Ok(ConnectionInitResponse {})
@@ -1397,6 +1399,18 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse>;
+    fn connection_upload_stream_begin_blocking(
+        &self,
+        input: ConnectionUploadStreamBeginRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamBeginResponse>;
+    fn connection_upload_stream_chunk_blocking(
+        &self,
+        input: ConnectionUploadStreamChunkRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamChunkResponse>;
+    fn connection_upload_stream_finish_blocking(
+        &self,
+        input: ConnectionUploadStreamFinishRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamFinishResponse>;
     fn connection_download_stream_begin_blocking(
         &self,
         input: ConnectionDownloadStreamBeginRequest,
@@ -1608,6 +1622,36 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse> {
         block_on_client_call(self.connection_get_query_result(input))
+    }
+
+    fn connection_upload_stream_begin_blocking(
+        &self,
+        input: ConnectionUploadStreamBeginRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamBeginResponse> {
+        tracing::debug!("connection_upload_stream_begin_blocking: entry");
+        let result = block_on_client_call(self.connection_upload_stream_begin(input));
+        tracing::debug!("connection_upload_stream_begin_blocking: exit");
+        result
+    }
+
+    fn connection_upload_stream_chunk_blocking(
+        &self,
+        input: ConnectionUploadStreamChunkRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamChunkResponse> {
+        tracing::debug!("connection_upload_stream_chunk_blocking: entry");
+        let result = block_on_client_call(self.connection_upload_stream_chunk(input));
+        tracing::debug!("connection_upload_stream_chunk_blocking: exit");
+        result
+    }
+
+    fn connection_upload_stream_finish_blocking(
+        &self,
+        input: ConnectionUploadStreamFinishRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamFinishResponse> {
+        tracing::debug!("connection_upload_stream_finish_blocking: entry");
+        let result = block_on_client_call(self.connection_upload_stream_finish(input));
+        tracing::debug!("connection_upload_stream_finish_blocking: exit");
+        result
     }
 
     fn connection_download_stream_begin_blocking(

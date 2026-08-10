@@ -93,33 +93,33 @@ public final class MetaDataIdentity {
 
   private final InternalSnowflakeConnection connection;
 
-  public String getURL() throws SQLException {
+  public String getURL() {
     connection.checkClosed();
     return connection.getParameters().getOrThrow(SessionProperty.URL);
   }
 
-  public String getUserName() throws SQLException {
+  public String getUserName() {
     connection.checkClosed();
     // USER is probably always populated during connection setup, but the spec allows null in theory
     return connection.getParameters().get(SessionProperty.USER, null);
   }
 
-  public String getDatabaseProductName() throws SQLException {
+  public String getDatabaseProductName() {
     connection.checkClosed();
     return DATABASE_PRODUCT_NAME;
   }
 
-  public String getDatabaseProductVersion() throws SQLException {
+  public String getDatabaseProductVersion() {
     connection.checkClosed();
     return connection.getDatabaseVersion();
   }
 
-  public String getDriverName() throws SQLException {
+  public String getDriverName() {
     connection.checkClosed();
     return SnowflakeDriver.DRIVER_NAME;
   }
 
-  public String getDriverVersion() throws SQLException {
+  public String getDriverVersion() {
     connection.checkClosed();
     return SnowflakeDriver.DRIVER_VERSION;
   }
@@ -132,82 +132,90 @@ public final class MetaDataIdentity {
     return SnowflakeDriver.MINOR_VERSION;
   }
 
-  public String getIdentifierQuoteString() throws SQLException {
+  public String getIdentifierQuoteString() {
     connection.checkClosed();
     return "\"";
   }
 
-  public String getSQLKeywords() throws SQLException {
+  public String getSQLKeywords() {
     connection.checkClosed();
     return NOT_SQL2003_KEYWORDS;
   }
 
-  public String getNumericFunctions() throws SQLException {
+  public String getNumericFunctions() {
     connection.checkClosed();
     return NUMERIC_FUNCTIONS_SUPPORTED;
   }
 
-  public String getStringFunctions() throws SQLException {
+  public String getStringFunctions() {
     connection.checkClosed();
     return STRING_FUNCTIONS_SUPPORTED;
   }
 
-  public String getSystemFunctions() throws SQLException {
+  public String getSystemFunctions() {
     connection.checkClosed();
     return SYSTEM_FUNCTIONS_SUPPORTED;
   }
 
-  public String getTimeDateFunctions() throws SQLException {
+  public String getTimeDateFunctions() {
     connection.checkClosed();
     return DATE_AND_TIME_FUNCTIONS_SUPPORTED;
   }
 
-  public String getSearchStringEscape() throws SQLException {
+  public String getSearchStringEscape() {
     connection.checkClosed();
     return Character.toString(SEARCH_STRING_ESCAPE);
   }
 
-  public String getExtraNameCharacters() throws SQLException {
+  public String getExtraNameCharacters() {
     connection.checkClosed();
     return "$";
   }
 
-  public String getSchemaTerm() throws SQLException {
+  public String getSchemaTerm() {
     connection.checkClosed();
     return "schema";
   }
 
-  public String getProcedureTerm() throws SQLException {
+  public String getProcedureTerm() {
     connection.checkClosed();
     return "procedure";
   }
 
-  public String getCatalogTerm() throws SQLException {
+  public String getCatalogTerm() {
     connection.checkClosed();
     return "database";
   }
 
-  public String getCatalogSeparator() throws SQLException {
+  public String getCatalogSeparator() {
     connection.checkClosed();
     return ".";
   }
 
-  public int getDatabaseMajorVersion() throws SQLException {
+  public int getDatabaseMajorVersion() {
     connection.checkClosed();
-    return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMajorVersion();
+    try {
+      return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMajorVersion();
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
+    }
   }
 
-  public int getDatabaseMinorVersion() throws SQLException {
+  public int getDatabaseMinorVersion() {
     connection.checkClosed();
-    return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMinorVersion();
+    try {
+      return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMinorVersion();
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
+    }
   }
 
-  public int getJDBCMajorVersion() throws SQLException {
+  public int getJDBCMajorVersion() {
     connection.checkClosed();
     return SnowflakeDriver.JDBC_SPEC_MAJOR;
   }
 
-  public int getJDBCMinorVersion() throws SQLException {
+  public int getJDBCMinorVersion() {
     connection.checkClosed();
     return SnowflakeDriver.JDBC_SPEC_MINOR;
   }

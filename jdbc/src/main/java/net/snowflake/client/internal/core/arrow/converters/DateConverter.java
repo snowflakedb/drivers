@@ -6,8 +6,8 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.TimeZone;
 import net.snowflake.client.api.exception.ErrorCode;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.DateDayVector;
@@ -37,7 +37,7 @@ public class DateConverter extends AbstractArrowVectorConverter {
     return LocalDate.ofEpochDay(getEpochDays(index));
   }
 
-  private Date getDate(int index, TimeZone jvmTz, boolean useDateFormat) throws SFException {
+  private Date getDate(int index, TimeZone jvmTz, boolean useDateFormat) {
     if (isNull(index)) {
       return null;
     }
@@ -51,8 +51,7 @@ public class DateConverter extends AbstractArrowVectorConverter {
    * raw epoch-day date is returned.
    */
   public static Date getDate(
-      int value, TimeZone jvmTz, TimeZone sessionTimeZone, boolean useDateFormat)
-      throws SFException {
+      int value, TimeZone jvmTz, TimeZone sessionTimeZone, boolean useDateFormat) {
     if (jvmTz == null || sessionTimeZone == null || !useDateFormat) {
       return ArrowDateUtil.getDate(value);
     }
@@ -60,12 +59,12 @@ public class DateConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public Date toDate(int index, TimeZone jvmTz, boolean useDateFormat) throws SFException {
+  public Date toDate(int index, TimeZone jvmTz, boolean useDateFormat) {
     return getDate(index, jvmTz, useDateFormat);
   }
 
   @Override
-  public String toString(int index) throws SFException {
+  public String toString(int index) {
     if (isNull(index)) {
       return null;
     }
@@ -74,12 +73,12 @@ public class DateConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public Object toObject(int index) throws SFException {
+  public Object toObject(int index) {
     return toDate(index, TimeZone.getDefault(), getUseDateFormat(false));
   }
 
   @Override
-  public Timestamp toTimestamp(int index, TimeZone tz) throws SFException {
+  public Timestamp toTimestamp(int index, TimeZone tz) {
     Date date = toDate(index, tz, getUseDateFormat(true));
     return date == null ? null : new Timestamp(date.getTime());
   }
@@ -93,13 +92,13 @@ public class DateConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public short toShort(int index) throws SFException {
+  public short toShort(int index) {
     if (isNull(index)) {
       return 0;
     }
     int val = getEpochDays(index);
     if (val < Short.MIN_VALUE || val > Short.MAX_VALUE) {
-      throw new SFException(
+      throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.SHORT_STR, val);
     }
     return (short) val;
@@ -129,11 +128,11 @@ public class DateConverter extends AbstractArrowVectorConverter {
   }
 
   @Override
-  public boolean toBoolean(int index) throws SFException {
+  public boolean toBoolean(int index) {
     if (isNull(index)) {
       return false;
     }
-    throw new SFException(
+    throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT,
         logicalTypeStr,
         SnowflakeUtil.BOOLEAN_STR,

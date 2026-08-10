@@ -1,12 +1,9 @@
 package net.snowflake.client.internal.api.implementation.exception;
 
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.function.Supplier;
-import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.decorator.AbstractDecorator;
-import net.snowflake.client.internal.util.NotImplementedException;
 
 /**
  * Translates the driver's internal runtime-exception model into the checked {@link SQLException}s
@@ -43,23 +40,17 @@ public final class SqlExceptionMapper {
   }
 
   /**
-   * The catch ladder as one pure function, shared by both entry points and {@link
-   * AbstractDecorator}'s telemetry hook. {@link SFException} maps via {@link
-   * SnowflakeSQLException#fromSFException} (SQLState + vendor code, cause dropped for legacy
-   * parity); anything else keeps its cause for diagnostics.
+   * The single translation function, shared by both entry points and {@link AbstractDecorator}'s
+   * telemetry hook. An already-checked {@link SQLException} passes through; a {@link
+   * DriverRuntimeException} maps via its own {@link DriverRuntimeException#toSQLException()}; any
+   * other (foreign) runtime exception is wrapped, keeping its cause.
    */
   public static SQLException translate(Throwable t) {
-    if (t instanceof SnowflakeSQLException) {
-      return (SnowflakeSQLException) t;
-    }
     if (t instanceof SQLException) {
       return (SQLException) t;
     }
-    if (t instanceof SFException) {
-      return SnowflakeSQLException.fromSFException((SFException) t);
-    }
-    if (t instanceof NotImplementedException) {
-      return new SQLFeatureNotSupportedException(t.getMessage());
+    if (t instanceof DriverRuntimeException) {
+      return ((DriverRuntimeException) t).toSQLException();
     }
     return new SnowflakeSQLException(t.getMessage(), t);
   }

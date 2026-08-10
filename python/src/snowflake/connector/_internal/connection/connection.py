@@ -3,19 +3,32 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
 
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus, SessionParameterName
 from ...errors import Error, ErrorValue, InterfaceError, ProgrammingError
+from ..api_client.client_api import core_driver
 from ..binding_converters import ParamStyle
-from ..decorators import api_telemetry, backward_compatibility, pep249
+from ..decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from ..errorhandler import ErrorHandlerMixin
 from ..extras import check_dependency
 from ..extras import numpy as np
 from ..logging import get_logger
 from .constants import LOG_MAX_QUERY_LENGTH
+from .decorators import requires_open
 
+
+if TYPE_CHECKING:
+    from ...aio.cursor import CursorType as AsyncCursorType
+    from ...cursor import CursorType as SyncCursorType
+    from ..protobuf_gen.database_driver_v1_pb2 import ConnectionHandle, DatabaseHandle
+    from ..protobuf_gen.database_driver_v1_services import ConnectionGetInfoResponse
+
+
+# Cursor instance type produced by ``cursor()``; each concrete Connection binds
+# it to its own (sync vs. async) ``CursorInstance`` union.
+_CursorT = TypeVar("_CursorT")
 
 logger = get_logger(__name__)
 
@@ -35,8 +48,8 @@ def clamp_client_prefetch_threads(value: int) -> int:
     return value
 
 
-class ConnectionMixin(ErrorHandlerMixin):
-    """Zero-I/O connection members shared by sync and async connection classes.
+class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
+    """Connection members shared by sync and async connection classes.
 
     Subclasses set handle/proxy fields (``conn_handle``, ``_session_parameters``,
     ``_connection_info``, etc.) and call :meth:`__init__` before performing any
@@ -51,6 +64,12 @@ class ConnectionMixin(ErrorHandlerMixin):
     _session_parameters: Any
     _connection_info: Any
     _client_param_telemetry_enabled: bool
+    conn_handle: ConnectionHandle | None
+
+    # Concrete subclasses set the default cursor class returned by ``cursor()``
+    # (the sync vs. async ``SnowflakeCursor``); kept off the shared mixin so
+    # ``_internal`` never imports the public cursor packages at runtime.
+    _default_cursor_class: ClassVar[SyncCursorType | AsyncCursorType]
 
     def __init__(
         self,
@@ -82,6 +101,48 @@ class ConnectionMixin(ErrorHandlerMixin):
             check_dependency(np)
 
         self._interpolate_empty_sequences = False
+
+    # ------------------------------------------------------------------
+    # Cursors
+    # ------------------------------------------------------------------
+
+    @pep249
+    @api_telemetry
+    @requires_open
+    def cursor(self, cursor_class: type[_CursorT] | None = None) -> _CursorT:
+        """Return a new Cursor object using the connection.
+
+        Args:
+            cursor_class: The class to instantiate. Defaults to the
+                connection's ``SnowflakeCursor``; pass ``DictCursor`` to get
+                results as dictionaries.
+
+        Returns:
+            A new cursor object.
+        """
+        # The concrete Connection subclass passes itself to the cursor
+        # constructor; the mixin can't prove ``self`` is that concrete type,
+        # so it builds through an untyped factory.
+        factory: Any = cursor_class or self._default_cursor_class
+        return cast("_CursorT", factory(self))
+
+    # ------------------------------------------------------------------
+    # Handle release
+    # ------------------------------------------------------------------
+
+    def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
+        """Release the Rust-side connection handle."""
+        try:
+            core_driver.connection_release(conn_handle=conn_handle)
+        except Exception:
+            logger.warning("Failed to release connection handle", exc_info=True)
+
+    def _release_database_handle(self, db_handle: DatabaseHandle) -> None:
+        """Release the Rust-side database handle."""
+        try:
+            core_driver.database_release(db_handle=db_handle)
+        except Exception:
+            logger.warning("Failed to release database handle", exc_info=True)
 
     # ------------------------------------------------------------------
     # PEP 249 attributes
@@ -431,6 +492,64 @@ class ConnectionMixin(ErrorHandlerMixin):
     def consent_cache_id_token(self) -> bool:
         """Whether to cache the IdP token for browser-based SSO authentication."""
         raise NotImplementedError("consent_cache_id_token is not yet implemented")
+
+    # ------------------------------------------------------------------
+    # connection state (sync core_driver reads)
+    # ------------------------------------------------------------------
+
+    def _autocommit_enabled(self) -> bool:
+        value = self._session_parameters["AUTOCOMMIT"]
+        return value is not None and value.lower() == "true"
+
+    @property
+    def _autocommit(self) -> bool:
+        """Whether autocommit is enabled (legacy internal name used by sync tests)."""
+        return self._autocommit_enabled()
+
+    @api_telemetry
+    def get_autocommit(self) -> bool:
+        """Return the current autocommit mode."""
+        return self._autocommit_enabled()
+
+    @api_telemetry
+    def get_client_prefetch_threads(self) -> int:
+        """Return the configured number of chunk-prefetch threads."""
+        return cast(int, self.config.client_prefetch_threads)
+
+    @api_telemetry
+    def is_expired(self) -> bool:
+        """Return True if the connection's master token has expired.
+
+        Once True, the session can no longer be renewed and the connection
+        must be replaced; full re-authentication is required.
+
+        Matches the legacy ``SnowflakeConnection.expired`` flag — intended as a
+        read-only signal for external pool / application code. Fails closed on
+        RPC errors so pools evict uncertain connections.
+        """
+        if self.conn_handle is None:
+            return False
+        try:
+            response = core_driver.connection_is_expired(conn_handle=self.conn_handle)
+            return bool(response.is_expired)
+        except Exception:
+            return True
+
+    @property
+    @api_telemetry
+    def expired(self) -> bool:
+        """Whether the master token has expired (sync legacy property name)."""
+        return self.is_expired()
+
+    @internal_api
+    def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
+        """Return connection details from Core."""
+        if self.conn_handle is None:
+            raise InterfaceError(msg="Connection handle is not available")
+        return core_driver.connection_get_info(
+            conn_handle=self.conn_handle,
+            include_master_token=include_master_token,
+        )
 
     # ------------------------------------------------------------------
     # Query status helpers

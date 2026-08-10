@@ -1,14 +1,12 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
-import java.sql.SQLException;
-
 /** Forward-only cursor that advances through result rows. */
 interface RowCursor extends AutoCloseable {
 
-  boolean next() throws SQLException;
+  boolean next();
 
   @Override
-  void close() throws SQLException;
+  void close();
 
   boolean isClosed();
 
@@ -18,7 +16,7 @@ interface RowCursor extends AutoCloseable {
 
   boolean isFirst();
 
-  boolean isLast() throws SQLException;
+  boolean isLast();
 
   int getCurrentRow();
 }

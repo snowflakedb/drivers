@@ -40,10 +40,11 @@ public interface SnowflakeStatement {
   void setParameter(String name, Object value) throws SQLException;
 
   /**
-   * Set batch ID
-   *
    * @param batchID the batch ID
+   * @deprecated No-op. Only ever tagged client-side telemetry in legacy snowflake-jdbc; never
+   *     affected query execution.
    */
+  @Deprecated
   void setBatchID(String batchID);
 
   /**

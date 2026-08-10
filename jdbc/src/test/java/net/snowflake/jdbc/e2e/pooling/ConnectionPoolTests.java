@@ -53,7 +53,6 @@ import javax.sql.StatementEvent;
 import javax.sql.StatementEventListener;
 import net.snowflake.client.api.pooling.SnowflakeConnectionPoolDataSource;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
-import net.snowflake.client.internal.api.implementation.pooling.SnowflakePooledConnection;
 import net.snowflake.jdbc.utils.PoolingTestCompat;
 import net.snowflake.jdbc.utils.PoolingTestResources;
 import org.apache.commons.dbcp.BasicDataSource;
@@ -124,7 +123,7 @@ public class ConnectionPoolTests extends PoolingE2ETestBase {
     assertEquals(1, listener.closedEvents.size());
     ConnectionEvent closedEvent = listener.closedEvents.get(0);
     assertNull(closedEvent.getSQLException());
-    assertInstanceOf(SnowflakePooledConnection.class, closedEvent.getSource());
+    assertInstanceOf(PooledConnection.class, closedEvent.getSource());
     assertSame(pooledConnection, closedEvent.getSource());
 
     // And The physical connection should remain open
@@ -163,7 +162,7 @@ public class ConnectionPoolTests extends PoolingE2ETestBase {
       // Then A connection error event should be fired with matching error code
       assertEquals(1, listener.errorEvents.size());
       ConnectionEvent errorEvent = listener.errorEvents.get(0);
-      assertInstanceOf(SnowflakePooledConnection.class, errorEvent.getSource());
+      assertInstanceOf(PooledConnection.class, errorEvent.getSource());
       assertSame(pooledConnection, errorEvent.getSource());
       assertEquals(thrown.getErrorCode(), errorEvent.getSQLException().getErrorCode());
     }

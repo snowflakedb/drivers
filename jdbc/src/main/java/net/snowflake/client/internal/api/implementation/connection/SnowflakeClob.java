@@ -12,6 +12,8 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.sql.Clob;
 import java.sql.SQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.codegen.JdbcBoundary;
 
 /**
  * A simple mutable {@link Clob} backed by a {@link StringBuilder}. {@link
@@ -20,6 +22,7 @@ import java.sql.SQLException;
  * be used here because it is fixed-length and rejects writes past its (zero) length. All positions
  * are 1-based per the JDBC contract.
  */
+@JdbcBoundary
 public class SnowflakeClob implements Clob {
 
   private StringBuilder buffer;
@@ -32,41 +35,41 @@ public class SnowflakeClob implements Clob {
     this.buffer = new StringBuilder(content == null ? "" : content);
   }
 
-  private void checkFreed() throws SQLException {
+  private void checkFreed() {
     if (buffer == null) {
-      throw new SQLException("Clob has been freed and is no longer valid.");
+      throw new SFSQLException("Clob has been freed and is no longer valid.");
     }
   }
 
   @Override
-  public long length() throws SQLException {
+  public long length() {
     checkFreed();
     return buffer.length();
   }
 
   @Override
-  public String getSubString(long pos, int length) throws SQLException {
+  public String getSubString(long pos, int length) {
     checkFreed();
     if (pos < 1 || length < 0 || pos - 1 > MAX_VALUE) {
-      throw new SQLException(
+      throw new SFSQLException(
           "Invalid arguments to getSubString: pos=" + pos + ", length=" + length);
     }
     int start = (int) (pos - 1);
     if (start > buffer.length()) {
-      throw new SQLException("Invalid position in Clob: " + pos);
+      throw new SFSQLException("Invalid position in Clob: " + pos);
     }
     int end = (int) Math.min((long) start + length, buffer.length());
     return buffer.substring(start, end);
   }
 
   @Override
-  public Reader getCharacterStream() throws SQLException {
+  public Reader getCharacterStream() {
     checkFreed();
     return new StringReader(buffer.toString());
   }
 
   @Override
-  public InputStream getAsciiStream() throws SQLException {
+  public InputStream getAsciiStream() {
     checkFreed();
     // ASCII streams are one byte per character; ISO-8859-1 maps each char to its low byte rather
     // than emitting multi-byte UTF-8 sequences for code points above U+007F.
@@ -74,13 +77,13 @@ public class SnowflakeClob implements Clob {
   }
 
   @Override
-  public long position(String searchstr, long start) throws SQLException {
+  public long position(String searchstr, long start) {
     checkFreed();
     if (searchstr == null) {
-      throw new SQLException("Search string is null.");
+      throw new SFSQLException("Search string is null.");
     }
     if (start < 1) {
-      throw new SQLException("Invalid start position: " + start);
+      throw new SFSQLException("Invalid start position: " + start);
     }
     if (start - 1 > MAX_VALUE) {
       return -1;
@@ -90,43 +93,48 @@ public class SnowflakeClob implements Clob {
   }
 
   @Override
-  public long position(Clob searchstr, long start) throws SQLException {
+  public long position(Clob searchstr, long start) {
     checkFreed();
     if (searchstr == null) {
-      throw new SQLException("Search Clob is null.");
+      throw new SFSQLException("Search Clob is null.");
     }
-    long searchLength = searchstr.length();
-    if (searchLength > MAX_VALUE) {
-      throw new SQLException("Search Clob length exceeds the maximum supported size.");
+    long searchLength = 0;
+    try {
+      searchLength = searchstr.length();
+      if (searchLength > MAX_VALUE) {
+        throw new SFSQLException("Search Clob length exceeds the maximum supported size.");
+      }
+      return position(searchstr.getSubString(1, (int) searchLength), start);
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
     }
-    return position(searchstr.getSubString(1, (int) searchLength), start);
   }
 
   @Override
-  public int setString(long pos, String str) throws SQLException {
+  public int setString(long pos, String str) {
     checkFreed();
     if (str == null) {
-      throw new SQLException("Cannot set a null string on a Clob.");
+      throw new SFSQLException("Cannot set a null string on a Clob.");
     }
     return setString(pos, str, 0, str.length());
   }
 
   @Override
-  public int setString(long pos, String str, int offset, int len) throws SQLException {
+  public int setString(long pos, String str, int offset, int len) {
     checkFreed();
     if (str == null) {
-      throw new SQLException("Cannot set a null string on a Clob.");
+      throw new SFSQLException("Cannot set a null string on a Clob.");
     }
     if (pos < 1
         || offset < 0
         || len < 0
         || (long) offset + len > str.length()
         || pos - 1 > MAX_VALUE) {
-      throw new SQLException("Invalid arguments to setString.");
+      throw new SFSQLException("Invalid arguments to setString.");
     }
     int start = (int) (pos - 1);
     if (start > buffer.length()) {
-      throw new SQLException("Invalid position in Clob: " + pos);
+      throw new SFSQLException("Invalid position in Clob: " + pos);
     }
     String fragment = str.substring(offset, offset + len);
     int end = Math.min(start + fragment.length(), buffer.length());
@@ -135,29 +143,29 @@ public class SnowflakeClob implements Clob {
   }
 
   @Override
-  public OutputStream setAsciiStream(long pos) throws SQLException {
+  public OutputStream setAsciiStream(long pos) {
     checkFreed();
     if (pos < 1) {
-      throw new SQLException("Invalid position in Clob: " + pos);
+      throw new SFSQLException("Invalid position in Clob: " + pos);
     }
     return new ClobAsciiOutputStream(buffer, (int) (pos - 1));
   }
 
   @Override
-  public Writer setCharacterStream(long pos) throws SQLException {
+  public Writer setCharacterStream(long pos) {
     checkFreed();
     if (pos < 1) {
-      throw new SQLException("Invalid position in Clob: " + pos);
+      throw new SFSQLException("Invalid position in Clob: " + pos);
     }
     // Legacy snowflake-jdbc appends flushed writer content; pos is accepted but not applied.
     return new ClobAppendWriter(buffer);
   }
 
   @Override
-  public void truncate(long len) throws SQLException {
+  public void truncate(long len) {
     checkFreed();
     if (len < 0 || len > buffer.length()) {
-      throw new SQLException("Invalid truncation length: " + len);
+      throw new SFSQLException("Invalid truncation length: " + len);
     }
     buffer.setLength((int) len);
   }
@@ -168,17 +176,17 @@ public class SnowflakeClob implements Clob {
   }
 
   @Override
-  public Reader getCharacterStream(long pos, long length) throws SQLException {
+  public Reader getCharacterStream(long pos, long length) {
     checkFreed();
     if (pos < 1 || pos > buffer.length()) {
-      throw new SQLException("Invalid position in Clob: " + pos);
+      throw new SFSQLException("Invalid position in Clob: " + pos);
     }
     // Unlike getSubString(), this overload must reject (rather than silently truncate) a window
     // that
     // runs past the end of the Clob, matching the JDBC contract and the JDK SerialClob behavior. A
     // zero-length window at a valid position is allowed and yields an empty Reader.
     if (length < 0 || length > MAX_VALUE || pos - 1 + length > buffer.length()) {
-      throw new SQLException("Invalid position and length: pos=" + pos + ", length=" + length);
+      throw new SFSQLException("Invalid position and length: pos=" + pos + ", length=" + length);
     }
     return new StringReader(getSubString(pos, (int) length));
   }

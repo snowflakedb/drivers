@@ -11,7 +11,6 @@ import java.sql.Types;
 import java.util.Collections;
 import java.util.List;
 import lombok.Data;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.FieldMetadata;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
@@ -45,8 +44,7 @@ public class SnowflakeColumnMetadata implements Serializable {
    * @param jdbcTreatDecimalAsInt whether scale-0 fixed columns should be reported as {@link
    *     Types#BIGINT} instead of {@link Types#DECIMAL}
    */
-  public SnowflakeColumnMetadata(ColumnMetadata colMetadata, boolean jdbcTreatDecimalAsInt)
-      throws SnowflakeSQLException {
+  public SnowflakeColumnMetadata(ColumnMetadata colMetadata, boolean jdbcTreatDecimalAsInt) {
     this.name = colMetadata.getName();
     this.nullable = colMetadata.getNullable();
     this.precision = (int) colMetadata.getPrecision();
@@ -84,8 +82,7 @@ public class SnowflakeColumnMetadata implements Serializable {
     this.isAutoIncrement = colMetadata.getIsAutoIncrement();
   }
 
-  public SnowflakeColumnMetadata(JsonNode colNode, boolean jdbcTreatDecimalAsInt)
-      throws SnowflakeSQLException {
+  public SnowflakeColumnMetadata(JsonNode colNode, boolean jdbcTreatDecimalAsInt) {
     this.name = colNode.path("name").asText();
     this.nullable = colNode.path("nullable").asBoolean();
     this.precision = colNode.path("precision").asInt();

@@ -25,14 +25,19 @@ import java.util.Properties;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFClientInfoException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
+import net.snowflake.client.internal.codegen.JdbcBoundary;
 
+@JdbcBoundary
 class LogicalConnection implements Connection {
 
   private final Connection physicalConnection;
   private final SnowflakePooledConnection pooledConnection;
   private final AtomicBoolean closed = new AtomicBoolean();
 
-  LogicalConnection(SnowflakePooledConnection pooledConnection) throws SQLException {
+  LogicalConnection(SnowflakePooledConnection pooledConnection) {
     this.physicalConnection = pooledConnection.getPhysicalConnection();
     this.pooledConnection = pooledConnection;
     // getPhysicalConnection() already rejects a null/closed physical at snapshot time, but the
@@ -40,8 +45,12 @@ class LogicalConnection implements Connection {
     // construction. Reject a handle backed by an already-closed physical session with
     // CONNECTION_CLOSED (consistent with BD#27) rather than returning one that would let the pool
     // recycle a dead connection on its later close().
-    if (physicalConnection.isClosed()) {
-      throw new SnowflakeSQLException(CONNECTION_CLOSED, "Connection is closed");
+    try {
+      if (physicalConnection.isClosed()) {
+        throw new SFSQLException(CONNECTION_CLOSED, "Connection is closed");
+      }
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
     }
   }
 
@@ -54,28 +63,38 @@ class LogicalConnection implements Connection {
    * is a caller/property mistake, not a sign the pooled physical connection is broken, and pool
    * managers typically evict a connection that signals {@code connectionErrorOccurred}.
    */
-  private void runOnPhysical(SqlRunnable action) throws SQLException {
+  private void runOnPhysical(SqlRunnable action) {
     try {
       action.run();
-    } catch (SQLFeatureNotSupportedException | SQLClientInfoException e) {
-      throw e;
+    } catch (SQLFeatureNotSupportedException e) {
+      throw new SFSQLFeatureNotSupportedException(e);
+    } catch (SQLClientInfoException e) {
+      throw new SFClientInfoException(
+          e.getMessage(), e.getSQLState(), e.getErrorCode(), e.getFailedProperties());
     } catch (SQLException e) {
       fireConnectionErrorEventIfOpen(e);
-      throw e;
+      // Re-surface the physical connection's exception unchanged so the caller sees the same vendor
+      // code / SQL state the error event carries (the delegate is already decorated, so e is a
+      // fully-formed SQLException).
+      throw SFSQLException.surfacing(e);
     }
   }
 
   /**
    * Delegates a value-returning operation to the physical connection. See {@link #runOnPhysical}.
    */
-  private <T> T callOnPhysical(SqlCallable<T> action) throws SQLException {
+  private <T> T callOnPhysical(SqlCallable<T> action) {
     try {
       return action.call();
-    } catch (SQLFeatureNotSupportedException | SQLClientInfoException e) {
-      throw e;
+    } catch (SQLFeatureNotSupportedException e) {
+      throw new SFSQLFeatureNotSupportedException(e);
+    } catch (SQLClientInfoException e) {
+      throw new SFClientInfoException(
+          e.getMessage(), e.getSQLState(), e.getErrorCode(), e.getFailedProperties());
     } catch (SQLException e) {
       fireConnectionErrorEventIfOpen(e);
-      throw e;
+      // See runOnPhysical: re-surface the delegate's exception unchanged.
+      throw SFSQLException.surfacing(e);
     }
   }
 
@@ -92,56 +111,56 @@ class LogicalConnection implements Connection {
   }
 
   @Override
-  public Statement createStatement() throws SQLException {
+  public Statement createStatement() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::createStatement);
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql) throws SQLException {
+  public PreparedStatement prepareStatement(String sql) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.prepareStatement(sql));
   }
 
   @Override
-  public CallableStatement prepareCall(String sql) throws SQLException {
+  public CallableStatement prepareCall(String sql) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.prepareCall(sql));
   }
 
   @Override
-  public String nativeSQL(String sql) throws SQLException {
+  public String nativeSQL(String sql) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.nativeSQL(sql));
   }
 
   @Override
-  public void setAutoCommit(boolean autoCommit) throws SQLException {
+  public void setAutoCommit(boolean autoCommit) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.setAutoCommit(autoCommit));
   }
 
   @Override
-  public boolean getAutoCommit() throws SQLException {
+  public boolean getAutoCommit() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getAutoCommit);
   }
 
   @Override
-  public void commit() throws SQLException {
+  public void commit() {
     throwExceptionIfClosed();
     runOnPhysical(physicalConnection::commit);
   }
 
   @Override
-  public void rollback() throws SQLException {
+  public void rollback() {
     throwExceptionIfClosed();
     runOnPhysical(physicalConnection::rollback);
   }
 
   /** Logical connection close does not close the physical connection; it only fires events. */
   @Override
-  public void close() throws SQLException {
+  public void close() {
     // compareAndSet guarantees the close event fires exactly once, even under concurrent close().
     if (!closed.compareAndSet(false, true)) {
       return;
@@ -162,139 +181,137 @@ class LogicalConnection implements Connection {
   }
 
   @Override
-  public boolean isClosed() throws SQLException {
+  public boolean isClosed() {
     return closed.get();
   }
 
   @Override
-  public DatabaseMetaData getMetaData() throws SQLException {
+  public DatabaseMetaData getMetaData() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getMetaData);
   }
 
   @Override
-  public void setReadOnly(boolean readOnly) throws SQLException {
+  public void setReadOnly(boolean readOnly) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.setReadOnly(readOnly));
   }
 
   @Override
-  public boolean isReadOnly() throws SQLException {
+  public boolean isReadOnly() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::isReadOnly);
   }
 
   @Override
-  public void setCatalog(String catalog) throws SQLException {
+  public void setCatalog(String catalog) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.setCatalog(catalog));
   }
 
   @Override
-  public String getCatalog() throws SQLException {
+  public String getCatalog() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getCatalog);
   }
 
   @Override
-  public void setTransactionIsolation(int level) throws SQLException {
+  public void setTransactionIsolation(int level) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.setTransactionIsolation(level));
   }
 
   @Override
-  public int getTransactionIsolation() throws SQLException {
+  public int getTransactionIsolation() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getTransactionIsolation);
   }
 
   @Override
-  public SQLWarning getWarnings() throws SQLException {
+  public SQLWarning getWarnings() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getWarnings);
   }
 
   @Override
-  public void clearWarnings() throws SQLException {
+  public void clearWarnings() {
     throwExceptionIfClosed();
     runOnPhysical(physicalConnection::clearWarnings);
   }
 
   @Override
-  public Statement createStatement(int resultSetType, int resultSetConcurrency)
-      throws SQLException {
+  public Statement createStatement(int resultSetType, int resultSetConcurrency) {
     throwExceptionIfClosed();
     return callOnPhysical(
         () -> physicalConnection.createStatement(resultSetType, resultSetConcurrency));
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency)
-      throws SQLException {
+  public PreparedStatement prepareStatement(
+      String sql, int resultSetType, int resultSetConcurrency) {
     throwExceptionIfClosed();
     return callOnPhysical(
         () -> physicalConnection.prepareStatement(sql, resultSetType, resultSetConcurrency));
   }
 
   @Override
-  public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency)
-      throws SQLException {
+  public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency) {
     throwExceptionIfClosed();
     return callOnPhysical(
         () -> physicalConnection.prepareCall(sql, resultSetType, resultSetConcurrency));
   }
 
   @Override
-  public Map<String, Class<?>> getTypeMap() throws SQLException {
+  public Map<String, Class<?>> getTypeMap() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getTypeMap);
   }
 
   @Override
-  public void setTypeMap(Map<String, Class<?>> map) throws SQLException {
+  public void setTypeMap(Map<String, Class<?>> map) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.setTypeMap(map));
   }
 
   @Override
-  public void setHoldability(int holdability) throws SQLException {
+  public void setHoldability(int holdability) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.setHoldability(holdability));
   }
 
   @Override
-  public int getHoldability() throws SQLException {
+  public int getHoldability() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getHoldability);
   }
 
   @Override
-  public Savepoint setSavepoint() throws SQLException {
+  public Savepoint setSavepoint() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::setSavepoint);
   }
 
   @Override
-  public Savepoint setSavepoint(String name) throws SQLException {
+  public Savepoint setSavepoint(String name) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.setSavepoint(name));
   }
 
   @Override
-  public void rollback(Savepoint savepoint) throws SQLException {
+  public void rollback(Savepoint savepoint) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.rollback(savepoint));
   }
 
   @Override
-  public void releaseSavepoint(Savepoint savepoint) throws SQLException {
+  public void releaseSavepoint(Savepoint savepoint) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.releaseSavepoint(savepoint));
   }
 
   @Override
   public Statement createStatement(
-      int resultSetType, int resultSetConcurrency, int resultSetHoldability) throws SQLException {
+      int resultSetType, int resultSetConcurrency, int resultSetHoldability) {
     throwExceptionIfClosed();
     return callOnPhysical(
         () ->
@@ -304,8 +321,7 @@ class LogicalConnection implements Connection {
 
   @Override
   public PreparedStatement prepareStatement(
-      String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
-      throws SQLException {
+      String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability) {
     throwExceptionIfClosed();
     return callOnPhysical(
         () ->
@@ -315,8 +331,7 @@ class LogicalConnection implements Connection {
 
   @Override
   public CallableStatement prepareCall(
-      String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
-      throws SQLException {
+      String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability) {
     throwExceptionIfClosed();
     return callOnPhysical(
         () ->
@@ -325,43 +340,43 @@ class LogicalConnection implements Connection {
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql, int autoGeneratedKeys) throws SQLException {
+  public PreparedStatement prepareStatement(String sql, int autoGeneratedKeys) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.prepareStatement(sql, autoGeneratedKeys));
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql, int[] columnIndexes) throws SQLException {
+  public PreparedStatement prepareStatement(String sql, int[] columnIndexes) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.prepareStatement(sql, columnIndexes));
   }
 
   @Override
-  public PreparedStatement prepareStatement(String sql, String[] columnNames) throws SQLException {
+  public PreparedStatement prepareStatement(String sql, String[] columnNames) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.prepareStatement(sql, columnNames));
   }
 
   @Override
-  public Clob createClob() throws SQLException {
+  public Clob createClob() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::createClob);
   }
 
   @Override
-  public Blob createBlob() throws SQLException {
+  public Blob createBlob() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::createBlob);
   }
 
   @Override
-  public NClob createNClob() throws SQLException {
+  public NClob createNClob() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::createNClob);
   }
 
   @Override
-  public SQLXML createSQLXML() throws SQLException {
+  public SQLXML createSQLXML() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::createSQLXML);
   }
@@ -380,7 +395,7 @@ class LogicalConnection implements Connection {
    * does not fire {@code connectionErrorOccurred} (see BD#34).
    */
   @Override
-  public boolean isValid(int timeout) throws SQLException {
+  public boolean isValid(int timeout) {
     if (closed.get()) {
       return false;
     }
@@ -436,37 +451,37 @@ class LogicalConnection implements Connection {
   }
 
   @Override
-  public String getClientInfo(String name) throws SQLException {
+  public String getClientInfo(String name) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.getClientInfo(name));
   }
 
   @Override
-  public Properties getClientInfo() throws SQLException {
+  public Properties getClientInfo() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getClientInfo);
   }
 
   @Override
-  public Array createArrayOf(String typeName, Object[] elements) throws SQLException {
+  public Array createArrayOf(String typeName, Object[] elements) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.createArrayOf(typeName, elements));
   }
 
   @Override
-  public Struct createStruct(String typeName, Object[] attributes) throws SQLException {
+  public Struct createStruct(String typeName, Object[] attributes) {
     throwExceptionIfClosed();
     return callOnPhysical(() -> physicalConnection.createStruct(typeName, attributes));
   }
 
   @Override
-  public void setSchema(String schema) throws SQLException {
+  public void setSchema(String schema) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.setSchema(schema));
   }
 
   @Override
-  public String getSchema() throws SQLException {
+  public String getSchema() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getSchema);
   }
@@ -491,7 +506,7 @@ class LogicalConnection implements Connection {
    * fired, preventing a later {@code close()} from recycling it.
    */
   @Override
-  public void abort(Executor executor) throws SQLException {
+  public void abort(Executor executor) {
     if (!closed.compareAndSet(false, true)) {
       return;
     }
@@ -500,12 +515,12 @@ class LogicalConnection implements Connection {
     } catch (SQLFeatureNotSupportedException e) {
       // Abort is unsupported, so the physical connection was left untouched; keep handle usable.
       closed.set(false);
-      throw e;
+      throw new SFSQLFeatureNotSupportedException(e);
     } catch (SQLException e) {
       // The physical connection is now dead; signal an error so the pool discards it and leave the
       // logical handle closed so a subsequent close() does not recycle the dead connection.
       pooledConnection.fireConnectionErrorEvent(e);
-      throw e;
+      throw new SFSQLException(CONNECTION_CLOSED, e.getMessage());
     }
     // Abort succeeded: the physical connection is dead. Fire connectionErrorOccurred (not
     // connectionClosed) so the pool evicts the connection instead of treating it as idle/reusable.
@@ -514,13 +529,13 @@ class LogicalConnection implements Connection {
   }
 
   @Override
-  public void setNetworkTimeout(Executor executor, int milliseconds) throws SQLException {
+  public void setNetworkTimeout(Executor executor, int milliseconds) {
     throwExceptionIfClosed();
     runOnPhysical(() -> physicalConnection.setNetworkTimeout(executor, milliseconds));
   }
 
   @Override
-  public int getNetworkTimeout() throws SQLException {
+  public int getNetworkTimeout() {
     throwExceptionIfClosed();
     return callOnPhysical(physicalConnection::getNetworkTimeout);
   }
@@ -534,20 +549,28 @@ class LogicalConnection implements Connection {
    * BD#26/BD#32.
    */
   @Override
-  public boolean isWrapperFor(Class<?> iface) throws SQLException {
+  public boolean isWrapperFor(Class<?> iface) {
     throwExceptionIfClosed();
-    return physicalConnection.isWrapperFor(iface);
+    try {
+      return physicalConnection.isWrapperFor(iface);
+    } catch (SQLException e) {
+      throw new SFSQLException(e.getMessage(), e);
+    }
   }
 
   @Override
-  public <T> T unwrap(Class<T> iface) throws SQLException {
+  public <T> T unwrap(Class<T> iface) {
     throwExceptionIfClosed();
-    return physicalConnection.unwrap(iface);
+    try {
+      return physicalConnection.unwrap(iface);
+    } catch (SQLException e) {
+      throw new SFSQLException(e.getMessage(), e);
+    }
   }
 
-  private void throwExceptionIfClosed() throws SQLException {
+  private void throwExceptionIfClosed() {
     if (closed.get()) {
-      throw new SnowflakeSQLException(CONNECTION_CLOSED, "Connection is closed");
+      throw new SFSQLException(CONNECTION_CLOSED, "Connection is closed");
     }
   }
 
