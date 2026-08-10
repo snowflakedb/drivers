@@ -1,63 +1,43 @@
+"""Live e2e SELECT 1M performance tests (direct Snowflake connection).
+
+Bind-mode matrix (ODBC):
+  * no suffix / existing names — SQL_C_CHAR (to_string); historical BenchDash baselines
+  * `_default` suffix           — SQL_C_DEFAULT (driver-chosen C type); separate charts
+
+A single run of this file (or of tests/) executes the complete type × bind_mode matrix.
+See test_select_1M_recorded_http.py for the WireMock (CPU-only) counterparts.
+
+Test function names stay stable (`test_select_string_1M_arrow`, …) for Jenkins smoke /
+regression node-id filters; SQL is shared via select_1m_queries.
+"""
 import pytest
+from select_1m_queries import TYPE_QUERIES
 
 ITERATIONS = 10
 WARMUP_ITERATIONS = 2
 
 
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_string_1M_arrow(perf_test):
-    perf_test(
-        sql_command="SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
-    )
+def _make_select_test(sql: str, bind_mode: str = "char"):
+    @pytest.mark.iterations(ITERATIONS)
+    @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+    def test_fn(perf_test, _sql=sql, _bind_mode=bind_mode):
+        kwargs = {"sql_command": _sql}
+        if _bind_mode != "char":
+            kwargs["bind_mode"] = _bind_mode
+        perf_test(**kwargs)
+
+    if bind_mode == "default":
+        test_fn = pytest.mark.supported_drivers("odbc")(test_fn)
+    return test_fn
 
 
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_number_1M_arrow(perf_test):
-    perf_test(
-        sql_command="SELECT L_LINENUMBER::INT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
-    )
+for type_key, sql in TYPE_QUERIES:
+    char_name = f"test_select_{type_key}_1M_arrow"
+    globals()[char_name] = _make_select_test(sql, "char")
+    globals()[char_name].__name__ = char_name
+    globals()[char_name].__qualname__ = char_name
 
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_date_1M_arrow(perf_test):
-    perf_test(
-        sql_command="SELECT L_SHIPDATE FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_timestamp_ntz_1M_arrow(perf_test):
-    perf_test(
-        sql_command="SELECT L_SHIPDATE::TIMESTAMP_NTZ FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
-    )
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_15columns_1M_arrow(perf_test):
-    perf_test(
-        sql_command="""
-            SELECT 
-                L_ORDERKEY,
-                L_PARTKEY,
-                L_SUPPKEY,
-                L_LINENUMBER,
-                L_QUANTITY,
-                L_EXTENDEDPRICE,
-                L_DISCOUNT,
-                L_TAX,
-                L_RETURNFLAG,
-                L_LINESTATUS,
-                L_SHIPDATE,
-                L_COMMITDATE,
-                L_RECEIPTDATE,
-                L_SHIPINSTRUCT,
-                L_COMMENT
-            FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM 
-            LIMIT 1000000
-        """
-    )
+    default_name = f"test_select_{type_key}_1M_arrow_default"
+    globals()[default_name] = _make_select_test(sql, "default")
+    globals()[default_name].__name__ = default_name
+    globals()[default_name].__qualname__ = default_name

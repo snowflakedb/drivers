@@ -248,6 +248,14 @@ def test_put_files_12mx100(perf_test):
   `tests/test_select_1M_fetchone.py`, `test_select_1M_fetchall.py`, `test_select_1M_pandas.py`). `"pandas"` uses
   `cursor.fetch_pandas_all()` and requires the `pandas` extra, already installed in the Python driver image.
   Not wired to the WireMock recorded-HTTP path.
+- **SELECT tests (ODBC)**: pass `bind_mode="default"` to bind columns with `SQL_C_DEFAULT`
+  (driver-chosen C type per SQL type; for Snowflake ODBC, `SQL_DECIMAL` defaults to CHAR)
+  instead of forcing `SQL_C_CHAR`. Default-bind tests live in the same files as the CHAR
+  baselines (`test_select_1M.py`, `test_select_1M_recorded_http.py`) with a `_default` name
+  suffix so BenchDash charts them separately, and are gated with
+  `@pytest.mark.supported_drivers("odbc")`. Invalid `BIND_MODE` values fail fast.
+  CHAR baselines keep historical bind-then-`ROW_ARRAY_SIZE` order; default mode sets
+  bulk-fetch attrs before `SQLBindCol`.
 
 ### Test Configuration Priority
 
@@ -375,6 +383,7 @@ All drivers receive their configuration through **environment variables**. The r
 | `TEST_TYPE` | String | `"select"` or `"put_get"` | `"select"` |
 | `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, ARROW format is prepended. For PUT/GET tests, `USE DATABASE` is prepended. | `[]` |
 | `FETCH_MODE` | String | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, or `"pandas"` (Python driver only) | `"fetchmany"` |
+| `BIND_MODE` | String | ODBC column bind target: `"char"` (`SQL_C_CHAR`) or `"default"` (`SQL_C_DEFAULT`). Ignored by other drivers. | `"char"` |
 
 ### PARAMETERS_JSON Format
 
