@@ -13,6 +13,7 @@ sf_core = { path = "../sf_core" }
 napi = { version = "3", default-features = false, features = ["napi9", "async"] }
 napi-derive = "3"
 arrow = { version = ">=54.0.0, <59" }
+snafu = "0.8.7"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
 tracing = "0.1.41"
 

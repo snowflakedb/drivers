@@ -12,14 +12,15 @@ export declare class Connection {
    */
   cancelConnect(): void
   connect(): Promise<void>
-  execute(query: string): Promise<Statement>
-  getQueryResult(queryId: string): Promise<Statement>
+  execute(query: string): Statement
+  getQueryResult(queryId: string): Statement
   destroy(): Promise<void>
 }
 
 export declare class Statement {
   getNextRow(): Promise<Array<unknown> | null>
-  getQueryId(): string
+  getQueryId(): string | null
   getNumRows(): number | null
   close(): void
+  cancel(): Promise<void>
 }
