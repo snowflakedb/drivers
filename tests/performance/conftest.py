@@ -403,7 +403,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         test_type: PerfTestType = PerfTestType.SELECT,
         s3_download_url: str = None,  # S3 URL for PUT/GET tests
         s3_download_dir: str = None,  # Local directory for downloaded files
-        fetch_mode: str = "fetchmany",  # Cursor fetch strategy for SELECT tests (e2e only)
+        fetch_mode: str = "fetchmany",  # Cursor fetch strategy for SELECT tests
         bind_mode: str = "char",  # ODBC: "char" (SQL_C_CHAR) or "default" (SQL_C_DEFAULT)
     ):
         if bind_mode not in ("char", "default"):
@@ -422,6 +422,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 "sql_command": sql_command,
                 "parameters_json": parameters_json,
                 "setup_queries": final_setup_queries,
+                "fetch_mode": fetch_mode,
             }
 
         # Route to appropriate runner based on test type
@@ -433,6 +434,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 s3_files_dir=s3_files_dir,
                 is_comparison=is_comparison,
                 test_type=test_type,
+                fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
             )
         else:
@@ -459,6 +461,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_files_dir,
         is_comparison: bool,
         test_type: PerfTestType = PerfTestType.SELECT_RECORDED_HTTP,
+        fetch_mode: str = "fetchmany",
         bind_mode: str = "char",
     ):
         """Run WireMock test (recorded HTTP traffic)."""
@@ -488,6 +491,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 preserve_mappings=preserve_mappings,
                 reuse_mappings_dir=reuse_mappings_dir,
                 test_type=container_test_type,
+                fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
             )
         else:
@@ -508,6 +512,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 preserve_mappings=preserve_mappings,
                 reuse_mappings_dir=reuse_mappings_dir,
                 test_type=container_test_type,
+                fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
             )
     

@@ -156,6 +156,7 @@ def _rerun_test(
             run_id=run_id,
             preserve_mappings=True,
             reuse_mappings_dir=run_id,
+            fetch_mode=test_params.get("fetch_mode", "fetchmany"),
         )
     except Exception as e:
         logger.error(f"Re-run failed for {test_name}: {e}")

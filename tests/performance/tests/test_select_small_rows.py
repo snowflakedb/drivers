@@ -5,8 +5,11 @@ Row counts approximate p50/p90/p99 of typical customer query result sizes:
 
 fetchmany is the default path and runs for all drivers. fetchall / fetchone /
 pandas require FETCH_MODE and are Python-only.
+
+Each case runs both e2e and recorded_http.
 """
 import pytest
+from runner.test_types import PerfTestType
 
 ITERATIONS = 30
 WARMUP_ITERATIONS = 2
@@ -46,4 +49,16 @@ def test_select_string(perf_test, row_count, name, fetch_mode):
         sql_command=SQL_TEMPLATE.format(n=row_count),
         fetch_mode=fetch_mode,
         test_name=f"select_string_{name}",
+    )
+
+
+@pytest.mark.iterations(ITERATIONS)
+@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+@pytest.mark.parametrize("row_count,name,fetch_mode", CASES)
+def test_select_string_recorded_http(perf_test, row_count, name, fetch_mode):
+    perf_test(
+        test_type=PerfTestType.SELECT_RECORDED_HTTP,
+        sql_command=SQL_TEMPLATE.format(n=row_count),
+        fetch_mode=fetch_mode,
+        test_name=f"select_string_{name}_recorded_http",
     )
