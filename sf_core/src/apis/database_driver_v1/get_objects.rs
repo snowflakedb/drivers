@@ -163,6 +163,8 @@ pub fn nested_get_objects_schema() -> SchemaRef {
 // Public request type
 // ---------------------------------------------------------------------------
 
+/// Request parameters shared by the Arrow and typed GetObjects APIs.
+#[derive(Debug, Clone)]
 pub struct GetObjectsRequest {
     pub conn_handle: Handle,
     pub depth: i32,
@@ -171,6 +173,35 @@ pub struct GetObjectsRequest {
     pub table_name: Option<String>,
     pub table_type: Vec<String>,
     pub column_name: Option<String>,
+}
+
+/// An owned catalog node in the typed GetObjects metadata tree.
+///
+/// `db_schemas` is `None` when the requested depth stops at catalogs and is
+/// `Some` (possibly empty) when schemas were requested.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogMetadata {
+    pub catalog_name: String,
+    pub db_schemas: Option<Vec<DbSchemaMetadata>>,
+}
+
+/// An owned schema node in the typed GetObjects metadata tree.
+///
+/// `tables` is `None` when the requested depth stops at schemas and is `Some`
+/// (possibly empty) when tables were requested.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DbSchemaMetadata {
+    pub db_schema_name: String,
+    pub tables: Option<Vec<TableMetadata>>,
+}
+
+/// An owned table node in the typed GetObjects metadata tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableMetadata {
+    pub table_name: String,
+    pub table_type: String,
+    /// Columns are empty when the requested depth stops at tables.
+    pub columns: Vec<ColumnDescriptor>,
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +247,34 @@ fn escape_show_like(pattern: &str) -> String {
 type ShowCancel = Option<(CleanupScope, AbortReport)>;
 
 impl DatabaseDriverV1 {
+    /// Returns GetObjects metadata as an owned, depth-aware tree.
+    ///
+    /// Unlike [`Self::connection_get_objects`], this API does not encode the
+    /// metadata into an Arrow result-set handle. A `None` child collection
+    /// means the requested depth stopped at its parent; `Some(Vec::new())`
+    /// means that level was requested but matched no objects.
+    /// Cancelling aborts each in-flight `SHOW` and stops any result chunk drain.
+    pub async fn connection_get_objects_typed(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        req: GetObjectsRequest,
+    ) -> Result<Vec<CatalogMetadata>, ApiError> {
+        let report = AbortReport::default();
+        let show_cancel =
+            operation_ctx.map(|operation| (operation.cleanup_scope().clone(), report.clone()));
+        let fetch = async move {
+            let (_, metadata) = self.fetch_get_objects_metadata(req, show_cancel).await?;
+            Ok(metadata)
+        };
+        run_reporting_abort(
+            operation_ctx,
+            "connection_get_objects_typed",
+            &report,
+            Box::pin(fetch),
+        )
+        .await
+    }
+
     /// Cancelling aborts each in-flight `SHOW` by the request id it was submitted
     /// with, and stops a chunk drain that is still reading a result.
     pub async fn connection_get_objects(
@@ -227,66 +286,8 @@ impl DatabaseDriverV1 {
         let show_cancel =
             operation_ctx.map(|operation| (operation.cleanup_scope().clone(), report.clone()));
         let fetch = async move {
-            let conn_ptr =
-                self.connections
-                    .get_obj(req.conn_handle)
-                    .context(InvalidArgumentSnafu {
-                        argument: "Connection handle not found".to_string(),
-                    })?;
-            let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
-
-            let (catalog_filter, schema_filter) = {
-                let conn = conn_ptr.lock().await;
-                apply_connection_context(&conn, req.catalog, req.db_schema).await
-            };
-
-            // `depth` arrives as a raw proto i32. Dispatch only the implemented depths
-            // explicitly; reject COLUMNS (deferred) and unknown values rather than
-            // letting them fall through to a TABLES catch-all.
-            let batch = match req.depth {
-                DEPTH_CATALOGS => {
-                    fetch_catalogs(&conn_ptr, catalog_filter.as_deref(), show_cancel).await?
-                }
-                DEPTH_DB_SCHEMAS => {
-                    fetch_schemas(
-                        &conn_ptr,
-                        catalog_filter.as_deref(),
-                        schema_filter.as_deref(),
-                        show_cancel,
-                    )
-                    .await?
-                }
-                DEPTH_TABLES => {
-                    let table_types = normalize_table_types(&req.table_type);
-                    fetch_tables(
-                        &conn_ptr,
-                        catalog_filter.as_deref(),
-                        schema_filter.as_deref(),
-                        req.table_name.as_deref(),
-                        &table_types,
-                        show_cancel,
-                    )
-                    .await?
-                }
-                DEPTH_COLUMNS => {
-                    fetch_columns(
-                        &conn_ptr,
-                        catalog_filter.as_deref(),
-                        schema_filter.as_deref(),
-                        req.table_name.as_deref(),
-                        req.column_name.as_deref(),
-                        show_cancel,
-                    )
-                    .await?
-                }
-                other => {
-                    return InvalidArgumentSnafu {
-                        argument: format!("GetObjects depth {other} is invalid (expected 1..=4)"),
-                    }
-                    .fail();
-                }
-            };
-
+            let (conn_ptr, metadata) = self.fetch_get_objects_metadata(req, show_cancel).await?;
+            let batch = build_metadata_batch(metadata)?;
             let http_client = {
                 let conn = conn_ptr.lock().await;
                 conn.http_client
@@ -303,6 +304,71 @@ impl DatabaseDriverV1 {
             Box::pin(fetch),
         )
         .await
+    }
+
+    async fn fetch_get_objects_metadata(
+        &self,
+        req: GetObjectsRequest,
+        show_cancel: ShowCancel,
+    ) -> Result<(Arc<Mutex<Connection>>, Vec<CatalogMetadata>), ApiError> {
+        let conn_ptr = self
+            .connections
+            .get_obj(req.conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+        let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
+
+        let (catalog_filter, schema_filter) = {
+            let conn = conn_ptr.lock().await;
+            apply_connection_context(&conn, req.catalog, req.db_schema).await
+        };
+
+        let metadata = match req.depth {
+            DEPTH_CATALOGS => {
+                fetch_catalogs(&conn_ptr, catalog_filter.as_deref(), show_cancel).await?
+            }
+            DEPTH_DB_SCHEMAS => {
+                fetch_schemas(
+                    &conn_ptr,
+                    catalog_filter.as_deref(),
+                    schema_filter.as_deref(),
+                    show_cancel,
+                )
+                .await?
+            }
+            DEPTH_TABLES => {
+                let table_types = normalize_table_types(&req.table_type);
+                fetch_tables(
+                    &conn_ptr,
+                    catalog_filter.as_deref(),
+                    schema_filter.as_deref(),
+                    req.table_name.as_deref(),
+                    &table_types,
+                    show_cancel,
+                )
+                .await?
+            }
+            DEPTH_COLUMNS => {
+                fetch_columns(
+                    &conn_ptr,
+                    catalog_filter.as_deref(),
+                    schema_filter.as_deref(),
+                    req.table_name.as_deref(),
+                    req.column_name.as_deref(),
+                    show_cancel,
+                )
+                .await?
+            }
+            other => {
+                return InvalidArgumentSnafu {
+                    argument: format!("GetObjects depth {other} is invalid (expected 1..=4)"),
+                }
+                .fail();
+            }
+        };
+
+        Ok((conn_ptr, metadata))
     }
 }
 
@@ -341,9 +407,15 @@ async fn fetch_catalogs(
     conn_ptr: &Arc<Mutex<Connection>>,
     catalog_filter: Option<&str>,
     show_cancel: ShowCancel,
-) -> Result<RecordBatch, ApiError> {
+) -> Result<Vec<CatalogMetadata>, ApiError> {
     let names = fetch_catalog_names(conn_ptr, catalog_filter, show_cancel).await?;
-    build_catalogs_batch(names)
+    Ok(names
+        .into_iter()
+        .map(|catalog_name| CatalogMetadata {
+            catalog_name,
+            db_schemas: None,
+        })
+        .collect())
 }
 
 async fn fetch_catalog_names(
@@ -390,7 +462,7 @@ async fn fetch_schemas(
     catalog_filter: Option<&str>,
     schema_filter: Option<&str>,
     show_cancel: ShowCancel,
-) -> Result<RecordBatch, ApiError> {
+) -> Result<Vec<CatalogMetadata>, ApiError> {
     let catalogs = resolve_catalog_pattern(conn_ptr, catalog_filter, show_cancel.clone()).await?;
     let schemas = fetch_schema_names(
         conn_ptr,
@@ -400,7 +472,21 @@ async fn fetch_schemas(
         show_cancel,
     )
     .await?;
-    build_schemas_batch(schemas)
+    Ok(schemas
+        .into_iter()
+        .map(|(catalog_name, schemas)| CatalogMetadata {
+            catalog_name,
+            db_schemas: Some(
+                schemas
+                    .into_iter()
+                    .map(|db_schema_name| DbSchemaMetadata {
+                        db_schema_name,
+                        tables: None,
+                    })
+                    .collect(),
+            ),
+        })
+        .collect())
 }
 
 /// Scope schema discovery to every resolved database, not unrelated databases.
@@ -586,13 +672,13 @@ async fn fetch_tables(
     table_name_filter: Option<&str>,
     table_types: &TableTypeFilter,
     show_cancel: ShowCancel,
-) -> Result<RecordBatch, ApiError> {
+) -> Result<Vec<CatalogMetadata>, ApiError> {
     if matches!(table_types, TableTypeFilter::Unsupported) {
-        return build_tables_batch(BTreeMap::new());
+        return Ok(Vec::new());
     }
     // Empty string means "match nothing"; skip the server query (like_pattern::matches("", _) is false).
     if matches!(table_name_filter, Some("")) {
-        return build_tables_batch(BTreeMap::new());
+        return Ok(Vec::new());
     }
 
     let scopes = object_show_scopes(
@@ -659,7 +745,30 @@ async fn fetch_tables(
             .push((tbl_name, normalized_type));
     }
 
-    build_tables_batch(by_cat_sch)
+    Ok(by_cat_sch
+        .into_iter()
+        .map(|(catalog_name, schemas)| CatalogMetadata {
+            catalog_name,
+            db_schemas: Some(
+                schemas
+                    .into_iter()
+                    .map(|(db_schema_name, tables)| DbSchemaMetadata {
+                        db_schema_name,
+                        tables: Some(
+                            tables
+                                .into_iter()
+                                .map(|(table_name, table_type)| TableMetadata {
+                                    table_name,
+                                    table_type,
+                                    columns: Vec::new(),
+                                })
+                                .collect(),
+                        ),
+                    })
+                    .collect(),
+            ),
+        })
+        .collect())
 }
 
 /// Build a `LIKE '…'` clause for `SHOW` commands.
@@ -942,6 +1051,100 @@ fn get_column<'a>(row: &'a [(String, String)], name: &str) -> Option<&'a str> {
 // ---------------------------------------------------------------------------
 // Arrow batch builders
 // ---------------------------------------------------------------------------
+
+fn build_metadata_batch(metadata: Vec<CatalogMetadata>) -> Result<RecordBatch, ApiError> {
+    let schemas_requested = metadata.iter().any(|catalog| catalog.db_schemas.is_some());
+    if !schemas_requested {
+        return build_catalogs_batch(
+            metadata
+                .into_iter()
+                .map(|catalog| catalog.catalog_name)
+                .collect(),
+        );
+    }
+
+    let tables_requested = metadata.iter().any(|catalog| {
+        catalog
+            .db_schemas
+            .as_ref()
+            .is_some_and(|schemas| schemas.iter().any(|schema| schema.tables.is_some()))
+    });
+    if !tables_requested {
+        let by_catalog = metadata
+            .into_iter()
+            .map(|catalog| {
+                let schemas = catalog
+                    .db_schemas
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|schema| schema.db_schema_name)
+                    .collect();
+                (catalog.catalog_name, schemas)
+            })
+            .collect();
+        return build_schemas_batch(by_catalog);
+    }
+
+    // The legacy COLUMNS representation uses an empty table type, whereas
+    // TABLES always contains TABLE or VIEW. Empty metadata produces the same
+    // zero-row RecordBatch at every depth, so no depth marker is needed there.
+    let columns_requested = metadata.iter().any(|catalog| {
+        catalog.db_schemas.as_ref().is_some_and(|schemas| {
+            schemas.iter().any(|schema| {
+                schema
+                    .tables
+                    .as_ref()
+                    .is_some_and(|tables| tables.iter().any(|table| table.table_type.is_empty()))
+            })
+        })
+    });
+
+    if columns_requested {
+        let by_catalog = metadata
+            .into_iter()
+            .map(|catalog| {
+                let schemas = catalog
+                    .db_schemas
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|schema| {
+                        let tables = schema
+                            .tables
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|table| (table.table_name, table.columns))
+                            .collect();
+                        (schema.db_schema_name, tables)
+                    })
+                    .collect();
+                (catalog.catalog_name, schemas)
+            })
+            .collect();
+        build_columns_batch(by_catalog)
+    } else {
+        let by_catalog = metadata
+            .into_iter()
+            .map(|catalog| {
+                let schemas = catalog
+                    .db_schemas
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|schema| {
+                        let tables = schema
+                            .tables
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|table| (table.table_name, table.table_type))
+                            .collect();
+                        (schema.db_schema_name, tables)
+                    })
+                    .collect();
+                (catalog.catalog_name, schemas)
+            })
+            .collect();
+        build_tables_batch(by_catalog)
+    }
+}
 
 fn build_catalogs_batch(catalog_names: Vec<String>) -> Result<RecordBatch, ApiError> {
     let schema = nested_get_objects_schema();
@@ -1248,7 +1451,7 @@ struct ShowColumnDataType {
 /// Decoded canonical column descriptor — the sf_core representation of a
 /// single SHOW COLUMNS row, with Snowflake-wire JSON fully parsed.
 /// No raw JSON crosses into the `odbc` crate.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnDescriptor {
     pub column_name: String,
     pub ordinal_position: i32,
@@ -1345,10 +1548,10 @@ async fn fetch_columns(
     table_name_filter: Option<&str>,
     column_name_filter: Option<&str>,
     show_cancel: ShowCancel,
-) -> Result<RecordBatch, ApiError> {
+) -> Result<Vec<CatalogMetadata>, ApiError> {
     // Empty string means "match nothing".
     if matches!(table_name_filter, Some("")) || matches!(column_name_filter, Some("")) {
-        return build_columns_batch(BTreeMap::new());
+        return Ok(Vec::new());
     }
 
     let exact_table = table_name_filter
@@ -1447,7 +1650,31 @@ async fn fetch_columns(
         table_cols.push(descriptor);
     }
 
-    build_columns_batch(by_cat_sch_tbl)
+    Ok(by_cat_sch_tbl
+        .into_iter()
+        .map(|(catalog_name, schemas)| CatalogMetadata {
+            catalog_name,
+            db_schemas: Some(
+                schemas
+                    .into_iter()
+                    .map(|(db_schema_name, tables)| DbSchemaMetadata {
+                        db_schema_name,
+                        tables: Some(
+                            tables
+                                .into_iter()
+                                .map(|(table_name, columns)| TableMetadata {
+                                    table_name,
+                                    // Preserve the existing COLUMNS Arrow representation.
+                                    table_type: String::new(),
+                                    columns,
+                                })
+                                .collect(),
+                        ),
+                    })
+                    .collect(),
+            ),
+        })
+        .collect())
 }
 
 fn build_columns_batch(
@@ -2304,5 +2531,186 @@ mod tests {
             .downcast_ref::<StringArray>()
             .unwrap();
         assert_eq!(logical_type_arr.value(0), "FIXED");
+    }
+
+    #[test]
+    fn typed_catalog_tree_preserves_order_and_null_schema_depth() {
+        let metadata = vec![
+            CatalogMetadata {
+                catalog_name: "ZDB".to_string(),
+                db_schemas: None,
+            },
+            CatalogMetadata {
+                catalog_name: "ADB".to_string(),
+                db_schemas: None,
+            },
+        ];
+
+        let batch = build_metadata_batch(metadata).unwrap();
+        let names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(names.value(0), "ZDB");
+        assert_eq!(names.value(1), "ADB");
+
+        let schemas = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        assert!(schemas.is_null(0));
+        assert!(schemas.is_null(1));
+    }
+
+    #[test]
+    fn typed_schema_tree_preserves_null_table_depth() {
+        let metadata = vec![CatalogMetadata {
+            catalog_name: "DB".to_string(),
+            db_schemas: Some(vec![DbSchemaMetadata {
+                db_schema_name: "PUBLIC".to_string(),
+                tables: None,
+            }]),
+        }];
+
+        let batch = build_metadata_batch(metadata).unwrap();
+        let schemas = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        assert!(!schemas.is_null(0));
+        let schema_values = schemas
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let tables = schema_values
+            .column_by_name(FIELD_DB_SCHEMA_TABLES)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        assert!(tables.is_null(0));
+    }
+
+    #[test]
+    fn typed_table_tree_preserves_empty_non_null_columns() {
+        let metadata = vec![CatalogMetadata {
+            catalog_name: "DB".to_string(),
+            db_schemas: Some(vec![DbSchemaMetadata {
+                db_schema_name: "PUBLIC".to_string(),
+                tables: Some(vec![TableMetadata {
+                    table_name: "T".to_string(),
+                    table_type: "TABLE".to_string(),
+                    columns: Vec::new(),
+                }]),
+            }]),
+        }];
+
+        let batch = build_metadata_batch(metadata).unwrap();
+        let schemas = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        let schema_values = schemas
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let tables = schema_values
+            .column_by_name(FIELD_DB_SCHEMA_TABLES)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        let table_values = tables
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let columns = table_values
+            .column_by_name(FIELD_TABLE_COLUMNS)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        assert!(!columns.is_null(0));
+        assert_eq!(columns.value_length(0), 0);
+    }
+
+    #[test]
+    fn typed_column_tree_preserves_column_and_empty_table_type() {
+        let column = ColumnDescriptor {
+            column_name: "ID".to_string(),
+            ordinal_position: 1,
+            logical_type: "FIXED".to_string(),
+            precision: Some(38),
+            scale: Some(0),
+            char_length: None,
+            byte_length: None,
+            nullable: false,
+            column_def: None,
+            remarks: Some("identifier".to_string()),
+        };
+        let metadata = vec![CatalogMetadata {
+            catalog_name: "DB".to_string(),
+            db_schemas: Some(vec![DbSchemaMetadata {
+                db_schema_name: "PUBLIC".to_string(),
+                tables: Some(vec![TableMetadata {
+                    table_name: "T".to_string(),
+                    table_type: String::new(),
+                    columns: vec![column.clone()],
+                }]),
+            }]),
+        }];
+
+        assert_eq!(
+            metadata[0].db_schemas.as_ref().unwrap()[0]
+                .tables
+                .as_ref()
+                .unwrap()[0]
+                .columns,
+            vec![column]
+        );
+        let batch = build_metadata_batch(metadata).unwrap();
+        let schemas = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        let schema_values = schemas
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let tables = schema_values
+            .column_by_name(FIELD_DB_SCHEMA_TABLES)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        let table_values = tables
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let table_types = table_values
+            .column_by_name(FIELD_TABLE_TYPE)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(table_types.value(0), "");
+        assert!(!table_types.is_null(0));
+        let columns = table_values
+            .column_by_name(FIELD_TABLE_COLUMNS)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        assert_eq!(columns.value_length(0), 1);
     }
 }
