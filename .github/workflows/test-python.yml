@@ -132,8 +132,14 @@ jobs:
           # lock-only key restores a stale rlib that cargo then treats as fresh
           # — sf_core compiles against outdated `param_names` and fails on a
           # symbol that exists in the tree. Same reasoning as proto-target below.
-          key: ${{ runner.os }}-rust-packaging-wheel-core-target-v2-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**') }}
-          restore-keys: ${{ runner.os }}-rust-packaging-wheel-core-target-v2-
+          # v3 also hashes protobuf/** and proto_generator/src/**: sf_core's
+          # build.rs regenerates Rust code from database_driver_v1.proto into
+          # this same target dir, so a schema-only or generator-only change
+          # must bust the cache too, or the restored dir keeps the old
+          # generated code next to freshly-compiled callers expecting the new
+          # shape (unresolved imports / wrong arg counts).
+          key: ${{ runner.os }}-rust-packaging-wheel-core-target-v3-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**', 'protobuf/**', 'proto_generator/src/**') }}
+          restore-keys: ${{ runner.os }}-rust-packaging-wheel-core-target-v3-
 
       - name: Restore proto-target cache
         id: proto-target-cache-pkg
@@ -192,7 +198,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: core-target
-          key: ${{ runner.os }}-rust-packaging-wheel-core-target-v2-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**') }}
+          key: ${{ runner.os }}-rust-packaging-wheel-core-target-v3-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**', 'protobuf/**', 'proto_generator/src/**') }}
 
       - name: Save proto-target cache
         if: always() && steps.proto-target-cache-pkg.outputs.cache-hit != 'true'
@@ -237,10 +243,12 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: core-target
-          # See the wheel job's core-target key: hashing Cargo.lock alone lets a
-          # stale sf_params_spec rlib survive a registry-only edit.
-          key: ${{ runner.os }}-rust-packaging-sdist-core-target-v2-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**') }}
-          restore-keys: ${{ runner.os }}-rust-packaging-sdist-core-target-v2-
+          # See the wheel job's core-target key above: hashing Cargo.lock alone
+          # lets a stale sf_params_spec rlib survive a registry-only edit, and
+          # omitting protobuf/**+proto_generator/src/** lets a schema/codegen
+          # change reuse stale generated code from sf_core's build.rs.
+          key: ${{ runner.os }}-rust-packaging-sdist-core-target-v3-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**', 'protobuf/**', 'proto_generator/src/**') }}
+          restore-keys: ${{ runner.os }}-rust-packaging-sdist-core-target-v3-
 
       - name: Restore proto-target cache
         id: proto-target-cache-pkg
@@ -303,7 +311,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: core-target
-          key: ${{ runner.os }}-rust-packaging-sdist-core-target-v2-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**') }}
+          key: ${{ runner.os }}-rust-packaging-sdist-core-target-v3-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**', 'protobuf/**', 'proto_generator/src/**') }}
 
       - name: Save proto-target cache
         if: always() && steps.proto-target-cache-pkg.outputs.cache-hit != 'true'
