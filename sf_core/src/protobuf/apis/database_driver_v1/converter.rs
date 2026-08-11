@@ -397,6 +397,8 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
     }
 }
 
+/// `request_id` is `None` only for `connection_get_query_result`, which fetches
+/// results for an already-executed query and never generates a new submission UUID.
 impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     fn from(result: NativeExecuteQueryResult) -> Self {
         let (proto_result, request_id) = match result {

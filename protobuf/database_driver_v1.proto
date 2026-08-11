@@ -762,9 +762,7 @@ message PrepareResult {
   optional string sql_state = 7;
   bool array_bind_supported = 8;
   repeated ColumnMetadata binds = 9;
-  // Client-generated UUID v4 sent as ?requestId= on the submission request.
-  // Unlike ExecuteQueryResponse.request_id, this is never absent: every
-  // statement_prepare call goes through execute_query_internal.
+  // Client-generated UUID v4 sent as ?requestId= on the submission request; unlike ExecuteQueryResponse.request_id, never absent.
   string request_id = 10;
 }
 
@@ -799,6 +797,8 @@ message ExecuteQueryResponse {
     MultiStatementResult multi = 2;
   }
   // Client-generated UUID v4 sent as ?requestId= on the submission request.
+  // Absent only for connection_get_query_result, which fetches results for
+  // an already-executed query and never generates a new submission UUID.
   optional string request_id = 3;
 }
 
