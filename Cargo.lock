@@ -3577,6 +3577,7 @@ dependencies = [
  "proto_utils",
  "rust-ini",
  "rustc_version",
+ "serde",
  "serde_json",
  "sf_core",
  "snafu 0.8.9",

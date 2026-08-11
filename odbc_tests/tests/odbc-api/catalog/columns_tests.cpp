@@ -2,6 +2,8 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <map>
 #include <string>
@@ -38,6 +40,12 @@ static ColumnValue sqlcolumns_get_column(SQLHSTMT stmt, SQLUSMALLINT column) {
     return {std::string(), indicator};
   }
   return {std::string(buf), indicator};
+}
+
+static std::string to_lower_copy(const std::string& s) {
+  std::string out = s;
+  std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return std::tolower(c); });
+  return out;
 }
 
 // ============================================================================
@@ -495,4 +503,152 @@ TEST_CASE_METHOD(DbcFixture, "SQLColumns: Requires active connection", "[odbc-ap
 
   // Note: Reference driver refuses to allocate statement on disconnected handle
   REQUIRE(ret == SQL_ERROR);
+}
+
+// ============================================================================
+// SQLColumns - SQL_ATTR_METADATA_ID (identifier vs pattern mode)
+// ============================================================================
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: metadata_id=TRUE treats _ and % as literals in column name",
+                 "[odbc-api][columns][catalog]") {
+  // Given SQL_ATTR_METADATA_ID is enabled (identifier mode)
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // When SQLColumns is called with the exact column name
+  ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                   sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, sqlchar("ID"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then the exact column is returned (metadata_id forces exact match)
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(sqlcolumns_get_column(stmt_handle(), 4).text == "ID");
+
+  ret = SQLFetch(stmt_handle());
+  CHECK(ret == SQL_NO_DATA);
+  ret = SQLCloseCursor(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // And a % that would match ID in pattern mode is treated as a literal → no rows
+  ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                   sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, sqlchar("I%"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  CHECK(ret == SQL_NO_DATA);
+  ret = SQLCloseCursor(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // And a _ that would match ID in pattern mode is treated as a literal → no rows
+  ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                   sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, sqlchar("_D"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: metadata_id=TRUE with NULL CatalogName returns HY009",
+                 "[odbc-api][columns][catalog][error]") {
+  // Given SQL_ATTR_METADATA_ID is enabled
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // When SQLColumns is called with NULL CatalogName (identifier required)
+  ret = SQLColumns(stmt_handle(), nullptr, 0, sqlchar(schema_name()), SQL_NTS, sqlchar(readonly_db::MULTI_TYPE_TABLE),
+                   SQL_NTS, sqlchar("ID"), SQL_NTS);
+
+  // Then HY009 (Invalid use of null pointer) is returned
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: metadata_id=TRUE with NULL SchemaName returns HY009",
+                 "[odbc-api][columns][catalog][error]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, nullptr, 0, sqlchar(readonly_db::MULTI_TYPE_TABLE),
+                   SQL_NTS, sqlchar("ID"), SQL_NTS);
+
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: metadata_id=TRUE with NULL TableName returns HY009",
+                 "[odbc-api][columns][catalog][error]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS, nullptr, 0,
+                   sqlchar("ID"), SQL_NTS);
+
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: metadata_id=TRUE with NULL ColumnName returns HY009",
+                 "[odbc-api][columns][catalog][error]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                   sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, nullptr, 0);
+
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+// Identifier mode folds unquoted identifiers to uppercase, so a lowercase
+// ColumnName must still match the uppercase stored name. Catalog/schema/table
+// stay canonical uppercase so this isolates the column-fold path. Both the
+// universal driver and the legacy driver fold ColumnName here (unlike
+// SQLTables TableName, where legacy stays case-sensitive — see BD#113).
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: metadata_id=TRUE matches unquoted ColumnName case-insensitively",
+                 "[odbc-api][columns][catalog]") {
+  // Given SQL_ATTR_METADATA_ID is enabled (identifier mode)
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const std::string col = to_lower_copy("ID");
+
+  // When SQLColumns is called with a lowercase unquoted ColumnName only
+  ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                   sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, sqlchar(col.c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then the uppercase column is returned on both drivers
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(sqlcolumns_get_column(stmt_handle(), 4).text == "ID");
+
+  ret = SQLFetch(stmt_handle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+// In pattern mode (default) a lowercase ColumnName must NOT match the uppercase name.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: metadata_id=FALSE treats ColumnName case-sensitively",
+                 "[odbc-api][columns][catalog]") {
+  // Given a lowercase ColumnName pattern while METADATA_ID is SQL_FALSE (default)
+  const std::string col = to_lower_copy("ID");
+
+  // When SQLColumns is called in pattern mode
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                             sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, sqlchar(col.c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then no rows are returned (case is significant)
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
+// In pattern mode (default) a lowercase TableName must NOT match the uppercase name.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: metadata_id=FALSE treats TableName case-sensitively",
+                 "[odbc-api][columns][catalog]") {
+  // Given a lowercase TableName pattern while METADATA_ID is SQL_FALSE (default)
+  const std::string tbl = to_lower_copy(readonly_db::MULTI_TYPE_TABLE);
+
+  // When SQLColumns is called in pattern mode
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                             sqlchar(tbl.c_str()), SQL_NTS, sqlchar("ID"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then no rows are returned (case is significant)
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
 }
