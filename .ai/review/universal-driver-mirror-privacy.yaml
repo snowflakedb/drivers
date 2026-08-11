@@ -48,16 +48,15 @@ rules:
   - id: ud-potentially-private-file-placement
     rule: |
       **OBJECTIVE**: Catch files added to public (mirrored) directories that contain
-      information belonging below a `NOMIRROR/` directory and should not reach the public mirror
-      at snowflakedb/drivers.
+      Snowflake-internal information that belongs on a Copybara-excluded path and
+      should not reach the public mirror at snowflakedb/drivers.
 
       **CONTEXT**: This repo is mirrored publicly via Copybara. The
       authoritative denylist of internal-only paths lives in
       `ci/mirroring/copy.bara.sky` (`EXCLUDED_PATHS`). Read it before reviewing —
       anything not listed there is public-by-default and reaches the
-      mirror on the next run. Any directory whose exact name is `NOMIRROR`
-      is excluded at any depth and is the designated home for new internal-only
-      material; see `NOMIRROR/mirroring.md` for the full boundary description.
+      mirror on the next run. Prefer placing new internal-only material on a
+      path already covered by that denylist rather than expanding the denylist.
 
       **REQUIREMENT**: Flag any new or substantially changed file in a public directory
       when it shows one or more of the following signals:
@@ -100,8 +99,10 @@ rules:
       public directories. Apply the standard: "Would this be appropriate content
       in a public open-source driver repository?"
 
-      **HOW TO FLAG**: If a file triggers any signal above, comment:
+      **HOW TO FLAG**: If a file triggers any signal above, comment without naming
+      specific excluded directory tokens (those must stay out of PR-facing text;
+      see `universal-driver-excluded-path-leak`):
       "This file may contain Snowflake-internal information. Consider moving it
-      below a `NOMIRROR/` directory (which is excluded from the public mirror by
-      `ci/mirroring/copy.bara.sky`). See `NOMIRROR/mirroring.md` for how to add internal-only
-      files without touching the denylist."
+      onto a Copybara-excluded / internal-only path listed in
+      `ci/mirroring/copy.bara.sky` (`EXCLUDED_PATHS`), or rewriting the content
+      so it is appropriate for the public mirror."
