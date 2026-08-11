@@ -93,11 +93,6 @@ def _convert_value_to_sql_option(value: str | bool | int | float) -> str:
     return str(value)
 
 
-def _drop_object(cursor: SnowflakeCursor, name: str, object_type: str) -> None:
-    """Drop a Snowflake object if it exists."""
-    cursor.execute(f"DROP {object_type} IF EXISTS IDENTIFIER(?)", params=(name,), _force_qmark_paramstyle=True)
-
-
 # ---------------------------------------------------------------------------
 # WritePandasResult
 # ---------------------------------------------------------------------------

@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from sqlalchemy import engine
 
     from .connection import Connection
-    from .cursor import SnowflakeCursor
 
 F = TypeVar("F", bound=Callable[..., Any])
 
