@@ -60,7 +60,6 @@ dependencies {
     compileOnly "org.projectlombok:lombok:${lombokVersion}"
     annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
 
-    implementation 'org.json:json:20260719'
     // API facade only — never ship a backend, or consumers get forced/conflicting bindings.
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
     implementation "org.apache.arrow:arrow-vector:${arrowVersion}"
@@ -92,7 +91,11 @@ dependencies {
     testRuntimeOnly "org.slf4j:slf4j-simple:${slf4jVersion}"
 
     referenceTestsOldDriver "net.snowflake:snowflake-jdbc:${oldJdbcVersion}"
-    referenceTestsOldDriver 'org.json:json:20260719'
+    // Test code parses/builds JSON with Jackson; the referenceTest classpath strips main's
+    // runtime deps (see the `referenceTest` task), so Jackson must be re-supplied here.
+    referenceTestsOldDriver "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+    referenceTestsOldDriver "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
+    referenceTestsOldDriver "com.fasterxml.jackson.core:jackson-annotations:${jacksonAnnotationsVersion}"
     // Old JDBC reference run needs SLF4J at runtime, but it is not guaranteed by old artifact metadata.
     referenceTestsOldDriver "org.slf4j:slf4j-api:${slf4jVersion}"
     referenceTestsOldDriver "org.slf4j:slf4j-simple:${slf4jVersion}"
@@ -258,7 +261,6 @@ shadowJar {
     relocate 'com.google.flatbuffers', "${internal}.com.google.flatbuffers"
     relocate 'com.fasterxml.jackson', "${internal}.com.fasterxml.jackson"
     relocate 'io.netty', "${internal}.io.netty"
-    relocate 'org.json', "${internal}.org.json"
     relocate 'org.apache.commons.codec', "${internal}.org.apache.commons.codec"
     // slf4j NOT relocated: ship slf4j-api, consumer binds a backend.
 
@@ -551,7 +553,7 @@ def verifyThinJar = tasks.register('verifyThinJar') {
         absent 'net/snowflake/client/jdbc/internal/'
         // No bundled deps — resolved from Maven at consume time.
         ['org/apache/arrow/', 'com/google/protobuf/', 'com/google/flatbuffers/',
-         'io/netty/', 'org/json/', 'org/slf4j/'].each { absent it }
+         'io/netty/', 'org/slf4j/'].each { absent it }
         // No bundled native — that ships in the per-platform classifier jars (verified below).
         absent 'net/snowflake/client/internal/unicore/native/'
         // Real driver + JDBC auto-registration service must be present.
@@ -564,7 +566,7 @@ def verifyThinJar = tasks.register('verifyThinJar') {
         // jackson-databind is used directly but only arrived transitively via arrow-vector;
         // pin it in the POM so consumers whose Arrow graph omits it don't break.
         ['org.apache.arrow:arrow-vector', 'com.google.protobuf:protobuf-java',
-         'org.json:json', 'org.slf4j:slf4j-api',
+         'org.slf4j:slf4j-api',
          'com.fasterxml.jackson.core:jackson-databind'].each { want ->
             if (!deps.contains(want)) problems << "thin POM missing dependency: ${want}"
         }
