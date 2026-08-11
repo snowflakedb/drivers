@@ -2553,7 +2553,7 @@ class TestAsyncExecuteSkipUploadOnContentMatch:
         captured, side_effect = self._capture_per_call()
         with (
             patch.object(cursor, "_execute", side_effect=side_effect),
-            patch.object(cursor, "reset", new=AsyncMock()),
+            patch.object(cursor, "reset", new=MagicMock()),
         ):
             asyncio.run(cursor.execute("PUT file://x @s", _skip_upload_on_content_match=True))
         assert captured.get(StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH) is True
@@ -2563,7 +2563,7 @@ class TestAsyncExecuteSkipUploadOnContentMatch:
         captured, side_effect = self._capture_per_call()
         with (
             patch.object(cursor, "_execute", side_effect=side_effect),
-            patch.object(cursor, "reset", new=AsyncMock()),
+            patch.object(cursor, "reset", new=MagicMock()),
         ):
             asyncio.run(cursor.execute("PUT file://x @s"))
         assert StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH not in captured
@@ -2594,7 +2594,7 @@ class TestAsyncExecuteNumStatements:
         captured, side_effect = self._capture_per_call()
         with (
             patch.object(cursor, "_execute", side_effect=side_effect),
-            patch.object(cursor, "reset", new=AsyncMock()),
+            patch.object(cursor, "reset", new=MagicMock()),
         ):
             asyncio.run(cursor.execute("SELECT 1; SELECT 2; SELECT 3", num_statements=3))
         assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 3
@@ -2603,14 +2603,14 @@ class TestAsyncExecuteNumStatements:
     def test_num_statements_does_not_persist_across_calls(self, cursor):
         with (
             patch.object(cursor, "_execute", new=AsyncMock(return_value=MagicMock())),
-            patch.object(cursor, "reset", new=AsyncMock()),
+            patch.object(cursor, "reset", new=MagicMock()),
         ):
             asyncio.run(cursor.execute("SELECT 1; SELECT 2", num_statements=2))
 
         captured, side_effect = self._capture_per_call()
         with (
             patch.object(cursor, "_execute", side_effect=side_effect),
-            patch.object(cursor, "reset", new=AsyncMock()),
+            patch.object(cursor, "reset", new=MagicMock()),
         ):
             asyncio.run(cursor.execute("SELECT 99"))
         assert StatementParameterName.MULTI_STATEMENT_COUNT not in captured, "second call must NOT inherit the count"
@@ -3138,7 +3138,7 @@ class TestFileStreamUpload:
         cursor = AsyncSnowflakeCursor(conn)
 
         payload = b"b" * (CHUNK_SIZE + 50)
-        with patch.object(AsyncSnowflakeCursor, "_apply_result_set", new=AsyncMock()):
+        with patch.object(AsyncSnowflakeCursor, "_apply_result_set", new=MagicMock()):
             asyncio.run(cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(payload)))
         assert async_mock_core_client.connection_upload_stream_chunk.await_count == 2
         sent = b"".join(c.args[0].data for c in async_mock_core_client.connection_upload_stream_chunk.call_args_list)
