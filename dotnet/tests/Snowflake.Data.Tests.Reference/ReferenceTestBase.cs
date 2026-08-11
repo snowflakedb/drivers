@@ -1,14 +1,16 @@
+using Snowflake.Data.Tests.Reference.Fixtures;
+
 namespace Snowflake.Data.Tests.Reference;
 
 [Trait("Category", "E2E")]
 [Trait("Driver", "Reference")]
-public abstract class ReferenceTestBase : IClassFixture<ITFixture>
+public abstract class ReferenceTestBase : IClassFixture<RegressionITFixture>
 {
-    protected ITFixture Fixture { get; }
+    protected RegressionITFixture Fixture { get; }
 
     protected ITestOutputHelper Output { get; }
 
-    protected ReferenceTestBase(ITFixture fixture, ITestOutputHelper output)
+    protected ReferenceTestBase(RegressionITFixture fixture, ITestOutputHelper output)
     {
         Fixture = fixture;
         Output = output;

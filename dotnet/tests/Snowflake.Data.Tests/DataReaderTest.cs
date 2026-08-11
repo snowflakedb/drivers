@@ -4,19 +4,21 @@ namespace Snowflake.Data.Tests;
 
 // TODO these tests are just PoC and will undergo heavy refactoring.
 [Trait("Category", "E2E")]
-public sealed class DataReaderTests : IClassFixture<ITFixture>
+public sealed class DataReaderTest : IClassFixture<ITFixture>
 {
     private readonly ITestOutputHelper _testOutputHelper;
+    private readonly ITFixture _fixture;
 
-    public DataReaderTests(ITestOutputHelper testOutputHelper)
+    public DataReaderTest(ITestOutputHelper testOutputHelper, ITFixture fixture)
     {
         _testOutputHelper = testOutputHelper;
+        _fixture = fixture;
     }
 
     [SnowflakeFact]
     public void ExecuteReader_ArrowFormat_ReadsValueCorrectly()
     {
-        using var connection = TestConnectionFactory.Create(_testOutputHelper);
+        using var connection = _fixture.Factory.Create(_testOutputHelper);
         connection.Open();
 
         ExecuteNonQuery(connection, "alter session set DOTNET_QUERY_RESULT_FORMAT = ARROW");
@@ -53,7 +55,7 @@ public sealed class DataReaderTests : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ExecuteReader_JsonFormat_ReadsValueCorrectly()
     {
-        using var connection = TestConnectionFactory.Create(_testOutputHelper);
+        using var connection = _fixture.Factory.Create(_testOutputHelper);
         connection.Open();
 
         ExecuteNonQuery(connection, "alter session set DOTNET_QUERY_RESULT_FORMAT = JSON");
