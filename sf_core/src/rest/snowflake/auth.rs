@@ -53,6 +53,8 @@ pub struct AuthRequestClientEnvironment {
     pub compiler: Option<String>,
     #[serde(rename = "OS_DETAILS", skip_serializing_if = "Option::is_none")]
     pub os_details: Option<HashMap<String, String>>,
+    #[serde(rename = "RELEASE_TYPE", skip_serializing_if = "Option::is_none")]
+    pub release_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -104,7 +106,7 @@ pub struct AuthRequestData {
     #[serde(rename = "PROVIDER", skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     #[serde(rename = "SPCS_TOKEN", skip_serializing_if = "Option::is_none")]
-    pub spcs_token: Option<String>,
+    pub spcs_token: Option<SensitiveString>,
     /// Transient DPoP JWK JSON carried from the OAuth flow to
     /// `send_login_request` when DPoP is enabled. Never serialized into
     /// the login-request body — it is consumed by `send_login_request`
@@ -255,8 +257,25 @@ mod tests {
             "None fields should be skipped"
         );
         assert!(
+            json.get("RELEASE_TYPE").is_none(),
+            "None RELEASE_TYPE should be skipped"
+        );
+        assert!(
             json.get("OCSP_MODE").is_none(),
             "None OCSP_MODE should be skipped"
         );
+    }
+
+    #[test]
+    fn test_client_environment_serializes_release_type() {
+        let env = AuthRequestClientEnvironment {
+            application: "ODBC".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.10".to_string(),
+            release_type: Some("rc1".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["RELEASE_TYPE"], "rc1");
     }
 }

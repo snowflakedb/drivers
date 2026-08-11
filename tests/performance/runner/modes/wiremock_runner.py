@@ -35,6 +35,7 @@ def run_wiremock_performance_test(
     reuse_mappings_dir: str = None,
     expected_row_count_override: int = None,
     test_type: PerfTestType = PerfTestType.SELECT,
+    fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
 ) -> list[Path]:
     """
@@ -72,7 +73,8 @@ def run_wiremock_performance_test(
                            If provided, skips recording phase and uses existing mappings
         expected_row_count_override: Optional row count for validation (used in comparison mode)
                                      When old driver reuses universal's mappings, this is set to universal's row count
-    
+        fetch_mode: Cursor fetch strategy for SELECT tests (fetchmany, fetchone, fetchall, pandas)
+
     Returns:
         List of result file paths created
     """
@@ -131,6 +133,7 @@ def run_wiremock_performance_test(
                     network_mode=network,
                     wiremock_manager=wiremock,
                     test_type=test_type,
+                    fetch_mode=fetch_mode,
                     bind_mode=bind_mode,
                 )
                 
@@ -218,6 +221,7 @@ def run_wiremock_performance_test(
                 expected_row_count=expected_row_count,  # Pass expected row count for validation
                 wiremock_manager=wiremock,
                 test_type=test_type,
+                fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
             )
             
@@ -282,6 +286,7 @@ def run_wiremock_comparison_test(
     preserve_mappings: bool = False,
     reuse_mappings_dir: str = None,
     test_type: PerfTestType = PerfTestType.SELECT,
+    fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
 ) -> dict[str, list[Path]]:
     """
@@ -301,7 +306,8 @@ def run_wiremock_comparison_test(
         run_id: Optional run ID for organizing results
         preserve_mappings: Keep mappings after test (default: delete)
         reuse_mappings_dir: Optional path to existing mappings directory
-    
+        fetch_mode: Cursor fetch strategy for SELECT tests (fetchmany, fetchone, fetchall, pandas)
+
     Returns:
         Dict with 'universal' and 'old' keys, each containing list of result file paths
     """
@@ -333,6 +339,7 @@ def run_wiremock_comparison_test(
         preserve_mappings=True,  # Must preserve for old driver to reuse
         reuse_mappings_dir=reuse_mappings_dir,
         test_type=test_type,
+        fetch_mode=fetch_mode,
         bind_mode=bind_mode,
     )
     
@@ -371,6 +378,7 @@ def run_wiremock_comparison_test(
         reuse_mappings_dir=old_driver_mappings,  # Reuse universal's mappings
         expected_row_count_override=expected_row_count_for_old,  # Pass universal's row count for validation
         test_type=test_type,
+        fetch_mode=fetch_mode,
         bind_mode=bind_mode,
     )
     
@@ -575,6 +583,7 @@ def _run_test_with_proxy(
     expected_row_count: int = None,
     wiremock_manager: "WiremockManager" = None,
     test_type: PerfTestType = PerfTestType.SELECT,
+    fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
 ):
     """
@@ -604,9 +613,12 @@ def _run_test_with_proxy(
         if expected:
             env_vars["EXPECTED_ROW_COUNT"] = str(expected)
 
+    if fetch_mode != "fetchmany":
+        env_vars["FETCH_MODE"] = fetch_mode
+
     if bind_mode != "char":
         env_vars["BIND_MODE"] = bind_mode
-    
+
     # Export the WireMock CA cert so the driver trusts the dynamically generated
     # MITM certificates. Each Dockerfile appends this to the appropriate CA bundle.
     if wiremock_manager:

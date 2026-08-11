@@ -118,3 +118,71 @@ fn odbc_application_does_not_override_client_app_id() {
         "Expected APPLICATION to land in CLIENT_ENVIRONMENT.APPLICATION while CLIENT_APP_ID stays ODBC, got: {result:?}"
     );
 }
+
+#[test]
+fn odbc_login_with_release_type_sends_release_type_in_client_environment() {
+    // When client_release_type is set (e.g. for a PuPr RC build), it must
+    // appear as CLIENT_ENVIRONMENT.RELEASE_TYPE in the login request body.
+    let mock = MockServerWithTls::start();
+    let client = odbc_client(&mock);
+    client.set_connection_option("client_release_type", "rc1");
+
+    mock.mount(
+        Mock::given(method("POST"))
+            .and(path_regex(r"/session/v1/login-request"))
+            .and(body_partial_json(serde_json::json!({
+                "data": {
+                    "CLIENT_APP_ID": "ODBC",
+                    "CLIENT_ENVIRONMENT": {
+                        "RELEASE_TYPE": "rc1"
+                    }
+                }
+            })))
+            .respond_with(password::success_login_response()),
+    );
+
+    let result = client.connect();
+
+    assert!(
+        result.is_ok(),
+        "Expected ODBC login to send CLIENT_ENVIRONMENT.RELEASE_TYPE=rc1, got: {result:?}"
+    );
+}
+
+#[test]
+fn odbc_login_without_release_type_omits_release_type_field() {
+    // When client_release_type is not set (GA build), CLIENT_ENVIRONMENT must
+    // not contain RELEASE_TYPE at all.
+    let mock = MockServerWithTls::start();
+    let client = odbc_client(&mock);
+
+    mock.mount(
+        Mock::given(method("POST"))
+            .and(path_regex(r"/session/v1/login-request"))
+            .and(ReleaseTypeFieldAbsent)
+            .respond_with(password::success_login_response()),
+    );
+
+    let result = client.connect();
+
+    assert!(
+        result.is_ok(),
+        "Expected ODBC login without release_type to omit CLIENT_ENVIRONMENT.RELEASE_TYPE, got: {result:?}"
+    );
+}
+
+/// Matches only requests whose `CLIENT_ENVIRONMENT` does **not** contain a
+/// `RELEASE_TYPE` key. Used to assert GA builds send no release type.
+struct ReleaseTypeFieldAbsent;
+
+impl wiremock::Match for ReleaseTypeFieldAbsent {
+    fn matches(&self, request: &wiremock::Request) -> bool {
+        let Ok(body) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
+            return false;
+        };
+        body.get("data")
+            .and_then(|d| d.get("CLIENT_ENVIRONMENT"))
+            .and_then(|e| e.get("RELEASE_TYPE"))
+            .is_none()
+    }
+}

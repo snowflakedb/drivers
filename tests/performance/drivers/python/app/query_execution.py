@@ -45,11 +45,20 @@ def _fetch_pandas_all(cursor):
     return len(cursor.fetch_pandas_all())
 
 
+def _fetch_arrow_batches(cursor):
+    """Fetch all rows by iterating cursor.fetch_arrow_batches(). Returns row count."""
+    row_count = 0
+    for batch in cursor.fetch_arrow_batches():
+        row_count += batch.num_rows
+    return row_count
+
+
 _FETCH_STRATEGIES = {
     "fetchmany": _fetch_many_chunks,
     "fetchone": _fetch_one_by_one,
     "fetchall": _fetch_all_at_once,
     "pandas": _fetch_pandas_all,
+    "arrow_batches": _fetch_arrow_batches,
 }
 
 

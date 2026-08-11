@@ -4,6 +4,10 @@
 
 New features:
 
+Changes:
+
+- Changed `SQLGetInfo(SQL_DRIVER_VER)` to return the zero-padded fixed-width `MM.mm.bbbb` string (e.g. `04.00.0000`) defined by the ODBC spec (`##.##.####`), instead of the unpadded Cargo semver (e.g. `4.0.0`). (snowflakedb/drivers#1074)
+
 Bug fixes:
 
 - Fixed `SQLCancelHandle(SQL_HANDLE_DBC)` to return SQLSTATE HY010 when an associated statement is asynchronously executing or mid data-at-execution, matching the ODBC 3.8 Diagnostics table (previously a no-op like the reference driver). (snowflakedb/drivers#871)

@@ -1,9 +1,15 @@
-"""Fetch performance for small result sets (Python driver).
+"""Fetch performance for small result sets.
 
 Row counts approximate p50/p90/p99 of typical customer query result sizes:
 1 row (p50), 15 rows (p90), 400 rows (p99).
+
+fetchmany is the default path and runs for all drivers. fetchall / fetchone /
+pandas require FETCH_MODE and are Python-only.
+
+Each case runs both e2e and recorded_http.
 """
 import pytest
+from runner.test_types import PerfTestType
 
 ITERATIONS = 30
 WARMUP_ITERATIONS = 2
@@ -18,20 +24,41 @@ def _name(label: str, fetch_mode: str) -> str:
     return label if fetch_mode == "fetchmany" else f"{label}_{fetch_mode}"
 
 
+def _case(row_count: int, label: str, fetch_mode: str):
+    name = _name(label, fetch_mode)
+    marks = (
+        [pytest.mark.supported_drivers("python")]
+        if fetch_mode != "fetchmany"
+        else []
+    )
+    return pytest.param(row_count, name, fetch_mode, id=name, marks=marks)
+
+
 CASES = [
-    (row_count, _name(label, fetch_mode), fetch_mode)
+    _case(row_count, label, fetch_mode)
     for row_count, label in ROW_COUNTS
     for fetch_mode in FETCH_MODES
 ]
-IDS = [name for _, name, _ in CASES]
 
 
 @pytest.mark.iterations(ITERATIONS)
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-@pytest.mark.parametrize("row_count,name,fetch_mode", CASES, ids=IDS)
+@pytest.mark.parametrize("row_count,name,fetch_mode", CASES)
 def test_select_string(perf_test, row_count, name, fetch_mode):
     perf_test(
         sql_command=SQL_TEMPLATE.format(n=row_count),
         fetch_mode=fetch_mode,
         test_name=f"select_string_{name}",
+    )
+
+
+@pytest.mark.iterations(ITERATIONS)
+@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+@pytest.mark.parametrize("row_count,name,fetch_mode", CASES)
+def test_select_string_recorded_http(perf_test, row_count, name, fetch_mode):
+    perf_test(
+        test_type=PerfTestType.SELECT_RECORDED_HTTP,
+        sql_command=SQL_TEMPLATE.format(n=row_count),
+        fetch_mode=fetch_mode,
+        test_name=f"select_string_{name}_recorded_http",
     )

@@ -1840,5 +1840,6 @@ fn test_client_info() -> ClientInfo {
         compiler: None,
         runtime_name: None,
         runtime_version: None,
+        release_type: None,
     }
 }

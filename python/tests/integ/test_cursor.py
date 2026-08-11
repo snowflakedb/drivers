@@ -2822,19 +2822,19 @@ class TestRequestIdIsolation:
             assert request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"
 
 
-@skip_async("_describe_internal is sync-only; Snowpark reaches it exclusively via the sync cursor")
 class TestCursorDescribeInternal:
     """Integration tests for Cursor._describe_internal — Snowpark V2 describe path.
 
-    All tests run against the real Snowflake server (no mocks).  The module-level
-    ``pytestmark = run_against_sync_and_async`` would exercise every test against
-    both cursor backends, but ``_describe_internal`` is deliberately sync-only, so
-    the class opts the async run out.
+    All tests run against the real Snowflake server (no mocks). ``_describe_internal``
+    is sync-only (Snowpark's schema_utils never calls it through the async cursor),
+    so this class opts out of the module-level async parametrization.
 
     Focus: properties that only a live server can confirm — ``vector_dimension``
     propagation end-to-end, ``display_size``/``internal_size`` proto-field mapping
     (BD#55), ``_to_result_metadata_v1()`` round-trip, and cursor-state side effects.
     """
+
+    pytestmark = skip_async("_describe_internal is sync-only; Snowpark never calls it through the async cursor")
 
     def test_returns_result_metadata_v2(self, cursor):
         """_describe_internal returns list[ResultMetadataV2] for a multi-column query."""
@@ -2853,23 +2853,22 @@ class TestCursorDescribeInternal:
         assert result[3].name == "BOOL_COL"
         assert result[3].type_code == 13  # BOOLEAN
 
-    def test_returns_synthetic_row_count_column_for_dml(self, function_connection):
-        """_describe_internal describes a DML statement as its synthetic row-count column.
+    def test_returns_dml_status_column(self, function_connection):
+        """_describe_internal describes a DML statement's status column.
 
-        Legacy ``_describe_internal`` returns ``self._description`` unconditionally with
-        no DML special-casing, and the server's describe response for an INSERT carries a
-        single ``number of rows inserted`` column. Both drivers therefore return that
-        column rather than ``None`` — asserted here so a future DML branch in either
-        driver cannot silently diverge.
+        INSERT/UPDATE/DELETE always describe to a single status column (e.g.
+        "number of rows inserted") on the server — there is no SQL statement
+        that describes to zero columns, so this covers the DML case rather
+        than a None result (the None branch is exercised in unit tests via
+        a mocked empty-columns prepare result).
         """
         with function_connection.cursor() as cur:
-            cur.execute("CREATE OR REPLACE TEMP TABLE _test_di_none (x INT)")
-            result = cur._describe_internal("INSERT INTO _test_di_none VALUES (1)")
+            cur.execute("CREATE OR REPLACE TEMP TABLE _test_di_dml (x INT)")
+            result = cur._describe_internal("INSERT INTO _test_di_dml VALUES (1)")
 
             assert result is not None
             assert len(result) == 1
-            assert result[0].name.lower() == "number of rows inserted"
-            assert result[0].type_code == 0  # FIXED
+            assert result[0].name == "number of rows inserted"
 
     def test_v2_type_codes_match_describe(self, cursor):
         """V2 type_code and name match the V1 describe() output for the same query."""

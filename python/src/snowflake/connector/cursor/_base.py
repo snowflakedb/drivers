@@ -546,6 +546,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
     # ------------------------------------------------------------------
     # Fetch – shared implementation
+    # Intentionally no @api_telemetry on fetch methods - they are hot paths.
     # ------------------------------------------------------------------
 
     @requires_open_cursor_not_connection
@@ -571,7 +572,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """Fetch the next row of a query result set."""
 
     @pep249
-    @api_telemetry
     @requires_open_cursor_not_connection
     @with_prefetch_hook
     def fetchmany(self, size: int | None = None) -> list[Any]:
@@ -605,7 +605,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         return rows
 
     @pep249
-    @api_telemetry
     @requires_open_cursor_not_connection
     @with_prefetch_hook
     def fetchall(self) -> list[Any]:
