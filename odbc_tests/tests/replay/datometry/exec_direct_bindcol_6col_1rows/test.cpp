@@ -78,7 +78,10 @@ TEST_CASE("Replay: exec_direct_bindcol_6col_1rows", "[dtm]") {
     SQLSMALLINT numCols = 0;
     SQLRETURN ret = SQLNumResultCols(stmt0, &numCols);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(numCols == 14);
+    // SHOW SCHEMAS now returns 15 result columns server-side: a column was
+    // appended after object_visibility, so the leading 14 columns described
+    // below are unchanged and only the count grew (was 14).
+    CHECK(numCols == 15);
   }
 
   // SQLDescribeCol col 1
