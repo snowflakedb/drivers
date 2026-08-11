@@ -1,5 +1,9 @@
 import pytest
 
+# FETCH_MODE is read only by the Python driver app; other drivers ignore it and
+# would report identical timings under misleading *_fetchone names.
+pytestmark = pytest.mark.supported_drivers("python")
+
 ITERATIONS = 10
 WARMUP_ITERATIONS = 2
 
