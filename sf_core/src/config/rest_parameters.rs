@@ -199,7 +199,7 @@ pub struct LoginParameters {
     pub secondary_roles: Option<String>,
     pub client_info: ClientInfo,
     pub session_parameters: Option<HashMap<String, String>>,
-    pub spcs_token: Option<String>,
+    pub spcs_token: Option<SensitiveString>,
     pub disable_parallel_user_prompt: bool,
 }
 
