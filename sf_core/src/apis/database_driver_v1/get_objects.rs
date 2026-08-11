@@ -186,7 +186,9 @@ pub struct DbSchemaMetadata {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableMetadata {
     pub table_name: String,
-    pub table_type: String,
+    /// `Some("TABLE")` or `Some("VIEW")` when table metadata was requested;
+    /// `None` at column depth because `SHOW COLUMNS` does not return table type.
+    pub table_type: Option<String>,
     /// Columns are empty when the requested depth stops at tables.
     pub columns: Vec<ColumnDescriptor>,
 }
@@ -248,8 +250,9 @@ impl DatabaseDriverV1 {
         &self,
         req: GetObjectsRequest,
     ) -> Result<super::result_set::ResultSetInfo, ApiError> {
+        let depth = req.depth;
         let (conn_ptr, metadata) = self.fetch_get_objects_metadata(req).await?;
-        let batch = build_metadata_batch(metadata)?;
+        let batch = build_metadata_batch(metadata, depth)?;
         let http_client = {
             let conn = conn_ptr.lock().await;
             conn.http_client
@@ -581,7 +584,7 @@ async fn fetch_tables(
                                 .into_iter()
                                 .map(|(table_name, table_type)| TableMetadata {
                                     table_name,
-                                    table_type,
+                                    table_type: Some(table_type),
                                     columns: Vec::new(),
                                 })
                                 .collect(),
@@ -808,97 +811,84 @@ fn get_column<'a>(row: &'a [(String, String)], name: &str) -> Option<&'a str> {
 // Arrow batch builders
 // ---------------------------------------------------------------------------
 
-fn build_metadata_batch(metadata: Vec<CatalogMetadata>) -> Result<RecordBatch, ApiError> {
-    let schemas_requested = metadata.iter().any(|catalog| catalog.db_schemas.is_some());
-    if !schemas_requested {
-        return build_catalogs_batch(
+fn build_metadata_batch(
+    metadata: Vec<CatalogMetadata>,
+    depth: i32,
+) -> Result<RecordBatch, ApiError> {
+    match depth {
+        DEPTH_CATALOGS => build_catalogs_batch(
             metadata
                 .into_iter()
                 .map(|catalog| Some(catalog.catalog_name))
                 .collect(),
-        );
-    }
-
-    let tables_requested = metadata.iter().any(|catalog| {
-        catalog
-            .db_schemas
-            .as_ref()
-            .is_some_and(|schemas| schemas.iter().any(|schema| schema.tables.is_some()))
-    });
-    if !tables_requested {
-        let by_catalog = metadata
-            .into_iter()
-            .map(|catalog| {
-                let schemas = catalog
-                    .db_schemas
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|schema| schema.db_schema_name)
-                    .collect();
-                (catalog.catalog_name, schemas)
-            })
-            .collect();
-        return build_schemas_batch(by_catalog);
-    }
-
-    // The legacy COLUMNS representation uses an empty table type, whereas
-    // TABLES always contains TABLE or VIEW. Empty metadata produces the same
-    // zero-row RecordBatch at every depth, so no depth marker is needed there.
-    let columns_requested = metadata.iter().any(|catalog| {
-        catalog.db_schemas.as_ref().is_some_and(|schemas| {
-            schemas.iter().any(|schema| {
-                schema
-                    .tables
-                    .as_ref()
-                    .is_some_and(|tables| tables.iter().any(|table| table.table_type.is_empty()))
-            })
-        })
-    });
-
-    if columns_requested {
-        let by_catalog = metadata
-            .into_iter()
-            .map(|catalog| {
-                let schemas = catalog
-                    .db_schemas
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|schema| {
-                        let tables = schema
-                            .tables
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|table| (table.table_name, table.columns))
-                            .collect();
-                        (schema.db_schema_name, tables)
-                    })
-                    .collect();
-                (catalog.catalog_name, schemas)
-            })
-            .collect();
-        build_columns_batch(by_catalog)
-    } else {
-        let by_catalog = metadata
-            .into_iter()
-            .map(|catalog| {
-                let schemas = catalog
-                    .db_schemas
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|schema| {
-                        let tables = schema
-                            .tables
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|table| (table.table_name, table.table_type))
-                            .collect();
-                        (schema.db_schema_name, tables)
-                    })
-                    .collect();
-                (catalog.catalog_name, schemas)
-            })
-            .collect();
-        build_tables_batch(by_catalog)
+        ),
+        DEPTH_DB_SCHEMAS => {
+            let by_catalog = metadata
+                .into_iter()
+                .map(|catalog| {
+                    let schemas = catalog
+                        .db_schemas
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|schema| schema.db_schema_name)
+                        .collect();
+                    (catalog.catalog_name, schemas)
+                })
+                .collect();
+            build_schemas_batch(by_catalog)
+        }
+        DEPTH_TABLES => {
+            let by_catalog = metadata
+                .into_iter()
+                .map(|catalog| {
+                    let schemas = catalog
+                        .db_schemas
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|schema| {
+                            let tables = schema
+                                .tables
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|table| {
+                                    (table.table_name, table.table_type.unwrap_or_default())
+                                })
+                                .collect();
+                            (schema.db_schema_name, tables)
+                        })
+                        .collect();
+                    (catalog.catalog_name, schemas)
+                })
+                .collect();
+            build_tables_batch(by_catalog)
+        }
+        DEPTH_COLUMNS => {
+            let by_catalog = metadata
+                .into_iter()
+                .map(|catalog| {
+                    let schemas = catalog
+                        .db_schemas
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|schema| {
+                            let tables = schema
+                                .tables
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|table| (table.table_name, table.columns))
+                                .collect();
+                            (schema.db_schema_name, tables)
+                        })
+                        .collect();
+                    (catalog.catalog_name, schemas)
+                })
+                .collect();
+            build_columns_batch(by_catalog)
+        }
+        other => InvalidArgumentSnafu {
+            argument: format!("GetObjects depth {other} is invalid (expected 1..=4)"),
+        }
+        .fail(),
     }
 }
 
@@ -1431,8 +1421,7 @@ async fn fetch_columns(
                                 .into_iter()
                                 .map(|(table_name, columns)| TableMetadata {
                                     table_name,
-                                    // Preserve the existing COLUMNS Arrow representation.
-                                    table_type: String::new(),
+                                    table_type: None,
                                     columns,
                                 })
                                 .collect(),
@@ -2110,7 +2099,7 @@ mod tests {
             },
         ];
 
-        let batch = build_metadata_batch(metadata).unwrap();
+        let batch = build_metadata_batch(metadata, DEPTH_CATALOGS).unwrap();
         let names = batch
             .column(0)
             .as_any()
@@ -2138,7 +2127,7 @@ mod tests {
             }]),
         }];
 
-        let batch = build_metadata_batch(metadata).unwrap();
+        let batch = build_metadata_batch(metadata, DEPTH_DB_SCHEMAS).unwrap();
         let schemas = batch
             .column(1)
             .as_any()
@@ -2167,13 +2156,13 @@ mod tests {
                 db_schema_name: "PUBLIC".to_string(),
                 tables: Some(vec![TableMetadata {
                     table_name: "T".to_string(),
-                    table_type: "TABLE".to_string(),
+                    table_type: Some("TABLE".to_string()),
                     columns: Vec::new(),
                 }]),
             }]),
         }];
 
-        let batch = build_metadata_batch(metadata).unwrap();
+        let batch = build_metadata_batch(metadata, DEPTH_TABLES).unwrap();
         let schemas = batch
             .column(1)
             .as_any()
@@ -2206,7 +2195,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_column_tree_preserves_column_and_empty_table_type() {
+    fn typed_column_tree_marks_table_type_unavailable() {
         let column = ColumnDescriptor {
             column_name: "ID".to_string(),
             ordinal_position: 1,
@@ -2225,21 +2214,19 @@ mod tests {
                 db_schema_name: "PUBLIC".to_string(),
                 tables: Some(vec![TableMetadata {
                     table_name: "T".to_string(),
-                    table_type: String::new(),
+                    table_type: None,
                     columns: vec![column.clone()],
                 }]),
             }]),
         }];
 
-        assert_eq!(
-            metadata[0].db_schemas.as_ref().unwrap()[0]
-                .tables
-                .as_ref()
-                .unwrap()[0]
-                .columns,
-            vec![column]
-        );
-        let batch = build_metadata_batch(metadata).unwrap();
+        let table = &metadata[0].db_schemas.as_ref().unwrap()[0]
+            .tables
+            .as_ref()
+            .unwrap()[0];
+        assert_eq!(table.columns, vec![column]);
+        assert_eq!(table.table_type, None);
+        let batch = build_metadata_batch(metadata, DEPTH_COLUMNS).unwrap();
         let schemas = batch
             .column(1)
             .as_any()
