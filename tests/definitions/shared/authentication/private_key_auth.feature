@@ -67,3 +67,9 @@ Feature: Private Key Authentication
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
+  @core_int
+  Scenario: should surface JWT credential rejection code
+    Given Authentication is set to JWT and the backend is configured to reject the JWT as invalid
+    When Trying to Connect
+    Then the raw GS code surfaces in the error
+
