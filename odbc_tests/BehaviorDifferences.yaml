@@ -1234,19 +1234,19 @@ behavior_differences:
       Applications that compared SQL_DRIVER_NAME against the literal string "Snowflake" (for driver detection or telemetry tagging) need to switch to a path-based check or to SQL_DBMS_NAME. Applications that already expected a file path — including Excel/Power Query, which uses SQL_DRIVER_NAME to populate the connection-properties dialog — now receive the spec-compliant value.
   76:
     name: "SQLGetInfo(SQL_DRIVER_VER) reports the Cargo package version verbatim instead of a zero-padded `MM.mm.bbbb` string"
-    status: todo
-    type: bug
+    status: fixed
+    type: bugfix
     reviewed: true
     is_breaking_change: true
     impact: medium
     status_rationale: |
-      ODBC spec defines the return as ##.##.####.
+      The ODBC spec defines SQL_DRIVER_VER as `##.##.####`. The universal driver emits that spec-compliant fixed-width string; the reference driver does not. The remaining delta (padded vs. unpadded) is a deliberate, accepted spec-compliance improvement, so the value is asserted per-driver rather than realigned.
     old_driver_behavior: |
-      SQLGetInfo(SQL_DRIVER_VER) returns the version as `MM.mm.bbbb` with each field zero-padded to a fixed width (e.g. `03.17.0000`).
+      SQLGetInfo(SQL_DRIVER_VER) returns an unpadded, three-component semver (e.g. `3.16.0`), not the fixed-width `##.##.####` the ODBC spec prescribes.
     new_driver_behavior: |
-      SQLGetInfo(SQL_DRIVER_VER) returns the Cargo package version verbatim, in unpadded semver form (e.g. `4.0.0`). The dot count is preserved (two dots, three components) so existing version-pattern consumers keep working, but the exact numeric width differs from the legacy fixed-width format.
+      SQLGetInfo(SQL_DRIVER_VER) zero-pads the Cargo package version to the fixed-width `MM.mm.bbbb` format (major/minor to two digits, build to four), so `4.0.0` is returned as `04.00.0000`, matching the ODBC spec's `##.##.####`.
     description: |
-      Applications that parsed SQL_DRIVER_VER assuming fixed `MM.mm.bbbb` widths need to relax their parser to accept unpadded semver. Applications that only used the dot count or treated the string as opaque are unaffected.
+      Applications that parse SQL_DRIVER_VER get a spec-compliant fixed-width `MM.mm.bbbb` string from the universal driver, versus the reference driver's unpadded semver. Consumers that treat the string as opaque or only use the dot count are unaffected.
 
   77:
     name: "SQLGetDiagRec/SQLGetDiagField MessageText appends an internal error trace by default"
