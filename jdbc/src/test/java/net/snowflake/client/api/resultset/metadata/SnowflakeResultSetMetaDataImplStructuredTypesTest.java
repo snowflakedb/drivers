@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.List;
@@ -25,10 +26,25 @@ class SnowflakeResultSetMetaDataImplStructuredTypesTest extends SnowflakeIntegra
   private Connection openStructuredTypesConnection() throws Exception {
     Connection conn = openConnection();
     try (Statement stmt = conn.createStatement()) {
-      stmt.execute("ALTER SESSION SET ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE = TRUE");
-      stmt.execute("ALTER SESSION SET IGNORE_CLIENT_VESRION_IN_STRUCTURED_TYPES_RESPONSE = TRUE");
+      setSessionParameterIfSupported(stmt, "ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE");
+      setSessionParameterIfSupported(stmt, "IGNORE_CLIENT_VESRION_IN_STRUCTURED_TYPES_RESPONSE");
     }
     return conn;
+  }
+
+  private static void setSessionParameterIfSupported(Statement stmt, String parameter)
+      throws SQLException {
+    try {
+      stmt.execute("ALTER SESSION SET " + parameter + " = TRUE");
+    } catch (SQLException exception) {
+      // These feature gates are absent after structured types become enabled by
+      // default. Preserve failures other than the expected retired-parameter
+      // response so connection and query regressions remain visible.
+      String message = exception.getMessage();
+      if (message == null || !message.contains("invalid parameter '" + parameter + "'")) {
+        throw exception;
+      }
+    }
   }
 
   @Test
