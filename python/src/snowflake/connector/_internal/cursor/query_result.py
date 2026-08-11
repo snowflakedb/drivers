@@ -21,17 +21,24 @@ class MultiStatementQueryResultState:
     Tracks the child query IDs returned by the server, which child
     we're currently positioned on, and the parent query ID that
     groups them together.
+
+    Also holds the submitting ``execute()``'s ``request_id``, which the per-child
+    ``ResultSetResponse`` does not carry: this object is the only state
+    ``nextset()`` rescues across ``reset()``, so it is the only place a
+    submission-scoped value can survive to be re-applied to each child.
     """
 
-    __slots__ = ("parent_qid", "child_query_ids", "_next_index")
+    __slots__ = ("parent_qid", "child_query_ids", "request_id", "_next_index")
 
     def __init__(
         self,
         parent_qid: str | None,
         child_query_ids: list[str],
+        request_id: str | None,
     ) -> None:
         self.parent_qid = parent_qid
         self.child_query_ids = child_query_ids
+        self.request_id = request_id
         self._next_index = 0
 
     def advance(self) -> str | None:
@@ -49,8 +56,15 @@ class MultiStatementQueryResultState:
         return self.child_query_ids[self._next_index - 1]
 
     @staticmethod
-    def from_result(multi_result: MultiStatementResult) -> MultiStatementQueryResultState | None:
-        """Create from a proto MultiStatementResult, or None if there are no children."""
+    def from_result(
+        multi_result: MultiStatementResult, request_id: str | None
+    ) -> MultiStatementQueryResultState | None:
+        """Create from a proto MultiStatementResult, or None if there are no children.
+
+        ``request_id`` is required rather than defaulted: every caller has the
+        submission's requestId in scope, and silently defaulting it to None is
+        what made ``nextset()`` report None for child statements.
+        """
         query_ids = list(multi_result.query_ids)
         if not query_ids:
             return None
@@ -59,6 +73,7 @@ class MultiStatementQueryResultState:
         return MultiStatementQueryResultState(
             parent_qid=parent_qid,
             child_query_ids=query_ids,
+            request_id=request_id,
         )
 
 

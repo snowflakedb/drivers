@@ -290,7 +290,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     async def _handle_multi_statement_response(
         self, result: MultiStatementResult, query: str, request_id: str | None
     ) -> None:
-        self._multi_statement = MultiStatementQueryResultState.from_result(result)
+        self._multi_statement = MultiStatementQueryResultState.from_result(result, request_id)
 
         # Edge case: empty multi-statement result
         if self._multi_statement is None:
@@ -638,7 +638,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self._multi_statement = ms
 
         rs_response = await self._fetch_result_set_by_query_id(query_id)
-        self._apply_result_set(rs_response, query=None)
+        self._apply_result_set(rs_response, query=None, request_id=ms.request_id)
         self._rownumber = -1
 
         return self

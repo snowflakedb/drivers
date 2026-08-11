@@ -2821,6 +2821,31 @@ class TestRequestIdIsolation:
             uuid.UUID(request_id)  # raises ValueError if not a valid UUID
             assert request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"
 
+    def test_request_id_survives_nextset(self, cursor):
+        """Every child statement of a multi-statement query reports the submission's _request_id.
+
+        One ``execute()`` is one submission with one requestId, so advancing through
+        the children with ``nextset()`` must not clear it. Each child's ``sfqid``
+        differs, which is what makes this non-trivial: the per-child result set the
+        wrapper fetches carries no requestId of its own.
+        """
+        cursor.execute("SELECT 1; SELECT 2; SELECT 3", num_statements=3)
+
+        submitted = cursor._request_id
+        assert submitted is not None
+        seen_sfqids = [cursor.sfqid]
+
+        while cursor.nextset() is not None:
+            assert cursor._request_id == submitted, (
+                f"nextset() must preserve the submission _request_id {submitted!r}, got {cursor._request_id!r}"
+            )
+            seen_sfqids.append(cursor.sfqid)
+
+        # Guards the assertions above against a no-op nextset(): we really did
+        # advance through three distinct child result sets.
+        assert len(seen_sfqids) == 3
+        assert len(set(seen_sfqids)) == 3, f"expected 3 distinct child sfqids, got {seen_sfqids}"
+
 
 class TestCursorDescribeInternal:
     """Integration tests for Cursor._describe_internal — Snowpark V2 describe path.
