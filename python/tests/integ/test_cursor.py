@@ -2808,12 +2808,14 @@ class TestRequestIdIsolation:
             assert cursor._request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"
 
 
+@skip_async("_describe_internal is sync-only; Snowpark reaches it exclusively via the sync cursor")
 class TestCursorDescribeInternal:
     """Integration tests for Cursor._describe_internal — Snowpark V2 describe path.
 
     All tests run against the real Snowflake server (no mocks).  The module-level
-    ``pytestmark = run_against_sync_and_async`` already exercises every test
-    against both the sync and async cursor backends without per-class marking.
+    ``pytestmark = run_against_sync_and_async`` would exercise every test against
+    both cursor backends, but ``_describe_internal`` is deliberately sync-only, so
+    the class opts the async run out.
 
     Focus: properties that only a live server can confirm — ``vector_dimension``
     propagation end-to-end, ``display_size``/``internal_size`` proto-field mapping
