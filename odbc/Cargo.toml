@@ -15,6 +15,9 @@ odbc_api_version = "03.80"
 # Format is "<major>.<minor>.<patch>" (e.g. "0.0.1").
 # This is to be removed and the package.version used after moving into the PuPr
 odbc_preview_version = "0.0.9"
+# Optional: release type for pre-release builds sent as CLIENT_ENVIRONMENT.RELEASE_TYPE.
+# Set to e.g. "rc1" or "rc2" when cutting a PuPr RC build; leave commented-out for GA builds.
+release_type = "prpr-0.0.9"
 
 [lib]
 name = "sfodbc"

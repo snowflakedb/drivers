@@ -128,6 +128,7 @@ fn default_client_info() -> ClientInfo {
         runtime_name: None,
         runtime_version: None,
         compiler: None,
+        release_type: None,
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
         proxy_config: sf_core::tls::config::ProxyConfig::default(),
