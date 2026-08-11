@@ -61,9 +61,8 @@ class MultiStatementQueryResultState:
     ) -> MultiStatementQueryResultState | None:
         """Create from a proto MultiStatementResult, or None if there are no children.
 
-        ``request_id`` is required rather than defaulted: every caller has the
-        submission's requestId in scope, and silently defaulting it to None is
-        what made ``nextset()`` report None for child statements.
+        ``request_id`` is required: every caller has the submission's requestId
+        in scope, so a None default can never be correct.
         """
         query_ids = list(multi_result.query_ids)
         if not query_ids:
