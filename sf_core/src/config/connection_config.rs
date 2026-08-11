@@ -594,7 +594,7 @@ impl LoginParameters {
         config: &ConnectionConfig,
         client_info: ClientInfo,
         session_parameters: Option<HashMap<String, String>>,
-        spcs_token: Option<String>,
+        spcs_token: Option<SensitiveString>,
     ) -> Self {
         Self {
             account_name: config.server.account.clone(),
