@@ -1,9 +1,12 @@
-//! Catalog functions: SQLTables, SQLGetTypeInfo, and related.
+//! Catalog functions: SQLTables, SQLColumns, SQLGetTypeInfo, and related.
 //!
 //! `SQLTables` runs wrapper-owned `SHOW` queries (`SHOW DATABASES` /
 //! `SHOW SCHEMAS` / `SHOW OBJECTS`), then maps rows into the flat 5-column
 //! ODBC result set. Pattern-mode filters use the local case-sensitive
 //! [`like_match`].
+//!
+//! `SQLColumns` likewise runs wrapper-owned `SHOW COLUMNS`, maps rows into
+//! the flat 19-column ODBC result set, and re-filters with [`like_match`].
 //!
 //! `SQLGetTypeInfo` is entirely static — it returns a hard-coded table of the
 //! 23 Snowflake SQL types, matching the legacy driver's `InitializeData()` in
@@ -16,9 +19,7 @@ use crate::api::error::{
     ShowKeysColumnMissingSnafu, ShowKeysInvalidKeySeqSnafu,
 };
 use crate::api::runtime::global;
-use crate::api::statement::{
-    collect_nested_batch, execute_show_query_collect_batch, set_state_for_catalog,
-};
+use crate::api::statement::{execute_show_query_collect_batch, set_state_for_catalog};
 use crate::api::utils::{ApiExitLog, ESCAPE_CHAR, catalog_arg_to_pattern, escape_like_wildcards};
 use crate::api::{
     ConnectionState, ExecutionOrigin, OdbcResult, StatementInner, StatementState, stmt_from_handle,
@@ -28,26 +29,15 @@ use crate::conversion::{
     num_prec_radix_from_field, octet_length_from_field, sql_type_from_field, type_name_from_field,
     verbose_sql_type_from_field,
 };
-use arrow::array::{
-    Array, ArrayRef, BooleanArray, Int16Array, Int32Array, Int64Array, LargeListArray, RecordBatch,
-    StringArray, StructArray,
-};
+use arrow::array::{Array, ArrayRef, Int16Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
-use sf_core::apis::database_driver_v1::{
-    DEPTH_COLUMNS, FIELD_COLUMN_BYTE_LENGTH, FIELD_COLUMN_CHAR_LENGTH, FIELD_COLUMN_DEF,
-    FIELD_COLUMN_LOGICAL_TYPE, FIELD_COLUMN_NAME, FIELD_COLUMN_NULLABLE,
-    FIELD_COLUMN_ORDINAL_POSITION, FIELD_COLUMN_PRECISION, FIELD_COLUMN_REMARKS,
-    FIELD_COLUMN_SCALE, FIELD_DB_SCHEMA_NAME, FIELD_DB_SCHEMA_TABLES, FIELD_TABLE_COLUMNS,
-    FIELD_TABLE_NAME,
-};
 use sf_core::protobuf::generated::database_driver_v1::{
-    ConnectionGetInfoRequest, ConnectionGetObjectsRequest, ConnectionGetParameterRequest,
-    ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest, StatementHandle,
+    ConnectionGetInfoRequest, ConnectionGetParameterRequest, StatementHandle,
 };
 use snafu::{OptionExt, ResultExt};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// One flat `SQLTables` result row, in ODBC column order:
@@ -219,33 +209,13 @@ pub fn tables<E: OdbcEncoding>(
     let table_types = parse_table_type_list(type_raw.as_deref());
 
     // Core GetObjects applied CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX after
-    // the ODBC NULL-catalog substitution: fill any still-NULL catalog/schema from
-    // the session (same as apply_connection_context). Do not gate solely on
-    // schema — a supplied schema must not skip catalog fill when catalog is
-    // still unresolved.
-    if (catalog_pattern.is_none() || schema_pattern.is_none())
-        && metadata_request_use_connection_ctx(conn_handle)?
-    {
-        let rt = global().context(OdbcRuntimeSnafu)?;
-        let info = rt.block_on(async |c| {
-            c.connection_get_info(ConnectionGetInfoRequest {
-                conn_handle: Some(conn_handle),
-                info_codes: vec![],
-                include_master_token: false,
-            })
-            .await
-        })?;
-        if catalog_pattern.is_none()
-            && let Some(db) = info.database
-        {
-            catalog_pattern = Some(escape_like_wildcards(&db));
-        }
-        if schema_pattern.is_none()
-            && let Some(sch) = info.schema
-        {
-            schema_pattern = Some(escape_like_wildcards(&sch));
-        }
-    }
+    // the ODBC NULL-catalog substitution. Do not gate solely on schema — a
+    // supplied schema must not skip catalog fill when catalog is still unresolved.
+    fill_null_catalog_schema_from_connection_ctx(
+        &mut catalog_pattern,
+        &mut schema_pattern,
+        conn_handle,
+    )?;
 
     execute_show_tables(
         &mut inner,
@@ -314,15 +284,7 @@ pub fn columns<E: OdbcEncoding>(
     let conn = dbc.connection.lock();
     let mut inner = guard.inner.lock();
 
-    if inner.state.as_ref().is_need_data() {
-        return InvalidDuringDaeSnafu.fail();
-    }
-    if inner.state.as_ref().is_async_executing() {
-        return AsyncInProgressSnafu.fail();
-    }
-    if inner.state.as_ref().has_open_cursor() {
-        return CursorAlreadyOpenSnafu.fail();
-    }
+    validate_catalog_stmt_ready(&inner)?;
 
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
@@ -331,21 +293,35 @@ pub fn columns<E: OdbcEncoding>(
 
     let metadata_id = inner.metadata_id;
     let numeric_settings = conn.numeric_settings;
+    let stmt_handle = guard.stmt_handle;
     drop(conn);
 
+    // Substitute a NULL catalog with the connection's current database (see
+    // resolve_null_catalog_to_connection_context). A NULL schema is deliberately
+    // left NULL so it matches every schema in that database, unless
+    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it below. Identifier mode
+    // (metadata_id=TRUE) still requires non-NULL args → HY009.
     let catalog_raw = if metadata_id {
         catalog_raw
     } else {
         resolve_null_catalog_to_connection_context(catalog_raw, conn_handle)?
     };
-    let catalog_pattern = catalog_arg_to_pattern(catalog_raw.as_deref(), metadata_id)?;
-    let schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
+    let mut catalog_pattern = catalog_arg_to_pattern(catalog_raw.as_deref(), metadata_id)?;
+    let mut schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
     let table_pattern = catalog_arg_to_pattern(table_raw.as_deref(), metadata_id)?;
     let column_pattern = catalog_arg_to_pattern(column_raw.as_deref(), metadata_id)?;
 
-    execute_get_columns_and_flatten(
-        &mut inner,
+    // Core GetObjects applied CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX after
+    // the ODBC NULL-catalog substitution (same as SQLTables).
+    fill_null_catalog_schema_from_connection_ctx(
+        &mut catalog_pattern,
+        &mut schema_pattern,
         conn_handle,
+    )?;
+
+    execute_show_columns(
+        &mut inner,
+        stmt_handle,
         numeric_settings,
         catalog_pattern,
         schema_pattern,
@@ -453,6 +429,46 @@ fn metadata_request_use_connection_ctx(
         .ok()
         .and_then(|r| r.value)
         .is_some_and(|v| v.eq_ignore_ascii_case("true")))
+}
+
+/// Fill still-NULL catalog/schema patterns from the session when
+/// `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` is enabled.
+///
+/// Shared by [`tables`] and [`columns`] so both stay aligned with core
+/// GetObjects' `apply_connection_context` behavior after the ODBC NULL-catalog
+/// substitution.
+fn fill_null_catalog_schema_from_connection_ctx(
+    catalog_pattern: &mut Option<String>,
+    schema_pattern: &mut Option<String>,
+    conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
+) -> OdbcResult<()> {
+    if catalog_pattern.is_some() && schema_pattern.is_some() {
+        return Ok(());
+    }
+    if !metadata_request_use_connection_ctx(conn_handle)? {
+        return Ok(());
+    }
+
+    let rt = global().context(OdbcRuntimeSnafu)?;
+    let info = rt.block_on(async |c| {
+        c.connection_get_info(ConnectionGetInfoRequest {
+            conn_handle: Some(conn_handle),
+            info_codes: vec![],
+            include_master_token: false,
+        })
+        .await
+    })?;
+    if catalog_pattern.is_none()
+        && let Some(db) = info.database
+    {
+        *catalog_pattern = Some(escape_like_wildcards(&db));
+    }
+    if schema_pattern.is_none()
+        && let Some(sch) = info.schema
+    {
+        *schema_pattern = Some(escape_like_wildcards(&sch));
+    }
+    Ok(())
 }
 
 fn resolve_show_identifiers(
@@ -2764,84 +2780,342 @@ fn install_catalog_batch(
     Ok(())
 }
 
-fn execute_get_columns_and_flatten(
+fn build_show_columns_sql(
+    catalog: Option<&str>,
+    schema: Option<&str>,
+    table_name: Option<&str>,
+    column_name: Option<&str>,
+) -> String {
+    let exact_catalog = catalog.and_then(is_exact_pattern).filter(|s| !s.is_empty());
+    let exact_schema = schema.and_then(is_exact_pattern).filter(|s| !s.is_empty());
+    let exact_table = table_name
+        .and_then(is_exact_pattern)
+        .filter(|s| !s.is_empty());
+
+    let like_clause = build_like_clause(column_name);
+    let scope = match (&exact_catalog, &exact_schema, &exact_table) {
+        (Some(cat), Some(sch), Some(tbl)) => format!(
+            "IN TABLE \"{}\".\"{}\".\"{}\"",
+            escape_snowflake_identifier(cat),
+            escape_snowflake_identifier(sch),
+            escape_snowflake_identifier(tbl)
+        ),
+        (Some(cat), Some(sch), None) => format!(
+            "IN SCHEMA \"{}\".\"{}\"",
+            escape_snowflake_identifier(cat),
+            escape_snowflake_identifier(sch)
+        ),
+        (Some(cat), None, _) => {
+            format!("IN DATABASE \"{}\"", escape_snowflake_identifier(cat))
+        }
+        _ => "IN ACCOUNT".to_string(),
+    };
+    format_show_sql("SHOW COLUMNS", &like_clause, &scope)
+}
+
+fn execute_show_columns(
     inner: &mut StatementInner,
-    conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
+    stmt_handle: StatementHandle,
     numeric_settings: NumericSettings,
     catalog: Option<String>,
-    db_schema: Option<String>,
+    schema: Option<String>,
     table_name: Option<String>,
     column_name: Option<String>,
 ) -> OdbcResult<()> {
-    let rt = global().context(OdbcRuntimeSnafu)?;
+    // Empty string means "match nothing" (like_match("", non-empty) is false).
+    if matches!(table_name.as_deref(), Some("")) || matches!(column_name.as_deref(), Some("")) {
+        return set_static_empty_catalog_result(inner, flat_columns_schema());
+    }
 
-    let response = rt.block_on(async |c| {
-        c.connection_get_objects(ConnectionGetObjectsRequest {
-            conn_handle: Some(conn_handle),
-            depth: DEPTH_COLUMNS,
-            catalog,
-            db_schema,
-            table_name,
-            table_type: vec![],
-            column_name,
-        })
-        .await
-    })?;
-
-    let rs_handle: ResultSetHandle =
-        response
-            .result_set_handle
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: "ConnectionGetObjects: missing result_set_handle".to_string(),
-                location: snafu::location!(),
-            })?;
-
-    let stream_ptr = {
-        let stream_resp = rt.block_on(async |c| {
-            c.result_set_get_stream(ResultSetGetStreamRequest {
-                result_set_handle: Some(rs_handle),
-            })
-            .await
-        })?;
-        let _ = rt.block_on(async |c| {
-            c.result_set_release(ResultSetReleaseRequest {
-                result_set_handle: Some(rs_handle),
-            })
-            .await
-        });
-        stream_resp
-            .stream
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: "ConnectionGetObjects: missing stream".to_string(),
-                location: snafu::location!(),
-            })?
+    let sql = build_show_columns_sql(
+        catalog.as_deref(),
+        schema.as_deref(),
+        table_name.as_deref(),
+        column_name.as_deref(),
+    );
+    let show_batch = match execute_show_query_collect_batch(stmt_handle, &sql) {
+        Ok(batch) => batch,
+        Err(e) => {
+            if e.server_sql_state()
+                .is_some_and(is_tables_empty_result_sql_state)
+            {
+                return set_static_empty_catalog_result(inner, flat_columns_schema());
+            }
+            return Err(e);
+        }
     };
 
-    let raw_ptr: *mut FFI_ArrowArrayStream = stream_ptr.into();
-    let owned_stream = unsafe { FFI_ArrowArrayStream::from_raw(raw_ptr) };
-    let reader = ArrowArrayStreamReader::try_new(owned_stream)
-        .context(ArrowArrayStreamReaderCreationSnafu)?;
-
-    let nested_batch = collect_nested_batch(Box::new(reader))?;
-    let flat_batch = flatten_columns_to_odbc(nested_batch, &numeric_settings)?;
-
+    let flat_batch = map_show_columns_to_odbc(
+        show_batch,
+        &numeric_settings,
+        catalog.as_deref(),
+        schema.as_deref(),
+        table_name.as_deref(),
+        column_name.as_deref(),
+    )?;
     let schema = flat_batch.schema();
-    let flat_reader = reader_from_record_batch(flat_batch, schema)?;
+    install_catalog_batch(inner, flat_batch, schema)
+}
 
-    set_state_for_catalog(
-        inner,
-        StatementState::QueryExecuted {
-            reader: flat_reader,
-            rows_affected: Some(-1),
-            origin: ExecutionOrigin::Direct,
-        },
-    );
-    Ok(())
+fn map_show_columns_to_odbc(
+    batch: RecordBatch,
+    numeric_settings: &NumericSettings,
+    catalog_filter: Option<&str>,
+    schema_filter: Option<&str>,
+    table_name_filter: Option<&str>,
+    column_name_filter: Option<&str>,
+) -> OdbcResult<RecordBatch> {
+    let out_schema = flat_columns_schema();
+    if batch.num_rows() == 0 {
+        return build_flat_columns_batch(out_schema, vec![]);
+    }
+
+    let input = batch.schema();
+    let db_idx = column_index_by_name(&input, "database_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW COLUMNS result missing 'database_name' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let sch_idx = column_index_by_name(&input, "schema_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW COLUMNS result missing 'schema_name' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let tbl_idx = column_index_by_name(&input, "table_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW COLUMNS result missing 'table_name' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let col_idx = column_index_by_name(&input, "column_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW COLUMNS result missing 'column_name' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let data_type_idx = column_index_by_name(&input, "data_type").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW COLUMNS result missing 'data_type' column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let default_idx = column_index_by_name(&input, "default");
+    let comment_idx = column_index_by_name(&input, "comment");
+
+    // Group by (catalog, schema, table) for ODBC-mandated lexicographic order.
+    //
+    // ORDINAL_POSITION is assigned 1,2,3… among the columns kept per table, in
+    // SHOW COLUMNS order, resetting at each table boundary. This intentionally
+    // matches the legacy Snowflake ODBC driver, whose ColumnsMetadataSource
+    // pushes `SHOW COLUMNS LIKE '<pattern>'` server-side and increments its
+    // ordinal only over the returned (matched) rows. It is a deliberate
+    // deviation from the strict ODBC spec ("ordinal position of the column in
+    // the table"): a ColumnName filter renumbers the survivors rather than
+    // reporting their absolute table position. Kept for old-driver parity —
+    // do not switch to absolute position without a BehaviorDifferences entry.
+    let mut by_cat_sch_tbl: BTreeMap<
+        String,
+        BTreeMap<String, BTreeMap<String, Vec<FlatColumnRow>>>,
+    > = BTreeMap::new();
+
+    for row in 0..batch.num_rows() {
+        let Some(db_name) = utf8_value_at(&batch, db_idx, row) else {
+            continue;
+        };
+        let Some(sch_name) = utf8_value_at(&batch, sch_idx, row) else {
+            continue;
+        };
+        let Some(tbl_name) = utf8_value_at(&batch, tbl_idx, row) else {
+            continue;
+        };
+        let Some(col_name) = utf8_value_at(&batch, col_idx, row) else {
+            continue;
+        };
+        let data_type_json =
+            utf8_value_at(&batch, data_type_idx, row).unwrap_or_else(|| "{}".to_string());
+        let column_def = default_idx
+            .and_then(|i| utf8_value_at(&batch, i, row))
+            .filter(|s| !s.is_empty());
+        let remarks = comment_idx
+            .and_then(|i| utf8_value_at(&batch, i, row))
+            .filter(|s| !s.is_empty());
+
+        if !pattern_matches(catalog_filter, &db_name) {
+            continue;
+        }
+        if !pattern_matches(schema_filter, &sch_name) {
+            continue;
+        }
+        if !pattern_matches(table_name_filter, &tbl_name) {
+            continue;
+        }
+        if !pattern_matches(column_name_filter, &col_name) {
+            continue;
+        }
+
+        let table_cols = by_cat_sch_tbl
+            .entry(db_name.clone())
+            .or_default()
+            .entry(sch_name.clone())
+            .or_default()
+            .entry(tbl_name.clone())
+            .or_default();
+        let ordinal_position = (table_cols.len() + 1) as i32;
+        let descriptor = decode_data_type_json(
+            &data_type_json,
+            col_name,
+            ordinal_position,
+            column_def,
+            remarks,
+        );
+        table_cols.push(flat_row_from_descriptor(
+            db_name,
+            sch_name,
+            tbl_name,
+            &descriptor,
+            numeric_settings,
+        ));
+    }
+
+    let mut rows: Vec<FlatColumnRow> = Vec::new();
+    for schemas in by_cat_sch_tbl.into_values() {
+        for tables in schemas.into_values() {
+            for cols in tables.into_values() {
+                rows.extend(cols);
+            }
+        }
+    }
+    build_flat_columns_batch(out_schema, rows)
 }
 
 // ============================================================================
-// Flatten nested ADBC Arrow → flat 19-col SQLColumns result
+// SQLColumns type mapping (SHOW COLUMNS JSON → flat 19-col ODBC row)
 // ============================================================================
+
+/// Parsed representation of the `data_type` JSON blob from `SHOW COLUMNS`.
+/// Only the fields needed to reconstruct the ODBC type metadata are captured;
+/// unknown fields are ignored (serde default).
+///
+/// Keep in sync with the same-named struct in
+/// `sf_core::apis::database_driver_v1::get_objects`.
+#[derive(Debug, serde::Deserialize)]
+struct ShowColumnDataType {
+    #[serde(rename = "type")]
+    type_: String,
+    nullable: Option<bool>,
+    precision: Option<i64>,
+    scale: Option<i64>,
+    #[serde(rename = "byteLength")]
+    byte_length: Option<i64>,
+    /// charLength (TEXT) — present in newer Snowflake responses.
+    #[serde(rename = "charLength")]
+    char_length: Option<i64>,
+    /// length (TEXT) — legacy alias for charLength; used when charLength absent.
+    length: Option<i64>,
+}
+
+/// Decoded column descriptor: a single `SHOW COLUMNS` row with the
+/// Snowflake-wire `data_type` JSON fully parsed. Owned by the ODBC wrapper so
+/// the SQLColumns path does not depend on `sf_core`'s GetObjects internals.
+///
+/// Keep in sync with the same-named type in
+/// `sf_core::apis::database_driver_v1::get_objects`.
+#[derive(Debug)]
+struct ColumnDescriptor {
+    column_name: String,
+    ordinal_position: i32,
+    logical_type: String,
+    precision: Option<i32>,
+    scale: Option<i32>,
+    char_length: Option<i64>,
+    byte_length: Option<i64>,
+    nullable: bool,
+    column_def: Option<String>,
+    remarks: Option<String>,
+}
+
+/// Decode the `data_type` JSON blob from `SHOW COLUMNS` into a
+/// [`ColumnDescriptor`].
+///
+/// Keep in sync with `sf_core::apis::database_driver_v1::get_objects::decode_data_type_json`
+/// (and its companion `ShowColumnDataType` / `ColumnDescriptor`). Copied into the
+/// ODBC wrapper so SQLColumns does not reach into GetObjects internals; prune the
+/// core copy once no other consumer needs it.
+///
+/// Three design points:
+///
+/// 1. **TEXT char length** — prefers `charLength` (present in modern Snowflake
+///    responses); falls back to `length`, which is a legacy alias for the same
+///    value used by older server versions. Non-TEXT types intentionally ignore
+///    `length` because it carries different semantics there (e.g. byte-length
+///    for BINARY vs. char-length for TEXT).
+///
+/// 2. **Parse failure** — on any JSON parse error (malformed blob, schema
+///    change, exotic type not yet in the struct) the function returns
+///    `logical_type = "UNKNOWN"` and `nullable = true` rather than propagating
+///    an error. This lets the wrapper fall back gracefully for exotic types
+///    (INTERVAL, VECTOR, GEOGRAPHY, GEOMETRY) whose `data_type` blobs may not
+///    match the fields captured here; the column maps to NULL in the ODBC
+///    output rather than poisoning the whole result set.
+///
+/// 3. **Precision/scale narrowing** — the JSON blob carries i64 values; we
+///    narrow to i32 for the descriptor. Snowflake's precision is at most 38
+///    (FIXED) and scale at most 37, both well within `i32::MAX`, so this is
+///    always in range in practice. A value that nonetheless overflows i32
+///    degrades to `None` (unknown) via a checked conversion rather than
+///    wrapping to a garbage number — handled in all builds, not just dev.
+fn decode_data_type_json(
+    json: &str,
+    column_name: String,
+    ordinal_position: i32,
+    column_def: Option<String>,
+    remarks: Option<String>,
+) -> ColumnDescriptor {
+    let dt: ShowColumnDataType = match serde_json::from_str(json) {
+        Ok(v) => v,
+        // See design point 2 above: preserve the column in an "unknown" state
+        // rather than dropping it or surfacing an error to the ODBC caller.
+        Err(_) => {
+            return ColumnDescriptor {
+                column_name,
+                ordinal_position,
+                logical_type: "UNKNOWN".to_string(),
+                precision: None,
+                scale: None,
+                char_length: None,
+                byte_length: None,
+                nullable: true,
+                column_def,
+                remarks,
+            };
+        }
+    };
+
+    // Design point 1: prefer charLength; fall back to length for TEXT only.
+    let char_length = dt.char_length.or_else(|| {
+        dt.type_
+            .eq_ignore_ascii_case("TEXT")
+            .then_some(dt.length)
+            .flatten()
+    });
+
+    ColumnDescriptor {
+        column_name,
+        ordinal_position,
+        logical_type: dt.type_,
+        // Design point 3: checked i64→i32 narrowing; overflow degrades to None
+        // (unknown) in every build rather than wrapping to garbage.
+        precision: dt.precision.and_then(|p| i32::try_from(p).ok()),
+        scale: dt.scale.and_then(|s| i32::try_from(s).ok()),
+        char_length,
+        byte_length: dt.byte_length,
+        nullable: dt.nullable.unwrap_or(true),
+        column_def,
+        remarks,
+    }
+}
 
 /// Rehydrate an Arrow `Field` from the canonical column struct metadata so
 /// the existing `*_from_field` helpers (which read `logicalType`, `precision`,
@@ -2945,311 +3219,85 @@ struct FlatColumnRow {
     user_data_type: Option<String>,
 }
 
-fn flatten_columns_to_odbc(
-    batch: RecordBatch,
+fn flat_row_from_descriptor(
+    cat: String,
+    schem: String,
+    tbl: String,
+    desc: &ColumnDescriptor,
     numeric_settings: &NumericSettings,
-) -> OdbcResult<RecordBatch> {
-    let schema = flat_columns_schema();
+) -> FlatColumnRow {
+    let field = rehydrate_field(
+        &desc.logical_type,
+        desc.precision,
+        desc.scale,
+        desc.char_length,
+        desc.byte_length,
+        desc.nullable,
+    );
 
-    if batch.num_rows() == 0 {
-        return build_flat_columns_batch(schema, vec![]);
+    let data_type_val = sql_type_from_field(&field, numeric_settings)
+        .ok()
+        .map(|t| t.0.to_string());
+    // TYPE_NAME (col 6) reports the Snowflake external / friendly name
+    // (BOOLEAN, TIMESTAMP, VARIANT, STRUCT, ARRAY, GEOGRAPHY, …) — NOT the SDK
+    // label from `type_name_from_field`, which is the
+    // SQLColAttribute(SQL_DESC_TYPE_NAME) contract. SNOW-3899531.
+    let type_name_val = Some(catalog_type_name_from_logical_type(&desc.logical_type));
+    let col_size_val = column_size_from_field(&field, numeric_settings)
+        .ok()
+        .map(|s| s.to_string());
+    let buf_len_val = octet_length_from_field(&field, numeric_settings)
+        .ok()
+        .map(|s| s.to_string());
+    // DECIMAL_DIGITS: scale 0 is a valid, meaningful value for exact-numeric
+    // columns (e.g. NUMBER(38,0)) — report it as "0", not NULL. The helper
+    // returns Err for types where DECIMAL_DIGITS is inapplicable (→ NULL).
+    let dec_digits_val = decimal_digits_from_field(&field, numeric_settings)
+        .ok()
+        .map(|s| s.to_string());
+    // NUM_PREC_RADIX: only ever 2, 10, or inapplicable (→ NULL); 0 is never
+    // a meaningful value, so collapsing 0 → NULL is harmless here.
+    let num_prec_radix_val = num_prec_radix_from_field(&field, numeric_settings)
+        .ok()
+        .and_then(|s| if s == 0 { None } else { Some(s.to_string()) });
+    let sql_data_type_val = verbose_sql_type_from_field(&field, numeric_settings)
+        .ok()
+        .map(|t| t.0.to_string());
+    let sql_dt_sub_val =
+        sql_datetime_sub_from_logical_type(&desc.logical_type).map(|s| s.to_string());
+    let char_octet_val = match desc.logical_type.as_str() {
+        "TEXT" | "BINARY" => octet_length_from_field(&field, numeric_settings)
+            .ok()
+            .map(|s| s.to_string()),
+        _ => None,
+    };
+
+    let nullable_str = if desc.nullable { "1" } else { "0" };
+    let is_nullable_str = if desc.nullable { "YES" } else { "NO" };
+    // USER_DATA_TYPE: mirror DATA_TYPE (driver-specific; tests only assert presence).
+    let user_data_type_val = data_type_val.clone();
+
+    FlatColumnRow {
+        cat: Some(cat),
+        schem: Some(schem),
+        tbl: Some(tbl),
+        col_name: Some(desc.column_name.clone()),
+        data_type: data_type_val,
+        type_name: type_name_val,
+        col_size: col_size_val,
+        buf_len: buf_len_val,
+        dec_digits: dec_digits_val,
+        num_prec_radix: num_prec_radix_val,
+        nullable: Some(nullable_str.to_string()),
+        remarks: desc.remarks.clone(),
+        col_def: desc.column_def.clone(),
+        sql_data_type: sql_data_type_val,
+        sql_dt_sub: sql_dt_sub_val,
+        char_octet: char_octet_val,
+        ordinal: Some(desc.ordinal_position.to_string()),
+        is_nullable: Some(is_nullable_str.to_string()),
+        user_data_type: user_data_type_val,
     }
-
-    // Rows arrive in (catalog, schema, table, ordinal) order because core builds
-    // them from BTreeMaps (lexicographic) with sequential per-table ordinals.
-    // No sort is needed here.
-    let mut rows: Vec<FlatColumnRow> = Vec::new();
-
-    let cat_arr = batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-            message: "Expected StringArray for catalog_name".to_string(),
-            location: snafu::location!(),
-        })?;
-
-    let schemas_list = batch
-        .column(1)
-        .as_any()
-        .downcast_ref::<LargeListArray>()
-        .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-            message: "Expected LargeListArray for catalog_db_schemas".to_string(),
-            location: snafu::location!(),
-        })?;
-
-    for cat_idx in 0..batch.num_rows() {
-        let cat_name = if cat_arr.is_null(cat_idx) {
-            None
-        } else {
-            Some(cat_arr.value(cat_idx).to_string())
-        };
-
-        if schemas_list.is_null(cat_idx) {
-            continue;
-        }
-
-        let sch_start = schemas_list.value_offsets()[cat_idx] as usize;
-        let sch_end = schemas_list.value_offsets()[cat_idx + 1] as usize;
-
-        let schemas_struct = schemas_list
-            .values()
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: "Expected StructArray for catalog_db_schemas values".to_string(),
-                location: snafu::location!(),
-            })?;
-
-        let schema_name_arr = schemas_struct
-            .column_by_name(FIELD_DB_SCHEMA_NAME)
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: format!("Missing {FIELD_DB_SCHEMA_NAME}"),
-                location: snafu::location!(),
-            })?
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: format!("Expected StringArray for {FIELD_DB_SCHEMA_NAME}"),
-                location: snafu::location!(),
-            })?;
-
-        let tables_list = schemas_struct
-            .column_by_name(FIELD_DB_SCHEMA_TABLES)
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: format!("Missing {FIELD_DB_SCHEMA_TABLES}"),
-                location: snafu::location!(),
-            })?
-            .as_any()
-            .downcast_ref::<LargeListArray>()
-            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                message: format!("Expected LargeListArray for {FIELD_DB_SCHEMA_TABLES}"),
-                location: snafu::location!(),
-            })?;
-
-        for sch_idx in sch_start..sch_end {
-            let sch_name = if schema_name_arr.is_null(sch_idx) {
-                None
-            } else {
-                Some(schema_name_arr.value(sch_idx).to_string())
-            };
-
-            if tables_list.is_null(sch_idx) {
-                continue;
-            }
-
-            let tbl_start = tables_list.value_offsets()[sch_idx] as usize;
-            let tbl_end = tables_list.value_offsets()[sch_idx + 1] as usize;
-
-            let tables_struct = tables_list
-                .values()
-                .as_any()
-                .downcast_ref::<StructArray>()
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: "Expected StructArray for table values".to_string(),
-                    location: snafu::location!(),
-                })?;
-
-            let tbl_name_arr = tables_struct
-                .column_by_name(FIELD_TABLE_NAME)
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: format!("Missing {FIELD_TABLE_NAME}"),
-                    location: snafu::location!(),
-                })?
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: format!("Expected StringArray for {FIELD_TABLE_NAME}"),
-                    location: snafu::location!(),
-                })?;
-
-            let cols_list = tables_struct
-                .column_by_name(FIELD_TABLE_COLUMNS)
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: format!("Missing {FIELD_TABLE_COLUMNS}"),
-                    location: snafu::location!(),
-                })?
-                .as_any()
-                .downcast_ref::<LargeListArray>()
-                .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                    message: format!("Expected LargeListArray for {FIELD_TABLE_COLUMNS}"),
-                    location: snafu::location!(),
-                })?;
-
-            for tbl_idx in tbl_start..tbl_end {
-                let tbl_name = if tbl_name_arr.is_null(tbl_idx) {
-                    None
-                } else {
-                    Some(tbl_name_arr.value(tbl_idx).to_string())
-                };
-
-                if cols_list.is_null(tbl_idx) {
-                    continue;
-                }
-
-                let col_start = cols_list.value_offsets()[tbl_idx] as usize;
-                let col_end = cols_list.value_offsets()[tbl_idx + 1] as usize;
-
-                let cols_struct = cols_list
-                    .values()
-                    .as_any()
-                    .downcast_ref::<StructArray>()
-                    .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                        message: format!("Expected StructArray for {FIELD_TABLE_COLUMNS} values"),
-                        location: snafu::location!(),
-                    })?;
-
-                // Pre-downcast all column arrays once per table.
-                macro_rules! col_arr {
-                    ($field:expr, $ty:ty) => {
-                        cols_struct
-                            .column_by_name($field)
-                            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                                message: format!("Missing column field {}", $field),
-                                location: snafu::location!(),
-                            })?
-                            .as_any()
-                            .downcast_ref::<$ty>()
-                            .ok_or_else(|| crate::api::error::OdbcError::InternalError {
-                                message: format!("Wrong array type for {}", $field),
-                                location: snafu::location!(),
-                            })?
-                    };
-                }
-
-                let col_name_arr = col_arr!(FIELD_COLUMN_NAME, StringArray);
-                let ordinal_arr = col_arr!(FIELD_COLUMN_ORDINAL_POSITION, Int32Array);
-                let logical_type_arr = col_arr!(FIELD_COLUMN_LOGICAL_TYPE, StringArray);
-                let precision_arr = col_arr!(FIELD_COLUMN_PRECISION, Int32Array);
-                let scale_arr = col_arr!(FIELD_COLUMN_SCALE, Int32Array);
-                let char_len_arr = col_arr!(FIELD_COLUMN_CHAR_LENGTH, Int64Array);
-                let byte_len_arr = col_arr!(FIELD_COLUMN_BYTE_LENGTH, Int64Array);
-                let nullable_arr = col_arr!(FIELD_COLUMN_NULLABLE, BooleanArray);
-                let col_def_arr = col_arr!(FIELD_COLUMN_DEF, StringArray);
-                let remarks_arr = col_arr!(FIELD_COLUMN_REMARKS, StringArray);
-
-                for col_idx in col_start..col_end {
-                    let col_name = if col_name_arr.is_null(col_idx) {
-                        None
-                    } else {
-                        Some(col_name_arr.value(col_idx).to_string())
-                    };
-                    let ordinal = ordinal_arr.value(col_idx);
-                    let logical_type = if logical_type_arr.is_null(col_idx) {
-                        ""
-                    } else {
-                        logical_type_arr.value(col_idx)
-                    };
-                    let precision = if precision_arr.is_null(col_idx) {
-                        None
-                    } else {
-                        Some(precision_arr.value(col_idx))
-                    };
-                    let scale = if scale_arr.is_null(col_idx) {
-                        None
-                    } else {
-                        Some(scale_arr.value(col_idx))
-                    };
-                    let char_length = if char_len_arr.is_null(col_idx) {
-                        None
-                    } else {
-                        Some(char_len_arr.value(col_idx))
-                    };
-                    let byte_length = if byte_len_arr.is_null(col_idx) {
-                        None
-                    } else {
-                        Some(byte_len_arr.value(col_idx))
-                    };
-                    let nullable = nullable_arr.value(col_idx);
-                    let col_def = if col_def_arr.is_null(col_idx) {
-                        None
-                    } else {
-                        Some(col_def_arr.value(col_idx).to_string())
-                    };
-                    let col_remarks = if remarks_arr.is_null(col_idx) {
-                        None
-                    } else {
-                        Some(remarks_arr.value(col_idx).to_string())
-                    };
-
-                    let field = rehydrate_field(
-                        logical_type,
-                        precision,
-                        scale,
-                        char_length,
-                        byte_length,
-                        nullable,
-                    );
-
-                    let data_type_val = sql_type_from_field(&field, numeric_settings)
-                        .ok()
-                        .map(|t| t.0.to_string());
-                    // TYPE_NAME (col 6) reports the Snowflake external / friendly
-                    // name (BOOLEAN, TIMESTAMP, VARIANT, STRUCT, ARRAY, GEOGRAPHY,
-                    // …) — NOT the SDK label from `type_name_from_field`, which is
-                    // the SQLColAttribute(SQL_DESC_TYPE_NAME) contract. SNOW-3899531.
-                    let type_name_val = Some(catalog_type_name_from_logical_type(logical_type));
-                    let col_size_val = column_size_from_field(&field, numeric_settings)
-                        .ok()
-                        .map(|s| s.to_string());
-                    let buf_len_val = octet_length_from_field(&field, numeric_settings)
-                        .ok()
-                        .map(|s| s.to_string());
-                    // DECIMAL_DIGITS: scale 0 is a valid, meaningful value for exact-numeric
-                    // columns (e.g. NUMBER(38,0)) — report it as "0", not NULL. The helper
-                    // returns Err for types where DECIMAL_DIGITS is inapplicable (→ NULL).
-                    let dec_digits_val = decimal_digits_from_field(&field, numeric_settings)
-                        .ok()
-                        .map(|s| s.to_string());
-                    // NUM_PREC_RADIX: only ever 2, 10, or inapplicable (→ NULL); 0 is never
-                    // a meaningful value, so collapsing 0 → NULL is harmless here.
-                    let num_prec_radix_val = num_prec_radix_from_field(&field, numeric_settings)
-                        .ok()
-                        .and_then(|s| if s == 0 { None } else { Some(s.to_string()) });
-                    let sql_data_type_val = verbose_sql_type_from_field(&field, numeric_settings)
-                        .ok()
-                        .map(|t| t.0.to_string());
-                    let sql_dt_sub_val =
-                        sql_datetime_sub_from_logical_type(logical_type).map(|s| s.to_string());
-                    let char_octet_val = match logical_type {
-                        "TEXT" | "BINARY" => octet_length_from_field(&field, numeric_settings)
-                            .ok()
-                            .map(|s| s.to_string()),
-                        _ => None,
-                    };
-
-                    let nullable_str = if nullable { "1" } else { "0" };
-                    let is_nullable_str = if nullable { "YES" } else { "NO" };
-                    // USER_DATA_TYPE: mirror DATA_TYPE (driver-specific; tests only assert presence).
-                    let user_data_type_val = data_type_val.clone();
-
-                    rows.push(FlatColumnRow {
-                        cat: cat_name.clone(),
-                        schem: sch_name.clone(),
-                        tbl: tbl_name.clone(),
-                        col_name,
-                        data_type: data_type_val,
-                        type_name: type_name_val,
-                        col_size: col_size_val,
-                        buf_len: buf_len_val,
-                        dec_digits: dec_digits_val,
-                        num_prec_radix: num_prec_radix_val,
-                        nullable: Some(nullable_str.to_string()),
-                        remarks: col_remarks,
-                        col_def,
-                        sql_data_type: sql_data_type_val,
-                        sql_dt_sub: sql_dt_sub_val,
-                        char_octet: char_octet_val,
-                        ordinal: Some(ordinal.to_string()),
-                        is_nullable: Some(is_nullable_str.to_string()),
-                        user_data_type: user_data_type_val,
-                    });
-                }
-            }
-        }
-    }
-
-    build_flat_columns_batch(schema, rows)
 }
 
 fn build_flat_columns_batch(
@@ -4983,6 +5031,36 @@ mod sqltables_tests {
     }
 
     #[test]
+    fn build_show_columns_sql_picks_tightest_exact_scope() {
+        assert_eq!(
+            build_show_columns_sql(Some("DB"), Some("SCH"), Some("TBL"), Some("C%")),
+            "SHOW COLUMNS LIKE 'C%' IN TABLE \"DB\".\"SCH\".\"TBL\""
+        );
+        assert_eq!(
+            build_show_columns_sql(Some("DB"), Some("SCH"), Some("T%"), None),
+            "SHOW COLUMNS IN SCHEMA \"DB\".\"SCH\""
+        );
+        assert_eq!(
+            build_show_columns_sql(Some("DB"), None, None, None),
+            "SHOW COLUMNS IN DATABASE \"DB\""
+        );
+        assert_eq!(
+            build_show_columns_sql(Some("DB%"), None, None, Some("ID")),
+            "SHOW COLUMNS LIKE 'ID' IN ACCOUNT"
+        );
+        // Escaped underscore is exact (is_exact_pattern recovers the literal).
+        assert_eq!(
+            build_show_columns_sql(
+                Some("SNOWFLAKE\\_SAMPLE\\_DATA"),
+                Some("TPCH\\_SF1"),
+                Some("ORDERS"),
+                None
+            ),
+            "SHOW COLUMNS IN TABLE \"SNOWFLAKE_SAMPLE_DATA\".\"TPCH_SF1\".\"ORDERS\""
+        );
+    }
+
+    #[test]
     fn build_like_clause_strips_escapes_for_coarse_pushdown() {
         assert_eq!(build_like_clause(None), "");
         assert_eq!(build_like_clause(Some("")), "");
@@ -5038,5 +5116,108 @@ mod sqltables_tests {
         assert!(!is_tables_empty_result_sql_state("22007"));
         // Keys matcher must stay narrower (no 02000).
         assert!(!is_object_not_found_sql_state("02000"));
+    }
+}
+
+#[cfg(test)]
+mod sqlcolumns_decode_tests {
+    use super::*;
+
+    #[test]
+    fn decoder_fixed_type() {
+        let json = r#"{"type":"FIXED","nullable":true,"fixed":true,"precision":38,"scale":0}"#;
+        let d = decode_data_type_json(json, "ID".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "FIXED");
+        assert_eq!(d.precision, Some(38));
+        assert_eq!(d.scale, Some(0));
+        assert!(d.nullable);
+        assert_eq!(d.char_length, None);
+        assert_eq!(d.byte_length, None);
+    }
+
+    #[test]
+    fn decoder_text_type_char_length_preferred() {
+        let json = r#"{"type":"TEXT","nullable":false,"precision":16777216,"scale":0,"length":16777216,"byteLength":16777216,"charLength":16777216}"#;
+        let d = decode_data_type_json(json, "NAME".to_string(), 2, None, None);
+        assert_eq!(d.logical_type, "TEXT");
+        assert_eq!(d.char_length, Some(16777216));
+        assert_eq!(d.byte_length, Some(16777216));
+        assert!(!d.nullable);
+    }
+
+    #[test]
+    fn decoder_text_type_falls_back_to_length() {
+        let json = r#"{"type":"TEXT","nullable":true,"length":255}"#;
+        let d = decode_data_type_json(json, "C".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "TEXT");
+        assert_eq!(d.char_length, Some(255));
+    }
+
+    #[test]
+    fn decoder_non_text_type_ignores_length() {
+        // `length` is a TEXT-only alias for charLength; non-TEXT types must not
+        // adopt it as char_length.
+        let json = r#"{"type":"BINARY","nullable":true,"length":8388608}"#;
+        let d = decode_data_type_json(json, "B".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "BINARY");
+        assert_eq!(d.char_length, None);
+    }
+
+    #[test]
+    fn decoder_boolean_type() {
+        let json = r#"{"type":"BOOLEAN","nullable":true}"#;
+        let d = decode_data_type_json(json, "FLAG".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "BOOLEAN");
+        assert_eq!(d.precision, None);
+        assert_eq!(d.scale, None);
+    }
+
+    #[test]
+    fn decoder_timestamp_ntz() {
+        let json = r#"{"type":"TIMESTAMP_NTZ","nullable":true,"precision":0,"scale":9}"#;
+        let d = decode_data_type_json(json, "TS".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "TIMESTAMP_NTZ");
+        assert_eq!(d.scale, Some(9));
+    }
+
+    #[test]
+    fn decoder_unknown_json_produces_unknown_logical_type() {
+        let d = decode_data_type_json("not valid json{{", "X".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "UNKNOWN");
+        assert!(d.nullable);
+    }
+
+    #[test]
+    fn decoder_overflowing_precision_and_scale_degrade_to_none() {
+        // precision/scale beyond i32::MAX must not wrap to a garbage i32 in
+        // release builds — the checked narrowing yields None (unknown) instead.
+        let json = r#"{"type":"FIXED","nullable":true,"precision":9999999999,"scale":9999999999}"#;
+        let d = decode_data_type_json(json, "BIG".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "FIXED");
+        assert_eq!(d.precision, None);
+        assert_eq!(d.scale, None);
+    }
+
+    #[test]
+    fn decoder_preserves_ordinal_and_identity() {
+        let json = r#"{"type":"FIXED","nullable":true,"precision":10,"scale":2}"#;
+        let d = decode_data_type_json(
+            json,
+            "AMT".to_string(),
+            5,
+            Some("0".to_string()),
+            Some("doc".to_string()),
+        );
+        assert_eq!(d.column_name, "AMT");
+        assert_eq!(d.ordinal_position, 5);
+        assert_eq!(d.column_def, Some("0".to_string()));
+        assert_eq!(d.remarks, Some("doc".to_string()));
+    }
+
+    #[test]
+    fn decoder_missing_nullable_defaults_true() {
+        let json = r#"{"type":"FIXED","precision":10,"scale":0}"#;
+        let d = decode_data_type_json(json, "N".to_string(), 1, None, None);
+        assert!(d.nullable);
     }
 }
