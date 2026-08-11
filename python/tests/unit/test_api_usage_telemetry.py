@@ -261,27 +261,39 @@ class TestCursorApiTelemetry:
         methods = _get_api_methods(mock_db_api)
         assert "SnowflakeCursor.close" in methods
 
-    def test_fetchone_sends_telemetry(self, cursor, mock_db_api):
-        # fetchone requires a prior execute — mock the iterator
+    def test_fetchone_does_not_send_telemetry(self, cursor, mock_db_api):
+        """fetchone is a hot path — intentionally not api_telemetry-tracked."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
         cursor._execute_result = MagicMock()
         cursor._iterator = iter([])
         cursor.fetchone()
 
-        methods = _get_api_methods(mock_db_api)
-        assert "SnowflakeCursor.fetchone" in methods
+        assert "SnowflakeCursor.fetchone" not in _get_api_methods(mock_db_api)
 
-    def test_fetchmany_sends_telemetry(self, cursor, mock_db_api):
-        """fetchmany() should send its own telemetry event."""
+    def test_fetchmany_does_not_send_telemetry(self, cursor, mock_db_api):
+        """fetchmany is a hot path — intentionally not api_telemetry-tracked."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
         mock_iterator = MagicMock()
         mock_iterator.fetch_many.return_value = [(1,), (2,)]
         cursor._execute_result = MagicMock()
         cursor._iterator = mock_iterator
         cursor.fetchmany(2)
 
-        methods = _get_api_methods(mock_db_api)
-        assert "SnowflakeCursor.fetchmany" in methods
+        assert "SnowflakeCursor.fetchmany" not in _get_api_methods(mock_db_api)
 
-    def test_dict_cursor_fetchone_uses_correct_class_name(self, connection, mock_db_api):
+    def test_fetchall_does_not_send_telemetry(self, cursor, mock_db_api):
+        """fetchall is a hot path — intentionally not api_telemetry-tracked."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        mock_iterator = MagicMock()
+        mock_iterator.fetch_all.return_value = [(1,), (2,)]
+        cursor._execute_result = MagicMock()
+        cursor._iterator = mock_iterator
+        cursor.fetchall()
+
+        assert "SnowflakeCursor.fetchall" not in _get_api_methods(mock_db_api)
+
+    def test_dict_cursor_fetchone_does_not_send_telemetry(self, connection, mock_db_api):
+        """DictCursor.fetchone is a hot path — intentionally not api_telemetry-tracked."""
         from snowflake.connector.cursor import DictCursor
 
         mock_db_api.telemetry_send_api_usage.reset_mock()
@@ -292,8 +304,7 @@ class TestCursorApiTelemetry:
         cur._iterator = iter([])
         cur.fetchone()
 
-        methods = _get_api_methods(mock_db_api)
-        assert "DictCursor.fetchone" in methods
+        assert "DictCursor.fetchone" not in _get_api_methods(mock_db_api)
 
 
 class TestApiTelemetryResetBehavior:
