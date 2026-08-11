@@ -211,10 +211,15 @@ class TestDescribeInternal:
         assert result[0].scale == 6
 
     def test_returns_none_for_no_columns(self, cursor, mock_core_client):
-        """_describe_internal() returns None when the statement produces no result set."""
+        """_describe_internal() returns None when the prepare result carries no columns.
+
+        Statement text is irrelevant here — the mocked prepare result drives the
+        outcome. A real DML describe does return a synthetic row-count column, so
+        this must not be read as "DML describes to None".
+        """
         self._setup_prepare(mock_core_client, columns=[])
 
-        assert cursor._describe_internal("INSERT INTO t VALUES (1)") is None
+        assert cursor._describe_internal("SELECT 1") is None
 
     def test_vector_dimension_populated(self, cursor, mock_core_client):
         """_describe_internal() propagates vector_dimension from the proto dimension field."""

@@ -2839,12 +2839,23 @@ class TestCursorDescribeInternal:
         assert result[3].name == "BOOL_COL"
         assert result[3].type_code == 13  # BOOLEAN
 
-    def test_returns_none_for_dml(self, function_connection):
-        """_describe_internal returns None for a DML statement that produces no result set."""
+    def test_returns_synthetic_row_count_column_for_dml(self, function_connection):
+        """_describe_internal describes a DML statement as its synthetic row-count column.
+
+        Legacy ``_describe_internal`` returns ``self._description`` unconditionally with
+        no DML special-casing, and the server's describe response for an INSERT carries a
+        single ``number of rows inserted`` column. Both drivers therefore return that
+        column rather than ``None`` — asserted here so a future DML branch in either
+        driver cannot silently diverge.
+        """
         with function_connection.cursor() as cur:
             cur.execute("CREATE OR REPLACE TEMP TABLE _test_di_none (x INT)")
             result = cur._describe_internal("INSERT INTO _test_di_none VALUES (1)")
-            assert result is None
+
+            assert result is not None
+            assert len(result) == 1
+            assert result[0].name.lower() == "number of rows inserted"
+            assert result[0].type_code == 0  # FIXED
 
     def test_v2_type_codes_match_describe(self, cursor):
         """V2 type_code and name match the V1 describe() output for the same query."""
