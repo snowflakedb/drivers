@@ -243,11 +243,11 @@ def test_put_files_12mx100(perf_test):
 - **PUT/GET tests**: `USE DATABASE {database}` is added to any provided `setup_queries`. This is required for `CREATE TEMPORARY STAGE` operations which need a database context.
 - PUT/GET tests use `test_type=PerfTestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
 - The `s3_download_url` parameter triggers automatic download of test files from S3 before test execution
-- **SELECT tests (Python, e2e only)**: pass `fetch_mode="fetchone"`, `"fetchall"`, or `"pandas"` to exercise a
+- **SELECT tests (Python)**: pass `fetch_mode="fetchone"`, `"fetchall"`, or `"pandas"` to exercise a
   different cursor fetch API instead of the default `fetchmany()` chunked loop (see
-  `tests/test_select_1M_fetchone.py`, `test_select_1M_fetchall.py`, `test_select_1M_pandas.py`). `"pandas"` uses
-  `cursor.fetch_pandas_all()` and requires the `pandas` extra, already installed in the Python driver image.
-  Not wired to the WireMock recorded-HTTP path.
+  `tests/test_select_1M_pandas.py`, `test_select_small_rows.py`, `test_select_mid_rows.py`).
+  `"pandas"` uses `cursor.fetch_pandas_all()` and requires the `pandas` extra, already installed
+  in the Python driver image. Works for both e2e and recorded-HTTP paths.
 - **SELECT tests (ODBC)**: pass `bind_mode="default"` to bind columns with `SQL_C_DEFAULT`
   (driver-chosen C type per SQL type; for Snowflake ODBC, `SQL_DECIMAL` defaults to CHAR)
   instead of forcing `SQL_C_CHAR`. Default-bind tests live in the same files as the CHAR
