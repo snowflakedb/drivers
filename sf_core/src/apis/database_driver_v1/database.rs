@@ -45,6 +45,20 @@ impl DatabaseDriverV1 {
         }
     }
 
+    pub(crate) async fn database_settings(
+        &self,
+        db_handle: Handle,
+    ) -> Result<ParamStore, ApiError> {
+        let db_ptr = self.databases.get_obj(db_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Database handle not found".to_string(),
+            }
+            .build()
+        })?;
+        let db = db_ptr.lock().await;
+        Ok(db.settings.clone())
+    }
+
     pub fn database_release(&self, db_handle: Handle) -> Result<(), ApiError> {
         match self.databases.delete_handle(db_handle) {
             true => Ok(()),
