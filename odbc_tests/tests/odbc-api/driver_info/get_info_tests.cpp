@@ -219,38 +219,41 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_VER", "[odbc-api]
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(verLen > 0);
 
+  const std::string ver(driverVer, static_cast<size_t>(verLen));
+  INFO("SQL_DRIVER_VER = '" << ver << "'");
+
   OLD_DRIVER_ONLY("BD#76") {
-    // Reference driver reports the version as `MM.mm.bbbb` with each
-    // field zero-padded (e.g. `03.17.0000`).
-    REQUIRE(std::count(driverVer, driverVer + verLen, '.') == 2);
+    // The reference driver reports an unpadded, three-component semver
+    // (e.g. `3.16.0`) — NOT the fixed-width `##.##.####` the ODBC spec
+    // prescribes. Assert only the dot count so the check tracks the
+    // reference driver's actual (unpadded) shape.
+    REQUIRE(std::count(ver.begin(), ver.end(), '.') == 2);
   }
   NEW_DRIVER_ONLY("BD#76") {
-    // New driver reports the Cargo package version verbatim: semver
-    // `M.m.p` with NO zero-padding (e.g. `4.0.0`). Assert the exact
-    // shape — three dot-separated, unpadded, non-negative integer
-    // components — so a regression to the old zero-padded `MM.mm.bbbb`
-    // format (e.g. `03.17.0000`) fails here instead of slipping past a
-    // bare dot-count check that both formats satisfy.
-    const std::string ver(driverVer, static_cast<size_t>(verLen));
-    int components = 0;
-    for (size_t start = 0; start <= ver.size();) {
+    // The driver zero-pads to the ODBC spec's fixed-width
+    // `MM.mm.bbbb` form (`##.##.####`): major/minor to two digits and the
+    // build field to four (e.g. `04.00.0000`). Assert the exact widths so a
+    // regression to the unpadded Cargo semver (e.g. `4.0.0`) fails here.
+    const size_t widths[] = {2, 2, 4};
+    const size_t fieldCount = sizeof(widths) / sizeof(widths[0]);
+    size_t start = 0;
+    for (size_t i = 0; i < fieldCount; ++i) {
       const size_t dot = ver.find('.', start);
-      const size_t end = (dot == std::string::npos) ? ver.size() : dot;
-      const std::string component = ver.substr(start, end - start);
-      INFO("version component '" << component << "' in '" << ver << "'");
-      // Non-empty and every char is a digit.
-      REQUIRE_FALSE(component.empty());
-      REQUIRE(std::all_of(component.begin(), component.end(), [](char c) { return c >= '0' && c <= '9'; }));
-      // Unpadded: a leading zero is only allowed when the component is
-      // exactly "0" (rejects "03", "0000").
-      REQUIRE((component.size() == 1 || component.front() != '0'));
-      ++components;
-      if (dot == std::string::npos) {
-        break;
+      const bool isLast = (i + 1 == fieldCount);
+      // Every field except the last must be followed by a '.'.
+      if (!isLast) {
+        REQUIRE(dot != std::string::npos);
       }
-      start = dot + 1;
+      const size_t end = isLast ? ver.size() : dot;
+      const std::string component = ver.substr(start, end - start);
+      INFO("version component '" << component << "'");
+      // Fixed width, all digits.
+      REQUIRE(component.size() == widths[i]);
+      REQUIRE(std::all_of(component.begin(), component.end(), [](char c) { return c >= '0' && c <= '9'; }));
+      start = end + 1;
     }
-    REQUIRE(components == 3);
+    // Exactly three components: no trailing content past the build field.
+    REQUIRE(std::count(ver.begin(), ver.end(), '.') == 2);
   }
 
   SQLDisconnect(dbc_handle());

@@ -299,6 +299,7 @@ message WrapperIdentity {
   optional string language_runtime = 3;
   optional string language_version = 4;
   optional string language_compiler = 5;
+  optional string release_type = 6;
 }
 
 message ConnectionInitRequest {

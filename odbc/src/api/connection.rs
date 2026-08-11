@@ -38,6 +38,7 @@ use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
 use crate::api::odbc_installer::resolve_driver_path;
 use crate::api::runtime::global;
+use crate::api::utils::zero_padded_driver_version;
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcError, OdbcResult, conn_from_handle, env_from_handle,
     types::{AccessMode, AutocommitValue, ConnectionAttribute, Dbc, StatementState},
@@ -564,11 +565,19 @@ fn connect_with_params(
             db_handle: Some(db_handle),
             wrapper_identity: Some(WrapperIdentity {
                 driver_name: Some(ODBC_DRIVER_NAME.to_string()),
+                // Report the verbatim Cargo semver to Snowflake (telemetry /
+                // server-side driver identification). Do NOT zero-pad here —
+                // the `MM.mm.bbbb` padding is a legacy quirk of the ODBC
+                // `SQLGetInfo(SQL_DRIVER_VER)` surface only (see
+                // `zero_padded_driver_version`).
                 driver_version: Some(ODBC_DRIVER_VERSION.to_string()),
                 // Set at compile time in `build.rs` (`SF_ODBC_*`) from Cargo / rustc.
                 language_runtime: Some(env!("SF_ODBC_WRAPPER_LANGUAGE_RUNTIME").to_string()),
                 language_version: Some(env!("SF_ODBC_BUILD_RUST_SEMVER").to_string()),
                 language_compiler: None,
+                // Set from `[package.metadata.odbc] release_type` in Cargo.toml when present;
+                // absent on GA builds so the field is not sent to the backend.
+                release_type: option_env!("SF_ODBC_RELEASE_TYPE").map(str::to_string),
             }),
         })
         .await?;
@@ -1854,7 +1863,7 @@ pub fn get_info<E: OdbcEncoding>(
             let path = resolve_driver_path(driver_section.as_deref(), dsn_name.as_deref());
             write_str(&path);
         }
-        InfoType::DriverVer => write_str(ODBC_DRIVER_VERSION),
+        InfoType::DriverVer => write_str(&zero_padded_driver_version(ODBC_DRIVER_VERSION)),
         InfoType::DbmsName => write_str("Snowflake"),
         InfoType::DatabaseName => {
             let db = current_database(&dbc)?;

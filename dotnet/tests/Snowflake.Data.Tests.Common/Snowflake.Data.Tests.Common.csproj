@@ -17,7 +17,7 @@
   <Import Project="targets/Snowflake.Data.Tests.xunit2.targets" Condition="'$(OldXunit)' == 'True'" />
 
   <ItemGroup>
-    <PackageReference Include="FluentAssertions" Version="8.10.0" />
+    <PackageReference Include="FluentAssertions" Version="[7.2.2]" />
     <PackageReference Include="Snowflake.Data" Version="*" />
   </ItemGroup>
 

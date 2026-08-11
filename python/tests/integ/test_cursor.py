@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from snowflake.connector.cursor import QueryResultStats, ResultMetadataV2, SnowflakeCursor
+from snowflake.connector.cursor import QueryResultStats, ResultMetadata, ResultMetadataV2, SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import NEW_DRIVER_ONLY, is_new_driver
 from tests.conftest import run_against_sync_and_async, skip_async, with_paramstyle
@@ -2811,14 +2811,16 @@ class TestRequestIdIsolation:
 class TestCursorDescribeInternal:
     """Integration tests for Cursor._describe_internal — Snowpark V2 describe path.
 
-    All tests run against the real Snowflake server (no mocks).  The module-level
-    ``pytestmark = run_against_sync_and_async`` already exercises every test
-    against both the sync and async cursor backends without per-class marking.
+    All tests run against the real Snowflake server (no mocks). ``_describe_internal``
+    is sync-only (Snowpark's schema_utils never calls it through the async cursor),
+    so this class opts out of the module-level async parametrization.
 
     Focus: properties that only a live server can confirm — ``vector_dimension``
     propagation end-to-end, ``display_size``/``internal_size`` proto-field mapping
     (BD#55), ``_to_result_metadata_v1()`` round-trip, and cursor-state side effects.
     """
+
+    pytestmark = skip_async("_describe_internal is sync-only; Snowpark never calls it through the async cursor")
 
     def test_returns_result_metadata_v2(self, cursor):
         """_describe_internal returns list[ResultMetadataV2] for a multi-column query."""
@@ -2837,12 +2839,22 @@ class TestCursorDescribeInternal:
         assert result[3].name == "BOOL_COL"
         assert result[3].type_code == 13  # BOOLEAN
 
-    def test_returns_none_for_dml(self, function_connection):
-        """_describe_internal returns None for a DML statement that produces no result set."""
+    def test_returns_dml_status_column(self, function_connection):
+        """_describe_internal describes a DML statement's status column.
+
+        INSERT/UPDATE/DELETE always describe to a single status column (e.g.
+        "number of rows inserted") on the server — there is no SQL statement
+        that describes to zero columns, so this covers the DML case rather
+        than a None result (the None branch is exercised in unit tests via
+        a mocked empty-columns prepare result).
+        """
         with function_connection.cursor() as cur:
-            cur.execute("CREATE OR REPLACE TEMP TABLE _test_di_none (x INT)")
-            result = cur._describe_internal("INSERT INTO _test_di_none VALUES (1)")
-            assert result is None
+            cur.execute("CREATE OR REPLACE TEMP TABLE _test_di_dml (x INT)")
+            result = cur._describe_internal("INSERT INTO _test_di_dml VALUES (1)")
+
+            assert result is not None
+            assert len(result) == 1
+            assert result[0].name == "number of rows inserted"
 
     def test_v2_type_codes_match_describe(self, cursor):
         """V2 type_code and name match the V1 describe() output for the same query."""
@@ -2881,25 +2893,21 @@ class TestCursorDescribeInternal:
     def test_display_size_and_internal_size_for_varchar(self, cursor):
         """display_size carries char length; internal_size carries byte length (BD#55).
 
-        Also confirms BD#55: the V1 describe() path returns display_size=None while
-        the V2 _describe_internal path returns display_size=100 for the same column.
+        BD#55 documents legacy's *own* ResultMetadataV2 (JSON describe path), which
+        always left display_size=None — not this driver's V1 describe(), which has
+        populated display_size from character length since the string-family guard
+        was added (both V1 and V2 share the same guard in from_column).
         """
         sql = "SELECT 'x'::VARCHAR(100) AS s"
         v2_result = cursor._describe_internal(sql)
-        v1_result = cursor.describe(sql)
 
-        assert v2_result is not None and v1_result is not None
+        assert v2_result is not None
         assert v2_result[0].display_size == 100
         assert v2_result[0].internal_size is not None
         assert v2_result[0].internal_size >= 100  # byte length ≥ char length
 
-        # BD#55: V1 describe() always returns display_size=None.
-        assert v1_result[0].display_size is None
-
     def test_to_v1_round_trip(self, cursor):
         """_to_result_metadata_v1() produces ResultMetadata matching describe() output."""
-        from snowflake.connector._internal.cursor.result_metadata import ResultMetadata
-
         sql = "SELECT 1::INTEGER AS a, 3.14::FLOAT AS b"
         v2_result = cursor._describe_internal(sql)
         v1_result = cursor.describe(sql)

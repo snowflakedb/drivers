@@ -15,6 +15,9 @@ odbc_api_version = "03.80"
 # Format is "<major>.<minor>.<patch>" (e.g. "0.0.1").
 # This is to be removed and the package.version used after moving into the PuPr
 odbc_preview_version = "0.0.9"
+# Optional: release type for pre-release builds sent as CLIENT_ENVIRONMENT.RELEASE_TYPE.
+# Set to e.g. "rc1" or "rc2" when cutting a PuPr RC build; leave commented-out for GA builds.
+release_type = "prpr-0.0.9"
 
 [lib]
 name = "sfodbc"
@@ -29,6 +32,7 @@ odbc-sys = "0.25.1"
 arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
 chrono = "0.4.43"
 base64 = "0.22.1"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 libc = "0.2"
 parking_lot = { version = "0.12.5", features = ["arc_lock"] }

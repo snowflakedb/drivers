@@ -45,6 +45,7 @@ impl Connection {
                         language_runtime: "nodejs".to_string(),
                         language_version: "24.0.0".to_string(),
                         language_compiler: None,
+                        release_type: None,
                     },
                 )
                 .await?;

@@ -374,6 +374,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             runtime_name: login_parameters.client_info.runtime_name.clone(),
             compiler: login_parameters.client_info.compiler.clone(),
             os_details: login_parameters.client_info.os_details.clone(),
+            release_type: login_parameters.client_info.release_type.clone(),
         },
         ..Default::default()
     }

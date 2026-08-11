@@ -940,6 +940,13 @@ impl DatabaseDriverV1 {
                         Setting::String(compiler),
                     );
                 }
+                if let Some(release_type) = identity.release_type.clone() {
+                    inject_if_absent(
+                        &mut conn.connection_seed,
+                        "client_release_type",
+                        Setting::String(release_type),
+                    );
+                }
 
                 conn.wrapper_identity = Some(identity);
                 Ok(())
@@ -1017,6 +1024,9 @@ pub struct WrapperIdentity {
     pub language_version: String,
     /// `None` means compiler info is not applicable for this language.
     pub language_compiler: Option<String>,
+    /// Release type for pre-release builds (e.g. `"rc1"`, `"rc2"`).
+    /// `None` on GA builds; sent as `CLIENT_ENVIRONMENT.RELEASE_TYPE` when set.
+    pub release_type: Option<String>,
 }
 
 pub struct Connection {

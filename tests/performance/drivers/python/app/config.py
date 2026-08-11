@@ -29,8 +29,11 @@ class TestConfig:
         self.setup_queries_json = os.getenv("SETUP_QUERIES")
 
         self.fetch_mode = os.getenv("FETCH_MODE", "fetchmany")
-        if self.fetch_mode not in ("fetchmany", "fetchone", "fetchall", "pandas"):
-            print(f"ERROR: Invalid fetch mode '{self.fetch_mode}'. Supported: fetchmany, fetchone, fetchall, pandas")
+        if self.fetch_mode not in ("fetchmany", "fetchone", "fetchall", "pandas", "arrow_batches"):
+            print(
+                f"ERROR: Invalid fetch mode '{self.fetch_mode}'. "
+                "Supported: fetchmany, fetchone, fetchall, pandas, arrow_batches"
+            )
             sys.exit(1)
 
         if not all([self.sql_command, self.test_name, self.params_json]):

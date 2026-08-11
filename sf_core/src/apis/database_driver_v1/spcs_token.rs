@@ -2,10 +2,11 @@ use std::path::Path;
 
 use crate::env_vars;
 use crate::fs_adapter::FsAdapter;
+use crate::sensitive::SensitiveString;
 
 const DEFAULT_SPCS_TOKEN_PATH: &str = "/snowflake/session/spcs_token";
 
-pub(crate) fn read_spcs_token(fs: &dyn FsAdapter) -> Option<String> {
+pub(crate) fn read_spcs_token(fs: &dyn FsAdapter) -> Option<SensitiveString> {
     std::env::var_os(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS)?;
 
     let path = Path::new(DEFAULT_SPCS_TOKEN_PATH);
@@ -16,7 +17,7 @@ pub(crate) fn read_spcs_token(fs: &dyn FsAdapter) -> Option<String> {
             if trimmed.is_empty() {
                 None
             } else {
-                Some(trimmed)
+                Some(SensitiveString::from(trimmed))
             }
         }
         Err(e) => {
@@ -50,7 +51,10 @@ mod tests {
             env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS,
             Some("true"),
             || {
-                assert_eq!(read_spcs_token(&fs).unwrap(), "my-spcs-token");
+                assert_eq!(
+                    read_spcs_token(&fs).unwrap().reveal().as_str(),
+                    "my-spcs-token"
+                );
             },
         );
     }
@@ -75,6 +79,21 @@ mod tests {
             Some("true"),
             || {
                 assert!(read_spcs_token(&fs).is_none());
+            },
+        );
+    }
+
+    #[test]
+    fn should_redact_spcs_token_in_debug_output() {
+        let fs = MockFs::new().with_file(DEFAULT_SPCS_TOKEN_PATH, "secret-spcs-token");
+        temp_env::with_var(
+            env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS,
+            Some("true"),
+            || {
+                let token = read_spcs_token(&fs).unwrap();
+                let debug_output = format!("{token:?}");
+                assert!(!debug_output.contains("secret-spcs-token"));
+                assert!(debug_output.contains("****"));
             },
         );
     }
