@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from snowflake.connector.cursor import QueryResultStats, ResultMetadataV2, SnowflakeCursor
+from snowflake.connector.cursor import QueryResultStats, ResultMetadata, ResultMetadataV2, SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import NEW_DRIVER_ONLY, is_new_driver
 from tests.conftest import run_against_sync_and_async, skip_async, with_paramstyle
@@ -2935,8 +2935,6 @@ class TestCursorDescribeInternal:
 
     def test_to_v1_round_trip(self, cursor):
         """_to_result_metadata_v1() produces ResultMetadata matching describe() output."""
-        from snowflake.connector._internal.cursor.result_metadata import ResultMetadata
-
         sql = "SELECT 1::INTEGER AS a, 3.14::FLOAT AS b"
         v2_result = cursor._describe_internal(sql)
         v1_result = cursor.describe(sql)
