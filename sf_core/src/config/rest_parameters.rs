@@ -106,6 +106,9 @@ pub struct ClientInfo {
     pub runtime_version: Option<String>,
     /// Wrapper compiler info (e.g. "Clang 13.0.0 ..."). Only set by language wrappers.
     pub compiler: Option<String>,
+    /// Release type for builds (e.g. `"rc1"`, `"rc2"`). Only set by language wrappers.
+    /// `None` on GA builds; sent as `CLIENT_ENVIRONMENT.RELEASE_TYPE` when set.
+    pub release_type: Option<String>,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
     pub proxy_config: ProxyConfig,
@@ -146,6 +149,9 @@ impl ClientInfo {
             compiler: settings
                 .get_string("client_compiler")
                 .and_then(|s| if s.trim().is_empty() { None } else { Some(s) }),
+            release_type: settings
+                .get_string("client_release_type")
+                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) }),
             crl_config,
             tls_config,
             proxy_config,
@@ -176,6 +182,7 @@ pub mod test_fixtures {
             runtime_name: None,
             runtime_version: None,
             compiler: None,
+            release_type: None,
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::insecure(),
             proxy_config: crate::tls::config::ProxyConfig::default(),

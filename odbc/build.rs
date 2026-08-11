@@ -12,6 +12,9 @@ fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let odbc_api_version = read_odbc_metadata(&manifest_dir, "odbc_api_version");
     println!("cargo:rustc-env=SF_ODBC_API_VER={odbc_api_version}");
+    if let Some(release_type) = try_read_odbc_metadata(&manifest_dir, "release_type") {
+        println!("cargo:rustc-env=SF_ODBC_RELEASE_TYPE={release_type}");
+    }
     println!("cargo:rerun-if-changed=Cargo.toml");
 
     #[cfg(not(target_os = "windows"))]
@@ -94,7 +97,22 @@ fn main() {
     }
 }
 
+/// Reads a required key from `[package.metadata.odbc]`, panicking if it is absent.
 fn read_odbc_metadata(manifest_dir: &str, key: &str) -> String {
+    try_read_odbc_metadata(manifest_dir, key).unwrap_or_else(|| {
+        let cargo_toml_path = std::path::Path::new(manifest_dir).join("Cargo.toml");
+        panic!(
+            "`{key}` not found in [package.metadata.odbc] of {}",
+            cargo_toml_path.display()
+        )
+    })
+}
+
+/// Reads an optional key from `[package.metadata.odbc]`, returning `None` when the key is
+/// absent or its value is an empty string. Panics only when the value is present but not a
+/// quoted string. Shared single parser for both required ([`read_odbc_metadata`]) and
+/// optional (e.g. `release_type`) metadata lookups.
+fn try_read_odbc_metadata(manifest_dir: &str, key: &str) -> Option<String> {
     const SECTION: &str = "[package.metadata.odbc]";
 
     let cargo_toml_path = std::path::Path::new(manifest_dir).join("Cargo.toml");
@@ -125,14 +143,16 @@ fn read_odbc_metadata(manifest_dir: &str, key: &str) -> String {
             .and_then(|s| s.strip_suffix('"'))
             .or_else(|| value.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
         {
-            return stripped.to_string();
+            let stripped = stripped.trim();
+            return if stripped.is_empty() {
+                None
+            } else {
+                Some(stripped.to_owned())
+            };
         }
         panic!("`{key}` in {SECTION} must be a quoted string, got `{value}`");
     }
-    panic!(
-        "`{key}` not found in {SECTION} of {}",
-        cargo_toml_path.display()
-    );
+    None
 }
 
 #[cfg(target_os = "windows")]

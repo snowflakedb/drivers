@@ -8,6 +8,7 @@ fn test_identity() -> WrapperIdentity {
         language_runtime: "CPython".to_string(),
         language_version: "3.12.1".to_string(),
         language_compiler: Some("GCC 13.2.0".to_string()),
+        release_type: Some("rc1".to_string()),
     }
 }
 
@@ -32,6 +33,7 @@ async fn set_then_get_roundtrips() {
     assert_eq!(identity.language_runtime, "CPython");
     assert_eq!(identity.language_version, "3.12.1");
     assert_eq!(identity.language_compiler, Some("GCC 13.2.0".to_string()));
+    assert_eq!(identity.release_type, Some("rc1".to_string()));
 }
 
 #[tokio::test]
