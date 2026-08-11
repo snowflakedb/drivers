@@ -485,6 +485,22 @@ pub fn describe_col<E: OdbcEncoding>(
 }
 
 // =============================================================================
+/// Render a semver package version as the ODBC `MM.mm.bbbb` string that
+/// `SQLGetInfo(SQL_DRIVER_VER)` must return: major and minor zero-padded to two
+/// digits and the build field to four (e.g. `4.0.0` -> `04.00.0000`).
+pub(crate) fn zero_padded_driver_version(version: &str) -> String {
+    fn leading_number(part: Option<&str>) -> u32 {
+        part.and_then(|p| p.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|digits| digits.parse::<u32>().ok())
+            .unwrap_or(0)
+    }
+    let mut parts = version.split('.');
+    let major = leading_number(parts.next());
+    let minor = leading_number(parts.next());
+    let build = leading_number(parts.next());
+    format!("{major:02}.{minor:02}.{build:04}")
+}
+
 // Tests
 // =============================================================================
 
@@ -722,5 +738,25 @@ mod tests {
     fn escape_like_wildcards_escapes_percent_and_backslash() {
         assert_eq!(escape_like_wildcards("DB%1"), "DB\\%1");
         assert_eq!(escape_like_wildcards("A\\B"), "A\\\\B");
+    }
+
+    #[test]
+    fn zero_padded_driver_version_matches_legacy_mm_mm_bbbb_format() {
+        // The reference driver reported SQL_DRIVER_VER as `MM.mm.bbbb`
+        // (##.##.#### per the ODBC spec); the crate's semver is zero-padded to
+        // match.
+        assert_eq!(zero_padded_driver_version("4.0.0"), "04.00.0000");
+        assert_eq!(zero_padded_driver_version("3.17.0"), "03.17.0000");
+        assert_eq!(zero_padded_driver_version("12.34.5678"), "12.34.5678");
+    }
+
+    #[test]
+    fn zero_padded_driver_version_ignores_prerelease_and_missing_fields() {
+        // Pre-release / build metadata on a component contributes only its
+        // leading digits, and absent components default to zero.
+        assert_eq!(zero_padded_driver_version("4.0.0-rc1"), "04.00.0000");
+        assert_eq!(zero_padded_driver_version("4.1.2+build.9"), "04.01.0002");
+        assert_eq!(zero_padded_driver_version("4"), "04.00.0000");
+        assert_eq!(zero_padded_driver_version(""), "00.00.0000");
     }
 }
