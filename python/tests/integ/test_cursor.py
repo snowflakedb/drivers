@@ -2892,22 +2892,32 @@ class TestCursorDescribeInternal:
         assert result[0].vector_dimension == 3
 
     def test_display_size_and_internal_size_for_varchar(self, cursor):
-        """display_size carries char length; internal_size carries byte length (BD#55).
+        """display_size/internal_size map the proto length and byte_length fields (BD#55).
 
-        Also confirms BD#55: the V1 describe() path returns display_size=None while
-        the V2 _describe_internal path returns display_size=100 for the same column.
+        UD routes the char count to ``display_size`` and the byte count to
+        ``internal_size``; legacy never populates ``display_size`` and reports the char
+        count as ``internal_size``. The mapping lives in ``from_column``, which both the
+        V1 ``describe()`` and V2 ``_describe_internal()`` views share, so both are
+        asserted here.
         """
         sql = "SELECT 'x'::VARCHAR(100) AS s"
         v2_result = cursor._describe_internal(sql)
         v1_result = cursor.describe(sql)
 
         assert v2_result is not None and v1_result is not None
-        assert v2_result[0].display_size == 100
-        assert v2_result[0].internal_size is not None
-        assert v2_result[0].internal_size >= 100  # byte length ≥ char length
 
-        # BD#55: V1 describe() always returns display_size=None.
-        assert v1_result[0].display_size is None
+        if NEW_DRIVER_ONLY("BD#55"):
+            # proto `length` (chars) -> display_size, `byte_length` -> internal_size.
+            assert v2_result[0].display_size == 100
+            assert v2_result[0].internal_size == 400  # UTF-8, 4 bytes/char
+            assert v1_result[0].display_size == 100
+            assert v1_result[0].internal_size == 400
+        else:
+            # JSON `length` (chars) -> internal_size; display_size is never populated.
+            assert v2_result[0].display_size is None
+            assert v2_result[0].internal_size == 100
+            assert v1_result[0].display_size is None
+            assert v1_result[0].internal_size == 100
 
     def test_to_v1_round_trip(self, cursor):
         """_to_result_metadata_v1() produces ResultMetadata matching describe() output."""
