@@ -2709,8 +2709,7 @@ class TestRequestIdIsolation:
 
     N_CURSORS = 8
 
-    def test_request_id_is_none_before_execute(self, connection):
-        cursor = connection.cursor()
+    def test_request_id_is_none_before_execute(self, cursor):
         assert cursor._request_id is None
 
     def test_request_id_is_populated_after_execute(self, cursor):
@@ -2748,9 +2747,9 @@ class TestRequestIdIsolation:
         """
 
         def run_cursor(_):
-            cur = connection.cursor()
-            cur.execute("SELECT 1")
-            return cur._request_id, cur.sfqid
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
+                return cur._request_id, cur.sfqid
 
         with ThreadPoolExecutor(max_workers=self.N_CURSORS) as pool:
             futures = [pool.submit(run_cursor, i) for i in range(self.N_CURSORS)]
@@ -2789,25 +2788,24 @@ class TestRequestIdIsolation:
         because no new submission was made — only the server-issued sfqid matters
         for result retrieval.
         """
-        cur1 = connection.cursor()
-        cur1.execute("SELECT 1")
-        qid = cur1.sfqid
-        assert qid is not None
+        with connection.cursor() as cur1, connection.cursor() as cur2:
+            cur1.execute("SELECT 1")
+            qid = cur1.sfqid
+            assert qid is not None
 
-        cur2 = connection.cursor()
-        cur2.get_results_from_sfqid(qid)
-        assert cur2._request_id is None, (
-            f"get_results_from_sfqid must not populate _request_id; got {cur2._request_id!r}"
-        )
+            cur2.get_results_from_sfqid(qid)
+            assert cur2._request_id is None, (
+                f"get_results_from_sfqid must not populate _request_id; got {cur2._request_id!r}"
+            )
 
     @pytest.mark.skip_async
     def test_request_id_populated_after_execute_async(self, connection):
         """execute_async sets _request_id from StatementExecuteAsyncResponse."""
-        cursor = connection.cursor()
-        cursor.execute_async("SELECT 1")
-        assert cursor._request_id is not None, "_request_id must be set after execute_async"
-        uuid.UUID(cursor._request_id)  # raises ValueError if not a valid UUID
-        assert cursor._request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"
+        with connection.cursor() as cursor:
+            cursor.execute_async("SELECT 1")
+            assert cursor._request_id is not None, "_request_id must be set after execute_async"
+            uuid.UUID(cursor._request_id)  # raises ValueError if not a valid UUID
+            assert cursor._request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"
 
 
 class TestCursorDescribeInternal:
