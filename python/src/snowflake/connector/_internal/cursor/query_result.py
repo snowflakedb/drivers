@@ -128,12 +128,15 @@ class QueryResult:
     def from_result_set_response(
         response: ResultSetResponse,
         query: str | None = None,
+        request_id: str | None = None,
     ) -> QueryResult:
         """Create QueryResult from a ResultSetResponse (metadata only).
 
         Args:
             response: ResultSetResponse containing descriptor metadata.
             query: Optional query text (not available in proto, must be passed separately).
+            request_id: Optional submission requestId (not carried on ResultSetResponse,
+                must be passed separately by callers that submitted the query).
 
         Returns:
             QueryResult instance with metadata populated.
@@ -144,6 +147,7 @@ class QueryResult:
             description=ResultMetadata.create_description(descriptor),
             sqlstate=extract_sqlstate(descriptor),
             sfqid=descriptor.query_id if descriptor.query_id else None,
+            request_id=request_id,
             query=query,
             rowcount=extract_rowcount(descriptor),
             is_file_transfer=(

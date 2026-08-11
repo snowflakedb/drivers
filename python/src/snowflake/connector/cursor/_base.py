@@ -260,11 +260,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             request_id = response.request_id or None
 
             if response.HasField("multi"):
-                self._handle_multi_statement_response(response.multi, query)
+                self._handle_multi_statement_response(response.multi, query, request_id)
             else:
-                self._apply_result_set(response.single, query)
-
-            self._query_result.request_id = request_id
+                self._apply_result_set(response.single, query, request_id)
 
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
@@ -326,22 +324,26 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             self._query_result = QueryResult.from_programming_error(exc)
             raise
 
-    def _handle_multi_statement_response(self, result: MultiStatementResult, query: str) -> None:
+    def _handle_multi_statement_response(
+        self, result: MultiStatementResult, query: str, request_id: str | None
+    ) -> None:
         self._multi_statement = MultiStatementQueryResultState.from_result(result)
 
         # Edge case: empty multi-statement result
         if self._multi_statement is None:
-            self._query_result = QueryResult(query=query)
+            self._query_result = QueryResult(query=query, request_id=request_id)
             return
 
         first_qid = self._multi_statement.advance()  # always non-None: from_result() guarantees non-empty children
         # already populate cursor with first child query results
         rs_response = self._fetch_result_set_by_query_id(first_qid)  # type: ignore[arg-type]
-        self._apply_result_set(rs_response, query)
+        self._apply_result_set(rs_response, query, request_id)
 
-    def _apply_result_set(self, rs_response: ResultSetResponse, query: str | None) -> None:
+    def _apply_result_set(
+        self, rs_response: ResultSetResponse, query: str | None, request_id: str | None = None
+    ) -> None:
         self._result_set.replace(rs_response.result_set_handle)
-        self._query_result = QueryResult.from_result_set_response(rs_response, query)
+        self._query_result = QueryResult.from_result_set_response(rs_response, query, request_id)
 
     def _fetch_result_set_by_query_id(self, query_id: str) -> ResultSetResponse:
         """Fetch a ResultSetResponse (handle + descriptor) for a given query ID."""
