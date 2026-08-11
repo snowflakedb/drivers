@@ -58,29 +58,23 @@ pub struct ResultSetInfo {
 }
 
 /// Result of executing a query (maps to proto ExecuteQueryResponse).
+///
+/// `request_id` is the client-generated UUID sent as `?requestId=` on the
+/// submission HTTP request, exposed to language wrappers via
+/// `ExecuteQueryResponse.request_id` so Snowpark can log it. It is `None` only
+/// on paths that never submitted the query themselves — `connection_get_query_result`
+/// fetches a result by query ID and has no submission UUID to report.
 pub enum ExecuteQueryResult {
-    Single(ResultSetInfo),
+    Single {
+        info: ResultSetInfo,
+        request_id: Option<uuid::Uuid>,
+    },
     Multi {
         parent: ResultSetDescriptor,
         query_ids: Vec<String>,
         statement_type_ids: Vec<i64>,
+        request_id: Option<uuid::Uuid>,
     },
-}
-
-/// `ExecuteQueryResult` paired with the client-generated request UUID that was
-/// sent as `?requestId=` on the submission HTTP request. Exposed to language
-/// wrappers via `ExecuteQueryResponse.request_id` so Snowpark can log it.
-///
-/// Every path through `execute_query_internal` generates a UUID (both Blocking
-/// and Async). `connection_get_query_result` is the only path without one, and
-/// it returns `ExecuteQueryResult` directly — never `ExecuteQueryOutcome`.
-///
-/// Callers that receive an `ExecuteQueryOutcome` must forward `request_id`
-/// into whatever result type they produce — dropping it silently leaves
-/// that call path unable to correlate its submission with a response.
-pub struct ExecuteQueryOutcome {
-    pub result: ExecuteQueryResult,
-    pub request_id: uuid::Uuid,
 }
 
 #[derive(Clone)]
@@ -482,18 +476,23 @@ impl DatabaseDriverV1 {
     /// Builds an `ExecuteQueryResult` from pre-resolved `RowsetData`.
     ///
     /// Callers must resolve PUT/GET transfers and convert `Data` into `RowsetData`
-    /// before calling this method.
+    /// before calling this method. `request_id` is the submission UUID, or `None`
+    /// for callers that did not submit the query themselves.
     pub(super) fn build_execute_result(
         &self,
         rowset_data: RowsetData,
         descriptor: ResultSetDescriptor,
         reader_ctx: ReaderContext,
+        request_id: Option<uuid::Uuid>,
     ) -> ExecuteQueryResult {
         let result_set_handle = self.create_result_set(descriptor.clone(), rowset_data, reader_ctx);
-        ExecuteQueryResult::Single(ResultSetInfo {
-            handle: result_set_handle,
-            descriptor,
-        })
+        ExecuteQueryResult::Single {
+            info: ResultSetInfo {
+                handle: result_set_handle,
+                descriptor,
+            },
+            request_id,
+        }
     }
 
     /// Creates a ResultSet and registers it in the handle manager.

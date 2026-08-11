@@ -89,14 +89,14 @@ impl Connection {
         let stmt_handle = DRIVER.statement_new(self.handle).map_err(to_napi_err)?;
         Ok(Statement::from_pending(Some(stmt_handle), async move {
             DRIVER.statement_set_sql_query(stmt_handle, query).await?;
-            let outcome = DRIVER
+            let result = DRIVER
                 .statement_execute_query(stmt_handle, None, None)
                 .await?;
             let _ = DRIVER.statement_release(stmt_handle);
             // Node.js does not currently surface request_id to its callers (unlike
             // Python's cursor._request_id property) — no consumer needs it yet, so
-            // it's intentionally discarded here rather than an oversight.
-            Ok(outcome.result)
+            // the `request_id` carried on the result is intentionally ignored.
+            Ok(result)
         }))
     }
 

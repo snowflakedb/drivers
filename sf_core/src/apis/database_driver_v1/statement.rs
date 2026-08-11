@@ -11,8 +11,8 @@ use super::inflight::{
 use super::multistatement;
 use super::query::{StageInfoRefreshContext, perform_put_get_transfer};
 use super::result_set::{
-    ColumnMetadata, ExecuteQueryOutcome, ExecuteQueryResult, fetch_query_response_data,
-    resolve_reader_ctx, response_to_descriptor,
+    ColumnMetadata, ExecuteQueryResult, fetch_query_response_data, resolve_reader_ctx,
+    response_to_descriptor,
 };
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, resolve_options,
@@ -219,13 +219,17 @@ impl DatabaseDriverV1 {
     pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
         let session_id = self.session_id_for_stmt(stmt_handle).await;
         async {
-            let outcome = self
+            // Multi-statement query prepare is not supported. `request_id` is
+            // always `Some` here — `execute_query_internal` mints one on every
+            // path — so binding `Some` keeps `PrepareResult.request_id`
+            // non-optional without inventing a fallback value.
+            let ExecuteQueryResult::Single {
+                info: rs_info,
+                request_id: Some(request_id),
+            } = self
                 .execute_query_internal(stmt_handle, None, Some(true), None)
-                .await?;
-
-            let request_id = outcome.request_id;
-            // Multi-statement query prepare is not supported.
-            let ExecuteQueryResult::Single(rs_info) = outcome.result else {
+                .await?
+            else {
                 return InvalidArgumentSnafu {
                     argument: "Multi-statement queries cannot be prepared".to_string(),
                 }
@@ -268,7 +272,7 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
         timeout_seconds: Option<u32>,
-    ) -> Result<ExecuteQueryOutcome, ApiError> {
+    ) -> Result<ExecuteQueryResult, ApiError> {
         let session_id = self.session_id_for_stmt(stmt_handle).await;
         self.execute_query_internal(stmt_handle, bindings, None, timeout_seconds)
             .instrument(crate::snowflake_op_span!(
@@ -320,7 +324,7 @@ impl DatabaseDriverV1 {
         bindings: Option<BindingType<'a>>,
         describe_only: Option<bool>,
         timeout_seconds: Option<u32>,
-    ) -> Result<ExecuteQueryOutcome, ApiError> {
+    ) -> Result<ExecuteQueryResult, ApiError> {
         let stmt_ptr =
             self.statements
                 .get_obj(stmt_handle)
@@ -465,11 +469,10 @@ impl DatabaseDriverV1 {
 
         let data = response.data;
         let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-        if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
-            return Ok(ExecuteQueryOutcome {
-                result: multi,
-                request_id,
-            });
+        if let Some(multi) =
+            multistatement::try_into_multi_result(&data, descriptor.clone(), Some(request_id))
+        {
+            return Ok(multi);
         }
         let rowset_data = self
             .extract_rowset_data(
@@ -482,10 +485,7 @@ impl DatabaseDriverV1 {
             )
             .await?;
         let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
-        Ok(ExecuteQueryOutcome {
-            result: self.build_execute_result(rowset_data, descriptor, reader_ctx),
-            request_id,
-        })
+        Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, Some(request_id)))
     }
 
     /// Decodes the row data from a query response, dispatching PUT/GET when
@@ -665,7 +665,11 @@ impl DatabaseDriverV1 {
 
             let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
             let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-            if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
+            // No submission UUID on this path: the result is fetched by query ID
+            // via an endpoint that sends no `?requestId=`.
+            if let Some(multi) =
+                multistatement::try_into_multi_result(&data, descriptor.clone(), None)
+            {
                 return Ok(multi);
             }
 
@@ -698,7 +702,7 @@ impl DatabaseDriverV1 {
                 .extract_rowset_data(&conn_ptr, data, refresh_sql, false, None, None)
                 .await?;
             let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
-            Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
+            Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, None))
         }
         .instrument(crate::snowflake_op_span!(
             "connection_get_query_result",
