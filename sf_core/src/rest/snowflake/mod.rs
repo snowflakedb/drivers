@@ -109,6 +109,31 @@ pub const OAUTH_ACCESS_TOKEN_EXPIRED: i32 = 390318;
 /// retried once. Mirrors JDBC/Go's `refreshOAuthTokenErrorCodes` set.
 const OAUTH_REFRESH_ERROR_CODES: [i32; 2] =
     [OAUTH_ACCESS_TOKEN_INVALID, OAUTH_ACCESS_TOKEN_EXPIRED];
+/// GS error codes that reject the presented credentials outright (bad
+/// username/password, invalid JWT). These warrant SQLSTATE `28000` (invalid
+/// authorization) rather than the generic connection-failure SQLSTATE.
+/// Mirrors `CREDENTIAL_REJECTION_GS_CODES` in the legacy Python connector's
+/// `network.py` (SNOW-3775156), which is where the raw-code passthrough this
+/// list supports originated.
+pub const CREDENTIAL_REJECTION_GS_CODES: [i32; 9] = [
+    390100, // AUTHORIZATION_FAILURE
+    390144, // JWT_TOKEN_INVALID
+    394300, // JWT_TOKEN_INVALID
+    394301, // JWT_TOKEN_EXPIRED
+    394302, // JWT_TOKEN_NOT_YET_VALID
+    394303, // JWT_TOKEN_INVALID_EXPIRATION_TIME
+    394304, // JWT_TOKEN_INVALID_PUBLIC_KEY_FINGERPRINT_MISMATCH
+    394305, // JWT_TOKEN_INVALID_ALGORITHM
+    394306, // JWT_TOKEN_INVALID_FORMAT
+];
+/// ANSI SQLSTATE for "invalid authorization specification", used for
+/// [`CREDENTIAL_REJECTION_GS_CODES`]. Mirrors `SQLSTATE_AUTHORIZATION_FAILURE`
+/// in the legacy Python connector's `sqlstate.py`.
+pub const SQLSTATE_AUTHORIZATION_FAILURE: &str = "28000";
+/// Sentinel for a login-failure `code` the server omitted or sent as a
+/// non-numeric value — not a real GS error code. Produced at the `code`
+/// extraction site feeding [`LoginSnafu`] below.
+pub const GS_CODE_UNAVAILABLE: i32 = -1;
 
 /// Session tokens returned from login, used for authentication and refresh
 #[derive(Debug, Clone)]
@@ -1188,7 +1213,7 @@ pub async fn snowflake_login_with_client(
             .code
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(-1);
+            .unwrap_or(GS_CODE_UNAVAILABLE);
         if EXT_AUTHN_ERROR_CODES.contains(&code) {
             let evictable = match &login_parameters.login_method {
                 LoginMethod::UserPasswordMfa { username, .. } => {
