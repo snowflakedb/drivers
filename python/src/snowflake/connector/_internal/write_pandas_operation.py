@@ -340,6 +340,9 @@ class WritePandasMixin:
         }
 
     def _build_drop_object_sql(self, name: str, object_type: str) -> dict[str, Any]:
+        # object_type sits in a SQL keyword position (TABLE/STAGE), which cannot be
+        # parameter-bound; every call site passes a hardcoded literal, never user input.
+        # The object name itself is bound via IDENTIFIER(?).
         return {
             "operation": f"DROP {object_type} IF EXISTS IDENTIFIER(?)",
             "parameters": (name,),
