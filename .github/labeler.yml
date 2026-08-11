@@ -4,6 +4,8 @@ sf_core:
           - sf_core/**
           - sf_mini_core/**
           - sf_mini_core_static/**
+          - sf_params_spec/**
+          - sf_params_codegen/**
 
 nodejs:
   - changed-files:

@@ -107,8 +107,8 @@ impl ParamStore {
     pub(crate) fn with_registry_defaults() -> Self {
         let mut store = Self::new();
         for param in super::param_registry::registry().all_params() {
-            if let Some(f) = param.default {
-                store.insert(param.canonical_name.to_owned(), f());
+            if let Some(default) = param.default {
+                store.insert(param.canonical_name.to_owned(), default.into());
             }
         }
         store

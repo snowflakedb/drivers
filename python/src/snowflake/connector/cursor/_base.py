@@ -525,11 +525,11 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         params: Sequence[Any] | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[ResultMetadataV2] | None:
-        """Describe-only path returning new-format metadata (see BD#43).
+        """Describe-only path returning new-format metadata (see BD#54).
 
         Returns ``list[ResultMetadataV2]`` with ``vector_dimension`` populated
         from the proto ``dimension`` field. ``fields`` is always ``None`` (UD
-        proto carries no nested column list for structured types — BD#43).
+        proto carries no nested column list for structured types — BD#54).
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
         self.reset()

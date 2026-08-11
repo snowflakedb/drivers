@@ -68,8 +68,8 @@ pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
         return;
     };
 
-    // SECURITY (SNOW-3663586, CWE-918): `account` is interpolated into the host
-    // verbatim, so its character set is restricted to a safe allow-list in
+    // SNOW-3663586: `account` is interpolated into the host verbatim, so its
+    // character set is restricted to an allow-list in
     // `connection_config::validate_settings`, which runs in
     // `ConnectionConfig::build` before any network I/O.
     let host = format!("{account}.snowflakecomputing.com");
@@ -142,8 +142,8 @@ pub fn resolve_with_paths(
 
     // Layer 4: Registry defaults (lowest priority)
     for param in param_registry::registry().all_params() {
-        if let Some(default_fn) = param.default {
-            merged.insert(param.canonical_name.to_owned(), default_fn());
+        if let Some(default) = param.default {
+            merged.insert(param.canonical_name.to_owned(), default.into());
         }
     }
 

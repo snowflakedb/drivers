@@ -266,6 +266,28 @@ public class SnowflakePooledConnectionTest {
   }
 
   @Test
+  public void shouldSurfaceUnwrapFailureAsSqlExceptionNotOpaqueRuntimeException()
+      throws SQLException {
+    Connection physicalConnection = mock(Connection.class);
+    SnowflakeConnectionImpl sfConnection = mock(SnowflakeConnectionImpl.class);
+    // The constructor unwraps once successfully; the unwrap inside getConnection() then fails with
+    // a raw SQLException, exercising the catch that previously rethrew an opaque RuntimeException.
+    when(physicalConnection.unwrap(SnowflakeConnectionImpl.class))
+        .thenReturn(sfConnection)
+        .thenThrow(new SQLException("unwrap boom"));
+
+    PooledConnection pooledConnection =
+        decorated(new SnowflakePooledConnection(physicalConnection));
+
+    // Surfaces as the checked SnowflakeSQLException with the original SQLException as its direct
+    // cause — no intermediate opaque wrapper.
+    SnowflakeSQLException ex =
+        assertThrows(SnowflakeSQLException.class, pooledConnection::getConnection);
+    assertInstanceOf(SQLException.class, ex.getCause());
+    assertEquals("unwrap boom", ex.getCause().getMessage());
+  }
+
+  @Test
   public void shouldDoubleCloseClosesPhysicalConnectionOnce() throws SQLException {
     Connection physicalConnection = mock(Connection.class);
     SnowflakeConnectionImpl sfConnection = mock(SnowflakeConnectionImpl.class);

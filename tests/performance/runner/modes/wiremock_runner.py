@@ -35,6 +35,7 @@ def run_wiremock_performance_test(
     reuse_mappings_dir: str = None,
     expected_row_count_override: int = None,
     test_type: PerfTestType = PerfTestType.SELECT,
+    bind_mode: str = "char",
 ) -> list[Path]:
     """
     Run a performance test with WireMock HTTP traffic recording.
@@ -130,6 +131,7 @@ def run_wiremock_performance_test(
                     network_mode=network,
                     wiremock_manager=wiremock,
                     test_type=test_type,
+                    bind_mode=bind_mode,
                 )
                 
                 # Step 4: Create snapshot and transform
@@ -216,6 +218,7 @@ def run_wiremock_performance_test(
                 expected_row_count=expected_row_count,  # Pass expected row count for validation
                 wiremock_manager=wiremock,
                 test_type=test_type,
+                bind_mode=bind_mode,
             )
             
             # Collect metrics while WireMock is still running (triggers flush to disk)
@@ -279,6 +282,7 @@ def run_wiremock_comparison_test(
     preserve_mappings: bool = False,
     reuse_mappings_dir: str = None,
     test_type: PerfTestType = PerfTestType.SELECT,
+    bind_mode: str = "char",
 ) -> dict[str, list[Path]]:
     """
     Run WireMock test on both universal and old driver implementations.
@@ -329,6 +333,7 @@ def run_wiremock_comparison_test(
         preserve_mappings=True,  # Must preserve for old driver to reuse
         reuse_mappings_dir=reuse_mappings_dir,
         test_type=test_type,
+        bind_mode=bind_mode,
     )
     
     # Determine the mappings directory created by universal driver
@@ -366,6 +371,7 @@ def run_wiremock_comparison_test(
         reuse_mappings_dir=old_driver_mappings,  # Reuse universal's mappings
         expected_row_count_override=expected_row_count_for_old,  # Pass universal's row count for validation
         test_type=test_type,
+        bind_mode=bind_mode,
     )
     
     return results
@@ -569,6 +575,7 @@ def _run_test_with_proxy(
     expected_row_count: int = None,
     wiremock_manager: "WiremockManager" = None,
     test_type: PerfTestType = PerfTestType.SELECT,
+    bind_mode: str = "char",
 ):
     """
     Run test with WireMock proxy configuration.
@@ -596,6 +603,9 @@ def _run_test_with_proxy(
         expected = extract_limit_from_sql(sql_command)
         if expected:
             env_vars["EXPECTED_ROW_COUNT"] = str(expected)
+
+    if bind_mode != "char":
+        env_vars["BIND_MODE"] = bind_mode
     
     # Export the WireMock CA cert so the driver trusts the dynamically generated
     # MITM certificates. Each Dockerfile appends this to the appropriate CA bundle.

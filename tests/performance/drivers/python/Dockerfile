@@ -44,6 +44,8 @@ ENV AWS_LC_FIPS_SYS_CC=clang
 # Copy Rust workspace sources (all members required for cargo workspace resolution)
 COPY Cargo.toml Cargo.lock build_common.rs ./
 COPY sf_core/ ./sf_core/
+COPY sf_params_spec/ ./sf_params_spec/
+COPY sf_params_codegen/ ./sf_params_codegen/
 COPY sf_mini_core/ ./sf_mini_core/
 COPY sf_mini_core_static/ ./sf_mini_core_static/
 COPY odbc/ ./odbc/
@@ -61,9 +63,10 @@ COPY python_bridge/ ./python_bridge/
 COPY python/ ./python/
 # Recreate symlinks (Docker COPY does not preserve symlinks to outside the context)
 RUN cd python && \
-    rm -f Cargo.toml sf_core proto_utils proto_generator protobuf error_trace error_trace_derive python_bridge && \
+    rm -f Cargo.toml sf_core sf_params_spec proto_utils proto_generator protobuf error_trace error_trace_derive python_bridge && \
     ln -s ../Cargo.toml Cargo.toml && \
     ln -s ../sf_core sf_core && \
+    ln -s ../sf_params_spec sf_params_spec && \
     ln -s ../proto_utils proto_utils && \
     ln -s ../proto_generator proto_generator && \
     ln -s ../protobuf protobuf && \

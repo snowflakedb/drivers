@@ -2172,7 +2172,10 @@ impl DatabaseDriverV1 {
                     {
                         return Ok(Some(s));
                     }
-                    return Ok(resolved_or_seed_string(&conn, ParamKey(d.canonical_name)));
+                    return Ok(resolved_or_seed_string(
+                        &conn,
+                        ParamKey::new(d.canonical_name),
+                    ));
                 }
 
                 if let Some(s) = conn
@@ -2205,7 +2208,7 @@ impl DatabaseDriverV1 {
     ///
     /// The `url` must be a relative path (e.g. `/session/token-request`).
     /// It is resolved against the connection's `server_url`. Absolute URLs
-    /// are rejected to prevent SSRF / token leakage to arbitrary hosts.
+    /// are rejected so requests stay on the configured host.
     /// Auth is always the current session token managed by sf_core.
     pub async fn connection_send_http_request(
         &self,

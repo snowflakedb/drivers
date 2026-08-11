@@ -53,8 +53,12 @@ fn callback_layer_delivers_events() {
 
     let config = LoggingConfig::default();
     let cb: CLogCallback = test_callback;
-    let lm = LogManager::with_app_sink(config, CallbackLayer::new(cb), SessionRegistry::default())
-        .unwrap();
+    let lm = LogManager::with_app_sink(
+        config,
+        CallbackLayer::from_c(cb),
+        SessionRegistry::default(),
+    )
+    .unwrap();
     let _guard = tracing::dispatcher::set_default(lm.dispatch());
 
     tracing::info!("callback_info_msg");

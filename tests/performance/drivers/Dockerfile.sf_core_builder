@@ -41,6 +41,8 @@ FROM chef AS planner
 COPY build_common.rs ./build_common.rs
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY sf_core/ ./sf_core/
+COPY sf_params_spec/ ./sf_params_spec/
+COPY sf_params_codegen/ ./sf_params_codegen/
 COPY sf_mini_core/ ./sf_mini_core/
 COPY sf_mini_core_static/ ./sf_mini_core_static/
 COPY odbc/ ./odbc/
@@ -84,6 +86,7 @@ COPY odbc/Cargo.toml ./odbc/Cargo.toml
 # Copy source files
 COPY sf_core/src/ ./sf_core/src/
 COPY sf_core/build.rs ./sf_core/build.rs
+COPY sf_params_spec/src/ ./sf_params_spec/src/
 COPY sf_mini_core/src/ ./sf_mini_core/src/
 COPY sf_mini_core_static/src/ ./sf_mini_core_static/src/
 COPY proto_utils/src/ ./proto_utils/src/

@@ -40,15 +40,17 @@ repos:
         language: system
     -   id: generate-connection-config
         name: Generate ConnectionConfig from Rust PARAM_DEFS
-        description: Regenerate connection_config.py when param_registry.rs changes
-        # ``-p sf_core`` pins the workspace package so this still works
+        description: Regenerate connection_config.py when the sf_params_spec registry or the generator changes
+        # ``-p sf_params_codegen`` pins the workspace package so this still works
         # unambiguously when other crates expose a ``param_defs_export`` bin.
         # ``set -euo pipefail`` makes any cargo / hatch failure stop the hook
         # immediately, and we deliberately let stderr through so generator or
         # formatter errors are visible in the pre-commit log.
-        entry: bash -c 'set -euo pipefail; cargo run -p sf_core --bin param_defs_export > python/src/snowflake/connector/connection_config.py && (cd python && hatch run precommit:fix src/snowflake/connector/connection_config.py) && git add python/src/snowflake/connector/connection_config.py'
+        entry: bash -c 'set -euo pipefail; cargo run -p sf_params_codegen --bin param_defs_export > python/src/snowflake/connector/connection_config.py && (cd python && hatch run precommit:fix src/snowflake/connector/connection_config.py) && git add python/src/snowflake/connector/connection_config.py'
         pass_filenames: false
-        files: (param_registry\.rs|param_defs_export\.rs)$
+        # Any Rust source in either crate, so a future module split of
+        # sf_params_spec/src/lib.rs doesn't silently stop triggering the hook.
+        files: ^(sf_params_spec|sf_params_codegen)/src/.*\.rs$
         language: system
     -   id: generate-python-stubs
         name: Generate sf_core_python.pyi from Rust source

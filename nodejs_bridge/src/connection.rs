@@ -3,8 +3,8 @@ use crate::error::to_napi_err;
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use sf_core::apis::database_driver_v1::ApiError;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity;
-use sf_core::apis::database_driver_v1::{ApiError, ExecuteQueryResult};
 use sf_core::apis::operation_ctx::OperationCtx;
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
@@ -81,52 +81,33 @@ impl Connection {
             .map_err(to_napi_err)
     }
 
-    async fn statement_from_result(&self, result: ExecuteQueryResult) -> Result<Statement> {
-        let (result_set_handle, descriptor) = match result {
-            ExecuteQueryResult::Single(rs) => (rs.handle, rs.descriptor),
-            ExecuteQueryResult::Multi { .. } => {
-                return Err(to_napi_err("multi-statement results are not supported yet"));
-            }
-        };
-        let batch_reader = DRIVER
-            .result_set_get_stream(result_set_handle)
-            .await
-            .map_err(to_napi_err)?;
-        Ok(Statement::new(result_set_handle, descriptor, batch_reader))
-    }
-
     #[napi]
-    pub async fn execute(&self, query: String) -> Result<Statement> {
+    pub fn execute(&self, query: String) -> Result<Statement> {
         // TODO:
         // - too much map_err calls :/
         // - must release statement or result set on errors?
         let stmt_handle = DRIVER.statement_new(self.handle).map_err(to_napi_err)?;
-
-        DRIVER
-            .statement_set_sql_query(stmt_handle, query)
-            .await
-            .map_err(to_napi_err)?;
-
-        let outcome = DRIVER
-            .statement_execute_query(stmt_handle, None, None)
-            .await
-            .map_err(to_napi_err)?;
-
-        let _ = DRIVER.statement_release(stmt_handle);
-
-        // Node.js does not currently surface request_id to its callers (unlike
-        // Python's cursor._request_id property) — no consumer needs it yet, so
-        // it's intentionally discarded here rather than an oversight.
-        self.statement_from_result(outcome.result).await
+        Ok(Statement::from_pending(Some(stmt_handle), async move {
+            DRIVER.statement_set_sql_query(stmt_handle, query).await?;
+            let outcome = DRIVER
+                .statement_execute_query(stmt_handle, None, None)
+                .await?;
+            let _ = DRIVER.statement_release(stmt_handle);
+            // Node.js does not currently surface request_id to its callers (unlike
+            // Python's cursor._request_id property) — no consumer needs it yet, so
+            // it's intentionally discarded here rather than an oversight.
+            Ok(outcome.result)
+        }))
     }
 
     #[napi]
-    pub async fn get_query_result(&self, query_id: String) -> Result<Statement> {
-        let result = DRIVER
-            .connection_get_query_result(self.handle, query_id)
-            .await
-            .map_err(to_napi_err)?;
-        self.statement_from_result(result).await
+    pub fn get_query_result(&self, query_id: String) -> Statement {
+        let conn_handle = self.handle;
+        Statement::from_pending(None, async move {
+            DRIVER
+                .connection_get_query_result(conn_handle, query_id)
+                .await
+        })
     }
 
     #[napi]

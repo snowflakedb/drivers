@@ -3,6 +3,10 @@
   <PropertyGroup Condition="'$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'net481'">
     <DefineConstants>$(DefineConstants);OLD_XUNIT</DefineConstants>
     <OldXunit>True</OldXunit>
+    <!-- TODO: remove once old Snowflake.Data NuGet reference is dropped — its transitive deps
+         pull System.Memory versions that conflict with Apache.Arrow at runtime -->
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
   </PropertyGroup>
 
   <PropertyGroup>

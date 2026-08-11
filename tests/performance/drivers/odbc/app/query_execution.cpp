@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "common.h"
+#include "config.h"
 #include "connection.h"
 #include "perf_metrics.h"
 #include "results.h"
@@ -16,23 +17,44 @@
 static constexpr std::size_t BULK_SIZE = 1024;
 static constexpr std::size_t CHAR_COL_BUF_LEN = 1024;
 
+enum class BindMode { Char, Default };
+
 // Forward declarations for private helpers
-void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations, CoreInstrumentation& perf);
+BindMode resolve_bind_mode();
+void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations, CoreInstrumentation& perf,
+                BindMode bind_mode);
 std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations,
-                                            CoreInstrumentation& perf);
+                                            CoreInstrumentation& perf, BindMode bind_mode);
 void validate_row_counts(const std::vector<TestResult>& results);
 void print_statistics(const std::vector<TestResult>& results);
-TestResult run_query(SQLHDBC dbc, const std::string& sql, int iteration, CoreInstrumentation& perf);
+TestResult run_query(SQLHDBC dbc, const std::string& sql, int iteration, CoreInstrumentation& perf, BindMode bind_mode);
 std::pair<std::size_t, std::size_t> get_expected_row_count(const std::vector<TestResult>& results);
 void assert_nonzero_row_count(std::size_t count);
 void check_row_count_match(std::size_t actual_count, std::size_t expected_count, std::size_t iteration);
-void bind_columns_for_bulk_fetch(SQLHSTMT stmt, SQLSMALLINT column_count, std::vector<std::vector<char>>& char_bufs,
-                                 std::vector<std::vector<SQLLEN>>& indicators);
+void set_bulk_fetch_attrs(SQLHSTMT stmt, SQLULEN* rows_fetched);
+void bind_columns_for_bulk_fetch(SQLHSTMT stmt, SQLSMALLINT column_count, SQLSMALLINT c_type,
+                                 std::vector<std::vector<char>>& bufs, std::vector<std::vector<SQLLEN>>& indicators);
+
+BindMode resolve_bind_mode() {
+  std::string bind_mode = get_env_optional("BIND_MODE", "char");
+  if (bind_mode == "char") {
+    return BindMode::Char;
+  }
+  if (bind_mode == "default") {
+    return BindMode::Default;
+  }
+  std::cerr << "ERROR: Invalid BIND_MODE '" << bind_mode << "'. Supported: char, default\n";
+  exit(1);
+}
+
+const char* bind_mode_label(BindMode mode) { return mode == BindMode::Default ? "default" : "char"; }
 
 void execute_fetch_test(SQLHDBC dbc, const std::string& sql_command, int warmup_iterations, int iterations,
                         const std::string& test_name, const std::string& driver_type_str,
                         const std::string& driver_version_str, time_t now) {
-  std::cout << "\n=== Executing SELECT Test (bulk fetch, " << BULK_SIZE << " rows/batch) ===\n";
+  BindMode bind_mode = resolve_bind_mode();
+  std::cout << "\n=== Executing SELECT Test (bulk fetch, " << BULK_SIZE << " rows/batch"
+            << ", bind=" << bind_mode_label(bind_mode) << ") ===\n";
   std::cout << "Query: " << sql_command << "\n";
 
   CoreInstrumentation perf;
@@ -40,12 +62,12 @@ void execute_fetch_test(SQLHDBC dbc, const std::string& sql_command, int warmup_
     std::cout << "Perf metrics: enabled (sf_core perf_timing symbols found)\n";
   }
 
-  run_warmup(dbc, sql_command, warmup_iterations, perf);
+  run_warmup(dbc, sql_command, warmup_iterations, perf, bind_mode);
 
   ResourceMonitor monitor(std::chrono::milliseconds(100));
   monitor.start();
 
-  auto results = run_test_iterations(dbc, sql_command, iterations, perf);
+  auto results = run_test_iterations(dbc, sql_command, iterations, perf, bind_mode);
 
   auto memory_timeline = monitor.stop();
 
@@ -60,22 +82,23 @@ void execute_fetch_test(SQLHDBC dbc, const std::string& sql_command, int warmup_
   finalize_test_execution(dbc, filename, driver_type_str, driver_version_str, now);
 }
 
-void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations, CoreInstrumentation& perf) {
+void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations, CoreInstrumentation& perf,
+                BindMode bind_mode) {
   if (warmup_iterations == 0) {
     return;
   }
 
   for (int i = 1; i <= warmup_iterations; i++) {
-    run_query(dbc, sql, i, perf);
+    run_query(dbc, sql, i, perf, bind_mode);
   }
 }
 
 std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations,
-                                            CoreInstrumentation& perf) {
+                                            CoreInstrumentation& perf, BindMode bind_mode) {
   std::vector<TestResult> results;
 
   for (int i = 1; i <= iterations; i++) {
-    auto result = run_query(dbc, sql, i, perf);
+    auto result = run_query(dbc, sql, i, perf, bind_mode);
     results.push_back(result);
   }
 
@@ -150,21 +173,31 @@ void check_row_count_match(std::size_t actual_count, std::size_t expected_count,
   }
 }
 
-void bind_columns_for_bulk_fetch(SQLHSTMT stmt, SQLSMALLINT column_count, std::vector<std::vector<char>>& char_bufs,
-                                 std::vector<std::vector<SQLLEN>>& indicators) {
-  char_bufs.resize(column_count);
+void set_bulk_fetch_attrs(SQLHSTMT stmt, SQLULEN* rows_fetched) {
+  SQLRETURN ret = SQLSetStmtAttr(stmt, SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)BULK_SIZE, 0);
+  check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLSetStmtAttr ROW_ARRAY_SIZE");
+
+  ret = SQLSetStmtAttr(stmt, SQL_ATTR_ROWS_FETCHED_PTR, rows_fetched, 0);
+  check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLSetStmtAttr ROWS_FETCHED_PTR");
+}
+
+void bind_columns_for_bulk_fetch(SQLHSTMT stmt, SQLSMALLINT column_count, SQLSMALLINT c_type,
+                                 std::vector<std::vector<char>>& bufs, std::vector<std::vector<SQLLEN>>& indicators) {
+  bufs.resize(column_count);
   indicators.resize(column_count);
 
   for (SQLSMALLINT i = 0; i < column_count; i++) {
     indicators[i].resize(BULK_SIZE, 0);
-    char_bufs[i].resize(BULK_SIZE * CHAR_COL_BUF_LEN, 0);
+    bufs[i].resize(BULK_SIZE * CHAR_COL_BUF_LEN, 0);
 
-    SQLRETURN ret = SQLBindCol(stmt, i + 1, SQL_C_CHAR, char_bufs[i].data(), CHAR_COL_BUF_LEN, indicators[i].data());
+    SQLRETURN ret = SQLBindCol(stmt, static_cast<SQLUSMALLINT>(i + 1), c_type, bufs[i].data(), CHAR_COL_BUF_LEN,
+                               indicators[i].data());
     check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLBindCol");
   }
 }
 
-TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration, CoreInstrumentation& perf) {
+TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration, CoreInstrumentation& perf,
+                     BindMode bind_mode) {
   TestResult result;
   result.iteration = iteration;
 
@@ -181,16 +214,19 @@ TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration,
   ret = SQLNumResultCols(stmt, &column_count);
   check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLNumResultCols");
 
-  std::vector<std::vector<char>> char_bufs;
-  std::vector<std::vector<SQLLEN>> indicators;
-  bind_columns_for_bulk_fetch(stmt, column_count, char_bufs, indicators);
-
-  ret = SQLSetStmtAttr(stmt, SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)BULK_SIZE, 0);
-  check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLSetStmtAttr ROW_ARRAY_SIZE");
-
   SQLULEN rows_fetched = 0;
-  ret = SQLSetStmtAttr(stmt, SQL_ATTR_ROWS_FETCHED_PTR, &rows_fetched, 0);
-  check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLSetStmtAttr ROWS_FETCHED_PTR");
+  std::vector<std::vector<char>> col_bufs;
+  std::vector<std::vector<SQLLEN>> indicators;
+  const SQLSMALLINT c_type = (bind_mode == BindMode::Default) ? SQL_C_DEFAULT : SQL_C_CHAR;
+
+  // CHAR baselines keep historical order (bind, then bulk attrs) so BenchDash series stay comparable.
+  if (bind_mode == BindMode::Default) {
+    set_bulk_fetch_attrs(stmt, &rows_fetched);
+    bind_columns_for_bulk_fetch(stmt, column_count, c_type, col_bufs, indicators);
+  } else {
+    bind_columns_for_bulk_fetch(stmt, column_count, c_type, col_bufs, indicators);
+    set_bulk_fetch_attrs(stmt, &rows_fetched);
+  }
 
   struct rusage usage_before;
   getrusage(RUSAGE_SELF, &usage_before);

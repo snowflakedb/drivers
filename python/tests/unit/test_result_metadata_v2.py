@@ -1,4 +1,4 @@
-"""Unit tests for the real ResultMetadataV2 class (BD#43 partial fix).
+"""Unit tests for the real ResultMetadataV2 class (BD#54 partial fix).
 
 Verifies: property access matches legacy interface, vector_dimension is read
 from the proto dimension field, _is_nullable is a private attr (Snowpark reads
@@ -97,7 +97,7 @@ class TestResultMetadataV2FromColumn:
         assert v2.vector_dimension is None
 
     def test_fields_always_none(self):
-        # Proto has no nested column list — BD#43 remainder.
+        # Proto has no nested column list — BD#54 remainder.
         col = _mock_column(col_type="OBJECT")
         v2 = ResultMetadataV2.from_column(col)
         assert v2.fields is None
@@ -238,7 +238,7 @@ class TestDescribeInternal:
 
 
 class TestResultMetadataV2FromColumnFieldSizes:
-    """Verify display_size and internal_size proto-field mapping (BD#56)."""
+    """Verify display_size and internal_size proto-field mapping (BD#55)."""
 
     def test_display_size_populated_for_text_column(self):
         col = _mock_column(col_type="TEXT", length=100)

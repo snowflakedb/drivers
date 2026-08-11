@@ -105,9 +105,12 @@ rules:
     - rafal-kowalski_snow
   nodejs:
     - ruslan-savenok_snow
-    - rafal-kowalski_snow
-    - piotr-bulawa_snow
-    - michal-cepiga_snow
+    - mateusz-wezdenko_snow
+    - filip-pawlowski_snow
+    # TODO: the commented users will be restored once we're close to PuPr release
+    #- rafal-kowalski_snow
+    #- piotr-bulawa_snow
+    #- michal-cepiga_snow
   odbc:
     - michal-hofman_snow
     - jakub-szczerbinski_snow

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use sf_params_spec::DefaultValue;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Setting {
     String(String),
@@ -7,6 +9,21 @@ pub enum Setting {
     Int(i64),
     Double(f64),
     Bool(bool),
+}
+
+/// Materialize a registry [`DefaultValue`] (the `sf_core`-independent IR from
+/// [`sf_params_spec`]) into a runtime [`Setting`]. This is the single boundary
+/// where the borrowed, `'static` default data becomes an owned `Setting`.
+impl From<DefaultValue> for Setting {
+    fn from(value: DefaultValue) -> Self {
+        match value {
+            DefaultValue::String(s) => Setting::String(s.to_owned()),
+            DefaultValue::Bytes(b) => Setting::Bytes(b.to_vec()),
+            DefaultValue::Int(i) => Setting::Int(i),
+            DefaultValue::Double(d) => Setting::Double(d),
+            DefaultValue::Bool(b) => Setting::Bool(b),
+        }
+    }
 }
 
 impl Setting {
@@ -95,6 +112,19 @@ pub trait Settings {
     fn get_bool(&self, key: &str) -> Option<bool> {
         let setting = self.get(key)?;
         setting.as_bool().copied()
+    }
+    /// Read a bool, coercing string (`"true"`/`"false"`/`"1"`/`"0"`/`"on"`/`"off"`)
+    /// and int representations via [`Setting::coerce_bool`], falling back to
+    /// `default` when the key is absent or unparseable.
+    ///
+    /// Unlike [`get_bool`](Settings::get_bool), which only matches a native
+    /// `Setting::Bool`, this is the right accessor on `&dyn Settings`/`&str`
+    /// paths where the value may arrive as a string or int — matching the
+    /// coercion `resolve_options` applies and `ParamStore::get_bool` performs.
+    fn get_bool_or(&self, key: &str, default: bool) -> bool {
+        self.get(key)
+            .and_then(|s| s.coerce_bool())
+            .unwrap_or(default)
     }
     fn set(&mut self, key: &str, value: Setting);
     fn set_string(&mut self, key: &str, value: String) {

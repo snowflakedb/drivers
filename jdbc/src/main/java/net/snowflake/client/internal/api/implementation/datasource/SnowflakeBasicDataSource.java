@@ -15,6 +15,7 @@ import java.util.Properties;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
 import net.snowflake.client.api.datasource.SnowflakeDataSource;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.Property;
@@ -120,7 +121,7 @@ public class SnowflakeBasicDataSource
     try {
       return DriverManager.getConnection(url, properties);
     } catch (SQLException e) {
-      throw new RuntimeException(e);
+      throw SFSQLException.surfacing(e);
     }
   }
 

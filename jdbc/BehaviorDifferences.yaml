@@ -956,3 +956,22 @@ behavior_differences:
       PEM string (optionally decrypted with private_key_password), consistent with the
       plaintext-PEM support added for the other wrappers in this PR stack. Purely additive:
       private_key_file and private_key_base64 continue to work unchanged on both drivers.
+  53:
+    name: "GEOGRAPHY/GEOMETRY WKB/EWKB ResultSetMetaData reports VARCHAR instead of BINARY"
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When GEOGRAPHY_OUTPUT_FORMAT (or GEOMETRY_OUTPUT_FORMAT) is WKB or EWKB, Snowflake sends
+      row metadata with underlying type "binary" and extTypeName "GEOGRAPHY"/"GEOMETRY". Legacy
+      snowflake-jdbc maps the raw type field to JDBC Types.BINARY, so getColumnType() returns
+      BINARY and isCaseSensitive() is false while getObject() still returns byte[].
+    new_driver_behavior: |
+      sf_core row_types_to_columns prefers extTypeName over the raw type when building column
+      metadata, and udt_output_type is populated only when the server sends outputType. When
+      outputType is absent, the JDBC wrapper defaults GEOGRAPHY/GEOMETRY metadata to VARCHAR.
+      Values are still decoded as byte[]; only ResultSetMetaData getColumnType() /
+      isCaseSensitive() differ from legacy. Planned fix: propagate binary output representation
+      into udt_output_type (or equivalent) in sf_core so JDBC reports BINARY like legacy.
