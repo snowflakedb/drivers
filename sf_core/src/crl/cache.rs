@@ -960,6 +960,12 @@ impl CrlCache {
             && let Some(dir) = self.config.get_cache_dir()
         {
             let verify_perms = !self.config.unsafe_skip_file_permissions_check;
+            if !verify_perms {
+                tracing::warn!(
+                    target: "sf_core::crl",
+                    "File permission check is disabled for CRL cache (SNOW-3548057)"
+                );
+            }
             // Reject a group/other-accessible cache directory (Unix) — a loose
             // dir lets another user swap cache files even when the files are
             // 0600. Matches the old Python driver's directory check.
@@ -1683,5 +1689,24 @@ mod tests {
         })
         .unwrap();
         missing.cleanup_on_disk_cache().await;
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn should_warn_when_file_permission_check_is_disabled() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let cfg = CrlConfig {
+            enable_disk_caching: true,
+            enable_memory_caching: false,
+            cache_dir: Some(dir.path().to_path_buf()),
+            unsafe_skip_file_permissions_check: true,
+            ..Default::default()
+        };
+        let cache = CrlCache::new(cfg).unwrap();
+        let _ = cache.get("http://example/test.crl").await;
+        assert!(logs_contain(
+            "File permission check is disabled for CRL cache"
+        ));
     }
 }
