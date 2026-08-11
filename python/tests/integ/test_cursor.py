@@ -2700,6 +2700,15 @@ class TestInterpolateEmptySequences:
         assert row == (42, 2)
 
 
+def _as_request_id_str(request_id: object) -> str:
+    """Normalize a ``_request_id`` to its canonical string form.
+
+    Legacy exposes a ``uuid.UUID`` object where UD exposes a ``str`` (BD#56), so tests
+    that UUID-parse or compare the value work from the string form to hold on both.
+    """
+    return str(request_id)
+
+
 class TestRequestIdIsolation:
     """Integration tests proving _request_id is populated and per-cursor isolated.
 
@@ -2713,19 +2722,23 @@ class TestRequestIdIsolation:
         assert cursor._request_id is None
 
     def test_request_id_is_populated_after_execute(self, cursor):
-        """_request_id is a non-None string after a simple execute."""
+        """_request_id is a valid UUID after a simple execute, in each driver's type (BD#56)."""
         cursor.execute("SELECT 1")
         assert cursor._request_id is not None
-        assert isinstance(cursor._request_id, str)
-        assert len(cursor._request_id) > 0
-        uuid.UUID(cursor._request_id)  # raises ValueError if not a valid UUID
+
+        if NEW_DRIVER_ONLY("BD#56"):
+            assert isinstance(cursor._request_id, str)
+        else:
+            assert isinstance(cursor._request_id, uuid.UUID)
+
+        uuid.UUID(_as_request_id_str(cursor._request_id))  # raises ValueError if malformed
 
     def test_request_id_distinct_from_sfqid(self, cursor):
         """_request_id must not equal sfqid — they are different ID spaces."""
         cursor.execute("SELECT 1")
         assert cursor._request_id is not None
         assert cursor.sfqid is not None
-        assert cursor._request_id != cursor.sfqid
+        assert _as_request_id_str(cursor._request_id) != cursor.sfqid
 
     def test_request_id_changes_per_execution(self, cursor):
         """Each execute on the same cursor produces a new _request_id."""
@@ -2755,12 +2768,12 @@ class TestRequestIdIsolation:
             futures = [pool.submit(run_cursor, i) for i in range(self.N_CURSORS)]
             results = [f.result() for f in as_completed(futures)]
 
-        request_ids = [r[0] for r in results]
+        request_ids = [_as_request_id_str(r[0]) for r in results if r[0] is not None]
         sfqids = [r[1] for r in results]
 
-        # All request_ids must be non-None valid UUID strings.
+        # Every cursor must have produced a valid UUID request_id.
+        assert len(request_ids) == self.N_CURSORS, "request_id should not be None after execute"
         for rid in request_ids:
-            assert rid is not None, "request_id should not be None after execute"
             uuid.UUID(rid)  # raises ValueError if not a valid UUID
 
         # All N request_ids must be distinct (no cross-cursor contamination).
@@ -2804,8 +2817,9 @@ class TestRequestIdIsolation:
         with connection.cursor() as cursor:
             cursor.execute_async("SELECT 1")
             assert cursor._request_id is not None, "_request_id must be set after execute_async"
-            uuid.UUID(cursor._request_id)  # raises ValueError if not a valid UUID
-            assert cursor._request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"
+            request_id = _as_request_id_str(cursor._request_id)
+            uuid.UUID(request_id)  # raises ValueError if not a valid UUID
+            assert request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"
 
 
 @skip_async("_describe_internal is sync-only; Snowpark reaches it exclusively via the sync cursor")
