@@ -1,5 +1,8 @@
 package net.snowflake.jdbc.e2e.authentication;
 
+import static net.snowflake.jdbc.utils.JsonTestUtils.parseJson;
+
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -12,8 +15,6 @@ import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
-import org.json.JSONObject;
-import org.json.JSONTokener;
 
 interface WithOauthAccessToken {
 
@@ -58,11 +59,11 @@ interface WithOauthAccessToken {
                 }
                 return responseBody;
               });
-      JSONObject json = new JSONObject(new JSONTokener(body));
+      JsonNode json = parseJson(body);
       if (!json.has("access_token")) {
         throw new RuntimeException("OAuth token response missing 'access_token': " + body);
       }
-      return json.getString("access_token");
+      return json.get("access_token").asText();
     } catch (IOException | RuntimeException e) {
       throw new RuntimeException("Failed to mint OAuth access token", e);
     }
