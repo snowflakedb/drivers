@@ -81,7 +81,7 @@ jobs:
                   "os": "windows-latest",
                   "container": "",
                   "cargo_lib": "sf_core_python.dll",
-                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2 --config profile.release.strip=false",
+                  "cargo_extra_args": "--config profile.release.opt-level=2 --config profile.release.strip=false",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "win_amd64",
                   "artifact_id": "win_amd64",
@@ -269,6 +269,22 @@ jobs:
           for v in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
             uv python install "$v"
           done
+
+      # Use the same vcpkg-provided OpenSSL setup as the Windows ARM64 build.
+      # Building vendored OpenSSL here delegates to the runner's MSYS2 Perl,
+      # whose incomplete core-module installation is not suitable for OpenSSL's
+      # Configure script (for example, Locale::Maketext::Simple may be absent).
+      - name: Setup OpenSSL (Windows x86_64)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-openssl
+        with:
+          arch: x86_64
+
+      - name: Setup MSVC environment (Windows x86_64)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: x64
 
       # ── python_bridge build: Linux (Docker + manylinux for glibc compat) ──
       # Cannot use job-level container: because cibuildwheel needs Docker.
@@ -487,6 +503,8 @@ jobs:
           CIBW_ENVIRONMENT_WINDOWS: >-
             SKIP_CORE_BUILD=true
             SKIP_PROTO_GENERATION=true
+            DISTUTILS_USE_SDK=1
+            MSSdk=1
           CIBW_ENVIRONMENT_MACOS: >-
             SKIP_CORE_BUILD=true
             SKIP_PROTO_GENERATION=true
@@ -646,6 +664,12 @@ jobs:
         working-directory: ./python
         shell: cmd
         run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
+        env:
+          # setup-msvc already exported a complete ARM64 compiler environment.
+          # Re-running vcvarsall from setuptools appends that environment to an
+          # already-long PATH and can exceed cmd.exe's input-line limit.
+          DISTUTILS_USE_SDK: "1"
+          MSSdk: "1"
 
       - name: Inspect wheel
         working-directory: ./python
