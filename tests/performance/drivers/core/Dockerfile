@@ -29,6 +29,7 @@ WORKDIR /workdir
 COPY rust-toolchain.toml ./rust-toolchain.toml
 COPY build_common.rs ./build_common.rs
 COPY sf_core/ ./sf_core/
+COPY sf_params_spec/ ./sf_params_spec/
 COPY proto_utils/ ./proto_utils/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
@@ -69,6 +70,7 @@ COPY build_common.rs ./build_common.rs
 
 # Copy sf_core and proto_utils source (needed for path dependencies)
 COPY sf_core/ ./sf_core/
+COPY sf_params_spec/ ./sf_params_spec/
 COPY proto_utils/ ./proto_utils/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/

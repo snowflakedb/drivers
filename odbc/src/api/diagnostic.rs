@@ -446,7 +446,17 @@ pub fn set_diag_info_from_result<T>(
         let Ok(guard) = stmt_from_handle(handle) else {
             return;
         };
-        add_from_result(guard.inner.lock().get_diag_info_mut(), None);
+        // Mirror the DBC path (BD#114): surface the owning connection's DSN as the
+        // diagnostic server name. The connection lock is dropped at the end of this
+        // statement, before `inner` is locked below, so the two never overlap.
+        let server_name = guard
+            .conn()
+            .ok()
+            .and_then(|dbc| dbc.connection.lock().dsn_name.clone());
+        add_from_result(
+            guard.inner.lock().get_diag_info_mut(),
+            server_name.as_deref(),
+        );
         return;
     }
     if handle_type == sql::HandleType::Desc {

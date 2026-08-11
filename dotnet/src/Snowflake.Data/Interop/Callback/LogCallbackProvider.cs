@@ -1,4 +1,4 @@
-namespace Snowflake.Data.Interop;
+namespace Snowflake.Data.Interop.Callback;
 
 ///  TODO this is PoC, will be subject to refactoring in the future
 internal static unsafe class LogCallbackProvider
@@ -8,10 +8,10 @@ internal static unsafe class LogCallbackProvider
 
     static LogCallbackProvider()
     {
-        PtrToStringUtf8 = NativeInteropProvider.Interop.PtrToStringUtf8;
+        PtrToStringUtf8 = SfCoreInteropProvider.StringHelper.PtrToStringUtf8;
     }
 
-    internal static uint LogCallback(uint level, byte* message, byte* filename, uint line, byte* function)
+    internal static uint LogCallback(uint level, byte* message, byte* filename, uint line, byte* function, byte* loggerName)
     {
         try
         {

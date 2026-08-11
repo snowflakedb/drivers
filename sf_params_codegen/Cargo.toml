@@ -1,0 +1,11 @@
+[package]
+name = "sf_params_codegen"
+edition = "2024"
+rust-version = "1.94"
+
+[dependencies]
+sf_params_spec = { path = "../sf_params_spec" }
+
+[[bin]]
+name = "param_defs_export"
+path = "src/main.rs"

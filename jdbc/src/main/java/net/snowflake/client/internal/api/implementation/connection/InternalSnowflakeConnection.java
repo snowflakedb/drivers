@@ -9,9 +9,15 @@ import net.snowflake.client.internal.api.implementation.parameters.ParametersReg
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 
-/** Internal interface combining JDBC Connection and SnowflakeConnection with handle access. */
-public interface InternalSnowflakeConnection extends Connection, SnowflakeConnection {
+/**
+ * Internal interface combining JDBC Connection and SnowflakeConnection with handle access. Extends
+ * {@link DelegatingWrapper} so callers holding this type get de-checked {@code unwrap}/{@code
+ * isWrapperFor}.
+ */
+public interface InternalSnowflakeConnection
+    extends Connection, SnowflakeConnection, DelegatingWrapper {
 
   ConnectionHandle getHandle();
 

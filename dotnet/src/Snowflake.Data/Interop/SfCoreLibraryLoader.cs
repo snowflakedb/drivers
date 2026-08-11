@@ -11,18 +11,19 @@ namespace Snowflake.Data.Interop;
 ///   2. Assembly output directory
 ///   3. Default OS search (LD_LIBRARY_PATH, DYLD_LIBRARY_PATH, PATH, etc.)
 /// </summary>
-///  TODO this is PoC, will be subject to refactoring in the future
-internal static class NativeLibraryLoader
+internal class SfCoreLibraryLoader : ISfCoreLibraryLoader
 {
     private const string SFCore = "sf_core";
     private static int _registered;
 
-    public static void Register()
+    internal static ISfCoreLibraryLoader Instance { get; } = new SfCoreLibraryLoader();
+
+    public void Register()
     {
         if (Interlocked.Exchange(ref _registered, 1) == 1)
             return;
 
-        NativeLibrary.SetDllImportResolver(typeof(NativeLibraryLoader).Assembly, ResolveLibrary);
+        NativeLibrary.SetDllImportResolver(typeof(SfCoreLibraryLoader).Assembly, ResolveLibrary);
     }
 
     private static nint ResolveLibrary(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)

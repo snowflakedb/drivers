@@ -285,28 +285,16 @@ fn starts_with_account_label(value: &str, account_lower: &str) -> bool {
     )
 }
 
-/// Check the opt-out flag across canonical key, all registered aliases, and
-/// string-typed values so the flag works regardless of how the wrapper
-/// delivered it. Aliases are read from the param registry so they stay in sync
-/// automatically.
+/// Read the `preserve_underscores_in_hostname` opt-out flag.
+///
+/// `settings` is always a `ParamStore` already alias-resolved and type-coerced
+/// by `resolve_options` (via `resolver::resolve`), so the flag lives under its
+/// canonical key as a `Bool` — no alias fan-out or string coercion needed here.
 fn is_allow_underscores(settings: &dyn Settings) -> bool {
-    let Some(param_def) =
-        param_registry::registry().resolve(param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME)
-    else {
-        tracing::warn!(
-            "Parameter definition for preserve_underscores_in_hostname not found; treating flag as disabled"
-        );
-        return false;
-    };
-
-    std::iter::once(param_def.canonical_name)
-        .chain(param_def.aliases.iter().copied())
-        .any(|key| {
-            settings.get_bool(key).unwrap_or(false)
-                || settings
-                    .get_string(key)
-                    .is_some_and(|s| s.eq_ignore_ascii_case("true"))
-        })
+    settings.get_bool_or(
+        param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.as_str(),
+        false,
+    )
 }
 
 /// Resolve, validate, and apply a batch of options to a settings map.
@@ -891,7 +879,6 @@ mod tests {
 
     #[test_case("preserve_underscores_in_hostname", Setting::Bool(true) ; "bool on canonical key")]
     #[test_case("preserve_underscores_in_hostname", Setting::String("true".to_string()) ; "string on canonical key")]
-    #[test_case("ALLOWUNDERSCORESINHOST", Setting::Bool(true) ; "bool on alias key")]
     fn opt_out_skips_normalization(key: &str, value: Setting) {
         let mut settings = HashMap::new();
         settings.insert(

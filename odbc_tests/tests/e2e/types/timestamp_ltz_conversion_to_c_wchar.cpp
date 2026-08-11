@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
@@ -63,22 +64,30 @@ TEST_CASE("TIMESTAMP_LTZ to SQL_C_WCHAR buffer too small", "[timestamp_ltz][conv
 }
 
 TEST_CASE("TIMESTAMP_LTZ to SQL_C_WCHAR truncation", "[timestamp_ltz][conversion][c_wchar][01004]") {
-  SKIP_OLD_DRIVER("BD#30", "Old driver crashes on TIMESTAMP to SQL_C_WCHAR truncation");
+  // Physical buffer is oversized (64 units) so the test runs to completion; BufferLength=21 is the truncation point
   // Given Snowflake client is logged in with a known session timezone
   Connection conn;
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
 
-  // When A TIMESTAMP_LTZ with fractional seconds is fetched into a WCHAR buffer of 21 characters
+  // When A TIMESTAMP_LTZ with fractional seconds is fetched with BufferLength=21 WCHAR units
   auto stmt = conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_LTZ");
-  SQLWCHAR buffer[21] = {};
+  SQLWCHAR buffer[64] = {};
   SQLLEN indicator = 0;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, 21 * sizeof(SQLWCHAR), &indicator);
 
-  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  auto records = get_diag_rec(stmt);
-  CHECK(!records.empty());
-  CHECK(records[0].sqlState == "01004");
+  OLD_DRIVER_ONLY("BD#30") {
+    // Old driver returns SQL_ERROR rather than truncating with SQL_SUCCESS_WITH_INFO
+    CHECK(ret == SQL_ERROR);
+  }
+  NEW_DRIVER_ONLY("BD#30") {
+    // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004 and the value is truncated
+    //      to the 20 characters that fit the stated BufferLength, per the ODBC spec
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+    auto records = get_diag_rec(stmt);
+    REQUIRE(!records.empty());
+    CHECK(records[0].sqlState == "01004");
+    CHECK(sf::wide::decode_wide_cstr(buffer) == U"2024-01-15 10:30:00.");
+  }
 }
 
 TEST_CASE("TIMESTAMP_LTZ NULL to SQL_C_WCHAR", "[timestamp_ltz][conversion][c_wchar][null]") {

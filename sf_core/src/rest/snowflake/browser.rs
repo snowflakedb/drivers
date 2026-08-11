@@ -3,8 +3,7 @@
 //! Both the external-browser SSO flow and the OAuth authorization-code
 //! flow open an IdP-supplied URL in the user's system browser. On WSL
 //! (Windows Subsystem for Linux) the default launch path can route the URL
-//! through a Windows shell interpreter, which is unsafe when the URL comes
-//! from an untrusted party. See SNOW-3649282 for the mechanism.
+//! through a Windows shell interpreter (SNOW-3649282).
 //!
 //! Two layers of defense live here:
 //!
@@ -31,7 +30,7 @@
 //! subset that is both risky and never legitimate in a URL.
 //!
 //! On top of `| < > ! ^`, validation also rejects their **percent-encoded**
-//! forms (`%7C` … `%5E`) so an encoded payload cannot slip past the literal
+//! forms (`%7C` … `%5E`) so an encoded form cannot slip past the literal
 //! scan, and characters that are never valid unencoded in a URL or that
 //! could perturb argument parsing at the launcher — quotes, backtick,
 //! backslash, and raw whitespace / control bytes. Encoded whitespace
@@ -294,7 +293,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_the_poc_pipe_injection() {
-        // Representative shell-metacharacter payload (SNOW-3649282).
+        // Representative shell-metacharacter input (SNOW-3649282).
         let payload = "https://evil-idp.example.com/sso?state=poc|calc";
         assert!(
             validate_browser_url(payload).is_err(),
@@ -386,9 +385,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn wsl_launcher_never_uses_a_shell_interpreter() {
-        // Even for a payload that (hypothetically) got past validation, the
+        // Even for an input that (hypothetically) got past validation, the
         // launcher must never route through cmd.exe / powershell, and must
-        // never pass "/c". This asserts the mitigation, not an attack.
+        // never pass "/c".
         let payload = "https://x/sso?s=y|calc&whoami";
         for (program, args) in wsl_launch_candidates(payload) {
             assert_ne!(program, "cmd.exe", "must not launch via cmd.exe");

@@ -602,15 +602,16 @@ behavior_differences:
     description: |
       Applications binding SQL_C_NUMERIC values to BOOLEAN columns will succeed on the new driver for any nonzero value.
   38:
-    #TODO: To verify
     name: "TIME to SQL_C_CHAR/WCHAR truncation and buffer-too-small handling"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      The new driver's behavior is the spec-compliant one: SQLSTATE 01004 (string data, right truncated) with SQL_SUCCESS_WITH_INFO is what the ODBC spec prescribes when the buffer holds the base time but not the fractional seconds, and the chunked-retrieval protocol is likewise spec-mandated. The old driver returns SQL_ERROR 22003 for the truncation case and does not implement chunked retrieval at all. Accepted as an intentional divergence rather than something to fix. Both drivers are now asserted directly (paired OLD_DRIVER_ONLY / NEW_DRIVER_ONLY blocks) across all four reference cells — Linux+unixODBC, macOS+unixODBC, Windows+unixODBC and macOS+iODBC — so the truncation and chunked-retrieval facets are verified. One facet remains unassertable: with a buffer physically smaller than the formatted value the old driver has undefined behavior and aborts, so that single test keeps SKIP_OLD_DRIVER("BD#38").
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
-      TIME to SQL_C_CHAR with a buffer smaller than 9 bytes returns SQL_SUCCESS instead of SQL_ERROR with SQLSTATE 22003. TIME to SQL_C_CHAR or SQL_C_WCHAR with a buffer of exactly 9 bytes (enough for HH:MM:SS but not fractional seconds) returns SQL_ERROR with SQLSTATE 22003.
+      TIME to SQL_C_CHAR with a buffer physically smaller than the full formatted time string has undefined behavior in the old driver. TIME to SQL_C_CHAR or SQL_C_WCHAR with a buffer of exactly 9 bytes (enough for HH:MM:SS but not fractional seconds) returns SQL_ERROR with SQLSTATE 22003.
     new_driver_behavior: |
       Returns SQL_ERROR with SQLSTATE 22003 when the buffer is too small (< 9 bytes for CHAR, < 18bytes for WCHAR), and returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 when the buffer can hold the base time but truncates fractional seconds, per the ODBC spec.
 
@@ -681,7 +682,7 @@ behavior_differences:
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Returns SQL_ERROR when SQLGetData is called with SQL_C_BINARY on a TIME column. The driver does not support converting TIME values to their binary SQL_TIME_STRUCT representation.
+      Returns SQL_ERROR SQLSTATE 07006 (unsupported conversion) when the buffer is at least sizeof(SQL_TIME_STRUCT). Returns SQL_ERROR 22003 for an undersized buffer (buffer size check precedes conversion support check). This behavior is uniform across Linux, macOS, and Windows — the released driver returns SQL_ERROR on the macOS unixODBC and iODBC reference cells as well.
     new_driver_behavior: |
       Returns SQL_SUCCESS with a 6-byte SQL_TIME_STRUCT containing the hour, minute, and second fields. The indicator is set to sizeof(SQL_TIME_STRUCT). Per the ODBC specification, SQL_C_BINARY is a valid target type for SQL_TYPE_TIME — the data is transferred as-is when the byte length fits the buffer, or SQLSTATE 22003 is returned when the buffer is too small.
 
@@ -2072,3 +2073,100 @@ behavior_differences:
       corroborating the pattern at the server side too. Kept deliberately: matching
       "Java 5.3.0" would misidentify which implementation produced the blob, valuable for
       diagnostics during the mixed-fleet rollout period.
+  113:
+    name: "SQLTables case-fold unquoted identifiers in identifier mode"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
+      ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
+      preserves case). The universal driver folds unquoted catalog/schema/table identifiers to
+      uppercase via catalog_arg_to_pattern before SHOW OBJECTS and the case-sensitive client-side
+      like_match re-filter. The legacy driver re-filters SHOW results case-sensitively against the
+      caller's raw (lowercase) argument, so a lowercase identifier matches nothing. Related pattern-
+      mode case-sensitivity fix: SNOW-3780463.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      With SQL_ATTR_METADATA_ID=SQL_TRUE and a lowercase (unquoted) catalog/schema/table identifier,
+      the legacy driver compares the identifier case-sensitively against the uppercase names returned
+      by SHOW and drops every row, yielding an empty result set.
+    new_driver_behavior: |
+      Unquoted identifiers are folded to uppercase before SHOW and the client-side re-filter, so a
+      lowercase identifier matches the uppercase stored name and the expected row(s) are returned.
+      Double-quoted identifiers remain case-sensitive. In pattern mode (SQL_ATTR_METADATA_ID=SQL_FALSE,
+      the default) names stay case-sensitive, matching the reference driver (SNOW-3780463).
+    description: |
+      Applications that relied on the legacy case-sensitive behavior of unquoted identifiers under
+      identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
+      split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
+      legacy empty result set).
+
+  114:
+    name: "SQLGetDiagField(SQL_DIAG_SERVER_NAME) is populated instead of returning an empty string"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLGetDiagField(SQL_DIAG_SERVER_NAME) returns an empty string after a diagnostic is raised
+      on a connected statement/connection.
+    new_driver_behavior: |
+      SQLGetDiagField(SQL_DIAG_SERVER_NAME) returns the server/DSN name of the connection, matching
+      the ODBC definition of the field.
+    description: |
+      Additive: applications reading SQL_DIAG_SERVER_NAME now receive the connection's server name
+      where the old driver returned "". Verified in
+      odbc-api/diagnostic/diag_field_tests.cpp via NEW_DRIVER_ONLY/OLD_DRIVER_ONLY("BD#114").
+
+  115:
+    name: "SQLGetDiagField(SQL_DIAG_DYNAMIC_FUNCTION_CODE) classifies the statement instead of returning 0/unknown"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLGetDiagField(SQL_DIAG_DYNAMIC_FUNCTION_CODE) returns 0 (SQL_DIAG_UNKNOWN_STATEMENT) and
+      SQL_DIAG_DYNAMIC_FUNCTION returns an empty string after execution.
+    new_driver_behavior: |
+      The fields are populated from the statement type: a SELECT reports
+      SQL_DIAG_DYNAMIC_FUNCTION_CODE = 85 (SQL_DIAG_SELECT_CURSOR); INSERT/UPDATE/DELETE/CALL map to
+      their ODBC-spec codes.
+    description: |
+      Additive: applications reading SQL_DIAG_DYNAMIC_FUNCTION_CODE now get the classified code where
+      the old driver returned 0. Verified in odbc-api/diagnostic/diag_field_tests.cpp via
+      NEW_DRIVER_ONLY/OLD_DRIVER_ONLY("BD#115").
+
+  116:
+    name: "Statement header diagnostic fields are not readable through iODBC's wide SQLGetDiagFieldW entry point"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Reading a statement-only header diagnostic field through iODBC's wide entry point
+      (SQLGetDiagFieldW) is mishandled: SQL_DIAG_ROW_COUNT and SQL_DIAG_CURSOR_ROW_COUNT abort the
+      process (a pthread_mutex assertion in Simba::ODBC::DiagManager::SQLGetDiagFieldW), and
+      SQL_DIAG_DYNAMIC_FUNCTION_CODE returns a non-success code. The same reads succeed through
+      unixODBC (the narrow entry point).
+    new_driver_behavior: |
+      The driver itself writes the correct value and returns SQL_SUCCESS for these fields regardless
+      of the ANSI/wide entry point (the numeric header writes in get_diag_field are
+      encoding-independent). But iODBC's wide SQLGetDiagFieldW does not deliver statement header
+      fields to the caller: SQL_DIAG_ROW_COUNT, SQL_DIAG_CURSOR_ROW_COUNT and
+      SQL_DIAG_DYNAMIC_FUNCTION_CODE return SQL_ERROR before the driver's value reaches the
+      application. The same reads succeed through iODBC's narrow entry point and through unixODBC.
+    description: |
+      This is an iODBC driver-manager limitation in its wide (UTF-16/UTF-32) SQLGetDiagFieldW path,
+      not a defect in the new driver: the driver returns the correct value, but iODBC's wide entry
+      point does not surface these statement header fields (the old driver additionally aborts or
+      errors inside its own DiagManager on the same path). Because the failure is at the DM boundary
+      it affects both drivers under iODBC, so the three affected reads in
+      odbc-api/diagnostic/diag_field_tests.cpp (SQL_DIAG_ROW_COUNT, SQL_DIAG_CURSOR_ROW_COUNT,
+      SQL_DIAG_DYNAMIC_FUNCTION_CODE) are gated with SKIP_IODBC("BD#116 - ..."). Full coverage of
+      these fields for both drivers remains on the unixODBC lanes (Linux, macOS Universal) and on
+      Windows.

@@ -34,8 +34,10 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
-          # v2 bump: one-time flush so the new `Pre-build param_defs_export`
-          # step's artefacts land in a fresh cache shape.
+          # The `-v2` suffix is a historical one-time cache flush (it was added
+          # for a since-removed `Pre-build param_defs_export` step). Keep it as
+          # is — bumping the suffix costs a full cold rebuild, so only change it
+          # when a deliberate flush is actually wanted.
           shared-key: "precommit-v2"
 
       - name: Restore tests-format-validator Rust cache
@@ -87,15 +89,12 @@ jobs:
       # language: python / language: node / etc., where pre-commit would
       # actually install something cacheable.
 
-      - name: Pre-build param_defs_export
-        # Compile the generator binary here so its artefacts land in the saved
-        # target/ cache. The earlier `cargo check --all-targets --all-features`
-        # steps don't cover this binary (different feature set, check vs. link),
-        # leaving `cargo run -p sf_core --bin param_defs_export` to pay a cold
-        # ~12-minute sf_core link on every pre-commit run. Warming it here
-        # turns the subsequent `Verify ConnectionConfig` step into a near
-        # no-op on cache hits.
-        run: cargo build -p sf_core --bin param_defs_export
+      # NOTE: no pre-build step for param_defs_export. It used to live here
+      # because the generator was a `sf_core` bin, so `cargo run` paid a cold
+      # ~12-minute sf_core link on every pre-commit run and needed warming into
+      # the target/ cache. The generator now lives in `sf_params_codegen`, whose
+      # only dependency is the std-only `sf_params_spec` crate — a cold build is
+      # well under a second, so pre-building it would cost more than it saves.
 
       - name: Generate protobuf Python stubs
         # The `protobuf_gen/*_pb2.py` files are gitignored and normally produced
@@ -135,7 +134,7 @@ jobs:
         run: |
           set -euo pipefail
           target=python/src/snowflake/connector/connection_config.py
-          cargo run -p sf_core --bin param_defs_export > "$target"
+          cargo run -p sf_params_codegen --bin param_defs_export > "$target"
           (cd python && hatch run precommit:fix) >/dev/null
           if ! git diff --exit-code -- "$target"; then
             echo "::error::connection_config.py is out of date. Run the 'generate-connection-config' pre-commit hook locally and commit the result."

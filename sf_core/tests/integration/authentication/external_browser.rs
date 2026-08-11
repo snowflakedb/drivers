@@ -265,29 +265,28 @@ fn should_fail_when_login_request_is_rejected_after_browser_callback() {
 }
 
 // =============================================================================
-// Security — SNOW-3649282: WSL command injection via malicious ssoUrl
+// SNOW-3649282: browser URL validation
 // =============================================================================
 
-/// End-to-end check that an `ssoUrl` carrying an unsafe character is
-/// rejected *before* the driver hands it to the system browser, delivered
-/// through the real `connect()` path. See SNOW-3649282.
+/// End-to-end check that an `ssoUrl` carrying a rejected character is
+/// refused *before* the driver hands it to the system browser, delivered
+/// through the real `connect()` path (SNOW-3649282).
 ///
-/// The generous timeout with no simulated callback discriminates the fix
-/// from a regression: a correct fix fails instantly at validation, whereas
-/// a regression that skipped validation would open the browser and block
-/// until the timeout — surfacing a *timeout* error, not the validation
-/// error asserted below. The assertion targets "refusing to open browser",
-/// which `validate_browser_url` emits and a timeout/HTTP error does not.
+/// The generous timeout with no simulated callback keeps the assertion
+/// specific: validation fails instantly, so the error asserted below is the
+/// validation error and not a timeout. The assertion targets "refusing to
+/// open browser", which `validate_browser_url` emits and a timeout/HTTP
+/// error does not.
 #[test]
-fn should_reject_malicious_sso_url_before_opening_browser() {
+fn should_validate_browser_url() {
     // Given Wiremock returns an ssoUrl containing a shell metacharacter
     let fixture = ExternalBrowserTestFixture::new();
     fixture.mock.mount(external_browser::authenticator_request(
         "https://evil-idp.example.com/sso?state=poc|calc",
         "proof_key",
     ));
-    // A generous timeout so a regression that skipped validation fails with a
-    // *timeout*, not the validation error asserted below.
+    // A generous timeout so the assertion below surfaces the validation
+    // error and not a timeout.
     fixture
         .client
         .set_connection_option("authentication_timeout", "30");

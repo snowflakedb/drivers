@@ -461,6 +461,7 @@ pub(crate) fn apply_proxy_to_builder(
     // (legacy POSIX behaviour) or they explicitly disabled the proxy via the
     // legacy ODBC `PROXY=""` + `AllowEmptyProxy=true` form.
     if proxy.use_proxy_env && !proxy.explicitly_disabled {
+        tracing::warn!("Proxy configuration: using environment variable proxy settings");
         Ok(builder)
     } else {
         Ok(builder.no_proxy())
@@ -618,6 +619,17 @@ mod tests {
         };
         let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
         builder.build().expect("env-fallback path must build");
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn should_log_info_when_use_proxy_env_is_enabled() {
+        let p = ProxyConfig {
+            use_proxy_env: true,
+            ..Default::default()
+        };
+        configure_http_client(Client::builder(), Some(&p)).unwrap();
+        assert!(logs_contain("environment variable proxy settings"));
     }
 
     #[test]

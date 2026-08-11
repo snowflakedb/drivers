@@ -98,7 +98,7 @@ public class SnowflakeClob implements Clob {
     if (searchstr == null) {
       throw new SFSQLException("Search Clob is null.");
     }
-    long searchLength = 0;
+    long searchLength;
     try {
       searchLength = searchstr.length();
       if (searchLength > MAX_VALUE) {
@@ -106,7 +106,7 @@ public class SnowflakeClob implements Clob {
       }
       return position(searchstr.getSubString(1, (int) searchLength), start);
     } catch (SQLException e) {
-      throw new RuntimeException(e);
+      throw SFSQLException.surfacing(e);
     }
   }
 

@@ -26,12 +26,12 @@ public sealed class SnowflakeDbConnection : DbConnection
     }
 
     public SnowflakeDbConnection()
-        : this(NativeCoreTransport.Instance)
+        : this(SfCoreTransport.Instance)
     {
     }
 
     public SnowflakeDbConnection(string connectionString)
-        : this(NativeCoreTransport.Instance)
+        : this(SfCoreTransport.Instance)
     {
         _connectionString = connectionString;
     }
@@ -105,11 +105,11 @@ public sealed class SnowflakeDbConnection : DbConnection
 
         var parser = new ConnectionStringParser(_connectionString);
 
-        var dbNewResp = await _driver.DatabaseNewAsync(new DatabaseNewRequest(), cancellationToken);
+        var dbNewResp = await _driver.DatabaseNewAsync(new DatabaseNewRequest(), cancellationToken).ConfigureAwait(false);
         _dbHandle = dbNewResp.DbHandle;
-        await _driver.DatabaseInitAsync(new DatabaseInitRequest { DbHandle = _dbHandle }, cancellationToken);
+        await _driver.DatabaseInitAsync(new DatabaseInitRequest { DbHandle = _dbHandle }, cancellationToken).ConfigureAwait(false);
 
-        var connNewResp = await _driver.ConnectionNewAsync(new ConnectionNewRequest(), cancellationToken);
+        var connNewResp = await _driver.ConnectionNewAsync(new ConnectionNewRequest(), cancellationToken).ConfigureAwait(false);
         _connHandle = connNewResp.ConnHandle;
 
         var setOptionsReq = new ConnectionSetOptionsRequest
@@ -118,14 +118,14 @@ public sealed class SnowflakeDbConnection : DbConnection
             NoConnectionDetails = parser.IsEmpty,
         };
         setOptionsReq.Options.Add(parser.ToProtoOptions());
-        await _driver.ConnectionSetOptionsAsync(setOptionsReq, cancellationToken);
+        await _driver.ConnectionSetOptionsAsync(setOptionsReq, cancellationToken).ConfigureAwait(false);
 
         await _driver.ConnectionInitAsync(new ConnectionInitRequest
         {
             ConnHandle = _connHandle,
             DbHandle = _dbHandle,
             WrapperIdentity = BuildWrapperIdentity(),
-        }, cancellationToken);
+        }, cancellationToken).ConfigureAwait(false);
 
         _state = ConnectionState.Open;
     }

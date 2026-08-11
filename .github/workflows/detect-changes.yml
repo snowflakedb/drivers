@@ -130,6 +130,12 @@ jobs:
               - 'sf_core/**'
               - 'sf_mini_core/**'
               - 'sf_mini_core_static/**'
+              # The canonical connection-parameter registry and the code
+              # generator that consumes it. A registry-only edit changes driver
+              # behaviour everywhere, so it must trigger the core suite even
+              # though no file under sf_core/ was touched.
+              - 'sf_params_spec/**'
+              - 'sf_params_codegen/**'
               - 'proto_utils/**'
               - 'proto_generator/**'
               - 'protobuf/**'
@@ -226,6 +232,10 @@ jobs:
             python_packaging:
               - 'python/pyproject.toml'
               - 'python/hatch_build.py'
+              # Minimal sdist workspace manifest. Adding or removing a member
+              # here only breaks at sdist-build time, so it has to run the
+              # packaging job.
+              - 'python/Cargo.toml.sdist'
             shared:
               - 'Cargo.toml'
               - 'Cargo.lock'

@@ -177,7 +177,7 @@ pub unsafe extern "C" fn sf_core_api_call_proto_async(
     // Copy inputs eagerly — the caller may free these after we return.
     let api_str = unsafe { CStr::from_ptr(api).to_string_lossy().into_owned() };
     let method_str = unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() };
-    let request_vec = if request_len == 0 {
+    let request_vec = if request_len == 0 || request.is_null() {
         Vec::new()
     } else {
         unsafe { std::slice::from_raw_parts(request, request_len).to_vec() }

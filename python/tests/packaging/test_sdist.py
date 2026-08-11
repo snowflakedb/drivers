@@ -23,6 +23,13 @@ def get_python_dir() -> Path:
     return Path(__file__).parent.parent.parent
 
 
+# A cold `cargo build --release` of the full workspace (triggered when the
+# core-target cache misses) routinely takes longer than 10 minutes on shared
+# CI runners. Configurable via env var so CI can raise it without a code
+# change; default is generous enough to cover a genuinely cold build.
+SDIST_INSTALL_TIMEOUT = int(os.environ.get("SDIST_INSTALL_TIMEOUT", "1500"))
+
+
 class TestSdistPackaging:
     """Tests for sdist build and installation."""
 
@@ -44,14 +51,19 @@ class TestSdistPackaging:
         if env:
             full_env.update(env)
 
-        result = subprocess.run(
-            cmd,
-            cwd=cwd,
-            env=full_env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=cwd,
+                env=full_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            pytest.fail(
+                f"Command timed out after {timeout}s: {' '.join(cmd)}\nstdout: {exc.stdout}\nstderr: {exc.stderr}"
+            )
         return result
 
     def _create_venv(self, venv_path: Path) -> Path:
@@ -97,7 +109,7 @@ class TestSdistPackaging:
         # Install the sdist (this will build from source)
         result = self._run_command(
             [str(pip_exe), "install", str(sdist_path), "--verbose"],
-            timeout=600,  # Rust compilation can take a while
+            timeout=SDIST_INSTALL_TIMEOUT,
         )
 
         if result.returncode != 0:
@@ -191,6 +203,8 @@ class TestSdistPackaging:
                 "sf_core/src/lib.rs",
                 "python_bridge/Cargo.toml",
                 "python_bridge/src/lib.rs",
+                "sf_params_spec/Cargo.toml",
+                "sf_params_spec/src/lib.rs",
                 "proto_utils/Cargo.toml",
                 "proto_utils/src/lib.rs",
                 "proto_generator/Cargo.toml",
@@ -206,23 +220,18 @@ class TestSdistPackaging:
                 matches = [n for n in names if n.endswith(pattern)]
                 assert matches, f"Missing required file pattern: {pattern}"
 
-            # Verify Cargo.toml is the minimal version (not full workspace)
-            cargo_toml_entry = next(
-                n
-                for n in names
-                if n.endswith("/Cargo.toml")
-                and "sf_core" not in n
-                and "python_bridge" not in n
-                and "proto_utils" not in n
-                and "proto_generator" not in n
-                and "error_trace" not in n
-            )
+            # Verify Cargo.toml is the minimal version (not full workspace).
+            # Anchor on archive depth rather than excluding member-crate names:
+            # a name blocklist silently repoints this at a member's manifest the
+            # first time a workspace member is added.
+            cargo_toml_entry = next(n for n in names if n.endswith("/Cargo.toml") and n.count("/") == 1)
             cargo_content = tar.extractfile(cargo_toml_entry)
             assert cargo_content is not None
             content = cargo_content.read().decode("utf-8")
 
             assert "sf_core" in content
             assert "python_bridge" in content
+            assert "sf_params_spec" in content
             assert "proto_utils" in content
             assert "error_trace" in content
             assert "error_trace_derive" in content

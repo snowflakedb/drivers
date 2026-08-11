@@ -1,6 +1,5 @@
 package net.snowflake.client.internal.api.implementation.metadata.capabilities;
 
-import java.sql.SQLException;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
@@ -194,20 +193,12 @@ public final class MetaDataIdentity {
 
   public int getDatabaseMajorVersion() {
     connection.checkClosed();
-    try {
-      return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMajorVersion();
-    } catch (SQLException e) {
-      throw new RuntimeException(e);
-    }
+    return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMajorVersion();
   }
 
   public int getDatabaseMinorVersion() {
     connection.checkClosed();
-    try {
-      return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMinorVersion();
-    } catch (SQLException e) {
-      throw new RuntimeException(e);
-    }
+    return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMinorVersion();
   }
 
   public int getJDBCMajorVersion() {

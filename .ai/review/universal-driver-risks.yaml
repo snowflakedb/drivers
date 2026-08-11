@@ -1,0 +1,759 @@
+id: universal-driver-risks
+friendly_name: "Universal Driver Trust-Boundary Risk Rules"
+status: enabled
+# ArcticOwl rules for the driver's external trust-boundary invariants —
+# the "what must never happen" at each edge where the driver touches the
+# outside world. Source of truth:
+#   security_guidelines.md
+# Prefer linking that doc (§ / A# / B#) over restating its prose here.
+#
+# Scope note (avoid duplicate review comments):
+#   - Secret STORAGE (SensitiveString wrapping, Debug redaction) is owned by
+#     `universal-driver-security-rules` — do NOT re-flag it here.
+#   - Secret / result / URL LOGGING is owned by `universal-driver-logging-rules`
+#     (and the Rust-specific logging ruleset). Do NOT re-flag log sites here.
+#   - Security-issue DISCLOSURE in comments/PRs is owned by
+#     `universal-driver-security-disclosure`.
+#   This ruleset covers the boundary INVARIANTS those rulesets don't:
+#   path confinement, TOCTOU-hardened I/O, integrity checks, TLS/endpoint
+#   confinement, proxy/CRL egress, auth-flow validation, telemetry gating/
+#   payload scope, WIF attestation handling, and audit of dangerous opt-outs.
+#
+# [posture] items from the guidelines are NOT encoded as hard rules here —
+# flag only actionable, reviewable invariants.
+allowed_folders:
+  - "sf_core/src"
+  - "odbc/src"
+excluded_folders:
+  - "sf_core/src/bin"
+allowed_file_extensions:
+  - ".rs"
+  - ".toml"
+rules:
+  # ===========================================================================
+  # RISK AREA 1 — LOCAL FILE SYSTEM
+  # See security_guidelines.md § "1. Local file system", B1, B11
+  # ===========================================================================
+  - id: ud-risk-download-path-confined
+    rule: |
+      **OBJECTIVE**: A GET / file download must only ever write inside the
+      caller-supplied destination directory. The source file name comes from a
+      Snowflake response and is therefore untrusted input — it must never be
+      able to steer a write to an arbitrary location on disk.
+      See `security_guidelines.md` § "1. Local file system" / B1.
+
+      **CONTEXT**: Existing two-layer guard in `sf_core/src/file_manager/mod.rs`
+      (`safe_download_file_name` + `resolve_validated_output_path`, SNOW-3704966).
+
+      **REQUIREMENT**: Any new or changed download / file-write path that derives
+      an on-disk destination from a server-, stage-, or otherwise
+      externally-supplied string MUST:
+        1. Reduce that string to a safe basename (reject empty, `.`, `..`, and
+           any path separator or drive-letter/NUL character) — never pass the raw
+           value into `Path::join` / `PathBuf::push` / `format!("{dir}/{name}")`.
+        2. Join onto a canonicalized base directory and confirm the resolved
+           result still starts with that base directory before creating the file.
+
+      Flag: a download/write destination built by joining an unsanitized
+      server-supplied name onto a directory; a `file_name().unwrap_or(raw)`-style
+      fallback that lets the raw tainted string through; a new transfer path that
+      skips the basename + containment checks the existing code performs.
+
+      ❌ **BAD:**
+      ```rust
+      let name = response.src_location;                 // untrusted
+      let out = Path::new(local_dir).join(&name);       // ".." / absolute path escapes
+      std::fs::write(out, bytes)?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let out = resolve_validated_output_path(local_dir, &response.src_location)?;
+      std::fs::write(out, bytes)?;
+      ```
+
+  - id: ud-risk-credential-file-reads-through-adapter
+    rule: |
+      **OBJECTIVE**: Reads of the **contents** of a user-referenced credential or
+      configuration file should flow through the `FsAdapter` seam so
+      permission/size/ownership policy stays centralized.
+      See `security_guidelines.md` § "1. Local file system" / B1.
+
+      **CONTEXT**: Seam is `sf_core/src/fs_adapter.rs`. Path-validation-only
+      `canonicalize` / metadata calls (e.g. download containment) are out of
+      scope for this rule.
+
+      **REQUIREMENT**: When adding a read of the *content* of a file whose path
+      originates from user/connection configuration (private key, token cache,
+      config file), prefer the injected `FsAdapter` (or the existing
+      config/credential loader) over a direct `std::fs::read_to_string` /
+      `File::open`. If a direct `std::fs` read is unavoidable, keep it in the
+      dedicated adapter/loader layer, not in transfer/auth business logic.
+
+      ❌ **BAD:**
+      ```rust
+      let pem = std::fs::read_to_string(&config.private_key_file)?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let pem = fs_adapter.read_to_string(&config.private_key_file)?;
+      ```
+
+  - id: ud-risk-file-io-toctou-hardened
+    rule: |
+      **OBJECTIVE**: File I/O on a security-relevant path must be free of TOCTOU
+      races and must not follow an attacker-planted symlink — trust decisions on
+      the open fd, not on a path that is re-opened later.
+      See `security_guidelines.md` § "1. Local file system" / B1.
+
+      **CONTEXT**: Hardened openers live in `sf_core/src/fs_lock.rs`; fd
+      validation pattern in `token_cache/file_cache.rs::validate_file_fd`.
+
+      **REQUIREMENT**: New or changed I/O on a security-relevant path MUST:
+        1. Make ownership / permission / file-type trust decisions from the **open
+           file descriptor** (`file.metadata()`), never from a `fs::metadata(path)`
+           / `path.exists()` / `path.is_file()` check followed by a separate open.
+        2. Set `O_NOFOLLOW` when opening an existing sensitive file, and create
+           sensitive files atomically with `O_EXCL` / `create_new` with the mode
+           set at creation — go through the `fs_lock` helpers.
+        3. Not probe a shared directory via a fixed, predictable path; use an
+           `O_EXCL` randomly-named temp as `filesystem_now` does.
+
+      Flag: a path-based trust check followed by a separate open/read/write of
+      the same path; non-atomic check-then-create; opening a sensitive existing
+      file without `O_NOFOLLOW`; a raw `OpenOptions` that bypasses `fs_lock`.
+
+      ❌ **BAD:**
+      ```rust
+      let meta = std::fs::metadata(path)?;
+      if meta.permissions().mode() & 0o077 == 0 && meta.uid() == getuid() {
+          let content = std::fs::read_to_string(path)?;
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let mut file = crate::fs_lock::open_existing_nofollow(path, true, false)?;
+      validate_file_fd(&file, path)?;
+      let mut content = String::new();
+      file.read_to_string(&mut content)?;
+      ```
+
+  - id: ud-risk-config-file-permission-checked
+    rule: |
+      **OBJECTIVE**: Config / connection file reads must gate on file permissions
+      so a group- or world-writable file cannot inject connection parameters,
+      auth settings, or file paths.
+      See `security_guidelines.md` § "1. Local file system" / B11.
+
+      **CONTEXT**: Gate is `config/toml_loader.rs::check_file_permissions`;
+      bypass only via explicit `unsafe_skip_file_permissions_check`; paths from
+      `config/path_resolver.rs`.
+
+      **REQUIREMENT**:
+        1. A new code path that reads a config / connection / credential settings
+           file MUST run it through the permission check (or the loader that does)
+           before parsing its contents.
+        2. The permission check may be skipped ONLY when the caller explicitly
+           passed `unsafe_skip_file_permissions_check`
+           (`FilePermissionCheck::UnsafeDisabled`); do not hard-code or default
+           the bypass, and keep the audit log on the skip path.
+        3. Resolve config file locations from the fixed platform-default /
+           env-driven resolver, not from an arbitrary, unvalidated caller string.
+
+      Flag: a config/connection file read that skips `check_file_permissions` /
+      the permission-checking loader; a call site that passes
+      `FilePermissionCheck::UnsafeDisabled` without the explicit connection
+      parameter; a new config-path source that bypasses the resolver.
+
+      ❌ **BAD:**
+      ```rust
+      let contents = std::fs::read_to_string(&connections_path)?;
+      let cfg: toml::Value = toml::from_str(&contents)?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let cfg = load_toml_file(&connections_path, permission_check)?;
+      ```
+
+  - id: ud-risk-sensitive-file-owner-only-perms
+    rule: |
+      **OBJECTIVE**: Files that hold secrets (token cache, credential material) or
+      security-relevant caches (CRL cache) must be created with owner-only
+      permissions (`0600`); sensitive directories owner-only (`0700`).
+      See `security_guidelines.md` § "1. Local file system" / B1 / A1.
+
+      **CONTEXT**: Prefer `fs_lock` helpers that set the mode at creation (also
+      see `ud-risk-file-io-toctou-hardened`).
+
+      **REQUIREMENT**: Code that creates or writes a token-cache file, credential
+      file, or CRL/security cache MUST create it with restrictive, owner-only
+      permissions and MUST NOT widen them. Do not write cached secrets to a
+      world-/group-readable path or with default umask-derived permissions.
+      Prefer `fs_lock::create_new_nofollow` (or existing cache writers) over a
+      bare `std::fs::write`.
+
+      Flag: a secret/credential/CRL-cache file created without an explicit
+      owner-only mode; a chmod that grants group/other access; a `std::fs::write`
+      of cached tokens that bypasses the hardened creator.
+
+      ❌ **BAD:**
+      ```rust
+      std::fs::write(&cache_path, serialized)?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let mut file = crate::fs_lock::create_new_nofollow(&cache_path, 0o600)?;
+      file.write_all(&serialized)?;
+      ```
+
+  # ===========================================================================
+  # RISK AREA 2 — CLOUD PROVIDER BUCKET OPERATIONS
+  # See security_guidelines.md § "2. Cloud provider bucket
+  # operations" / B4
+  # ===========================================================================
+  - id: ud-risk-downloaded-content-integrity-verified
+    rule: |
+      **OBJECTIVE**: Bytes fetched from a cloud bucket must have integrity
+      verified before they are surfaced or written as final plaintext.
+      See `security_guidelines.md` § "2. Cloud provider bucket operations" / B4.
+
+      **CONTEXT**: Digest check in `sf_core/src/file_manager/encryption.rs`;
+      downloads use temp `.part` + atomic `rename`.
+
+      **REQUIREMENT**: A new or changed cloud download path MUST:
+        1. For client-side-encrypted material, verify the content digest as part
+           of decryption; do not surface content whose digest did not match.
+        2. Where a content length / expected size is available, verify bytes
+           received match before treating the download as complete.
+        3. Write to a temporary sibling path and atomically `rename` into place.
+
+      Flag: decrypt without digest verification; ignore a known expected content
+      length; write plaintext straight to the final path.
+
+      ❌ **BAD:**
+      ```rust
+      let plaintext = decrypt(ciphertext, &key);
+      std::fs::write(&final_path, &plaintext)?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let plaintext = decrypt_and_verify_digest(ciphertext, &key, expected_sha256)?;
+      std::fs::write(&part_path, &plaintext)?;
+      std::fs::rename(&part_path, &final_path)?;
+      ```
+
+  - id: ud-risk-bucket-endpoint-from-stage-credentials-only
+    rule: |
+      **OBJECTIVE**: The driver must only talk to the cloud endpoint / bucket /
+      presigned URL described by the Snowflake-issued stage credentials for this
+      operation — never an untrusted or caller-mutable host string.
+      See `security_guidelines.md` § "2. Cloud provider bucket operations" / B4.
+
+      **REQUIREMENT**: The target host / bucket / presigned URL for a PUT or GET
+      MUST be derived from the stage-info / credentials returned by the Snowflake
+      backend over the authenticated session. Do not build a cloud request URL by
+      string-concatenating a caller-supplied host.
+
+      Flag: a transfer endpoint read from an unvalidated external string; a
+      presigned URL used from anywhere other than the server-provided stage-info
+      / presigned-URL list.
+
+      ❌ **BAD:**
+      ```rust
+      let endpoint = format!("https://{}/{}", user_supplied_host, bucket);
+      client.put(endpoint).body(bytes).send().await?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let endpoint = stage_credentials.presigned_url_for(index)?;
+      client.put(endpoint).body(bytes).send().await?;
+      ```
+
+  - id: ud-risk-presigned-url-is-bearer-secret
+    rule: |
+      **OBJECTIVE**: Presigned / SAS URLs, stage credentials, and the stage
+      master key (`query_stage_master_key`) are bearer secrets — hold and move
+      them as credentials; never embed them in errors or free-form diagnostics.
+      (`smk_id` is a key reference, not a secret.)
+      See `security_guidelines.md` § "2. Cloud provider bucket operations" / B4.
+      Logging of these values is owned by `universal-driver-logging-rules`;
+      `SensitiveString` wrapping by `universal-driver-security-rules`.
+
+      **REQUIREMENT**:
+        1. Keep cloud credentials and `query_stage_master_key` in
+           `SensitiveString` (or existing stage-credential types) — do not demote
+           them to plain `String`.
+        2. Do NOT interpolate a presigned/SAS URL, stage credential, or master
+           key into an error/`anyhow`/`snafu` display string, panic, or free-form
+           diagnostic. Prefer non-secret identifiers (`smk_id`, operation, status).
+        3. If a storage URL must appear in a diagnostic context, reduce it to
+           scheme+host+path (query/fragment stripped).
+
+      Flag: a plain `String` newly holding a stage credential / master key /
+      full presigned URL; an error constructed with those values interpolated;
+      a `Display`/`Debug` path that emits the full presigned form unredacted.
+
+      ❌ **BAD:**
+      ```rust
+      return Err(anyhow!("upload failed to {presigned_url}"));
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      return Err(UploadFailedSnafu { operation: "put", status }.build());
+      ```
+
+  # ===========================================================================
+  # RISK AREA 3 — DRIVER BACKEND REST API / TLS
+  # See security_guidelines.md § "3. Driver backend REST API
+  # (TLS / networking)" / B3
+  # ===========================================================================
+  - id: ud-risk-tls-verification-not-disabled-in-prod
+    rule: |
+      **OBJECTIVE**: Certificate chain, hostname, and CRL/revocation checks must
+      stay on for every outbound connection in production. Insecure-TLS seams are
+      test-only. CRL is the only revocation mechanism — OCSP is intentionally
+      unsupported.
+      See `security_guidelines.md` § "3. Driver backend REST API (TLS / networking)" / B3.
+
+      **CONTEXT**: `TlsConfig::insecure()` in `config/rest_parameters.rs`; CRL
+      verifier under `sf_core/src/tls/`.
+
+      **REQUIREMENT**:
+        1. Do NOT introduce a production call to `TlsConfig::insecure()`,
+           `danger_accept_invalid_certs(true)`, `danger_accept_invalid_hostnames(true)`,
+           a no-op certificate verifier, or an equivalent that disables chain,
+           hostname, or CRL validation.
+        2. Any such construct MUST be gated behind
+           `#[cfg(any(test, feature = "test-utils"))]` (or test-only constructors).
+        3. Do not add a connection option that flips TLS verification off in a
+           shipped build.
+
+      Flag: an insecure-TLS constructor/verifier outside a test/`test-utils`
+      gate; a new config flag that disables certificate, hostname, or CRL
+      verification in a non-test build.
+
+      ❌ **BAD:**
+      ```rust
+      let tls = TlsConfig::insecure();
+      let client = build_client(tls);
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      #[cfg(any(test, feature = "test-utils"))]
+      let tls = TlsConfig::insecure();
+      #[cfg(not(any(test, feature = "test-utils")))]
+      let tls = TlsConfig::from_settings(&settings)?;
+      ```
+
+  - id: ud-risk-connect-only-to-configured-account-host
+    rule: |
+      **OBJECTIVE**: Snowflake REST / login / session traffic must target the
+      configured account host. A host/redirect from a server response must not
+      silently steer subsequent traffic elsewhere.
+      See `security_guidelines.md` § "3. Driver backend REST API (TLS / networking)" / B3.
+      (Stage endpoints: see `ud-risk-bucket-endpoint-from-stage-credentials-only`.)
+
+      **REQUIREMENT**: Outbound Snowflake REST traffic MUST target the account
+      host derived from connection configuration (or the documented validated
+      host-resolution / redirect path). Do not build a new backend request URL
+      from an unvalidated host string taken from a response body, header, or
+      unrelated config field.
+
+      Flag: a new code path that takes a host/URL from a server response and uses
+      it as the next Snowflake REST target without the existing validated
+      host-resolution logic.
+
+      ❌ **BAD:**
+      ```rust
+      let next = response.redirect_host;
+      client.post(format!("https://{next}/session")).send().await?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let host = resolve_account_host(&connection_config)?;
+      client.post(session_url_for(&host)).send().await?;
+      ```
+
+  - id: ud-risk-response-size-and-timeouts-bounded
+    rule: |
+      **OBJECTIVE**: Networked fetches must bound response size, decompression,
+      and timeouts — fail closed on oversize; do not hang on a hostile peer.
+      See `security_guidelines.md` § "3. Driver backend REST API (TLS / networking)" / B3
+      and "Client-side library outside Snowflake's control" item 7.
+
+      **CONTEXT**: Prefer helpers such as
+      `http::retry::execute_bytes_with_retry_capped` and `crl_max_download_size`.
+
+      **REQUIREMENT**: A new or changed networked fetch / response-body read MUST:
+        1. Enforce connect and read timeouts.
+        2. Cap the response body size when reading from an untrusted or
+           third-party host.
+        3. Not disable or bypass decompression-bomb / size guards on gzip/zstd
+           (or equivalent) without an explicit, documented safe-path reason.
+
+      Flag: unbounded `.bytes().await` / read-to-end of a third-party or
+      untrusted response; a client with no connect/read timeout; removal of an
+      existing size or decompression bound.
+
+      ❌ **BAD:**
+      ```rust
+      let bytes = client.get(url).send().await?.bytes().await?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let bytes = execute_bytes_with_retry_capped(&client, url, max_size, ctx).await?;
+      ```
+
+  # ===========================================================================
+  # RISK AREA 4 — THIRD-PARTY EGRESS & PROXY
+  # See security_guidelines.md § "4. Third-party egress &
+  # proxy" / B5 / B6
+  # ===========================================================================
+  - id: ud-risk-outbound-egress-honors-proxy
+    rule: |
+      **OBJECTIVE**: Every outbound HTTP client must route through the driver's
+      configured `ProxyConfig`. Env-var proxies stay off unless `use_proxy_env`
+      is true; explicit config overrides env.
+      See `security_guidelines.md` § "4. Third-party egress & proxy" / B5.
+
+      **CONTEXT**: `sf_core/src/tls/config.rs::ProxyConfig` (password is
+      `SensitiveString` — logging owned by the logging ruleset).
+
+      **REQUIREMENT**: When constructing an outbound HTTP client for ANY
+      networked path (REST, cloud storage, CRL, diagnostics, WIF metadata/STS),
+      thread `ProxyConfig` (or the existing client-builder that applies it). Do
+      NOT build a bare `reqwest::Client::new()` / `ClientBuilder` that ignores
+      the configured proxy, or leave env-proxy auto-detection on while
+      `use_proxy_env` is false.
+
+      Flag: a new networked HTTP client that does not derive its proxy from
+      `ProxyConfig`; a client that leaves env-proxy auto-detection on while
+      `use_proxy_env` is false.
+
+      ❌ **BAD:**
+      ```rust
+      let client = reqwest::Client::new();
+      client.get(crl_url).send().await?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let client = build_http_client(&proxy_config)?;
+      client.get(crl_url).send().await?;
+      ```
+
+  - id: ud-risk-crl-fetch-bounded-and-verified
+    rule: |
+      **OBJECTIVE**: CRL fetches (URL from the presented certificate — untrusted)
+      must be size-/time-bounded, http(s)-only, and signature-verified against the
+      issuer before trust. CRL is the **only** revocation mechanism — do not add
+      OCSP responder fetching or stapled-OCSP in production.
+      See `security_guidelines.md` § "4. Third-party egress & proxy" / B6.
+
+      **CONTEXT**: Distribution points via
+      `crl::certificate_parser::extract_crl_distribution_points`; fetch via
+      `execute_bytes_with_retry_capped` + `crl_max_download_size`; verify via
+      `tls::x509_utils::verify_crl_signature`. Revocation off by default
+      (`CertRevocationCheckMode::Disabled`).
+
+      **REQUIREMENT**: A new or changed CRL (or cert-derived third-party
+      revocation) fetch MUST:
+        1. Cap response body size.
+        2. Enforce connect and read timeouts.
+        3. Restrict scheme to `http`/`https`.
+        4. Verify payload signature against the trusted issuer before use.
+        5. Persist caches through the TOCTOU-hardened, owner-only path
+           (respecting `crl_unsafe_skip_file_permissions_check`).
+        6. Not introduce OCSP as a production revocation path.
+
+      Flag: unbounded CRL/third-party read; missing timeout; unconstrained
+      scheme; unverified payload trusted for revocation; new OCSP fetch/verify
+      in production code.
+
+      ❌ **BAD:**
+      ```rust
+      let bytes = client.get(dp_url).send().await?.bytes().await?;
+      let crl = parse_crl(&bytes)?;
+      if crl.contains(serial) { revoke() }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let bytes = execute_bytes_with_retry_capped(&client, dp_url, cfg.max_download_size, ctx).await?;
+      verify_crl_signature(&bytes, issuer)?;
+      let crl = parse_crl(&bytes)?;
+      if crl.contains(serial) { revoke() }
+      ```
+
+  # ===========================================================================
+  # RISK AREA 5 — AUTHENTICATION
+  # See security_guidelines.md § "5. Authentication
+  # (browser/shell, IdPs, keystore)" / B7 / B8 / A1
+  # ===========================================================================
+  - id: ud-risk-oauth-callback-state-and-redirect-validated
+    rule: |
+      **OBJECTIVE**: Browser / OAuth flows must validate returned `state`/`nonce`
+      and accept the callback only on the redirect URI/port the driver registered
+      before exchanging or accepting a token.
+      See `security_guidelines.md` § "5. Authentication (browser/shell, IdPs, keystore)" / B7.
+      Use timing-safe comparison (`ud-risk-timing-safe-secret-compare`). Describe
+      checks neutrally (`universal-driver-security-disclosure`).
+
+      **REQUIREMENT**: Before exchanging or accepting a token:
+        1. Compare returned `state` (and `nonce` where applicable) against the
+           value the driver generated for this request; reject on mismatch.
+        2. Accept the callback only on the redirect URI / loopback port the
+           driver itself registered.
+
+      Flag: token exchange without `state`/`nonce` compare; callback that trusts
+      a redirect URI/port from the response instead of the one the driver bound.
+
+      ❌ **BAD:**
+      ```rust
+      let code = callback.authorization_code;
+      let token = exchange_code(code).await?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      ensure!(constant_time_eq(&callback.state, &expected_state), StateMismatchSnafu);
+      let token = exchange_code(callback.authorization_code).await?;
+      ```
+
+  - id: ud-risk-oauth-callback-listener-loopback-only
+    rule: |
+      **OBJECTIVE**: The OAuth / external-browser callback listener must bind
+      loopback-only (`127.0.0.1`), never `0.0.0.0` / `::` / a routable interface.
+      See `security_guidelines.md` § "5. Authentication (browser/shell, IdPs, keystore)" / B7.
+
+      **REQUIREMENT**: Code that opens the local HTTP listener for an OAuth /
+      external-browser callback MUST bind to a loopback address only.
+
+      Flag: a callback `TcpListener` / server bind to `0.0.0.0`, `::`, or a
+      non-loopback host; a new option that exposes the callback port off-loopback
+      without a clear test-only gate.
+
+      ❌ **BAD:**
+      ```rust
+      let listener = TcpListener::bind("0.0.0.0:0").await?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let listener = TcpListener::bind("127.0.0.1:0").await?;
+      ```
+
+  - id: ud-risk-browser-launch-url-validated-no-shell
+    rule: |
+      **OBJECTIVE**: IdP-supplied URLs opened in the system browser must go
+      through the validating launcher (`https`-only, no shell/argv metacharacters,
+      never via a shell interpreter).
+      See `security_guidelines.md` § "5. Authentication (browser/shell, IdPs, keystore)" / B8.
+
+      **CONTEXT**: `sf_core/src/rest/snowflake/browser.rs`
+      (`validate_browser_url` / `open_url`, SNOW-3649282).
+
+      **REQUIREMENT**: Any browser launch (external-browser SSO, OAuth
+      authorization-code) MUST:
+        1. Go through `browser::open_url` / `validate_browser_url` — not
+           `webbrowser::open`, `std::process::Command`, or an OS opener directly
+           on a server-supplied URL.
+        2. Never route the URL through a shell (`sh -c`, `cmd /c`, `powershell`)
+           or interpolate it into a command line.
+        3. Reject non-`https` URLs and URLs carrying shell/argv metacharacters.
+
+      Flag: direct opener on a server-supplied URL that bypasses
+      `validate_browser_url`; shell-based launch; missing `https` enforcement.
+
+      ❌ **BAD:**
+      ```rust
+      std::process::Command::new("sh").arg("-c").arg(format!("xdg-open {sso_url}")).spawn()?;
+      webbrowser::open(&sso_url)?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      crate::rest::snowflake::browser::open_url(&sso_url)?;
+      ```
+
+  - id: ud-risk-timing-safe-secret-compare
+    rule: |
+      **OBJECTIVE**: Comparisons of secrets, OAuth/SSO `state`/`nonce`, and
+      tokens/HMACs must use constant-time equality — never short-circuiting `==`.
+      See `security_guidelines.md` A1 (Credentials).
+
+      **CONTEXT**: OAuth already uses constant-time equality via
+      `oauth2::CsrfToken` (and equivalents).
+
+      **REQUIREMENT**: When comparing `state`/`nonce`, tokens, HMACs, or other
+      secrets against attacker-influenceable input, use a constant-time /
+      timing-safe helper (or a type whose equality is documented as
+      constant-time). Do not use ordinary string/`==` comparison.
+
+      Flag: `expected_state == callback.state` (or similar) on secret/auth
+      material without a constant-time helper; a custom HMAC/token compare with
+      early-exit byte loops.
+
+      ❌ **BAD:**
+      ```rust
+      if callback.state != expected_state {
+          return Err(StateMismatch);
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      if !bool::from(expected_state.secret_eq(callback.state.as_bytes())) {
+          return Err(StateMismatch);
+      }
+      ```
+
+  # ===========================================================================
+  # RISK AREA 5b — WIF / INSTANCE METADATA
+  # See security_guidelines.md B16
+  # ===========================================================================
+  - id: ud-risk-wif-attestation-handled-as-credential
+    rule: |
+      **OBJECTIVE**: WIF attestation / identity tokens are bearer credentials;
+      metadata/STS fetches must be time-bounded; WIF stays opt-in via explicit
+      provider config.
+      See `security_guidelines.md` B16.
+      Integrity of the instance-metadata service /
+      `IDENTITY_ENDPOINT`/`MSI_ENDPOINT` is cloud/OS **[posture]** — do not invent
+      a driver-side MITM check for the metadata endpoint.
+
+      **REQUIREMENT**:
+        1. Hold the attestation token in `SensitiveString` (or the existing WIF
+           credential type) — do not demote to plain `String` in long-lived
+           structs. (Logging owned by the logging ruleset.)
+        2. Metadata / STS fetches MUST carry bounded timeouts.
+        3. Do not enable WIF implicitly — opt-in via explicit provider config.
+        4. Do not weaken the pinned audience / pre-signed-request shape for the
+           AWS default path (`snowflakecomputing.com`) without a reviewed reason.
+
+      Flag: attestation token as plain `String` in a long-lived struct;
+      metadata/STS call with no timeout; WIF activated by default; removal of the
+      AWS audience pin.
+
+      ❌ **BAD:**
+      ```rust
+      let token: String = fetch_imds_token(&client).await?;
+      login.token = token;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let token: SensitiveString = fetch_imds_token_with_timeout(&client, IMDS_TIMEOUT).await?;
+      login.token = token;
+      ```
+
+  # ===========================================================================
+  # RISK AREA 6 — TELEMETRY
+  # See security_guidelines.md § "6. Telemetry" / B10
+  # ===========================================================================
+  - id: ud-risk-telemetry-requires-server-opt-in
+    rule: |
+      **OBJECTIVE**: In-band telemetry must only send when the server opts the
+      session in (`CLIENT_TELEMETRY_ENABLED` + configured registry) — never
+      unconditionally. Out-of-band / pre-session telemetry is **[posture]**; if
+      added it needs its own default-conservative disable switch.
+      See `security_guidelines.md` § "6. Telemetry" / B10.
+
+      **CONTEXT**: Gate in `apis/database_driver_v1/connection.rs`.
+
+      **REQUIREMENT**: Any in-band telemetry export/send MUST be behind
+      `CLIENT_TELEMETRY_ENABLED` + the session registry. Do not make telemetry
+      unconditional. Do not add a pre-session telemetry path that sends
+      identifying detail without its own disable switch.
+
+      Flag: telemetry send not behind the server opt-in + registry gate;
+      unconditional telemetry; new pre-session path with no disable switch.
+
+      ❌ **BAD:**
+      ```rust
+      exporter.send(span_batch).await?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      if telemetry_enabled {
+          exporter.send(span_batch).await?;
+      }
+      ```
+
+  - id: ud-risk-telemetry-payload-metadata-only
+    rule: |
+      **OBJECTIVE**: Telemetry payloads carry approved operational metadata only
+      — never query text, bindings, result data, secrets, file paths, or foreign
+      error messages.
+      See `security_guidelines.md` § "6. Telemetry" / B10 / A3.
+
+      **CONTEXT**: `sf_core/src/telemetry`.
+
+      **REQUIREMENT**: When building a telemetry span/event or its attributes,
+      only attach approved operational fields (session/request/query id,
+      operation name, error **type/class**, timings, counts, environment info).
+      Do NOT attach query text/bindings, result data/schema metadata, secrets
+      (including presigned URLs), whole request/config objects, local file paths,
+      raw foreign error messages, or account/user/host-identifying detail on any
+      out-of-band path.
+
+      Flag: a telemetry attribute set from SQL text, bindings, result data, a
+      secret-bearing field, a file path, or `format!("{err}")` of a foreign error.
+
+      ❌ **BAD:**
+      ```rust
+      span.set_attribute("query", sql.clone());
+      span.set_attribute("error", format!("{source}"));
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      span.set_attribute("operation", op_name);
+      span.set_attribute("error.kind", error_kind.as_str());
+      span.set_attribute("row_count", row_count);
+      ```
+
+  # ===========================================================================
+  # RISK AREA 7 — AUDIT OF DANGEROUS OPT-OUTS
+  # See security_guidelines.md A2 / B11
+  # Logging *content* is owned by the logging rulesets; this rule only requires
+  # that security-relevant opt-outs are not silent.
+  # ===========================================================================
+  - id: ud-risk-dangerous-opt-out-audited
+    rule: |
+      **OBJECTIVE**: Dangerous security opt-outs must never be silent — audit-log
+      *that* the bypass was taken (non-sensitive attributes only).
+      See `security_guidelines.md` A2 / B11.
+
+      **REQUIREMENT**: When adding or changing a dangerous opt-out
+      (`unsafe_skip_file_permissions_check` / `FilePermissionCheck::UnsafeDisabled`,
+      `crl_unsafe_skip_file_permissions_check`, `use_proxy_env`, or any new
+      equivalent that weakens a security control), the skip/enable path MUST emit
+      an audit-level log (or existing equivalent warning). Do not introduce a
+      silent bypass, and do not default a dangerous opt-out to enabled.
+
+      Flag: a bypass of a security control with no accompanying audit/warn log
+      on the skip path; a dangerous opt-out defaulted to on.
+
+      ❌ **BAD:**
+      ```rust
+      if skip_permissions { /* read config with no log */ }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      if skip_permissions {
+          warn!("unsafe_skip_file_permissions_check enabled; config permission gate bypassed");
+      }
+      ```

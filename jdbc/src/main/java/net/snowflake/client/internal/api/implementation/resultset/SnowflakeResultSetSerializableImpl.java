@@ -107,42 +107,33 @@ class SnowflakeResultSetSerializableImpl implements SnowflakeResultSetSerializab
   }
 
   /**
-   * This class is its own exception-translation boundary rather than a {@code @JdbcBoundary}: the
-   * generated decorator extends {@link
-   * net.snowflake.client.internal.api.decorator.AbstractDecorator AbstractDecorator}, which is not
-   * {@link Serializable}, and shipping slices to remote workers is this type's whole purpose — a
-   * decorated wrapper could not be serialized. So this method routes through {@link
-   * SqlExceptionMapper#call} to convert the impl tier's unchecked carriers ({@link SFSQLException}
-   * here, {@code CoreException} from the fetch) into the checked {@link SQLException} the interface
-   * declares, and decorates the returned result set (with {@link Telemetry#NOOP}, since the
-   * sessionless slice emits no telemetry) so its hot-path accessors translate too.
+   * Its own exception-translation boundary rather than a {@code @JdbcBoundary}: the generated
+   * decorator isn't {@link Serializable}, and shipping slices to remote workers is this type's
+   * whole purpose, so it can't be wrapped. It therefore routes through {@link
+   * SqlExceptionMapper#call} to turn the impl tier's unchecked carriers into the checked {@link
+   * SQLException} the interface declares, and decorates the result (with {@link Telemetry#NOOP}, as
+   * a sessionless slice emits no telemetry) so its accessors translate too.
    */
   @Override
   public ResultSet getResultSet(ResultSetRetrieveConfig resultSetRetrieveConfig)
       throws SQLException {
-    return SqlExceptionMapper.call(
-        () -> {
-          if (chunks.isEmpty()) {
-            throw new SFSQLException("The Result Set serializable is invalid.");
-          }
-          // TODO: use url and proxy setting from ResultSetRetrieveConfig
+    return SqlExceptionMapper.call(() -> fetchResultSet(resultSetRetrieveConfig));
+  }
 
-          DatabaseFetchChunkResponse response =
-              coreDriverApi.databaseFetchChunk(chunks, columnMetadata);
-          // The factory rebuilds the originating session's conversion context from this frozen
-          // parameter snapshot so formatting matches the live result set. Pass the chunks too, so
-          // the derived (sessionless) ResultSet can be serialized again without re-fetch.
-          return Decorators.resultSet(
-              ResultSetFactory.createFromChunks(
-                  coreDriverApi,
-                  chunks,
-                  columnMetadata,
-                  queryId,
-                  response,
-                  getRowCount(),
-                  parameters),
-              Telemetry.NOOP);
-        });
+  /** Fetches this slice's chunks and returns the decorated, sessionless result set. */
+  private ResultSet fetchResultSet(ResultSetRetrieveConfig resultSetRetrieveConfig) {
+    if (chunks.isEmpty()) {
+      throw new SFSQLException("The Result Set serializable is invalid.");
+    }
+    // TODO: use url and proxy setting from ResultSetRetrieveConfig
+    DatabaseFetchChunkResponse response = coreDriverApi.databaseFetchChunk(chunks, columnMetadata);
+    // The factory rebuilds the originating session's conversion context from this frozen parameter
+    // snapshot so formatting matches the live result set. Pass the chunks too, so the derived
+    // (sessionless) ResultSet can be serialized again without re-fetch.
+    return Decorators.resultSet(
+        ResultSetFactory.createFromChunks(
+            coreDriverApi, chunks, columnMetadata, queryId, response, getRowCount(), parameters),
+        Telemetry.NOOP);
   }
 
   @Override

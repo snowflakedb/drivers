@@ -58,23 +58,30 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR", "[timestamp_tz][conversion][c_char]") {
 }
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR fractional truncation", "[timestamp_tz][conversion][c_char][01004]") {
-  SKIP_OLD_DRIVER("BD#30", "Old driver crashes (SIGSEGV) on TIMESTAMP to SQL_C_CHAR truncation");
+  // Physical buffer is oversized; the stated BufferLength (21) is the truncation point under test
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A TIMESTAMP_TZ with fractional seconds is fetched into a 21-byte buffer
+  // When A TIMESTAMP_TZ with fractional seconds is fetched with BufferLength=21
   auto stmt = conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789 +00:00'::TIMESTAMP_TZ");
-  char buffer[21] = {};
+  char buffer[64] = {};
   SQLLEN indicator = 0;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, 21, &indicator);
 
-  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004 and fractional part truncated
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  CHECK(indicator == 29);
-  auto records = get_diag_rec(stmt);
-  CHECK(!records.empty());
-  CHECK(records[0].sqlState == "01004");
-  CHECK(std::string(buffer) == "2024-01-15 10:30:00.");
+  OLD_DRIVER_ONLY("BD#30") {
+    // Old driver truncates the fractional seconds entirely, returning only "YYYY-MM-DD HH:MM:SS"
+    CHECK((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
+    CHECK(std::string(buffer) == "2024-01-15 10:30:00");
+  }
+  NEW_DRIVER_ONLY("BD#30") {
+    // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004 and fractional part truncated
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+    CHECK(indicator == 29);
+    auto records = get_diag_rec(stmt);
+    REQUIRE(!records.empty());
+    CHECK(records[0].sqlState == "01004");
+    CHECK(std::string(buffer) == "2024-01-15 10:30:00.");
+  }
 }
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR buffer too small", "[timestamp_tz][conversion][c_char][22003]") {
