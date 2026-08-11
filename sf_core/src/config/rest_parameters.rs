@@ -52,29 +52,14 @@ pub fn resolve_log_max_query_length(settings: &dyn Settings) -> usize {
         .unwrap_or(DEFAULT_LOG_MAX_QUERY_LENGTH)
 }
 
-/// Read a boolean-typed parameter that may have been provided as a bool, an int,
-/// or a string ("true"/"false"/"1"/"0"). Falls back to `default` when absent or
-/// when present but unparseable.
-fn resolve_bool_param(settings: &dyn Settings, key: &str, default: bool) -> bool {
-    settings
-        .get_bool(key)
-        .or_else(|| {
-            settings
-                .get_string(key)
-                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        })
-        .or_else(|| settings.get_int(key).map(|v| v != 0))
-        .unwrap_or(default)
-}
-
 /// Read `log_query_text` from a settings bag, accepting bool/int/string values.
 pub fn resolve_log_query_text(settings: &dyn Settings) -> bool {
-    resolve_bool_param(settings, param_names::LOG_QUERY_TEXT.as_str(), false)
+    settings.get_bool_or(param_names::LOG_QUERY_TEXT.as_str(), false)
 }
 
 /// Read `log_query_parameters` from a settings bag, accepting bool/int/string values.
 pub fn resolve_log_query_parameters(settings: &dyn Settings) -> bool {
-    resolve_bool_param(settings, param_names::LOG_QUERY_PARAMETERS.as_str(), false)
+    settings.get_bool_or(param_names::LOG_QUERY_PARAMETERS.as_str(), false)
 }
 
 #[derive(Clone)]
@@ -245,11 +230,8 @@ impl LoginParameters {
             client_info: ClientInfo::from_settings(settings)?,
             session_parameters: None,
             spcs_token: None,
-            disable_parallel_user_prompt: resolve_bool_param(
-                settings,
-                param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(),
-                true,
-            ),
+            disable_parallel_user_prompt: settings
+                .get_bool_or(param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(), true),
         })
     }
 }
@@ -596,22 +578,6 @@ pub(crate) fn non_empty_string(settings: &dyn Settings, key: &str) -> Option<Str
     settings.get_string(key).filter(|s| !s.is_empty())
 }
 
-/// Read a boolean parameter that wrappers may submit as a typed bool,
-/// a string (`"true"`, `"1"`), or an int (`0`/`1`). Defaults to `false`
-/// when absent or unparseable so OAuth knobs like `enable_dpop` behave
-/// the same regardless of the wrapper's setting representation.
-pub(crate) fn get_flexible_bool(settings: &dyn Settings, key: &str) -> bool {
-    settings
-        .get_bool(key)
-        .or_else(|| {
-            settings
-                .get_string(key)
-                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        })
-        .or_else(|| settings.get_int(key).map(|v| v != 0))
-        .unwrap_or(false)
-}
-
 /// Prefix for the default OAuth scope derived from the session role.
 const DEFAULT_SESSION_ROLE_SCOPE_PREFIX: &str = "session:role:";
 
@@ -758,11 +724,11 @@ impl OAuthAuthorizationCodeConfig {
         let redirect_uri = parse_optional_redirect_uri(settings, "oauth_redirect_uri")?;
         let scope = resolve_oauth_scope(settings);
         let enable_single_use_refresh_tokens =
-            get_flexible_bool(settings, "oauth_enable_single_use_refresh_tokens");
-        let disable_pkce = get_flexible_bool(settings, "oauth_disable_pkce");
-        let enable_dpop = get_flexible_bool(settings, "oauth_enable_dpop");
+            settings.get_bool_or("oauth_enable_single_use_refresh_tokens", false);
+        let disable_pkce = settings.get_bool_or("oauth_disable_pkce", false);
+        let enable_dpop = settings.get_bool_or("oauth_enable_dpop", false);
         let client_store_temporary_credential =
-            get_flexible_bool(settings, "client_store_temporary_credential");
+            settings.get_bool_or("client_store_temporary_credential", false);
         let authentication_timeout_secs = settings
             .get_u64("authentication_timeout")
             .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
@@ -822,8 +788,8 @@ impl OAuthClientCredentialsConfig {
             })?;
         let token_url = parse_required_url(settings, "oauth_token_request_url")?;
         let scope = resolve_oauth_scope(settings);
-        let credentials_in_body = get_flexible_bool(settings, "oauth_credentials_in_body");
-        let enable_dpop = get_flexible_bool(settings, "oauth_enable_dpop");
+        let credentials_in_body = settings.get_bool_or("oauth_credentials_in_body", false);
+        let enable_dpop = settings.get_bool_or("oauth_enable_dpop", false);
         let authentication_timeout_secs = settings
             .get_u64("authentication_timeout")
             .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
@@ -887,15 +853,7 @@ impl LoginMethod {
                         parameter: "password",
                     })?
                     .into(),
-                passcode_in_password: settings
-                    .get_bool("passcodeInPassword")
-                    .or_else(|| {
-                        settings
-                            .get_string("passcodeInPassword")
-                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-                    })
-                    .or_else(|| settings.get_int("passcodeInPassword").map(|v| v != 0))
-                    .unwrap_or(false),
+                passcode_in_password: settings.get_bool_or("passcodeInPassword", false),
                 passcode: settings.get_string("passcode").map(SensitiveString::from),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
@@ -929,11 +887,7 @@ impl LoginMethod {
                         parameter: "password",
                     })?;
 
-                let disable_saml_url_check = settings
-                    .get_string("disable_saml_url_check")
-                    .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-                    .or_else(|| settings.get_int("disable_saml_url_check").map(|v| v != 0))
-                    .unwrap_or(false);
+                let disable_saml_url_check = settings.get_bool_or("disable_saml_url_check", false);
 
                 let authentication_timeout_secs = settings
                     .get_u64("authentication_timeout")
@@ -977,20 +931,10 @@ impl LoginMethod {
                         parameter: "password",
                     })?
                     .into(),
-                passcode_in_password: settings
-                    .get_bool("passcodeInPassword")
-                    .or_else(|| {
-                        settings
-                            .get_string("passcodeInPassword")
-                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-                    })
-                    .or_else(|| settings.get_int("passcodeInPassword").map(|v| v != 0))
-                    .unwrap_or(false),
+                passcode_in_password: settings.get_bool_or("passcodeInPassword", false),
                 passcode: settings.get_string("passcode").map(SensitiveString::from),
-                client_store_temporary_credential: get_flexible_bool(
-                    settings,
-                    "client_store_temporary_credential",
-                ),
+                client_store_temporary_credential: settings
+                    .get_bool_or("client_store_temporary_credential", false),
             }),
             "EXTERNALBROWSER" => {
                 let authentication_timeout_secs = settings
@@ -1001,10 +945,8 @@ impl LoginMethod {
                     username: non_empty_string(settings, "user")
                         .context(MissingParameterSnafu { parameter: "user" })?,
                     authentication_timeout_secs,
-                    client_store_temporary_credential: get_flexible_bool(
-                        settings,
-                        "client_store_temporary_credential",
-                    ),
+                    client_store_temporary_credential: settings
+                        .get_bool_or("client_store_temporary_credential", false),
                 })
             }
             "WORKLOAD_IDENTITY" => Ok(Self::WorkloadIdentity(
