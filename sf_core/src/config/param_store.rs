@@ -15,6 +15,10 @@ impl ParamStore {
         }
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &Setting)> {
         self.inner.iter()
     }
@@ -125,6 +129,19 @@ impl ParamStore {
     pub(crate) fn extend_from(&mut self, other: &ParamStore) {
         for (k, v) in &other.inner {
             self.inner.insert(k.clone(), v.clone());
+        }
+    }
+
+    /// Copy entries from `other`, replacing keys case-insensitively.
+    ///
+    /// Registered settings are already canonicalized, but arbitrary session
+    /// parameters retain their caller-provided casing until login. Layered
+    /// programmatic options still need deterministic precedence for those keys.
+    pub(crate) fn extend_from_case_insensitive(&mut self, other: &ParamStore) {
+        for (key, value) in &other.inner {
+            self.inner
+                .retain(|existing, _| !existing.eq_ignore_ascii_case(key));
+            self.inner.insert(key.clone(), value.clone());
         }
     }
 

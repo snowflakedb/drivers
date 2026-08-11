@@ -286,6 +286,10 @@ impl DatabaseDriverV1 {
 
     /// Establish the session for `conn_handle`.
     ///
+    /// Options from `db_handle` form the base programmatic layer. Options set
+    /// directly on the connection override database options before config-file
+    /// and registry-default resolution.
+    ///
     /// `operation_ctx` is the operation's cancellation context, or `None` when the caller
     /// reached core without an operation handle (a blocking FFI entry, an
     /// internal caller, a test) and therefore has no way to cancel. This is the
@@ -295,12 +299,12 @@ impl DatabaseDriverV1 {
         &self,
         operation_ctx: Option<&OperationCtx>,
         conn_handle: Handle,
-        _db_handle: Handle,
+        db_handle: Handle,
     ) -> Result<(), ApiError> {
         crate::apis::operation_ctx::run_opt(
             operation_ctx,
             "connection_init",
-            Box::pin(self.connection_init_inner(conn_handle, _db_handle)),
+            Box::pin(self.connection_init_inner(conn_handle, db_handle)),
         )
         .await
     }
@@ -308,17 +312,31 @@ impl DatabaseDriverV1 {
     async fn connection_init_inner(
         &self,
         conn_handle: Handle,
-        _db_handle: Handle,
+        db_handle: Handle,
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let (config, host, port, client_info, init_params, resolved_snapshot) = {
+                let database_seed = self.database_settings(db_handle).await?;
+                let (
+                    config,
+                    host,
+                    port,
+                    client_info,
+                    init_params,
+                    resolved_snapshot,
+                    effective_seed,
+                ) = {
                     let conn = conn_ptr.lock().await;
                     // TODO(sfc-gh-boler): Clone the mutable connection inputs under the mutex,
                     // then drop the lock before calling resolve/build. Those paths can do
                     // synchronous disk I/O and private-key parsing, which currently extends the
                     // connection mutex critical section and can block the async runtime thread.
-                    let mut resolved = conn.resolved_settings().context(ConfigurationSnafu)?;
+                    let effective_seed = conn.effective_seed(&database_seed);
+                    let mut resolved = resolver::resolve(
+                        &effective_seed,
+                        conn.no_connection_details && database_seed.is_empty(),
+                    )
+                    .context(ConfigurationSnafu)?;
                     normalize_host_underscores(&mut resolved);
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
@@ -337,7 +355,7 @@ impl DatabaseDriverV1 {
                     // params that belong in SESSION_PARAMETERS
                     // (CLIENT_SESSION_KEEP_ALIVE, its heartbeat frequency,
                     // CLIENT_PREFETCH_THREADS, QUERY_TAG) to match the Python connector.
-                    let mut login_session_params = collect_unknown_settings(&conn.connection_seed);
+                    let mut login_session_params = collect_unknown_settings(&effective_seed);
                     if let Some(v) = resolved.get_bool(param_names::CLIENT_SESSION_KEEP_ALIVE) {
                         login_session_params.insert(
                             param_names::CLIENT_SESSION_KEEP_ALIVE.as_str().to_string(),
@@ -400,15 +418,14 @@ impl DatabaseDriverV1 {
                         client_info,
                         init_params,
                         resolved_snapshot,
+                        effective_seed,
                     )
                 };
 
                 warn_query_logging_risk(&resolved_snapshot);
 
-                let timeout_config = {
-                    let conn = conn_ptr.lock().await;
-                    crate::config::retry::TimeoutConfig::from_params(&conn.connection_seed)
-                };
+                let timeout_config =
+                    crate::config::retry::TimeoutConfig::from_params(&effective_seed);
 
                 let (http_client, diag_rustls) =
                     crate::tls::client::build_tls_client_and_rustls_config(
@@ -500,10 +517,7 @@ impl DatabaseDriverV1 {
                     None
                 };
 
-                let retry_policy = {
-                    let conn = conn_ptr.lock().await;
-                    RetryPolicy::login(&conn.connection_seed)
-                };
+                let retry_policy = RetryPolicy::login(&effective_seed);
 
                 let login_fut = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,
@@ -586,6 +600,7 @@ impl DatabaseDriverV1 {
                         merged_params,
                         login_final_names,
                         login_server_version,
+                        database_seed,
                         resolved_snapshot,
                         logout_config,
                         timeout_config,
@@ -1045,7 +1060,11 @@ pub struct WrapperIdentity {
 }
 
 pub struct Connection {
-    /// Explicit connection-string / API options (merged as the top layer in [`resolver::resolve`]).
+    /// Options inherited from the database used to initialize this connection.
+    /// Connection options override this base layer.
+    pub(crate) database_seed: ParamStore,
+    /// Explicit connection-string / API options. These override [`Self::database_seed`]
+    /// in the top programmatic layer passed to [`resolver::resolve`].
     pub(crate) connection_seed: ParamStore,
     /// True when the caller invoked a bare `connect()` with no connection
     /// options — the wrapper's `is_kwargs_empty` signal, received via
@@ -1140,6 +1159,7 @@ impl Default for Connection {
 impl Connection {
     pub fn new() -> Self {
         Connection {
+            database_seed: ParamStore::new(),
             connection_seed: ParamStore::new(),
             no_connection_details: false,
             resolved_connect: None,
@@ -1182,11 +1202,12 @@ impl Connection {
         crate::rest::snowflake::query_response::read_use_s3_regional_url_session_param(&params)
     }
 
-    /// Reads `unsafe_file_write` from the connection seed. Default `false`
+    /// Reads `unsafe_file_write` from the effective connection/database seed. Default `false`
     /// (owner-only 0o600 permissions on GET downloads on Unix).
     pub(crate) fn unsafe_file_write(&self) -> bool {
         self.connection_seed
             .get_bool(param_names::UNSAFE_FILE_WRITE)
+            .or_else(|| self.database_seed.get_bool(param_names::UNSAFE_FILE_WRITE))
             .unwrap_or(false)
     }
 
@@ -1233,6 +1254,7 @@ impl Connection {
         self.session_overrides
             .get_bool(key)
             .or_else(|| self.connection_seed.get_bool(key))
+            .or_else(|| self.database_seed.get_bool(key))
     }
 
     /// Resolves `PUT_FASTFAIL` (see [`Self::resolve_override_bool`]).
@@ -1298,6 +1320,12 @@ impl Connection {
         resolver::resolve(&self.connection_seed, self.no_connection_details)
     }
 
+    fn effective_seed(&self, database_seed: &ParamStore) -> ParamStore {
+        let mut effective = database_seed.clone();
+        effective.extend_from_case_insensitive(&self.connection_seed);
+        effective
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn initialize(
         &mut self,
@@ -1310,6 +1338,7 @@ impl Connection {
         session_params: HashMap<String, Setting>,
         final_names: FinalSessionNames,
         server_version: Option<String>,
+        database_seed: ParamStore,
         resolved_connect: ParamStore,
         logout_config: LogoutConfig,
         timeout_config: crate::config::retry::TimeoutConfig,
@@ -1317,7 +1346,8 @@ impl Connection {
     ) {
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
-        self.retry_policy = RetryPolicy::http(&self.connection_seed);
+        self.database_seed = database_seed;
+        self.retry_policy = RetryPolicy::http(&self.effective_seed(&self.database_seed));
         self.timeout_config = timeout_config;
         self.host = host;
         self.port = port;
@@ -1868,18 +1898,9 @@ fn resolved_or_seed_string(conn: &Connection, key: ParamKey) -> Option<String> {
     {
         return Some(s);
     }
-    conn.connection_seed.get_string(key)
-}
-
-/// Connection-scoped string from the live seed (writes rejected after connect when immutable).
-fn get_connection_seed_string(conn: &Connection, key: ParamKey) -> Option<String> {
-    conn.connection_seed.get(key).and_then(|s| {
-        if let Setting::String(v) = s {
-            Some(v.clone())
-        } else {
-            None
-        }
-    })
+    conn.connection_seed
+        .get_string(key)
+        .or_else(|| conn.database_seed.get_string(key))
 }
 
 /// Session effective read: server cache → session overrides → resolved connect (then seed).
@@ -1965,8 +1986,8 @@ impl DatabaseDriverV1 {
                     }
                 };
 
-                let account = get_connection_seed_string(&conn, param_names::ACCOUNT);
-                let user = get_connection_seed_string(&conn, param_names::USER);
+                let account = resolved_or_seed_string(&conn, param_names::ACCOUNT);
+                let user = resolved_or_seed_string(&conn, param_names::USER);
 
                 // Resolution order for session-scoped values:
                 //   1. final_session_names  (server-echoed via login sessionInfo or query finalXxxName)
@@ -2626,11 +2647,12 @@ impl DatabaseDriverV1 {
                 // Return None to signal early exit after the block
                 None
             } else {
-                // Re-derive logout config from connection_seed at close()-time so
-                // post-init overrides (e.g. retry=False sets logout_max_attempts=1)
-                // take effect. Falls back to init-time defaults for unset keys.
-                let config = LogoutConfig::from_settings(&conn.connection_seed)
-                    .unwrap_or_else(|e| {
+                // Re-derive logout config from the database + connection layers
+                // at close-time so post-init connection overrides (e.g.
+                // retry=False sets logout_max_attempts=1) take effect.
+                let effective_seed = conn.effective_seed(&conn.database_seed);
+                let config =
+                    LogoutConfig::from_settings(&effective_seed).unwrap_or_else(|e| {
                         tracing::warn!(error = %e, "Failed to re-derive LogoutConfig at close-time; using init-time config");
                         conn.logout_config.clone()
                     });
@@ -2710,25 +2732,82 @@ mod tests {
     }
 
     #[test]
-    fn get_connection_seed_string_returns_value() {
-        let conn =
-            make_connection_with_settings(vec![("host", Setting::String("example.com".into()))]);
+    fn effective_seed_inherits_database_options() {
+        let conn = Connection::new();
+        let mut database_seed = ParamStore::new();
+        database_seed.insert("account".into(), Setting::String("database-account".into()));
+
+        let effective = conn.effective_seed(&database_seed);
+
         assert_eq!(
-            get_connection_seed_string(&conn, param_names::HOST),
-            Some("example.com".into())
+            effective.get_string(param_names::ACCOUNT),
+            Some("database-account".into())
         );
     }
 
     #[test]
-    fn get_connection_seed_string_returns_none_for_missing_key() {
-        let conn = Connection::new();
-        assert_eq!(get_connection_seed_string(&conn, param_names::HOST), None);
+    fn effective_seed_prefers_connection_options() {
+        let conn = make_connection_with_settings(vec![(
+            "account",
+            Setting::String("connection-account".into()),
+        )]);
+        let mut database_seed = ParamStore::new();
+        database_seed.insert("account".into(), Setting::String("database-account".into()));
+        database_seed.insert("user".into(), Setting::String("database-user".into()));
+
+        let effective = conn.effective_seed(&database_seed);
+
+        assert_eq!(
+            effective.get_string(param_names::ACCOUNT),
+            Some("connection-account".into())
+        );
+        assert_eq!(
+            effective.get_string(param_names::USER),
+            Some("database-user".into())
+        );
     }
 
     #[test]
-    fn get_connection_seed_string_returns_none_for_non_string_type() {
-        let conn = make_connection_with_settings(vec![("port", Setting::Int(443))]);
-        assert_eq!(get_connection_seed_string(&conn, param_names::PORT), None);
+    fn effective_seed_applies_unknown_option_precedence_case_insensitively() {
+        let conn = make_connection_with_settings(vec![(
+            "custom_session_parameter",
+            Setting::String("connection-value".into()),
+        )]);
+        let mut database_seed = ParamStore::new();
+        database_seed.insert(
+            "CUSTOM_SESSION_PARAMETER".into(),
+            Setting::String("database-value".into()),
+        );
+
+        let effective = conn.effective_seed(&database_seed);
+        let unknown = collect_unknown_settings(&effective);
+
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(
+            unknown.get("CUSTOM_SESSION_PARAMETER"),
+            Some(&"connection-value".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_init_requires_a_valid_database_handle() {
+        let driver = DatabaseDriverV1::new();
+        let conn_handle = driver.connection_new();
+        let missing_database = Handle {
+            id: u64::MAX,
+            magic: 0,
+        };
+
+        let error = driver
+            .connection_init(None, conn_handle, missing_database)
+            .await
+            .unwrap_err();
+
+        assert!(
+            error.to_string().contains("Database handle not found"),
+            "unexpected error: {error}"
+        );
+        driver.connection_release(conn_handle).unwrap();
     }
 
     // `enable_put_get()` reads the two flags only; the JDBC-only scoping lives in
