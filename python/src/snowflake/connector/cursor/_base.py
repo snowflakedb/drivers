@@ -24,6 +24,7 @@ from .._internal.cursor import (
     QueryResult,
     QueryResultWaiter,
     ResultMetadata,
+    ResultMetadataV2,
     Row,
 )
 from .._internal.cursor.decorators import (
@@ -31,7 +32,12 @@ from .._internal.cursor.decorators import (
     requires_open_cursor_not_connection,
     with_prefetch_hook,
 )
-from .._internal.decorators import api_telemetry, pep249
+from .._internal.decorators import (
+    api_telemetry,
+    backward_compatibility,
+    pep249,
+    snowpark_compat,
+)
 from .._internal.errorcode import ER_INVALID_VALUE
 from .._internal.extras import pandas, pyarrow, requires_dependency
 from .._internal.logging import get_logger
@@ -504,6 +510,34 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             self._rownumber = -1
 
         return self._query_result.description
+
+    @snowpark_compat
+    @backward_compatibility
+    @requires_open
+    def _describe_internal(
+        self,
+        operation: str,
+        parameters: Sequence[Any] | dict[str, Any] | None = None,
+        *,
+        params: Sequence[Any] | dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[ResultMetadataV2] | None:
+        """Describe-only path returning new-format metadata (see BD#54).
+
+        Returns ``list[ResultMetadataV2]`` with ``vector_dimension`` populated
+        from the proto ``dimension`` field. ``fields`` is always ``None`` (UD
+        proto carries no nested column list for structured types — BD#54).
+        """
+        parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
+        self.reset()
+        query, _ = self._prepare_query(operation, parameters)
+        prepare_result: PrepareResult | None = None
+        with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
+            prepare_result = self._prepare(stmt_handle)
+        self._query_result = QueryResult.from_prepare_result(prepare_result)
+        if self._query_result.description:
+            self._rownumber = -1
+        return ResultMetadataV2.create_description(prepare_result)
 
     # ------------------------------------------------------------------
     # Fetch – shared implementation

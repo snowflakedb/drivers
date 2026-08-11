@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
+from snowflake.connector.cursor import QueryResultStats, ResultMetadata, ResultMetadataV2, SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import NEW_DRIVER_ONLY, is_new_driver
 from tests.conftest import run_against_sync_and_async, skip_async, with_paramstyle
@@ -2695,3 +2695,127 @@ class TestInterpolateEmptySequences:
         cursor.execute("SELECT %s AS a, 100 %% 7 AS b", [42])
         row = cursor.fetchone()
         assert row == (42, 2)
+
+
+class TestCursorDescribeInternal:
+    """Integration tests for Cursor._describe_internal — Snowpark V2 describe path.
+
+    All tests run against the real Snowflake server (no mocks). ``_describe_internal``
+    is sync-only (Snowpark's schema_utils never calls it through the async cursor),
+    so this class opts out of the module-level async parametrization.
+
+    Focus: properties that only a live server can confirm — ``vector_dimension``
+    propagation end-to-end, ``display_size``/``internal_size`` proto-field mapping
+    (BD#55), ``_to_result_metadata_v1()`` round-trip, and cursor-state side effects.
+    """
+
+    pytestmark = skip_async("_describe_internal is sync-only; Snowpark never calls it through the async cursor")
+
+    def test_returns_result_metadata_v2(self, cursor):
+        """_describe_internal returns list[ResultMetadataV2] for a multi-column query."""
+        sql = "SELECT 1 AS int_col, 'hello'::VARCHAR AS str_col, 3.14::FLOAT AS float_col, TRUE::BOOLEAN AS bool_col"
+        result = cursor._describe_internal(sql)
+
+        assert result is not None
+        assert len(result) == 4
+        assert all(isinstance(col, ResultMetadataV2) for col in result)
+        assert result[0].name == "INT_COL"
+        assert result[0].type_code == 0  # FIXED
+        assert result[1].name == "STR_COL"
+        assert result[1].type_code == 2  # TEXT
+        assert result[2].name == "FLOAT_COL"
+        assert result[2].type_code == 1  # REAL
+        assert result[3].name == "BOOL_COL"
+        assert result[3].type_code == 13  # BOOLEAN
+
+    def test_returns_dml_status_column(self, function_connection):
+        """_describe_internal describes a DML statement's status column.
+
+        INSERT/UPDATE/DELETE always describe to a single status column (e.g.
+        "number of rows inserted") on the server — there is no SQL statement
+        that describes to zero columns, so this covers the DML case rather
+        than a None result (the None branch is exercised in unit tests via
+        a mocked empty-columns prepare result).
+        """
+        with function_connection.cursor() as cur:
+            cur.execute("CREATE OR REPLACE TEMP TABLE _test_di_dml (x INT)")
+            result = cur._describe_internal("INSERT INTO _test_di_dml VALUES (1)")
+
+            assert result is not None
+            assert len(result) == 1
+            assert result[0].name == "number of rows inserted"
+
+    def test_v2_type_codes_match_describe(self, cursor):
+        """V2 type_code and name match the V1 describe() output for the same query."""
+        sql = "SELECT 1::INTEGER AS a, 'x'::VARCHAR(50) AS b, 3.14::FLOAT AS c"
+        v1_result = cursor.describe(sql)
+        v2_result = cursor._describe_internal(sql)
+
+        assert v1_result is not None and v2_result is not None
+        for v1, v2 in zip(v1_result, v2_result, strict=True):
+            assert v1.name == v2.name
+            assert v1.type_code == v2.type_code
+
+    def test_cursor_state_after_describe_internal(self, cursor):
+        """_describe_internal sets cursor.sfqid, cursor.query, and leaves rownumber None."""
+        sql = "SELECT 1 AS col"
+        cursor._describe_internal(sql)
+
+        assert cursor.sfqid is not None
+        assert cursor.query == sql
+        assert cursor.rownumber is None  # _rownumber == -1 maps to None via property
+
+    def test_vector_dimension_populated_end_to_end(self, cursor):
+        """vector_dimension is populated from the server's describe response end-to-end.
+
+        Confirms sf_core reads the proto ``dimension`` field from the actual Snowflake
+        describe result — not just from mocked data in unit tests.
+        """
+        sql = "SELECT [1.0, 2.0, 3.0]::VECTOR(FLOAT, 3) AS vec_col"
+        result = cursor._describe_internal(sql)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].type_code == 16  # VECTOR
+        assert result[0].vector_dimension == 3
+
+    def test_display_size_and_internal_size_for_varchar(self, cursor):
+        """display_size carries char length; internal_size carries byte length (BD#55).
+
+        BD#55 documents legacy's *own* ResultMetadataV2 (JSON describe path), which
+        always left display_size=None — not this driver's V1 describe(), which has
+        populated display_size from character length since the string-family guard
+        was added (both V1 and V2 share the same guard in from_column).
+        """
+        sql = "SELECT 'x'::VARCHAR(100) AS s"
+        v2_result = cursor._describe_internal(sql)
+
+        assert v2_result is not None
+        assert v2_result[0].display_size == 100
+        assert v2_result[0].internal_size is not None
+        assert v2_result[0].internal_size >= 100  # byte length ≥ char length
+
+    def test_to_v1_round_trip(self, cursor):
+        """_to_result_metadata_v1() produces ResultMetadata matching describe() output."""
+        sql = "SELECT 1::INTEGER AS a, 3.14::FLOAT AS b"
+        v2_result = cursor._describe_internal(sql)
+        v1_result = cursor.describe(sql)
+
+        assert v2_result is not None and v1_result is not None
+        for v2, v1_expected in zip(v2_result, v1_result, strict=True):
+            converted = v2._to_result_metadata_v1()
+            assert isinstance(converted, ResultMetadata)
+            assert converted.name == v1_expected.name
+            assert converted.type_code == v1_expected.type_code
+
+    def test_raises_on_invalid_sql(self, cursor):
+        """_describe_internal raises ProgrammingError for syntactically invalid SQL."""
+        with pytest.raises(ProgrammingError):
+            cursor._describe_internal("SELECT * FROM nonexistent_table_xyz_42")
+
+    def test_raises_when_cursor_closed(self, function_connection):
+        """_describe_internal raises InterfaceError when the cursor is closed."""
+        cur = function_connection.cursor()
+        cur.close()
+        with pytest.raises(InterfaceError):
+            cur._describe_internal("SELECT 1")

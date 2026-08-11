@@ -1,3 +1,4 @@
+
 behavior_differences:
   1:
     name: "Header of a gzip-compressed file does not contain filename"
@@ -709,9 +710,9 @@ behavior_differences:
       telemetry endpoint from a background thread. Snowpark uses this for usage
       tracking and diagnostics.
     new_driver_behavior: |
-      The Universal Driver does not implement OOB telemetry. `TelemetryService`
-      is a no-op stub. Operation methods raise `NotSupportedError` (Snowpark
-      swallows these silently). get_instance/enable/disable/close are no-ops.
+      The Universal Driver does not implement OOB telemetry at all -- the
+      `telemetry_oob` module and `TelemetryService` class do not exist;
+      `import snowflake.connector.telemetry_oob` raises `ModuleNotFoundError`.
     description: |
       Telemetry OOB is disabled on the backend anyway; not planned for UD scope currently.
 
@@ -924,3 +925,58 @@ behavior_differences:
       batched-queue flush model has no analog, since the universal driver sends each
       telemetry event immediately via RPC.
 
+
+  54:
+    name: "ResultMetadataV2.fields is always None (no nested structured-type metadata)"
+    status: todo
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: medium
+    old_driver_behavior: |
+      `cursor._describe_internal()` returns `list[ResultMetadataV2]` where
+      `ResultMetadataV2` is a distinct class from `ResultMetadata` and carries two
+      additional attributes: `vector_dimension: int | None` (for VECTOR column types)
+      and `fields: list[ResultMetadataV2] | None` (for structured/object column types).
+      Snowpark and other callers read these attributes to handle VECTOR and structured
+      columns correctly.
+    new_driver_behavior: |
+      `cursor._describe_internal()` returns a real, distinct `ResultMetadataV2` class
+      (not an alias for `ResultMetadata`). `vector_dimension` is fully populated from
+      the protobuf `dimension` field, so VECTOR column schema inference works correctly.
+      `fields` is always `None` -- the UD proto `ColumnMetadata` carries no nested
+      column list for structured types (OBJECT/ARRAY/MAP) -- so structured-type
+      introspection via `_describe_internal` is unsupported; Snowpark falls back to
+      `cursor.description` (V1 path) for those columns.
+    description: |
+      Tracked as part of SNOW-2912540 Snowpark compatibility work. `vector_dimension`
+      is fully implemented. Remaining fix requires the UD proto's `ColumnMetadata` to
+      carry a nested field list for structured types, then wiring `fields` to populate
+      from it.
+
+  55:
+    name: "ResultMetadataV2 display_size and internal_size map proto fields differently from legacy"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `ResultMetadataV2.from_column` (JSON source) sets `display_size = None` for all
+      column types and `internal_size = col["length"]` (the JSON `length` field, which
+      carries the maximum character length for VARCHAR/TEXT columns).
+    new_driver_behavior: |
+      `ResultMetadataV2.from_column` (proto source) sets `display_size = col.length`
+      for TEXT/VARCHAR/CHAR/STRING column types (and `None` otherwise) and
+      `internal_size = col.byte_length` (maximum byte length) when the proto field is
+      present. For a `VARCHAR(100)` column: legacy returns `display_size=None,
+      internal_size=100`; UD returns `display_size=100, internal_size=400` (UTF-8
+      4 bytes/char). Snowpark reads `name`, `type_code`, `is_nullable`,
+      `vector_dimension`, and `fields` from V2 objects — not `display_size` or
+      `internal_size` — so this difference has no observed runtime impact on Snowpark.
+    description: |
+      The difference arises from the JSON-to-proto field renaming: JSON `length` is the
+      char count and maps to proto `length`; JSON `byteLength` is the byte count and maps
+      to proto `byte_length`. The legacy connector used `length` for `internal_size` with
+      no proto distinction; the UD splits them across two slots more precisely.
+      CONFIRMED from source (both connectors).
