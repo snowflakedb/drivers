@@ -4,7 +4,6 @@ use crate::config::param_names::{
     CUSTOM_ROOT_STORE_PATH, MAX_TLS_VERSION, MIN_TLS_VERSION, TLS_SKIP_VERIFY, VERIFY_CERTIFICATES,
     VERIFY_HOSTNAME,
 };
-use crate::config::param_registry::{ParamKey, registry};
 use crate::config::settings::{Setting, Settings};
 use crate::crl::config::CrlConfig;
 use crate::sensitive::SensitiveString;
@@ -200,14 +199,8 @@ impl ProxyConfig {
     /// `proxy_user`/`proxy_password` fields.  Individual fields override URL
     /// components when both are set.
     pub fn from_settings(settings: &dyn crate::config::settings::Settings) -> Self {
-        let allow_empty_proxy = settings
-            .get_bool("allow_empty_proxy")
-            .or_else(|| coerce_bool(settings.get_string("allow_empty_proxy").as_deref()))
-            .unwrap_or(true);
-        let use_proxy_env = settings
-            .get_bool("use_proxy_env")
-            .or_else(|| coerce_bool(settings.get_string("use_proxy_env").as_deref()))
-            .unwrap_or(false);
+        let allow_empty_proxy = settings.get_bool_or("allow_empty_proxy", true);
+        let use_proxy_env = settings.get_bool_or("use_proxy_env", false);
         let raw_url = settings.get_string("proxy");
 
         let explicitly_disabled = matches!(&raw_url, Some(s) if s.is_empty()) && allow_empty_proxy;
@@ -247,17 +240,6 @@ impl ProxyConfig {
             allow_empty_proxy,
             explicitly_disabled,
         }
-    }
-}
-
-/// Coerce a string like `"true"`/`"1"`/`"false"`/`"0"` to bool, matching
-/// the `ParamStore::get_bool` rules. Returns `None` for unrecognised values
-/// so callers can apply their own default.
-fn coerce_bool(s: Option<&str>) -> Option<bool> {
-    match s?.to_ascii_lowercase().as_str() {
-        "true" | "1" | "on" => Some(true),
-        "false" | "0" | "off" => Some(false),
-        _ => None,
     }
 }
 
@@ -319,21 +301,23 @@ impl TlsConfig {
 
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let crl_config = CrlConfig::from_settings(settings)?;
-        let custom_root_store_path = lookup_setting(settings, CUSTOM_ROOT_STORE_PATH)
+        let custom_root_store_path = settings
+            .get(CUSTOM_ROOT_STORE_PATH.as_str())
             .and_then(|s| match s {
                 Setting::String(path) => Some(path),
                 _ => None,
             })
             .map(PathBuf::from);
-        let skip_tls_verify = lookup_bool(settings, TLS_SKIP_VERIFY, false);
+        let skip_tls_verify = settings.get_bool_or(TLS_SKIP_VERIFY.as_str(), false);
         if skip_tls_verify {
             tracing::warn!(
                 "TLS verification disabled via tls_skip_verify: certificate, hostname, and CRL revocation checks are all bypassed. Do not use in production."
             );
         }
-        let verify_hostname = !skip_tls_verify && lookup_bool(settings, VERIFY_HOSTNAME, true);
+        let verify_hostname =
+            !skip_tls_verify && settings.get_bool_or(VERIFY_HOSTNAME.as_str(), true);
         let verify_certificates =
-            !skip_tls_verify && lookup_bool(settings, VERIFY_CERTIFICATES, true);
+            !skip_tls_verify && settings.get_bool_or(VERIFY_CERTIFICATES.as_str(), true);
 
         // The optional [min, max] TLS version window. Defaults match rustls'
         // effective default (1.2..=1.3), so behaviour is unchanged unless the
@@ -362,24 +346,6 @@ impl Default for TlsConfig {
     }
 }
 
-/// Read a setting by canonical `ParamKey`, falling back to any aliases the
-/// registry has for it. `build_tls_config` reads an already-canonicalized
-/// `ParamStore`; this path may get a raw settings bag, so resolving aliases
-/// here keeps both TLS-config builders honoring the same wrapper keys.
-fn lookup_setting(settings: &dyn Settings, key: ParamKey) -> Option<Setting> {
-    settings.get(key.as_str()).or_else(|| {
-        registry()
-            .resolve(key.as_str())
-            .and_then(|def| def.aliases.iter().find_map(|&alias| settings.get(alias)))
-    })
-}
-
-fn lookup_bool(settings: &dyn Settings, key: ParamKey, default: bool) -> bool {
-    lookup_setting(settings, key)
-        .and_then(|s| s.coerce_bool())
-        .unwrap_or(default)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,18 +371,6 @@ mod tests {
     fn from_settings_defaults_to_verifying() {
         let cfg = TlsConfig::from_settings(&HashMap::<String, Setting>::new()).unwrap();
         assert!(cfg.verify_hostname);
-        assert!(cfg.verify_certificates);
-    }
-
-    #[test]
-    fn from_settings_honors_registered_aliases() {
-        // Raw bag using the registered alias (TLS_VERIFY_HOSTNAME) instead of the
-        // canonical key must still take effect, matching the ParamStore path.
-        let mut s: HashMap<String, Setting> = HashMap::new();
-        s.insert("TLS_VERIFY_HOSTNAME".into(), Setting::Bool(false));
-
-        let cfg = TlsConfig::from_settings(&s).unwrap();
-        assert!(!cfg.verify_hostname);
         assert!(cfg.verify_certificates);
     }
 }

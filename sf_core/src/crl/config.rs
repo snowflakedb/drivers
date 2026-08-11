@@ -98,19 +98,11 @@ impl CrlConfig {
                 CertRevocationCheckMode::Disabled
             }
         };
-        let enable_disk_caching = settings
-            .get_string("crl_enable_disk_caching")
-            .map(|s| s.to_lowercase() == "true")
-            .unwrap_or(true);
-        let enable_memory_caching = settings
-            .get_string("crl_enable_memory_caching")
-            .map(|s| s.to_lowercase() == "true")
-            .unwrap_or(true);
+        let enable_disk_caching = settings.get_bool_or("crl_enable_disk_caching", true);
+        let enable_memory_caching = settings.get_bool_or("crl_enable_memory_caching", true);
         let cache_dir = settings.get_string("crl_cache_dir").map(PathBuf::from);
-        let allow_certificates_without_crl_url = settings
-            .get_string("crl_allow_certificates_without_crl_url")
-            .map(|s| s.to_lowercase() == "true")
-            .unwrap_or(false);
+        let allow_certificates_without_crl_url =
+            settings.get_bool_or("crl_allow_certificates_without_crl_url", false);
         // Configured directly in bytes (matching gosnowflake and the old
         // Python driver, which both use bytes).
         let max_download_size = settings
@@ -136,14 +128,9 @@ impl CrlConfig {
             .filter(|v| *v > 0)
             .map(Duration::seconds)
             .unwrap_or(Duration::seconds(DEFAULT_CRL_CACHE_CLEANUP_INTERVAL_SECS));
-        let cache_start_cleanup = settings
-            .get_string("crl_cache_start_cleanup")
-            .map(|s| s.to_lowercase() == "true")
-            .unwrap_or(false);
-        let unsafe_skip_file_permissions_check = settings
-            .get_string("crl_unsafe_skip_file_permissions_check")
-            .map(|s| s.to_lowercase() == "true")
-            .unwrap_or(false);
+        let cache_start_cleanup = settings.get_bool_or("crl_cache_start_cleanup", false);
+        let unsafe_skip_file_permissions_check =
+            settings.get_bool_or("crl_unsafe_skip_file_permissions_check", false);
         let http_timeout = settings
             .get_int("crl_http_timeout")
             .map(Duration::seconds)

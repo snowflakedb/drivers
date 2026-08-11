@@ -113,6 +113,19 @@ pub trait Settings {
         let setting = self.get(key)?;
         setting.as_bool().copied()
     }
+    /// Read a bool, coercing string (`"true"`/`"false"`/`"1"`/`"0"`/`"on"`/`"off"`)
+    /// and int representations via [`Setting::coerce_bool`], falling back to
+    /// `default` when the key is absent or unparseable.
+    ///
+    /// Unlike [`get_bool`](Settings::get_bool), which only matches a native
+    /// `Setting::Bool`, this is the right accessor on `&dyn Settings`/`&str`
+    /// paths where the value may arrive as a string or int — matching the
+    /// coercion `resolve_options` applies and `ParamStore::get_bool` performs.
+    fn get_bool_or(&self, key: &str, default: bool) -> bool {
+        self.get(key)
+            .and_then(|s| s.coerce_bool())
+            .unwrap_or(default)
+    }
     fn set(&mut self, key: &str, value: Setting);
     fn set_string(&mut self, key: &str, value: String) {
         self.set(key, Setting::String(value));
