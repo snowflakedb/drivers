@@ -287,7 +287,7 @@ impl DatabaseDriverV1 {
             let flags = crate::stage_binding::StageBindingFlags {
                 stage_state: conn.stage_state.clone(),
             };
-            let put_get_policy = RetryPolicy::put_get(&conn.connection_seed);
+            let put_get_policy = RetryPolicy::put_get(&conn.effective_settings());
             (regional, flags, put_get_policy)
         };
 
@@ -845,7 +845,7 @@ pub(super) async fn query_context(
         conn.http_client
             .clone()
             .context(ConnectionNotInitializedSnafu)?,
-        RetryPolicy::query(&conn.connection_seed),
+        RetryPolicy::query(&conn.effective_settings()),
     ))
 }
 
