@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from ..errors import InterfaceError
 from .api_client.client_api import async_core_driver, core_driver
+from .decorators import backward_compatibility
 from .logging import get_logger
 
 
@@ -97,6 +98,14 @@ class TelemetryClient:
         Kept for snowflake-cli API compatibility (``_app/telemetry.py``).
         """
 
+    @backward_compatibility
+    def send_log_batch(self) -> None:
+        """No-op: retained for backward compatibility with snowflake-connector-python callers.
+
+        Predates :meth:`send_batch` in the Universal Driver's own history;
+        some callers may still hold a reference to this name specifically.
+        """
+
 
 class AsyncTelemetryClient:
     """Async counterpart of :class:`TelemetryClient` for :class:`~snowflake.connector.aio.Connection`.
@@ -159,14 +168,3 @@ class AsyncTelemetryClient:
             await self.add_log_to_batch(telemetry_data)
         except Exception:
             logger.debug("Failed to add log to telemetry")
-
-    async def send_batch(self) -> None:
-        """No-op: flush is owned by the Rust core (threshold + connection release).
-
-        On SIGTERM/SIGINT the driver flushes buffered telemetry automatically
-        via the connection-release path; SIGKILL cannot be intercepted and
-        in-buffer entries are lost (same behaviour as the legacy connector).
-        See ``tests/integ/telemetry/test_telemetry_crash_flush.py``.
-
-        Kept for snowflake-cli API compatibility (``_app/telemetry.py``).
-        """

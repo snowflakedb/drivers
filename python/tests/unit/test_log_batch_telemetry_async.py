@@ -71,12 +71,3 @@ class TestAsyncTryAddLogToBatch:
         with patch.object(async_core_driver, "telemetry_send_log", new_callable=AsyncMock) as rpc:
             asyncio.run(client.try_add_log_to_batch(TelemetryData(message={"type": "ok"}, timestamp=2)))
         rpc.assert_awaited_once()
-
-
-class TestAsyncSendBatch:
-    def test_is_noop(self):
-        # Core owns flush; send_batch exists for snowflake-cli API compatibility only.
-        client = _client()
-        with patch.object(async_core_driver, "telemetry_send_log", new_callable=AsyncMock) as rpc:
-            asyncio.run(client.send_batch())
-            rpc.assert_not_awaited()
