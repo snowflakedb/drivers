@@ -108,6 +108,10 @@ spotless {
     java {
         removeUnusedImports()
         googleJavaFormat('1.7')
+        // Lets a few e2e test method names that mirror long shared-feature scenario
+        // names stay on one line (the tests_format_validator matches `void <name>(`
+        // on a single line); guarded regions are marked with spotless:off/on.
+        toggleOffOn()
         target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
         targetExclude 'src/**/protobuf_gen/**/*.java'
     }
