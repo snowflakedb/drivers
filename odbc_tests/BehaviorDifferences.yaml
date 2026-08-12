@@ -2170,3 +2170,45 @@ behavior_differences:
       SQL_DIAG_DYNAMIC_FUNCTION_CODE) are gated with SKIP_IODBC("BD#116 - ..."). Full coverage of
       these fields for both drivers remains on the unixODBC lanes (Linux, macOS Universal) and on
       Windows.
+
+  118:
+    name: "SQLDescribeCol column size for SQL_DOUBLE / SQL_FLOAT is 15 (decimal digits) instead of 53 (binary mantissa bits)"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLDescribeCol on a SQL_DOUBLE / SQL_FLOAT column (SQL data type 8) reports a column size of
+      53 -- the number of bits in the IEEE-754 double-precision mantissa.
+    new_driver_behavior: |
+      The new driver reports a column size of 15 -- the number of significant decimal digits of a
+      double-precision float, matching the ODBC specification's definition of column size for
+      SQL_DOUBLE / SQL_FLOAT.
+    description: |
+      Spec reference: the ODBC "Column Size, Decimal Digits, Transfer Octet Length, and Display
+      Size" table defines the column size of SQL_DOUBLE / SQL_FLOAT as 15 (decimal digits), not the
+      count of binary mantissa bits. Applications that used the old driver's 53 to size buffers will
+      now see 15; the value is a precision/display hint and does not change the fetched data.
+      Exercised by odbc_tests/tests/replay/excel/ado/sqlbindcol/test.cpp (SQLDescribeCol cols 8, 9, 10).
+
+  119:
+    name: "Fractional truncation on a numeric-to-character fetch returns SQLSTATE 01S07 instead of 01000"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When a fetch converts a high-scale numeric column into a bound character buffer that cannot
+      hold all fractional digits, the old driver returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01000
+      (general warning) and vendor code 40460.
+    new_driver_behavior: |
+      The new driver returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07 (fractional truncation) --
+      the ODBC 3.x SQLSTATE the specification defines for loss of fractional digits during a
+      numeric-to-character conversion.
+    description: |
+      Spec reference: ODBC 3.x defines 01S07 "Fractional truncation" for exactly this case. Both
+      drivers still return SQL_SUCCESS_WITH_INFO, so the (truncated) fetched value is unchanged;
+      applications that matched on the old driver's 01000 must also accept 01S07. Exercised by
+      odbc_tests/tests/replay/excel/ado/sqlbindcol/test.cpp (two SQLFetch cases).
