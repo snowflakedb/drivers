@@ -770,6 +770,25 @@ fn to_driver_error(error: &ApiError) -> DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::Login { source, .. } => match source.as_ref() {
+            // Reauth-shaped terminal login failure: the driver's own
+            // evict-and-retry ladder already gave up on a cached credential
+            // (is_reauthentication_required, computed in mod.rs). This is
+            // the same "open a new connection" signal as MasterTokenExpired
+            // below, so it constructs the same dedicated error type rather
+            // than LoginError.
+            RestError::LoginError {
+                message,
+                code,
+                reauthentication_required: true,
+                ..
+            } => DriverError {
+                error_type: Some(driver_error::ErrorType::ReauthenticationRequiredError(
+                    ReauthenticationRequiredError {
+                        message: message.clone(),
+                        code: *code,
+                    },
+                )),
+            },
             RestError::LoginError { message, code, .. } => DriverError {
                 error_type: Some(driver_error::ErrorType::LoginError(LoginError {
                     message: message.clone(),
@@ -813,10 +832,15 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::Query { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::MasterTokenExpired { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                detail: "Master token expired, full re-authentication required".to_string(),
-            })),
+        ApiError::MasterTokenExpired { code, .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::ReauthenticationRequiredError(
+                ReauthenticationRequiredError {
+                    message: format!(
+                        "Master token expired or invalid (code {code}), full re-authentication required"
+                    ),
+                    code: *code,
+                },
+            )),
         },
         ApiError::InvalidRefreshState { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
@@ -956,9 +980,16 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// rely on `sql_state` as the single source of truth for error
 /// classification.
 ///
-/// NOTE: currently handles `QueryFailed`, `AsyncQuery`, `MasterTokenExpired`,
-/// and (narrowly) `Login` variants only. New query-related error variants
-/// should be added here as they are introduced.
+/// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
+/// New query-related error variants should be added here as they are
+/// introduced.
+///
+/// Deliberately does NOT handle `MasterTokenExpired`/reauth-shaped `Login`
+/// failures: those construct their own dedicated
+/// `ReauthenticationRequiredError` message (see `to_driver_error`) — the
+/// discriminant callers need is the message *type* itself, not a
+/// `vendor_code` value, which is reserved for genuine Snowflake
+/// query-error codes.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
     let (code, sql_state) = match error {
         ApiError::Query { source, .. } => match source.as_ref() {
@@ -967,26 +998,6 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
             } => (*code, sql_state.clone()),
             RestError::AsyncQuery {
                 source: SfError::SnowflakeBody { code, .. },
-                ..
-            } => (Some(*code), None),
-            _ => (None, None),
-        },
-        // Mid-session master-token-terminal codes (390113/390114/390115): the
-        // server code IS the user-facing discriminant here (there is no SQL
-        // error to distinguish it from), so surface it directly.
-        ApiError::MasterTokenExpired { code, .. } => (Some(*code), None),
-        // Login-time cached-credential rejection. `reauthentication_required`
-        // is computed once in mod.rs's `is_reauthentication_required`
-        // (reusing EXT_AUTHN_ERROR_CODES/OAUTH_REFRESH_ERROR_CODES, the same
-        // constants already consulted for cache eviction) — read that
-        // already-computed flag here rather than re-deriving it from a
-        // second, independently-maintained code list. Every other
-        // `ApiError::Login` (bad password, etc.) keeps falling to
-        // `(None, None)` — this is not a blanket policy change.
-        ApiError::Login { source, .. } => match source.as_ref() {
-            RestError::LoginError {
-                code,
-                reauthentication_required: true,
                 ..
             } => (Some(*code), None),
             _ => (None, None),
@@ -1347,51 +1358,83 @@ mod tests {
         }
     }
 
+    // extract_vendor_info deliberately does NOT handle MasterTokenExpired/
+    // reauth-shaped Login (see its doc comment) — that discriminant is now
+    // the ReauthenticationRequiredError message *type itself*, tested below
+    // via to_driver_error.
     #[test]
-    fn master_token_expired_390113_surfaces_vendor_code() {
-        let err = master_token_expired(390113);
-        assert_eq!(extract_vendor_info(&err), (Some(390113), None));
-    }
-
-    #[test]
-    fn master_token_expired_390114_surfaces_vendor_code() {
+    fn master_token_expired_does_not_populate_generic_vendor_code() {
         let err = master_token_expired(390114);
-        assert_eq!(extract_vendor_info(&err), (Some(390114), None));
+        assert_eq!(extract_vendor_info(&err), (None, None));
     }
 
     #[test]
-    fn master_token_expired_390115_surfaces_vendor_code() {
-        let err = master_token_expired(390115);
-        assert_eq!(extract_vendor_info(&err), (Some(390115), None));
+    fn login_error_does_not_populate_generic_vendor_code() {
+        let err = login_error(390195, true);
+        assert_eq!(extract_vendor_info(&err), (None, None));
     }
 
     #[test]
-    fn login_reauth_codes_surface_vendor_code_when_flag_is_set() {
-        // The flag (not a magic-number list here) is what gates this —
-        // mod.rs's is_reauthentication_required is what actually decides
-        // which codes qualify, reusing EXT_AUTHN_ERROR_CODES/OAUTH_REFRESH_ERROR_CODES.
-        for code in [390195, 390303, 390318] {
-            let err = login_error(code, true);
-            assert_eq!(extract_vendor_info(&err), (Some(code), None));
+    fn master_token_expired_constructs_reauth_error_type_with_real_code() {
+        for code in [390113, 390114, 390115] {
+            let err = master_token_expired(code);
+            match to_driver_error(&err).error_type {
+                Some(driver_error::ErrorType::ReauthenticationRequiredError(reauth)) => {
+                    assert_eq!(
+                        reauth.code, code,
+                        "ReauthenticationRequiredError.code should carry the real GS code"
+                    );
+                }
+                other => panic!(
+                    "expected ReauthenticationRequiredError for code {code}, got {other:?}"
+                ),
+            }
         }
     }
 
     #[test]
-    fn login_error_with_flag_false_stays_none() {
-        // Regression guard: even a code that happens to look reauth-shaped
-        // must not surface vendor_code unless mod.rs actually set the flag —
-        // extract_vendor_info trusts the flag, it does not re-derive from code.
-        let err = login_error(390195, false);
-        assert_eq!(extract_vendor_info(&err), (None, None));
+    fn login_reauth_flag_constructs_reauth_error_type_not_login_error() {
+        for code in [390195, 390303, 390318] {
+            let err = login_error(code, true);
+            match to_driver_error(&err).error_type {
+                Some(driver_error::ErrorType::ReauthenticationRequiredError(reauth)) => {
+                    assert_eq!(reauth.code, code);
+                }
+                other => panic!(
+                    "expected ReauthenticationRequiredError for code {code}, got {other:?} \
+                     (a reauth-shaped login failure must not construct a plain LoginError)"
+                ),
+            }
+        }
     }
 
     #[test]
-    fn login_non_reauth_code_stays_none() {
+    fn login_error_with_flag_false_stays_a_plain_login_error() {
+        // Regression guard: even a code that happens to look reauth-shaped
+        // must construct a plain LoginError, not ReauthenticationRequiredError,
+        // unless mod.rs actually set the flag. to_driver_error trusts the
+        // flag, it does not re-derive reauth-ness from the code.
+        let err = login_error(390195, false);
+        match to_driver_error(&err).error_type {
+            Some(driver_error::ErrorType::LoginError(login_error)) => {
+                assert_eq!(login_error.code, 390195);
+            }
+            other => panic!("expected a plain LoginError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn login_non_reauth_code_stays_a_plain_login_error() {
         // Ordinary login failure (bad password, GS 390100): mod.rs would
-        // never set the flag for this, so extract_vendor_info must not
-        // surface a vendor_code either.
+        // never set the flag for this, so it must construct a plain
+        // LoginError, not ReauthenticationRequiredError.
         let err = login_error(390100, false);
-        assert_eq!(extract_vendor_info(&err), (None, None));
+        match to_driver_error(&err).error_type {
+            Some(driver_error::ErrorType::LoginError(login_error)) => {
+                assert_eq!(login_error.code, 390100);
+            }
+            other => panic!("expected a plain LoginError, got {other:?}"),
+        }
     }
 
     #[test]

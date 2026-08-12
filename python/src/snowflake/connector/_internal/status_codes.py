@@ -17,16 +17,6 @@ from ..errors import (
     OperationalError,
     ProgrammingError,
 )
-
-# Aliased with a leading underscore so this name is never a bare module-level
-# attribute here: TestNoInternalImportsOfBackwardCompatNames forbids any
-# internal snowflake.connector module from rebinding a
-# @backward_compatibility name into its own globals (it walks
-# `vars(module).items()` and skips anything starting with `_`). This keeps
-# `status_codes.ReauthenticationRequest` from existing as an importable name
-# from this module while still letting VENDOR_CODE_TO_EXCEPTION's *values*
-# reference the real class, as a plain top-level constant below.
-from ..errors import ReauthenticationRequest as _ReauthenticationRequest
 from .errorcode import (
     ER_COMPRESSION_NOT_SUPPORTED,
     ER_FAILED_TO_CONNECT_TO_DB,
@@ -108,20 +98,14 @@ STATUS_TO_EXCEPTION: dict[int, type[Error]] = {
 # Some Snowflake server errors share the same StatusCode (e.g. STATUS_CODE_INTERNAL_ERROR)
 # but carry a vendor_code that warrants a more specific exception.
 # Entries here take precedence over STATUS_TO_EXCEPTION when a vendor_code is present.
+#
+# Master-token-expiry and login-time-reauth signals do NOT go through this
+# table — sf_core constructs a dedicated ReauthenticationRequiredError
+# message for both, handled directly in client_api.py's
+# _convert_application_error, since vendor_code is reserved for genuine
+# Snowflake query-error codes.
 VENDOR_CODE_TO_EXCEPTION: dict[int, type[Error]] = {
     100072: IntegrityError,  # NULL result in a non-nullable column
-    # Mid-session master-token-terminal codes: the master token was not
-    # found, expired, or is invalid — the session can never be renewed.
-    390113: _ReauthenticationRequest,
-    390114: _ReauthenticationRequest,
-    390115: _ReauthenticationRequest,
-    # Login-time cached-credential rejection, after the driver's own
-    # evict-and-retry ladder (sf_core::rest::snowflake::is_reauthentication_required)
-    # gives up: cached ID token (390195) or cached OAuth access token
-    # invalid/expired (390303/390318).
-    390195: _ReauthenticationRequest,
-    390303: _ReauthenticationRequest,
-    390318: _ReauthenticationRequest,
 }
 
 # Prefer the Snowflake server vendor_code when the core driver provides it, fallback to this mapping if not present.
