@@ -2,7 +2,7 @@ using Snowflake.Data.Tests.Utilities;
 
 namespace Snowflake.Data.Tests.Fixtures;
 
-public sealed class ITFixture
+public class ITFixture
 #if !OLD_XUNIT
     : IAsyncLifetime
 #else
@@ -15,6 +15,7 @@ public sealed class ITFixture
 
     private static string? _baseSchema;
     private string? _schemaName;
+    public virtual ITestConnectionFactory Factory { get; } = new DefaultTestConnectionFactory();
 
     private static ITestOutputHelper? TestOutputHelper =>
 #if OLD_XUNIT
@@ -52,7 +53,7 @@ public sealed class ITFixture
 
         try
         {
-            await ModifySchemaAsync(_schemaName, "DROP IF EXISTS").ConfigureAwait(false);
+            await ModifySchemaAsync(_schemaName, "DROP").ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -92,9 +93,9 @@ public sealed class ITFixture
     }
 #endif
 
-    private static async Task ModifySchemaAsync(string schemaName, string action)
+    private async Task ModifySchemaAsync(string schemaName, string action)
     {
-        using var connection = TestConnectionFactory.Create(TestOutputHelper);
+        using var connection = Factory.Create(TestOutputHelper);
 
         await connection.OpenAsync().ConfigureAwait(false);
 
@@ -127,7 +128,7 @@ public sealed class ITFixture
             currentDirectoryPath = new DirectoryInfo(currentDirectoryPath).Parent?.FullName ?? string.Empty;
 
             if (nestedDirCount++ > 10)
-                throw new InvalidOperationException($"Did not found root directory after stepping 10 levels!");
+                throw new InvalidOperationException($"Did not find root directory after stepping 10 levels!");
         }
 
         ITEnvironment.Init();

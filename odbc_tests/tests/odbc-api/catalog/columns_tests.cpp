@@ -7,6 +7,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
@@ -92,6 +93,59 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set column names mat
                          &colSize, &decDigits, &nullable);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(std::string(colName) == expectedColNames[col - 1]);
+  }
+}
+
+// SNOW-3897864 / BD#117: IRD concise types of the SQLColumns result set itself
+// (not the DATA_TYPE / TYPE_NAME cell values describing user table columns).
+// Match the reference driver catalog IRD: string cols = SQL_WVARCHAR; numerics =
+// SMALLINT / INTEGER (NUM_PREC_RADIX is INTEGER on the reference driver).
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: result-set IRD concise types match reference driver",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // 1-based column index → expected SQL_DESC_CONCISE_TYPE.
+  const std::pair<SQLSMALLINT, SQLSMALLINT> expectedTypes[] = {
+      {1, SQL_WVARCHAR},   // TABLE_CAT
+      {2, SQL_WVARCHAR},   // TABLE_SCHEM
+      {3, SQL_WVARCHAR},   // TABLE_NAME
+      {4, SQL_WVARCHAR},   // COLUMN_NAME
+      {5, SQL_SMALLINT},   // DATA_TYPE
+      {6, SQL_WVARCHAR},   // TYPE_NAME
+      {7, SQL_INTEGER},    // COLUMN_SIZE
+      {8, SQL_INTEGER},    // BUFFER_LENGTH
+      {9, SQL_SMALLINT},   // DECIMAL_DIGITS
+      {10, SQL_INTEGER},   // NUM_PREC_RADIX (reference driver INTEGER)
+      {11, SQL_SMALLINT},  // NULLABLE
+      {12, SQL_WVARCHAR},  // REMARKS
+      {13, SQL_WVARCHAR},  // COLUMN_DEF
+      {14, SQL_SMALLINT},  // SQL_DATA_TYPE
+      {15, SQL_SMALLINT},  // SQL_DATETIME_SUB
+      {16, SQL_INTEGER},   // CHAR_OCTET_LENGTH
+      {17, SQL_INTEGER},   // ORDINAL_POSITION
+      {18, SQL_WVARCHAR},  // IS_NULLABLE
+      {19, SQL_SMALLINT},  // USER_DATA_TYPE
+  };
+
+  for (const auto& [col, expected] : expectedTypes) {
+    INFO("col " << col << " expected=" << expected);
+    SQLLEN numAttr = 0;
+    SQLSMALLINT strLen = 0;
+    ret = SQLColAttribute(stmt_handle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(numAttr == expected);
+
+    char colName[256] = {};
+    SQLSMALLINT nameLen = 0;
+    SQLSMALLINT dataType = 0x7FFF;
+    SQLULEN colSize = 0;
+    SQLSMALLINT decDigits = 0;
+    SQLSMALLINT nullable = 0;
+    ret = SQLDescribeCol(stmt_handle(), col, reinterpret_cast<SQLCHAR*>(colName), sizeof(colName), &nameLen, &dataType,
+                         &colSize, &decDigits, &nullable);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(dataType == expected);
   }
 }
 

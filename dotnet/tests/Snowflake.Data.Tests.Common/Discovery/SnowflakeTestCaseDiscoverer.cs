@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using Xunit.Internal;
 using Xunit.Sdk;
 
@@ -41,8 +43,10 @@ public sealed class SnowflakeTheoryDiscovererV3 : TheoryDiscoverer
         IXunitTestMethod testMethod,
         IFactAttribute factAttribute)
     {
-        var theoryAttribute = (ITheoryAttribute)factAttribute;
-        var retriesCountEnum = (factAttribute as SnowflakeTheoryAttribute)?.RetriesCount ?? RetriesCount.NoRetries;
+
+        discoveryOptions.SetValue("xunit.discovery.PreEnumerateTheories", "True");
+        var theoryAttribute = (SnowflakeTheoryAttribute)factAttribute;
+        var retriesCountEnum = theoryAttribute.RetriesCount;
         var retriesCount = (int)retriesCountEnum;
 
         // Delegate to base discovery, then wrap results

@@ -975,3 +975,19 @@ behavior_differences:
       Values are still decoded as byte[]; only ResultSetMetaData getColumnType() /
       isCaseSensitive() differ from legacy. Planned fix: propagate binary output representation
       into udt_output_type (or equivalent) in sf_core so JDBC reports BINARY like legacy.
+  54:
+    name: "PUT/GET size columns report BIGINT instead of DECIMAL"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Legacy hard-codes the PUT/GET size columns (source_size, target_size, size) to Types.DECIMAL,
+      ignoring JDBC_TREAT_DECIMAL_AS_INT. This contradicts its own rule for ordinary scale-0 columns,
+      which report BIGINT under the default JDBC_TREAT_DECIMAL_AS_INT=true.
+    new_driver_behavior: |
+      The new driver builds the PUT/GET rowset through the standard metadata path, so the size
+      columns follow the normal scale-0 rule and report BIGINT. Column counts, names, and values are
+      at full parity; only the size columns' JDBC type differs. Matching legacy's DECIMAL would mean
+      leaking a JDBC-only quirk into the shared metadata format.
