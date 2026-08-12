@@ -2865,6 +2865,20 @@ mod tests {
         assert_eq!(policy.backoff.base, Duration::from_millis(123));
     }
 
+    #[test]
+    fn query_retry_policy_uses_resolved_settings_and_connection_overrides() {
+        let mut conn = make_connection_with_settings(vec![("retry_max_attempts", Setting::Int(2))]);
+        let mut resolved = ParamStore::new();
+        resolved.insert(param_names::RETRY_MAX_ATTEMPTS.into(), Setting::Int(5));
+        resolved.insert(param_names::RETRY_BACKOFF_BASE_MS.into(), Setting::Int(123));
+        conn.resolved_connect = Some(resolved);
+
+        let policy = RetryPolicy::query(&conn.effective_settings());
+
+        assert_eq!(policy.max_attempts, 2);
+        assert_eq!(policy.backoff.base, Duration::from_millis(123));
+    }
+
     #[tokio::test]
     async fn connection_init_requires_a_valid_database_handle() {
         let driver = DatabaseDriverV1::new();
