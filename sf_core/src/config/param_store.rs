@@ -2,6 +2,7 @@ use super::param_registry::ParamKey;
 use super::settings::{Setting, Settings};
 use crate::sensitive::SensitiveString;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 #[derive(Debug, Clone)]
 pub struct ParamStore {
@@ -13,10 +14,6 @@ impl ParamStore {
         Self {
             inner: HashMap::new(),
         }
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.inner.is_empty()
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &Setting)> {
@@ -138,9 +135,26 @@ impl ParamStore {
     /// parameters retain their caller-provided casing until login. Layered
     /// programmatic options still need deterministic precedence for those keys.
     pub(crate) fn extend_from_case_insensitive(&mut self, other: &ParamStore) {
+        let mut replacements: HashMap<String, (&String, &Setting)> =
+            HashMap::with_capacity(other.inner.len());
         for (key, value) in &other.inner {
-            self.inner
-                .retain(|existing, _| !existing.eq_ignore_ascii_case(key));
+            match replacements.entry(key.to_ascii_lowercase()) {
+                Entry::Vacant(entry) => {
+                    entry.insert((key, value));
+                }
+                Entry::Occupied(mut entry) if key < entry.get().0 => {
+                    // A ParamStore can contain unknown parameters that differ
+                    // only by case. Prefer the lexicographically first spelling
+                    // so the result does not depend on HashMap iteration order.
+                    entry.insert((key, value));
+                }
+                Entry::Occupied(_) => {}
+            }
+        }
+
+        self.inner
+            .retain(|existing, _| !replacements.contains_key(&existing.to_ascii_lowercase()));
+        for (_, (key, value)) in replacements {
             self.inner.insert(key.clone(), value.clone());
         }
     }
@@ -197,5 +211,32 @@ mod tests {
         );
         assert_eq!(store_with(Setting::Bool(true)).get_double(KEY), None);
         assert_eq!(ParamStore::new().get_double(KEY), None);
+    }
+
+    #[test]
+    fn case_insensitive_extend_replaces_once_and_deduplicates_overrides() {
+        let mut base = ParamStore::new();
+        base.insert("CUSTOM_ONE".into(), Setting::String("base-one".into()));
+        base.insert("custom_two".into(), Setting::String("base-two".into()));
+        base.insert("untouched".into(), Setting::Bool(true));
+
+        let mut overrides = ParamStore::new();
+        overrides.insert("custom_one".into(), Setting::String("override-one".into()));
+        overrides.insert("CUSTOM_TWO".into(), Setting::String("upper".into()));
+        overrides.insert("custom_two".into(), Setting::String("lower".into()));
+
+        base.extend_from_case_insensitive(&overrides);
+
+        assert_eq!(base.inner.len(), 3);
+        assert_eq!(
+            base.get_any("custom_one"),
+            Some(&Setting::String("override-one".into()))
+        );
+        assert_eq!(
+            base.get_any("CUSTOM_TWO"),
+            Some(&Setting::String("upper".into()))
+        );
+        assert_eq!(base.get_any("custom_two"), None);
+        assert_eq!(base.get_any("untouched"), Some(&Setting::Bool(true)));
     }
 }
