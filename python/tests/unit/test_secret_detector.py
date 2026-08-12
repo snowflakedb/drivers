@@ -16,7 +16,7 @@ import warnings
 # warning contract itself is asserted elsewhere, so suppress it at import here.
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
-    from snowflake.connector.secret_detector import MaskedMessageData, SecretDetector
+    from snowflake.connector._common.secret_detector import MaskedMessageData, SecretDetector
 
 
 class TestMaskSecrets:

@@ -282,7 +282,7 @@ class TestSecretDetectorModuleIntegration:
     resolving it must warn once per process yet stay a usable ``logging.Formatter``."""
 
     def test_secret_detector_warns_once_on_import(self):
-        import snowflake.connector.secret_detector as secret_detector_module
+        import snowflake.connector._common.secret_detector as secret_detector_module
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -297,7 +297,7 @@ class TestSecretDetectorModuleIntegration:
 
     def test_masked_message_data_helper_does_not_warn(self):
         """The undecorated ``MaskedMessageData`` helper stays a plain global."""
-        import snowflake.connector.secret_detector as secret_detector_module
+        import snowflake.connector._common.secret_detector as secret_detector_module
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")

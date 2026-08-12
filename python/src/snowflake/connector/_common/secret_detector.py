@@ -16,8 +16,8 @@ import re
 
 from typing import NamedTuple
 
-from ._internal.backward_compatibility import install_backward_compatibility_getattr
-from ._internal.decorators import backward_compatibility
+from .._internal.backward_compatibility import install_backward_compatibility_getattr
+from .._internal.decorators import backward_compatibility
 
 
 MIN_TOKEN_LEN = os.getenv("MIN_TOKEN_LEN", 32)
