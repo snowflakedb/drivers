@@ -136,11 +136,7 @@ class TelemetryClient:
 
     @backward_compatibility
     def send_log_batch(self) -> None:
-        """No-op: retained for backward compatibility with snowflake-connector-python callers.
-
-        Predates :meth:`send_batch` in the Universal Driver's own history;
-        some callers may still hold a reference to this name specifically.
-        """
+        """No-op: the Universal Driver sends telemetry via RPC immediately; there is no batch to flush."""
 
 
 class AsyncTelemetryClient:
