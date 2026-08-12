@@ -317,15 +317,7 @@ impl DatabaseDriverV1 {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let database_seed = self.database_settings(db_handle).await?;
-                let (
-                    config,
-                    host,
-                    port,
-                    client_info,
-                    init_params,
-                    resolved_snapshot,
-                    effective_seed,
-                ) = {
+                let (config, host, port, client_info, init_params, resolved_snapshot) = {
                     let conn = conn_ptr.lock().await;
                     // TODO(sfc-gh-boler): Clone the mutable connection inputs under the mutex,
                     // then drop the lock before calling resolve/build. Those paths can do
@@ -416,14 +408,13 @@ impl DatabaseDriverV1 {
                         client_info,
                         init_params,
                         resolved_snapshot,
-                        effective_seed,
                     )
                 };
 
                 warn_query_logging_risk(&resolved_snapshot);
 
                 let timeout_config =
-                    crate::config::retry::TimeoutConfig::from_params(&effective_seed);
+                    crate::config::retry::TimeoutConfig::from_params(&resolved_snapshot);
 
                 let (http_client, diag_rustls) =
                     crate::tls::client::build_tls_client_and_rustls_config(
@@ -515,7 +506,7 @@ impl DatabaseDriverV1 {
                     None
                 };
 
-                let retry_policy = RetryPolicy::login(&effective_seed);
+                let retry_policy = RetryPolicy::login(&resolved_snapshot);
 
                 let login_fut = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,
@@ -1327,6 +1318,20 @@ impl Connection {
         effective
     }
 
+    /// Settings used to derive policies that can be overridden after login.
+    ///
+    /// The resolved snapshot preserves registry and config-file layers selected
+    /// by database options such as `connection_name`. Mutable connection options
+    /// set after initialization are then applied as the final precedence layer.
+    fn close_settings(&self) -> ParamStore {
+        let mut settings = self
+            .resolved_connect
+            .clone()
+            .unwrap_or_else(|| self.database_seed.clone());
+        settings.extend_from_case_insensitive(&self.connection_seed);
+        settings
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn initialize(
         &mut self,
@@ -1348,7 +1353,7 @@ impl Connection {
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
         self.database_seed = database_seed;
-        self.retry_policy = RetryPolicy::http(&self.effective_seed(&self.database_seed));
+        self.retry_policy = RetryPolicy::http(&resolved_connect);
         self.timeout_config = timeout_config;
         self.host = host;
         self.port = port;
@@ -2648,12 +2653,14 @@ impl DatabaseDriverV1 {
                 // Return None to signal early exit after the block
                 None
             } else {
-                // Re-derive logout config from the database + connection layers
-                // at close-time so post-init connection overrides (e.g.
-                // retry=False sets logout_max_attempts=1) take effect.
-                let effective_seed = conn.effective_seed(&conn.database_seed);
+                // Re-derive logout config from the resolved login snapshot at
+                // close-time, then apply post-init connection overrides (e.g.
+                // retry=False sets logout_max_attempts=1). Starting from the
+                // snapshot preserves config-file layers selected by database
+                // options such as connection_name.
+                let close_settings = conn.close_settings();
                 let config =
-                    LogoutConfig::from_settings(&effective_seed).unwrap_or_else(|e| {
+                    LogoutConfig::from_settings(&close_settings).unwrap_or_else(|e| {
                         tracing::warn!(error = %e, "Failed to re-derive LogoutConfig at close-time; using init-time config");
                         conn.logout_config.clone()
                     });
@@ -2663,7 +2670,7 @@ impl DatabaseDriverV1 {
 
                 // Prepare logout data while holding the lock (pure reads, no network I/O)
                 let logout_data =
-                    logout::prepare_logout_from_conn(&conn, &config, &effective_seed)?;
+                    logout::prepare_logout_from_conn(&conn, &config, &close_settings)?;
 
                 Some((logout_data, error_strategy))
             }
@@ -2812,6 +2819,24 @@ mod tests {
             resolved.get_string(param_names::USER),
             Some("database-user".into())
         );
+    }
+
+    #[test]
+    fn close_settings_preserves_resolved_layers_and_applies_connection_overrides() {
+        let mut conn =
+            make_connection_with_settings(vec![("logout_max_attempts", Setting::Int(1))]);
+        let mut resolved = ParamStore::new();
+        resolved.insert(param_names::RETRY_BACKOFF_BASE_MS.into(), Setting::Int(123));
+        resolved.insert(param_names::LOGOUT_MAX_ATTEMPTS.into(), Setting::Int(5));
+        conn.resolved_connect = Some(resolved);
+
+        let settings = conn.close_settings();
+
+        assert_eq!(
+            settings.get_int(param_names::RETRY_BACKOFF_BASE_MS),
+            Some(123)
+        );
+        assert_eq!(settings.get_int(param_names::LOGOUT_MAX_ATTEMPTS), Some(1));
     }
 
     #[tokio::test]
