@@ -4,8 +4,10 @@ PEP 249 Database API 2.0 Exception Classes
 This module defines the exception hierarchy for the Snowflake connector.
 
 The **active** exceptions (raised at runtime) are the PEP 249 hierarchy plus a
-handful of driver-specific types (``MissingDependencyError``, config errors).
-These are what ``sf_core`` status codes map to via ``STATUS_TO_EXCEPTION``.
+handful of driver-specific types (``MissingDependencyError``, config errors,
+``ReauthenticationRequiredError``). These are what ``sf_core`` status codes
+map to via ``STATUS_TO_EXCEPTION`` and vendor codes map to via
+``VENDOR_CODE_TO_EXCEPTION``.
 
 Everything after the "Backward compatibility" section below exists solely so
 that ``from snowflake.connector.errors import BadGatewayError`` (etc.) does not
@@ -257,6 +259,32 @@ class OperationalError(DatabaseError):
         return error
 
 
+class ReauthenticationRequiredError(OperationalError):
+    """Raised when the master token has expired (mid-session, GS code
+    ``390113``/``390114``/``390115``) or a cached credential was rejected and
+    the driver's own login retry was exhausted (login-time, GS code
+    ``390195``/``390303``/``390318``).
+
+    In both cases the connection cannot be renewed: full re-authentication (a
+    new connection) is required. The universal driver performs **no
+    automatic retry** for either trigger — this is a deliberate departure
+    from the legacy Python connector, which silently reauthenticates (popping
+    a browser window) for ``EXTERNALBROWSER`` mid-session master-token
+    expiry. See ``python/BehaviorDifferences.yaml`` for the recorded
+    rationale.
+
+    Subclasses :class:`OperationalError` (not :class:`ProgrammingError`,
+    which is the type legacy's exception embeds as ``.cause``) so that
+    ``except OperationalError`` and ``except Error`` both catch this
+    directly — a superset of legacy's catchability, which required knowing
+    to catch the legacy ``ReauthenticationRequest`` type specifically or
+    unwrap ``.cause`` to reach the errno.
+
+    The real GS code is preserved as :attr:`Error.errno` so callers can
+    still discriminate the specific trigger if they need to.
+    """
+
+
 class IntegrityError(DatabaseError):
     """
     Exception raised when the relational integrity of the database is affected,
@@ -390,6 +418,25 @@ class RefreshTokenError(Error):
 @backward_compatibility
 class TokenExpiredError(Error):
     """Old-driver internal signal for expired session tokens."""
+
+
+@backward_compatibility
+class ReauthenticationRequest(ReauthenticationRequiredError):
+    """Deprecated alias matching legacy's exception name
+    (``snowflake.connector.network.ReauthenticationRequest``). Also
+    importable from :mod:`snowflake.connector.network` for compatibility with
+    consumers (e.g. Snowpark's ``server_connection.py``) that import it from
+    that module path rather than from ``errors``.
+
+    Prefer :class:`ReauthenticationRequiredError`. Note: the universal driver
+    raises :class:`ReauthenticationRequiredError` itself (the base class),
+    never this subclass, so ``except ReauthenticationRequest`` will not catch
+    driver-raised instances — only ``isinstance``/``except`` checks against
+    :class:`ReauthenticationRequiredError`, :class:`OperationalError`, or
+    :class:`Error` do. This alias exists so the *name* remains importable
+    and subclassable, matching legacy's symbol; see the plan doc for why a
+    strictly-catching alias was not pursued.
+    """
 
 
 @backward_compatibility

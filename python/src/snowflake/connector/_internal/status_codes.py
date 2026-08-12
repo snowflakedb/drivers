@@ -16,6 +16,7 @@ from ..errors import (
     NotSupportedError,
     OperationalError,
     ProgrammingError,
+    ReauthenticationRequiredError,
 )
 from .errorcode import (
     ER_COMPRESSION_NOT_SUPPORTED,
@@ -100,6 +101,17 @@ STATUS_TO_EXCEPTION: dict[int, type[Error]] = {
 # Entries here take precedence over STATUS_TO_EXCEPTION when a vendor_code is present.
 VENDOR_CODE_TO_EXCEPTION: dict[int, type[Error]] = {
     100072: IntegrityError,  # NULL result in a non-nullable column
+    # Mid-session master-token-terminal codes: the master token was not
+    # found, expired, or is invalid — the session can never be renewed.
+    390113: ReauthenticationRequiredError,
+    390114: ReauthenticationRequiredError,
+    390115: ReauthenticationRequiredError,
+    # Login-time cached-credential rejection, after the driver's own
+    # evict-and-retry ladder gives up: cached ID token (390195) or cached
+    # OAuth access token invalid/expired (390303/390318).
+    390195: ReauthenticationRequiredError,
+    390303: ReauthenticationRequiredError,
+    390318: ReauthenticationRequiredError,
 }
 
 # Prefer the Snowflake server vendor_code when the core driver provides it, fallback to this mapping if not present.

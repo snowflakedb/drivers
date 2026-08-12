@@ -36,6 +36,7 @@ from snowflake.connector.errors import (
     NotSupportedError,
     OperationalError,
     ProgrammingError,
+    ReauthenticationRequiredError,
     Warning,
 )
 
@@ -72,6 +73,54 @@ class TestExceptionHierarchy:
 
     def test_not_supported_error_inheritance(self):
         assert issubclass(NotSupportedError, DatabaseError)
+
+    def test_reauthentication_required_error_inheritance(self):
+        assert issubclass(ReauthenticationRequiredError, OperationalError)
+        assert issubclass(ReauthenticationRequiredError, DatabaseError)
+        assert issubclass(ReauthenticationRequiredError, Error)
+
+
+class TestReauthenticationRequiredError:
+    """Tests for ``ReauthenticationRequiredError`` and its back-compat alias
+    ``ReauthenticationRequest`` (importable from both ``errors`` and the
+    ``network`` shim module, matching legacy's ``network.py`` import site
+    used by e.g. Snowpark's ``server_connection.py``)."""
+
+    def test_is_catchable_as_operational_error(self):
+        try:
+            raise ReauthenticationRequiredError("master token expired", errno=390114)
+        except OperationalError as exc:
+            assert exc.errno == 390114
+        else:
+            raise AssertionError("expected OperationalError to catch ReauthenticationRequiredError")
+
+    def test_is_catchable_as_error(self):
+        try:
+            raise ReauthenticationRequiredError("master token expired", errno=390114)
+        except Error:
+            pass
+        else:
+            raise AssertionError("expected Error to catch ReauthenticationRequiredError")
+
+    def test_alias_importable_from_errors(self):
+        import warnings
+
+        from snowflake.connector.errors import ReauthenticationRequest
+
+        assert issubclass(ReauthenticationRequest, ReauthenticationRequiredError)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            err = ReauthenticationRequest("cached credential rejected", errno=390195)
+        assert isinstance(err, ReauthenticationRequiredError)
+        assert err.errno == 390195
+
+    def test_alias_importable_from_network_module(self):
+        """Matches Snowpark's actual import site:
+        ``from snowflake.connector.network import ReauthenticationRequest``."""
+        from snowflake.connector.errors import ReauthenticationRequest as FromErrors
+        from snowflake.connector.network import ReauthenticationRequest as FromNetwork
+
+        assert FromNetwork is FromErrors
 
 
 class TestExceptionInstantiation:
@@ -530,6 +579,78 @@ class TestConvertProtoError:
         assert isinstance(result, IntegrityError)
         assert result.errno == 100072
         assert result.sqlstate == "23000"
+
+    def test_application_exception_master_token_expired_vendor_codes_map_to_reauth_error(self):
+        """Mid-session master-token-terminal GS codes (390113/390114/390115)
+        must all map to ReauthenticationRequiredError, with the real GS code
+        preserved as errno."""
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        for code in (390113, 390114, 390115):
+            driver_exc = ProtoDriverException(
+                message="Master token is no longer valid",
+                status_code=STATUS_CODE_AUTHENTICATION_ERROR,
+                vendor_code=code,
+            )
+            proto_exc = ProtoApplicationException(driver_exc)
+
+            result = _proto_to_public_error(proto_exc)
+            assert isinstance(result, ReauthenticationRequiredError), (
+                f"code {code} did not map to ReauthenticationRequiredError, got {type(result)}"
+            )
+            assert isinstance(result, OperationalError)
+            assert isinstance(result, DatabaseError)
+            assert isinstance(result, Error)
+            assert result.errno == code
+
+    def test_application_exception_login_time_reauth_vendor_codes_map_to_reauth_error(self):
+        """Login-time cached-credential-rejection GS codes (390195/390303/390318),
+        surfaced after the driver's own retry ladder is exhausted, must also map
+        to ReauthenticationRequiredError."""
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        for code in (390195, 390303, 390318):
+            driver_exc = ProtoDriverException(
+                message="Cached credential was rejected",
+                status_code=STATUS_CODE_LOGIN_ERROR,
+                vendor_code=code,
+            )
+            proto_exc = ProtoApplicationException(driver_exc)
+
+            result = _proto_to_public_error(proto_exc)
+            assert isinstance(result, ReauthenticationRequiredError), (
+                f"code {code} did not map to ReauthenticationRequiredError, got {type(result)}"
+            )
+            assert result.errno == code
+
+    def test_application_exception_bad_password_login_error_unaffected(self):
+        """A non-reauth login failure (e.g. bad password, GS 390100) must keep
+        mapping to the generic DatabaseError, not ReauthenticationRequiredError —
+        the new vendor_code entries must not leak beyond their narrow set."""
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = MagicMock()
+        driver_exc.message = "Login failed"
+        driver_exc.status_code = STATUS_CODE_LOGIN_ERROR
+        driver_exc.report = ""
+        driver_exc.error = ProtoDriverError(
+            login_error=ProtoLoginError(
+                message="Incorrect username or password",
+                code=390100,
+            ),
+        )
+        driver_exc.HasField.return_value = False
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert isinstance(result, DatabaseError)
+        assert not isinstance(result, ReauthenticationRequiredError)
 
     def test_application_exception_report_not_included(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (

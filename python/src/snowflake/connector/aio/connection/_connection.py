@@ -325,6 +325,37 @@ class Connection(ConnectionMixin[CursorInstance]):
         except Exception:
             return False
 
+    @api_telemetry
+    async def is_expired(self) -> bool:  # type: ignore[override]
+        """Return True if the connection's master token has expired (async).
+
+        Overrides ``ConnectionMixin.is_expired()`` (a blocking sync method) with
+        a coroutine that uses ``async_core_driver`` instead, so checking expiry
+        does not block the event loop. Once True, the session can no longer be
+        renewed and the connection must be replaced; full re-authentication is
+        required.
+
+        Note: the inherited ``expired`` property (``ConnectionMixin.expired``)
+        calls ``self.is_expired()`` synchronously and is documented as a
+        sync-only name — it is not overridden here, so it must not be used on
+        an async connection (it would return an unawaited coroutine rather
+        than a bool). Always ``await conn.is_expired()`` on an async
+        connection instead.
+
+        ``# type: ignore[override]``: this intentionally widens the return
+        type from ``bool`` to a coroutine of ``bool`` relative to
+        ``ConnectionMixin.is_expired()`` — a deliberate, narrow Liskov
+        violation so the async connection never makes a blocking sync gRPC
+        call from a coroutine.
+        """
+        if self.conn_handle is None:
+            return False
+        try:
+            response = await async_core_driver.connection_is_expired(conn_handle=self.conn_handle)
+            return bool(response.is_expired)
+        except Exception:
+            return True
+
     # ------------------------------------------------------------------
     # Multi-statement execution
     # ------------------------------------------------------------------
