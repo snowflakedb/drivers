@@ -1,6 +1,8 @@
 //! Cross-platform shim over the ODBC installer API's
 //! `SQLGetPrivateProfileString`, used to resolve the driver's installed
-//! file path for `SQLGetInfo(SQL_DRIVER_NAME)`.
+//! file name for `SQLGetInfo(SQL_DRIVER_NAME)`. Internally it resolves the
+//! full on-disk path of the shared library and then hands callers just the
+//! file-name component (see [`resolve_driver_name`]).
 //!
 //! - **Windows**: the Driver Manager exposes `SQLGetPrivateProfileStringW`
 //!   via `odbccp32.dll` (already bound in [`crate::setup_common`]). When the
@@ -341,6 +343,29 @@ pub fn resolve_driver_path(driver_section: Option<&str>, dsn_name: Option<&str>)
     )
 }
 
+/// Resolve the driver's on-disk file *name* — the value
+/// `SQLGetInfo(SQL_DRIVER_NAME)` must return per the ODBC spec ("A
+/// character string with the file name of the driver used to access the
+/// data source"). Delegates to [`resolve_driver_path`] for the full-path
+/// layering, then strips the directory component so callers receive just
+/// the library file name (e.g. `libsfodbc.so`) rather than its absolute
+/// path (`/opt/snowflake/lib/libsfodbc.so`). Returns an empty string when
+/// [`resolve_driver_path`] found nothing to report.
+pub fn resolve_driver_name(driver_section: Option<&str>, dsn_name: Option<&str>) -> String {
+    file_name_of(&resolve_driver_path(driver_section, dsn_name))
+}
+
+/// Return the final path component (file name) of `path`, tolerating
+/// either platform's directory separator. `Path::file_name` only
+/// recognises the *native* separator, but a path read from an ini file
+/// can carry the other platform's separator (e.g. a Windows
+/// `C:\...\sfodbc.dll` value surfacing on a Unix box), so split on both.
+/// Returns `path` unchanged when it has no directory component and an
+/// empty string when `path` is empty.
+fn file_name_of(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
+}
+
 fn resolve_driver_path_with<F, G>(
     driver_section: Option<&str>,
     dsn_name: Option<&str>,
@@ -603,6 +628,32 @@ mod tests {
         // `unwrap_or_default()` on `Some("")` yields `""`, which is
         // exactly the documented "all layers failed" outcome.
         assert_eq!(path, "");
+    }
+
+    #[test]
+    fn file_name_of_strips_unix_directory() {
+        assert_eq!(
+            file_name_of("/opt/snowflake/lib/libsfodbc.so"),
+            "libsfodbc.so"
+        );
+    }
+
+    #[test]
+    fn file_name_of_strips_windows_directory() {
+        assert_eq!(
+            file_name_of(r"C:\Program Files\Snowflake ODBC\sfodbc.dll"),
+            "sfodbc.dll"
+        );
+    }
+
+    #[test]
+    fn file_name_of_returns_bare_name_unchanged() {
+        assert_eq!(file_name_of("libsfodbc.dylib"), "libsfodbc.dylib");
+    }
+
+    #[test]
+    fn file_name_of_maps_empty_path_to_empty_name() {
+        assert_eq!(file_name_of(""), "");
     }
 
     /// `current_driver_path` should always answer when run inside a

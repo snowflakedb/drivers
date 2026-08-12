@@ -31,19 +31,21 @@ use tokio::sync::Mutex;
 const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
 const PUT_GET_ROWSET_FIXED_LENGTH: u64 = 64;
 
-/// Literal emitted by `PutGetResultsetFlavor::Odbc` in the PUT result's
-/// `encryption` column. Mirrors `#define ENCRYPTION_ENCRYPTED "ENCRYPTED"`
-/// from legacy libsnowflakeclient's `FileTransferExecutionResult.cpp`. The
-/// value is a constant string for *every* row (it advertises "your data
-/// ended up encrypted", not "this row's encryption material"). Any C++ /
-/// Python wrapper test that asserts on this column must use the same
-/// literal — kept here so the contract has one source of truth.
-const ODBC_PUT_ENCRYPTION_LITERAL: &str = "ENCRYPTED";
+/// Constant value of the PUT result's `encryption` column (same for every row).
+/// Matches legacy ODBC and snowflake-jdbc.
+const PUT_ENCRYPTION_LITERAL: &str = "ENCRYPTED";
 
-/// Literal emitted by `PutGetResultsetFlavor::Odbc` in the GET result's
-/// `encryption` column. Mirrors `#define ENCRYPTION_DECRYPTED "DECRYPTED"`
-/// from legacy libsnowflakeclient. See `ODBC_PUT_ENCRYPTION_LITERAL`.
-const ODBC_GET_ENCRYPTION_LITERAL: &str = "DECRYPTED";
+/// Constant value of the GET result's `encryption` column. See `PUT_ENCRYPTION_LITERAL`.
+const GET_ENCRYPTION_LITERAL: &str = "DECRYPTED";
+
+/// Whether the PUT/GET result set carries the `encryption` column (between
+/// `status` and `message`). ODBC and JDBC do; Python does not.
+fn emits_encryption_column(flavor: &PutGetResultsetFlavor) -> bool {
+    matches!(
+        flavor,
+        PutGetResultsetFlavor::Odbc | PutGetResultsetFlavor::Jdbc
+    )
+}
 
 /// Inputs the refresher needs to re-issue the original PUT/GET SQL against GS.
 ///
@@ -695,7 +697,7 @@ fn upload_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)
         build_generic_text_rowtype("target_compression"),
         build_generic_text_rowtype("status"),
     ];
-    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+    if emits_encryption_column(&wrapper_presets.put_get_resultset_flavor) {
         row_types.push(build_generic_text_rowtype("encryption"));
     }
     row_types.push(build_generic_text_rowtype("message"));
@@ -708,7 +710,7 @@ fn download_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataTyp
         build_generic_fixed_rowtype("size"),
         build_generic_text_rowtype("status"),
     ];
-    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+    if emits_encryption_column(&wrapper_presets.put_get_resultset_flavor) {
         row_types.push(build_generic_text_rowtype("encryption"));
     }
     row_types.push(build_generic_text_rowtype("message"));
@@ -733,9 +735,9 @@ pub(super) fn upload_results_reader(
         string_array!(upload_results, target_compression),
         string_array!(upload_results, status),
     ];
-    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+    if emits_encryption_column(&wrapper_presets.put_get_resultset_flavor) {
         columns.push(Arc::new(StringArray::from_iter_values(
-            std::iter::repeat_n(ODBC_PUT_ENCRYPTION_LITERAL, n),
+            std::iter::repeat_n(PUT_ENCRYPTION_LITERAL, n),
         )));
     }
     columns.push(string_array!(upload_results, message));
@@ -757,9 +759,9 @@ pub(super) fn download_results_reader(
         int64_array!(download_results, size),
         string_array!(download_results, status),
     ];
-    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+    if emits_encryption_column(&wrapper_presets.put_get_resultset_flavor) {
         columns.push(Arc::new(StringArray::from_iter_values(
-            std::iter::repeat_n(ODBC_GET_ENCRYPTION_LITERAL, n),
+            std::iter::repeat_n(GET_ENCRYPTION_LITERAL, n),
         )));
     }
     columns.push(string_array!(download_results, message));
@@ -1162,6 +1164,37 @@ mod tests {
 
         assert_eq!(columns[4].name, "message");
         assert_eq!(columns[4].r#type, "TEXT");
+    }
+
+    #[test]
+    fn upload_column_metadata_has_correct_structure_jdbc() {
+        // JDBC carries the `encryption` column like ODBC.
+        let columns = upload_column_metadata(&WrapperPresets::jdbc());
+
+        assert_eq!(
+            columns.len(),
+            9,
+            "PUT (JDBC) should have 9 columns including encryption"
+        );
+        assert_eq!(columns[6].name, "status");
+        assert_eq!(columns[7].name, "encryption");
+        assert_eq!(columns[7].r#type, "TEXT");
+        assert_eq!(columns[8].name, "message");
+    }
+
+    #[test]
+    fn download_column_metadata_has_correct_structure_jdbc() {
+        let columns = download_column_metadata(&WrapperPresets::jdbc());
+
+        assert_eq!(
+            columns.len(),
+            5,
+            "GET (JDBC) should have 5 columns including encryption"
+        );
+        assert_eq!(columns[2].name, "status");
+        assert_eq!(columns[3].name, "encryption");
+        assert_eq!(columns[3].r#type, "TEXT");
+        assert_eq!(columns[4].name, "message");
     }
 
     #[test]

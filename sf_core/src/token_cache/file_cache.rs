@@ -384,14 +384,19 @@ impl FileTokenCache {
         }
         #[cfg(not(unix))]
         {
-            if !self.cache_file_path.exists() {
-                return Ok(None);
+            use std::io::Read;
+            match fs::File::open(&self.cache_file_path) {
+                Ok(mut f) => {
+                    let mut content = String::new();
+                    f.read_to_string(&mut content)
+                        .boxed()
+                        .context(TokenRetrievalSnafu)?;
+                    let cache = parse_cache_lenient(&content);
+                    Ok(Some((CacheFileHandle {}, cache)))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e).boxed().context(TokenRetrievalSnafu),
             }
-            let content = fs::read_to_string(&self.cache_file_path)
-                .boxed()
-                .context(TokenRetrievalSnafu)?;
-            let cache = parse_cache_lenient(&content);
-            Ok(Some((CacheFileHandle {}, cache)))
         }
     }
 
@@ -425,13 +430,18 @@ impl FileTokenCache {
         }
         #[cfg(not(unix))]
         {
-            if !self.cache_file_path.exists() {
-                return Ok(None);
+            use std::io::Read;
+            match fs::File::open(&self.cache_file_path) {
+                Ok(mut f) => {
+                    let mut content = String::new();
+                    f.read_to_string(&mut content)
+                        .boxed()
+                        .context(TokenRetrievalSnafu)?;
+                    Ok(parse_cache_strict(&content))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e).boxed().context(TokenRetrievalSnafu),
             }
-            let content = fs::read_to_string(&self.cache_file_path)
-                .boxed()
-                .context(TokenRetrievalSnafu)?;
-            Ok(parse_cache_strict(&content))
         }
     }
 
@@ -830,6 +840,33 @@ mod tests {
 
             assert_eq!(cache.retry_count, 10);
             assert_eq!(cache.retry_delay, Duration::from_millis(50));
+        }
+
+        #[cfg(not(unix))]
+        #[test]
+        fn should_treat_missing_cache_file_as_cache_miss() {
+            let dir = tempfile::tempdir().expect("Failed to create temp dir");
+            let cache = FileTokenCache::with_directory(dir.path().to_path_buf());
+            let result = cache
+                .open_existing_cache()
+                .expect("open_existing_cache must not error when file is absent");
+            assert!(
+                result.is_none(),
+                "missing file must be a cache miss, not an error"
+            );
+        }
+
+        #[cfg(not(unix))]
+        #[test]
+        fn should_open_and_read_existing_cache_file() {
+            let (_dir, cache) = create_temp_cache();
+            cache
+                .set_secret("key", b"value")
+                .expect("set_secret must succeed");
+            let result = cache
+                .open_existing_cache()
+                .expect("open_existing_cache must not error for an existing file");
+            assert!(result.is_some(), "existing cache file must return Some");
         }
     }
 
