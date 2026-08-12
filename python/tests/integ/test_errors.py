@@ -34,7 +34,11 @@ class TestAuthenticationErrors:
             connection_factory(authenticator=PASSWORD_AUTH, password="wrong_password_12345")
         error = excinfo.value
         assert "incorrect username or password" in error.msg.lower()
-        assert error.errno == 250001
+        # Universal driver and old driver behave identically here: both
+        # surface the server's raw GS code for credential rejections
+        # (SNOW-3775156).
+        assert error.errno == 390100
+        assert error.sqlstate == "28000"
 
     def test_invalid_user(self, connection_factory):
         """Test that a non-existent user raises a DatabaseError subclass."""
@@ -46,7 +50,11 @@ class TestAuthenticationErrors:
             )
         error = excinfo.value
         assert error.msg
-        assert error.errno == 250001
+        # Universal driver and old driver behave identically here: both
+        # surface the server's raw GS code for credential rejections
+        # (SNOW-3775156).
+        assert error.errno == 390100
+        assert error.sqlstate == "28000"
 
     def test_invalid_account(self, connection_factory):
         """Test that a non-existent account raises an Error subclass."""
@@ -59,11 +67,22 @@ class TestAuthenticationErrors:
         error = excinfo.value
         assert error.errno != -1
         if is_new_driver():
-            assert error.errno == 250001
-        else:
-            # Old driver: HttpError (290404) when server returns 404 for unknown account,
-            # or ER_FAILED_TO_CONNECT_TO_DB (250001) for connection-level failures.
-            assert error.errno in (290404, 250001)
+            # Depends on whether the account lookup resolves through the
+            # generic connection-failure path (250001) or the
+            # credential-rejection login path (390100, SNOW-3775156) — both
+            # are observed depending on the target deployment.
+            assert error.errno in (250001, 390100)
+            return
+
+        # Old driver: HttpError (290404) when the server returns a 404 for an
+        # unknown account — version-independent, unrelated to SNOW-3775156.
+        if error.errno == 290404:
+            return
+
+        # Otherwise this is a connection-level login failure: old driver
+        # surfaces the raw GS code (390100), matching universal driver's
+        # login-failure path above (SNOW-3775156).
+        assert error.errno == 390100
 
     def test_invalid_authenticator_value(self, connection_factory):
         """Test that an unsupported authenticator value raises ProgrammingError."""

@@ -1,9 +1,13 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import com.fasterxml.jackson.core.JsonEncoding;
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.google.protobuf.ByteString;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -15,11 +19,13 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Binar
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.memory.RootAllocator;
-import org.json.JSONStringer;
 
 final class PreparedStatementBindingSerializer {
   private static final SFLogger logger =
       SFLoggerFactory.getLogger(PreparedStatementBindingSerializer.class);
+
+  /** Thread-safe once configured; reused to avoid re-parsing the (empty) generator config. */
+  private static final JsonFactory JSON_FACTORY = new JsonFactory();
 
   /** Process-wide; a fresh allocator per execute is measurably expensive in batch scenarios. */
   static final RootAllocator SHARED_ALLOCATOR = new RootAllocator(Long.MAX_VALUE);
@@ -89,35 +95,49 @@ final class PreparedStatementBindingSerializer {
   }
 
   private static byte[] buildBindingsJson(Map<Integer, ParameterValue> parameterValues) {
-    JSONStringer jsonStringer = new JSONStringer();
-    jsonStringer.object();
-    // Emit every bound value, keyed by parameter index and ordered for a deterministic payload.
-    // The server validates placeholder count/style/types — the driver never inspects the SQL.
-    for (Map.Entry<Integer, ParameterValue> entry : new TreeMap<>(parameterValues).entrySet()) {
-      int parameterIndex = entry.getKey();
-      ParameterValue parameterValue = entry.getValue();
-      jsonStringer.key(String.valueOf(parameterIndex)).object();
-      jsonStringer.key("type").value(parameterValue.bindType().name());
-      jsonStringer.key("value");
-      writeBindingValue(jsonStringer, parameterIndex, parameterValue.value());
-      jsonStringer.endObject();
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    try (JsonGenerator json = JSON_FACTORY.createGenerator(out, JsonEncoding.UTF8)) {
+      json.writeStartObject();
+      // Emit every bound value, keyed by parameter index and ordered for a deterministic payload.
+      // The server validates placeholder count/style/types — the driver never inspects the SQL.
+      for (Map.Entry<Integer, ParameterValue> entry : new TreeMap<>(parameterValues).entrySet()) {
+        int parameterIndex = entry.getKey();
+        ParameterValue parameterValue = entry.getValue();
+        json.writeObjectFieldStart(String.valueOf(parameterIndex));
+        json.writeStringField("type", parameterValue.bindType().name());
+        json.writeFieldName("value");
+        writeBindingValue(json, parameterIndex, parameterValue.value());
+        json.writeEndObject();
+      }
+      json.writeEndObject();
+    } catch (IOException e) {
+      // ByteArrayOutputStream never throws; this only fires on a genuine serialization fault.
+      throw new SFSQLException("Failed to serialize prepared statement bindings", e);
     }
-    jsonStringer.endObject();
-    return jsonStringer.toString().getBytes(StandardCharsets.UTF_8);
+    return out.toByteArray();
   }
 
-  private static void writeBindingValue(JSONStringer json, int parameterIndex, Object value) {
-    if (value == null || value instanceof String) {
-      json.value(value);
+  private static void writeBindingValue(JsonGenerator json, int parameterIndex, Object value)
+      throws IOException {
+    if (value == null) {
+      json.writeNull();
+      return;
+    }
+    if (value instanceof String) {
+      json.writeString((String) value);
       return;
     }
     if (value instanceof List) {
-      json.array();
+      json.writeStartArray();
       for (Object element : (List<?>) value) {
         requireNullOrString(element, parameterIndex, "list-valued binding");
-        json.value(element);
+        if (element == null) {
+          json.writeNull();
+        } else {
+          json.writeString((String) element);
+        }
       }
-      json.endArray();
+      json.writeEndArray();
       return;
     }
     throw unsupportedBindingValue(parameterIndex, value, "binding");

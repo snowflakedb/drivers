@@ -1,5 +1,10 @@
 package net.snowflake.jdbc.wiremock;
 
+import static net.snowflake.jdbc.utils.JsonTestUtils.objectNode;
+import static net.snowflake.jdbc.utils.JsonTestUtils.parseJson;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
@@ -26,9 +31,6 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import net.snowflake.jdbc.utils.HttpTestClient;
 import net.snowflake.jdbc.utils.HttpTestClient.Response;
-import org.json.JSONArray;
-import org.json.JSONObject;
-import org.json.JSONTokener;
 
 /**
  * Spawns the WireMock standalone JAR vendored at {@code
@@ -254,11 +256,11 @@ public final class WiremockClient implements AutoCloseable {
       content = content.replace(entry.getKey(), entry.getValue());
     }
 
-    JSONObject parsed = new JSONObject(new JSONTokener(content));
-    if (parsed.has("mappings") && parsed.get("mappings") instanceof JSONArray) {
-      JSONArray array = parsed.getJSONArray("mappings");
-      for (int i = 0; i < array.length(); i++) {
-        registerSingleMapping(array.getJSONObject(i).toString());
+    JsonNode parsed = parseJson(content);
+    JsonNode mappings = parsed.get("mappings");
+    if (mappings != null && mappings.isArray()) {
+      for (JsonNode mapping : mappings) {
+        registerSingleMapping(mapping.toString());
       }
     } else {
       registerSingleMapping(content);
@@ -273,29 +275,31 @@ public final class WiremockClient implements AutoCloseable {
     registerSingleMapping(mappingJson);
   }
 
-  public List<JSONObject> getRequests(String urlPathPattern) {
-    JSONObject body = new JSONObject().put("urlPathPattern", urlPathPattern);
+  public List<JsonNode> getRequests(String urlPathPattern) {
+    ObjectNode body = objectNode().put("urlPathPattern", urlPathPattern);
     Response resp = httpClient().post(adminUrl("/__admin/requests/find"), body.toString());
     if (!resp.ok()) {
       throw new RuntimeException("Failed to query requests: " + resp.status() + " " + resp.body());
     }
-    JSONObject parsed = resp.json();
-    JSONArray requests = parsed.has("requests") ? parsed.getJSONArray("requests") : new JSONArray();
-    List<JSONObject> out = new ArrayList<>(requests.length());
-    for (int i = 0; i < requests.length(); i++) {
-      out.add(requests.getJSONObject(i));
+    JsonNode parsed = resp.json();
+    JsonNode requests = parsed.get("requests");
+    List<JsonNode> out = new ArrayList<>();
+    if (requests != null) {
+      for (JsonNode request : requests) {
+        out.add(request);
+      }
     }
     return out;
   }
 
   public void verifyRequestCount(int expectedCount, String urlPathPattern) {
-    JSONObject body = new JSONObject().put("method", "ANY").put("urlPathPattern", urlPathPattern);
+    ObjectNode body = objectNode().put("method", "ANY").put("urlPathPattern", urlPathPattern);
     Response resp = httpClient().post(adminUrl("/__admin/requests/count"), body.toString());
     if (!resp.ok()) {
       throw new RuntimeException(
           "Failed to query request count: " + resp.status() + " " + resp.body());
     }
-    int actual = resp.json().getInt("count");
+    int actual = resp.json().get("count").asInt();
     if (actual != expectedCount) {
       throw new AssertionError(
           "Expected "
