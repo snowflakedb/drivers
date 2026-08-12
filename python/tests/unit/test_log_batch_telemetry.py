@@ -78,3 +78,28 @@ class TestSendBatch:
         with patch.object(core_driver, "telemetry_send_log") as rpc:
             client.send_batch()
             rpc.assert_not_called()
+
+
+class TestSendLogBatch:
+    """send_log_batch predates send_batch in the Universal Driver's own history.
+
+    Kept as a no-op for callers that still hold this name specifically.
+    """
+
+    def test_exists(self):
+        client = _client()
+        assert callable(client.send_log_batch)
+
+    def test_is_noop(self):
+        client = _client()
+        with patch.object(core_driver, "telemetry_send_log") as rpc:
+            result = client.send_log_batch()
+            rpc.assert_not_called()
+        assert result is None
+
+    def test_does_not_disrupt_other_telemetry(self):
+        client = _client()
+        with patch.object(core_driver, "telemetry_send_api_usage") as rpc:
+            client.send_log_batch()
+            client.send_api_usage("Connection.cursor")
+        rpc.assert_called_once()

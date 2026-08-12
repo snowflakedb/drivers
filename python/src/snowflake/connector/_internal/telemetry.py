@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from ..errors import InterfaceError
 from .api_client.client_api import async_core_driver, core_driver
+from .decorators import backward_compatibility
 from .logging import get_logger
 
 
@@ -95,6 +96,14 @@ class TelemetryClient:
         See ``tests/integ/telemetry/test_telemetry_crash_flush.py``.
 
         Kept for snowflake-cli API compatibility (``_app/telemetry.py``).
+        """
+
+    @backward_compatibility
+    def send_log_batch(self) -> None:
+        """No-op: retained for backward compatibility with snowflake-connector-python callers.
+
+        Predates :meth:`send_batch` in the Universal Driver's own history;
+        some callers may still hold a reference to this name specifically.
         """
 
 
