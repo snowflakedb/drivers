@@ -2662,7 +2662,8 @@ impl DatabaseDriverV1 {
                 // TODO: SNOW-2912513 - Record telemetry for logout decision
 
                 // Prepare logout data while holding the lock (pure reads, no network I/O)
-                let logout_data = logout::prepare_logout_from_conn(&conn, &config)?;
+                let logout_data =
+                    logout::prepare_logout_from_conn(&conn, &config, &effective_seed)?;
 
                 Some((logout_data, error_strategy))
             }

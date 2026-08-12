@@ -13,6 +13,7 @@
 use super::async_query_registry::AsyncQueryRegistry;
 use super::connection::{Connection, RefreshContext};
 use super::error::*;
+use crate::config::ParamStore;
 use crate::config::logout::LogoutConfig;
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
@@ -159,6 +160,7 @@ fn validate_config(config: &LogoutConfig) -> Result<(), ApiError> {
 pub(super) fn prepare_logout_from_conn(
     conn: &Connection,
     config: &LogoutConfig,
+    retry_settings: &ParamStore,
 ) -> Result<Option<LogoutData>, ApiError> {
     // Validate config first (no lock needed — operates on config only)
     validate_config(config)?;
@@ -186,7 +188,7 @@ pub(super) fn prepare_logout_from_conn(
         (Some(client), Some(url), Some(info)) => {
             let refresh_ctx = RefreshContext::new(conn)?;
 
-            let retry_policy = RetryPolicy::logout(&conn.connection_seed, config);
+            let retry_policy = RetryPolicy::logout(retry_settings, config);
 
             tracing::debug!(
                 total_timeout_secs = config.logout_total_timeout.as_secs(),
@@ -277,6 +279,7 @@ pub(super) async fn execute_logout_with_strategy(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::param_registry::param_names;
     use std::time::Duration;
 
     #[test]
@@ -308,6 +311,26 @@ mod tests {
         let err = result.unwrap_err();
         assert!(matches!(err, ApiError::InvalidArgument { .. }));
         assert!(err.to_string().contains("Zero timeout"));
+    }
+
+    #[test]
+    fn prepare_logout_uses_supplied_effective_retry_settings() {
+        let mut conn = Connection::new();
+        conn.http_client = Some(reqwest::Client::new());
+        conn.server_url = Some("https://example.com".into());
+        conn.client_info = Some(ClientInfo::from_settings(&ParamStore::new()).unwrap());
+
+        let mut effective_settings = ParamStore::new();
+        effective_settings.insert(
+            param_names::RETRY_BACKOFF_BASE_MS.into(),
+            crate::config::settings::Setting::Int(123),
+        );
+
+        let data = prepare_logout_from_conn(&conn, &LogoutConfig::default(), &effective_settings)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(data.retry_policy.backoff.base, Duration::from_millis(123));
     }
 
     #[test]
