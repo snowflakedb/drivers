@@ -1219,7 +1219,7 @@ behavior_differences:
 
   75:
     name: "SQLGetInfo(SQL_DRIVER_NAME) returns the driver's installed file path instead of a fixed identifier"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     is_breaking_change: true
@@ -1229,9 +1229,9 @@ behavior_differences:
     old_driver_behavior: |
       SQLGetInfo(SQL_DRIVER_NAME) returns the fixed string "Snowflake" regardless of where the driver is installed. This is non-spec — the ODBC specification defines SQL_DRIVER_NAME as "a character string with the file name of the driver used to access the data source".
     new_driver_behavior: |
-      SQLGetInfo(SQL_DRIVER_NAME) returns the on-disk file path of the loaded driver shared library, exactly as the ODBC spec prescribes. The path is resolved via the ODBC installer API (`SQLGetPrivateProfileString` against odbc.ini / odbcinst.ini) using whichever lookup hints (`DRIVER={...}` keyword or `DSN=`) were supplied at connect time, with a `dladdr` self-path fallback for DM-less contexts. Returns an empty string only when every layer fails (e.g. a missing installer library on a sandboxed unit-test box).
+      SQLGetInfo(SQL_DRIVER_NAME) returns the file name of the loaded driver shared library (e.g. `libsfodbc.so`, `libsfodbc.dylib`, or `sfodbc.dll`), exactly as the ODBC spec prescribes. The driver resolves the library's on-disk path via the ODBC installer API (`SQLGetPrivateProfileString` against odbc.ini / odbcinst.ini) using whichever lookup hints (`DRIVER={...}` keyword or `DSN=`) were supplied at connect time, with a `dladdr` self-path fallback for DM-less contexts, and then returns only the path's file-name component. Returns an empty string only when every layer fails (e.g. a missing installer library on a sandboxed unit-test box).
     description: |
-      Applications that compared SQL_DRIVER_NAME against the literal string "Snowflake" (for driver detection or telemetry tagging) need to switch to a path-based check or to SQL_DBMS_NAME. Applications that already expected a file path — including Excel/Power Query, which uses SQL_DRIVER_NAME to populate the connection-properties dialog — now receive the spec-compliant value.
+      Applications that compared SQL_DRIVER_NAME against the literal string "Snowflake" (for driver detection or telemetry tagging) need to switch to a file-name check or to SQL_DBMS_NAME. Applications that already expected a driver file name — including Excel/Power Query, which uses SQL_DRIVER_NAME to populate the connection-properties dialog — now receive the spec-compliant value.
   76:
     name: "SQLGetInfo(SQL_DRIVER_VER) reports the Cargo package version verbatim instead of a zero-padded `MM.mm.bbbb` string"
     status: fixed
