@@ -1236,8 +1236,6 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(TelemetrySendResponse {})
     }
 
-    // Forward one caller-produced telemetry entry (e.g. Snowpark) to the core's
-    // in-band batch. Core owns batching, flush threshold, and egress.
     #[instrument(name = "DatabaseDriverV1::telemetry_send_log", skip(self, input))]
     async fn telemetry_send_log(
         &self,
