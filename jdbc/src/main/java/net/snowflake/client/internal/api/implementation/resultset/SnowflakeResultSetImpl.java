@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.resultset;
 
 import java.io.InputStream;
 import java.io.Reader;
+import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URL;
@@ -405,7 +406,8 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   @Override
   @NoTelemetry
   public Reader getCharacterStream(int columnIndex) {
-    throw new NotImplementedException();
+    String value = getString(columnIndex);
+    return value == null ? null : new StringReader(value);
   }
 
   @Override

@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.BufferedReader;
+import java.io.Reader;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.Clob;
@@ -230,5 +231,45 @@ public class SnowflakeResultSetGettersTest extends SnowflakeIntegrationTestBase 
       assertNull(rs.getClob(1));
       assertTrue(rs.wasNull());
     }
+  }
+
+  @Test
+  public void shouldReadCharacterStreamByIndexAndLabel() throws Exception {
+    try (Statement stmt = getDefaultConnection().createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT 'hello' AS C")) {
+      assertTrue(rs.next());
+
+      try (Reader byIndex = rs.getCharacterStream(1)) {
+        assertNotNull(byIndex);
+        assertEquals("hello", readFully(byIndex));
+      }
+      // Snowflake uppercases the unquoted alias; the legacy driver's findColumn is case-sensitive,
+      // so reference the label by its returned form "C" to keep the reference run parity-green.
+      try (Reader byLabel = rs.getCharacterStream("C")) {
+        assertNotNull(byLabel);
+        assertEquals("hello", readFully(byLabel));
+      }
+    }
+  }
+
+  @Test
+  public void shouldReturnNullCharacterStreamForSqlNull() throws Exception {
+    try (Statement stmt = getDefaultConnection().createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT NULL::VARCHAR")) {
+      assertTrue(rs.next());
+      assertNull(rs.getCharacterStream(1));
+      assertTrue(rs.wasNull());
+    }
+  }
+
+  private static String readFully(Reader reader) throws Exception {
+    StringBuilder sb = new StringBuilder();
+    try (BufferedReader buffered = new BufferedReader(reader)) {
+      int c;
+      while ((c = buffered.read()) != -1) {
+        sb.append((char) c);
+      }
+    }
+    return sb.toString();
   }
 }
