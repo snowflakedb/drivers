@@ -1035,7 +1035,8 @@ behavior_differences:
       `add_log_to_batch` / `try_add_log_to_batch` forward entries to sf_core, which
       batches them per session and POSTs `{"logs": [...]}` to `/telemetry/send`.
       Gated by the `CLIENT_TELEMETRY_ENABLED` session parameter. Flush threshold
-      and egress are owned entirely by the Rust core's LogBatcher.
+      and egress are owned entirely by the Rust core's `SessionTelemetry`
+      (`sf_core/src/telemetry/session_telemetry.rs`).
     description: |
       Restores the legacy in-band log-telemetry path (SNOW-3774686) so Snowpark and
       other consumers that call `connection._telemetry.try_add_log_to_batch(...)`
@@ -1091,7 +1092,7 @@ behavior_differences:
 
   60:
     name: "Telemetry client does not self-disable on HTTP-level send failure"
-    status: allowed
+    status: todo
     type: bug
     reviewed: false
     is_breaking_change: false
