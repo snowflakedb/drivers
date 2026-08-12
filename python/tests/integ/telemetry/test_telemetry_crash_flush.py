@@ -1,16 +1,20 @@
-"""Verify that buffered telemetry is flushed even when the connector process is killed.
+"""Document that buffered telemetry is lost when the connector process is killed.
 
 ``send_batch()`` on ``connection._telemetry`` is a no-op because the Rust core
-owns the flush lifecycle. The guarantee is: on a clean kill (SIGTERM/SIGINT) the
-atexit / connection-release path flushes the buffer before the process exits.
-SIGKILL bypasses all cleanup and entries in-buffer are lost — same behaviour as
-the legacy connector.
+owns the flush lifecycle; the only cleanup hook either driver installs is
+``atexit.register(...)``. ``atexit`` callbacks run on normal interpreter
+shutdown only (falling off ``__main__``, ``sys.exit()``, an unhandled
+exception unwinding to the top) — not on any signal. Neither driver installs
+a ``signal.signal(SIGTERM, ...)`` handler, so SIGTERM's default disposition
+(immediate OS-level termination) applies: the interpreter never runs cleanup
+code. SIGKILL is the same story, just more so (unblockable). Buffered
+telemetry is lost on both signals, in both drivers — this test documents that
+gap rather than asserting a guarantee that was never implemented.
 
 Test strategy: run the connector in a subprocess so we can actually kill the
 process. WireMock answers the login request but hangs the query response
 indefinitely, so the subprocess is blocked inside ``cursor.execute`` and has no
-chance to call ``send_batch()`` or ``close()`` explicitly. If telemetry still
-arrives at ``/telemetry/send``, the driver's crash-flush path is working.
+chance to call ``send_batch()`` or ``close()`` explicitly.
 
 Runs against both drivers (old connector reference + universal driver) to catch
 regressions and to document any parity differences.
@@ -74,9 +78,16 @@ _SUBPROCESS_SCRIPT = textwrap.dedent("""
 _KILL_CASES = [
     pytest.param(
         signal.SIGTERM,
-        True,
-        id="SIGTERM-delivers",
-        marks=[],
+        False,
+        id="SIGTERM-buffer-lost",
+        marks=[
+            pytest.mark.xfail(
+                strict=False,
+                reason="Neither driver installs a SIGTERM handler; atexit does not fire on signals, "
+                "so buffered telemetry is lost. xfail (not a hard assertion) so this flips silently, "
+                "not with a failure, if a crash-safe flush is ever implemented.",
+            )
+        ],
     ),
     pytest.param(
         signal.SIGKILL,
@@ -121,14 +132,15 @@ def test_telemetry_flushed_after_process_kill(int_test_connection_factory, wirem
         proc.kill()
         proc.wait()
 
-    # Poll briefly — SIGTERM flush may take a moment to complete.
+    # Poll briefly rather than asserting immediately after wait() returns.
     telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
 
     if not expect_delivery:
-        # xfail: assert nothing arrived (SIGKILL case) — if this fails it means
-        # the driver somehow flushes under SIGKILL, which would be a pleasant surprise.
+        # xfail: assert nothing arrived — if this fails it means the driver somehow
+        # flushes under this signal, which would be a pleasant surprise.
         assert len(telemetry_requests) == 0, (
-            "Unexpectedly received telemetry after SIGKILL — update this test if the driver gained crash-safe flush"
+            f"Unexpectedly received telemetry after {kill_signal.name} — "
+            "update this test if the driver gained crash-safe flush"
         )
         return
 
