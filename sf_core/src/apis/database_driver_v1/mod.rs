@@ -34,7 +34,7 @@ pub use crate::config::settings::Setting;
 pub use crate::handle_manager::Handle;
 pub use async_query_registry::AsyncQueryRegistry;
 pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
-pub use error::ApiError;
+pub use error::{ApiError, ErrorDiagnostics};
 pub use get_objects::{
     ColumnDescriptor, DEPTH_CATALOGS, DEPTH_COLUMNS, DEPTH_DB_SCHEMAS, DEPTH_TABLES,
     FIELD_CATALOG_DB_SCHEMAS, FIELD_CATALOG_NAME, FIELD_COLUMN_BYTE_LENGTH,
