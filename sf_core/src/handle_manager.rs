@@ -82,26 +82,34 @@ impl<T> HandleManager<T> {
         }
     }
 
-    pub fn delete_handle(&self, handle: Handle) -> bool {
-        let span = span!(target: "handle_manager", Level::INFO, "Deleting handle", handle_id = handle.id, handle_magic = handle.magic);
+    /// Atomically deregisters and returns the value for `handle`. Only one caller
+    /// can take a live handle; later lookups and takes fail.
+    pub(crate) fn take_obj(&self, handle: Handle) -> Option<Arc<T>> {
+        let span = span!(target: "handle_manager", Level::INFO, "Taking handle", handle_id = handle.id, handle_magic = handle.magic);
         let _enter = span.enter();
         let mut handles = self.handles.write_recover();
 
-        match handles.live.get(&handle.id) {
-            Some(entry) if entry.magic == handle.magic => {
-                handles.live.remove(&handle.id);
-                tracing::trace!(target: "handle_manager", "Handle deleted successfully");
-                true
+        match handles.live.entry(handle.id) {
+            std::collections::hash_map::Entry::Occupied(entry)
+                if entry.get().magic == handle.magic =>
+            {
+                let value = entry.remove().value;
+                tracing::trace!(target: "handle_manager", "Handle taken successfully");
+                Some(value)
             }
-            Some(_) => {
-                tracing::error!("Handle magic mismatch, cannot delete handle");
-                false
+            std::collections::hash_map::Entry::Occupied(_) => {
+                tracing::error!("Handle magic mismatch, cannot take object");
+                None
             }
-            None => {
-                tracing::error!("Handle not found, cannot delete handle");
-                false
+            std::collections::hash_map::Entry::Vacant(_) => {
+                tracing::error!("Handle not found, cannot take object");
+                None
             }
         }
+    }
+
+    pub fn delete_handle(&self, handle: Handle) -> bool {
+        self.take_obj(handle).is_some()
     }
 
     /// Deregisters and returns every currently-live value matching `pred`,
