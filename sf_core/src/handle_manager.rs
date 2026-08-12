@@ -80,35 +80,39 @@ impl<T> HandleManager<T> {
         }
     }
 
-    pub fn delete_handle(&self, handle: Handle) -> bool {
-        let span = span!(target: "handle_manager", Level::INFO, "Deleting handle", handle_id = handle.id, handle_magic = handle.magic);
+    /// Atomically deregisters and returns the value for `handle`. Only one caller
+    /// can take a live handle; later lookups and takes fail.
+    pub(crate) fn take_obj(&self, handle: Handle) -> Option<Arc<T>> {
+        let span = span!(target: "handle_manager", Level::INFO, "Taking handle", handle_id = handle.id, handle_magic = handle.magic);
         let _enter = span.enter();
         let index = handle.id as usize;
         let mut handles = self.handles.write_recover();
 
         if index >= handles.len() {
-            tracing::error!("Handle index out of bounds, cannot delete handle");
-            return false;
+            tracing::error!("Handle index out of bounds, cannot take object");
+            return None;
         }
 
         let handle_value = &mut handles[index];
-        let magic = handle_value.magic;
-
-        if magic != handle.magic {
-            tracing::error!("Handle magic mismatch, cannot delete handle");
-            return false;
+        if handle_value.magic != handle.magic {
+            tracing::error!("Handle magic mismatch, cannot take object");
+            return None;
         }
 
         match handle_value.value.take() {
-            Some(_) => {
-                tracing::trace!(target: "handle_manager", "Handle deleted successfully");
-                true
+            Some(value) => {
+                tracing::trace!(target: "handle_manager", "Handle taken successfully");
+                Some(value)
             }
             None => {
-                tracing::error!("Handle not found, cannot delete handle");
-                false
+                tracing::error!("Handle not found, cannot take object");
+                None
             }
         }
+    }
+
+    pub fn delete_handle(&self, handle: Handle) -> bool {
+        self.take_obj(handle).is_some()
     }
 
     /// Deregisters and returns every currently-live value matching `pred`,
