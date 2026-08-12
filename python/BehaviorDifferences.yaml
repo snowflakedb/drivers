@@ -689,11 +689,11 @@ behavior_differences:
       preserved as `errno`/`vendor_code` instead of collapsing to a generic error.
       `ReauthenticationRequest` is kept as a deprecated back-compat alias name
       (importable from both `errors` and `network`, matching Snowpark's
-      `snowflake.connector.network` import site) so the old symbol remains
-      importable/subclassable, though the driver itself raises the base
-      `ReauthenticationRequiredError`, not the alias subclass — see entry 61 for the
-      one deliberate behavioral gap (no automatic reauth) this leaves relative to
-      legacy's `EXTERNALBROWSER` handling.
+      `snowflake.connector.network` import site), and the driver raises this
+      subclass directly, so `except ReauthenticationRequest` — the exact legacy
+      name real consumers like Snowpark catch — fires on driver-raised errors
+      too. See entry 61 for the one deliberate behavioral gap (no automatic
+      reauth) this leaves relative to legacy's `EXTERNALBROWSER` handling.
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -712,12 +712,12 @@ behavior_differences:
           390303/390318 (cached OAuth access token invalid/expired).
       The real GS code survives end-to-end and is exposed as `errno`. No automatic
       retry/reauthentication is performed in any case — callers must open a new
-      connection. `ReauthenticationRequest` remains importable (from `errors` and
-      `network`) as a deprecated subclass of `ReauthenticationRequiredError` for
-      source compatibility, but the driver does not raise that subclass itself, so
-      `except ReauthenticationRequest` (the exact legacy type) will not catch
-      driver-raised instances — only `except ReauthenticationRequiredError`/
-      `OperationalError`/`Error` will.
+      connection. The driver raises `ReauthenticationRequest` (a deprecated
+      subclass of `ReauthenticationRequiredError`, importable from both `errors`
+      and `network` for source compatibility with Snowpark's import site), so
+      `except ReauthenticationRequest` (the exact legacy type), `except
+      ReauthenticationRequiredError`, `except OperationalError`, and `except
+      Error` all catch it.
 
   45:
     name: "Out-of-band (OOB) telemetry is not implemented"

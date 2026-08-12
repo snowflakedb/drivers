@@ -627,6 +627,40 @@ class TestConvertProtoError:
             )
             assert result.errno == code
 
+    def test_reauth_vendor_code_is_catchable_as_legacy_reauthentication_request(self):
+        """Regression guard: a driver-raised reauth error must be catchable
+        by `except ReauthenticationRequest` — the exact legacy type name real
+        consumers like Snowpark's server_connection.py catch — not just by
+        its ReauthenticationRequiredError base. This is deliberately an
+        end-to-end proto-conversion test (not a direct-instantiation test)
+        because the bug this guards against was in which class
+        VENDOR_CODE_TO_EXCEPTION maps to, not in the class hierarchy itself:
+        isinstance(result, ReauthenticationRequiredError) alone stayed true
+        even when the driver raised the base class and this except clause
+        would have silently failed to fire."""
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+        from snowflake.connector.errors import ReauthenticationRequest
+
+        driver_exc = ProtoDriverException(
+            message="Master token is no longer valid",
+            status_code=STATUS_CODE_AUTHENTICATION_ERROR,
+            vendor_code=390114,
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        try:
+            raise result
+        except ReauthenticationRequest as exc:
+            assert exc.errno == 390114
+        else:
+            raise AssertionError(
+                "expected `except ReauthenticationRequest` to catch a driver-raised "
+                f"reauth error, but {type(result)} was not an instance of it"
+            )
+
     def test_application_exception_bad_password_login_error_unaffected(self):
         """A non-reauth login failure (e.g. bad password, GS 390100) must keep
         mapping to the generic DatabaseError, not ReauthenticationRequiredError —

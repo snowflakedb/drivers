@@ -282,6 +282,12 @@ class ReauthenticationRequiredError(OperationalError):
 
     The real GS code is preserved as :attr:`Error.errno` so callers can
     still discriminate the specific trigger if they need to.
+
+    The driver actually raises instances of :class:`ReauthenticationRequest`
+    (the deprecated subclass below), not this base class directly — so
+    ``except ReauthenticationRequest`` (the exact legacy name) also catches
+    driver-raised errors, in addition to ``except OperationalError``/
+    ``except Error`` via this base class.
     """
 
 
@@ -428,14 +434,13 @@ class ReauthenticationRequest(ReauthenticationRequiredError):
     consumers (e.g. Snowpark's ``server_connection.py``) that import it from
     that module path rather than from ``errors``.
 
-    Prefer :class:`ReauthenticationRequiredError`. Note: the universal driver
-    raises :class:`ReauthenticationRequiredError` itself (the base class),
-    never this subclass, so ``except ReauthenticationRequest`` will not catch
-    driver-raised instances — only ``isinstance``/``except`` checks against
-    :class:`ReauthenticationRequiredError`, :class:`OperationalError`, or
-    :class:`Error` do. This alias exists so the *name* remains importable
-    and subclassable, matching legacy's symbol; see the plan doc for why a
-    strictly-catching alias was not pursued.
+    Prefer :class:`ReauthenticationRequiredError` in new code. The driver
+    raises this subclass directly (via ``VENDOR_CODE_TO_EXCEPTION``), so
+    ``except ReauthenticationRequest`` — the exact legacy name real
+    consumers like Snowpark's ``server_connection.py`` catch — fires on
+    driver-raised instances, in addition to ``except
+    ReauthenticationRequiredError``/``OperationalError``/``Error`` (all of
+    which also match, since this is a subclass of each).
     """
 
 
