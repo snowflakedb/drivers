@@ -1018,3 +1018,109 @@ behavior_differences:
       proto already guarantees well-formed, purely to reproduce a legacy implementation
       detail. Tests that need to compare or UUID-parse the value normalize through
       `str()` so they hold on both drivers. CONFIRMED from source (both connectors).
+
+  57:
+    name: "connection._telemetry add_log_to_batch/try_add_log_to_batch now send in-band telemetry"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `connection._telemetry` returned a throwaway no-op `TelemetryClient`; its
+      `add_log_to_batch` / `try_add_log_to_batch` methods did nothing, so
+      caller-produced in-band telemetry (e.g. Snowpark's) was silently discarded.
+    new_driver_behavior: |
+      `connection._telemetry` returns the live in-band telemetry client.
+      `add_log_to_batch` / `try_add_log_to_batch` forward entries to sf_core, which
+      batches them per session and POSTs `{"logs": [...]}` to `/telemetry/send`.
+      Gated by the `CLIENT_TELEMETRY_ENABLED` session parameter. Flush threshold
+      and egress are owned entirely by the Rust core's LogBatcher.
+    description: |
+      Restores the legacy in-band log-telemetry path (SNOW-3774686) so Snowpark and
+      other consumers that call `connection._telemetry.try_add_log_to_batch(...)`
+      reach Snowflake again. The Python layer only emits entries; the core decides
+      when to flush.
+
+  58:
+    name: "TelemetryClient._log_batch buffer attribute not accessible"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `TelemetryClient._log_batch` was a Python-side `list[TelemetryData]` holding
+      the pending batch buffer. Code could inspect it directly to verify what
+      telemetry had been buffered (used by Snowpark integration tests in
+      `tests/integ/test_telemetry.py` and `tests/integ/modin/test_telemetry.py`).
+    new_driver_behavior: |
+      The buffer lives in the Rust core and is not accessible from Python.
+      `conn._telemetry._log_batch` raises `AttributeError`.
+    description: |
+      Snowpark integration tests that assert on `_log_batch` contents need to be
+      rewritten to verify the `/telemetry/send` wire payload via WireMock instead
+      of reading the Python-side buffer.
+
+  59:
+    name: "In-band log telemetry (try_add_log_to_batch) is now gated by CLIENT_TELEMETRY_ENABLED"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Snowpark's direct path (`connection._telemetry.try_add_log_to_batch(...)`)
+      only checks `TelemetryClient._enabled`, a local flag that starts `True` and
+      is independent of the server-sent `CLIENT_TELEMETRY_ENABLED` session
+      parameter. In practice this path is ungated: it sends regardless of what
+      the server parameter says.
+    new_driver_behavior: |
+      The core only buffers/sends a raw-log entry for a session registered in
+      `SessionRegistry`; a session is registered only after `CLIENT_TELEMETRY_ENABLED`
+      is read as enabled from session parameters at connect time. This is *more*
+      restrictive than legacy on exactly the path Snowpark uses: a session where
+      the server has not (yet) reported the parameter as enabled — or reports it
+      disabled — silently drops entries that legacy would have sent.
+    description: |
+      Intentional: routing this path through the same enable gate as the rest of
+      the driver's telemetry is more consistent than legacy's effectively-ungated
+      behavior. Documented here since nothing about this reads as a deliberate
+      choice from the code alone — a caller debugging "telemetry missing right
+      after connect on the universal driver, present on legacy" should land here.
+
+  60:
+    name: "Telemetry client does not self-disable on HTTP-level send failure"
+    status: allowed
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Any HTTP-level failure from `POST /telemetry/send` — a 5xx response, a
+      `TypeError` from a non-JSON-serializable message, or a
+      `{"success": false}` response body — sets `TelemetryClient._enabled =
+      False` permanently for the connection's lifetime. One strike and every
+      subsequent `add_log_to_batch`/flush call becomes an immediate silent
+      no-op, forever after.
+    new_driver_behavior: |
+      The core's telemetry send path (`send_with_token`) swallows HTTP-level
+      failures and always returns `Ok(())` to the Python layer, regardless of
+      outcome. Python's `_enabled` flag is never set `False` by an HTTP-layer
+      failure; the client keeps forwarding entries and every subsequent flush
+      tries again independently of prior failures. Python-layer visibility
+      into a failed send has no propagation path today — this isn't just
+      "more lenient than legacy," it's currently unobservable from Python.
+    description: |
+      The legacy self-disable was a best-effort back-off: if the endpoint
+      rejects events, stop accumulating and sending for the session. UD moves
+      the HTTP call behind the Rust core, so Python-layer error visibility
+      would require an explicit propagation path that doesn't exist yet.
+      Arguably better engineering in the common case (a transient 5xx no
+      longer silences telemetry for the rest of the connection), but it is a
+      real behavior change, not parity — a caller comparing "telemetry
+      stopped after one error on legacy but kept going on the universal
+      driver" should land here. Parity proof, if ever needed, requires a Rust
+      integration test against a mocked HTTP 500 asserting `_enabled` stays
+      `True` on the Python side — a Python-layer mock that bypasses the Rust
+      HTTP path would be trivially true regardless of production behavior.

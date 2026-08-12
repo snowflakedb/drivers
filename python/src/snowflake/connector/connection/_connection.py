@@ -50,7 +50,6 @@ from ..connection_config import ConnectionConfig
 from ..constants import QueryStatus
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from ..errors import Error, ProgrammingError
-from ..telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from ..version import __version__
 
 
@@ -506,10 +505,11 @@ class Connection(ConnectionMixin[CursorInstance]):
         """Internal :class:`SnowflakeRestful` instance exposed for backward compatibility."""
         return SnowflakeRestful(connection=self)
 
+    @property
     @internal_api
     @backward_compatibility
-    def _telemetry(self) -> _BackwardCompatTelemetryClient:
-        return _BackwardCompatTelemetryClient()
+    def _telemetry(self) -> _InternalTelemetryClient:
+        return self._telemetry_client
 
     @property
     def _errorhandler_connection(self) -> Connection:
