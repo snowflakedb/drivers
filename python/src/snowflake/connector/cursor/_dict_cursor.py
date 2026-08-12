@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from .._internal.cursor import DictRow
 from ._base import SnowflakeCursorBase
 
@@ -29,10 +31,7 @@ class DictCursor(SnowflakeCursorBase):
             dict: Next row as a dictionary with column names as keys,
                   or None when no more data is available
         """
-        row = self._fetchone()
-        if not (row is None or isinstance(row, dict)):
-            raise TypeError(f"fetchone got unexpected result: {row}")
-        return row
+        return cast(DictRow | None, self._fetchone())
 
     def fetchmany(self, size: int | None = None) -> list[DictRow]:
         """

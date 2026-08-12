@@ -23,6 +23,9 @@ use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
 use crate::rest::snowflake::AbortOutcome;
+use crate::rest::snowflake::CREDENTIAL_REJECTION_GS_CODES;
+use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
+use crate::rest::snowflake::SQLSTATE_AUTHORIZATION_FAILURE;
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::sql_state::sql_state_from_code;
 use arrow::array::RecordBatchReader;
@@ -934,15 +937,22 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 
 /// Extract the Snowflake server vendor code and SQL state from an ApiError, if available.
 ///
-/// Only populates vendor_code/sql_state for query errors where the Snowflake server
-/// code is the user-facing error number.  Login errors use client-side error codes
-/// (mapped by the Python layer) so the server code is NOT surfaced here.
+/// Populates vendor_code/sql_state for query errors (where the Snowflake server
+/// code is the user-facing error number) and for login/authentication failures,
+/// where the raw GS code (e.g. `390100` for bad credentials) is surfaced as
+/// `vendor_code`, matching the legacy Python connector's behavior (SNOW-3775156) —
+/// a code of `-1` means the server omitted or sent a non-numeric code, in which
+/// case no vendor_code is surfaced and callers fall back to their default errno.
 ///
 /// SQLSTATE resolution order (first hit wins):
 ///   1. The `sqlState` the server included in its response (verbatim).
-///   2. `sql_state_from_code` lookup against the numeric Snowflake error
+///   2. For login failures, [`SQLSTATE_AUTHORIZATION_FAILURE`] when the code
+///      is a known credential rejection ([`CREDENTIAL_REJECTION_GS_CODES`]);
+///      otherwise left unset so callers fall back to their own default.
+///   3. `sql_state_from_code` lookup against the numeric Snowflake error
 ///      code, which covers paths (async-poll, query-monitoring) that drop
-///      `sqlState` on the wire but keep the error code.
+///      `sqlState` on the wire but keep the error code. Scoped to query
+///      errors — login codes are deliberately not added to that table.
 ///
 /// We deliberately do NOT inspect the human-readable message text:
 /// classification belongs to the server, and substring matching on
@@ -952,7 +962,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// rely on `sql_state` as the single source of truth for error
 /// classification.
 ///
-/// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
+/// NOTE: currently handles `QueryFailed`, `AsyncQuery`, and `Login` variants.
 /// New query-related error variants should be added here as they are
 /// introduced.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
@@ -965,6 +975,15 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
                 source: SfError::SnowflakeBody { code, .. },
                 ..
             } => (Some(*code), None),
+            _ => (None, None),
+        },
+        ApiError::Login { source, .. } => match source.as_ref() {
+            RestError::LoginError { code, .. } if *code != GS_CODE_UNAVAILABLE => (
+                Some(*code),
+                CREDENTIAL_REJECTION_GS_CODES
+                    .contains(code)
+                    .then(|| SQLSTATE_AUTHORIZATION_FAILURE.to_string()),
+            ),
             _ => (None, None),
         },
         _ => (None, None),
@@ -1251,6 +1270,17 @@ mod tests {
         }
     }
 
+    fn login_error(code: i32) -> ApiError {
+        ApiError::Login {
+            location: loc(),
+            source: Box::new(RestError::LoginError {
+                message: "test".to_owned(),
+                code,
+                location: loc(),
+            }),
+        }
+    }
+
     #[test]
     fn query_failed_passes_through_server_sql_state() {
         let err = query_failed(Some(1003), Some("42000"));
@@ -1325,6 +1355,33 @@ mod tests {
     fn async_query_unknown_code_keeps_sql_state_none() {
         let err = async_query(424_242);
         assert_eq!(extract_vendor_info(&err), (Some(424_242), None));
+    }
+
+    #[test]
+    fn login_credential_rejection_surfaces_code_and_authorization_sql_state() {
+        let err = login_error(390100);
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(390100), Some("28000".to_owned()))
+        );
+    }
+
+    #[test]
+    fn login_non_rejection_code_surfaces_code_with_no_sql_state() {
+        // A login failure code outside the credential-rejection set still
+        // passes its vendor_code through, but sql_state is left unset so
+        // callers fall back to their own default (e.g. "08001").
+        let err = login_error(390111);
+        assert_eq!(extract_vendor_info(&err), (Some(390111), None));
+    }
+
+    #[test]
+    fn login_missing_code_sentinel_stays_none() {
+        // GS_CODE_UNAVAILABLE is used when the server omitted or sent a
+        // non-numeric code; treat as "no vendor code" so callers fall back
+        // to their default errno.
+        let err = login_error(GS_CODE_UNAVAILABLE);
+        assert_eq!(extract_vendor_info(&err), (None, None));
     }
 
     #[test]

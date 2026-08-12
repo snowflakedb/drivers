@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.resultset;
 
 import java.io.InputStream;
 import java.io.Reader;
+import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URL;
@@ -29,6 +30,7 @@ import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.Decorators;
+import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.DecoratedSnowflakeResultSetMetaDataImpl;
@@ -404,7 +406,8 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   @Override
   @NoTelemetry
   public Reader getCharacterStream(int columnIndex) {
-    throw new NotImplementedException();
+    String value = getString(columnIndex);
+    return value == null ? null : new StringReader(value);
   }
 
   @Override
@@ -808,7 +811,8 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public Clob getClob(int columnIndex) {
-    throw new SFSQLFeatureNotSupportedException("getClob not supported");
+    String value = getString(columnIndex);
+    return value == null ? null : new SnowflakeClob(value);
   }
 
   @Override
@@ -834,7 +838,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public Clob getClob(String columnLabel) {
-    throw new NotImplementedException();
+    return getClob(findColumn(columnLabel));
   }
 
   @Override

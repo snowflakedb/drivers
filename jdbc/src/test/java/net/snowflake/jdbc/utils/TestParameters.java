@@ -1,7 +1,8 @@
 package net.snowflake.jdbc.utils;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -12,9 +13,6 @@ import java.util.Properties;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import lombok.SneakyThrows;
-import org.json.JSONArray;
-import org.json.JSONObject;
-import org.json.JSONTokener;
 
 /**
  * Test connection parameters from {@code parameters.json} (or {@code PARAMETER_PATH}). Loads the
@@ -23,10 +21,10 @@ import org.json.JSONTokener;
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class TestParameters {
 
-  private static volatile JSONObject params;
+  private static volatile ObjectNode params;
 
   @SneakyThrows
-  private static JSONObject get() {
+  private static ObjectNode get() {
     if (params != null) {
       return params;
     }
@@ -39,11 +37,10 @@ public class TestParameters {
         paramPath = "/parameters.json";
       }
       try (InputStream input = Files.newInputStream(Paths.get(paramPath))) {
-        JSONObject parametersJson = new JSONObject(new JSONTokener(new InputStreamReader(input)));
-        JSONObject resolvedParams = parametersJson.getJSONObject("testconnection");
+        JsonNode parametersJson = JsonTestUtils.mapper().readTree(input);
+        ObjectNode resolvedParams = (ObjectNode) parametersJson.get("testconnection");
         if (parametersJson.has("testconnection-jdbc")) {
-          JSONObject overridesJson = parametersJson.getJSONObject("testconnection-jdbc");
-          overridesJson.keys().forEachRemaining(k -> resolvedParams.put(k, overridesJson.get(k)));
+          resolvedParams.setAll((ObjectNode) parametersJson.get("testconnection-jdbc"));
         }
         params = resolvedParams;
       }
@@ -56,18 +53,17 @@ public class TestParameters {
   }
 
   public static String get(String key) {
-    return TestParameters.get().getString(key);
+    return TestParameters.get().get(key).asText();
   }
 
   public static int getInt(String key) {
-    return TestParameters.get().getInt(key);
+    return TestParameters.get().get(key).asInt();
   }
 
   public static List<String> getList(String key) {
     List<String> result = new ArrayList<>();
-    JSONArray jsonArray = TestParameters.get().getJSONArray(key);
-    for (int i = 0; i < jsonArray.length(); i++) {
-      result.add(jsonArray.getString(i));
+    for (JsonNode element : TestParameters.get().get(key)) {
+      result.add(element.asText());
     }
     return result;
   }

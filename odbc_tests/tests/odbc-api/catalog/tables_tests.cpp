@@ -120,6 +120,35 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Result set column names matc
   }
 }
 
+// SNOW-3897864 / BD#117: catalog string result columns report SQL_WVARCHAR to
+// match the reference driver IRD.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: result-set string columns report SQL_WVARCHAR concise type",
+                 "[odbc-api][catalog][tables]") {
+  SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                            sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  for (SQLSMALLINT col = 1; col <= 5; col++) {
+    INFO("col " << col << " expected=" << SQL_WVARCHAR);
+    SQLLEN numAttr = 0;
+    SQLSMALLINT strLen = 0;
+    ret = SQLColAttribute(stmt_handle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(numAttr == SQL_WVARCHAR);
+
+    char colName[256] = {};
+    SQLSMALLINT nameLen = 0;
+    SQLSMALLINT dataType = 0x7FFF;
+    SQLULEN colSize = 0;
+    SQLSMALLINT decDigits = 0;
+    SQLSMALLINT nullable = 0;
+    ret = SQLDescribeCol(stmt_handle(), col, reinterpret_cast<SQLCHAR*>(colName), sizeof(colName), &nameLen, &dataType,
+                         &colSize, &decDigits, &nullable);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(dataType == SQL_WVARCHAR);
+  }
+}
+
 // ============================================================================
 // SQLTables - Data Verification
 // ============================================================================

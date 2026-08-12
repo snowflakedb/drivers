@@ -21,6 +21,10 @@
     <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Snowflake.Data" Version="*" />
+  </ItemGroup>
+
   <Target Name="CopyCustomContent" AfterTargets="AfterBuild">
     <Copy SourceFiles="parameters.json" DestinationFolder="$(OutDir)" ContinueOnError="true"/>
   </Target>
