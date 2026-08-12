@@ -1173,25 +1173,36 @@ impl Connection {
         crate::rest::snowflake::query_response::read_use_s3_regional_url_session_param(&params)
     }
 
-    /// Reads `unsafe_file_write` from the effective connection/database seed. Default `false`
+    /// Reads `unsafe_file_write` from the effective resolved settings. Default `false`
     /// (owner-only 0o600 permissions on GET downloads on Unix).
     pub(crate) fn unsafe_file_write(&self) -> bool {
         self.connection_seed
             .get_bool(param_names::UNSAFE_FILE_WRITE)
+            .or_else(|| {
+                self.resolved_connect
+                    .as_ref()
+                    .and_then(|settings| settings.get_bool(param_names::UNSAFE_FILE_WRITE))
+            })
             .or_else(|| self.database_seed.get_bool(param_names::UNSAFE_FILE_WRITE))
             .unwrap_or(false)
     }
 
-    /// Resolves a two-tier boolean override: session override first, else the
-    /// connect-time seed. `None` if unset, so the caller falls back to the
-    /// wrapper preset. Backs `put_fastfail`/`get_fastfail`.
+    /// Resolves a client-only boolean override: session override first, then
+    /// live connection options, the resolved login snapshot, and the database
+    /// seed. `None` if unset, so the caller falls back to the wrapper preset.
+    /// Backs `put_fastfail`/`get_fastfail`.
     ///
-    /// Only 2 tiers: these are client-only params never echoed by the server,
-    /// so the session-param cache and resolved_connect don't apply.
+    /// These are client-only params never echoed by the server, so the server
+    /// session-parameter cache does not apply.
     fn resolve_override_bool(&self, key: ParamKey) -> Option<bool> {
         self.session_overrides
             .get_bool(key)
             .or_else(|| self.connection_seed.get_bool(key))
+            .or_else(|| {
+                self.resolved_connect
+                    .as_ref()
+                    .and_then(|settings| settings.get_bool(key))
+            })
             .or_else(|| self.database_seed.get_bool(key))
     }
 
@@ -1267,12 +1278,12 @@ impl Connection {
         effective
     }
 
-    /// Settings used to derive policies that can be overridden after login.
+    /// Effective settings for client-side behavior after login.
     ///
     /// The resolved snapshot preserves registry and config-file layers selected
     /// by database options such as `connection_name`. Mutable connection options
     /// set after initialization are then applied as the final precedence layer.
-    fn close_settings(&self) -> ParamStore {
+    pub(crate) fn effective_settings(&self) -> ParamStore {
         let mut settings = self
             .resolved_connect
             .clone()
@@ -2612,7 +2623,7 @@ impl DatabaseDriverV1 {
                 // retry=False sets logout_max_attempts=1). Starting from the
                 // snapshot preserves config-file layers selected by database
                 // options such as connection_name.
-                let close_settings = conn.close_settings();
+                let close_settings = conn.effective_settings();
                 let config =
                     LogoutConfig::from_settings(&close_settings).unwrap_or_else(|e| {
                         tracing::warn!(error = %e, "Failed to re-derive LogoutConfig at close-time; using init-time config");
@@ -2776,7 +2787,7 @@ mod tests {
     }
 
     #[test]
-    fn close_settings_preserves_resolved_layers_and_applies_connection_overrides() {
+    fn effective_settings_preserves_resolved_layers_and_applies_connection_overrides() {
         let mut conn =
             make_connection_with_settings(vec![("logout_max_attempts", Setting::Int(1))]);
         let mut resolved = ParamStore::new();
@@ -2784,13 +2795,28 @@ mod tests {
         resolved.insert(param_names::LOGOUT_MAX_ATTEMPTS.into(), Setting::Int(5));
         conn.resolved_connect = Some(resolved);
 
-        let settings = conn.close_settings();
+        let settings = conn.effective_settings();
 
         assert_eq!(
             settings.get_int(param_names::RETRY_BACKOFF_BASE_MS),
             Some(123)
         );
         assert_eq!(settings.get_int(param_names::LOGOUT_MAX_ATTEMPTS), Some(1));
+    }
+
+    #[test]
+    fn put_get_retry_policy_uses_resolved_settings_and_connection_overrides() {
+        let mut conn =
+            make_connection_with_settings(vec![("put_get_max_attempts", Setting::Int(2))]);
+        let mut resolved = ParamStore::new();
+        resolved.insert(param_names::PUT_GET_MAX_ATTEMPTS.into(), Setting::Int(5));
+        resolved.insert(param_names::RETRY_BACKOFF_BASE_MS.into(), Setting::Int(123));
+        conn.resolved_connect = Some(resolved);
+
+        let policy = RetryPolicy::put_get(&conn.effective_settings());
+
+        assert_eq!(policy.max_attempts, 2);
+        assert_eq!(policy.backoff.base, Duration::from_millis(123));
     }
 
     #[tokio::test]
