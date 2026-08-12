@@ -223,7 +223,9 @@ behavior_differences:
     name: "SQL_C_BINARY on FLOAT/DOUBLE/REAL columns returns raw f64 bytes instead of SQL_NUMERIC_STRUCT"
     status: unknown
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      To be verified
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
@@ -301,7 +303,9 @@ behavior_differences:
     name: "DECFLOAT values are returned in scientific notation and properly normalized"
     status: unknown
     type: enhancement
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      To be verified
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
@@ -349,8 +353,10 @@ behavior_differences:
     name: "SQL_C_WCHAR chunked SQLGetData fits more characters per call than previously"
     status: unknown
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
+    status_rationale: |
+      To be verified.
     impact: medium
     old_driver_behavior: |
       With an 8-byte SQLWCHAR buffer, the old driver fits only 2 data wide characters + NUL instead of the expected 3 + NUL. This appears to stem from using sizeof(wchar_t) (4 bytes on Linux) for buffer capacity calculation instead of sizeof(SQLWCHAR).
@@ -619,7 +625,9 @@ behavior_differences:
     name: "SQL_C_WCHAR decimal string to SQL_DECIMAL conversion works (Linux only)"
     status: unknown
     type: bugfix
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Old driver to be verified
     is_breaking_change: false
     impact: medium
     old_driver_behavior: |
@@ -632,9 +640,9 @@ behavior_differences:
     name: "SQLSTATE for string data exceeding column size returns SQLSTATE 22000 even if server provides different state"
     status: todo
     type: bug
-    reviewed: false
+    reviewed: true
     status_rationale: |
-      We should propagate the sqlState retrieved from the server, not consuming it and clearing the state to the default.
+      To be verified. We should propagate the sqlState retrieved from the server, not consuming it and clearing the state to the default.
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -706,8 +714,10 @@ behavior_differences:
     name: "SQLGetFunctions does report SQLCancelHandle as supported"
     status: unknown
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
+    status_rationale: |
+      To be verified
     impact: medium
     old_driver_behavior: |
       SQLGetFunctions returns SQL_FALSE for SQL_API_SQLCANCELHANDLE even though the driver exports and handles the function. The internal supported-functions bitmap does not include the ODBC 3.8 SQLCancelHandle entry, so the function works at runtime but the SQLGetFunctions report is missing.
@@ -863,8 +873,10 @@ behavior_differences:
     name: "SQL_VARCHAR fetched as SQL_C_INTERVAL_*: stricter Appendix D semantics in the universal driver"
     status: unknown
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
+    status_rationale: |
+      To be verified
     impact: high
     old_driver_behavior: |
       The reference driver already implements most of ODBC Appendix D ("Character to Interval") for VARCHAR -> SQL_C_INTERVAL_* fetches: well-formed literals succeed, trailing-field truncation surfaces 01S07, and leading-field overflow against the default precision surfaces 22015. It diverges from the spec in five places:
@@ -958,7 +970,9 @@ behavior_differences:
     name: "SQLBindParameter SQL_C_INTERVAL_SECOND with fractional seconds bound to exact-numeric SQL targets truncates the fraction instead of overflowing"
     status: unknown
     type: enhancement
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      To be verified
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -994,9 +1008,9 @@ behavior_differences:
   62:
     #TODO: To be checked after implementing complete ODBC API
     name: "iODBC's DM dispatches the new driver and the old driver along different paths (driver-cap dependent), so identical calls return different return codes / SQLSTATEs under iODBC"
-    status: allowed
+    status: todo
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       iODBC's DM consults each driver's claimed ODBC version and reported function bitmap to decide whether to short-circuit a call from its own static tables, intercept a parameter validation up-front, or forward the call to the driver. Because the old driver and the new driver advertise different capabilities, iODBC takes different paths for identical calls and the surfaced return code / SQLSTATE differs accordingly. This is intrinsic to iODBC's dispatch model and not addressable from the driver side.
     is_breaking_change: true
@@ -1204,7 +1218,7 @@ behavior_differences:
     name: "Binding a SQL_C_CHAR/WCHAR character literal as SQL_TYPE_TIMESTAMP shifts the stored wall-clock value by a timezone offset on the old driver"
     status: unknown
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       SQL_TYPE_TIMESTAMP routes to TIMESTAMP_NTZ, a timezone-naive type, so the bound wall-clock value must be stored verbatim. The old driver applying a timezone offset is the bug; the new driver storing the literal unchanged is the spec-correct behavior.
     is_breaking_change: true
@@ -1219,7 +1233,7 @@ behavior_differences:
 
   75:
     name: "SQLGetInfo(SQL_DRIVER_NAME) returns the driver's installed file path instead of a fixed identifier"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     is_breaking_change: true
@@ -1229,9 +1243,9 @@ behavior_differences:
     old_driver_behavior: |
       SQLGetInfo(SQL_DRIVER_NAME) returns the fixed string "Snowflake" regardless of where the driver is installed. This is non-spec — the ODBC specification defines SQL_DRIVER_NAME as "a character string with the file name of the driver used to access the data source".
     new_driver_behavior: |
-      SQLGetInfo(SQL_DRIVER_NAME) returns the on-disk file path of the loaded driver shared library, exactly as the ODBC spec prescribes. The path is resolved via the ODBC installer API (`SQLGetPrivateProfileString` against odbc.ini / odbcinst.ini) using whichever lookup hints (`DRIVER={...}` keyword or `DSN=`) were supplied at connect time, with a `dladdr` self-path fallback for DM-less contexts. Returns an empty string only when every layer fails (e.g. a missing installer library on a sandboxed unit-test box).
+      SQLGetInfo(SQL_DRIVER_NAME) returns the file name of the loaded driver shared library (e.g. `libsfodbc.so`, `libsfodbc.dylib`, or `sfodbc.dll`), exactly as the ODBC spec prescribes. The driver resolves the library's on-disk path via the ODBC installer API (`SQLGetPrivateProfileString` against odbc.ini / odbcinst.ini) using whichever lookup hints (`DRIVER={...}` keyword or `DSN=`) were supplied at connect time, with a `dladdr` self-path fallback for DM-less contexts, and then returns only the path's file-name component. Returns an empty string only when every layer fails (e.g. a missing installer library on a sandboxed unit-test box).
     description: |
-      Applications that compared SQL_DRIVER_NAME against the literal string "Snowflake" (for driver detection or telemetry tagging) need to switch to a path-based check or to SQL_DBMS_NAME. Applications that already expected a file path — including Excel/Power Query, which uses SQL_DRIVER_NAME to populate the connection-properties dialog — now receive the spec-compliant value.
+      Applications that compared SQL_DRIVER_NAME against the literal string "Snowflake" (for driver detection or telemetry tagging) need to switch to a file-name check or to SQL_DBMS_NAME. Applications that already expected a driver file name — including Excel/Power Query, which uses SQL_DRIVER_NAME to populate the connection-properties dialog — now receive the spec-compliant value.
   76:
     name: "SQLGetInfo(SQL_DRIVER_VER) reports the Cargo package version verbatim instead of a zero-padded `MM.mm.bbbb` string"
     status: fixed
@@ -1343,11 +1357,12 @@ behavior_differences:
     description: |
       Applications using ODBC 2.x field identifiers with the 3.x function will now
       receive correct values.
+
   81:
     name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Deliberate security hardening (SNOW-3663588). Accepted as a divergence from the old driver
       because HTTPS on the OAuth authorization/token endpoints is already required by RFC 6749
@@ -1372,7 +1387,7 @@ behavior_differences:
     name: "PUT expands a leading ~ / ~/ in local source paths to the home directory"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Aligns the universal driver with JDBC and the Python connector, both of which expand a leading `~` in PUT source paths. The legacy ODBC driver (libsnowflakeclient) never did client-side `~` expansion, so adding it only enables previously-failing commands to succeed; no existing caller that passed an absolute or relative path is affected.
     is_breaking_change: false
@@ -1385,9 +1400,9 @@ behavior_differences:
       Reference: JDBC `SnowflakeFileTransferAgent.expandFileNames` (leading-`~` replacement) and Python `file_transfer_agent.py` (`os.path.expanduser`). The `~user` (named-user) form is not expanded by the universal driver; only the bare `~` and `~/` leading forms are. This differs from Python's `os.path.expanduser`, which additionally resolves `~user` via the password database; it matches the leading-only intent of JDBC. Applications that relied on the legacy ODBC behavior of treating a leading `~` literally will now have it expanded.
   83:
     name: "OAuth IdP token-exchange rejection returns SQLSTATE 28000 instead of generic HY000"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       The new driver classifies an IdP-side credential rejection (bad client secret during the
       OAuth Authorization Code / Client Credentials token-exchange step) as an authentication
@@ -1405,9 +1420,9 @@ behavior_differences:
       Credentials connection will now see 28000 instead of HY000.
   84:
     name: "PASSCODEINPASSWORD accepts on/true/1 instead of only on"
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       The legacy ODBC driver only enables passcode-in-password when the connection-string value
       is the literal "on" (case-insensitive); any other value, including "true" or "1", is
@@ -1429,10 +1444,11 @@ behavior_differences:
       failed on the legacy driver. Tests use the value "on", which both drivers accept, to keep
       the shared e2e flow running against either driver.
   85:
+    #TODO: Align with other wrappers to set it true by default (?)
     name: "OAuth Authorization Code token caching default differs from legacy ODBC (platform-dependent across reference drivers)"
-    status: unknown
-    type: enhancement
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
     status_rationale: |
       OAuth token caching for the Authorization Code flow is gated by
       CLIENT_STORE_TEMPORARY_CREDENTIAL, but the default varies by driver and platform. Legacy
@@ -1468,9 +1484,11 @@ behavior_differences:
   86:
     name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
     status: allowed
-    type: bug
-    reviewed: false
+    type: bugfix
+    reviewed: true
     impact: high
+    status_rationale: |
+      The cancel should clear all data.
     is_breaking_change: true
     old_driver_behavior: |
       When SQLCancel is called from S10 (PutDataCalled) during a data-at-execution sequence, the old driver retains accumulated SQLPutData data. If the application re-enters DAE and provides new data, the final parameter value is the concatenation of the old and new chunks.
@@ -1478,11 +1496,12 @@ behavior_differences:
       SQLCancel from any DAE state (S8/S9/S10) fully resets the pending operation, discarding all accumulated SQLPutData. On re-entry the parameter starts fresh, matching the ODBC 3.5 spec requirement that cancel aborts the pending operation.
     description: |
       Applications that cancel mid-DAE and retry will get clean parameter values instead of stale concatenated data.
+
   87:
     name: "SQLPrimaryKeys/SQLForeignKeys case-fold unquoted identifiers in identifier mode"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
       ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
@@ -1506,13 +1525,16 @@ behavior_differences:
       identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
       split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
       legacy empty result set).
+
   88:
     name: "SQLForeignKeys resolves NULL FK catalog and schema from connection context"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
+    status_rationale: |
+      This is a parameter gating correct behavior. It's worth dropping it to have better consistency with the ODBC API.
     old_driver_behavior: |
       When only FKTableName is supplied with NULL FKCatalogName and NULL FKSchemaName, the reference
       driver's result depends on the account's CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX session
@@ -1527,12 +1549,15 @@ behavior_differences:
     description: |
       Aligns FK-side identifier resolution with SQLPrimaryKeys and the ODBC catalog-function contract
       for ordinary (non-pattern) arguments.
+
   89:
     name: "SQLForeignKeys metadata_id=TRUE allows NULL identifiers on the unspecified side"
-    status: unknown
-    type: bugfix
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
     is_breaking_change: true
+    status_rationale: |
+      According to the ODBC specification, it is in DM's role to verify the provided null pointers, but unixODBC nor iODBC does that. We should readd the check to have the consistency.
     impact: low
     old_driver_behavior: |
       With SQL_ATTR_METADATA_ID=SQL_TRUE, a single-sided PK-table query that leaves the entire FK
@@ -1548,17 +1573,18 @@ behavior_differences:
       The reference driver over-validates the unspecified FK side. On Windows the Driver Manager
       enforces the identifier null check itself (documented as a "(DM)" diagnostic in the MS ODBC
       reference), so the improvement is observable only on unixODBC/iODBC.
+
   90:
     name: "SQLForeignKeys treats an empty-string PK/FK table as absent for SHOW side selection"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       SQLForeignKeys chooses SHOW EXPORTED vs SHOW IMPORTED KEYS based on which side supplies a table
       name. The universal driver treats an empty-string table name the same as an absent (NULL) one,
       so an empty PKTableName with a populated FKTableName resolves to the FK side (SHOW IMPORTED KEYS
       scoped to the FK table), consistent with how build_show_in_scope treats empty identifiers as "no
-      filter". Tracked under SNOW-3234773.
+      filter".
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -1571,11 +1597,12 @@ behavior_differences:
       Callers that passed an empty PKTableName alongside a real FKTableName and relied on the legacy
       empty result set will now receive the FK relationship. The odbc-api test splits the assertion
       (NEW_DRIVER_ONLY expects the row, OLD_DRIVER_ONLY expects the legacy empty result set).
+
   91:
     name: "SQLProcedures/SQLProcedureColumns case-fold unquoted identifiers in identifier mode"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
       ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
@@ -1607,7 +1634,7 @@ behavior_differences:
     name: "GET auto-creates a missing local destination directory"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Aligns the universal driver with the Python connector (`os.makedirs`) and JDBC, both of which
       create the GET destination directory when it is missing. The legacy ODBC driver
@@ -1634,14 +1661,14 @@ behavior_differences:
     name: "Failed GET download no longer leaves a partial or corrupt file at the destination"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     status_rationale: |
       The legacy driver wrote GET output directly to the destination (decrypting in place) with
       no staging file and no cleanup, so a failed or interrupted transfer left a truncated/corrupt
       file at the destination. The universal driver's atomic `.part`-then-rename prevents any
-      partial file from ever appearing at the destination. The improvement is accepted.
+      partial file from ever appearing at the destination.
     old_driver_behavior: |
       The legacy ODBC driver (libsnowflakeclient) opens the final destination file directly and
       streams downloaded bytes into it — through an in-place decrypt wrapper (`Crypto::CipherIOStream`)
@@ -1666,9 +1693,11 @@ behavior_differences:
     name: "SQLSetConnectAttr(SQL_ATTR_LOGIN_TIMEOUT) after connect returns HY011 instead of SQL_SUCCESS"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
+    status_rationale: |
+      It does not make sense to silently accept a value that is already no-op.
     old_driver_behavior: |
       The old driver accepts SQL_ATTR_LOGIN_TIMEOUT set calls after the connection is established,
       returning SQL_SUCCESS silently. The attribute has no effect post-connect (the login timeout
@@ -1688,9 +1717,11 @@ behavior_differences:
     name: "SQLGetConnectAttr with out-of-range attribute identifier returns HY092 instead of accepting silently"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      It provides a better visibility of what's happening internally for the user, aligning with the ODBC spec.
     old_driver_behavior: |
       The old driver does not classify completely out-of-range attribute identifiers (e.g. 99999)
       as HY092; it may return HY000 or pass through without an error.
@@ -1702,12 +1733,14 @@ behavior_differences:
       HY092 error instead of an undefined response. No impact on well-formed applications.
 
   96:
-    name: "SQLSetStmtAttr(SQL_ATTR_CURSOR_TYPE) with unsupported type returns SQL_SUCCESS_WITH_INFO/01S02 and substitutes SQL_CURSOR_FORWARD_ONLY"
+    name: "SQLSetStmtAttr(SQL_ATTR_CURSOR_TYPE) supports only SQL_CURSOR_FORWARD_ONLY, replacing any other value with that and returns SQL_SUCCESS_WITH_INFO/01S02"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
+    status_rationale: |
+      As the Snowflake does not support other cursors than forward-only, it is aligning the API with the Snowflake API.
     old_driver_behavior: |
       The old driver silently accepts non-forward-only cursor types (SQL_CURSOR_STATIC,
       SQL_CURSOR_DYNAMIC, SQL_CURSOR_KEYSET_DRIVEN) on SQL_ATTR_CURSOR_TYPE without warning.
@@ -1727,9 +1760,11 @@ behavior_differences:
     name: "SQL_SF_CONN_ATTR_APPLICATION is a Snowflake-custom pre-connect attribute not present in the legacy driver"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      Adds a new way of setting up the Application.
     old_driver_behavior: |
       The legacy driver does not expose SQL_SF_CONN_ATTR_APPLICATION. Setting or getting this
       attribute returns an error on the old driver.
@@ -1742,10 +1777,12 @@ behavior_differences:
 
   98:
     name: "Numeric-to-interval conversion normalizes negative zero to +0 instead of producing negative zero"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
+    status_rationale: |
+      This enhances the visibility of the truncated value.
     impact: low
     old_driver_behavior: |
       When a negative fractional numeric value (FLOAT/REAL, DECFLOAT, or NUMBER) truncates to zero for a
@@ -1761,11 +1798,13 @@ behavior_differences:
       numeric_helpers::write_single_field_interval. Formerly tracked (incorrectly) under BD#17 (a PUT/GET
       regression) and BD#16 (a NaN-to-integer difference); relabeled to its own entry.
   99:
-    name: "FLOAT/REAL-to-interval fractional truncation is not flagged with 01S07 by the old driver"
-    status: unknown
+    name: "FLOAT/REAL-to-interval fractional truncation is flagged with 01S07 instead of SQL_SUCCESS in some cases"
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
+    status_rationale: |
+      Alignment with the ODBC spec.
     impact: low
     old_driver_behavior: |
       When a FLOAT/REAL value with a nonzero fractional part is fetched as a single-field interval C type
@@ -1780,11 +1819,12 @@ behavior_differences:
       part now receive it. Previously tracked (incorrectly) under BD#16 (a NaN-to-integer difference).
       Related to BD#98, which covers the negative-zero sign normalization on the same FLOAT->interval
       truncation path.
+
   100:
-    name: "SQLSetStmtAttr SQL_ATTR_PARAM_BIND_TYPE misaligned value accepted by new driver on all platforms"
-    status: unknown
+    name: "SQLSetStmtAttr SQL_ATTR_PARAM_BIND_TYPE misaligned value accepted on all platforms"
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       The old driver on Linux x86_64 accepts a bind-type value of 10 (not 0 and not a multiple of
       alignof(SQLLEN)=8), but rejects it with S1000 on Linux aarch64 and macOS. The new driver
@@ -1820,12 +1860,15 @@ behavior_differences:
       non-x86_64 Unix platforms with the new driver. This is a spec-compliance improvement: the
       value is a byte-length stride with no alignment requirement, so accepting it at set time is
       correct; any addressing consequence of a bad stride still surfaces at SQLExecute time.
+
   101:
-    name: "Connection-level QUERY_TAG is applied as a session parameter (new driver only)"
+    name: "Connection-level QUERY_TAG is applied as a session parameter"
     status: allowed
-    type: enhancement
-    reviewed: false
+    type: bugfix
+    reviewed: true
     is_breaking_change: false
+    status_rationale: |
+      The query_tag should always be forwarded to the Snowflake on the session login.
     impact: low
     old_driver_behavior: |
       Setting QUERY_TAG in the connection string does not tag the session: after connecting with
@@ -1840,11 +1883,14 @@ behavior_differences:
       difference (BD#57). The e2e test query/query_tag.cpp asserts both drivers via NEW_DRIVER_ONLY("BD#101") and OLD_DRIVER_ONLY("BD#101").
   102:
     name: "SQLSetStmtAttr(SQL_ROWSET_SIZE, 0) coerces to 1 instead of storing 0"
-    status: allowed
-    type: bugfix
-    reviewed: false
+    # ROW_ARRAY_SIZE should also be aligned to the spec; setting 0 triggers SQL_ERROR
+    status: todo
+    type: bug
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      According to ODBC spec, this should fail loudly.
     old_driver_behavior: |
       SQLSetStmtAttr(SQL_ROWSET_SIZE, 0) returns SQL_SUCCESS and stores 0 unchanged; a
       subsequent SQLGetStmtAttr(SQL_ROWSET_SIZE) returns 0.
@@ -1857,11 +1903,14 @@ behavior_differences:
       the new driver normalizes it to 1 for consistency with SQL_ATTR_ROW_ARRAY_SIZE.
 
   103:
+    #TODO - add test and confirm behavior
     name: "GCS PUT OVERWRITE=TRUE on matching content re-uploads instead of skipping"
-    status: allowed
+    status: todo
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
+    status_rationale: |
+      To be verified, how old driver behaves.
     impact: low
     old_driver_behavior: |
       Against a GCS stage, a PUT with OVERWRITE=TRUE whose local payload matched the remote object's
@@ -1879,7 +1928,7 @@ behavior_differences:
     name: "GET writes to a temporary .part file before renaming to the final destination (old driver writes the destination directly)"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Downloading to a `<file>.part` temp file and renaming on success avoids leaving a partially
       written file at the destination path if the download is interrupted. This is a deliberate
@@ -1902,7 +1951,7 @@ behavior_differences:
     name: "PUT_FASTFAIL diagnostic message differs between drivers while both fail fast"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Both drivers abort the PUT batch at the first failing file when fast-fail is enabled; only the
       diagnostic text differs. The ODBC spec does not mandate specific message wording, so this is a
@@ -1922,8 +1971,10 @@ behavior_differences:
     name: "Unrecognized connection-string keywords are forwarded to the server instead of being rejected with 01S00"
     status: todo
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
+    status_rationale: |
+      This requires additional work on the backend.
     impact: low
     old_driver_behavior: |
       SQLDriverConnect with an unrecognized connection-string keyword (e.g.
@@ -1952,9 +2003,11 @@ behavior_differences:
     name: "SQLSetConnectAttr with ODBC 2.x statement-level attribute IDs returns HY092 instead of SQL_SUCCESS"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      Alignment with ODBC spec.
     old_driver_behavior: |
       SQLSetConnectAttr(SQL_ATTR_MAX_ROWS) and SQLSetConnectAttr(SQL_ATTR_QUERY_TIMEOUT) on a
       connection handle return SQL_SUCCESS silently. Both IDs (0 and 1) are ODBC 2.x statement
@@ -2170,3 +2223,45 @@ behavior_differences:
       SQL_DIAG_DYNAMIC_FUNCTION_CODE) are gated with SKIP_IODBC("BD#116 - ..."). Full coverage of
       these fields for both drivers remains on the unixODBC lanes (Linux, macOS Universal) and on
       Windows.
+
+  117:
+    name: "SQLDescribeCol column size for SQL_DOUBLE / SQL_FLOAT is 15 (decimal digits) instead of 53 (binary mantissa bits)"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLDescribeCol on a SQL_DOUBLE / SQL_FLOAT column (SQL data type 8) reports a column size of
+      53 -- the number of bits in the IEEE-754 double-precision mantissa.
+    new_driver_behavior: |
+      The new driver reports a column size of 15 -- the number of significant decimal digits of a
+      double-precision float, matching the ODBC specification's definition of column size for
+      SQL_DOUBLE / SQL_FLOAT.
+    description: |
+      Spec reference: the ODBC "Column Size, Decimal Digits, Transfer Octet Length, and Display
+      Size" table defines the column size of SQL_DOUBLE / SQL_FLOAT as 15 (decimal digits), not the
+      count of binary mantissa bits. Applications that used the old driver's 53 to size buffers will
+      now see 15; the value is a precision/display hint and does not change the fetched data.
+      Exercised by odbc_tests/tests/replay/excel/ado/sqlbindcol/test.cpp (SQLDescribeCol cols 8, 9, 10).
+
+  118:
+    name: "Fractional truncation on a numeric-to-character fetch returns SQLSTATE 01S07 instead of 01000"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When a fetch converts a high-scale numeric column into a bound character buffer that cannot
+      hold all fractional digits, the old driver returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01000
+      (general warning) and vendor code 40460.
+    new_driver_behavior: |
+      The new driver returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07 (fractional truncation) --
+      the ODBC 3.x SQLSTATE the specification defines for loss of fractional digits during a
+      numeric-to-character conversion.
+    description: |
+      Spec reference: ODBC 3.x defines 01S07 "Fractional truncation" for exactly this case. Both
+      drivers still return SQL_SUCCESS_WITH_INFO, so the (truncated) fetched value is unchanged;
+      applications that matched on the old driver's 01000 must also accept 01S07. Exercised by
+      odbc_tests/tests/replay/excel/ado/sqlbindcol/test.cpp (two SQLFetch cases).

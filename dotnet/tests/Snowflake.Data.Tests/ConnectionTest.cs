@@ -3,27 +3,29 @@
 namespace Snowflake.Data.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class ConnectionTests : IClassFixture<ITFixture>
+public sealed class ConnectionTest : IClassFixture<ITFixture>
 {
     private readonly ITestOutputHelper _testOutputHelper;
+    private readonly ITFixture _fixture;
 
-    public ConnectionTests(ITestOutputHelper testOutputHelper)
+    public ConnectionTest(ITestOutputHelper testOutputHelper, ITFixture fixture)
     {
         _testOutputHelper = testOutputHelper;
+        _fixture = fixture;
     }
 
     [SnowflakeFact]
-    public async Task ConnectsAsyncWithValidCredentials()
+    public async Task ConnectsAsyncWithValidCredentialsAsync()
     {
-        using var connection = TestConnectionFactory.Create(_testOutputHelper);
-        await connection.OpenAsync();
+        using var connection = _fixture.Factory.Create(_testOutputHelper);
+        await connection.OpenAsync().ConfigureAwait(false);
         Assert.Equal(ConnectionState.Open, connection.State);
     }
 
     [SnowflakeFact]
     public void ConnectsWithValidCredentials()
     {
-        using var connection = TestConnectionFactory.Create(_testOutputHelper);
+        using var connection = _fixture.Factory.Create(_testOutputHelper);
         connection.Open();
         Assert.Equal(ConnectionState.Open, connection.State);
     }
@@ -31,7 +33,7 @@ public sealed class ConnectionTests : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void CloseTransitionsToClosedState()
     {
-        using var connection = TestConnectionFactory.Create(_testOutputHelper);
+        using var connection = _fixture.Factory.Create(_testOutputHelper);
         connection.Open();
         connection.Close();
         Assert.Equal(ConnectionState.Closed, connection.State);

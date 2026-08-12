@@ -1,3 +1,4 @@
+
 namespace Snowflake.Data.Tests.Fixtures;
 
 public static class ITEnvironment
