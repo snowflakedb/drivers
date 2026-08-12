@@ -3,24 +3,21 @@
 ``get(name, default)`` is the dict-style accessor that legacy
 ``snowflake-connector-python`` exposes on ``_session_parameters`` (a plain
 dict). Snowpark's ``ServerConnection.__init__`` calls it, so the proxy must
-provide it. It lives on the shared ``SessionParametersProxyMixin``, so the sync
-and async concrete proxies get it from one definition — both are exercised here.
+provide it. ``SessionParametersProxy`` is shared verbatim by the sync and
+async connection implementations (one definition, no separate subclasses).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from snowflake.connector.aio.connection._freezable_proxy import (
-    _SessionParametersProxy as AsyncSessionParametersProxy,
-)
-from snowflake.connector.connection._freezable_proxy import SessionParametersProxy
+from snowflake.connector._internal.connection.freezable_proxy import SessionParametersProxy
 
 
-@pytest.fixture(params=[SessionParametersProxy, AsyncSessionParametersProxy], ids=["sync", "async"])
-def frozen_proxy(request):
-    """A frozen proxy of each concrete type, cache pre-populated (no live core)."""
-    proxy = request.param(conn_handle=None)
+@pytest.fixture
+def frozen_proxy():
+    """A frozen proxy, cache pre-populated (no live core)."""
+    proxy = SessionParametersProxy(conn_handle=None)
     proxy._cache = {"AUTOCOMMIT": "true", "TIMEZONE": "UTC"}
     return proxy
 
