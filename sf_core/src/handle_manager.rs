@@ -83,7 +83,7 @@ impl<T> HandleManager<T> {
     /// Atomically deregisters and returns the value for `handle`. Only one caller
     /// can take a live handle; later lookups and takes fail.
     pub(crate) fn take_obj(&self, handle: Handle) -> Option<Arc<T>> {
-        let span = span!(target: "handle_manager", Level::INFO, "Taking handle", handle_id = handle.id, handle_magic = handle.magic);
+        let span = span!(target: "handle_manager", Level::INFO, "HandleManager::take_obj", handle_id = handle.id, handle_magic = handle.magic);
         let _enter = span.enter();
         let index = handle.id as usize;
         let mut handles = self.handles.write_recover();
