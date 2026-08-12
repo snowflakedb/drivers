@@ -38,7 +38,7 @@ pub use async_query_registry::AsyncQueryRegistry;
 pub use connection::{
     Connection, ConnectionInfo, ConnectionUsability, RefreshContext, with_valid_session,
 };
-pub use error::{ApiError, CancellationAbortResult};
+pub use error::{ApiError, CancellationAbortResult, ErrorDiagnostics};
 pub use error_kind::ErrorKind;
 pub use get_objects::{
     ColumnDescriptor, DEPTH_CATALOGS, DEPTH_COLUMNS, DEPTH_DB_SCHEMAS, DEPTH_TABLES,

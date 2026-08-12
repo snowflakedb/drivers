@@ -431,3 +431,41 @@ impl ApiError {
         }
     }
 }
+
+/// Wrapper-neutral structured metadata extracted from an [`ApiError`].
+///
+/// Fields remain `None` when the underlying error does not carry that
+/// diagnostic. Wrappers can translate the values into their native error
+/// types without matching sf_core's internal error variants.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ErrorDiagnostics {
+    /// Snowflake's numeric server error code.
+    pub vendor_code: Option<i32>,
+    /// SQLSTATE supplied by the server or inferred from the vendor code when
+    /// sf_core has a canonical mapping. Server values are returned verbatim.
+    pub sql_state: Option<String>,
+    /// Server-assigned Snowflake query ID.
+    pub query_id: Option<String>,
+    /// Client-generated request ID used to submit the query.
+    pub request_id: Option<String>,
+}
+
+impl ApiError {
+    /// Returns structured diagnostics suitable for any language or driver wrapper.
+    ///
+    /// The server-provided SQLSTATE is authoritative. When it is absent for a
+    /// query error, sf_core falls back to its vendor-code mapping. Known login
+    /// credential failures use the authorization SQLSTATE (`28000`). No
+    /// diagnostic is inferred from human-readable message text.
+    #[must_use]
+    pub fn diagnostics(&self) -> ErrorDiagnostics {
+        let context = self.snowflake_context();
+
+        ErrorDiagnostics {
+            vendor_code: context.vendor_code,
+            sql_state: context.sql_state,
+            query_id: context.query_id,
+            request_id: context.request_id,
+        }
+    }
+}
