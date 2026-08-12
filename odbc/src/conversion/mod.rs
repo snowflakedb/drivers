@@ -804,18 +804,29 @@ pub fn make_converter(
 /// so the two cannot drift apart.
 pub(crate) const SMALLINT_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::SMALLINT.0;
 
+/// The `conciseSqlType` Arrow-metadata value that tags catalog string columns
+/// as ODBC `SQL_WVARCHAR` (−9), matching the reference driver catalog IRD.
+pub(crate) const WVARCHAR_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::EXT_W_VARCHAR.0;
+
+/// The `conciseSqlType` Arrow-metadata value that tags catalog INTEGER columns
+/// as ODBC `SQL_INTEGER`.
+pub(crate) const INTEGER_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::INTEGER.0;
+
 /// Map a Snowflake Arrow field to the corresponding SQL data type.
 pub fn sql_type_from_field(
     field: &Field,
     numeric_settings: &NumericSettings,
 ) -> Result<odbc_sys::SqlDataType, ConversionError> {
-    if field
+    // Catalog result schemas may override the concise type (e.g. WVARCHAR for
+    // string catalog cols, SMALLINT/INTEGER for numeric catalog cols) while
+    // keeping a physical Arrow type that is convenient to build. Query-result
+    // TEXT fields never set this metadata and keep resolving to SQL_VARCHAR.
+    if let Some(code) = field
         .metadata()
         .get("conciseSqlType")
         .and_then(|v| v.parse::<i16>().ok())
-        .is_some_and(|v| v == SMALLINT_CONCISE_SQL_TYPE)
     {
-        return Ok(odbc_sys::SqlDataType::SMALLINT);
+        return Ok(odbc_sys::SqlDataType(code));
     }
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
 }
@@ -834,6 +845,72 @@ pub fn verbose_sql_type_from_field(
         | odbc_sys::SqlDataType::TIMESTAMP => odbc_sys::SqlDataType::DATETIME,
         other => other,
     })
+}
+
+#[cfg(test)]
+mod concise_sql_type_override_tests {
+    use super::{
+        INTEGER_CONCISE_SQL_TYPE, NumericSettings, SMALLINT_CONCISE_SQL_TYPE,
+        WVARCHAR_CONCISE_SQL_TYPE, sql_type_from_field,
+    };
+    use arrow::datatypes::{DataType, Field};
+    use odbc_sys as sql;
+    use std::collections::HashMap;
+
+    fn text_field_with_concise(code: i16) -> Field {
+        let metadata: HashMap<String, String> = [
+            ("logicalType".to_string(), "TEXT".to_string()),
+            ("charLength".to_string(), "255".to_string()),
+            ("conciseSqlType".to_string(), code.to_string()),
+        ]
+        .into();
+        Field::new("col", DataType::Utf8, true).with_metadata(metadata)
+    }
+
+    fn plain_text_field() -> Field {
+        let metadata: HashMap<String, String> = [
+            ("logicalType".to_string(), "TEXT".to_string()),
+            ("charLength".to_string(), "255".to_string()),
+        ]
+        .into();
+        Field::new("col", DataType::Utf8, true).with_metadata(metadata)
+    }
+
+    #[test]
+    fn concise_sql_type_wvarchar_override() {
+        let field = text_field_with_concise(WVARCHAR_CONCISE_SQL_TYPE);
+        assert_eq!(
+            sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
+            sql::SqlDataType::EXT_W_VARCHAR
+        );
+    }
+
+    #[test]
+    fn concise_sql_type_integer_override() {
+        let field = text_field_with_concise(INTEGER_CONCISE_SQL_TYPE);
+        assert_eq!(
+            sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
+            sql::SqlDataType::INTEGER
+        );
+    }
+
+    #[test]
+    fn concise_sql_type_smallint_override() {
+        let field = text_field_with_concise(SMALLINT_CONCISE_SQL_TYPE);
+        assert_eq!(
+            sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
+            sql::SqlDataType::SMALLINT
+        );
+    }
+
+    #[test]
+    fn plain_text_without_override_stays_varchar() {
+        let field = plain_text_field();
+        assert_eq!(
+            sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
+            sql::SqlDataType::VARCHAR
+        );
+    }
 }
 
 pub fn column_size_from_field(
