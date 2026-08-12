@@ -975,14 +975,20 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
         // server code IS the user-facing discriminant here (there is no SQL
         // error to distinguish it from), so surface it directly.
         ApiError::MasterTokenExpired { code, .. } => (Some(*code), None),
-        // Login-time cached-credential rejection, narrowly scoped to the
-        // reauth-relevant codes (see REAUTH_LOGIN_CODES). Every other
-        // ApiError::Login (bad password, etc.) deliberately keeps falling to
-        // (None, None) — this is not a blanket policy change.
+        // Login-time cached-credential rejection. `reauthentication_required`
+        // is computed once in mod.rs's `is_reauthentication_required`
+        // (reusing EXT_AUTHN_ERROR_CODES/OAUTH_REFRESH_ERROR_CODES, the same
+        // constants already consulted for cache eviction) — read that
+        // already-computed flag here rather than re-deriving it from a
+        // second, independently-maintained code list. Every other
+        // `ApiError::Login` (bad password, etc.) keeps falling to
+        // `(None, None)` — this is not a blanket policy change.
         ApiError::Login { source, .. } => match source.as_ref() {
-            RestError::LoginError { code, .. } if REAUTH_LOGIN_CODES.contains(code) => {
-                (Some(*code), None)
-            }
+            RestError::LoginError {
+                code,
+                reauthentication_required: true,
+                ..
+            } => (Some(*code), None),
             _ => (None, None),
         },
         _ => (None, None),
@@ -992,16 +998,6 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
 
     (code, sql_state)
 }
-
-/// GS codes that, when returned as the *terminal* login failure (i.e. after the
-/// existing evict-and-retry ladder in `snowflake_login_with_client` gives up),
-/// indicate a cached credential was rejected and re-authentication (a new
-/// connection) is required. Matches legacy Python's own `auth/_auth.py` set:
-/// `390195` (cached ID token rejected), `390303`/`390318` (cached OAuth access
-/// token invalid/expired). Deliberately narrow — every other `ApiError::Login`
-/// (bad password, locked account, etc.) is not in this set and keeps mapping to
-/// `(None, None)` in [`extract_vendor_info`].
-const REAUTH_LOGIN_CODES: [i32; 3] = [390195, 390303, 390318];
 
 fn extract_query_id(error: &ApiError) -> Option<String> {
     match error {
@@ -1339,12 +1335,13 @@ mod tests {
         }
     }
 
-    fn login_error(code: i32) -> ApiError {
+    fn login_error(code: i32, reauthentication_required: bool) -> ApiError {
         ApiError::Login {
             location: loc(),
             source: Box::new(RestError::LoginError {
                 message: "test".to_owned(),
                 code,
+                reauthentication_required,
                 location: loc(),
             }),
         }
@@ -1369,28 +1366,31 @@ mod tests {
     }
 
     #[test]
-    fn login_reauth_code_390195_surfaces_vendor_code() {
-        let err = login_error(390195);
-        assert_eq!(extract_vendor_info(&err), (Some(390195), None));
+    fn login_reauth_codes_surface_vendor_code_when_flag_is_set() {
+        // The flag (not a magic-number list here) is what gates this —
+        // mod.rs's is_reauthentication_required is what actually decides
+        // which codes qualify, reusing EXT_AUTHN_ERROR_CODES/OAUTH_REFRESH_ERROR_CODES.
+        for code in [390195, 390303, 390318] {
+            let err = login_error(code, true);
+            assert_eq!(extract_vendor_info(&err), (Some(code), None));
+        }
     }
 
     #[test]
-    fn login_reauth_code_390303_surfaces_vendor_code() {
-        let err = login_error(390303);
-        assert_eq!(extract_vendor_info(&err), (Some(390303), None));
-    }
-
-    #[test]
-    fn login_reauth_code_390318_surfaces_vendor_code() {
-        let err = login_error(390318);
-        assert_eq!(extract_vendor_info(&err), (Some(390318), None));
+    fn login_error_with_flag_false_stays_none() {
+        // Regression guard: even a code that happens to look reauth-shaped
+        // must not surface vendor_code unless mod.rs actually set the flag —
+        // extract_vendor_info trusts the flag, it does not re-derive from code.
+        let err = login_error(390195, false);
+        assert_eq!(extract_vendor_info(&err), (None, None));
     }
 
     #[test]
     fn login_non_reauth_code_stays_none() {
-        // Regression guard: the REAUTH_LOGIN_CODES carve-out must not leak to
-        // every other login failure (e.g. bad password, GS code 390100).
-        let err = login_error(390100);
+        // Ordinary login failure (bad password, GS 390100): mod.rs would
+        // never set the flag for this, so extract_vendor_info must not
+        // surface a vendor_code either.
+        let err = login_error(390100, false);
         assert_eq!(extract_vendor_info(&err), (None, None));
     }
 

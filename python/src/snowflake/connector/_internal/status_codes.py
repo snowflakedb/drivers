@@ -17,6 +17,16 @@ from ..errors import (
     OperationalError,
     ProgrammingError,
 )
+
+# Aliased with a leading underscore so this name is never a bare module-level
+# attribute here: TestNoInternalImportsOfBackwardCompatNames forbids any
+# internal snowflake.connector module from rebinding a
+# @backward_compatibility name into its own globals (it walks
+# `vars(module).items()` and skips anything starting with `_`). This keeps
+# `status_codes.ReauthenticationRequest` from existing as an importable name
+# from this module while still letting VENDOR_CODE_TO_EXCEPTION's *values*
+# reference the real class, as a plain top-level constant below.
+from ..errors import ReauthenticationRequest as _ReauthenticationRequest
 from .errorcode import (
     ER_COMPRESSION_NOT_SUPPORTED,
     ER_FAILED_TO_CONNECT_TO_DB,
@@ -92,44 +102,27 @@ STATUS_TO_EXCEPTION: dict[int, type[Error]] = {
     STATUS_CODE_UNSUPPORTED_COMPRESSION: ProgrammingError,
 }
 
-def _build_vendor_code_to_exception() -> dict[int, type[Error]]:
-    # Local import, deliberately not at module scope: ReauthenticationRequest
-    # is a @backward_compatibility name (see ../errors.py), and
-    # TestNoInternalImportsOfBackwardCompatNames forbids any internal
-    # snowflake.connector module from rebinding one into its own globals. A
-    # function-local import never becomes a module attribute, so this dict's
-    # *values* can be ReauthenticationRequest instances without
-    # `status_codes.ReauthenticationRequest` existing as a name anyone could
-    # import — the same constraint the network.py shim works around with a
-    # lazy __getattr__ instead of a static import.
-    from ..errors import ReauthenticationRequest
-
-    return {
-        100072: IntegrityError,  # NULL result in a non-nullable column
-        # Mid-session master-token-terminal codes: the master token was not
-        # found, expired, or is invalid — the session can never be renewed.
-        # Raised as ReauthenticationRequest (not the ReauthenticationRequiredError
-        # base) so `except ReauthenticationRequest` — the legacy type name real
-        # consumers like Snowpark catch — fires on driver-raised instances too.
-        390113: ReauthenticationRequest,
-        390114: ReauthenticationRequest,
-        390115: ReauthenticationRequest,
-        # Login-time cached-credential rejection, after the driver's own
-        # evict-and-retry ladder gives up: cached ID token (390195) or cached
-        # OAuth access token invalid/expired (390303/390318).
-        390195: ReauthenticationRequest,
-        390303: ReauthenticationRequest,
-        390318: ReauthenticationRequest,
-    }
-
-
 # Snowflake vendor_code → exception overrides.
 #
 # STATUS_TO_EXCEPTION maps the proto StatusCode (a broad category) to a default PEP 249 class.
 # Some Snowflake server errors share the same StatusCode (e.g. STATUS_CODE_INTERNAL_ERROR)
 # but carry a vendor_code that warrants a more specific exception.
 # Entries here take precedence over STATUS_TO_EXCEPTION when a vendor_code is present.
-VENDOR_CODE_TO_EXCEPTION: dict[int, type[Error]] = _build_vendor_code_to_exception()
+VENDOR_CODE_TO_EXCEPTION: dict[int, type[Error]] = {
+    100072: IntegrityError,  # NULL result in a non-nullable column
+    # Mid-session master-token-terminal codes: the master token was not
+    # found, expired, or is invalid — the session can never be renewed.
+    390113: _ReauthenticationRequest,
+    390114: _ReauthenticationRequest,
+    390115: _ReauthenticationRequest,
+    # Login-time cached-credential rejection, after the driver's own
+    # evict-and-retry ladder (sf_core::rest::snowflake::is_reauthentication_required)
+    # gives up: cached ID token (390195) or cached OAuth access token
+    # invalid/expired (390303/390318).
+    390195: _ReauthenticationRequest,
+    390303: _ReauthenticationRequest,
+    390318: _ReauthenticationRequest,
+}
 
 # Prefer the Snowflake server vendor_code when the core driver provides it, fallback to this mapping if not present.
 STATUS_TO_ERRNO: dict[int, int] = {

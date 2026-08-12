@@ -412,6 +412,16 @@ const EXT_AUTHN_ERROR_CODES: [i32; 8] = [
     390195, // ID_TOKEN_INVALID
 ];
 
+/// True when a terminal login failure on `code` means a cached credential
+/// was rejected and the caller must open a new connection — not just that
+/// this particular set of credentials was bad. Reuses the same
+/// `EXT_AUTHN_ERROR_CODES`/`OAUTH_REFRESH_ERROR_CODES` sets already consulted
+/// above for cache-eviction decisions, so there is exactly one place that
+/// knows which codes mean this.
+fn is_reauthentication_required(code: i32) -> bool {
+    EXT_AUTHN_ERROR_CODES.contains(&code) || OAUTH_REFRESH_ERROR_CODES.contains(&code)
+}
+
 /// Sets the DUO second-factor fields on the login request.
 /// Matches the behavior of the old JDBC, .NET, and ODBC drivers:
 /// always sends `EXT_AUTHN_DUO_METHOD`, defaulting to `"push"` when
@@ -1210,6 +1220,7 @@ pub async fn snowflake_login_with_client(
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
+        let reauthentication_required = is_reauthentication_required(code);
         if EXT_AUTHN_ERROR_CODES.contains(&code) {
             let evictable = match &login_parameters.login_method {
                 LoginMethod::UserPasswordMfa { username, .. } => {
@@ -1234,7 +1245,12 @@ pub async fn snowflake_login_with_client(
                 .await;
             }
         }
-        LoginSnafu { message, code }.fail()?;
+        LoginSnafu {
+            message,
+            code,
+            reauthentication_required,
+        }
+        .fail()?;
     }
 
     tracing::debug!("Login successful, extracting session tokens");
@@ -2511,6 +2527,11 @@ pub enum RestError {
     LoginError {
         message: String,
         code: i32,
+        // True when `code` is one of EXT_AUTHN_ERROR_CODES/OAUTH_REFRESH_ERROR_CODES
+        // — the caller must open a new connection, not just retry the same credentials.
+        // Computed once at the terminal-failure site in `snowflake_login_with_client`,
+        // which already checks these constants for cache eviction.
+        reauthentication_required: bool,
         #[snafu(implicit)]
         location: Location,
     },
@@ -2652,6 +2673,38 @@ pub enum SnowflakeResponseError {
 mod tests {
     use super::*;
     use crate::config::rest_parameters::test_fixtures::test_client_info;
+
+    #[test]
+    fn is_reauthentication_required_covers_id_token_and_oauth_codes() {
+        for code in [390195, 390303, 390318] {
+            assert!(
+                is_reauthentication_required(code),
+                "code {code} should require reauthentication"
+            );
+        }
+    }
+
+    #[test]
+    fn is_reauthentication_required_excludes_ordinary_login_failures() {
+        // Bad username/password (390100) is neither an EXT_AUTHN nor an
+        // OAuth-refresh code — a rejected password means try again with
+        // different credentials, not "open a new connection".
+        assert!(!is_reauthentication_required(390100));
+    }
+
+    #[test]
+    fn is_reauthentication_required_covers_full_ext_authn_set() {
+        // Reuses EXT_AUTHN_ERROR_CODES wholesale (not a hand-picked subset):
+        // every EXT_AUTHN failure means the driver's own eviction-and-retry
+        // ladder already gave up on this credential, so all of them mean
+        // "open a new connection", not just the ID-token-specific case.
+        for &code in EXT_AUTHN_ERROR_CODES.iter() {
+            assert!(
+                is_reauthentication_required(code),
+                "EXT_AUTHN code {code} should require reauthentication"
+            );
+        }
+    }
     use crate::token_cache::{
         CacheKey, TokenCache, TokenCacheError, TokenType, build_cache_key, normalize_identifier,
         normalize_url,
