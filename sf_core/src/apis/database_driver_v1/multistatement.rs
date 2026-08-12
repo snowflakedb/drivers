@@ -12,6 +12,7 @@ pub fn is_multistatement(data: &Data) -> bool {
 pub fn try_into_multi_result(
     data: &Data,
     descriptor: ResultSetDescriptor,
+    request_id: Option<uuid::Uuid>,
 ) -> Option<ExecuteQueryResult> {
     if !is_multistatement(data) {
         return None;
@@ -20,6 +21,7 @@ pub fn try_into_multi_result(
         parent: descriptor,
         query_ids: child_query_ids(data),
         statement_type_ids: child_statement_type_ids(data),
+        request_id,
     })
 }
 

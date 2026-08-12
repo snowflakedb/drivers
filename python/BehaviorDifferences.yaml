@@ -955,7 +955,7 @@ behavior_differences:
       from it.
 
   55:
-    name: "ResultMetadataV2 display_size and internal_size map proto fields differently from legacy"
+    name: "display_size and internal_size map proto fields differently from legacy (V1 and V2)"
     status: allowed
     type: api_incompatibility
     reviewed: false
@@ -964,19 +964,57 @@ behavior_differences:
     old_driver_behavior: |
       `ResultMetadataV2.from_column` (JSON source) sets `display_size = None` for all
       column types and `internal_size = col["length"]` (the JSON `length` field, which
-      carries the maximum character length for VARCHAR/TEXT columns).
+      carries the maximum character length for VARCHAR/TEXT columns). `ResultMetadata`
+      (V1) inherits the same values: legacy builds V1 entries via
+      `ResultMetadataV2._to_result_metadata_v1()`, which copies `_display_size` and
+      `_internal_size` verbatim. So `cursor.describe()` and `cursor.description` also
+      report `display_size=None`.
     new_driver_behavior: |
-      `ResultMetadataV2.from_column` (proto source) sets `display_size = col.length`
-      for TEXT/VARCHAR/CHAR/STRING column types (and `None` otherwise) and
+      `from_column` (proto source) sets `display_size = col.length` for
+      TEXT/VARCHAR/CHAR/STRING column types (and `None` otherwise) and
       `internal_size = col.byte_length` (maximum byte length) when the proto field is
-      present. For a `VARCHAR(100)` column: legacy returns `display_size=None,
-      internal_size=100`; UD returns `display_size=100, internal_size=400` (UTF-8
-      4 bytes/char). Snowpark reads `name`, `type_code`, `is_nullable`,
-      `vector_dimension`, and `fields` from V2 objects — not `display_size` or
-      `internal_size` — so this difference has no observed runtime impact on Snowpark.
+      present. This applies to BOTH `ResultMetadata` (V1, read via `cursor.describe()`
+      and `cursor.description`) and `ResultMetadataV2` (read via
+      `cursor._describe_internal()`) — each has its own `from_column` carrying the same
+      mapping. For a `VARCHAR(100)` column: legacy returns `display_size=None,
+      internal_size=100` from both views; UD returns `display_size=100,
+      internal_size=400` (UTF-8 4 bytes/char) from both. Snowpark reads `name`,
+      `type_code`, `is_nullable`, `vector_dimension`, and `fields` from V2 objects — not
+      `display_size` or `internal_size` — so this difference has no observed runtime
+      impact on Snowpark.
     description: |
       The difference arises from the JSON-to-proto field renaming: JSON `length` is the
       char count and maps to proto `length`; JSON `byteLength` is the byte count and maps
       to proto `byte_length`. The legacy connector used `length` for `internal_size` with
       no proto distinction; the UD splits them across two slots more precisely.
-      CONFIRMED from source (both connectors).
+      CONFIRMED from source (both connectors). The V1 half of this entry was previously
+      undocumented, which led an integration test to assert that UD's `describe()`
+      returns `display_size=None`; it has always returned the char count.
+
+  56:
+    name: "cursor._request_id is a str instead of a uuid.UUID object"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `SnowflakeCursor._request_id` is typed `uuid.UUID | None` (cursor.py:392) and holds
+      a `uuid.UUID` instance, assigned either as `uuid.uuid4()` or as
+      `uuid.UUID(str(request_id), version=4)`. Callers doing `str(cursor._request_id)`
+      get the canonical hyphenated form; callers passing it to `uuid.UUID()` directly
+      raise `AttributeError: 'UUID' object has no attribute 'replace'`.
+    new_driver_behavior: |
+      `Cursor._request_id` returns `str | None`, delegating to the public `request_id`
+      property backed by `QueryResult.request_id`. The value originates from the
+      protobuf `string request_id` field, so it deserializes as a Python `str` and is
+      surfaced unchanged rather than being re-wrapped in `uuid.UUID`. The string content
+      is identical to the legacy object's canonical form — only the type differs.
+    description: |
+      Snowpark is unaffected: `server_connection.py:465` does
+      `notify_kwargs["requestId"] = str(results_cursor._request_id)`, which is a no-op
+      for a `str` and already the only observed read of the attribute. Re-wrapping into
+      `uuid.UUID` at the Python layer was rejected as it would add a parse of a value the
+      proto already guarantees well-formed, purely to reproduce a legacy implementation
+      detail. Tests that need to compare or UUID-parse the value normalize through
+      `str()` so they hold on both drivers. CONFIRMED from source (both connectors).

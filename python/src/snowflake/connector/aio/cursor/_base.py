@@ -242,11 +242,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = await self._execute_query(stmt_handle, bindings)
+            request_id = response.request_id or None
 
             if response.HasField("multi"):
-                await self._handle_multi_statement_response(response.multi, query)
+                await self._handle_multi_statement_response(response.multi, query, request_id)
             else:
-                self._apply_result_set(response.single, query)
+                self._apply_result_set(response.single, query, request_id)
 
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
@@ -286,22 +287,26 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             self._query_result = QueryResult.from_programming_error(exc)
             raise
 
-    async def _handle_multi_statement_response(self, result: MultiStatementResult, query: str) -> None:
-        self._multi_statement = MultiStatementQueryResultState.from_result(result)
+    async def _handle_multi_statement_response(
+        self, result: MultiStatementResult, query: str, request_id: str | None
+    ) -> None:
+        self._multi_statement = MultiStatementQueryResultState.from_result(result, request_id)
 
         # Edge case: empty multi-statement result
         if self._multi_statement is None:
-            self._query_result = QueryResult(query=query)
+            self._query_result = QueryResult(query=query, request_id=request_id)
             return
 
         first_qid = self._multi_statement.advance()  # always non-None: from_result() guarantees non-empty children
         # already populate cursor with first child query results
         rs_response = await self._fetch_result_set_by_query_id(first_qid)  # type: ignore[arg-type]
-        self._apply_result_set(rs_response, query)
+        self._apply_result_set(rs_response, query, request_id)
 
-    def _apply_result_set(self, rs_response: ResultSetResponse, query: str | None) -> None:
+    def _apply_result_set(
+        self, rs_response: ResultSetResponse, query: str | None, request_id: str | None = None
+    ) -> None:
         self._result_set.replace(rs_response.result_set_handle)
-        self._query_result = QueryResult.from_result_set_response(rs_response, query)
+        self._query_result = QueryResult.from_result_set_response(rs_response, query, request_id)
 
     async def _fetch_result_set_by_query_id(self, query_id: str) -> ResultSetResponse:
         """Fetch a ResultSetResponse (handle + descriptor) for a given query ID."""
@@ -633,7 +638,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self._multi_statement = ms
 
         rs_response = await self._fetch_result_set_by_query_id(query_id)
-        self._apply_result_set(rs_response, query=None)
+        self._apply_result_set(rs_response, query=None, request_id=ms.request_id)
         self._rownumber = -1
 
         return self
@@ -899,12 +904,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     ) -> dict[str, str | None]:
         query, binding_params = self._prepare_query(command, params)
 
-        response = None
         async with async_statement(self._connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = await async_core_driver.statement_execute_async(stmt_handle=stmt_handle, bindings=bindings)
-        query_id = (response.query_id if response.query_id else None) if response else None
-        self._query_result = QueryResult(sfqid=query_id)
+        query_id = response.query_id or None
+        request_id = response.request_id or None
+        self._query_result = QueryResult(sfqid=query_id, request_id=request_id)
 
         return {"queryId": query_id}
 

@@ -21,17 +21,24 @@ class MultiStatementQueryResultState:
     Tracks the child query IDs returned by the server, which child
     we're currently positioned on, and the parent query ID that
     groups them together.
+
+    Also holds the submitting ``execute()``'s ``request_id``, which the per-child
+    ``ResultSetResponse`` does not carry: this object is the only state
+    ``nextset()`` rescues across ``reset()``, so it is the only place a
+    submission-scoped value can survive to be re-applied to each child.
     """
 
-    __slots__ = ("parent_qid", "child_query_ids", "_next_index")
+    __slots__ = ("parent_qid", "child_query_ids", "request_id", "_next_index")
 
     def __init__(
         self,
         parent_qid: str | None,
         child_query_ids: list[str],
+        request_id: str | None,
     ) -> None:
         self.parent_qid = parent_qid
         self.child_query_ids = child_query_ids
+        self.request_id = request_id
         self._next_index = 0
 
     def advance(self) -> str | None:
@@ -49,8 +56,14 @@ class MultiStatementQueryResultState:
         return self.child_query_ids[self._next_index - 1]
 
     @staticmethod
-    def from_result(multi_result: MultiStatementResult) -> MultiStatementQueryResultState | None:
-        """Create from a proto MultiStatementResult, or None if there are no children."""
+    def from_result(
+        multi_result: MultiStatementResult, request_id: str | None
+    ) -> MultiStatementQueryResultState | None:
+        """Create from a proto MultiStatementResult, or None if there are no children.
+
+        ``request_id`` is required: every caller has the submission's requestId
+        in scope, so a None default can never be correct.
+        """
         query_ids = list(multi_result.query_ids)
         if not query_ids:
             return None
@@ -59,13 +72,23 @@ class MultiStatementQueryResultState:
         return MultiStatementQueryResultState(
             parent_qid=parent_qid,
             child_query_ids=query_ids,
+            request_id=request_id,
         )
 
 
 class QueryResult:
     """Pure metadata about a query execution result."""
 
-    __slots__ = ("description", "sqlstate", "sfqid", "request_id", "query", "stats", "rowcount", "is_file_transfer")
+    __slots__ = (
+        "description",
+        "sqlstate",
+        "sfqid",
+        "request_id",
+        "query",
+        "stats",
+        "rowcount",
+        "is_file_transfer",
+    )
 
     def __init__(
         self,
@@ -82,8 +105,8 @@ class QueryResult:
         self.description = description
         self.sqlstate = sqlstate
         self.sfqid = sfqid
-        # Client-generated requestId of the query submission. Currently only
-        # populated on the error path (from a failed execute).
+        # Client-generated requestId of the query submission, populated on
+        # both the success and error paths.
         self.request_id = request_id
         self.query = query
         self.stats = stats if stats is not None else QueryResultStats()
@@ -110,6 +133,7 @@ class QueryResult:
             description=description,
             sqlstate=extract_sqlstate(result),
             sfqid=(result.query_id if result.query_id else None) if result else None,
+            request_id=(result.request_id if result.request_id else None) if result else None,
             query=(result.query if result.query else None) if result else None,
             rowcount=0 if description else None,
         )
@@ -127,12 +151,15 @@ class QueryResult:
     def from_result_set_response(
         response: ResultSetResponse,
         query: str | None = None,
+        request_id: str | None = None,
     ) -> QueryResult:
         """Create QueryResult from a ResultSetResponse (metadata only).
 
         Args:
             response: ResultSetResponse containing descriptor metadata.
             query: Optional query text (not available in proto, must be passed separately).
+            request_id: Optional submission requestId (not carried on ResultSetResponse,
+                must be passed separately by callers that submitted the query).
 
         Returns:
             QueryResult instance with metadata populated.
@@ -143,6 +170,7 @@ class QueryResult:
             description=ResultMetadata.create_description(descriptor),
             sqlstate=extract_sqlstate(descriptor),
             sfqid=descriptor.query_id if descriptor.query_id else None,
+            request_id=request_id,
             query=query,
             rowcount=extract_rowcount(descriptor),
             is_file_transfer=(

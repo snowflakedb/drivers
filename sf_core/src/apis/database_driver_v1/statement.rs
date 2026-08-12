@@ -95,6 +95,8 @@ pub enum BindingType<'a> {
 /// Result returned from async query submission (non-blocking).
 pub struct AsyncExecuteResult {
     pub query_id: String,
+    /// Client-generated UUID v4 sent as `?requestId=` on the submission request.
+    pub request_id: uuid::Uuid,
 }
 
 impl DatabaseDriverV1 {
@@ -210,18 +212,24 @@ pub struct PrepareResult {
     pub sql_state: Option<String>,
     pub array_bind_supported: bool,
     pub binds: Vec<ColumnMetadata>,
+    pub request_id: uuid::Uuid,
 }
 
 impl DatabaseDriverV1 {
     pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
         let session_id = self.session_id_for_stmt(stmt_handle).await;
         async {
-            let result = self
+            // Multi-statement query prepare is not supported. `request_id` is
+            // always `Some` here — `execute_query_internal` mints one on every
+            // path — so binding `Some` keeps `PrepareResult.request_id`
+            // non-optional without inventing a fallback value.
+            let ExecuteQueryResult::Single {
+                info: rs_info,
+                request_id: Some(request_id),
+            } = self
                 .execute_query_internal(stmt_handle, None, Some(true), None)
-                .await?;
-
-            // Multi-statement query prepare is not supported.
-            let ExecuteQueryResult::Single(rs_info) = result else {
+                .await?
+            else {
                 return InvalidArgumentSnafu {
                     argument: "Multi-statement queries cannot be prepared".to_string(),
                 }
@@ -250,6 +258,7 @@ impl DatabaseDriverV1 {
                 sql_state: rs_info.descriptor.sql_state,
                 array_bind_supported: rs_info.descriptor.array_bind_supported,
                 binds: rs_info.descriptor.binds,
+                request_id,
             })
         }
         .instrument(crate::snowflake_op_span!("statement_prepare", session_id))
@@ -460,7 +469,9 @@ impl DatabaseDriverV1 {
 
         let data = response.data;
         let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-        if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
+        if let Some(multi) =
+            multistatement::try_into_multi_result(&data, descriptor.clone(), Some(request_id))
+        {
             return Ok(multi);
         }
         let rowset_data = self
@@ -474,7 +485,7 @@ impl DatabaseDriverV1 {
             )
             .await?;
         let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
-        Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
+        Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, Some(request_id)))
     }
 
     /// Decodes the row data from a query response, dispatching PUT/GET when
@@ -633,7 +644,10 @@ impl DatabaseDriverV1 {
 
         stmt.state = StatementState::Executed;
 
-        Ok(AsyncExecuteResult { query_id })
+        Ok(AsyncExecuteResult {
+            query_id,
+            request_id,
+        })
     }
 
     pub async fn connection_get_query_result(
@@ -651,7 +665,11 @@ impl DatabaseDriverV1 {
 
             let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
             let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-            if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
+            // No submission UUID on this path: the result is fetched by query ID
+            // via an endpoint that sends no `?requestId=`.
+            if let Some(multi) =
+                multistatement::try_into_multi_result(&data, descriptor.clone(), None)
+            {
                 return Ok(multi);
             }
 
@@ -684,7 +702,7 @@ impl DatabaseDriverV1 {
                 .extract_rowset_data(&conn_ptr, data, refresh_sql, false, None, None)
                 .await?;
             let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
-            Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
+            Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, None))
         }
         .instrument(crate::snowflake_op_span!(
             "connection_get_query_result",
