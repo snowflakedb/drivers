@@ -13,6 +13,7 @@ use std::collections::HashMap;
 #[napi]
 pub struct Connection {
     handle: Handle,
+    database_handle: Handle,
     /// Cancellation context for the in-flight `connect()`. Node owns its own
     /// token rather than going through the transport's handle registry, since it
     /// calls the driver API directly and never crosses the protobuf layer.
@@ -23,6 +24,12 @@ pub struct Connection {
 impl Connection {
     #[napi(constructor)]
     pub fn new(options: HashMap<String, String>) -> Result<Self> {
+        let database_handle = DRIVER.database_new();
+        if let Err(error) = DRIVER.database_init(database_handle) {
+            let _ = DRIVER.database_release(database_handle);
+            return Err(to_napi_err(error));
+        }
+
         let conn_handle = DRIVER.connection_new();
 
         // TODO: temporary conversion, proper options mapping will be done later
@@ -31,7 +38,7 @@ impl Connection {
             .map(|(k, v)| (k.clone(), Setting::String(v.clone())))
             .collect();
 
-        block_on(async {
+        if let Err(error) = block_on(async {
             DRIVER
                 .connection_set_options(conn_handle, converted_options, false)
                 .await?;
@@ -50,12 +57,15 @@ impl Connection {
                 )
                 .await?;
             Ok::<_, ApiError>(())
-        })
-        // TODO: must release connection on any error
-        .map_err(to_napi_err)?;
+        }) {
+            let _ = DRIVER.connection_release(conn_handle);
+            let _ = DRIVER.database_release(database_handle);
+            return Err(to_napi_err(error));
+        }
 
         Ok(Self {
             handle: conn_handle,
+            database_handle,
             connect_ctx: OperationCtx::with_own_token(),
         })
     }
@@ -70,14 +80,7 @@ impl Connection {
     #[napi]
     pub async fn connect(&self) -> Result<()> {
         DRIVER
-            // TODO:
-            // The _db_handle parameter is currently unused but required; passing a dummy value for now.
-            // This argument is planned for removal from connection_init in a future update.
-            .connection_init(
-                Some(&self.connect_ctx),
-                self.handle,
-                Handle { id: 0, magic: 0 },
-            )
+            .connection_init(Some(&self.connect_ctx), self.handle, self.database_handle)
             .await
             .map_err(to_napi_err)
     }
@@ -110,13 +113,12 @@ impl Connection {
 
     #[napi]
     pub async fn destroy(&self) -> Result<()> {
-        DRIVER
-            .connection_close(self.handle)
-            .await
-            .map_err(to_napi_err)?;
-        DRIVER
-            .connection_release(self.handle)
-            .map_err(to_napi_err)?;
-        Ok(())
+        let close_result = DRIVER.connection_close(self.handle).await;
+        let connection_release_result = DRIVER.connection_release(self.handle);
+        let database_release_result = DRIVER.database_release(self.database_handle);
+
+        close_result.map_err(to_napi_err)?;
+        connection_release_result.map_err(to_napi_err)?;
+        database_release_result.map_err(to_napi_err)
     }
 }
