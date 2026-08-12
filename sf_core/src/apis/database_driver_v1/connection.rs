@@ -332,11 +332,9 @@ impl DatabaseDriverV1 {
                     // synchronous disk I/O and private-key parsing, which currently extends the
                     // connection mutex critical section and can block the async runtime thread.
                     let effective_seed = conn.effective_seed(&database_seed);
-                    let mut resolved = resolver::resolve(
-                        &effective_seed,
-                        conn.no_connection_details && database_seed.is_empty(),
-                    )
-                    .context(ConfigurationSnafu)?;
+                    let mut resolved =
+                        resolver::resolve(&effective_seed, conn.no_connection_details)
+                            .context(ConfigurationSnafu)?;
                     normalize_host_underscores(&mut resolved);
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
@@ -1317,7 +1315,10 @@ impl Connection {
     }
 
     fn resolved_settings(&self) -> Result<ParamStore, crate::config::ConfigError> {
-        resolver::resolve(&self.connection_seed, self.no_connection_details)
+        resolver::resolve(
+            &self.effective_seed(&self.database_seed),
+            self.no_connection_details,
+        )
     }
 
     fn effective_seed(&self, database_seed: &ParamStore) -> ParamStore {
@@ -2786,6 +2787,29 @@ mod tests {
         assert_eq!(
             unknown.get("CUSTOM_SESSION_PARAMETER"),
             Some(&"connection-value".to_string())
+        );
+    }
+
+    #[test]
+    fn resolved_settings_uses_database_and_connection_options() {
+        let mut conn = make_connection_with_settings(vec![(
+            "account",
+            Setting::String("connection-account".into()),
+        )]);
+        conn.database_seed
+            .insert("account".into(), Setting::String("database-account".into()));
+        conn.database_seed
+            .insert("user".into(), Setting::String("database-user".into()));
+
+        let resolved = conn.resolved_settings().unwrap();
+
+        assert_eq!(
+            resolved.get_string(param_names::ACCOUNT),
+            Some("connection-account".into())
+        );
+        assert_eq!(
+            resolved.get_string(param_names::USER),
+            Some("database-user".into())
         );
     }
 
