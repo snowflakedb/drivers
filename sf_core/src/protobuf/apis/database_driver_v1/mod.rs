@@ -1236,9 +1236,6 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(TelemetrySendResponse {})
     }
 
-    // Forward one caller-produced telemetry entry to the core's in-band batch.
-    // Real batching + `/telemetry/send` egress is wired in SNOW-3774686 -core;
-    // this stub keeps the stack green.
     #[instrument(name = "DatabaseDriverV1::telemetry_send_log", skip(self, input))]
     async fn telemetry_send_log(
         &self,
