@@ -1236,15 +1236,21 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(TelemetrySendResponse {})
     }
 
-    // Forward one caller-produced telemetry entry to the core's in-band batch.
-    // Real batching + `/telemetry/send` egress is wired in SNOW-3774686 -core;
-    // this stub keeps the stack green.
+    // Forward one caller-produced telemetry entry (e.g. Snowpark) to the core's
+    // in-band batch. Core owns batching, flush threshold, and egress.
     #[instrument(name = "DatabaseDriverV1::telemetry_send_log", skip(self, input))]
     async fn telemetry_send_log(
         &self,
         input: TelemetrySendLogRequest,
     ) -> Result<TelemetrySendResponse, DriverException> {
-        required(input.conn_handle, "Connection handle is required")?;
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        self.driver
+            .telemetry_send_log(
+                Handle::from(conn_handle),
+                input.message_json,
+                input.timestamp_ms,
+            )
+            .await;
         Ok(TelemetrySendResponse {})
     }
 }
