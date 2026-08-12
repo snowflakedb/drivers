@@ -745,8 +745,8 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 8, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
     CHECK(dataType == 8);
-    OLD_DRIVER_ONLY("BD#118") { CHECK(colSize == (SQLULEN)53); }
-    NEW_DRIVER_ONLY("BD#118") { CHECK(colSize == (SQLULEN)15); }
+    OLD_DRIVER_ONLY("BD#117") { CHECK(colSize == (SQLULEN)53); }
+    NEW_DRIVER_ONLY("BD#117") { CHECK(colSize == (SQLULEN)15); }
     CHECK(scale == 0);
     CHECK(nullable == 1);
   }
@@ -778,8 +778,8 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 9, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
     CHECK(dataType == 8);
-    OLD_DRIVER_ONLY("BD#118") { CHECK(colSize == (SQLULEN)53); }
-    NEW_DRIVER_ONLY("BD#118") { CHECK(colSize == (SQLULEN)15); }
+    OLD_DRIVER_ONLY("BD#117") { CHECK(colSize == (SQLULEN)53); }
+    NEW_DRIVER_ONLY("BD#117") { CHECK(colSize == (SQLULEN)15); }
     CHECK(scale == 0);
     CHECK(nullable == 1);
   }
@@ -811,8 +811,8 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 10, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
     CHECK(dataType == 8);
-    OLD_DRIVER_ONLY("BD#118") { CHECK(colSize == (SQLULEN)53); }
-    NEW_DRIVER_ONLY("BD#118") { CHECK(colSize == (SQLULEN)15); }
+    OLD_DRIVER_ONLY("BD#117") { CHECK(colSize == (SQLULEN)53); }
+    NEW_DRIVER_ONLY("BD#117") { CHECK(colSize == (SQLULEN)15); }
     CHECK(scale == 0);
     CHECK(nullable == 1);
   }
@@ -1683,11 +1683,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
   // SQLFetch
   {
     SQLRETURN ret = SQLFetch(stmt0);
-    OLD_DRIVER_ONLY("BD#119") {
+    OLD_DRIVER_ONLY("BD#118") {
       CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
                  OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01000"));
     }
-    NEW_DRIVER_ONLY("BD#119") {
+    NEW_DRIVER_ONLY("BD#118") {
       CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
                  OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01S07"));
     }
@@ -1940,11 +1940,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
   // SQLFetch
   {
     SQLRETURN ret = SQLFetch(stmt0);
-    OLD_DRIVER_ONLY("BD#119") {
+    OLD_DRIVER_ONLY("BD#118") {
       CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
                  OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01000"));
     }
-    NEW_DRIVER_ONLY("BD#119") {
+    NEW_DRIVER_ONLY("BD#118") {
       CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
                  OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01S07"));
     }

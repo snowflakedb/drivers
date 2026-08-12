@@ -2184,7 +2184,7 @@ behavior_differences:
       these fields for both drivers remains on the unixODBC lanes (Linux, macOS Universal) and on
       Windows.
 
-  118:
+  117:
     name: "SQLDescribeCol column size for SQL_DOUBLE / SQL_FLOAT is 15 (decimal digits) instead of 53 (binary mantissa bits)"
     status: allowed
     type: bugfix
@@ -2205,7 +2205,7 @@ behavior_differences:
       now see 15; the value is a precision/display hint and does not change the fetched data.
       Exercised by odbc_tests/tests/replay/excel/ado/sqlbindcol/test.cpp (SQLDescribeCol cols 8, 9, 10).
 
-  119:
+  118:
     name: "Fractional truncation on a numeric-to-character fetch returns SQLSTATE 01S07 instead of 01000"
     status: allowed
     type: bugfix
