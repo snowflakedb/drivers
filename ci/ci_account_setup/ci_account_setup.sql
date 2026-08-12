@@ -85,6 +85,14 @@ ALTER USER TEST_UNIVERSAL SET AUTHENTICATION POLICY testdb_universal.public.PROG
 ALTER USER TEST_UNIVERSAL UNSET NETWORK_POLICY;
 ALTER USER TEST_UNIVERSAL SET NETWORK_POLICY = 'CI_POLICY';
 
+-- Let the test role manage PATs on test_universal. The e2e test "should handle
+-- ALTER USER PAT result set" (odbc_tests/.../pat.cpp) runs
+-- ALTER USER test_universal ADD PROGRAMMATIC ACCESS TOKEN as testrole_universal,
+-- which requires MODIFY PROGRAMMATIC AUTHENTICATION METHODS on the user (the role
+-- neither owns test_universal nor holds this privilege otherwise). Without it the
+-- ADD fails with SQLSTATE 42501 / 3001 and the test fails 100% (SNOW-3882970).
+GRANT MODIFY PROGRAMMATIC AUTHENTICATION METHODS ON USER test_universal TO ROLE testrole_universal;
+
 -- COPY CURRENT GRANTS preserves any dependent grants (e.g. CREATE AUTHENTICATION POLICY
 -- granted to ACCOUNTADMIN above) so the ownership transfer doesn't fail on re-runs.
 GRANT OWNERSHIP ON SCHEMA testdb_universal.public TO ROLE testrole_universal COPY CURRENT GRANTS;
