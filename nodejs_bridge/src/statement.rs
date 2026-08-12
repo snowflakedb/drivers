@@ -147,7 +147,7 @@ impl Statement {
 
 async fn result_data_from(result: ExecuteQueryResult) -> std::result::Result<ResultData, ApiError> {
     let (result_set_handle, result_set_descriptor) = match result {
-        ExecuteQueryResult::Single(rs) => (rs.handle, rs.descriptor),
+        ExecuteQueryResult::Single { info, .. } => (info.handle, info.descriptor),
         ExecuteQueryResult::Multi { .. } => {
             return Err(ApiError::InvalidArgument {
                 argument: "multi-statement results are not supported yet".to_string(),

@@ -94,6 +94,9 @@ impl Connection {
                 .statement_execute_query(stmt_handle, None, None)
                 .await?;
             let _ = DRIVER.statement_release(stmt_handle);
+            // Node.js does not currently surface request_id to its callers (unlike
+            // Python's cursor._request_id property) — no consumer needs it yet, so
+            // the `request_id` carried on the result is intentionally ignored.
             Ok(result)
         }))
     }

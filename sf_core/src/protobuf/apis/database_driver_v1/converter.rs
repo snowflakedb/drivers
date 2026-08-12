@@ -400,25 +400,34 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
     }
 }
 
+/// `request_id` is `None` only for `connection_get_query_result`, which fetches
+/// results for an already-executed query and never generates a new submission UUID.
+/// Leaving it `None` there matches legacy `get_results_from_sfqid`, which never
+/// set `_request_id` on the outer cursor.
 impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     fn from(result: NativeExecuteQueryResult) -> Self {
-        match result {
-            NativeExecuteQueryResult::Single(info) => ExecuteQueryResponse {
-                result: Some(execute_query_response::Result::Single(info.into())),
-            },
+        let (proto_result, request_id) = match result {
+            NativeExecuteQueryResult::Single { info, request_id } => (
+                execute_query_response::Result::Single(info.into()),
+                request_id,
+            ),
             NativeExecuteQueryResult::Multi {
                 parent,
                 query_ids,
                 statement_type_ids,
-            } => ExecuteQueryResponse {
-                result: Some(execute_query_response::Result::Multi(
-                    MultiStatementResult {
-                        parent: Some(parent.into()),
-                        query_ids,
-                        statement_type_ids,
-                    },
-                )),
-            },
+                request_id,
+            } => (
+                execute_query_response::Result::Multi(MultiStatementResult {
+                    parent: Some(parent.into()),
+                    query_ids,
+                    statement_type_ids,
+                }),
+                request_id,
+            ),
+        };
+        ExecuteQueryResponse {
+            result: Some(proto_result),
+            request_id: request_id.map(|id| id.to_string()),
         }
     }
 }

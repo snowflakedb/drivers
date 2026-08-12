@@ -2,6 +2,9 @@
 Integration tests for PEP 249 Cursor objects.
 """
 
+import uuid
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 
 import pytest
@@ -2697,6 +2700,153 @@ class TestInterpolateEmptySequences:
         assert row == (42, 2)
 
 
+def _as_request_id_str(request_id: object) -> str:
+    """Normalize a ``_request_id`` to its canonical string form.
+
+    Legacy exposes a ``uuid.UUID`` object where UD exposes a ``str`` (BD#56), so tests
+    that UUID-parse or compare the value work from the string form to hold on both.
+    """
+    return str(request_id)
+
+
+class TestRequestIdIsolation:
+    """Integration tests proving _request_id is populated and per-cursor isolated.
+
+    Each cursor gets a unique, distinct _request_id after execution, and no
+    _request_id equals any sfqid (they are different ID spaces).
+    """
+
+    N_CURSORS = 8
+
+    def test_request_id_is_none_before_execute(self, cursor):
+        assert cursor._request_id is None
+
+    def test_request_id_is_populated_after_execute(self, cursor):
+        """_request_id is a valid UUID after a simple execute, in each driver's type (BD#56)."""
+        cursor.execute("SELECT 1")
+        assert cursor._request_id is not None
+
+        if NEW_DRIVER_ONLY("BD#56"):
+            assert isinstance(cursor._request_id, str)
+        else:
+            assert isinstance(cursor._request_id, uuid.UUID)
+
+        uuid.UUID(_as_request_id_str(cursor._request_id))  # raises ValueError if malformed
+
+    def test_request_id_distinct_from_sfqid(self, cursor):
+        """_request_id must not equal sfqid — they are different ID spaces."""
+        cursor.execute("SELECT 1")
+        assert cursor._request_id is not None
+        assert cursor.sfqid is not None
+        assert _as_request_id_str(cursor._request_id) != cursor.sfqid
+
+    def test_request_id_changes_per_execution(self, cursor):
+        """Each execute on the same cursor produces a new _request_id."""
+        cursor.execute("SELECT 1")
+        first = cursor._request_id
+
+        cursor.execute("SELECT 2")
+        second = cursor._request_id
+
+        assert first is not None
+        assert second is not None
+        assert first != second
+
+    def test_request_id_isolated_across_concurrent_cursors(self, connection):
+        """N cursors executing concurrently each get a distinct _request_id.
+
+        Proves per-cursor isolation: no two cursors share the same UUID and
+        no _request_id leaks into the sfqid space (or vice-versa).
+        """
+
+        def run_cursor(_):
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
+                return cur._request_id, cur.sfqid
+
+        with ThreadPoolExecutor(max_workers=self.N_CURSORS) as pool:
+            futures = [pool.submit(run_cursor, i) for i in range(self.N_CURSORS)]
+            results = [f.result() for f in as_completed(futures)]
+
+        request_ids = [_as_request_id_str(r[0]) for r in results if r[0] is not None]
+        sfqids = [r[1] for r in results]
+
+        # Every cursor must have produced a valid UUID request_id.
+        assert len(request_ids) == self.N_CURSORS, "request_id should not be None after execute"
+        for rid in request_ids:
+            uuid.UUID(rid)  # raises ValueError if not a valid UUID
+
+        # All N request_ids must be distinct (no cross-cursor contamination).
+        assert len(set(request_ids)) == self.N_CURSORS, (
+            f"Expected {self.N_CURSORS} distinct _request_ids, got {len(set(request_ids))}: {request_ids}"
+        )
+
+        # All N sfqids must be distinct.
+        assert len(set(sfqids)) == self.N_CURSORS, (
+            f"Expected {self.N_CURSORS} distinct sfqids, got {len(set(sfqids))}: {sfqids}"
+        )
+
+        # No request_id should equal any sfqid (different ID spaces).
+        all_sfqids_set = set(sfqids)
+        for rid in request_ids:
+            assert rid not in all_sfqids_set, (
+                f"request_id {rid!r} found in sfqid set — they must be different identifiers"
+            )
+
+    @pytest.mark.skip_async
+    def test_request_id_none_after_get_results_from_sfqid(self, connection):
+        """get_results_from_sfqid does not set _request_id on the fetching cursor.
+
+        Legacy behavior (confirmed): the outer cursor's _request_id is None
+        because no new submission was made — only the server-issued sfqid matters
+        for result retrieval.
+        """
+        with connection.cursor() as cur1, connection.cursor() as cur2:
+            cur1.execute("SELECT 1")
+            qid = cur1.sfqid
+            assert qid is not None
+
+            cur2.get_results_from_sfqid(qid)
+            assert cur2._request_id is None, (
+                f"get_results_from_sfqid must not populate _request_id; got {cur2._request_id!r}"
+            )
+
+    @pytest.mark.skip_async
+    def test_request_id_populated_after_execute_async(self, connection):
+        """execute_async sets _request_id from StatementExecuteAsyncResponse."""
+        with connection.cursor() as cursor:
+            cursor.execute_async("SELECT 1")
+            assert cursor._request_id is not None, "_request_id must be set after execute_async"
+            request_id = _as_request_id_str(cursor._request_id)
+            uuid.UUID(request_id)  # raises ValueError if not a valid UUID
+            assert request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"
+
+    def test_request_id_survives_nextset(self, cursor):
+        """Every child statement of a multi-statement query reports the submission's _request_id.
+
+        One ``execute()`` is one submission with one requestId, so advancing through
+        the children with ``nextset()`` must not clear it. Each child's ``sfqid``
+        differs, which is what makes this non-trivial: the per-child result set the
+        wrapper fetches carries no requestId of its own.
+        """
+        cursor.execute("SELECT 1; SELECT 2; SELECT 3", num_statements=3)
+
+        submitted = cursor._request_id
+        assert submitted is not None
+        seen_sfqids = [cursor.sfqid]
+
+        while cursor.nextset() is not None:
+            assert cursor._request_id == submitted, (
+                f"nextset() must preserve the submission _request_id {submitted!r}, got {cursor._request_id!r}"
+            )
+            seen_sfqids.append(cursor.sfqid)
+
+        # Guards the assertions above against a no-op nextset(): we really did
+        # advance through three distinct child result sets.
+        assert len(seen_sfqids) == 3
+        assert len(set(seen_sfqids)) == 3, f"expected 3 distinct child sfqids, got {seen_sfqids}"
+
+
 class TestCursorDescribeInternal:
     """Integration tests for Cursor._describe_internal — Snowpark V2 describe path.
 
@@ -2780,20 +2930,32 @@ class TestCursorDescribeInternal:
         assert result[0].vector_dimension == 3
 
     def test_display_size_and_internal_size_for_varchar(self, cursor):
-        """display_size carries char length; internal_size carries byte length (BD#55).
+        """display_size/internal_size map the proto length and byte_length fields (BD#55).
 
-        BD#55 documents legacy's *own* ResultMetadataV2 (JSON describe path), which
-        always left display_size=None — not this driver's V1 describe(), which has
-        populated display_size from character length since the string-family guard
-        was added (both V1 and V2 share the same guard in from_column).
+        UD routes the char count to ``display_size`` and the byte count to
+        ``internal_size``; legacy never populates ``display_size`` and reports the char
+        count as ``internal_size``. The mapping lives in ``from_column``, which both the
+        V1 ``describe()`` and V2 ``_describe_internal()`` views share, so both are
+        asserted here.
         """
         sql = "SELECT 'x'::VARCHAR(100) AS s"
         v2_result = cursor._describe_internal(sql)
+        v1_result = cursor.describe(sql)
 
-        assert v2_result is not None
-        assert v2_result[0].display_size == 100
-        assert v2_result[0].internal_size is not None
-        assert v2_result[0].internal_size >= 100  # byte length ≥ char length
+        assert v2_result is not None and v1_result is not None
+
+        if NEW_DRIVER_ONLY("BD#55"):
+            # proto `length` (chars) -> display_size, `byte_length` -> internal_size.
+            assert v2_result[0].display_size == 100
+            assert v2_result[0].internal_size == 400  # UTF-8, 4 bytes/char
+            assert v1_result[0].display_size == 100
+            assert v1_result[0].internal_size == 400
+        else:
+            # JSON `length` (chars) -> internal_size; display_size is never populated.
+            assert v2_result[0].display_size is None
+            assert v2_result[0].internal_size == 100
+            assert v1_result[0].display_size is None
+            assert v1_result[0].internal_size == 100
 
     def test_to_v1_round_trip(self, cursor):
         """_to_result_metadata_v1() produces ResultMetadata matching describe() output."""
