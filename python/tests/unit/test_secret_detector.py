@@ -22,6 +22,8 @@ import warnings
 
 from unittest import mock
 
+import pytest
+
 
 # Resolving ``SecretDetector`` fires the backward-compat DeprecationWarning; the
 # warning contract itself is asserted elsewhere, so suppress it at import here.
@@ -81,17 +83,20 @@ class TestMaskSecrets:
         assert err_str is None
         assert masked_text == "password=****"
 
-    def test_password_false_positives_are_not_masked(self):
-        """``PASSWORD_PATTERN``'s value floor is 6 chars (not 1) so a short common word
-        right after a bare ``password``/``pwd`` keyword isn't mistaken for the secret
-        itself; matches legacy .NET/JDBC's floor and ``TestPasswordFalsePositive``."""
-        for text in (
+    @pytest.mark.parametrize(
+        "text",
+        [
             "2020-04-30 23:06:04,069 - MainThread auth.py:397"
             " - write_temporary_credential() - DEBUG - no ID password was not given",
             "2020-04-30 23:06:04,069 - MainThread auth.py:397"
             " - write_temporary_credential() - DEBUG - no ID proxyPassword was not given",
-        ):
-            _assert_not_masked(text)
+        ],
+    )
+    def test_password_false_positives_are_not_masked(self, text):
+        """``PASSWORD_PATTERN``'s value floor is 6 chars (not 1) so a short common word
+        right after a bare ``password``/``pwd`` keyword isn't mistaken for the secret
+        itself; matches legacy .NET/JDBC's floor and ``TestPasswordFalsePositive``."""
+        _assert_not_masked(text)
 
     def test_aws_key_is_masked(self):
         sql = (
@@ -131,21 +136,23 @@ class TestMaskSecrets:
         _, masked_text, _ = SecretDetector.mask_secrets(sql)
         assert masked_text == correct
 
-    def test_aws_tokens_are_masked(self):
-        """``AWS_TOKEN_PATTERN`` (``accessToken``/``tempToken``/``keySecret``) has no legacy
-        Python test at all; ported from the legacy .NET driver's ``TestAWSTokens``."""
-        cases = [
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
             ('accessToken":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"', 'accessToken":"XXXX"'),
             ('tempToken":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"', 'tempToken":"XXXX"'),
             ('keySecret":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"', 'keySecret":"XXXX"'),
             ('accessToken"  :  "aB1aaaaaaaaaaZaaaaaaaaaaa9aaaaaaa="', 'accessToken":"XXXX"'),
             ('accessToken"  :  "aB1aaaaaaaaaaZaaaaaaaa56aaaaaaaaaa=="', 'accessToken":"XXXX"'),
-        ]
-        for text, expected in cases:
-            masked, masked_text, err_str = SecretDetector.mask_secrets(text)
-            assert masked
-            assert err_str is None
-            assert masked_text == expected
+        ],
+    )
+    def test_aws_tokens_are_masked(self, text, expected):
+        """``AWS_TOKEN_PATTERN`` (``accessToken``/``tempToken``/``keySecret``) has no legacy
+        Python test at all; ported from the legacy .NET driver's ``TestAWSTokens``."""
+        masked, masked_text, err_str = SecretDetector.mask_secrets(text)
+        assert masked
+        assert err_str is None
+        assert masked_text == expected
 
     def test_sas_tokens_are_masked(self):
         azure_sas_token = (
@@ -396,49 +403,51 @@ class TestMaskSecrets:
         assert err_str is None
         assert masked_text == "token=****"
 
-    def test_oauth_tokens_are_masked(self):
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ('"access_token" : "some:FAKE_token123"', '"access_token":"XXXX"'),
+            ('"refresh_token" : "some:FAKE_token123"', '"refresh_token":"XXXX"'),
+        ],
+    )
+    def test_oauth_tokens_are_masked(self, text, expected):
         """``OAUTH_TOKEN_PATTERN`` has no legacy Python equivalent; ported from
         legacy JDBC's ``OAUTH_JSON_PATTERN`` / ``testMaskOAuthSecrets``."""
-        masked, masked_text, err_str = SecretDetector.mask_secrets('"access_token" : "some:FAKE_token123"')
+        masked, masked_text, err_str = SecretDetector.mask_secrets(text)
         assert masked
         assert err_str is None
-        assert masked_text == '"access_token":"XXXX"'
+        assert masked_text == expected
 
-        masked, masked_text, err_str = SecretDetector.mask_secrets('"refresh_token" : "some:FAKE_token123"')
-        assert masked
-        assert err_str is None
-        assert masked_text == '"refresh_token":"XXXX"'
-
-    def test_oauth_client_secrets_are_masked(self):
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("oauthClientSecret: aVeryLongSecretValue123", "oauthClientSecret: ****"),
+            ("clientSecret=anotherLongSecretValue456", "clientSecret=****"),
+        ],
+    )
+    def test_oauth_client_secrets_are_masked(self, text, expected):
         """``OAUTH_CLIENT_SECRET_PATTERN`` has no legacy Python equivalent; ported
         from legacy Node.js's ``OAUTH_CLIENT_SECRET_PATTERN``."""
-        masked, masked_text, err_str = SecretDetector.mask_secrets("oauthClientSecret: aVeryLongSecretValue123")
+        masked, masked_text, err_str = SecretDetector.mask_secrets(text)
         assert masked
         assert err_str is None
-        assert masked_text == "oauthClientSecret: ****"
+        assert masked_text == expected
 
-        masked, masked_text, err_str = SecretDetector.mask_secrets("clientSecret=anotherLongSecretValue456")
-        assert masked
-        assert err_str is None
-        assert masked_text == "clientSecret=****"
-
-    def test_passcodes_are_masked(self):
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("passcode: 123456", "passcode:****"),
+            ("otp=987654", "otp=****"),
+            ("pin = 4321", "pin=****"),
+        ],
+    )
+    def test_passcodes_are_masked(self, text, expected):
         """``PASSCODE_PATTERN`` has no legacy Python equivalent; ported from legacy
         Node.js's ``PASSCODE_PATTERN`` (covers passcode/otp/pin/otac, 4-6 digits)."""
-        masked, masked_text, err_str = SecretDetector.mask_secrets("passcode: 123456")
+        masked, masked_text, err_str = SecretDetector.mask_secrets(text)
         assert masked
         assert err_str is None
-        assert masked_text == "passcode:****"
-
-        masked, masked_text, err_str = SecretDetector.mask_secrets("otp=987654")
-        assert masked
-        assert err_str is None
-        assert masked_text == "otp=****"
-
-        masked, masked_text, err_str = SecretDetector.mask_secrets("pin = 4321")
-        assert masked
-        assert err_str is None
-        assert masked_text == "pin=****"
+        assert masked_text == expected
 
 
 class TestMaskSecretsExceptionHandling:
