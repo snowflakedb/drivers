@@ -79,7 +79,10 @@ impl WrapperPresets {
 
     /// Presets for the JDBC bridge.
     pub fn jdbc() -> Self {
-        Self::default()
+        Self {
+            put_get_resultset_flavor: PutGetResultsetFlavor::Jdbc,
+            ..Self::default()
+        }
     }
 }
 
