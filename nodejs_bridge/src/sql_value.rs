@@ -1,4 +1,4 @@
-use napi::bindgen_prelude::{Null, ToNapiValue};
+use napi::bindgen_prelude::{Buffer, Null, ToNapiValue};
 use napi::{Result, sys};
 
 /// Intermediate cell value between Arrow decoding and the JS boundary.
@@ -12,6 +12,7 @@ pub enum SqlValue {
     Null,
     Bool(bool),
     String(String),
+    Binary(Vec<u8>),
 }
 
 impl ToNapiValue for SqlValue {
@@ -20,6 +21,7 @@ impl ToNapiValue for SqlValue {
             SqlValue::Null => unsafe { Null::to_napi_value(env, Null) },
             SqlValue::Bool(val) => unsafe { bool::to_napi_value(env, val) },
             SqlValue::String(val) => unsafe { String::to_napi_value(env, val) },
+            SqlValue::Binary(bytes) => unsafe { Buffer::to_napi_value(env, bytes.into()) },
         }
     }
 }

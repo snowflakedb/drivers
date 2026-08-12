@@ -651,12 +651,16 @@ fn preprocess_file_before_upload(
         None => None,
     };
 
-    // What actually lands in the stage: ciphertext length for CSE (analytic,
-    // from the encryptor), or the source length for SSE.
-    let target_size = cse
-        .as_ref()
-        .map(|c| c.encryptor.cipher_len())
-        .unwrap_or(source_len);
+    // `target_size` = bytes landing in the stage: ciphertext length for CSE, or
+    // source length for SSE. JDBC diverges — it reports the post-compression,
+    // pre-encryption size (`source_len`) instead of the ciphertext length.
+    let target_size = match data.flavor {
+        PutGetResultsetFlavor::Jdbc => source_len,
+        _ => cse
+            .as_ref()
+            .map(|c| c.encryptor.cipher_len())
+            .unwrap_or(source_len),
+    };
 
     // Bundle the body source with its tempfile guard (if any). For the gzip
     // path the tempfile *is* the source, so the guard travels with it; every

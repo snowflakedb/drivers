@@ -247,6 +247,12 @@ static inline SQLRETURN SQLCancelHandle(SQLSMALLINT /*handle_type*/, SQLHANDLE /
       SKIP("Skipping for old driver under iODBC: " << bd << ": " << message); \
     }                                                                         \
   } while (0)
+#define SKIP_NEW_IODBC(bd, message)                                           \
+  do {                                                                        \
+    if (is_iodbc_test_suite() && get_driver_type() == DRIVER_TYPE::NEW) {     \
+      SKIP("Skipping for new driver under iODBC: " << bd << ": " << message); \
+    }                                                                         \
+  } while (0)
 #define OLD_IODBC_ONLY(x) if (is_iodbc_test_suite() && get_driver_type() == DRIVER_TYPE::OLD)
 #define NEW_IODBC_ONLY(x) if (is_iodbc_test_suite() && get_driver_type() == DRIVER_TYPE::NEW)
 

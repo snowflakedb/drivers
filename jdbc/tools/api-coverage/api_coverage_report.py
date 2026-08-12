@@ -47,16 +47,33 @@ JDBC_INTERFACES = [
     "javax.sql.XADataSource",
     "javax.sql.XAConnection",
 ]
-# Cumulative readiness milestones (PuPr ⊂ GA ⊂ Post-GA). Interfaces are deferred
-# past the earlier milestones:
+# Cumulative readiness milestones (PuPr ⊂ GA ⊂ Post-GA). Interfaces AND individual
+# methods can be deferred past the earlier milestones:
 #   - SQLInput/SQLOutput back user-defined SQLData mapping — deferred to Post-GA.
+#   - java.sql.Array and the structured-type accessors (getArray/getList/getMap and
+#     Connection.createArrayOf) depend on the structured-type surface — deferred to
+#     Post-GA, same as SQLInput/SQLOutput.
 #   - Loader (the bulk-load API) lands at GA, so it is excluded from PuPr only.
-# Each milestone's coverage is reported over the baseline MINUS its exclusion set;
-# Post-GA excludes nothing.
-POST_GA_ONLY_INTERFACES = frozenset({"java.sql.SQLInput", "java.sql.SQLOutput"})
+# Each milestone's coverage is reported over the baseline MINUS its exclusion sets
+# (whole interfaces + individual `iface::sig` methods); Post-GA excludes nothing.
+POST_GA_ONLY_INTERFACES = frozenset({"java.sql.SQLInput", "java.sql.SQLOutput", "java.sql.Array"})
 GA_ONLY_INTERFACES = frozenset({"net.snowflake.client.api.loader.Loader"})
 PUPR_EXCLUDED_INTERFACES = POST_GA_ONLY_INTERFACES | GA_ONLY_INTERFACES
 GA_EXCLUDED_INTERFACES = POST_GA_ONLY_INTERFACES
+
+# Structured-type accessors on otherwise-earlier-milestone interfaces. Keyed by the
+# full "interface::signature" (matching method_categories keys) so only these methods
+# defer, not their whole interface.
+POST_GA_ONLY_METHODS = frozenset({
+    "net.snowflake.client.api.resultset.SnowflakeResultSet::getArray(int,Class)",
+    "net.snowflake.client.api.resultset.SnowflakeResultSet::getList(int,Class)",
+    "net.snowflake.client.api.resultset.SnowflakeResultSet::getMap(int,Class)",
+    "java.sql.ResultSet::getArray(int)",
+    "java.sql.Connection::createArrayOf(String,Object[])",
+})
+GA_ONLY_METHODS: frozenset[str] = frozenset()
+PUPR_EXCLUDED_METHODS = POST_GA_ONLY_METHODS | GA_ONLY_METHODS
+GA_EXCLUDED_METHODS = POST_GA_ONLY_METHODS
 
 SUMMARY_ORDER = ["implemented", "unsupported_by_design", "not_implemented"]
 # Worst-case rollup across all concrete classes implementing an (interface, signature):
@@ -166,6 +183,57 @@ def thrown_types(method_decl) -> set[str]:
     return res
 
 
+# Lombok generates accessors at compile time, so javalang (a source-only parser)
+# never sees them — a class like `@Data class Foo implements Bar {}` looks like it
+# has zero methods, and every interface method it should satisfy falls to "missing".
+# We synthesize the getter/setter signatures Lombok would emit from the fields.
+# Scope: class/field-level @Data, @Value, @Getter, @Setter — the forms this codebase
+# uses. We do not model @Accessors(fluent/prefix) or AccessLevel.NONE (unused here).
+LOMBOK_GETTER_ANNOS = frozenset({"Data", "Value", "Getter"})
+LOMBOK_SETTER_ANNOS = frozenset({"Data", "Setter"})
+
+
+def field_type_name(field_decl, declarator) -> str:
+    ftype = field_decl.type
+    base = parse_ref_type(ftype) if hasattr(ftype, "name") else str(ftype)
+    dims = len(getattr(ftype, "dimensions", []) or []) + len(getattr(declarator, "dimensions", []) or [])
+    return f"{base}{'[]' * dims}"
+
+
+def lombok_accessors(decl) -> dict[str, set[str]]:
+    """Signatures Lombok would generate for a class, as {sig: thrown_types}.
+
+    Generated accessors never throw, so each maps to an empty set (→ classified
+    `implemented`). Explicit methods in the source take precedence over these."""
+    class_annos = {a.name for a in (decl.annotations or [])}
+    cls_get = bool(class_annos & LOMBOK_GETTER_ANNOS)
+    cls_set = bool(class_annos & LOMBOK_SETTER_ANNOS)
+    # @Value makes fields final ⇒ no setters, even under a class-level @Setter.
+    value = "Value" in class_annos
+    out: dict[str, set[str]] = {}
+    for field in decl.fields:
+        mods = field.modifiers or set()
+        if "static" in mods:  # Lombok never generates accessors for static fields
+            continue
+        f_annos = {a.name for a in (field.annotations or [])}
+        want_get = cls_get or "Getter" in f_annos
+        want_set = cls_set or "Setter" in f_annos
+        is_final = "final" in mods or value
+        for d in field.declarators:
+            ftype = field_type_name(field, d)
+            fname = d.name
+            is_bool = ftype == "boolean"
+            # Lombok keeps an existing `is`-prefix on boolean fields (isRunning → isRunning()).
+            keep_is = is_bool and fname.startswith("is") and len(fname) > 2 and fname[2].isupper()
+            stem = fname[2:] if keep_is else fname[:1].upper() + fname[1:]
+            if want_get:
+                gname = fname if keep_is else (("is" if is_bool else "get") + stem)
+                out.setdefault(norm_sig(gname, []), set())
+            if want_set and not is_final:
+                out.setdefault(norm_sig("set" + stem, [ftype]), set())
+    return out
+
+
 def collect_types(source_root: Path, package_prefixes: list[str]) -> dict[str, TypeInfo]:
     pkg_paths = [p.replace(".", "/") for p in package_prefixes]
     infos: dict[str, TypeInfo] = {}
@@ -193,6 +261,11 @@ def collect_types(source_root: Path, package_prefixes: list[str]) -> dict[str, T
             extends = [parse_ref_type(x) for x in (decl.extends or [])] if kind == "interface" else ([parse_ref_type(decl.extends)] if decl.extends else [])
             implements = [parse_ref_type(x) for x in (decl.implements or [])] if kind == "class" else []
             methods = {norm_sig(m.name, [parse_param_type(p) for p in m.parameters]): thrown_types(m) for m in decl.methods}
+            if kind == "class":
+                # Fill in Lombok-generated accessors, but never override an explicitly
+                # written method (which carries real thrown-exception info).
+                for sig, thrown in lombok_accessors(decl).items():
+                    methods.setdefault(sig, thrown)
             fqcn = f"{pkg}.{decl.name}" if pkg else decl.name
             infos[fqcn] = TypeInfo(pkg, imports, list(wildcards), kind, "abstract" in (decl.modifiers or set()), extends, implements, methods)
     return infos
@@ -447,15 +520,16 @@ def leadership_buckets(report: dict) -> dict[str, float | int]:
     }
 
 
-def buckets_from_categories(categories: dict[str, str], excluded_interfaces: frozenset[str] = frozenset()) -> dict:
+def buckets_from_categories(categories: dict[str, str], excluded_interfaces: frozenset[str] = frozenset(), excluded_methods: frozenset[str] = frozenset()) -> dict:
     """done/remaining/pct + totals over a method_categories map, optionally
-    excluding whole interfaces (by the `iface` component of each `iface::sig` key).
+    excluding whole interfaces (by the `iface` component of each `iface::sig` key)
+    and/or individual methods (by the full `iface::sig` key).
 
     Used to report the cumulative milestones (PuPr, GA, Post-GA) from the same
-    reconciled categories, each with its own exclusion set."""
+    reconciled categories, each with its own exclusion sets."""
     totals: dict[str, int] = defaultdict(int)
     for key, cat in categories.items():
-        if key.split("::", 1)[0] in excluded_interfaces:
+        if key.split("::", 1)[0] in excluded_interfaces or key in excluded_methods:
             continue
         totals[cat] += 1
     done = totals["implemented"] + totals["unsupported_by_design"]
@@ -472,20 +546,23 @@ def buckets_from_categories(categories: dict[str, str], excluded_interfaces: fro
 
 def phase_buckets(old_categories: dict[str, str], new_categories: dict[str, str]) -> dict:
     """Three-phase cumulative readiness (PuPr ⊂ GA ⊂ Post-GA), each with old/new
-    buckets:
-      - `pupr`    — baseline minus PUPR_EXCLUDED_INTERFACES (SQLInput/SQLOutput + Loader)
-      - `ga`      — baseline minus GA_EXCLUDED_INTERFACES (SQLInput/SQLOutput), i.e. PuPr + Loader
+    buckets. Each earlier milestone excludes whole interfaces AND individual methods:
+      - `pupr`    — baseline minus PUPR_EXCLUDED_{INTERFACES,METHODS}
+                    (SQLInput/SQLOutput/Array + structured-type accessors + Loader)
+      - `ga`      — baseline minus GA_EXCLUDED_{INTERFACES,METHODS}, i.e. PuPr + Loader
       - `post_ga` — full baseline"""
     return {
         "pupr": {
             "excluded_interfaces": sorted(PUPR_EXCLUDED_INTERFACES),
-            "old": buckets_from_categories(old_categories, PUPR_EXCLUDED_INTERFACES),
-            "new": buckets_from_categories(new_categories, PUPR_EXCLUDED_INTERFACES),
+            "excluded_methods": sorted(PUPR_EXCLUDED_METHODS),
+            "old": buckets_from_categories(old_categories, PUPR_EXCLUDED_INTERFACES, PUPR_EXCLUDED_METHODS),
+            "new": buckets_from_categories(new_categories, PUPR_EXCLUDED_INTERFACES, PUPR_EXCLUDED_METHODS),
         },
         "ga": {
             "excluded_interfaces": sorted(GA_EXCLUDED_INTERFACES),
-            "old": buckets_from_categories(old_categories, GA_EXCLUDED_INTERFACES),
-            "new": buckets_from_categories(new_categories, GA_EXCLUDED_INTERFACES),
+            "excluded_methods": sorted(GA_EXCLUDED_METHODS),
+            "old": buckets_from_categories(old_categories, GA_EXCLUDED_INTERFACES, GA_EXCLUDED_METHODS),
+            "new": buckets_from_categories(new_categories, GA_EXCLUDED_INTERFACES, GA_EXCLUDED_METHODS),
         },
         "post_ga": {
             "old": buckets_from_categories(old_categories),

@@ -4,6 +4,28 @@ use serde_json::json;
 use wiremock::matchers::{body_partial_json, method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// Failed JWT (key-pair) login — invalid token, GS code 390144.
+///
+/// Matches the wiremock fixture the legacy connector uses for this scenario
+/// (`test/data/wiremock/mappings/auth/keypair/jwt_token_invalid.json`).
+/// Returned as a `Mock` for callers using `MockServerWithTls::mount`, rather
+/// than mounted directly, matching `mocks::password`'s convention for the
+/// synchronous `SnowflakeTestClient::connect` test style.
+pub fn login_failure_jwt_token_invalid() -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "SNOWFLAKE_JWT"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": "390144",
+            "message": "JWT token is invalid."
+        })))
+}
+
 /// Mount a successful JWT authentication response.
 ///
 /// Matches POST requests to `/session/v1/login-request.*` with SNOWFLAKE_JWT authenticator.
