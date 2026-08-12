@@ -4,14 +4,14 @@ using NewSnowflakeDbConnection = Snowflake.Data.SnowflakeDbConnection;
 using OldSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
 #pragma warning disable CS0162 // Unreachable code detected
 
-namespace Snowflake.Data.Tests;
+namespace Snowflake.Data.Tests.Reference;
 
-public static class TestConnectionFactory
+public class TestConnectionFactory : ITestConnectionFactory
 {
     private static readonly bool UseOldDriver =
         Environment.GetEnvironmentVariable("SNOWFLAKE_DOTNET_USE_OLD_DRIVER") == "1";
 
-    public static DbConnection Create(ITestOutputHelper? testOutputHelper, string? connectionStringOverride = null)
+    public DbConnection Create(ITestOutputHelper? testOutputHelper, string? connectionStringOverride = null)
     {
         var connStr = connectionStringOverride ?? BuildConnectionString(testOutputHelper);
         if (UseOldDriver)
@@ -22,7 +22,7 @@ public static class TestConnectionFactory
 
     public static bool IsRunningForOldDriver() => UseOldDriver;
 
-    private static string BuildConnectionString(ITestOutputHelper? testOutputHelper)
+    public string BuildConnectionString(ITestOutputHelper? testOutputHelper)
     {
         ParametersReader.Init(testOutputHelper);
         var account = ParametersReader.Get("SNOWFLAKE_TEST_ACCOUNT") ?? "";

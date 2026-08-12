@@ -157,10 +157,8 @@ TEST_CASE("should fail PAT authentication when invalid token provided", "[pat]")
   CHECK_THAT(records[0].messageText, ContainsSubstring("Programmatic access token is invalid"));
 }
 
-// [flaky]: the PAT-authenticator login path currently hangs/times out server-side on some test
-// accounts. Excluded from CI (ctest -LE flaky) until snowflake#453715 is merged.
 TEST_CASE("should handle ALTER USER PAT result set: new driver returns token, old driver returns cursor state error",
-          "[pat][flaky]") {
+          "[pat]") {
   // Given ALTER USER ADD PROGRAMMATIC ACCESS TOKEN is executed
   Connection conn;
   auto params = get_test_parameters("testconnection");

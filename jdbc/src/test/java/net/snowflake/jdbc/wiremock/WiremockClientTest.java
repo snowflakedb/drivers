@@ -1,13 +1,15 @@
 package net.snowflake.jdbc.wiremock;
 
+import static net.snowflake.jdbc.utils.JsonTestUtils.objectNode;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
 import net.snowflake.jdbc.utils.HttpTestClient;
 import net.snowflake.jdbc.utils.HttpTestClient.Response;
-import org.json.JSONObject;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -27,23 +29,19 @@ public class WiremockClientTest {
     try (WiremockClient client = new WiremockClient();
         HttpTestClient http = new HttpTestClient()) {
       client.start();
-      client.addMappingJson(
-          new JSONObject()
-              .put("request", new JSONObject().put("method", "GET").put("urlPath", "/ping"))
-              .put(
-                  "response",
-                  new JSONObject()
-                      .put("status", 200)
-                      .put("body", "pong")
-                      .put("headers", new JSONObject().put("Content-Type", "text/plain")))
-              .toString());
+      ObjectNode mapping = objectNode();
+      mapping.putObject("request").put("method", "GET").put("urlPath", "/ping");
+      ObjectNode response = mapping.putObject("response");
+      response.put("status", 200).put("body", "pong");
+      response.putObject("headers").put("Content-Type", "text/plain");
+      client.addMappingJson(mapping.toString());
 
       Response resp = http.get(client.httpUrl() + "/ping");
       assertEquals(200, resp.status());
       assertEquals("pong", resp.body());
 
       client.verifyRequestCount(1, "/ping");
-      List<JSONObject> recorded = client.getRequests("/ping");
+      List<JsonNode> recorded = client.getRequests("/ping");
       assertEquals(1, recorded.size());
 
       client.reset();

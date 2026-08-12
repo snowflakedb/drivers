@@ -10,7 +10,7 @@ import decimal
 
 from datetime import datetime, timedelta, timezone, tzinfo
 from sys import byteorder
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 import pytz
 
@@ -71,14 +71,33 @@ class ArrowConverterContext:
     def __init__(
         self,
         timezone: str | None = None,
+        *,
+        timezone_supplier: Callable[[], str | None] | None = None,
     ) -> None:
-        self._timezone = timezone
+        # An explicit ``timezone`` takes precedence and marks the value resolved.
+        # Otherwise, ``timezone_supplier`` (if any) is invoked lazily on first access.
+        self._tz_value = timezone
+        self._tz_supplier = timezone_supplier if timezone is None else None
 
     @classmethod
     def create(cls, connection: Connection | AsyncConnection) -> ArrowConverterContext:
-        """Create a context by fetching the session timezone."""
-        tz = connection._session_parameters[PARAMETER_TIMEZONE]
-        return cls(timezone=tz)
+        """Create a context whose timezone resolves lazily from the session."""
+        return cls(
+            timezone_supplier=lambda: connection._session_parameters[PARAMETER_TIMEZONE],
+        )
+
+    @property
+    def _timezone(self) -> str | None:
+        """Resolved session timezone, invoking the supplier once on first read.
+
+        Named ``_timezone`` because the C++ table iterator reads this attribute
+        directly via ``PyObject_GetAttrString(context, "_timezone")``.
+        """
+        supplier = self._tz_supplier
+        if supplier is not None:
+            self._tz_value = supplier()
+            self._tz_supplier = None
+        return self._tz_value
 
     @property
     def timezone(self) -> str | None:
@@ -86,7 +105,16 @@ class ArrowConverterContext:
 
     @timezone.setter
     def timezone(self, tz: str | None) -> None:
-        self._timezone = tz
+        self._tz_value = tz
+        self._tz_supplier = None
+
+    def __getstate__(self) -> dict[str, Any]:
+        # resolve timezone before pickling
+        return {"timezone": self._timezone}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self._tz_value = state.get("timezone")
+        self._tz_supplier = None
 
     def _get_session_tz(self) -> tzinfo:
         """Get the session timezone or use the local computer's timezone."""

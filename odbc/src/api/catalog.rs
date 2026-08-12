@@ -25,7 +25,8 @@ use crate::api::{
     ConnectionState, ExecutionOrigin, OdbcResult, StatementInner, StatementState, stmt_from_handle,
 };
 use crate::conversion::{
-    NumericSettings, SMALLINT_CONCISE_SQL_TYPE, column_size_from_field, decimal_digits_from_field,
+    INTEGER_CONCISE_SQL_TYPE, NumericSettings, SMALLINT_CONCISE_SQL_TYPE,
+    WVARCHAR_CONCISE_SQL_TYPE, column_size_from_field, decimal_digits_from_field,
     num_prec_radix_from_field, octet_length_from_field, sql_type_from_field, type_name_from_field,
     verbose_sql_type_from_field,
 };
@@ -71,37 +72,52 @@ fn catalog_text_field(name: &str, char_length: u32) -> Field {
     Field::new(name, DataType::Utf8, true).with_metadata(metadata)
 }
 
+/// Catalog string column labeled `SQL_WVARCHAR` (−9) to match the reference
+/// driver catalog IRD. Physical storage stays Utf8; only the concise type is overridden.
+fn catalog_wvarchar_field(name: &str, char_length: u32) -> Field {
+    let metadata: HashMap<String, String> = [
+        ("logicalType".to_string(), "TEXT".to_string()),
+        ("charLength".to_string(), char_length.to_string()),
+        (
+            "conciseSqlType".to_string(),
+            WVARCHAR_CONCISE_SQL_TYPE.to_string(),
+        ),
+    ]
+    .into();
+    Field::new(name, DataType::Utf8, true).with_metadata(metadata)
+}
+
 fn flat_tables_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("TABLE_CAT", 255),
-        catalog_text_field("TABLE_SCHEM", 255),
-        catalog_text_field("TABLE_NAME", 255),
-        catalog_text_field("TABLE_TYPE", 255),
-        catalog_text_field("REMARKS", 65535),
+        catalog_wvarchar_field("TABLE_CAT", 255),
+        catalog_wvarchar_field("TABLE_SCHEM", 255),
+        catalog_wvarchar_field("TABLE_NAME", 255),
+        catalog_wvarchar_field("TABLE_TYPE", 255),
+        catalog_wvarchar_field("REMARKS", 65535),
     ]))
 }
 
 fn flat_columns_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("TABLE_CAT", 255),        // 1
-        catalog_text_field("TABLE_SCHEM", 255),      // 2
-        catalog_text_field("TABLE_NAME", 255),       // 3
-        catalog_text_field("COLUMN_NAME", 255),      // 4
-        catalog_text_field("DATA_TYPE", 20),         // 5 SMALLINT returned as text
-        catalog_text_field("TYPE_NAME", 255),        // 6
-        catalog_text_field("COLUMN_SIZE", 20),       // 7 INTEGER returned as text
-        catalog_text_field("BUFFER_LENGTH", 20),     // 8 INTEGER returned as text
-        catalog_text_field("DECIMAL_DIGITS", 20),    // 9 SMALLINT nullable
-        catalog_text_field("NUM_PREC_RADIX", 20),    // 10 SMALLINT nullable
-        catalog_text_field("NULLABLE", 20),          // 11 SMALLINT (0/1)
-        catalog_text_field("REMARKS", 65535),        // 12
-        catalog_text_field("COLUMN_DEF", 65535),     // 13 nullable
-        catalog_text_field("SQL_DATA_TYPE", 20),     // 14 SMALLINT
-        catalog_text_field("SQL_DATETIME_SUB", 20),  // 15 SMALLINT nullable
-        catalog_text_field("CHAR_OCTET_LENGTH", 20), // 16 INTEGER nullable
-        catalog_text_field("ORDINAL_POSITION", 20),  // 17 INTEGER
-        catalog_text_field("IS_NULLABLE", 3),        // 18 "YES"/"NO"/""
-        catalog_text_field("USER_DATA_TYPE", 20),    // 19 driver-specific
+        catalog_wvarchar_field("TABLE_CAT", 255),    // 1
+        catalog_wvarchar_field("TABLE_SCHEM", 255),  // 2
+        catalog_wvarchar_field("TABLE_NAME", 255),   // 3
+        catalog_wvarchar_field("COLUMN_NAME", 255),  // 4
+        catalog_smallint_field("DATA_TYPE"),         // 5
+        catalog_wvarchar_field("TYPE_NAME", 255),    // 6
+        catalog_int_field("COLUMN_SIZE"),            // 7
+        catalog_int_field("BUFFER_LENGTH"),          // 8
+        catalog_smallint_field("DECIMAL_DIGITS"),    // 9
+        catalog_int_field("NUM_PREC_RADIX"),         // 10 (reference driver: INTEGER)
+        catalog_smallint_field("NULLABLE"),          // 11
+        catalog_wvarchar_field("REMARKS", 65535),    // 12
+        catalog_wvarchar_field("COLUMN_DEF", 65535), // 13
+        catalog_smallint_field("SQL_DATA_TYPE"),     // 14
+        catalog_smallint_field("SQL_DATETIME_SUB"),  // 15
+        catalog_int_field("CHAR_OCTET_LENGTH"),      // 16
+        catalog_int_field("ORDINAL_POSITION"),       // 17
+        catalog_wvarchar_field("IS_NULLABLE", 3),    // 18
+        catalog_smallint_field("USER_DATA_TYPE"),    // 19
     ]))
 }
 
@@ -3156,10 +3172,9 @@ fn rehydrate_field(
 /// This is deliberately **separate** from `SnowflakeFieldType::type_name`
 /// (the `SQLColAttribute(SQL_DESC_TYPE_NAME)` path on query columns), which
 /// returns SDK-style labels (`BIT`, `TYPE_DATE`, `TYPE_TIMESTAMP`, …) and must
-/// not change. Excel Power Query Navigator and the legacy Simba driver depend
-/// on the external names here; routing SQLColumns through the ColAttribute
-/// helper collapsed semi-structured types to `VARCHAR` and turned `GEOGRAPHY`
-/// into `NULL`. See SNOW-3899531.
+/// not change. The reference driver depends on the external names here; routing
+/// SQLColumns through the ColAttribute helper collapsed semi-structured types
+/// to `VARCHAR` and turned `GEOGRAPHY` into `NULL`. See SNOW-3899531.
 fn catalog_type_name_from_logical_type(logical_type: &str) -> String {
     match logical_type {
         "TEXT" => "VARCHAR",
@@ -3202,21 +3217,21 @@ struct FlatColumnRow {
     schem: Option<String>,
     tbl: Option<String>,
     col_name: Option<String>,
-    data_type: Option<String>,
+    data_type: Option<i16>,
     type_name: Option<String>,
-    col_size: Option<String>,
-    buf_len: Option<String>,
-    dec_digits: Option<String>,
-    num_prec_radix: Option<String>,
-    nullable: Option<String>,
+    col_size: Option<i32>,
+    buf_len: Option<i32>,
+    dec_digits: Option<i16>,
+    num_prec_radix: Option<i32>,
+    nullable: Option<i16>,
     remarks: Option<String>,
     col_def: Option<String>,
-    sql_data_type: Option<String>,
-    sql_dt_sub: Option<String>,
-    char_octet: Option<String>,
-    ordinal: Option<String>,
+    sql_data_type: Option<i16>,
+    sql_dt_sub: Option<i16>,
+    char_octet: Option<i32>,
+    ordinal: Option<i32>,
     is_nullable: Option<String>,
-    user_data_type: Option<String>,
+    user_data_type: Option<i16>,
 }
 
 fn flat_row_from_descriptor(
@@ -3237,7 +3252,7 @@ fn flat_row_from_descriptor(
 
     let data_type_val = sql_type_from_field(&field, numeric_settings)
         .ok()
-        .map(|t| t.0.to_string());
+        .map(|t| t.0);
     // TYPE_NAME (col 6) reports the Snowflake external / friendly name
     // (BOOLEAN, TIMESTAMP, VARIANT, STRUCT, ARRAY, GEOGRAPHY, …) — NOT the SDK
     // label from `type_name_from_field`, which is the
@@ -3245,37 +3260,35 @@ fn flat_row_from_descriptor(
     let type_name_val = Some(catalog_type_name_from_logical_type(&desc.logical_type));
     let col_size_val = column_size_from_field(&field, numeric_settings)
         .ok()
-        .map(|s| s.to_string());
+        .and_then(|s| i32::try_from(s).ok());
     let buf_len_val = octet_length_from_field(&field, numeric_settings)
         .ok()
-        .map(|s| s.to_string());
+        .and_then(|s| i32::try_from(s).ok());
     // DECIMAL_DIGITS: scale 0 is a valid, meaningful value for exact-numeric
-    // columns (e.g. NUMBER(38,0)) — report it as "0", not NULL. The helper
+    // columns (e.g. NUMBER(38,0)) — report it as 0, not NULL. The helper
     // returns Err for types where DECIMAL_DIGITS is inapplicable (→ NULL).
-    let dec_digits_val = decimal_digits_from_field(&field, numeric_settings)
-        .ok()
-        .map(|s| s.to_string());
+    let dec_digits_val = decimal_digits_from_field(&field, numeric_settings).ok();
     // NUM_PREC_RADIX: only ever 2, 10, or inapplicable (→ NULL); 0 is never
     // a meaningful value, so collapsing 0 → NULL is harmless here.
     let num_prec_radix_val = num_prec_radix_from_field(&field, numeric_settings)
         .ok()
-        .and_then(|s| if s == 0 { None } else { Some(s.to_string()) });
+        .and_then(|s| if s == 0 { None } else { i32::try_from(s).ok() });
     let sql_data_type_val = verbose_sql_type_from_field(&field, numeric_settings)
         .ok()
-        .map(|t| t.0.to_string());
-    let sql_dt_sub_val =
-        sql_datetime_sub_from_logical_type(&desc.logical_type).map(|s| s.to_string());
+        .map(|t| t.0);
+    let sql_dt_sub_val = sql_datetime_sub_from_logical_type(&desc.logical_type);
     let char_octet_val = match desc.logical_type.as_str() {
         "TEXT" | "BINARY" => octet_length_from_field(&field, numeric_settings)
             .ok()
-            .map(|s| s.to_string()),
+            .and_then(|s| i32::try_from(s).ok()),
         _ => None,
     };
 
-    let nullable_str = if desc.nullable { "1" } else { "0" };
+    let nullable_val: i16 = if desc.nullable { 1 } else { 0 };
     let is_nullable_str = if desc.nullable { "YES" } else { "NO" };
-    // USER_DATA_TYPE: mirror DATA_TYPE (driver-specific; tests only assert presence).
-    let user_data_type_val = data_type_val.clone();
+    // USER_DATA_TYPE: mirror DATA_TYPE (driver-specific; cell-value semantics
+    // tracked separately in SNOW-3899721).
+    let user_data_type_val = data_type_val;
 
     FlatColumnRow {
         cat: Some(cat),
@@ -3288,13 +3301,13 @@ fn flat_row_from_descriptor(
         buf_len: buf_len_val,
         dec_digits: dec_digits_val,
         num_prec_radix: num_prec_radix_val,
-        nullable: Some(nullable_str.to_string()),
+        nullable: Some(nullable_val),
         remarks: desc.remarks.clone(),
         col_def: desc.column_def.clone(),
         sql_data_type: sql_data_type_val,
         sql_dt_sub: sql_dt_sub_val,
         char_octet: char_octet_val,
-        ordinal: Some(desc.ordinal_position.to_string()),
+        ordinal: Some(desc.ordinal_position),
         is_nullable: Some(is_nullable_str.to_string()),
         user_data_type: user_data_type_val,
     }
@@ -3304,8 +3317,14 @@ fn build_flat_columns_batch(
     schema: SchemaRef,
     rows: Vec<FlatColumnRow>,
 ) -> OdbcResult<RecordBatch> {
-    fn to_array(v: Vec<Option<String>>) -> ArrayRef {
+    fn str_col(v: Vec<Option<String>>) -> ArrayRef {
         Arc::new(StringArray::from(v)) as ArrayRef
+    }
+    fn i16_col(v: Vec<Option<i16>>) -> ArrayRef {
+        Arc::new(Int16Array::from(v)) as ArrayRef
+    }
+    fn i32_col(v: Vec<Option<i32>>) -> ArrayRef {
+        Arc::new(Int32Array::from(v)) as ArrayRef
     }
     let n = rows.len();
     let mut cats = Vec::with_capacity(n);
@@ -3351,25 +3370,25 @@ fn build_flat_columns_batch(
     RecordBatch::try_new(
         schema,
         vec![
-            to_array(cats),
-            to_array(schms),
-            to_array(tbls),
-            to_array(col_names),
-            to_array(data_types),
-            to_array(type_names),
-            to_array(col_sizes),
-            to_array(buf_lens),
-            to_array(dec_digits),
-            to_array(num_prec_radixes),
-            to_array(nullables),
-            to_array(remarks),
-            to_array(col_defs),
-            to_array(sql_data_types),
-            to_array(sql_dt_subs),
-            to_array(char_octets),
-            to_array(ordinals),
-            to_array(is_nullables),
-            to_array(user_data_types),
+            str_col(cats),
+            str_col(schms),
+            str_col(tbls),
+            str_col(col_names),
+            i16_col(data_types),
+            str_col(type_names),
+            i32_col(col_sizes),
+            i32_col(buf_lens),
+            i16_col(dec_digits),
+            i32_col(num_prec_radixes),
+            i16_col(nullables),
+            str_col(remarks),
+            str_col(col_defs),
+            i16_col(sql_data_types),
+            i16_col(sql_dt_subs),
+            i32_col(char_octets),
+            i32_col(ordinals),
+            str_col(is_nullables),
+            i16_col(user_data_types),
         ],
     )
     .context(crate::api::error::RecordBatchBuildSnafu)
@@ -3729,6 +3748,10 @@ fn catalog_smallint_field(name: &str) -> Field {
         ("logicalType".to_string(), "FIXED".to_string()),
         ("scale".to_string(), "0".to_string()),
         ("precision".to_string(), "5".to_string()),
+        (
+            "conciseSqlType".to_string(),
+            SMALLINT_CONCISE_SQL_TYPE.to_string(),
+        ),
     ]
     .into();
     Field::new(name, DataType::Int16, true).with_metadata(metadata)
@@ -3740,6 +3763,10 @@ fn catalog_int_field(name: &str) -> Field {
         ("logicalType".to_string(), "FIXED".to_string()),
         ("scale".to_string(), "0".to_string()),
         ("precision".to_string(), "10".to_string()),
+        (
+            "conciseSqlType".to_string(),
+            INTEGER_CONCISE_SQL_TYPE.to_string(),
+        ),
     ]
     .into();
     Field::new(name, DataType::Int32, true).with_metadata(metadata)

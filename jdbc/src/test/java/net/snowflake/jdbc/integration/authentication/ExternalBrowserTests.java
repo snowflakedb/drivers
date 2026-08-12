@@ -1,10 +1,12 @@
 package net.snowflake.jdbc.integration.authentication;
 
+import static net.snowflake.jdbc.utils.JsonTestUtils.parseJson;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -18,7 +20,6 @@ import java.util.Properties;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.jdbc.utils.SkipOldDriver;
 import net.snowflake.jdbc.wiremock.BaseWiremockTest;
-import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -60,14 +61,13 @@ class ExternalBrowserTests extends BaseWiremockTest {
       assertFalse(conn.isClosed());
 
       // And Login request contains EXTERNALBROWSER authenticator, token, proof key, and login name
-      List<JSONObject> loginRequests = wiremock.getRequests("/session/v1/login-request.*");
+      List<JsonNode> loginRequests = wiremock.getRequests("/session/v1/login-request.*");
       assertTrue(loginRequests.size() >= 1, "Expected at least one login-request");
-      JSONObject data =
-          new JSONObject(loginRequests.get(0).getString("body")).getJSONObject("data");
-      assertEquals("EXTERNALBROWSER", data.getString("AUTHENTICATOR"));
-      assertEquals(token, data.getString("TOKEN"));
-      assertEquals("mock_proof_key_abc123", data.getString("PROOF_KEY"));
-      assertEquals("test_user", data.getString("LOGIN_NAME"));
+      JsonNode data = parseJson(loginRequests.get(0).get("body").asText()).get("data");
+      assertEquals("EXTERNALBROWSER", data.get("AUTHENTICATOR").asText());
+      assertEquals(token, data.get("TOKEN").asText());
+      assertEquals("mock_proof_key_abc123", data.get("PROOF_KEY").asText());
+      assertEquals("test_user", data.get("LOGIN_NAME").asText());
     } finally {
       callbackThread.join();
     }
@@ -185,11 +185,10 @@ class ExternalBrowserTests extends BaseWiremockTest {
   private void simulateBrowserCallback(String token) {
     long deadline = System.nanoTime() + 10_000L * 1_000_000L;
     while (System.nanoTime() < deadline) {
-      List<JSONObject> requests = wiremock.getRequests("/session/authenticator-request.*");
+      List<JsonNode> requests = wiremock.getRequests("/session/authenticator-request.*");
       if (!requests.isEmpty()) {
-        JSONObject body = new JSONObject(requests.get(0).getString("body"));
-        int port =
-            Integer.parseInt(body.getJSONObject("data").getString("BROWSER_MODE_REDIRECT_PORT"));
+        JsonNode body = parseJson(requests.get(0).get("body").asText());
+        int port = Integer.parseInt(body.get("data").get("BROWSER_MODE_REDIRECT_PORT").asText());
         try (Socket sock = new Socket()) {
           sock.connect(new InetSocketAddress("127.0.0.1", port), 5_000);
           OutputStream out = sock.getOutputStream();

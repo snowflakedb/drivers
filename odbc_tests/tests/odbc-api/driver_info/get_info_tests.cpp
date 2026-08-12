@@ -175,19 +175,25 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_NAME", "[odbc-api
     REQUIRE(std::string(driverName) == "Snowflake");
   }
   NEW_DRIVER_ONLY("BD#75") {
-    // New driver is spec-compliant: it returns the on-disk file path
-    // of the loaded driver shared library, resolved via the ODBC
-    // installer API (`SQLGetPrivateProfileString` against
-    // odbc.ini/odbcinst.ini) with a `dladdr` self-path fallback.
-    // The test fixture stamps the actually-loaded library path into
-    // odbcinst.ini via the `DRIVER_PATH` env var, so the resolver
-    // must round-trip to exactly that value.
+    // New driver is spec-compliant: it returns the *file name* of the
+    // loaded driver shared library. The ODBC spec defines
+    // SQL_DRIVER_NAME as "a character string with the file name of the
+    // driver used to access the data source", so the driver resolves the
+    // library's on-disk path via the ODBC installer API
+    // (`SQLGetPrivateProfileString` against odbc.ini/odbcinst.ini) with a
+    // `dladdr` self-path fallback, then returns just the path's file-name
+    // component. The test fixture stamps the actually-loaded library path
+    // into odbcinst.ini via the `DRIVER_PATH` env var, so the returned
+    // value must equal that path's basename.
     const char* expected = std::getenv("DRIVER_PATH");
     INFO(
         "DRIVER_PATH must be set by the test runner so the new-driver "
-        "branch knows what file path to expect from SQL_DRIVER_NAME");
+        "branch knows which library file name to expect from SQL_DRIVER_NAME");
     REQUIRE(expected != nullptr);
-    REQUIRE(std::string(driverName) == std::string(expected));
+    const std::string expectedPath(expected);
+    const std::string::size_type sep = expectedPath.find_last_of("/\\");
+    const std::string expectedName = sep == std::string::npos ? expectedPath : expectedPath.substr(sep + 1);
+    REQUIRE(std::string(driverName) == expectedName);
   }
 
   SQLDisconnect(dbc_handle());

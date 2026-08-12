@@ -45,13 +45,17 @@ describe('Query returning data types', () => {
   it('returns BINARY as Buffer', async () => {
     const { statement, rows } = await executeAsync(
       connection,
-      "SELECT X'ABCDEF'::BINARY as BINARY_COLUMN",
+      "SELECT X'ABCDEF'::BINARY as BINARY_COLUMN, NULL::BINARY as NULL_BINARY_COLUMN",
     );
     const expectedValue = Buffer.from('ABCDEF', 'hex');
     const receivedValue = rows![0].BINARY_COLUMN as Buffer;
-    const column = statement.getColumn(0);
-    expect(column.getType()).toBe('binary');
-    expect(column.isBinary()).toBe(true);
+    const binaryColumn = statement.getColumn(0);
+    const nullBinaryColumn = statement.getColumn(1);
+    expect(binaryColumn.getType()).toBe('binary');
+    expect(binaryColumn.isBinary()).toBe(true);
+    expect(nullBinaryColumn.getType()).toBe('binary');
+    expect(nullBinaryColumn.isBinary()).toBe(true);
+    expect(rows![0].NULL_BINARY_COLUMN).toBe(null);
     // In old driver, returned Buffer has extra methods .toStringSf() and .getFormat())
     // that cause .toEqual to fail in vitest. New driver omits these monkey patches (see BCR log).
     if (isRunningForOldDriver()) {

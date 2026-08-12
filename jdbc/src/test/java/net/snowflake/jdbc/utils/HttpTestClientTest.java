@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import java.io.ByteArrayOutputStream;
@@ -14,7 +15,6 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 import net.snowflake.jdbc.utils.HttpTestClient.Response;
-import org.json.JSONObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -83,8 +83,8 @@ public class HttpTestClientTest {
         capturedContentType.get().toLowerCase().contains("application/json"),
         "Expected JSON content type, got: " + capturedContentType.get());
 
-    JSONObject parsed = response.json();
-    assertEquals(true, parsed.getBoolean("ack"));
+    JsonNode parsed = response.json();
+    assertEquals(true, parsed.get("ack").asBoolean());
   }
 
   @Test
