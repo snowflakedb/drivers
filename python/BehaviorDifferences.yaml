@@ -679,9 +679,21 @@ behavior_differences:
       set both toggles to `False` explicitly.
   44:
     name: "ReauthenticationRequest is not raised in MasterTokenExpired scenarios"
-    status: todo
+    status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      A new `ReauthenticationRequiredError(OperationalError)` is now raised uniformly
+      for every master-token/reauth GS code, both mid-session (390113/390114/390115)
+      and at login-time-exhaustion (390195/390303/390318). The real GS code is
+      preserved as `errno`/`vendor_code` instead of collapsing to a generic error.
+      `ReauthenticationRequest` is kept as a deprecated back-compat alias name
+      (importable from both `errors` and `network`, matching Snowpark's
+      `snowflake.connector.network` import site) so the old symbol remains
+      importable/subclassable, though the driver itself raises the base
+      `ReauthenticationRequiredError`, not the alias subclass — see entry 61 for the
+      one deliberate behavioral gap (no automatic reauth) this leaves relative to
+      legacy's `EXTERNALBROWSER` handling.
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -689,14 +701,23 @@ behavior_differences:
       original exception as `.cause`) when the master token expires and a refresh
       is required. Snowpark catches this exception to trigger session re-establishment.
     new_driver_behavior: |
-      The universal driver does not raise `ReauthenticationRequest` or any equivalent
-      signal in these token-refresh scenarios; the UD has no compat class for Snowpark
-      to catch or subclass, and no wiring to the internal refresh paths that would need
-      to raise it.
-    description: |
-      TODO: identify the UD token-refresh code paths that correspond to the old
-      driver's MasterTokenExpired handling and raise `ReauthenticationRequest`
-      (or an equivalent signal Snowpark catches) in those cases.
+      The universal driver raises `ReauthenticationRequiredError` (a discriminable
+      `OperationalError` subclass, so `except OperationalError`/`except Error` catch
+      it directly) for:
+        - Mid-session master-token-terminal GS codes 390113 (not found), 390114
+          (expired), and 390115 (invalid) — previously only 390114 was even detected,
+          and it collapsed into a generic `DatabaseError` with a generic errno.
+        - Login-time cached-credential rejection after the driver's own
+          evict-and-retry ladder is exhausted: GS 390195 (cached ID token) and
+          390303/390318 (cached OAuth access token invalid/expired).
+      The real GS code survives end-to-end and is exposed as `errno`. No automatic
+      retry/reauthentication is performed in any case — callers must open a new
+      connection. `ReauthenticationRequest` remains importable (from `errors` and
+      `network`) as a deprecated subclass of `ReauthenticationRequiredError` for
+      source compatibility, but the driver does not raise that subclass itself, so
+      `except ReauthenticationRequest` (the exact legacy type) will not catch
+      driver-raised instances — only `except ReauthenticationRequiredError`/
+      `OperationalError`/`Error` will.
 
   45:
     name: "Out-of-band (OOB) telemetry is not implemented"
@@ -1101,3 +1122,69 @@ behavior_differences:
       integration test against a mocked HTTP 500 asserting `_enabled` stays
       `True` on the Python side — a Python-layer mock that bypasses the Rust
       HTTP path would be trivially true regardless of production behavior.
+
+  61:
+    name: "EXTERNALBROWSER no longer auto-reauthenticates on mid-session master-token expiry"
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    status_rationale: |
+      Deliberate scope decision (see reauth.md / rauth-plan.md): cross-driver research
+      showed 5 of 8 drivers never auto-reauth mid-session for any authenticator, and
+      legacy Python's own mid-session auto-reauth is narrow (EXTERNALBROWSER only, and
+      only via the session-renewal endpoint failure path — a direct 390114 on a query
+      response never triggers it either). Implementing an equivalent live retry would
+      require widening `RefreshContext` to hold `LoginParameters`/`ConnectionConfig` and
+      re-driving the interactive browser flow mid-query — out of scope for this fix,
+      which uniformly raises `ReauthenticationRequiredError` instead for every trigger,
+      matching the majority (non-auto-reauth) cross-driver behavior.
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      For an `EXTERNALBROWSER` connection, a mid-session master-token expiry detected
+      via the session-renewal endpoint (`/session/token-request` returning GS 390114)
+      is caught internally and silently recovered: the driver re-runs the full
+      interactive SSO flow (popping a new browser window) and retries, so the
+      caller's in-flight query transparently succeeds after the reauth completes.
+      The caller never sees an exception for this specific path.
+    new_driver_behavior: |
+      The universal driver does not perform any automatic reauthentication for any
+      authenticator, including `EXTERNALBROWSER`. A mid-session master-token-terminal
+      GS code (390113/390114/390115), however detected, raises
+      `ReauthenticationRequiredError` uniformly; the caller must open a new connection
+      (which will itself trigger a fresh interactive browser prompt for
+      `EXTERNALBROWSER`). Code that previously "just worked" through a master-token
+      expiry on an `EXTERNALBROWSER` connection must now catch
+      `ReauthenticationRequiredError` and reconnect.
+    description: |
+      See `/home/repo/temp/snowpark/missing-api/reauth/rauth-plan.md` (Design §0/§1) and
+      `/home/repo/temp/snowpark/missing-api/reauth/old-drivers-review.md` (§2.3-§2.4, §3)
+      for the full cross-driver research backing this decision.
+
+  62:
+    name: "GS codes 390113/390115 are now detected as master-token-terminal (previously silently ignored)"
+    status: fixed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      Widens the existing 390114-only special-casing in both
+      `sf_core::rest::snowflake::read_response_json` (query-response path) and
+      `refresh_session` (session-renewal-endpoint path) to also recognize 390113
+      (master token not found) and 390115 (master token invalid), matching legacy
+      Python's own `MASTER_TOKEN_NOTFOUND_GS_CODE`/`MASTER_TOKEN_INVALD_GS_CODE`
+      constants and JDBC/ODBC's equivalent handling.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      N/A for direct comparison — legacy Python's own network.py checks 390114
+      only for its `MASTER_TOKEN_EXPIRED_GS_CODE`-specific branches, though it does
+      define (but does not specially branch on) `MASTER_TOKEN_NOTFOUND_GS_CODE`
+      (390113) / `MASTER_TOKEN_INVALD_GS_CODE` (390115) constants elsewhere.
+    new_driver_behavior: |
+      Before this fix, the universal driver only special-cased GS 390114; a 390113
+      or 390115 response silently fell through to a generic, unremarked query/refresh
+      failure and never set `is_master_token_expired`. Both codes are now recognized
+      identically to 390114: `is_master_token_expired` is set and
+      `ReauthenticationRequiredError` (errno=390113/390115) is raised. Pure bugfix —
+      no caller could have depended on the old silent-fallthrough behavior in a way
+      that this change would break.
