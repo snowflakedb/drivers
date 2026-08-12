@@ -729,8 +729,9 @@ impl DatabaseDriverV1 {
                     get_fastfail,
                 ) = {
                     let conn = conn.lock().await;
+                    let effective_settings = conn.effective_settings();
                     (
-                        crate::config::retry::RetryPolicy::put_get(&conn.connection_seed),
+                        crate::config::retry::RetryPolicy::put_get(&effective_settings),
                         conn.use_s3_regional_url_session_param().await,
                         conn.unsafe_file_write(),
                         conn.tls_config(),
