@@ -90,9 +90,10 @@ class TelemetryClient:
     def send_batch(self) -> None:
         """No-op: flush is owned by the Rust core (threshold + connection release).
 
-        On SIGTERM/SIGINT the driver flushes buffered telemetry automatically
-        via the connection-release path; SIGKILL cannot be intercepted and
-        in-buffer entries are lost (same behaviour as the legacy connector).
+        Only an explicit close() or normal process exit (atexit) reliably
+        flushes buffered telemetry. Neither this driver nor the legacy
+        connector installs a signal handler, so a killed process (SIGTERM or
+        SIGKILL) loses in-buffer entries — atexit does not run on signals.
         See ``tests/integ/telemetry/test_telemetry_crash_flush.py``.
 
         Kept for snowflake-cli API compatibility (``_app/telemetry.py``).
