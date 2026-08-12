@@ -1019,30 +1019,6 @@ behavior_differences:
       detail. Tests that need to compare or UUID-parse the value normalize through
       `str()` so they hold on both drivers. CONFIRMED from source (both connectors).
 
-  57:
-    name: "connection._telemetry add_log_to_batch/try_add_log_to_batch now send in-band telemetry"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `connection._telemetry` returned a throwaway no-op `TelemetryClient`; its
-      `add_log_to_batch` / `try_add_log_to_batch` methods did nothing, so
-      caller-produced in-band telemetry (e.g. Snowpark's) was silently discarded.
-    new_driver_behavior: |
-      `connection._telemetry` returns the live in-band telemetry client.
-      `add_log_to_batch` / `try_add_log_to_batch` forward entries to sf_core, which
-      batches them per session and POSTs `{"logs": [...]}` to `/telemetry/send`.
-      Gated by the `CLIENT_TELEMETRY_ENABLED` session parameter. Flush threshold
-      and egress are owned entirely by the Rust core's `SessionTelemetry`
-      (`sf_core/src/telemetry/session_telemetry.rs`).
-    description: |
-      Restores the legacy in-band log-telemetry path (SNOW-3774686) so Snowpark and
-      other consumers that call `connection._telemetry.try_add_log_to_batch(...)`
-      reach Snowflake again. The Python layer only emits entries; the core decides
-      when to flush.
-
   58:
     name: "TelemetryClient._log_batch buffer attribute not accessible"
     status: allowed
