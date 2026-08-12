@@ -14,6 +14,7 @@ use std::sync::Arc;
 #[napi]
 pub struct Connection {
     handle: Handle,
+    database_handle: Handle,
     /// TEMPORARY: Copied onto every [`Statement`] this connection creates.\
     session_parameters: HashMap<String, String>,
 }
@@ -26,6 +27,12 @@ impl Connection {
         env: &Env,
         session_parameters: HashMap<String, String>,
     ) -> Result<Self> {
+        let database_handle = DRIVER.database_new();
+        DRIVER.database_init(database_handle).map_err(|e| {
+            let _ = DRIVER.database_release(database_handle);
+            e.to_js_error(*env)
+        })?;
+
         let conn_handle = DRIVER.connection_new();
 
         // TODO: temporary conversion, proper options mapping will be done later
@@ -68,11 +75,13 @@ impl Connection {
         })
         .map_err(|e| {
             let _ = DRIVER.connection_release(conn_handle);
+            let _ = DRIVER.database_release(database_handle);
             e.to_js_error(*env)
         })?;
 
         Ok(Self {
             handle: conn_handle,
+            database_handle,
             session_parameters,
         })
     }
@@ -80,13 +89,9 @@ impl Connection {
     #[napi]
     pub fn connect(&self, env: &Env) -> Result<AsyncBlock<()>> {
         let handle = self.handle;
+        let database_handle = self.database_handle;
         async_to_js(env, async move {
-            // TODO:
-            // The _db_handle parameter is currently unused but required; passing a dummy value for now.
-            // This argument is planned for removal from connection_init in a future update.
-            DRIVER
-                .connection_init(None, handle, Handle { id: 0, magic: 0 })
-                .await
+            DRIVER.connection_init(None, handle, database_handle).await
         })
     }
 
@@ -133,9 +138,11 @@ impl Connection {
     #[napi]
     pub fn destroy(&self, env: &Env) -> Result<AsyncBlock<()>> {
         let handle = self.handle;
+        let database_handle = self.database_handle;
         async_to_js(env, async move {
             let close = DRIVER.connection_close(handle).await;
             let _ = DRIVER.connection_release(handle);
+            let _ = DRIVER.database_release(database_handle);
             close
         })
     }
