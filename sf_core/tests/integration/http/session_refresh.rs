@@ -101,38 +101,47 @@ async fn should_fail_when_refresh_returns_error() {
     server.await.unwrap();
 }
 
-/// GS 390114 on the refresh endpoint must surface the discriminable
-/// MasterTokenExpired variant (not the generic SessionRefreshFailed), so callers
-/// can mark the connection expired. Unit-level proof of the refresh_session mapping.
+/// GS 390113/390114/390115 on the refresh endpoint must all surface the
+/// discriminable MasterTokenExpired variant (not the generic
+/// SessionRefreshFailed), carrying the real GS code forward, so callers can
+/// mark the connection expired. Unit-level proof of the refresh_session mapping.
+/// Before this fix, only 390114 was special-cased here; 390113/390115 fell
+/// through to the generic SessionRefreshFailed error.
 #[tokio::test]
-async fn should_map_390114_to_master_token_expired() {
-    let (addr, attempts, server) = spawn_refresh_server(|_| async move {
-        let body = r#"{"success":false,"code":"390114","message":"Master token has expired"}"#;
-        format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        ).into_bytes()
-    }).await;
-
-    let client = reqwest::Client::new();
-    let server_url = format!("http://{}", addr);
-
-    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
-
-    let err = result.expect_err("390114 refresh must fail");
-    assert!(
-        matches!(
-            err,
-            RestError::InvalidSnowflakeResponse {
-                source: SnowflakeResponseError::MasterTokenExpired { .. },
-                ..
+async fn should_map_master_token_terminal_codes_to_master_token_expired() {
+    for code in [390113, 390114, 390115] {
+        let (addr, attempts, server) = spawn_refresh_server(move |_| {
+            let body = format!(
+                r#"{{"success":false,"code":"{code}","message":"Master token is no longer valid"}}"#
+            );
+            async move {
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                ).into_bytes()
             }
-        ),
-        "expected InvalidSnowflakeResponse{{MasterTokenExpired}}, got {err:?}"
-    );
-    assert_eq!(attempts.load(Ordering::SeqCst), 1);
-    server.await.unwrap();
+        }).await;
+
+        let client = reqwest::Client::new();
+        let server_url = format!("http://{}", addr);
+
+        let result =
+            refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+
+        let err = result.expect_err(&format!("{code} refresh must fail"));
+        match err {
+            RestError::InvalidSnowflakeResponse {
+                source: SnowflakeResponseError::MasterTokenExpired { code: got, .. },
+                ..
+            } => assert_eq!(got, code, "expected the real GS code to be preserved"),
+            other => {
+                panic!("expected InvalidSnowflakeResponse{{MasterTokenExpired}}, got {other:?}")
+            }
+        }
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        server.await.unwrap();
+    }
 }
 
 async fn spawn_refresh_server<F, Fut>(

@@ -281,3 +281,53 @@ async fn should_set_is_expired_when_refresh_returns_390114() {
         "is_expired must be true after the refresh endpoint returns GS 390114"
     );
 }
+
+/// Mirrors `should_set_is_expired_when_refresh_returns_390114`: GS
+/// 390113 (master token not found) and GS 390115 (master token invalid) must
+/// also mark the connection expired. Before this fix, only 390114 was
+/// special-cased in `read_response_json`/`refresh_session`; 390113/390115
+/// silently fell through to a generic, unremarked failure and never set
+/// `is_master_token_expired`.
+#[tokio::test]
+async fn should_set_is_expired_when_refresh_returns_390113_or_390115() {
+    for code in [390113, 390115] {
+        let server = MockServer::start().await;
+        mount_jwt_login_success(&server).await;
+
+        Mock::given(method("POST"))
+            .and(path_regex(r"/queries/v1/query-request.*"))
+            .respond_with(ResponseTemplate::new(401))
+            .named("query_401")
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/session/token-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": false,
+                "code": code.to_string(),
+                "message": "Master token is no longer valid."
+            })))
+            .named("refresh_master_token_terminal")
+            .mount(&server)
+            .await;
+
+        let server_uri = server.uri();
+        let is_expired = tokio::task::spawn_blocking(move || {
+            let client = SnowflakeTestClient::connect_integration_test(Some(&server_uri));
+            let query_result = client.execute_query_no_unwrap("SELECT 1");
+            assert!(
+                query_result.is_err(),
+                "query should fail once the master token is reported expired"
+            );
+            client.connection_is_expired_blocking().unwrap()
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            is_expired,
+            "is_expired must be true after the refresh endpoint returns GS {code}"
+        );
+    }
+}

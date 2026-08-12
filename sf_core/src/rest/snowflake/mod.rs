@@ -93,9 +93,30 @@ pub const SESSION_GONE: i32 = 390111;
 /// GS error code returned when the session token has expired.
 /// The caller must use the master token to obtain a fresh session token and retry.
 pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
+/// GS error code returned when the master token cannot be found server-side
+/// (e.g. it was evicted). Same terminal, non-renewable semantics as
+/// [`MASTER_TOKEN_EXPIRED`]. Matches legacy Python's `MASTER_TOKEN_NOTFOUND_GS_CODE`
+/// / JDBC's `MASTER_TOKEN_NOTFOUND`.
+pub const MASTER_TOKEN_NOT_FOUND: i32 = 390113;
 /// GS error code returned when the master token has expired.
 /// Full re-authentication is required; the session can never be renewed.
 pub const MASTER_TOKEN_EXPIRED: i32 = 390114;
+/// GS error code returned when the master token is invalid (e.g. malformed,
+/// or presented against the wrong session). Same terminal, non-renewable
+/// semantics as [`MASTER_TOKEN_EXPIRED`]. Matches legacy Python's
+/// `MASTER_TOKEN_INVALD_GS_CODE` (sic) / JDBC's `MASTER_TOKEN_INVALID_GS_CODE`.
+pub const MASTER_TOKEN_INVALID: i32 = 390115;
+/// GS error codes that all mean the master token can never be renewed and
+/// full re-authentication is required. Legacy Python/JDBC/ODBC treat
+/// 390113/390114/390115 as equivalent terminal signals for this purpose; the
+/// UD widens detection to all three — previously only 390114 was
+/// special-cased, so 390113/390115 silently fell through to a generic,
+/// unremarked failure on both the query-response and session-renewal paths.
+const MASTER_TOKEN_TERMINAL_CODES: [i32; 3] = [
+    MASTER_TOKEN_NOT_FOUND,
+    MASTER_TOKEN_EXPIRED,
+    MASTER_TOKEN_INVALID,
+];
 /// GS error code returned when the OAuth access token presented at login is
 /// invalid. Treated cross-driver as a signal to evict the cached access
 /// token and replay the OAuth flow.
@@ -1423,12 +1444,13 @@ pub async fn refresh_session(
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
         tracing::error!(code, message = %message, "Session refresh failed");
-        // GS 390114 on the refresh endpoint means the master token itself has
-        // expired: the session can never be renewed. Surface the discriminable
-        // MasterTokenExpired variant so callers can mark the connection expired,
-        // mirroring the query-response path in read_response_json.
-        if code == MASTER_TOKEN_EXPIRED {
-            return MasterTokenExpiredSnafu
+        // GS 390113/390114/390115 on the refresh endpoint all mean the master
+        // token can never be renewed (not found, expired, or invalid). Surface
+        // the discriminable MasterTokenExpired variant, carrying the real code,
+        // so callers can mark the connection expired, mirroring the
+        // query-response path in read_response_json.
+        if MASTER_TOKEN_TERMINAL_CODES.contains(&code) {
+            return MasterTokenExpiredSnafu { code }
                 .fail()
                 .context(InvalidSnowflakeResponseSnafu);
         }
@@ -2367,13 +2389,16 @@ where
         return SessionExpiredSnafu.fail();
     }
 
-    // 2xx with `success:false, code:"390114"` means the master token has expired.
-    // The session can never be renewed; surface it so RefreshContext can set
-    // `is_master_token_expired = true` and propagate `MasterTokenExpired` to the caller.
-    if !parsed.success
-        && parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) == Some(MASTER_TOKEN_EXPIRED)
-    {
-        return MasterTokenExpiredSnafu.fail();
+    // 2xx with `success:false, code:"390113"/"390114"/"390115"` means the master
+    // token can never be renewed (not found, expired, or invalid). Surface it so
+    // RefreshContext can set `is_master_token_expired = true` and propagate the
+    // real GS code via `MasterTokenExpired { code }` to the caller.
+    if !parsed.success {
+        if let Some(code) = parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) {
+            if MASTER_TOKEN_TERMINAL_CODES.contains(&code) {
+                return MasterTokenExpiredSnafu { code }.fail();
+            }
+        }
     }
 
     Ok(parsed)
@@ -2612,8 +2637,12 @@ pub enum SnowflakeResponseError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Master token expired - full re-authentication required (GS code 390114)"))]
+    #[snafu(display("Master token expired - full re-authentication required (GS code {code})"))]
     MasterTokenExpired {
+        /// The real GS code that triggered this (390113/390114/390115), preserved
+        /// so callers can surface it to end users (e.g. as `errno`/`vendor_code`)
+        /// instead of a generic, indistinguishable failure.
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },
@@ -3912,6 +3941,45 @@ mod tests {
             matches!(result, Err(SnowflakeResponseError::SessionExpired { .. })),
             "expected SessionExpired, got {result:?}"
         );
+    }
+
+    /// 2xx responses carrying `success:false, code:"390113"/"390114"/"390115"`
+    /// must all be surfaced as `MasterTokenExpired { code }`, carrying the real
+    /// GS code forward. Before this fix, 390113/390115 were not special-cased
+    /// at all and silently returned `Ok(parsed)` with `success:false` —
+    /// degrading to a generic, unremarked failure downstream. 390114 was
+    /// already handled; this proves the widened set and the preserved code.
+    #[tokio::test]
+    async fn read_response_json_maps_master_token_terminal_codes_to_master_token_expired() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        for code in [390113, 390114, 390115] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": false,
+                    "code": code.to_string(),
+                    "message": "Master token is no longer valid",
+                })))
+                .mount(&server)
+                .await;
+
+            let response = reqwest::Client::new()
+                .post(server.uri())
+                .send()
+                .await
+                .expect("mock request sends");
+
+            let result = read_response_json::<serde_json::Value>(response).await;
+            match result {
+                Err(SnowflakeResponseError::MasterTokenExpired { code: got, .. }) => {
+                    assert_eq!(got, code, "expected the real GS code to be preserved");
+                }
+                other => panic!("expected MasterTokenExpired{{code: {code}}}, got {other:?}"),
+            }
+        }
     }
 
     /// Non-2xx bodies can carry tokens in JSON `data`; the error Display must

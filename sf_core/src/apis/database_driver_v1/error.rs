@@ -116,8 +116,14 @@ pub enum ApiError {
         #[snafu(source(from(RestError, Box::new)))]
         source: Box<RestError>,
     },
-    #[snafu(display("Master token expired, full re-authentication required"))]
+    #[snafu(display("Master token expired, full re-authentication required (GS code {code})"))]
     MasterTokenExpired {
+        /// The real GS code (390113/390114/390115) that triggered this, or the
+        /// canonical [`crate::rest::snowflake::MASTER_TOKEN_EXPIRED`] when
+        /// detected client-side (e.g. a locally-tracked expiry deadline, with
+        /// no server round-trip). Preserved so it survives to the Python layer
+        /// as `errno`/`vendor_code` instead of a generic, indistinguishable one.
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },

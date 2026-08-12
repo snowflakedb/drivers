@@ -935,8 +935,12 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// Extract the Snowflake server vendor code and SQL state from an ApiError, if available.
 ///
 /// Only populates vendor_code/sql_state for query errors where the Snowflake server
-/// code is the user-facing error number.  Login errors use client-side error codes
-/// (mapped by the Python layer) so the server code is NOT surfaced here.
+/// code is the user-facing error number.  Login errors generally use client-side
+/// error codes (mapped by the Python layer) so the server code is NOT surfaced here
+/// — with one narrow, explicit exception: [`REAUTH_LOGIN_CODES`] below. Those are
+/// server-issued discriminants for a rejected cached credential at login time
+/// (mirroring the query-error carve-out already in place), not client-side
+/// classification, so surfacing them does not violate the general policy.
 ///
 /// SQLSTATE resolution order (first hit wins):
 ///   1. The `sqlState` the server included in its response (verbatim).
@@ -952,9 +956,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// rely on `sql_state` as the single source of truth for error
 /// classification.
 ///
-/// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
-/// New query-related error variants should be added here as they are
-/// introduced.
+/// NOTE: currently handles `QueryFailed`, `AsyncQuery`, `MasterTokenExpired`,
+/// and (narrowly) `Login` variants only. New query-related error variants
+/// should be added here as they are introduced.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
     let (code, sql_state) = match error {
         ApiError::Query { source, .. } => match source.as_ref() {
@@ -967,6 +971,20 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
             } => (Some(*code), None),
             _ => (None, None),
         },
+        // Mid-session master-token-terminal codes (390113/390114/390115): the
+        // server code IS the user-facing discriminant here (there is no SQL
+        // error to distinguish it from), so surface it directly.
+        ApiError::MasterTokenExpired { code, .. } => (Some(*code), None),
+        // Login-time cached-credential rejection, narrowly scoped to the
+        // reauth-relevant codes (see REAUTH_LOGIN_CODES). Every other
+        // ApiError::Login (bad password, etc.) deliberately keeps falling to
+        // (None, None) — this is not a blanket policy change.
+        ApiError::Login { source, .. } => match source.as_ref() {
+            RestError::LoginError { code, .. } if REAUTH_LOGIN_CODES.contains(code) => {
+                (Some(*code), None)
+            }
+            _ => (None, None),
+        },
         _ => (None, None),
     };
 
@@ -974,6 +992,16 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
 
     (code, sql_state)
 }
+
+/// GS codes that, when returned as the *terminal* login failure (i.e. after the
+/// existing evict-and-retry ladder in `snowflake_login_with_client` gives up),
+/// indicate a cached credential was rejected and re-authentication (a new
+/// connection) is required. Matches legacy Python's own `auth/_auth.py` set:
+/// `390195` (cached ID token rejected), `390303`/`390318` (cached OAuth access
+/// token invalid/expired). Deliberately narrow — every other `ApiError::Login`
+/// (bad password, locked account, etc.) is not in this set and keeps mapping to
+/// `(None, None)` in [`extract_vendor_info`].
+const REAUTH_LOGIN_CODES: [i32; 3] = [390195, 390303, 390318];
 
 fn extract_query_id(error: &ApiError) -> Option<String> {
     match error {
@@ -1301,6 +1329,68 @@ mod tests {
     #[test]
     fn missing_code_and_sql_state_stays_none() {
         let err = query_failed(None, None);
+        assert_eq!(extract_vendor_info(&err), (None, None));
+    }
+
+    fn master_token_expired(code: i32) -> ApiError {
+        ApiError::MasterTokenExpired {
+            code,
+            location: loc(),
+        }
+    }
+
+    fn login_error(code: i32) -> ApiError {
+        ApiError::Login {
+            location: loc(),
+            source: Box::new(RestError::LoginError {
+                message: "test".to_owned(),
+                code,
+                location: loc(),
+            }),
+        }
+    }
+
+    #[test]
+    fn master_token_expired_390113_surfaces_vendor_code() {
+        let err = master_token_expired(390113);
+        assert_eq!(extract_vendor_info(&err), (Some(390113), None));
+    }
+
+    #[test]
+    fn master_token_expired_390114_surfaces_vendor_code() {
+        let err = master_token_expired(390114);
+        assert_eq!(extract_vendor_info(&err), (Some(390114), None));
+    }
+
+    #[test]
+    fn master_token_expired_390115_surfaces_vendor_code() {
+        let err = master_token_expired(390115);
+        assert_eq!(extract_vendor_info(&err), (Some(390115), None));
+    }
+
+    #[test]
+    fn login_reauth_code_390195_surfaces_vendor_code() {
+        let err = login_error(390195);
+        assert_eq!(extract_vendor_info(&err), (Some(390195), None));
+    }
+
+    #[test]
+    fn login_reauth_code_390303_surfaces_vendor_code() {
+        let err = login_error(390303);
+        assert_eq!(extract_vendor_info(&err), (Some(390303), None));
+    }
+
+    #[test]
+    fn login_reauth_code_390318_surfaces_vendor_code() {
+        let err = login_error(390318);
+        assert_eq!(extract_vendor_info(&err), (Some(390318), None));
+    }
+
+    #[test]
+    fn login_non_reauth_code_stays_none() {
+        // Regression guard: the REAUTH_LOGIN_CODES carve-out must not leak to
+        // every other login failure (e.g. bad password, GS code 390100).
+        let err = login_error(390100);
         assert_eq!(extract_vendor_info(&err), (None, None));
     }
 
