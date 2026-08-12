@@ -3,10 +3,14 @@
 ``SecretDetector`` is imported unconditionally by Snowpark's telemetry mock; the
 Universal Driver ships it only for that parity. These tests port the full legacy
 ``snowflake-connector-python`` masking-behavior suite (``test_log_secret_detector.py``
-and ``test_oob_secret_detector.py``) verbatim, plus the AWS-token cases from the
-legacy .NET driver's ``SecretDetectorTest.TestAWSTokens`` (the ``AWS_TOKEN_PATTERN``
-masker has no legacy Python test at all). The once-per-process deprecation warning
-on import is covered separately in ``test_backward_compatibility_warnings.py``.
+and ``test_oob_secret_detector.py``) verbatim, plus cases ported from other legacy
+drivers for masking gaps that legacy Python itself never covered: AWS-token masking
+(from .NET's ``TestAWSTokens``), OAuth-token JSON masking (from JDBC's
+``OAUTH_JSON_PATTERN``), OAuth-client-secret and passcode/OTP/PIN masking (from
+Node.js), the version/hint-prefixed session-token wire format, and the
+``PASSWORD_PATTERN`` false-positive fix (from .NET/JDBC's ``{6,}`` floor). The
+once-per-process deprecation warning on import is covered separately in
+``test_backward_compatibility_warnings.py``.
 """
 
 from __future__ import annotations
@@ -76,6 +80,18 @@ class TestMaskSecrets:
         assert masked
         assert err_str is None
         assert masked_text == "password=****"
+
+    def test_password_false_positives_are_not_masked(self):
+        """``PASSWORD_PATTERN``'s value floor is 6 chars (not 1) so a short common word
+        right after a bare ``password``/``pwd`` keyword isn't mistaken for the secret
+        itself; matches legacy .NET/JDBC's floor and ``TestPasswordFalsePositive``."""
+        for text in (
+            "2020-04-30 23:06:04,069 - MainThread auth.py:397"
+            " - write_temporary_credential() - DEBUG - no ID password was not given",
+            "2020-04-30 23:06:04,069 - MainThread auth.py:397"
+            " - write_temporary_credential() - DEBUG - no ID proxyPassword was not given",
+        ):
+            _assert_not_masked(text)
 
     def test_aws_key_is_masked(self):
         sql = (
@@ -369,6 +385,60 @@ class TestMaskSecrets:
         filtered_text = '"privateKeyData": "XXXX"'
         _, result, _ = SecretDetector.mask_secrets(text)
         assert result == filtered_text
+
+    def test_session_token_wire_format_is_masked(self):
+        """``CONNECTION_TOKEN_PATTERN``'s value class includes ':' and '%' so a
+        version/hint-prefixed session token -- Snowflake's actual wire format --
+        masks in full instead of stopping at the first ':'; matches legacy
+        Node.js's fix for the same gap."""
+        masked, masked_text, err_str = SecretDetector.mask_secrets("token=ver:1-hint:1036-abcd1234efgh5678")
+        assert masked
+        assert err_str is None
+        assert masked_text == "token=****"
+
+    def test_oauth_tokens_are_masked(self):
+        """``OAUTH_TOKEN_PATTERN`` has no legacy Python equivalent; ported from
+        legacy JDBC's ``OAUTH_JSON_PATTERN`` / ``testMaskOAuthSecrets``."""
+        masked, masked_text, err_str = SecretDetector.mask_secrets('"access_token" : "some:FAKE_token123"')
+        assert masked
+        assert err_str is None
+        assert masked_text == '"access_token":"XXXX"'
+
+        masked, masked_text, err_str = SecretDetector.mask_secrets('"refresh_token" : "some:FAKE_token123"')
+        assert masked
+        assert err_str is None
+        assert masked_text == '"refresh_token":"XXXX"'
+
+    def test_oauth_client_secrets_are_masked(self):
+        """``OAUTH_CLIENT_SECRET_PATTERN`` has no legacy Python equivalent; ported
+        from legacy Node.js's ``OAUTH_CLIENT_SECRET_PATTERN``."""
+        masked, masked_text, err_str = SecretDetector.mask_secrets("oauthClientSecret: aVeryLongSecretValue123")
+        assert masked
+        assert err_str is None
+        assert masked_text == "oauthClientSecret: ****"
+
+        masked, masked_text, err_str = SecretDetector.mask_secrets("clientSecret=anotherLongSecretValue456")
+        assert masked
+        assert err_str is None
+        assert masked_text == "clientSecret=****"
+
+    def test_passcodes_are_masked(self):
+        """``PASSCODE_PATTERN`` has no legacy Python equivalent; ported from legacy
+        Node.js's ``PASSCODE_PATTERN`` (covers passcode/otp/pin/otac, 4-6 digits)."""
+        masked, masked_text, err_str = SecretDetector.mask_secrets("passcode: 123456")
+        assert masked
+        assert err_str is None
+        assert masked_text == "passcode:****"
+
+        masked, masked_text, err_str = SecretDetector.mask_secrets("otp=987654")
+        assert masked
+        assert err_str is None
+        assert masked_text == "otp=****"
+
+        masked, masked_text, err_str = SecretDetector.mask_secrets("pin = 4321")
+        assert masked
+        assert err_str is None
+        assert masked_text == "pin=****"
 
 
 class TestMaskSecretsExceptionHandling:
