@@ -399,6 +399,8 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
 
 /// `request_id` is `None` only for `connection_get_query_result`, which fetches
 /// results for an already-executed query and never generates a new submission UUID.
+/// Leaving it `None` there matches legacy `get_results_from_sfqid`, which never
+/// set `_request_id` on the outer cursor.
 impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     fn from(result: NativeExecuteQueryResult) -> Self {
         let (proto_result, request_id) = match result {
