@@ -1343,11 +1343,12 @@ behavior_differences:
     description: |
       Applications using ODBC 2.x field identifiers with the 3.x function will now
       receive correct values.
+
   81:
     name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Deliberate security hardening (SNOW-3663588). Accepted as a divergence from the old driver
       because HTTPS on the OAuth authorization/token endpoints is already required by RFC 6749
@@ -1372,7 +1373,7 @@ behavior_differences:
     name: "PUT expands a leading ~ / ~/ in local source paths to the home directory"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Aligns the universal driver with JDBC and the Python connector, both of which expand a leading `~` in PUT source paths. The legacy ODBC driver (libsnowflakeclient) never did client-side `~` expansion, so adding it only enables previously-failing commands to succeed; no existing caller that passed an absolute or relative path is affected.
     is_breaking_change: false
@@ -1385,9 +1386,9 @@ behavior_differences:
       Reference: JDBC `SnowflakeFileTransferAgent.expandFileNames` (leading-`~` replacement) and Python `file_transfer_agent.py` (`os.path.expanduser`). The `~user` (named-user) form is not expanded by the universal driver; only the bare `~` and `~/` leading forms are. This differs from Python's `os.path.expanduser`, which additionally resolves `~user` via the password database; it matches the leading-only intent of JDBC. Applications that relied on the legacy ODBC behavior of treating a leading `~` literally will now have it expanded.
   83:
     name: "OAuth IdP token-exchange rejection returns SQLSTATE 28000 instead of generic HY000"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       The new driver classifies an IdP-side credential rejection (bad client secret during the
       OAuth Authorization Code / Client Credentials token-exchange step) as an authentication
@@ -1405,9 +1406,9 @@ behavior_differences:
       Credentials connection will now see 28000 instead of HY000.
   84:
     name: "PASSCODEINPASSWORD accepts on/true/1 instead of only on"
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       The legacy ODBC driver only enables passcode-in-password when the connection-string value
       is the literal "on" (case-insensitive); any other value, including "true" or "1", is
@@ -1429,10 +1430,11 @@ behavior_differences:
       failed on the legacy driver. Tests use the value "on", which both drivers accept, to keep
       the shared e2e flow running against either driver.
   85:
+    #TODO: Align with other wrappers to set it true by default (?)
     name: "OAuth Authorization Code token caching default differs from legacy ODBC (platform-dependent across reference drivers)"
-    status: unknown
-    type: enhancement
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
     status_rationale: |
       OAuth token caching for the Authorization Code flow is gated by
       CLIENT_STORE_TEMPORARY_CREDENTIAL, but the default varies by driver and platform. Legacy
@@ -1468,9 +1470,11 @@ behavior_differences:
   86:
     name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
     status: allowed
-    type: bug
-    reviewed: false
+    type: bugfix
+    reviewed: true
     impact: high
+    status_rationale: |
+      The cancel should clear all data.
     is_breaking_change: true
     old_driver_behavior: |
       When SQLCancel is called from S10 (PutDataCalled) during a data-at-execution sequence, the old driver retains accumulated SQLPutData data. If the application re-enters DAE and provides new data, the final parameter value is the concatenation of the old and new chunks.
@@ -1478,11 +1482,12 @@ behavior_differences:
       SQLCancel from any DAE state (S8/S9/S10) fully resets the pending operation, discarding all accumulated SQLPutData. On re-entry the parameter starts fresh, matching the ODBC 3.5 spec requirement that cancel aborts the pending operation.
     description: |
       Applications that cancel mid-DAE and retry will get clean parameter values instead of stale concatenated data.
+
   87:
     name: "SQLPrimaryKeys/SQLForeignKeys case-fold unquoted identifiers in identifier mode"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
       ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
@@ -1506,13 +1511,16 @@ behavior_differences:
       identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
       split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
       legacy empty result set).
+
   88:
     name: "SQLForeignKeys resolves NULL FK catalog and schema from connection context"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
+    status_rationale: |
+      This is a parameter gating correct behavior. It's worth dropping it to have better consistency with the ODBC API.
     old_driver_behavior: |
       When only FKTableName is supplied with NULL FKCatalogName and NULL FKSchemaName, the reference
       driver's result depends on the account's CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX session
@@ -1527,12 +1535,15 @@ behavior_differences:
     description: |
       Aligns FK-side identifier resolution with SQLPrimaryKeys and the ODBC catalog-function contract
       for ordinary (non-pattern) arguments.
+
   89:
     name: "SQLForeignKeys metadata_id=TRUE allows NULL identifiers on the unspecified side"
-    status: unknown
-    type: bugfix
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
     is_breaking_change: true
+    status_rationale: |
+      According to the ODBC specification, it is in DM's role to verify the provided null pointers, but unixODBC nor iODBC does that. We should readd the check to have the consistency.
     impact: low
     old_driver_behavior: |
       With SQL_ATTR_METADATA_ID=SQL_TRUE, a single-sided PK-table query that leaves the entire FK
@@ -1548,9 +1559,10 @@ behavior_differences:
       The reference driver over-validates the unspecified FK side. On Windows the Driver Manager
       enforces the identifier null check itself (documented as a "(DM)" diagnostic in the MS ODBC
       reference), so the improvement is observable only on unixODBC/iODBC.
+
   90:
     name: "SQLForeignKeys treats an empty-string PK/FK table as absent for SHOW side selection"
-    status: unknown
+    status: allowed
     type: bugfix
     reviewed: false
     status_rationale: |
@@ -1558,7 +1570,7 @@ behavior_differences:
       name. The universal driver treats an empty-string table name the same as an absent (NULL) one,
       so an empty PKTableName with a populated FKTableName resolves to the FK side (SHOW IMPORTED KEYS
       scoped to the FK table), consistent with how build_show_in_scope treats empty identifiers as "no
-      filter". Tracked under SNOW-3234773.
+      filter".
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -1571,6 +1583,7 @@ behavior_differences:
       Callers that passed an empty PKTableName alongside a real FKTableName and relied on the legacy
       empty result set will now receive the FK relationship. The odbc-api test splits the assertion
       (NEW_DRIVER_ONLY expects the row, OLD_DRIVER_ONLY expects the legacy empty result set).
+
   91:
     name: "SQLProcedures/SQLProcedureColumns case-fold unquoted identifiers in identifier mode"
     status: unknown
