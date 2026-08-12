@@ -71,12 +71,12 @@ TEST_CASE_METHOD(EnvFixture, "SQLFreeHandle: HY010 - Cannot free environment wit
 }
 
 TEST_CASE("SQLFreeHandle: Double free environment handle", "[odbc-api][freehandle][terminating_connection][error]") {
-  // Under iODBC the second SQLFreeHandle on a freed env handle aborts inside the
-  //   old driver's per-handle cleanup callback (Subprocess aborted), and the
-  //   subsequent probe-invalid-handle path observes a stale-but-still-addressable
-  //   env slot returned as SQL_SUCCESS instead of SQL_INVALID_HANDLE. The new
-  //   driver coordinates with iODBC's alloc table correctly (see BD#59).
-  SKIP_OLD_IODBC("BD#59", "old driver aborts on double-free of env handle inside iODBC's handle-dispatch path");
+  // No SQLConnect here, so no driver is loaded — the whole env lifecycle lives
+  //   in iODBC's DriverManager (GENV). The second SQLFreeHandle(ENV) is decided
+  //   entirely by iODBC, which returns SQL_SUCCESS instead of SQL_INVALID_HANDLE
+  //   for both drivers. This is an iODBC DM limitation, not a driver behavior
+  //   difference. unixODBC / Windows return SQL_INVALID_HANDLE.
+  SKIP_IODBC("iODBC DM mishandles double-free of env handle, driver not in the loop (both drivers)");
 
   // Allocate and free environment
   SQLHENV env = SQL_NULL_HENV;
@@ -183,7 +183,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free connection ha
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  SQLHDBC dbc = dbc_handle();
+  const SQLHDBC dbc = dbc_handle();
   ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc);
   REQUIRE(ret == SQL_SUCCESS);
   release_dbc();
