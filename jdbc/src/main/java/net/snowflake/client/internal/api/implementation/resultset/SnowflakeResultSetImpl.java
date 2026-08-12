@@ -29,6 +29,7 @@ import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.Decorators;
+import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.DecoratedSnowflakeResultSetMetaDataImpl;
@@ -808,7 +809,8 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public Clob getClob(int columnIndex) {
-    throw new SFSQLFeatureNotSupportedException("getClob not supported");
+    String value = getString(columnIndex);
+    return value == null ? null : new SnowflakeClob(value);
   }
 
   @Override
@@ -834,7 +836,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public Clob getClob(String columnLabel) {
-    throw new NotImplementedException();
+    return getClob(findColumn(columnLabel));
   }
 
   @Override
