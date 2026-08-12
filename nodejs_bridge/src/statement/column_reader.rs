@@ -1,4 +1,4 @@
-use arrow::array::{Array, BooleanArray, StringArray};
+use arrow::array::{Array, BinaryArray, BooleanArray, StringArray};
 use arrow::compute::cast;
 use arrow::datatypes::{DataType, Field};
 
@@ -13,6 +13,7 @@ use crate::sql_value::SqlValue;
 ///   [`SqlValue::Null`]).
 pub(crate) enum ColumnReader {
     Boolean(BooleanArray),
+    Binary(BinaryArray),
     Fixed(StringArray),
 }
 
@@ -29,6 +30,16 @@ impl ColumnReader {
                         "Arrow column could not be downcast to BooleanArray".to_string()
                     })?;
                 Ok(Self::Boolean(array))
+            }
+            Some("BINARY") => {
+                let array = column
+                    .as_any()
+                    .downcast_ref::<BinaryArray>()
+                    .cloned()
+                    .ok_or_else(|| {
+                        "Arrow column could not be downcast to BinaryArray".to_string()
+                    })?;
+                Ok(Self::Binary(array))
             }
             Some("FIXED") => {
                 // TODO: temporary string casting. We need to figure out how to handle precision loss.
@@ -58,6 +69,9 @@ impl ColumnReader {
             Self::Boolean(array) => {
                 read_cell(array, row_index, || SqlValue::Bool(array.value(row_index)))
             }
+            Self::Binary(array) => read_cell(array, row_index, || {
+                SqlValue::Binary(array.value(row_index).to_vec())
+            }),
             Self::Fixed(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())
             }),

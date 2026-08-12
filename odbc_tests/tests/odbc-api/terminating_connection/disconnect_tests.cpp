@@ -71,8 +71,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Autocommit OFF after comm
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Can reconnect after disconnect",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Connect, disconnect, reconnect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -93,10 +91,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Can reconnect after disco
   REQUIRE(ret == SQL_SUCCESS);
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Idempotency of multiple disconnects",
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Second disconnect returns 08003 error",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Connect first
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -118,8 +114,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Idempotency of multiple d
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Closes open statements automatically",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Connect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -259,8 +253,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Explicit BEGIN TRANSACTIO
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With active result sets",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Connect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -296,16 +288,12 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With active result sets",
 
 TEST_CASE("SQLDisconnect: SQL_INVALID_HANDLE for null connection handle",
           "[odbc-api][disconnect][terminating_connection][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLRETURN ret = SQLDisconnect(SQL_NULL_HDBC);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
 TEST_CASE_METHOD(EnvFixture, "SQLDisconnect: SQL_INVALID_HANDLE for wrong handle type",
                  "[odbc-api][disconnect][terminating_connection][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Pass environment handle as connection handle
   const SQLRETURN ret = SQLDisconnect(env_handle());
   REQUIRE(ret == SQL_INVALID_HANDLE);
@@ -313,8 +301,6 @@ TEST_CASE_METHOD(EnvFixture, "SQLDisconnect: SQL_INVALID_HANDLE for wrong handle
 
 TEST_CASE_METHOD(DbcFixture, "SQLDisconnect: 08003 - Connection not open when not connected",
                  "[odbc-api][disconnect][terminating_connection][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Try to disconnect without connecting first
   // 08003: Connection not open
   const SQLRETURN ret = SQLDisconnect(dbc_handle());
@@ -327,8 +313,6 @@ TEST_CASE_METHOD(DbcFixture, "SQLDisconnect: 08003 - Connection not open when no
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: After failed connection attempt",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Attempt to connect with invalid credentials
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar("InvalidDSN"), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_ERROR);
@@ -343,8 +327,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With multiple statement h
   SKIP_OLD_IODBC("BD#59",
                  "old driver SQLDisconnect leaves per-statement entries valid in iODBC's alloc table; "
                  "freeing them afterwards SIGSEGVs inside the driver's per-statement cleanup path");
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Connect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -368,8 +350,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With multiple statement h
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Preserves connection handle for reuse",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Connect, disconnect, verify handle can be reused
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -379,11 +359,10 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Preserves connection hand
 
   SQLUINTEGER timeout = 0;
   ret = SQLGetConnectAttr(dbc_handle(), SQL_ATTR_CONNECTION_TIMEOUT, &timeout, 0, nullptr);
-  OLD_IODBC_ONLY("BD#64") {
-    // iODBC + old driver keeps connection-attribute reads working after
-    //   SQLDisconnect (it serves them from the cached DM-side state) instead
-    //   of failing with SQL_ERROR the way unixODBC + old and the new driver
-    //   under iODBC both do.
+  IODBC_ONLY {
+    // iODBC serves connection-attribute reads from its DM-side cache after
+    //   SQLDisconnect for both drivers (SQL_SUCCESS) instead of the
+    //   spec-mandated SQL_ERROR asserted on unixODBC / Windows (BD#64).
     REQUIRE(ret == SQL_SUCCESS);
   }
   else {
