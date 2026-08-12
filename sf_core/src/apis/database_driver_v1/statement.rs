@@ -295,8 +295,7 @@ impl DatabaseDriverV1 {
                 }
                 .fail();
             };
-            let stream = self.result_set_get_stream(rs_info.handle).await?;
-            self.result_set_release(rs_info.handle)?;
+            let stream = self.result_set_take_stream(rs_info.handle).await?;
 
             Ok(PrepareResult {
                 stream,
