@@ -3531,3 +3531,25 @@ class TestAsyncExecuteStatementParams:
         ):
             asyncio.run(cursor.execute("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"}))
         assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
+
+    def test_num_statements_wins_over_statement_params_collision(self, cursor):
+        # Driver fold-in (num_statements) must override a caller-supplied
+        # MULTI_STATEMENT_COUNT -- matches legacy (which spreads it last).
+        captured = {}
+
+        async def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return MagicMock()
+
+        with (
+            patch.object(cursor, "_execute", new=AsyncMock(side_effect=side_effect)),
+            patch.object(cursor, "reset", new=AsyncMock()),
+        ):
+            asyncio.run(
+                cursor.execute(
+                    "SELECT 1; SELECT 2",
+                    num_statements=2,
+                    _statement_params={StatementParameterName.MULTI_STATEMENT_COUNT: 5},
+                )
+            )
+        assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 2

@@ -215,8 +215,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             num_statements=num_statements,
             statement_params=_statement_params,
         )
-        if _statement_params:
-            statement_parameters.update(_statement_params)
 
         self.reset()
         return self._execute(
