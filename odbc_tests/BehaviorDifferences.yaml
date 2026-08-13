@@ -1214,22 +1214,20 @@ behavior_differences:
       Applications binding interval literals as SQL_C_CHAR/SQL_C_WCHAR to SQL_INTERVAL_* parameters now succeed on the new driver instead of receiving an HY000 bind-variable error.
 
   74:
-    #TODO: Verify with the Product; this seems to be a spec-correct, but is a big shift
     name: "Binding a SQL_C_CHAR/WCHAR character literal as SQL_TYPE_TIMESTAMP shifts the stored wall-clock value by a timezone offset on the old driver"
-    status: unknown
-    type: bugfix
-    reviewed: true
+    status: fixed
+    type: bug
+    reviewed: false
     status_rationale: |
-      SQL_TYPE_TIMESTAMP routes to TIMESTAMP_NTZ, a timezone-naive type, so the bound wall-clock value must be stored verbatim. The old driver applying a timezone offset is the bug; the new driver storing the literal unchanged is the spec-correct behavior.
-    is_breaking_change: true
+      Realigned to the legacy driver. The new driver originally stored the wall-clock verbatim (treating TIMESTAMP_NTZ as strictly timezone-naive on the bind side), which diverged from the legacy driver's host-/session-timezone-dependent offset. Routing every SQL_TYPE_TIMESTAMP -> TIMESTAMP_NTZ bind through the wall-clock/TEXT path (exactly as TIMESTAMP_LTZ already did) restores the legacy semantics and eliminates the old-vs-new delta.
+    is_breaking_change: false
     impact: high
     old_driver_behavior: |
-      Binding a character C source (SQL_C_CHAR / SQL_C_WCHAR) with ParameterType SQL_TYPE_TIMESTAMP into a TIMESTAMP_NTZ column applies a timezone offset to the wall-clock value before it is stored: e.g. the literal "2024-01-15 14:30:45" is read back as "2024-01-15 06:30:45" (an 8-hour shift observed on the UTC CI hosts whose session TIMEZONE resolves to a -8h offset). The exact shift is environment-dependent (driven by client/session timezone), which makes char -> TIMESTAMP_NTZ binds non-deterministic across hosts.
+      Binding a timestamp value as SQL_TYPE_TIMESTAMP (any C source: SQL_C_CHAR / SQL_C_WCHAR character literal, SQL_C_TYPE_TIMESTAMP struct, or SQL_C_BINARY) into a TIMESTAMP_NTZ column sends the bare wall-clock as a TEXT bind and lets the server attach the session TIMEZONE offset. Under a non-UTC session the stored value is shifted: e.g. "2024-01-15 14:30:45" bound under a session whose TIMEZONE resolves to -8h is stored/read back as "2024-01-15 06:30:45". The shift is session-/host-dependent.
     new_driver_behavior: |
-      The character literal is forwarded verbatim and stored as the exact wall-clock value with no timezone adjustment, as required for the timezone-naive TIMESTAMP_NTZ target. "2024-01-15 14:30:45" round-trips unchanged regardless of host or session timezone.
+      Realigned to the legacy driver: the new driver again binds SQL_TYPE_TIMESTAMP as a wall-clock TEXT value and lets the server apply the session TIMEZONE offset for the TIMESTAMP_NTZ target, so the stored value matches the legacy driver on every host. (The earlier behavior that bound NTZ as epoch-nanoseconds tagged type=TIMESTAMP_NTZ and stored the wall-clock verbatim regardless of session timezone has been reverted; this entry is now status: fixed.)
     description: |
-      Spec reference: ODBC Appendix D lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for SQL_TYPE_TIMESTAMP; TIMESTAMP_NTZ is timezone-naive so no offset should be applied. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
-      Applications binding character timestamp literals as SQL_TYPE_TIMESTAMP now get the wall-clock value they supplied, instead of a host-/session-timezone-shifted value.
+      Regression realigned to legacy. Binding any timestamp as SQL_TYPE_TIMESTAMP into TIMESTAMP_NTZ again applies the session TIMEZONE offset on both drivers, matching the legacy 3.16.0 behavior. Tests that assert a verbatim round-trip pin TIMEZONE='UTC' so the offset is zero. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
 
   75:
     name: "SQLGetInfo(SQL_DRIVER_NAME) returns the driver's installed file path instead of a fixed identifier"

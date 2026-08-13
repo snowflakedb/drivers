@@ -129,6 +129,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BINARY timestamp struct t
   const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
   CAPTURE(sql_type);
 
+  // NTZ binds as wall-clock TEXT and the server applies the session TIMEZONE
+  // offset; pin UTC so the stored value equals the bound wall-clock.
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
+
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
@@ -156,6 +160,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BINARY timestamp with fra
   SKIP_OLD_DRIVER("BD#46", "Old driver does not support SQL_C_BINARY as source for SQL_TYPE_TIMESTAMP");
   const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
   CAPTURE(sql_type);
+
+  // NTZ binds as wall-clock TEXT and the server applies the session TIMEZONE
+  // offset; pin UTC so the stored value equals the bound wall-clock.
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
 
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
