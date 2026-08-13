@@ -146,8 +146,9 @@ pub fn extract_crl_number(crl_der: &[u8]) -> Result<Option<u128>, X509Error> {
     Ok(None)
 }
 
-// CRL signature verification using issuer public key
-// Returns Ok(()) if verification passes or issuer is None; Err otherwise.
+// CRL signature verification using issuer public key.
+// Returns Ok(()) if verification passes. Returns Err if issuer_der is None,
+// if the issuer name does not match the CRL issuer, or if the signature check fails.
 pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result<(), CrlError> {
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     let _sig = crl.signature.as_bytes().context(InvalidCrlSignatureSnafu)?;
