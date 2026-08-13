@@ -14,6 +14,9 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     LoginError as ProtoLoginError,
 )
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ReauthenticationRequiredError as ProtoReauthenticationRequiredError,
+)
 from snowflake.connector._internal.status_codes import (
     STATUS_CODE_AUTHENTICATION_ERROR,
     STATUS_CODE_INTERNAL_ERROR,
@@ -580,10 +583,12 @@ class TestConvertProtoError:
         assert result.errno == 100072
         assert result.sqlstate == "23000"
 
-    def test_application_exception_master_token_expired_vendor_codes_map_to_reauth_error(self):
+    def test_application_exception_master_token_expired_constructs_reauth_error_type(self):
         """Mid-session master-token-terminal GS codes (390113/390114/390115)
-        must all map to ReauthenticationRequiredError, with the real GS code
-        preserved as errno."""
+        arrive as a dedicated ReauthenticationRequiredError message (not
+        AuthenticationError/vendor_code) and must all map to Python's
+        ReauthenticationRequiredError, with the real GS code preserved as
+        errno."""
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
         )
@@ -592,7 +597,12 @@ class TestConvertProtoError:
             driver_exc = ProtoDriverException(
                 message="Master token is no longer valid",
                 status_code=STATUS_CODE_AUTHENTICATION_ERROR,
-                vendor_code=code,
+                error=ProtoDriverError(
+                    reauthentication_required_error=ProtoReauthenticationRequiredError(
+                        message="Master token is no longer valid",
+                        code=code,
+                    )
+                ),
             )
             proto_exc = ProtoApplicationException(driver_exc)
 
@@ -604,11 +614,17 @@ class TestConvertProtoError:
             assert isinstance(result, DatabaseError)
             assert isinstance(result, Error)
             assert result.errno == code
+            # Regression guard: the dedicated error_type case must be added
+            # to _derive_sqlstate's tuple alongside login_error/auth_error —
+            # this silently regressed to None once before.
+            assert result.sqlstate == "08001"
 
-    def test_application_exception_login_time_reauth_vendor_codes_map_to_reauth_error(self):
+    def test_application_exception_login_time_reauth_constructs_reauth_error_type(self):
         """Login-time cached-credential-rejection GS codes (390195/390303/390318),
-        surfaced after the driver's own retry ladder is exhausted, must also map
-        to ReauthenticationRequiredError."""
+        surfaced after the driver's own retry ladder is exhausted, arrive as
+        the same dedicated ReauthenticationRequiredError message as the
+        mid-session case — a single unified type regardless of trigger — and
+        must also map to Python's ReauthenticationRequiredError."""
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
         )
@@ -617,7 +633,12 @@ class TestConvertProtoError:
             driver_exc = ProtoDriverException(
                 message="Cached credential was rejected",
                 status_code=STATUS_CODE_LOGIN_ERROR,
-                vendor_code=code,
+                error=ProtoDriverError(
+                    reauthentication_required_error=ProtoReauthenticationRequiredError(
+                        message="Cached credential was rejected",
+                        code=code,
+                    )
+                ),
             )
             proto_exc = ProtoApplicationException(driver_exc)
 
@@ -627,17 +648,11 @@ class TestConvertProtoError:
             )
             assert result.errno == code
 
-    def test_reauth_vendor_code_is_catchable_as_legacy_reauthentication_request(self):
+    def test_reauth_error_is_catchable_as_legacy_reauthentication_request(self):
         """Regression guard: a driver-raised reauth error must be catchable
         by `except ReauthenticationRequest` — the exact legacy type name real
         consumers like Snowpark's server_connection.py catch — not just by
-        its ReauthenticationRequiredError base. This is deliberately an
-        end-to-end proto-conversion test (not a direct-instantiation test)
-        because the bug this guards against was in which class
-        VENDOR_CODE_TO_EXCEPTION maps to, not in the class hierarchy itself:
-        isinstance(result, ReauthenticationRequiredError) alone stayed true
-        even when the driver raised the base class and this except clause
-        would have silently failed to fire."""
+        its ReauthenticationRequiredError base."""
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
         )
@@ -646,7 +661,12 @@ class TestConvertProtoError:
         driver_exc = ProtoDriverException(
             message="Master token is no longer valid",
             status_code=STATUS_CODE_AUTHENTICATION_ERROR,
-            vendor_code=390114,
+            error=ProtoDriverError(
+                reauthentication_required_error=ProtoReauthenticationRequiredError(
+                    message="Master token is no longer valid",
+                    code=390114,
+                )
+            ),
         )
         proto_exc = ProtoApplicationException(driver_exc)
 
@@ -662,24 +682,23 @@ class TestConvertProtoError:
             )
 
     def test_application_exception_bad_password_login_error_unaffected(self):
-        """A non-reauth login failure (e.g. bad password, GS 390100) must keep
-        mapping to the generic DatabaseError, not ReauthenticationRequiredError —
-        the new vendor_code entries must not leak beyond their narrow set."""
+        """A non-reauth login failure (e.g. bad password, GS 390100) — a
+        plain LoginError, not the dedicated ReauthenticationRequiredError
+        type — must keep mapping to the generic DatabaseError."""
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
         )
 
-        driver_exc = MagicMock()
-        driver_exc.message = "Login failed"
-        driver_exc.status_code = STATUS_CODE_LOGIN_ERROR
-        driver_exc.report = ""
-        driver_exc.error = ProtoDriverError(
-            login_error=ProtoLoginError(
-                message="Incorrect username or password",
-                code=390100,
+        driver_exc = ProtoDriverException(
+            message="Login failed",
+            status_code=STATUS_CODE_LOGIN_ERROR,
+            error=ProtoDriverError(
+                login_error=ProtoLoginError(
+                    message="Incorrect username or password",
+                    code=390100,
+                )
             ),
         )
-        driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
         result = _proto_to_public_error(proto_exc)

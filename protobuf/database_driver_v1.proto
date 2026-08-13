@@ -83,6 +83,20 @@ message LoginError {
   int32 code = 2;
 }
 
+// Raised when the master token expired mid-session (GS 390113/390114/390115),
+// or a cached credential was rejected at login and the driver's own
+// evict-and-retry ladder (see sf_core::rest::snowflake::is_reauthentication_required)
+// is exhausted (GS 390195/390303/390318). Deliberately a single, unified type
+// for both triggers rather than two: the caller's correct response is
+// identical in either case (open a new connection), so the discriminant a
+// caller actually needs is "is this reauth-required", not "which code path
+// detected it". `code` still carries the real GS code for anyone who wants
+// to distinguish further.
+message ReauthenticationRequiredError {
+  string message = 1;
+  int32 code = 2;
+}
+
 // Missing parameter error
 message MissingParameter {
   string parameter = 1;
@@ -110,6 +124,7 @@ message DriverError {
     MissingParameter missing_parameter = 4;
     InvalidParameterValue invalid_parameter_value = 5;
     LoginError login_error = 6;
+    ReauthenticationRequiredError reauthentication_required_error = 7;
   }
 }
 

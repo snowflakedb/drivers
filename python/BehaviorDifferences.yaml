@@ -685,8 +685,12 @@ behavior_differences:
     status_rationale: |
       A new `ReauthenticationRequiredError(OperationalError)` is now raised uniformly
       for every master-token/reauth GS code, both mid-session (390113/390114/390115)
-      and at login-time-exhaustion (390195/390303/390318). The real GS code is
-      preserved as `errno`/`vendor_code` instead of collapsing to a generic error.
+      and at login-time-exhaustion (390195/390303/390318). Both triggers construct
+      the same dedicated `ReauthenticationRequiredError` proto message (a new
+      `DriverError` oneof case, not a field bolted onto `AuthenticationError`/
+      `LoginError`, and not `DriverException.vendor_code`, which is reserved for
+      genuine Snowflake query-error codes) — the real GS code is preserved as
+      `errno` via that message's own `code` field.
       `ReauthenticationRequest` is kept as a deprecated back-compat alias name
       (importable from both `errors` and `network`, matching Snowpark's
       `snowflake.connector.network` import site), and the driver raises this
