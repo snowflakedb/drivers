@@ -3287,9 +3287,10 @@ fn flat_row_from_descriptor(
 
     let nullable_val: i16 = if desc.nullable { 1 } else { 0 };
     let is_nullable_str = if desc.nullable { "YES" } else { "NO" };
-    // USER_DATA_TYPE: mirror DATA_TYPE (driver-specific; cell-value semantics
-    // tracked separately in SNOW-3899721).
-    let user_data_type_val = data_type_val;
+    // USER_DATA_TYPE (col 19): always UDT_STANDARD_SQL_TYPE (0). Snowflake has
+    // no custom UDTs — match ProcedureColumns / TypeInfo and the reference
+    // driver's ColumnsMetadataSource::getUserDataType.
+    let user_data_type_val = Some(0);
 
     FlatColumnRow {
         cat: Some(cat),
