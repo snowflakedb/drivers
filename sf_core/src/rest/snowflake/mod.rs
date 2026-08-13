@@ -401,6 +401,15 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
     }
 }
 
+// Cached-ID-token rejection, called out as its own named constant (rather
+// than only existing inline inside EXT_AUTHN_ERROR_CODES below) because it
+// has a second, narrower meaning: unlike the other 7 EXT_AUTHN_ERROR_CODES
+// entries (all MFA-flow-specific failures — denied, not enrolled, locked,
+// timeout, invalid, exception, Duo push disabled), this one specifically
+// means "the cached credential itself is stale", which is what
+// is_reauthentication_required below cares about.
+const ID_TOKEN_INVALID_LOGIN_REQUEST: i32 = 390195;
+
 const EXT_AUTHN_ERROR_CODES: [i32; 8] = [
     390120, // EXT_AUTHN_DENIED
     390122, // EXT_AUTHN_NOT_ENROLLED
@@ -409,17 +418,25 @@ const EXT_AUTHN_ERROR_CODES: [i32; 8] = [
     390127, // EXT_AUTHN_INVALID
     390129, // EXT_AUTHN_EXCEPTION
     390132, // EXT_AUTHN_DUO_PUSH_DISABLED
-    390195, // ID_TOKEN_INVALID
+    ID_TOKEN_INVALID_LOGIN_REQUEST,
 ];
 
 /// True when a terminal login failure on `code` means a cached credential
 /// was rejected and the caller must open a new connection — not just that
-/// this particular set of credentials was bad. Reuses the same
-/// `EXT_AUTHN_ERROR_CODES`/`OAUTH_REFRESH_ERROR_CODES` sets already consulted
-/// above for cache-eviction decisions, so there is exactly one place that
-/// knows which codes mean this.
+/// this particular set of credentials was bad.
+///
+/// Deliberately narrower than `EXT_AUTHN_ERROR_CODES.contains(&code)`: that
+/// array is used above for cache-eviction decisions and legitimately
+/// includes MFA-flow-specific failures (denied, not enrolled, locked,
+/// timed out, Duo push disabled, ...) — a locked account or a denied
+/// enrollment is not fixed by opening a new connection, so lumping those
+/// under `ReauthenticationRequiredError` would tell the caller "just
+/// reconnect" when reconnecting will fail identically. Only
+/// `ID_TOKEN_INVALID_LOGIN_REQUEST` (the cached-token-is-stale case) and
+/// the OAuth refresh codes mean that; matches legacy Python's own
+/// `auth/_auth.py` set exactly (390195/390303/390318).
 fn is_reauthentication_required(code: i32) -> bool {
-    EXT_AUTHN_ERROR_CODES.contains(&code) || OAUTH_REFRESH_ERROR_CODES.contains(&code)
+    code == ID_TOKEN_INVALID_LOGIN_REQUEST || OAUTH_REFRESH_ERROR_CODES.contains(&code)
 }
 
 /// Sets the DUO second-factor fields on the login request.
@@ -2693,15 +2710,20 @@ mod tests {
     }
 
     #[test]
-    fn is_reauthentication_required_covers_full_ext_authn_set() {
-        // Reuses EXT_AUTHN_ERROR_CODES wholesale (not a hand-picked subset):
-        // every EXT_AUTHN failure means the driver's own eviction-and-retry
-        // ladder already gave up on this credential, so all of them mean
-        // "open a new connection", not just the ID-token-specific case.
+    fn is_reauthentication_required_excludes_mfa_specific_ext_authn_codes() {
+        // Regression guard: an MFA-flow failure (denied, not enrolled,
+        // locked, timed out, invalid, exception, Duo push disabled) is not
+        // fixed by opening a new connection the way a stale cached
+        // credential is — reconnecting fails identically for a locked
+        // account. Only ID_TOKEN_INVALID_LOGIN_REQUEST (390195) from this
+        // array means reauthentication; the other 7 must not.
         for &code in EXT_AUTHN_ERROR_CODES.iter() {
+            if code == ID_TOKEN_INVALID_LOGIN_REQUEST {
+                continue;
+            }
             assert!(
-                is_reauthentication_required(code),
-                "EXT_AUTHN code {code} should require reauthentication"
+                !is_reauthentication_required(code),
+                "MFA-specific EXT_AUTHN code {code} should NOT require reauthentication"
             );
         }
     }
