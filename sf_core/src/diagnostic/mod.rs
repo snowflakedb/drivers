@@ -807,13 +807,22 @@ fn inspect_tls(
                         &format!("{host}: Certificate {cert_num}: no CRL Distribution Points"),
                     );
                 } else {
+                    let issuer_der = cert_ders.get(idx + 1).map(Vec::as_slice);
                     for crl_url in &crl_urls {
                         append(
                             results,
                             section,
                             &format!("{host}: Certificate {cert_num}: CRL DP: {crl_url}"),
                         );
-                        fetch_and_parse_crl(crl_url, host, cert_num, section, results, tested_crls);
+                        fetch_and_parse_crl(
+                            crl_url,
+                            host,
+                            cert_num,
+                            section,
+                            results,
+                            tested_crls,
+                            issuer_der,
+                        );
                     }
                 }
             }
@@ -825,6 +834,18 @@ fn inspect_tls(
                 );
             }
         }
+    }
+}
+
+/// Verify the CRL signature against its chain issuer and return a short
+/// diagnostic label. Returns `"verified"`, `"unverified (<reason>)"`, or
+/// `"unverified (root; no chain issuer available)"` when the issuer cert is
+/// not present in the TLS peer chain (e.g. root CA trust anchors).
+fn crl_sig_label(body: &[u8], issuer_der: Option<&[u8]>) -> String {
+    match crate::tls::x509_utils::verify_crl_signature(body, issuer_der) {
+        Ok(()) => "verified".to_owned(),
+        Err(_) if issuer_der.is_none() => "unverified (root; no chain issuer available)".to_owned(),
+        Err(e) => format!("unverified ({e})"),
     }
 }
 
@@ -842,6 +863,7 @@ fn fetch_and_parse_crl(
     section: &str,
     results: &mut HashMap<String, Vec<String>>,
     tested_crls: &mut HashSet<String>,
+    issuer_der: Option<&[u8]>,
 ) {
     if tested_crls.contains(url) {
         tracing::debug!(
@@ -889,12 +911,13 @@ fn fetch_and_parse_crl(
                         .map(|t| t.to_string())
                         .unwrap_or_else(|| "none".to_string());
                     let revoked = crl.iter_revoked_certificates().count();
+                    let sig_label = crl_sig_label(&body, issuer_der);
                     append(
                         results,
                         section,
                         &format!(
                             "{host}: Certificate {cert_num}: CRL {url}: \
-                             issuer={issuer}, thisUpdate={this_update}, \
+                             issuer={issuer} [{sig_label}], thisUpdate={this_update}, \
                              nextUpdate={next_update}, revokedCount={revoked}"
                         ),
                     );
@@ -968,9 +991,8 @@ fn http_get_binary(url: &str) -> Result<Vec<u8>, String> {
 
 /// HTTP GET connectivity check over an already-established TCP stream (port 80).
 ///
-/// Rewrites the path to `/ocsp_response_cache.json` for OCSP cache hosts
-/// (mirrors gosnowflake's hostname-prefix check).  Accepts integer status codes
-/// in `ACCEPTABLE_HTTP_STATUS` rather than fragile string-pattern matching.
+/// Accepts integer status codes in `ACCEPTABLE_HTTP_STATUS` rather than fragile
+/// string-pattern matching.
 ///
 /// When `via_proxy` is set the stream is connected to the proxy (not the
 /// target), so the request uses an absolute-form request URI that the proxy
@@ -985,12 +1007,7 @@ fn do_http_check(
     via_proxy: bool,
     proxy_auth_header: Option<&str>,
 ) {
-    // OCSP cache hosts serve the cache file at a specific path.
-    let path = if host.starts_with("ocsp.snowflakecomputing.") {
-        "/ocsp_response_cache.json"
-    } else {
-        "/"
-    };
+    let path = "/";
 
     // Origin-form (`/path`) for a direct connection; absolute-form
     // (`http://host:port/path`) so an HTTP proxy forwards to the target.
@@ -1175,5 +1192,70 @@ fn collect_proxy_env() -> String {
         "{}".to_string()
     } else {
         format!("{{{}}}", entries.join(", "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::crl_sig_label;
+    use rcgen::{
+        BasicConstraints, CertificateParams, CertificateRevocationListParams, IsCa, KeyPair,
+        KeyUsagePurpose, SerialNumber,
+    };
+
+    fn make_ca() -> (rcgen::Certificate, KeyPair, Vec<u8>) {
+        let key_pair = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec![]).unwrap();
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let cert = params.self_signed(&key_pair).unwrap();
+        let der = cert.der().to_vec();
+        (cert, key_pair, der)
+    }
+
+    fn make_crl(ca_cert: &rcgen::Certificate, ca_key: &KeyPair) -> Vec<u8> {
+        let now = time::OffsetDateTime::now_utc();
+        CertificateRevocationListParams {
+            this_update: now,
+            next_update: now + time::Duration::days(7),
+            crl_number: SerialNumber::from(1u64),
+            issuing_distribution_point: None,
+            revoked_certs: vec![],
+            key_identifier_method: rcgen::KeyIdMethod::Sha256,
+        }
+        .signed_by(ca_cert, ca_key)
+        .unwrap()
+        .der()
+        .to_vec()
+    }
+
+    #[test]
+    fn should_label_verified_when_issuer_matches() {
+        let (ca_cert, ca_key, ca_der) = make_ca();
+        let crl_der = make_crl(&ca_cert, &ca_key);
+        assert_eq!(crl_sig_label(&crl_der, Some(&ca_der)), "verified");
+    }
+
+    #[test]
+    fn should_label_unverified_root_when_no_issuer() {
+        let (ca_cert, ca_key, _) = make_ca();
+        let crl_der = make_crl(&ca_cert, &ca_key);
+        let label = crl_sig_label(&crl_der, None);
+        assert!(
+            label.starts_with("unverified (root;"),
+            "expected root label, got: {label}"
+        );
+    }
+
+    #[test]
+    fn should_label_unverified_when_issuer_mismatch() {
+        let (ca_cert, ca_key, _) = make_ca();
+        let (_, _, wrong_ca_der) = make_ca();
+        let crl_der = make_crl(&ca_cert, &ca_key);
+        let label = crl_sig_label(&crl_der, Some(&wrong_ca_der));
+        assert!(
+            label.starts_with("unverified") && !label.starts_with("unverified (root;"),
+            "expected issuer-mismatch unverified label, got: {label}"
+        );
     }
 }
