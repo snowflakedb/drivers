@@ -11,6 +11,7 @@ import threading
 from typing import Any
 
 from ..api_client.client_api import core_driver
+from ..decorators import snowpark_compat
 
 
 class _FreezableProxy:
@@ -42,6 +43,7 @@ class SessionParametersProxy(_FreezableProxy):
             return self._cache.get(name.upper())
         return self._fetch_one(name)
 
+    @snowpark_compat
     def get(self, name: str, default: str | None = None) -> str | None:
         """Dict-style lookup returning ``default`` when the parameter is unset.
 
