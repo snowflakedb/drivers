@@ -243,7 +243,11 @@ class TestDescribeInternal:
 
 
 class TestResultMetadataV2FromColumnFieldSizes:
-    """Verify display_size and internal_size proto-field mapping (BD#55)."""
+    """Verify display_size and internal_size proto-field mapping.
+
+    display_size is UD-only, populated for text types (BD#63). internal_size
+    carries the char count on both drivers — legacy semantics, matched here.
+    """
 
     def test_display_size_populated_for_text_column(self):
         col = _mock_column(col_type="TEXT", length=100)
@@ -261,15 +265,67 @@ class TestResultMetadataV2FromColumnFieldSizes:
         v2 = ResultMetadataV2.from_column(col)
         assert v2.display_size is None
 
-    def test_internal_size_populated_from_byte_length(self):
-        col = _mock_column(col_type="TEXT", byte_length=400)
+    def test_internal_size_populated_from_length(self):
+        # internal_size carries the char count (legacy semantics), not byte_length.
+        col = _mock_column(col_type="TEXT", length=100, byte_length=400)
         v2 = ResultMetadataV2.from_column(col)
-        assert v2.internal_size == 400
+        assert v2.internal_size == 100
 
-    def test_internal_size_none_when_byte_length_absent(self):
-        col = _mock_column(col_type="TEXT")  # byte_length=None → HasField False
+    def test_internal_size_none_when_length_absent(self):
+        col = _mock_column(col_type="TEXT")  # length=None → HasField("length") False
         v2 = ResultMetadataV2.from_column(col)
         assert v2.internal_size is None
+
+    def test_internal_size_populated_for_binary_column(self):
+        # BINARY has no display_size (type-gated to text), but internal_size must
+        # still carry a real value here — unlike display_size, it is not type-gated.
+        col = _mock_column(col_type="BINARY", length=8)
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.display_size is None
+        assert v2.internal_size == 8
+
+    @pytest.mark.parametrize(
+        "col_type",
+        [
+            "FIXED",
+            "DATE",
+            "TIME",
+            "TIMESTAMP_NTZ",
+            "TIMESTAMP_LTZ",
+            "TIMESTAMP_TZ",
+            "VARIANT",
+            "OBJECT",
+            "ARRAY",
+            "BOOLEAN",
+        ],
+    )
+    def test_internal_size_none_for_types_without_length(self, col_type):
+        # Legacy never populates internal_size for these types; the proto never
+        # sets `length` for them either, so HasField("length") is False.
+        col = _mock_column(col_type=col_type)
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.internal_size is None
+
+
+class TestResultMetadataFromColumnFieldSizes:
+    """Mirrors TestResultMetadataV2FromColumnFieldSizes for the V1 NamedTuple's
+    own from_column — the size-field mapping is duplicated in both."""
+
+    def test_internal_size_populated_from_length(self):
+        col = _mock_column(col_type="TEXT", length=100, byte_length=400)
+        v1 = ResultMetadata.from_column(col)
+        assert v1.internal_size == 100
+
+    def test_internal_size_none_when_length_absent(self):
+        col = _mock_column(col_type="TEXT")
+        v1 = ResultMetadata.from_column(col)
+        assert v1.internal_size is None
+
+    def test_internal_size_populated_for_binary_column(self):
+        col = _mock_column(col_type="BINARY", length=8)
+        v1 = ResultMetadata.from_column(col)
+        assert v1.display_size is None
+        assert v1.internal_size == 8
 
 
 class TestResultMetadataV2ToV1:

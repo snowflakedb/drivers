@@ -2855,8 +2855,8 @@ class TestCursorDescribeInternal:
     so this class opts out of the module-level async parametrization.
 
     Focus: properties that only a live server can confirm — ``vector_dimension``
-    propagation end-to-end, ``display_size``/``internal_size`` proto-field mapping
-    (BD#55), ``_to_result_metadata_v1()`` round-trip, and cursor-state side effects.
+    propagation end-to-end, ``display_size`` being UD-only (BD#63),
+    ``_to_result_metadata_v1()`` round-trip, and cursor-state side effects.
     """
 
     pytestmark = skip_async("_describe_internal is sync-only; Snowpark never calls it through the async cursor")
@@ -2930,13 +2930,10 @@ class TestCursorDescribeInternal:
         assert result[0].vector_dimension == 3
 
     def test_display_size_and_internal_size_for_varchar(self, cursor):
-        """display_size/internal_size map the proto length and byte_length fields (BD#55).
+        """internal_size is the char count on both drivers; display_size is UD-only (BD#63).
 
-        UD routes the char count to ``display_size`` and the byte count to
-        ``internal_size``; legacy never populates ``display_size`` and reports the char
-        count as ``internal_size``. The mapping lives in ``from_column``, which both the
-        V1 ``describe()`` and V2 ``_describe_internal()`` views share, so both are
-        asserted here.
+        The mapping lives in ``from_column``, which both the V1 ``describe()`` and
+        V2 ``_describe_internal()`` views share, so both are asserted here.
         """
         sql = "SELECT 'x'::VARCHAR(100) AS s"
         v2_result = cursor._describe_internal(sql)
@@ -2944,18 +2941,16 @@ class TestCursorDescribeInternal:
 
         assert v2_result is not None and v1_result is not None
 
-        if NEW_DRIVER_ONLY("BD#55"):
-            # proto `length` (chars) -> display_size, `byte_length` -> internal_size.
+        assert v2_result[0].internal_size == 100
+        assert v1_result[0].internal_size == 100
+
+        if NEW_DRIVER_ONLY("BD#63"):
             assert v2_result[0].display_size == 100
-            assert v2_result[0].internal_size == 400  # UTF-8, 4 bytes/char
             assert v1_result[0].display_size == 100
-            assert v1_result[0].internal_size == 400
         else:
-            # JSON `length` (chars) -> internal_size; display_size is never populated.
+            # Legacy never populates display_size.
             assert v2_result[0].display_size is None
-            assert v2_result[0].internal_size == 100
             assert v1_result[0].display_size is None
-            assert v1_result[0].internal_size == 100
 
     def test_to_v1_round_trip(self, cursor):
         """_to_result_metadata_v1() produces ResultMetadata matching describe() output."""
