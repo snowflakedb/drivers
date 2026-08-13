@@ -208,11 +208,18 @@ def _extract_reauth_error_code(driver_exception: Any) -> int | None:
     identical in either case (open a new connection), so the discriminant
     callers need is the message *type itself*, not a value inside
     ``AuthenticationError``/``LoginError``/``vendor_code``.
+
+    The `None` return means "this is not a ReauthenticationRequiredError" —
+    signaled by the `WhichOneof` check above, not by `code`'s truthiness.
+    `code` itself is returned as-is (a plain, always-set proto3 `int32`);
+    a `0 or None` coercion here would wrongly report "not present" for a
+    hypothetical code of `0`, when presence was already confirmed by the
+    oneof match.
     """
     error = getattr(driver_exception, "error", None)
     if error is None or error.WhichOneof("error_type") != "reauthentication_required_error":
         return None
-    return error.reauthentication_required_error.code or None
+    return error.reauthentication_required_error.code
 
 
 def _append_detail(base: str, detail: str) -> str:
@@ -353,12 +360,18 @@ def _derive_sqlstate(driver_exception: Any) -> str | None:
     Only login/auth errors have an obvious ANSI SQL state mapping today.
     Other error types (missing_parameter, invalid_parameter_value, etc.)
     will return ``None``; extend this function as mappings become clear.
+
+    ``reauthentication_required_error`` belongs in the same "connection was
+    not established / could not be renewed" bucket as ``login_error``/
+    ``auth_error`` — the same regression this dedicated type was meant to
+    avoid (a discriminant getting silently dropped between two similar-but-
+    not-identical checks) would otherwise repeat itself right here.
     """
     error = getattr(driver_exception, "error", None)
     if error is None:
         return None
     error_type = error.WhichOneof("error_type")
-    if error_type in ("login_error", "auth_error"):
+    if error_type in ("login_error", "auth_error", "reauthentication_required_error"):
         return "08001"  # SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED
     return None
 

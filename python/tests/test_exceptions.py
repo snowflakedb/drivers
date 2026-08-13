@@ -614,6 +614,10 @@ class TestConvertProtoError:
             assert isinstance(result, DatabaseError)
             assert isinstance(result, Error)
             assert result.errno == code
+            # Regression guard: the dedicated error_type case must be added
+            # to _derive_sqlstate's tuple alongside login_error/auth_error —
+            # this silently regressed to None once before.
+            assert result.sqlstate == "08001"
 
     def test_application_exception_login_time_reauth_constructs_reauth_error_type(self):
         """Login-time cached-credential-rejection GS codes (390195/390303/390318),
