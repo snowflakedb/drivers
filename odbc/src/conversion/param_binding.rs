@@ -259,9 +259,13 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
         // symmetry with the new DATE / TIME alias arms above).
         //
         // SQL_TYPE_TIMESTAMP (93) routing depends on the optional Snowflake
-        // vendor opt-in. Default (no opt-in) maps to TIMESTAMP_NTZ for
-        // backward compatibility with Tableau/Excel/Power BI; explicit LTZ
-        // and TZ opt-ins map to the corresponding Snowflake logical types.
+        // vendor opt-in. Default (no opt-in) and the explicit NTZ opt-in both
+        // map to the NTZ converter (backward compatibility with
+        // Tableau/Excel/Power BI). That converter now emits a bare wall-clock
+        // string tagged wire `type=TEXT`, so the server attaches the session
+        // `TIMEZONE` offset -- realigning NTZ binds with the legacy 3.16.0
+        // driver (see BD#74 and `write_timestamp_wire_wallclock`). Explicit LTZ
+        // and TZ opt-ins map to their own converters below.
         sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => match binding.sf_subtype {
             None | Some(TimestampSubtype::Ntz) => Ok(Box::new(WireParamConverter {
                 snowflake_type: SnowflakeTimestampNtz { scale: 9 },
@@ -2275,7 +2279,10 @@ mod tests {
     // rather than always landing on NTZ via the standard `SQL_TYPE_TIMESTAMP`.
 
     #[test]
-    fn ntz_vendor_code_routes_to_timestamp_ntz_logical_type() -> TestResult {
+    fn ntz_vendor_code_routes_to_text_logical_type() -> TestResult {
+        // Like LTZ/TZ, the NTZ vendor code binds as a wall-clock string tagged
+        // `TEXT` so the server attaches the session `TIMEZONE` offset. This
+        // realigns NTZ with the legacy 3.16.0 driver -- see BD#74.
         let ts = sql::Timestamp {
             year: 2024,
             month: 6,
@@ -2293,7 +2300,7 @@ mod tests {
             std::ptr::null_mut(),
         );
         let (ty, _) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        assert_eq!(ty, SnowflakeLogicalType::Text);
         Ok(())
     }
 
@@ -2329,10 +2336,11 @@ mod tests {
     }
 
     #[test]
-    fn standard_sql_timestamp_still_routes_to_ntz_for_backward_compat() -> TestResult {
+    fn standard_sql_timestamp_routes_to_text_logical_type() -> TestResult {
         // Tableau / Excel / Power BI bind via the standard `SQL_TYPE_TIMESTAMP`
-        // (93) today and expect an NTZ logical type. Adding the vendor codes
-        // must not change that legacy route.
+        // (93), which routes to the NTZ converter. That converter now emits a
+        // wall-clock string tagged `TEXT` (server attaches the session
+        // `TIMEZONE` offset).
         let ts = sql::Timestamp {
             year: 2024,
             month: 6,
@@ -2350,7 +2358,7 @@ mod tests {
             std::ptr::null_mut(),
         );
         let (ty, _) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        assert_eq!(ty, SnowflakeLogicalType::Text);
         Ok(())
     }
 
@@ -3403,15 +3411,10 @@ mod tests {
             std::ptr::null_mut(),
         );
         let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
-        let expected_nanos = chrono::NaiveDate::from_ymd_opt(2024, 6, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp_nanos_opt()
-            .unwrap();
-        assert_eq!(v, expected_nanos.to_string());
+        // NTZ binds emit a bare wall-clock TEXT string; midnight has
+        // no fractional part.
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, "2024-06-01 00:00:00".to_string());
         Ok(())
     }
 
@@ -3755,10 +3758,12 @@ mod tests {
         let (ty, v) = convert_binding(&binding)?;
         let today_after = chrono::Local::now().date_naive();
 
-        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        // NTZ binds emit a bare wall-clock TEXT string, not epoch-nanos.
+        assert_eq!(ty, SnowflakeLogicalType::Text);
 
-        let nanos: i64 = v.parse().expect("nanos must parse as i64");
-        let dt = chrono::DateTime::from_timestamp_nanos(nanos).naive_utc();
+        // Whole-second time -> no fractional part in the wall-clock literal.
+        let dt = chrono::NaiveDateTime::parse_from_str(&v, "%Y-%m-%d %H:%M:%S")
+            .expect("wall-clock literal must parse");
 
         // The time component is preserved exactly with a zero fractional part.
         assert_eq!(
@@ -5403,15 +5408,10 @@ mod tests {
             &mut ind,
         );
         let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
-        let expected_nanos = chrono::NaiveDate::from_ymd_opt(2025, 3, 26)
-            .unwrap()
-            .and_hms_opt(14, 30, 45)
-            .unwrap()
-            .and_utc()
-            .timestamp_nanos_opt()
-            .unwrap();
-        assert_eq!(v, expected_nanos.to_string());
+        // NTZ binds emit a bare wall-clock TEXT string; whole seconds
+        // have no fractional part.
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, "2025-03-26 14:30:45".to_string());
         Ok(())
     }
 
@@ -5476,15 +5476,10 @@ mod tests {
             &mut ind,
         );
         let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
-        let expected_nanos = chrono::NaiveDate::from_ymd_opt(2025, 1, 1)
-            .unwrap()
-            .and_hms_nano_opt(0, 0, 0, 500_000_000)
-            .unwrap()
-            .and_utc()
-            .timestamp_nanos_opt()
-            .unwrap();
-        assert_eq!(v, expected_nanos.to_string());
+        // NTZ binds emit a bare wall-clock TEXT string; the .5s
+        // fraction keeps a single fractional digit (trailing zeros trimmed).
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, "2025-01-01 00:00:00.5".to_string());
         Ok(())
     }
 

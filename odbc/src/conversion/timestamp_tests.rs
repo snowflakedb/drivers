@@ -667,19 +667,17 @@ mod tests {
         assert_eq!(v, "2024-03-15 14:30:45");
     }
 
-    /// NTZ must keep emitting epoch-nanoseconds (the existing wire format).
-    /// Pinning this here so that any future refactor of the macro that
-    /// accidentally swaps the encoder gets caught at unit-test time.
+    /// NTZ binds emit the same bare wall-clock literal string as LTZ (wire
+    /// `type=TEXT`), so the server attaches the session `TIMEZONE` offset.
     #[test]
-    fn ntz_write_wire_emits_epoch_nanos_string() {
+    fn ntz_write_wire_emits_bare_wall_clock_literal() {
         use crate::conversion::traits::WriteWire;
         use chrono::NaiveDate;
         let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
             .and_then(|d| d.and_hms_nano_opt(14, 30, 45, 123_456_789))
             .expect("constant inputs");
         let v = ntz(9).write_wire(dt).expect("write_wire");
-        // 2024-03-15T14:30:45.123456789 UTC == 1710513045123456789 ns.
-        assert_eq!(v, "1710513045123456789");
+        assert_eq!(v, "2024-03-15 14:30:45.123456789");
     }
     // ---- TZ-specific write/read/wire round-trip tests ------------------------
     //

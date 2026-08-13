@@ -596,6 +596,12 @@ pub(crate) enum SnowflakeLogicalType {
     Binary,
     Date,
     Time,
+    /// Result-side only: GS emits `TIMESTAMP_NTZ` as the logical type of
+    /// NTZ columns in the IRD/result-set metadata. On the bind side, NTZ
+    /// binds are tagged as `Text`, so this variant is
+    /// only constructed by `SnowflakeFieldType::FromStr` when reading the
+    /// column metadata from the server.
+    #[allow(dead_code)]
     TimestampNtz,
     /// Result-side only: GS emits `TIMESTAMP_LTZ` as the logical type of
     /// LTZ columns in the IRD/result-set metadata. On the bind side,
