@@ -45,6 +45,9 @@ pub(crate) mod timestamp;
 #[cfg(test)]
 mod timestamp_tests;
 mod varchar;
+mod vector;
+#[cfg(test)]
+mod vector_tests;
 
 use crate::api::CDataType;
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
@@ -476,6 +479,7 @@ enum SnowflakeFieldType {
     Binary(binary::SnowflakeBinary),
     Real(real::SnowflakeReal),
     Decfloat(decfloat::SnowflakeDecfloat),
+    Vector(vector::SnowflakeVector),
 }
 
 impl SnowflakeFieldType {
@@ -555,6 +559,41 @@ impl SnowflakeFieldType {
                     is_semi_structured: true,
                 }))
             }
+            "VECTOR" => {
+                // VECTOR columns arrive from sf_core as FixedSizeListArray of Int32 or Float32.
+                // Determine the child element type from the Arrow DataType.
+                let element_type = match field.data_type() {
+                    DataType::FixedSizeList(child_field, _) => match child_field.data_type() {
+                        DataType::Int32 => vector::VectorElementType::Int32,
+                        DataType::Float32 => vector::VectorElementType::Float32,
+                        dt => {
+                            return IncompatibleFieldMetadataSnafu {
+                                logical_type: format!("VECTOR with unsupported child type {dt:?}"),
+                                data_type: field.data_type().clone(),
+                            }
+                            .fail();
+                        }
+                    },
+                    dt => {
+                        return IncompatibleFieldMetadataSnafu {
+                            logical_type: "VECTOR".to_string(),
+                            data_type: dt.clone(),
+                        }
+                        .fail();
+                    }
+                };
+                let column_size = match get_field_metadata(field, "charLength") {
+                    Ok(len) => len,
+                    Err(ConversionError::MissingFieldMetadata { .. }) => {
+                        numeric_settings.max_varchar_size.min(u32::MAX as u64) as u32
+                    }
+                    Err(e) => return Err(e),
+                };
+                Ok(Self::Vector(vector::SnowflakeVector {
+                    element_type,
+                    column_size,
+                }))
+            }
             lt => IncompatibleFieldMetadataSnafu {
                 logical_type: lt.to_string(),
                 data_type: field.data_type().clone(),
@@ -576,6 +615,7 @@ impl SnowflakeFieldType {
             Self::Binary(t) => t.sql_type(),
             Self::Real(t) => t.sql_type(),
             Self::Decfloat(t) => t.sql_type(),
+            Self::Vector(t) => t.sql_type(),
         }
     }
 
@@ -592,6 +632,7 @@ impl SnowflakeFieldType {
             Self::Binary(t) => t.column_size(),
             Self::Real(t) => t.column_size(),
             Self::Decfloat(t) => t.column_size(),
+            Self::Vector(t) => t.column_size(),
         }
     }
 
@@ -615,6 +656,7 @@ impl SnowflakeFieldType {
             Self::Binary(t) => t.decimal_digits(),
             Self::Real(t) => t.decimal_digits(),
             Self::Decfloat(t) => t.decimal_digits(),
+            Self::Vector(t) => t.decimal_digits(),
         }
     }
 
@@ -631,6 +673,7 @@ impl SnowflakeFieldType {
             Self::Binary(_) => "BINARY",
             Self::Real(_) => "DOUBLE",
             Self::Decfloat(_) => "NUMERIC",
+            Self::Vector(_) => "VECTOR",
         }
     }
 
@@ -646,6 +689,7 @@ impl SnowflakeFieldType {
             Self::Boolean(_) => 1,
             Self::Binary(t) => 2 * t.len as odbc_sys::Len,
             Self::Real(_) => 24,
+            Self::Vector(t) => t.column_size as odbc_sys::Len,
         }
     }
 
@@ -661,6 +705,7 @@ impl SnowflakeFieldType {
             Self::Boolean(_) => 1,
             Self::Binary(t) => t.len as odbc_sys::Len,
             Self::Real(_) => 8,
+            Self::Vector(t) => (t.column_size as odbc_sys::Len) * narrow_char_byte_width(),
         }
     }
 
@@ -683,6 +728,7 @@ impl SnowflakeFieldType {
                 | Self::TimestampNtz(_)
                 | Self::TimestampLtz(_)
                 | Self::TimestampTz(_)
+                | Self::Vector(_)
         )
     }
 
@@ -794,6 +840,9 @@ pub fn make_converter(
         }
         SnowflakeFieldType::Decfloat(snowflake_type) => {
             make_converter!(arrow::array::StructArray, snowflake_type, nullable)
+        }
+        SnowflakeFieldType::Vector(snowflake_type) => {
+            make_converter!(arrow::array::FixedSizeListArray, snowflake_type, nullable)
         }
     }
 }

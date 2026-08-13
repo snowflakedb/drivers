@@ -1,4 +1,4 @@
-@python @jdbc @core_not_needed
+@python @jdbc @odbc @core_not_needed
 Feature: VECTOR type support
   # Snowflake VECTOR type stores fixed-size arrays of numeric values.
   # Subtypes: INT (integer) and FLOAT (32-bit floating-point).
@@ -9,7 +9,7 @@ Feature: VECTOR type support
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should cast vector values to appropriate type
     # Python: INT vectors should be list[int], FLOAT vectors should be list[float]
     Given Snowflake client is logged in
@@ -20,7 +20,7 @@ Feature: VECTOR type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario Outline: should select <subtype> vector literal
     Given Snowflake client is logged in
     When Query "SELECT <expected_value>::VECTOR(<vec_type>, ...)" is executed
@@ -32,13 +32,13 @@ Feature: VECTOR type support
       | INT-2d    | INT      | [40, 1234567]               |
       | FLOAT-5d  | FLOAT    | [1.8, -3.4, 6.7, 0.0, 2.3] |
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should handle NULL vector values
     Given Snowflake client is logged in
     When Query "SELECT [1, 2, 3]::VECTOR(INT, 3), NULL::VECTOR(INT, 3), NULL::VECTOR(FLOAT, 3)" is executed
     Then Result should contain [[1, 2, 3], NULL, NULL]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario Outline: should select <subtype> vector boundary values
     # VECTOR(INT) stores 32-bit signed integers: [-2147483648, 2147483647]
     # VECTOR(FLOAT) stores IEEE 754 single-precision floats (~3.4e38 max magnitude)
@@ -51,7 +51,7 @@ Feature: VECTOR type support
       | INT     | INT      | [-2147483648, 2147483647, 0]        |
       | FLOAT   | FLOAT    | [3.4028235e38, -3.4028235e38, 0.0]  |
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should preserve FLOAT smallest-normal
     # VECTOR(FLOAT) must round-trip the smallest IEEE 754 single-precision
     # normal value (1.1754944e-38) without underflowing to zero.
@@ -59,7 +59,7 @@ Feature: VECTOR type support
     When Query selects a VECTOR(FLOAT, ...) containing FLOAT32_SMALLEST_NORMAL
     Then the smallest-normal value must not underflow to zero
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select max-dimension vector
     Given Snowflake client is logged in
     When Query selecting 4096-element float vector is executed
@@ -69,14 +69,14 @@ Feature: VECTOR type support
   #                           Table operations                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select vector values from table
     Given Snowflake client is logged in
     And Table with VECTOR(INT, 3) and VECTOR(FLOAT, 5) columns exists with values
     When Query "SELECT * FROM <table> ORDER BY id" is executed
     Then Result should contain the expected integer and float vector values
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should handle NULL vector values from table
     Given Snowflake client is logged in
     And Table with VECTOR columns exist containing NULLs and values
@@ -87,7 +87,7 @@ Feature: VECTOR type support
   #                       Multiple chunks downloading                           #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should download vector data in multiple chunks
     Given Snowflake client is logged in
     When Query generating 20000 integer vectors is executed
