@@ -108,6 +108,11 @@ class CArrowStreamTableIterator {
    * Apply Snowflake type conversions to the current batch via
    * m_converter, then move the result into the export slots
    * (m_exportArray / m_exportSchema).
+   * Releases the GIL during the per-column conversion loop, since it is
+   * pure nanoarrow buffer work; any Python exception raised inside the
+   * loop is signalled through py::setPyError(), which re-acquires the GIL
+   * only for the duration of the call. Errors are checked once after the
+   * loop when the GIL is held again.
    * Sets a Python exception on failure (check py::checkPyError()).
    */
   void convertBatch();
