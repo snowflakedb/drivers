@@ -118,12 +118,16 @@ def awaitable_context_manager(
     return wrapper
 
 
-def backward_compatibility(obj: T) -> T:
+def backward_compatibility(obj: T | None = None, *, recommendation: str | None = None) -> T | Callable[[T], T]:
     """Mark an object as a backward-compatibility shim and, where applicable,
     wrap it so that first external use emits a ``DeprecationWarning``.
 
     The emitted message always names the symbol (``module.qualname``) and
-    explains that it is retained only for backward compatibility.
+    explains that it is retained only for backward compatibility. Usable bare
+    (``@backward_compatibility``) or, to name a specific replacement API in the
+    warning, called with a keyword argument
+    (``@backward_compatibility(recommendation="Use `foo` instead.")``).
+    ``recommendation`` only affects function/method targets — see below.
 
     Behavior by target type:
 
@@ -133,7 +137,7 @@ def backward_compatibility(obj: T) -> T:
       the warning fires on first attribute access (e.g.
       ``from ...errors import HttpError`` or ``errors.HttpError``). Classes
       are never wrapped because "use" of a class takes too many shapes
-      (``isinstance``, ``raise``, subclassing).
+      (``isinstance``, ``raise``, subclassing); ``recommendation`` is ignored.
 
     * **Function / method** — wrapped so the first *external* call emits a
       warning. Calls originating from inside ``snowflake.connector.*`` are
@@ -146,7 +150,9 @@ def backward_compatibility(obj: T) -> T:
       function* (i.e. *below* ``@property`` / ``@prop.setter``) so the
       call-time wrapper is installed before the descriptor is built on top.
     """
-    return apply_backward_compatibility(obj)
+    if obj is None:
+        return lambda target: apply_backward_compatibility(target, recommendation=recommendation)
+    return apply_backward_compatibility(obj, recommendation=recommendation)
 
 
 # ------------------------------------------------------------------

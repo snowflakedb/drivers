@@ -1035,7 +1035,9 @@ behavior_differences:
       The property is also decorated with `@snowpark_compat` + `@backward_compatibility`,
       the driver's shared mechanism (`_internal/backward_compatibility.py`) for flagging
       legacy-only surface: the first access from outside `snowflake.connector.*` emits a
-      one-time-per-process `DeprecationWarning`. Internal driver callers never trigger it.
+      one-time-per-process `DeprecationWarning` naming `request_id` as the replacement, via
+      the decorator's `recommendation=` parameter (added for this call site — see
+      `decorators.py::backward_compatibility`). Internal driver callers never trigger it.
     description: |
       Snowpark is unaffected by the type change: `server_connection.py:465` does
       `notify_kwargs["requestId"] = str(results_cursor._request_id)`, which is a no-op
@@ -1045,11 +1047,12 @@ behavior_differences:
       detail. Tests that need to compare or UUID-parse the value normalize through
       `str()` so they hold on both drivers.
 
-      `_request_id` exists only because Snowpark reads it directly instead of the public
-      `request_id` property. Outright removing the attribute was considered (and would
-      only require a one-line change on the Snowpark side) but rejected here in favor of
-      the deprecation warning above: it lets Snowpark migrate to `request_id` on its own
-      schedule instead of coupling that migration to this driver's release.
+      `_request_id` was never public API; it's kept only for any community code (Snowpark
+      included) that came to depend on this legacy connector attribute despite the leading
+      underscore. Outright removing the attribute was considered — Snowpark's own read of
+      it would only need a one-line change — but rejected here in favor of the deprecation
+      warning above: any caller still on `_request_id` gets a heads-up and a migration
+      window instead of an immediate break tied to this driver's release.
       `_BACKWARD_COMPAT_WARNED` dedup means test suites that access `_request_id` see at
       most one warning per process, and the repo's pytest configuration does not turn
       warnings into errors, so existing tests are unaffected. CONFIRMED from source (both

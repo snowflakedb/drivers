@@ -59,7 +59,7 @@ _DEPRECATION_WARNING_MSG_SUFFIX = (
 )
 
 
-def apply_backward_compatibility(obj: T) -> T:
+def apply_backward_compatibility(obj: T, *, recommendation: str | None = None) -> T:
     """Implement the ``@backward_compatibility`` decorator.
 
     Plain functions are wrapped so the first *external* call emits a warning.
@@ -67,6 +67,10 @@ def apply_backward_compatibility(obj: T) -> T:
     passed through untouched; for classes the module-level ``__getattr__``
     installed by :func:`install_backward_compatibility_getattr` turns
     registry membership into a warn-on-first-access behavior.
+
+    ``recommendation``, if given, is appended to the emitted warning to name
+    the replacement API. Only takes effect for the wrapped-function path;
+    classes ignore it since they never reach :func:`_wrap_fn_with_warning`.
 
     The returned object is recorded in :data:`_MARKED_BACKWARD_COMPAT` so
     :func:`install_backward_compatibility_getattr` can later identify which
@@ -76,7 +80,7 @@ def apply_backward_compatibility(obj: T) -> T:
     if _is_marked_backward_compat(obj):
         return obj  # idempotent re-decoration
 
-    result = _wrap_fn_with_warning(obj) if inspect.isfunction(obj) else obj
+    result = _wrap_fn_with_warning(obj, recommendation=recommendation) if inspect.isfunction(obj) else obj
     _mark_backward_compat(result)
     return result
 
@@ -130,7 +134,7 @@ def _is_marked_backward_compat(obj: Any) -> bool:
     return obj in _MARKED_BACKWARD_COMPAT
 
 
-def _wrap_fn_with_warning(obj: F) -> F:
+def _wrap_fn_with_warning(obj: F, *, recommendation: str | None = None) -> F:
     module = getattr(obj, "__module__", None) or ""
     # Prefer __qualname__ so method warnings read "Class.method" rather than just "method".
     name = getattr(obj, "__qualname__", None) or getattr(obj, "__name__", None) or ""
@@ -138,7 +142,7 @@ def _wrap_fn_with_warning(obj: F) -> F:
     @functools.wraps(obj)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         if _is_caller_external():
-            _emit_backward_compatibility_warning(module, name)
+            _emit_backward_compatibility_warning(module, name, recommendation=recommendation)
         return obj(*args, **kwargs)
 
     return wrapper  # type: ignore[return-value]
@@ -192,13 +196,18 @@ def _module_getattr_with_warning(
     return __getattr__
 
 
-def _emit_backward_compatibility_warning(module: str, name: str) -> None:
+def _emit_backward_compatibility_warning(
+    module: str, name: str, *, recommendation: str | None = None
+) -> None:
     """Emit a ``DeprecationWarning`` the first time ``module.name`` is used.
 
     Deduplication is done against an explicit set so the warning is emitted at
     most once per process per ``(module, name)`` pair regardless of the user's
     ``warnings`` filter configuration, and regardless of whether the first use
     was an import (module ``__getattr__``) or a call (wrapped callable).
+
+    ``recommendation``, if given, is appended verbatim to name the replacement
+    API for this specific symbol.
 
     Concurrency: the check-then-add is not locked. Two threads racing on the
     same key may each see it as absent and both emit the warning once — an
@@ -217,8 +226,9 @@ def _emit_backward_compatibility_warning(module: str, name: str) -> None:
     if key in _BACKWARD_COMPAT_WARNED:
         return
     _BACKWARD_COMPAT_WARNED.add(key)
+    suffix = f" {recommendation}" if recommendation else ""
     warnings.warn(
-        f"'{module}.{name}' {_DEPRECATION_WARNING_MSG_SUFFIX}",
+        f"'{module}.{name}' {_DEPRECATION_WARNING_MSG_SUFFIX}{suffix}",
         DeprecationWarning,
         stacklevel=3,
     )

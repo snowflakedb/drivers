@@ -178,11 +178,13 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
 
     @property
     @snowpark_compat
-    @backward_compatibility
+    @backward_compatibility(recommendation="Use the public `request_id` property instead.")
     def _request_id(self) -> str | None:
         """Private alias of :attr:`request_id`, kept for Snowpark's expected attribute name.
 
-        Deprecated: Snowpark should read the public ``request_id`` property instead.
+        Deprecated: this private attribute is retained only for backward
+        compatibility with code that accessed it directly; use the public
+        ``request_id`` property instead.
         """
         return self.request_id
 
