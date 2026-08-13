@@ -49,11 +49,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagRec: valid record after a que
   CHECK(msg_len == full_len);
   CHECK(std::string(reinterpret_cast<char*>(msg.data())).size() == static_cast<size_t>(msg_len));
 
-  // BD#102: the new driver prepends the vendor/component identifier
-  // "[Snowflake][Snowflake ODBC Driver]" per ODBC §16.2.16. The old driver's prefix
-  // differs and is documented in BD#102, so it is not pinned here.
+  // BD#110: for a server (data source-originated) error the two drivers diverge in how they prefix the
+  // diagnostic message text. The new driver prepends the ODBC §16.2.16 [vendor][ODBC-component]
+  // identifier plus a [data-source] segment, yielding the 3-part
+  // "[Snowflake][Snowflake ODBC Driver][Snowflake]". The old (SimbaEngine) driver does NOT prefix
+  // server-originated messages at all: it passes the raw server text through, starting with
+  // "SQL compilation error:". (The old driver's "[Snowflake][Support]" vendor prefix appears only on
+  // driver-originated errors) The INFO capture surfaces the
+  // actual message on any mismatch.
   std::string message(reinterpret_cast<char*>(msg.data()));
-  NEW_DRIVER_ONLY("BD#102") { CHECK(message.rfind("[Snowflake][Snowflake ODBC Driver]", 0) == 0); }
+  INFO("diagnostic message: " << message);
+  NEW_DRIVER_ONLY("BD#110") { CHECK(message.rfind("[Snowflake][Snowflake ODBC Driver][Snowflake]", 0) == 0); }
+  OLD_DRIVER_ONLY("BD#110") { CHECK(message.rfind("SQL compilation error", 0) == 0); }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagRec: RecNumber 0 returns SQL_ERROR",
