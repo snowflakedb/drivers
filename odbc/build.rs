@@ -12,9 +12,6 @@ fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let odbc_api_version = read_odbc_metadata(&manifest_dir, "odbc_api_version");
     println!("cargo:rustc-env=SF_ODBC_API_VER={odbc_api_version}");
-    if let Some(release_type) = try_read_odbc_metadata(&manifest_dir, "release_type") {
-        println!("cargo:rustc-env=SF_ODBC_RELEASE_TYPE={release_type}");
-    }
     println!("cargo:rerun-if-changed=Cargo.toml");
 
     #[cfg(not(target_os = "windows"))]
@@ -111,7 +108,7 @@ fn read_odbc_metadata(manifest_dir: &str, key: &str) -> String {
 /// Reads an optional key from `[package.metadata.odbc]`, returning `None` when the key is
 /// absent or its value is an empty string. Panics only when the value is present but not a
 /// quoted string. Shared single parser for both required ([`read_odbc_metadata`]) and
-/// optional (e.g. `release_type`) metadata lookups.
+/// optional metadata lookups.
 fn try_read_odbc_metadata(manifest_dir: &str, key: &str) -> Option<String> {
     const SECTION: &str = "[package.metadata.odbc]";
 

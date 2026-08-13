@@ -575,9 +575,9 @@ fn connect_with_params(
                 language_runtime: Some(env!("SF_ODBC_WRAPPER_LANGUAGE_RUNTIME").to_string()),
                 language_version: Some(env!("SF_ODBC_BUILD_RUST_SEMVER").to_string()),
                 language_compiler: None,
-                // Set from `[package.metadata.odbc] release_type` in Cargo.toml when present;
-                // absent on GA builds so the field is not sent to the backend.
-                release_type: option_env!("SF_ODBC_RELEASE_TYPE").map(str::to_string),
+                // Leave unset so sf_core derives RELEASE_TYPE from driver_version's
+                // suffix (e.g. `4.0.0-rc1` → `rc1`). Set only to override that default.
+                release_type: None,
             }),
         })
         .await?;
