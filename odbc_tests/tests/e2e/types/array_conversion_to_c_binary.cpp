@@ -16,7 +16,7 @@ static picojson::value parse_json(const std::string& text) {
   return v;
 }
 
-TEST_CASE("ARRAY to SQL_C_BINARY", "[array][conversion][c_binary]") {
+TEST_CASE("ARRAY to SQL_C_BINARY", "[datatype][array][conversion][c_binary]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -34,7 +34,7 @@ TEST_CASE("ARRAY to SQL_C_BINARY", "[array][conversion][c_binary]") {
   CHECK(json.get<picojson::array>().size() == 3);
 }
 
-TEST_CASE("ARRAY to SQL_C_BINARY empty", "[array][conversion][c_binary]") {
+TEST_CASE("ARRAY to SQL_C_BINARY empty", "[datatype][array][conversion][c_binary]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -52,7 +52,7 @@ TEST_CASE("ARRAY to SQL_C_BINARY empty", "[array][conversion][c_binary]") {
   CHECK(json.get<picojson::array>().empty());
 }
 
-TEST_CASE("ARRAY to SQL_C_BINARY nested", "[array][conversion][c_binary]") {
+TEST_CASE("ARRAY to SQL_C_BINARY nested", "[datatype][array][conversion][c_binary]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -70,7 +70,7 @@ TEST_CASE("ARRAY to SQL_C_BINARY nested", "[array][conversion][c_binary]") {
   CHECK(json.get<picojson::array>().size() == 2);
 }
 
-TEST_CASE("ARRAY to SQL_C_BINARY buffer too small", "[array][conversion][c_binary][01004]") {
+TEST_CASE("ARRAY to SQL_C_BINARY buffer too small", "[datatype][array][conversion][c_binary][01004]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -88,7 +88,7 @@ TEST_CASE("ARRAY to SQL_C_BINARY buffer too small", "[array][conversion][c_binar
   CHECK(records[0].sqlState == "01004");
 }
 
-TEST_CASE("ARRAY to SQL_C_BINARY exact buffer fit", "[array][conversion][c_binary]") {
+TEST_CASE("ARRAY to SQL_C_BINARY exact buffer fit", "[datatype][array][conversion][c_binary]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -106,7 +106,7 @@ TEST_CASE("ARRAY to SQL_C_BINARY exact buffer fit", "[array][conversion][c_binar
   CHECK(json.is<picojson::array>());
 }
 
-TEST_CASE("ARRAY NULL to SQL_C_BINARY", "[array][conversion][c_binary][null]") {
+TEST_CASE("ARRAY NULL to SQL_C_BINARY", "[datatype][array][conversion][c_binary][null]") {
   // Given Snowflake client is logged in
   Connection conn;
 

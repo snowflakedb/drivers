@@ -2,6 +2,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstring>
 #include <set>
 #include <string>
 #include <vector>
@@ -807,6 +808,40 @@ static const TypeInfoExpected ALL_TYPE_INFO[] = {
      2},
 };
 
+// VECTOR type info for UD-only assertions (reference driver does not support VECTOR).
+static const TypeInfoExpected VECTOR_TYPE_INFO = {2006,
+                                                  "VECTOR",
+                                                  134217728,
+                                                  "'",
+                                                  1,
+                                                  "'",
+                                                  1,
+                                                  "max length",
+                                                  10,
+                                                  SQL_NULLABLE,
+                                                  SQL_FALSE,
+                                                  SQL_SEARCHABLE,
+                                                  0,
+                                                  SQL_NULL_DATA,
+                                                  SQL_FALSE,
+                                                  0,
+                                                  SQL_NULL_DATA,
+                                                  "OWN",
+                                                  3,
+                                                  0,
+                                                  SQL_NULL_DATA,
+                                                  0,
+                                                  SQL_NULL_DATA,
+                                                  2006,
+                                                  0,
+                                                  SQL_NULL_DATA,
+                                                  0,
+                                                  SQL_NULL_DATA,
+                                                  0,
+                                                  SQL_NULL_DATA,
+                                                  0,
+                                                  2};
+
 // ============================================================================
 // SQLGetTypeInfo - Basic Functionality
 // ============================================================================
@@ -834,7 +869,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering whe
   REQUIRE(ret == SQL_NO_DATA);
 
   // Note: The reference driver does not sort types by data type, unlike in the ODBC spec
-  REQUIRE(types.size() == 23);
+  // UD adds VECTOR (2006) after VARIANT, giving 24 rows; reference driver has 23 rows.
+  NEW_DRIVER_ONLY("BD#119") { REQUIRE(types.size() == 24); }
+  OLD_DRIVER_ONLY("BD#119") { REQUIRE(types.size() == 23); }
   REQUIRE(types[0].first == SQL_CHAR);
   REQUIRE(types[1].first == SQL_NUMERIC);
   REQUIRE(types[2].first == SQL_DECIMAL);
@@ -855,9 +892,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering whe
   REQUIRE(types[17].first == 2003);  // ARRAY
   REQUIRE(types[18].first == 2004);  // OBJECT
   REQUIRE(types[19].first == 2005);  // VARIANT
-  REQUIRE(types[20].first == SQL_WCHAR);
-  REQUIRE(types[21].first == SQL_WVARCHAR);
-  REQUIRE(types[22].first == SQL_BIT);
+  NEW_DRIVER_ONLY("BD#119") {
+    REQUIRE(types[20].first == 2006);  // VECTOR
+    REQUIRE(types[21].first == SQL_WCHAR);
+    REQUIRE(types[22].first == SQL_WVARCHAR);
+    REQUIRE(types[23].first == SQL_BIT);
+  }
+  OLD_DRIVER_ONLY("BD#119") {
+    REQUIRE(types[20].first == SQL_WCHAR);
+    REQUIRE(types[21].first == SQL_WVARCHAR);
+    REQUIRE(types[22].first == SQL_BIT);
+  }
 }
 
 // ============================================================================
@@ -916,7 +961,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLGetTypeInfo: Requires active connection",
   ret = SQLGetTypeInfo(stmt, SQL_ALL_TYPES);
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt, SQL_HANDLE_STMT);
 
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  REQUIRE(ret == SQL_SUCCESS);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can be called multiple times on same statement",
@@ -1049,22 +1095,32 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     SQLSMALLINT userDataType;
     SQLLEN indicator;
 
+    std::memset(typeName, 0xFF, sizeof(typeName));
+    std::memset(literalPrefix, 0xFF, sizeof(literalPrefix));
+    std::memset(literalSuffix, 0xFF, sizeof(literalSuffix));
+    std::memset(createParams, 0xFF, sizeof(createParams));
+    std::memset(localTypeName, 0xFF, sizeof(localTypeName));
+
     // TYPE_NAME
+    indicator = -1;
     ret = SQLGetData(stmt, 1, SQL_C_CHAR, typeName, sizeof(typeName), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(std::string(typeName) == expected.typeName);
 
     // DATA_TYPE
+    indicator = -1;
     ret = SQLGetData(stmt, 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(dataType == expected.sqlType);
 
     // COLUMN_SIZE
+    indicator = -1;
     ret = SQLGetData(stmt, 3, SQL_C_SLONG, &columnSize, sizeof(columnSize), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(columnSize == expected.columnSize);
 
     // LITERAL_PREFIX
+    indicator = -1;
     ret = SQLGetData(stmt, 4, SQL_C_CHAR, literalPrefix, sizeof(literalPrefix), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.literalPrefixIndicator);
@@ -1074,6 +1130,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // LITERAL_SUFFIX
+    indicator = -1;
     ret = SQLGetData(stmt, 5, SQL_C_CHAR, literalSuffix, sizeof(literalSuffix), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.literalSuffixIndicator);
@@ -1082,6 +1139,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // CREATE_PARAMS
+    indicator = -1;
     ret = SQLGetData(stmt, 6, SQL_C_CHAR, createParams, sizeof(createParams), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.createParamsIndicator);
@@ -1090,21 +1148,25 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // NULLABLE
+    indicator = -1;
     ret = SQLGetData(stmt, 7, SQL_C_SSHORT, &nullable, sizeof(nullable), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(nullable == expected.nullable);
 
     // CASE_SENSITIVE
+    indicator = -1;
     ret = SQLGetData(stmt, 8, SQL_C_SSHORT, &caseSensitive, sizeof(caseSensitive), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(caseSensitive == expected.caseSensitive);
 
     // SEARCHABLE
+    indicator = -1;
     ret = SQLGetData(stmt, 9, SQL_C_SSHORT, &searchable, sizeof(searchable), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(searchable == expected.searchable);
 
     // UNSIGNED_ATTRIBUTE
+    indicator = -1;
     ret = SQLGetData(stmt, 10, SQL_C_SSHORT, &unsignedAttr, sizeof(unsignedAttr), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.unsignedAttrIndicator);
@@ -1113,11 +1175,13 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // FIXED_PREC_SCALE
+    indicator = -1;
     ret = SQLGetData(stmt, 11, SQL_C_SSHORT, &fixedPrecScale, sizeof(fixedPrecScale), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(fixedPrecScale == expected.fixedPrecScale);
 
     // AUTO_UNIQUE_VALUE
+    indicator = -1;
     ret = SQLGetData(stmt, 12, SQL_C_SSHORT, &autoUniqueValue, sizeof(autoUniqueValue), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.autoUniqueValueIndicator);
@@ -1126,6 +1190,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // LOCAL_TYPE_NAME
+    indicator = -1;
     ret = SQLGetData(stmt, 13, SQL_C_CHAR, localTypeName, sizeof(localTypeName), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.localTypeNameIndicator);
@@ -1134,6 +1199,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // MINIMUM_SCALE
+    indicator = -1;
     ret = SQLGetData(stmt, 14, SQL_C_SSHORT, &minimumScale, sizeof(minimumScale), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.minimumScaleIndicator);
@@ -1142,6 +1208,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // MAXIMUM_SCALE
+    indicator = -1;
     ret = SQLGetData(stmt, 15, SQL_C_SSHORT, &maximumScale, sizeof(maximumScale), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.maximumScaleIndicator);
@@ -1150,11 +1217,13 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // SQL_DATA_TYPE
+    indicator = -1;
     ret = SQLGetData(stmt, 16, SQL_C_SSHORT, &sqlDataType, sizeof(sqlDataType), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(sqlDataType == expected.sqlDataType);
 
     // SQL_DATETIME_SUB
+    indicator = -1;
     ret = SQLGetData(stmt, 17, SQL_C_SSHORT, &sqlDatetimeSub, sizeof(sqlDatetimeSub), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.sqlDatetimeSubIndicator);
@@ -1163,6 +1232,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // NUM_PREC_RADIX
+    indicator = -1;
     ret = SQLGetData(stmt, 18, SQL_C_SLONG, &numPrecRadix, sizeof(numPrecRadix), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.numPrecRadixIndicator);
@@ -1171,6 +1241,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // INTERVAL_PRECISION
+    indicator = -1;
     ret = SQLGetData(stmt, 19, SQL_C_SLONG, &intervalPrecision, sizeof(intervalPrecision), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.intervalPrecisionIndicator);
@@ -1179,6 +1250,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     }
 
     // USER_DATA_TYPE
+    indicator = -1;
     ret = SQLGetData(stmt, 20, SQL_C_SSHORT, &userDataType, sizeof(userDataType), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(indicator == expected.userDataTypeIndicator);
@@ -1186,7 +1258,190 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
       REQUIRE(userDataType == expected.userDataType);
     }
 
-    SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+    ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+
+  // VECTOR (2006) is only present in UD; verify its type-info row separately.
+  NEW_DRIVER_ONLY("BD#119") {
+    const TypeInfoExpected& expected = VECTOR_TYPE_INFO;
+
+    SQLHSTMT stmt = SQL_NULL_HSTMT;
+    SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    ret = SQLGetTypeInfo(stmt, expected.sqlType);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    ret = SQLFetch(stmt);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    char typeName[256];
+    SQLSMALLINT dataType;
+    SQLINTEGER columnSize;
+    char literalPrefix[32];
+    char literalSuffix[32];
+    char createParams[256];
+    SQLSMALLINT nullable;
+    SQLSMALLINT caseSensitive;
+    SQLSMALLINT searchable;
+    SQLSMALLINT unsignedAttr;
+    SQLSMALLINT fixedPrecScale;
+    SQLSMALLINT autoUniqueValue;
+    char localTypeName[256];
+    SQLSMALLINT minimumScale;
+    SQLSMALLINT maximumScale;
+    SQLSMALLINT sqlDataType;
+    SQLSMALLINT sqlDatetimeSub;
+    SQLINTEGER numPrecRadix;
+    SQLINTEGER intervalPrecision;
+    SQLSMALLINT userDataType;
+    SQLLEN indicator;
+
+    std::memset(typeName, 0xFF, sizeof(typeName));
+    std::memset(literalPrefix, 0xFF, sizeof(literalPrefix));
+    std::memset(literalSuffix, 0xFF, sizeof(literalSuffix));
+    std::memset(createParams, 0xFF, sizeof(createParams));
+    std::memset(localTypeName, 0xFF, sizeof(localTypeName));
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 1, SQL_C_CHAR, typeName, sizeof(typeName), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(std::string(typeName) == expected.typeName);
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(dataType == expected.sqlType);
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 3, SQL_C_SLONG, &columnSize, sizeof(columnSize), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(columnSize == expected.columnSize);
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 4, SQL_C_CHAR, literalPrefix, sizeof(literalPrefix), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.literalPrefixIndicator);
+    if (expected.literalPrefixIndicator != SQL_NULL_DATA) {
+      REQUIRE(std::string(literalPrefix) == expected.literalPrefix);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 5, SQL_C_CHAR, literalSuffix, sizeof(literalSuffix), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.literalSuffixIndicator);
+    if (expected.literalSuffixIndicator != SQL_NULL_DATA) {
+      REQUIRE(std::string(literalSuffix) == expected.literalSuffix);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 6, SQL_C_CHAR, createParams, sizeof(createParams), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.createParamsIndicator);
+    if (expected.createParamsIndicator != SQL_NULL_DATA) {
+      REQUIRE(std::string(createParams) == expected.createParams);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 7, SQL_C_SSHORT, &nullable, sizeof(nullable), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(nullable == expected.nullable);
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 8, SQL_C_SSHORT, &caseSensitive, sizeof(caseSensitive), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(caseSensitive == expected.caseSensitive);
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 9, SQL_C_SSHORT, &searchable, sizeof(searchable), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(searchable == expected.searchable);
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 10, SQL_C_SSHORT, &unsignedAttr, sizeof(unsignedAttr), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.unsignedAttrIndicator);
+    if (expected.unsignedAttrIndicator != SQL_NULL_DATA) {
+      REQUIRE(unsignedAttr == expected.unsignedAttr);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 11, SQL_C_SSHORT, &fixedPrecScale, sizeof(fixedPrecScale), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(fixedPrecScale == expected.fixedPrecScale);
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 12, SQL_C_SSHORT, &autoUniqueValue, sizeof(autoUniqueValue), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.autoUniqueValueIndicator);
+    if (expected.autoUniqueValueIndicator != SQL_NULL_DATA) {
+      REQUIRE(autoUniqueValue == expected.autoUniqueValue);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 13, SQL_C_CHAR, localTypeName, sizeof(localTypeName), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.localTypeNameIndicator);
+    if (expected.localTypeNameIndicator != SQL_NULL_DATA) {
+      REQUIRE(std::string(localTypeName) == expected.localTypeName);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 14, SQL_C_SSHORT, &minimumScale, sizeof(minimumScale), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.minimumScaleIndicator);
+    if (expected.minimumScaleIndicator != SQL_NULL_DATA) {
+      REQUIRE(minimumScale == expected.minimumScale);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 15, SQL_C_SSHORT, &maximumScale, sizeof(maximumScale), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.maximumScaleIndicator);
+    if (expected.maximumScaleIndicator != SQL_NULL_DATA) {
+      REQUIRE(maximumScale == expected.maximumScale);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 16, SQL_C_SSHORT, &sqlDataType, sizeof(sqlDataType), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(sqlDataType == expected.sqlDataType);
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 17, SQL_C_SSHORT, &sqlDatetimeSub, sizeof(sqlDatetimeSub), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.sqlDatetimeSubIndicator);
+    if (expected.sqlDatetimeSubIndicator != SQL_NULL_DATA) {
+      REQUIRE(sqlDatetimeSub == expected.sqlDatetimeSub);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 18, SQL_C_SLONG, &numPrecRadix, sizeof(numPrecRadix), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.numPrecRadixIndicator);
+    if (expected.numPrecRadixIndicator != SQL_NULL_DATA) {
+      REQUIRE(numPrecRadix == expected.numPrecRadix);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 19, SQL_C_SLONG, &intervalPrecision, sizeof(intervalPrecision), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.intervalPrecisionIndicator);
+    if (expected.intervalPrecisionIndicator != SQL_NULL_DATA) {
+      REQUIRE(intervalPrecision == expected.intervalPrecision);
+    }
+
+    indicator = -1;
+    ret = SQLGetData(stmt, 20, SQL_C_SSHORT, &userDataType, sizeof(userDataType), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == expected.userDataTypeIndicator);
+    if (expected.userDataTypeIndicator != SQL_NULL_DATA) {
+      REQUIRE(userDataType == expected.userDataType);
+    }
+
+    ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+    REQUIRE(ret == SQL_SUCCESS);
   }
 
   SQLDisconnect(dbc_handle());

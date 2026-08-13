@@ -4,6 +4,8 @@
 
 New features:
 
+- Added VECTOR type fetch support: VECTOR columns are now returned as compact JSON array strings (e.g. `[1,2,3]`) via `SQL_C_CHAR`, `SQL_C_WCHAR`, and `SQL_C_BINARY`, matching the ARRAY/VARIANT pattern. `SQLDescribeCol` reports `SQL_VARCHAR`; `SQL_DESC_TYPE_NAME` returns `"VECTOR"`. (snowflake-eng/universal-driver#1010)
+
 Changes:
 
 - Changed `SQLGetInfo(SQL_DRIVER_VER)` to return the zero-padded fixed-width `MM.mm.bbbb` string (e.g. `04.00.0000`) defined by the ODBC spec (`##.##.####`), instead of the unpadded Cargo semver (e.g. `4.0.0`). (snowflakedb/drivers#1074)

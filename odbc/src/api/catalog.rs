@@ -1900,6 +1900,7 @@ fn field_from_sql_type_string(type_str: &str, numeric_settings: &NumericSettings
         "VARIANT" => rehydrate_field("VARIANT", None, None, Some(default_varchar), None, true),
         "OBJECT" => rehydrate_field("OBJECT", None, None, Some(default_varchar), None, true),
         "ARRAY" => rehydrate_field("ARRAY", None, None, Some(default_varchar), None, true),
+        "VECTOR" => rehydrate_field("VECTOR", None, None, Some(default_varchar), None, true),
         // GEOGRAPHY/GEOMETRY and anything unrecognized fall back to a character
         // type, matching the reference driver's treatment of unmapped types.
         _ => rehydrate_field("TEXT", None, None, Some(default_varchar), None, true),
@@ -4276,6 +4277,27 @@ static ALL_SF_TYPE_INFO: &[TypeInfoRow] = &[
         num_prec_radix: None,
         user_data_type: 0,
     },
+    // ── VECTOR (Snowflake vendor type 2006) ───────────────────────────────────
+    TypeInfoRow {
+        type_name: "VECTOR",
+        data_type: 2006,
+        column_size: 134_217_728,
+        literal_prefix: Some("'"),
+        literal_suffix: Some("'"),
+        create_params: Some("max length"),
+        nullable: 1,
+        case_sensitive: 0,
+        searchable: SEARCHABLE,
+        unsigned_attribute: None,
+        fixed_prec_scale: 0,
+        local_type_name: Some("OWN"),
+        minimum_scale: None,
+        maximum_scale: None,
+        sql_data_type: 2006,
+        sql_datetime_sub: None,
+        num_prec_radix: None,
+        user_data_type: 0,
+    },
     // ── WCHAR (SQL_WCHAR = -8) ────────────────────────────────────────────────
     TypeInfoRow {
         type_name: "CHAR",
@@ -4460,10 +4482,10 @@ mod type_info_tests {
     use super::*;
 
     #[test]
-    fn all_types_returns_23_rows_and_20_columns() {
+    fn all_types_returns_24_rows_and_20_columns() {
         let all: Vec<&TypeInfoRow> = ALL_SF_TYPE_INFO.iter().collect();
         let batch = build_type_info_batch(&all).expect("batch build failed");
-        assert_eq!(batch.num_rows(), 23);
+        assert_eq!(batch.num_rows(), 24);
         assert_eq!(batch.num_columns(), 20);
         assert_eq!(type_info_schema().fields().len(), 20);
     }
@@ -4491,10 +4513,10 @@ mod type_info_tests {
     #[test]
     fn insertion_order_matches_ordering_test_expectation() {
         // Authoritative order from get_type_info_tests.cpp ordering test
-        // (types[0..22]).
+        // (types[0..23], extended to include VECTOR 2006).
         let expected: &[i16] = &[
             1, 2, 3, 4, -5, 6, 7, 8, 12, -2, -3, 91, 92, 2000, 2002, 2001, 93, 2003, 2004, 2005,
-            -8, -9, -7,
+            2006, -8, -9, -7,
         ];
         let actual: Vec<i16> = ALL_SF_TYPE_INFO.iter().map(|r| r.data_type).collect();
         assert_eq!(actual, expected);
