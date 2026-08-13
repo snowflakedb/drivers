@@ -29,7 +29,7 @@ RUN cd /workdir/jdbc && \
     ./gradlew --no-daemon --console=plain shadowJar && \
     cp build/libs/snowflake-jdbc-native-all-*.jar /workdir/snowflake-jdbc-native-all.jar
 
-# Compile the perf app against the fat jar (which also supplies the shaded org.json it uses).
+# Compile the perf app against the fat jar (which also supplies the shaded Jackson it uses).
 COPY tests/performance/drivers/jdbc/app/ /workdir/app/
 RUN mkdir -p /workdir/app-classes && \
     javac -cp "/workdir/snowflake-jdbc-native-all.jar" \
@@ -39,15 +39,16 @@ RUN mkdir -p /workdir/app-classes && \
 # Capture the Rust compiler version that built libjdbc_bridge.so (for run metadata).
 RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /workdir/rust_version
 
-# curl + unzip for fetching the old jar and lifting the shaded org.json out of the fat jar. Kept in
+# curl + unzip for fetching the old jar and lifting the shaded Jackson out of the fat jar. Kept in
 # its own layer after shadowJar so it does not invalidate the (expensive) fat-jar build cache.
 RUN apt-get update && apt-get install -y curl unzip && rm -rf /var/lib/apt/lists/*
 
 # The `old` comparison driver is the latest published snowflake-jdbc release — a self-contained fat
 # jar that registers jdbc:snowflake:// via net.snowflake.client.jdbc.SnowflakeDriver, so the same
-# compiled perf-app classes run against it unchanged. Unlike our fat jar it bundles NO org.json, so
-# the shaded package the app imports (net.snowflake.client.jdbc.internal.org.json) must be supplied
-# separately on the `old` classpath — we lift the byte-identical classes out of our fat jar below.
+# compiled perf-app classes run against it unchanged. It bundles its own Jackson, but relocated under
+# a different internal package, so the exact shaded package the app compiled against
+# (net.snowflake.client.jdbc.internal.com.fasterxml.jackson) must be supplied separately on the `old`
+# classpath — we lift the byte-identical classes out of our fat jar below.
 # Fetched from Snowflake's internal Artifactory Maven proxy (not public Maven Central) to avoid a
 # public CI dependency and its rate limits; the version is resolved from Maven metadata at build time.
 RUN REPO=https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/development-maven-virtual/net/snowflake/snowflake-jdbc && \
@@ -55,10 +56,10 @@ RUN REPO=https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory
     echo "Using snowflake-jdbc ${VERSION}" && \
     curl -fsSL -o /workdir/snowflake-jdbc-old.jar "${REPO}/${VERSION}/snowflake-jdbc-${VERSION}.jar"
 
-RUN mkdir -p /workdir/shaded-json && cd /workdir/shaded-json && \
+RUN mkdir -p /workdir/shaded-jackson && cd /workdir/shaded-jackson && \
     unzip -q /workdir/snowflake-jdbc-native-all.jar \
-      'net/snowflake/client/jdbc/internal/org/json/*' && \
-    jar --create --file /workdir/shaded-json.jar -C /workdir/shaded-json .
+      'net/snowflake/client/jdbc/internal/com/fasterxml/jackson/*' && \
+    jar --create --file /workdir/shaded-jackson.jar -C /workdir/shaded-jackson .
 
 # ============================================================================
 # Base runtime image (shared by driver targets)
@@ -101,12 +102,13 @@ CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/r
 FROM base AS old
 
 COPY --from=jar_builder /workdir/snowflake-jdbc-old.jar /opt/jdbc/snowflake-jdbc-old.jar
-COPY --from=jar_builder /workdir/shaded-json.jar /opt/jdbc/shaded-json.jar
+COPY --from=jar_builder /workdir/shaded-jackson.jar /opt/jdbc/shaded-jackson.jar
 RUN echo "N/A" > /etc/rust_version
 
 ENV DRIVER_TYPE=old
-# The released jar bundles no org.json; supply the shaded package the app imports alongside it.
-ENV JDBC_CLASSPATH="/opt/jdbc/app:/opt/jdbc/snowflake-jdbc-old.jar:/opt/jdbc/shaded-json.jar"
+# The released jar relocates Jackson under a different package; supply the exact shaded package the
+# app compiled against alongside it.
+ENV JDBC_CLASSPATH="/opt/jdbc/app:/opt/jdbc/snowflake-jdbc-old.jar:/opt/jdbc/shaded-jackson.jar"
 
 # No CORE_PATH: the released jar carries its own JNI transport. Results.writeRunMetadata already
 # gates build_rust_version on driver_type=universal, so "N/A" here is never emitted to metadata.

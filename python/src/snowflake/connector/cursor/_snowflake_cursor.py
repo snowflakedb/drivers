@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from .._internal.cursor import Row
 from ._base import SnowflakeCursorBase
 
@@ -23,10 +25,7 @@ class SnowflakeCursor(SnowflakeCursorBase):
         Returns:
             tuple: Next row, or None when no more data is available
         """
-        row = self._fetchone()
-        if not (row is None or isinstance(row, tuple)):
-            raise TypeError(f"fetchone got unexpected result: {row}")
-        return row
+        return cast(Row | None, self._fetchone())
 
     def fetchmany(self, size: int | None = None) -> list[Row]:
         """

@@ -446,9 +446,38 @@ class TestConvertProtoError:
 
         result = _proto_to_public_error(proto_exc)
         assert isinstance(result, DatabaseError)
-        # Login errors use ER_FAILED_TO_CONNECT_TO_DB (250001) to match old driver.
+        # When sf_core doesn't surface a vendor_code (e.g. the server omitted
+        # or sent a non-numeric login-failure code), fall back to
+        # ER_FAILED_TO_CONNECT_TO_DB (250001), matching old driver's own fallback.
         assert result.errno == 250001
         assert result.sqlstate == "08001"
+
+    def test_application_exception_login_error_uses_vendor_code_when_present(self):
+        """sf_core surfaces the server's raw GS code for login failures (e.g. 390100
+        for bad credentials) via vendor_code/sql_state, which takes priority over the
+        STATUS_TO_ERRNO fallback — matching legacy Python connector >=4.7.2 (SNOW-3775156)."""
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="Failed to connect to DB",
+            status_code=STATUS_CODE_LOGIN_ERROR,
+            vendor_code=390100,
+            sql_state="28000",
+            error=ProtoDriverError(
+                login_error=ProtoLoginError(
+                    message="Incorrect username or password",
+                    code=390100,
+                ),
+            ),
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert isinstance(result, DatabaseError)
+        assert result.errno == 390100
+        assert result.sqlstate == "28000"
 
     def test_application_exception_uses_vendor_code_and_sqlstate(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (

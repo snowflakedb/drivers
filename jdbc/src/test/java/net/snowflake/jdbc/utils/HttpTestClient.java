@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.utils;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
@@ -16,8 +17,6 @@ import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.apache.hc.core5.http.io.support.ClassicRequestBuilder;
 import org.apache.hc.core5.util.Timeout;
-import org.json.JSONObject;
-import org.json.JSONTokener;
 
 /** Minimal Apache HttpClient 5.x wrapper for synchronous test use. Java 8 source compatible. */
 public final class HttpTestClient implements AutoCloseable {
@@ -103,8 +102,8 @@ public final class HttpTestClient implements AutoCloseable {
       return status >= 200 && status < 300;
     }
 
-    public JSONObject json() {
-      return new JSONObject(new JSONTokener(body));
+    public JsonNode json() {
+      return JsonTestUtils.parseJson(body);
     }
 
     @Override

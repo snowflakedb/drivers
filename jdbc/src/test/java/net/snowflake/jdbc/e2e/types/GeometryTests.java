@@ -1,6 +1,8 @@
 package net.snowflake.jdbc.e2e.types;
 
 import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
+import static net.snowflake.jdbc.utils.JsonTestUtils.arrayNode;
+import static net.snowflake.jdbc.utils.JsonTestUtils.parseJson;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -8,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
@@ -18,8 +22,6 @@ import java.util.stream.Stream;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SkipForJSONResultSet;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
-import org.json.JSONArray;
-import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -69,7 +71,7 @@ class GeometryTests extends SnowflakeIntegrationTestBase implements WithGeoAsser
   @ParameterizedTest
   @MethodSource("geometryLiteralCases")
   void shouldSelectShapeGeometryLiteral(
-      String shape, String queryValue, JSONArray expectedCoordinates) throws Exception {
+      String shape, String queryValue, JsonNode expectedCoordinates) throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
@@ -261,12 +263,12 @@ class GeometryTests extends SnowflakeIntegrationTestBase implements WithGeoAsser
             assertFalse(resultSet.wasNull(), "GEO column should not be NULL at row " + rowCount);
             assertFalse(geoJson.isEmpty(), "GEO column should not be empty at row " + rowCount);
 
-            JSONObject geo = new JSONObject(geoJson);
-            assertEquals("Point", geo.getString("type"));
-            JSONArray coordinates = geo.getJSONArray("coordinates");
-            assertEquals(2, coordinates.length());
-            assertEquals((double) rowCount, coordinates.getDouble(0), 1e-9);
-            assertEquals((double) rowCount, coordinates.getDouble(1), 1e-9);
+            JsonNode geo = parseJson(geoJson);
+            assertEquals("Point", geo.get("type").asText());
+            JsonNode coordinates = geo.get("coordinates");
+            assertEquals(2, coordinates.size());
+            assertEquals((double) rowCount, coordinates.get(0).asDouble(), 1e-9);
+            assertEquals((double) rowCount, coordinates.get(1).asDouble(), 1e-9);
 
             rowCount++;
           }
@@ -350,25 +352,25 @@ class GeometryTests extends SnowflakeIntegrationTestBase implements WithGeoAsser
         });
   }
 
-  private static JSONArray pointCoordinates(double x, double y) {
-    return new JSONArray().put(x).put(y);
+  private static ArrayNode pointCoordinates(double x, double y) {
+    return arrayNode().add(x).add(y);
   }
 
-  private static JSONArray lineStringCoordinates() {
-    return new JSONArray()
-        .put(new JSONArray().put(0).put(0))
-        .put(new JSONArray().put(1).put(1))
-        .put(new JSONArray().put(2).put(2));
+  private static ArrayNode lineStringCoordinates() {
+    return arrayNode()
+        .add(arrayNode().add(0).add(0))
+        .add(arrayNode().add(1).add(1))
+        .add(arrayNode().add(2).add(2));
   }
 
-  private static JSONArray polygonCoordinates() {
-    return new JSONArray()
-        .put(
-            new JSONArray()
-                .put(new JSONArray().put(0).put(0))
-                .put(new JSONArray().put(4).put(0))
-                .put(new JSONArray().put(4).put(3))
-                .put(new JSONArray().put(0).put(3))
-                .put(new JSONArray().put(0).put(0)));
+  private static ArrayNode polygonCoordinates() {
+    return arrayNode()
+        .add(
+            arrayNode()
+                .add(arrayNode().add(0).add(0))
+                .add(arrayNode().add(4).add(0))
+                .add(arrayNode().add(4).add(3))
+                .add(arrayNode().add(0).add(3))
+                .add(arrayNode().add(0).add(0)));
   }
 }

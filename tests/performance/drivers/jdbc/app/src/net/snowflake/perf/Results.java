@@ -7,13 +7,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
-// org.json is bundled in the fat jar, relocated by shadowJar (see Config).
-import net.snowflake.client.jdbc.internal.org.json.JSONObject;
+// Jackson is bundled in the fat jar, relocated by shadowJar (see Config).
+import net.snowflake.client.jdbc.internal.com.fasterxml.jackson.databind.ObjectMapper;
+import net.snowflake.client.jdbc.internal.com.fasterxml.jackson.databind.node.ObjectNode;
 
 /** Writes the per-iteration CSV, memory-timeline CSV, and run-metadata JSON under /results. */
 final class Results {
 
   private static final Path RESULTS_DIR = Paths.get("/results");
+  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private Results() {}
 
@@ -75,7 +77,7 @@ final class Results {
       return;
     }
     Files.createDirectories(RESULTS_DIR);
-    JSONObject metadata = new JSONObject();
+    ObjectNode metadata = MAPPER.createObjectNode();
     metadata.put("driver", "jdbc");
     metadata.put("driver_type", driverType);
     metadata.put("driver_version", driverVersion);
@@ -87,7 +89,10 @@ final class Results {
     if ("universal".equals(driverType)) {
       metadata.put("build_rust_version", envOrDefault("BUILD_RUST_VERSION", "NA"));
     }
-    Files.write(file, metadata.toString(2).getBytes(StandardCharsets.UTF_8));
+    Files.write(
+        file,
+        MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(metadata)
+            .getBytes(StandardCharsets.UTF_8));
   }
 
   private static long epochSeconds() {

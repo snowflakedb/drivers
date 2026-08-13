@@ -48,9 +48,9 @@ function executeAsync(options: snowflake.StatementOption) {
 }
 
 const SQL_TEXT = `\
-  SELECT CAST(NULL AS INT), CAST(23 AS INT), true
+  SELECT CAST(NULL AS INT), CAST(23 AS INT), true, TO_BINARY('ABCDEF', 'HEX')
   UNION ALL
-  SELECT CAST(42 AS INT), CAST(NULL AS INT), false
+  SELECT CAST(42 AS INT), CAST(NULL AS INT), false, TO_BINARY('00', 'HEX')
 `;
 
 (async () => {

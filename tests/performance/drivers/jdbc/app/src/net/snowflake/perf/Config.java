@@ -1,13 +1,14 @@
 package net.snowflake.perf;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Properties;
-// org.json is bundled in the fat jar, relocated by shadowJar (jdbc/build.gradle).
-import net.snowflake.client.jdbc.internal.org.json.JSONArray;
-import net.snowflake.client.jdbc.internal.org.json.JSONObject;
+// Jackson is bundled in the fat jar, relocated by shadowJar (jdbc/build.gradle).
+import net.snowflake.client.jdbc.internal.com.fasterxml.jackson.databind.JsonNode;
+import net.snowflake.client.jdbc.internal.com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * Config from env vars + the {@code PARAMETERS_JSON} blob. Connection property names follow the
@@ -23,7 +24,9 @@ final class Config {
   final int iterations;
   final int warmupIterations;
 
-  private final JSONObject conn;
+  private static final ObjectMapper MAPPER = new ObjectMapper();
+
+  private final JsonNode conn;
   private final String setupQueriesJson;
 
   Config() {
@@ -40,15 +43,19 @@ final class Config {
       throw new IllegalStateException(
           "Missing required environment variables (SQL_COMMAND, TEST_NAME, PARAMETERS_JSON)");
     }
-    this.conn = new JSONObject(paramsJson).getJSONObject("testconnection");
+    JsonNode testConnection = parseJson(paramsJson).get("testconnection");
+    if (testConnection == null || !testConnection.isObject()) {
+      throw new IllegalStateException("PARAMETERS_JSON is missing a 'testconnection' object");
+    }
+    this.conn = testConnection;
   }
 
   List<String> setupQueries() {
     List<String> result = new ArrayList<>();
     if (setupQueriesJson != null && !setupQueriesJson.isEmpty()) {
-      JSONArray arr = new JSONArray(setupQueriesJson);
-      for (int i = 0; i < arr.length(); i++) {
-        result.add(arr.getString(i));
+      JsonNode arr = parseJson(setupQueriesJson);
+      for (int i = 0; i < arr.size(); i++) {
+        result.add(arr.get(i).asText());
       }
     }
     return result;
@@ -65,7 +72,7 @@ final class Config {
     setIfPresent(props, "db", "SNOWFLAKE_TEST_DATABASE", "database");
     // JDBC prefers the JDBC-specific warehouse when present (mirrors TestParameters).
     if (conn.has("SNOWFLAKE_TEST_WAREHOUSE_JDBC")) {
-      props.setProperty("warehouse", conn.getString("SNOWFLAKE_TEST_WAREHOUSE_JDBC"));
+      props.setProperty("warehouse", conn.get("SNOWFLAKE_TEST_WAREHOUSE_JDBC").asText());
     } else {
       setIfPresent(props, "warehouse", "SNOWFLAKE_TEST_WAREHOUSE", "warehouse");
     }
@@ -126,29 +133,38 @@ final class Config {
         "private_key_base64",
         Base64.getEncoder().encodeToString(pem.getBytes(StandardCharsets.UTF_8)));
     if (conn.has("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")
-        && !conn.getString("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD").isEmpty()) {
-      props.setProperty("private_key_pwd", conn.getString("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD"));
+        && !conn.get("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD").asText().isEmpty()) {
+      props.setProperty(
+          "private_key_pwd", conn.get("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD").asText());
     }
     props.setProperty("authenticator", "SNOWFLAKE_JWT");
   }
 
   private void setIfPresent(Properties props, String propKey, String primary, String fallback) {
     if (conn.has(primary)) {
-      props.setProperty(propKey, String.valueOf(conn.get(primary)));
+      props.setProperty(propKey, conn.get(primary).asText());
     } else if (conn.has(fallback)) {
-      props.setProperty(propKey, String.valueOf(conn.get(fallback)));
+      props.setProperty(propKey, conn.get(fallback).asText());
     }
   }
 
   private List<String> getList(String key) {
     List<String> result = new ArrayList<>();
     if (conn.has(key)) {
-      JSONArray arr = conn.getJSONArray(key);
-      for (int i = 0; i < arr.length(); i++) {
-        result.add(arr.getString(i));
+      JsonNode arr = conn.get(key);
+      for (int i = 0; i < arr.size(); i++) {
+        result.add(arr.get(i).asText());
       }
     }
     return result;
+  }
+
+  private static JsonNode parseJson(String content) {
+    try {
+      return MAPPER.readTree(content);
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to parse JSON: " + content, e);
+    }
   }
 
   private static String envOrDefault(String key, String def) {

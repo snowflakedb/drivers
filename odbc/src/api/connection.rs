@@ -36,7 +36,7 @@ use crate::api::get_info_bitmasks::{
 };
 use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
-use crate::api::odbc_installer::resolve_driver_path;
+use crate::api::odbc_installer::resolve_driver_name;
 use crate::api::runtime::global;
 use crate::api::utils::zero_padded_driver_version;
 use crate::api::{
@@ -333,7 +333,7 @@ fn resolve_and_connect<E: OdbcEncoding>(
     let params = parse_connection_string(&connection_string)?;
     // Capture the original `DRIVER=` / `DSN=` keywords (if any) before
     // they get normalised away — they are needed later to resolve the
-    // driver's installed file path for `SQLGetInfo(SQL_DRIVER_NAME)`.
+    // driver's file name for `SQLGetInfo(SQL_DRIVER_NAME)`.
     let driver_section = params.get("DRIVER").cloned();
     let dsn_name = params.get("DSN").cloned();
     // Expand any DSN-stored attributes (account, host, user, credentials)
@@ -363,7 +363,7 @@ pub fn driver_connect<E: OdbcEncoding>(
     let params = parse_connection_string(&connection_string)?;
     // Capture the original `DRIVER=` / `DSN=` keywords (if any) before
     // they get normalised away — they are needed later to resolve the
-    // driver's installed file path for `SQLGetInfo(SQL_DRIVER_NAME)`.
+    // driver's file name for `SQLGetInfo(SQL_DRIVER_NAME)`.
     let driver_section = params.get("DRIVER").cloned();
     let dsn_name = params.get("DSN").cloned();
     // Expand any DSN-stored attributes (account, host, user, credentials)
@@ -745,9 +745,9 @@ pub fn connect<E: OdbcEncoding>(
     let params = merge_dsn_config(explicit, Some(&dsn))?;
 
     // The DSN name is what reaches `SQLGetInfo(SQL_DRIVER_NAME)` for
-    // resolving the driver's installed file path via `odbc.ini` →
-    // `odbcinst.ini`. SQLConnect never carries a `DRIVER=` keyword, so
-    // there is no direct driver section to capture here.
+    // resolving the driver's file name via `odbc.ini` → `odbcinst.ini`.
+    // SQLConnect never carries a `DRIVER=` keyword, so there is no direct
+    // driver section to capture here.
     connect_with_params(connection_handle, params, None, Some(dsn))
 }
 
@@ -1851,17 +1851,19 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::DriverName => {
             // Per ODBC spec, `SQL_DRIVER_NAME` returns "a character string
             // with the file name of the driver used to access the data
-            // source" — i.e. the on-disk path of the shared library the
-            // Driver Manager loaded. We resolve it via the DM's installer
-            // API (`SQLGetPrivateProfileString`) using whichever lookup
-            // hints we captured at connect time; see
-            // [`odbc_installer::resolve_driver_path`] for the layering.
+            // source" — i.e. the file name (not the full path) of the
+            // shared library the Driver Manager loaded. We resolve the
+            // library's on-disk path via the DM's installer API
+            // (`SQLGetPrivateProfileString`) using whichever lookup hints
+            // we captured at connect time, then return just its file-name
+            // component; see [`odbc_installer::resolve_driver_name`] for
+            // the layering.
             let (driver_section, dsn_name) = {
                 let conn = dbc.connection.lock();
                 (conn.driver_section.clone(), conn.dsn_name.clone())
             };
-            let path = resolve_driver_path(driver_section.as_deref(), dsn_name.as_deref());
-            write_str(&path);
+            let name = resolve_driver_name(driver_section.as_deref(), dsn_name.as_deref());
+            write_str(&name);
         }
         InfoType::DriverVer => write_str(&zero_padded_driver_version(ODBC_DRIVER_VERSION)),
         InfoType::DbmsName => write_str("Snowflake"),
