@@ -56,6 +56,8 @@ pub struct PrefetchChunkReader<D: DownloadChunk, P: ParseChunk> {
     phantom: PhantomData<(D, P)>,
 }
 
+type ChunkTask = tokio::task::JoinHandle<Result<Chunk, ArrowError>>;
+
 impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
     pub async fn reader<R: RecordBatchReader + Send>(
         initial: R,
@@ -104,68 +106,99 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
         prefetch_concurrency: usize,
         memory_budget: MemoryBudget,
     ) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
-        let send = |msg: Result<Chunk, ArrowError>| {
-            let tx = &tx;
-            async move {
-                if let Err(e) = tx.send(msg).await {
-                    log_foreign_error!(e, "Failed to send result to channel");
-                    return Err(e);
-                }
-                Ok(())
-            }
-        };
-
         if !initial.is_empty() {
-            send(Ok(Chunk {
-                batches: VecDeque::from(initial),
-                ticket: MemoryTicket::empty(),
-            }))
+            send_result(
+                &tx,
+                Ok(Chunk {
+                    batches: VecDeque::from(initial),
+                    ticket: MemoryTicket::empty(),
+                }),
+            )
             .await?;
         }
 
-        let mut chunk_tasks: VecDeque<tokio::task::JoinHandle<Result<Chunk, ArrowError>>> =
-            VecDeque::new();
+        let mut chunk_tasks: VecDeque<ChunkTask> = VecDeque::new();
 
-        for _ in 0..prefetch_concurrency {
-            if let Some(data) = chunks.pop_front() {
-                let estimate = data.estimated_memory_mb();
-                let ticket = memory_budget.acquire(estimate).await;
+        fill_window(
+            &downloader,
+            &parser,
+            &mut chunks,
+            &mut chunk_tasks,
+            &memory_budget,
+            prefetch_concurrency,
+        )
+        .await;
 
-                let d = downloader.clone();
-                let p = parser.clone();
-                chunk_tasks.push_back(tokio::task::spawn(
-                    get_chunk(d, p, data, ticket).with_current_subscriber(),
-                ));
-            }
-        }
-
-        while let Some(task) = chunk_tasks.pop_front() {
-            match task.await {
-                Err(e) => {
-                    return send(Err(ArrowError::ExternalError(Box::new(e)))).await;
-                }
-                Ok(Err(e)) => {
-                    return send(Err(e)).await;
-                }
-                Ok(Ok(chunk)) => {
-                    send(Ok(chunk)).await?;
-                }
-            }
-
-            if let Some(data) = chunks.pop_front() {
-                let next_estimate = data.estimated_memory_mb();
-                let ticket = memory_budget.acquire(next_estimate).await;
-
-                let d = downloader.clone();
-                let p = parser.clone();
-                chunk_tasks.push_back(tokio::task::spawn(
-                    get_chunk(d, p, data, ticket).with_current_subscriber(),
-                ));
-            }
-        }
-
-        Ok(())
+        drain_window(
+            &downloader,
+            &parser,
+            &mut chunks,
+            &mut chunk_tasks,
+            &memory_budget,
+            &tx,
+        )
+        .await
     }
+}
+
+async fn send_result(
+    tx: &tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
+    msg: Result<Chunk, ArrowError>,
+) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
+    if let Err(e) = tx.send(msg).await {
+        log_foreign_error!(e, "Failed to send result to channel");
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Spawn up to `concurrency` download+parse tasks from the front of `chunks`.
+async fn fill_window(
+    downloader: &impl DownloadChunk,
+    parser: &impl ParseChunk,
+    chunks: &mut VecDeque<ChunkDownloadData>,
+    tasks: &mut VecDeque<ChunkTask>,
+    budget: &MemoryBudget,
+    concurrency: usize,
+) {
+    while tasks.len() < concurrency {
+        let Some(data) = chunks.pop_front() else {
+            break;
+        };
+        let ticket = budget.acquire(data.estimated_memory_mb()).await;
+        tasks.push_back(tokio::spawn(
+            get_chunk(downloader.clone(), parser.clone(), data, ticket).with_current_subscriber(),
+        ));
+    }
+}
+
+/// Await tasks in order, send results, and refill the window after each completion.
+async fn drain_window(
+    downloader: &impl DownloadChunk,
+    parser: &impl ParseChunk,
+    chunks: &mut VecDeque<ChunkDownloadData>,
+    tasks: &mut VecDeque<ChunkTask>,
+    budget: &MemoryBudget,
+    tx: &tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
+) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
+    while let Some(task) = tasks.pop_front() {
+        let result = task
+            .await
+            .unwrap_or_else(|e| Err(ArrowError::ExternalError(Box::new(e))));
+        let is_err = result.is_err();
+        send_result(tx, result).await?;
+        if is_err {
+            return Ok(());
+        }
+        if let Some(data) = chunks.pop_front() {
+            let ticket = budget.acquire(data.estimated_memory_mb()).await;
+            tasks.push_back(tokio::spawn(
+                get_chunk(downloader.clone(), parser.clone(), data, ticket)
+                    .with_current_subscriber(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 async fn get_chunk(
