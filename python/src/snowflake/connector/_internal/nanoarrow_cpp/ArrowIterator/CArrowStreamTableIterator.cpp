@@ -200,10 +200,16 @@ void CArrowStreamTableIterator::convertBatch() {
   int rc = ArrowSchemaDeepCopy(m_schema.get(), m_exportSchema.get());
   SF_CHECK_ARROW_RC(rc, "[Snowflake Exception] error deep-copying schema, error code: %d", rc);
 
-  for (int64_t col = 0; col < m_columnCount; col++) {
-    m_converter->convertIfNeeded(m_exportSchema->children[col], m_currentArrayView->children[col]);
-    if (py::checkPyError()) return;
+  {
+    Py_BEGIN_ALLOW_THREADS
+    for (int64_t col = 0; col < m_columnCount; col++) {
+      m_converter->convertIfNeeded(m_exportSchema->children[col],
+                                   m_currentArrayView->children[col]);
+    }
+    Py_END_ALLOW_THREADS
   }
+  // GIL is held again - surface any error set via py::setPyError
+  if (py::checkPyError()) return;
 
   ArrowArrayMove(m_currentArray.get(), m_exportArray.get());
 }

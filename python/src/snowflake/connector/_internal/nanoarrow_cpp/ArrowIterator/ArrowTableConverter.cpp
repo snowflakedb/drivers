@@ -84,7 +84,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
           break;
         case NANOARROW_TYPE_LIST: {
           if (columnSchemaView.schema->n_children != 1) {
-            PyErr_SetString(
+            py::setPyError(
                 PyExc_Exception,
                 Logger::formatString(
                     "[Snowflake Exception] invalid arrow schema for array "
@@ -97,7 +97,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
           break;
         }
         default:
-          PyErr_SetString(
+          py::setPyError(
               PyExc_Exception,
               Logger::formatString(
                   "[Snowflake Exception] unknown arrow type(%s) "
@@ -110,7 +110,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
 
     case SnowflakeType::Type::MAP: {
       if (columnSchemaView.schema->n_children != 1) {
-        PyErr_SetString(
+        py::setPyError(
             PyExc_Exception,
             Logger::formatString(
                 "[Snowflake Exception] invalid arrow schema for map "
@@ -120,7 +120,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
       }
       ArrowSchema* entries = columnSchemaView.schema->children[0];
       if (entries->n_children != 2) {
-        PyErr_SetString(
+        py::setPyError(
             PyExc_Exception,
             Logger::formatString(
                 "[Snowflake Exception] invalid arrow schema for map "
@@ -146,7 +146,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
           }
           break;
         default:
-          PyErr_SetString(
+          py::setPyError(
               PyExc_Exception,
               Logger::formatString(
                   "[Snowflake Exception] unknown arrow type(%s) "
@@ -189,7 +189,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
             std::string(scaleString.data, scaleString.size_bytes));
       }
       if (scale < 0 || scale > 9) {
-        PyErr_SetString(
+        py::setPyError(
             PyExc_Exception,
             Logger::formatString(
                 "[Snowflake Exception] invalid scale value %d for TIME "
@@ -215,7 +215,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
             std::string(scaleString.data, scaleString.size_bytes));
       }
       if (scale < 0 || scale > 9) {
-        PyErr_SetString(
+        py::setPyError(
             PyExc_Exception,
             Logger::formatString(
                 "[Snowflake Exception] invalid scale value %d for "
@@ -241,7 +241,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
             std::string(scaleString.data, scaleString.size_bytes));
       }
       if (scale < 0 || scale > 9) {
-        PyErr_SetString(
+        py::setPyError(
             PyExc_Exception,
             Logger::formatString(
                 "[Snowflake Exception] invalid scale value %d for "
@@ -282,7 +282,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
         }
       }
       if (scale < 0 || scale > 9) {
-        PyErr_SetString(
+        py::setPyError(
             PyExc_Exception,
             Logger::formatString(
                 "[Snowflake Exception] invalid scale value %d for "
@@ -296,7 +296,7 @@ void ArrowTableConverter::convertIfNeeded(ArrowSchema* columnSchema,
     }
 
     default:
-      PyErr_SetString(
+      py::setPyError(
           PyExc_Exception,
           Logger::formatString(
               "[Snowflake Exception] unknown Snowflake type: %s",
@@ -877,7 +877,7 @@ void ArrowTableConverter::convertTimestampTZColumn_nanoarrow(
                     : (epoch * sf::internal::powTenSB4[9] + frac);
         returnCode = ArrowArrayAppendInt(newArray, val);
       } else {
-        PyErr_SetString(
+        py::setPyError(
             PyExc_Exception,
             Logger::formatString(
                 "[Snowflake Exception] unknown byteLength(%d) for "

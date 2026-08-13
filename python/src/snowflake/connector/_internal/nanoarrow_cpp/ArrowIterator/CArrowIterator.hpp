@@ -10,11 +10,19 @@
 #include "logging.hpp"
 #include "nanoarrow.hpp"
 
+// logger->error() and PyErr_SetString() both call into the Python/C API. This
+// may run inside a Py_BEGIN_ALLOW_THREADS block (e.g. ArrowTableConverter's
+// per-column conversion loop) as well as ordinary GIL-holding code paths, so
+// guard with py::PyUniqueLock, which re-acquires the GIL only if it isn't
+// already held by this thread.
 #define SF_CHECK_ARROW_RC(arrow_status, format_string, ...)                     \
   if (arrow_status != NANOARROW_OK) {                                           \
     std::string errorInfo = Logger::formatString(format_string, ##__VA_ARGS__); \
-    logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());             \
-    PyErr_SetString(PyExc_Exception, errorInfo.c_str());                        \
+    {                                                                           \
+      py::PyUniqueLock gilGuard;                                                \
+      logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());           \
+      PyErr_SetString(PyExc_Exception, errorInfo.c_str());                      \
+    }                                                                          \
     return;                                                                     \
   }
 

@@ -89,6 +89,17 @@ class PyUniqueLock {
   PyGILState_STATE m_state;
 };
 
+/**
+ * Set a Python exception from a thread that may not currently hold the
+ * GIL (e.g. inside a Py_BEGIN_ALLOW_THREADS block). PyGILState_Ensure()
+ * is a cheap no-op when this thread already holds the GIL, so this is
+ * also safe to call from ordinary GIL-holding code paths.
+ */
+inline void setPyError(PyObject* excType, const char* msg) {
+  PyUniqueLock gilGuard;
+  PyErr_SetString(excType, msg);
+}
+
 }  // namespace py
 }  // namespace sf
 
