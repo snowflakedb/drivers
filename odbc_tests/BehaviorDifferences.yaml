@@ -2057,26 +2057,37 @@ behavior_differences:
       relocated one — allowed as a bugfix since silently accepting a no-op param combination is itself a
       latent bug.
   110:
-    name: "SQLGetDiagRec/SQLGetDiagField MessageText vendor prefix changed from [Snowflake][Support] to [Snowflake][Snowflake ODBC Driver]"
+    name: "SQLGetDiagRec/SQLGetDiagField MessageText: new driver prepends the ODBC vendor prefix to server errors"
     status: allowed
-    type: bugfix
+    type: enhancement
     reviewed: false
     status_rationale: |
       The ODBC spec (§16.2.16) requires drivers to prepend [vendor][ODBC-component-identifier] to
-      diagnostic message text. The old driver (SimbaEngine-based) used [Snowflake][Support]; the new
-      driver uses [Snowflake][Snowflake ODBC Driver], which is a more accurate component identifier.
-      Both satisfy the spec; the new prefix is intentionally more descriptive.
+      diagnostic message text. The new driver does so uniformly and, for data source-originated
+      (server) errors, adds a third [data-source] segment ([Snowflake]) (SNOW-3235406), yielding the
+      3-part [Snowflake][Snowflake ODBC Driver][Snowflake]. The old (SimbaEngine) driver only prefixes
+      driver-originated errors (with [Snowflake][Support]) and passes server-originated error text
+      through verbatim with no vendor prefix. The new driver's uniform, spec-compliant prefixing is
+      intentional; the old driver's raw passthrough on server errors is the divergence.
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Diagnostic message text from SQLGetDiagRec / SQLGetDiagField(SQL_DIAG_MESSAGE_TEXT) is
-      prefixed with "[Snowflake][Support]" (a SimbaEngine artefact).
+      Diagnostic message text from SQLGetDiagRec / SQLGetDiagField(SQL_DIAG_MESSAGE_TEXT) for a data
+      source-originated (server) error is the raw server message with no vendor prefix, e.g.
+      "SQL compilation error: Object '...' does not exist or not authorized." The old driver's
+      "[Snowflake][Support]" prefix (a SimbaEngine artefact) appears only on driver-originated errors.
     new_driver_behavior: |
-      Diagnostic message text is prefixed with "[Snowflake][Snowflake ODBC Driver]", matching the
-      ODBC spec requirement that the component identifier names the driver.
+      Diagnostic message text is prefixed with "[Snowflake][Snowflake ODBC Driver]" for
+      driver-originated errors and the 3-part "[Snowflake][Snowflake ODBC Driver][Snowflake]" for data
+      source-originated (server) errors, matching the §16.2.16 [vendor][component][data-source]
+      structure. The component identifier now names the driver; the third [Snowflake] segment
+      identifies the data source (SNOW-3235406).
     description: |
-      Applications that pattern-match diagnostic message text against the literal "[Snowflake][Support]"
-      prefix must update their pattern to "[Snowflake][Snowflake ODBC Driver]".
+      Applications that pattern-match diagnostic message text against a leading "[Snowflake][Support]"
+      prefix must update to "[Snowflake][Snowflake ODBC Driver]". For server (data source-originated)
+      errors specifically, the old driver emits no vendor prefix at all -- it passes the raw server text
+      through (e.g. "SQL compilation error: ...") -- whereas the new driver emits the 3-part
+      "[Snowflake][Snowflake ODBC Driver][Snowflake]" prefix.
 
   111:
     name: "SQLCancelHandle(DBC) returns HY010 when an associated statement is mid-async or in data-at-execution"
