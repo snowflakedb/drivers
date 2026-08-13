@@ -19,28 +19,42 @@ never rebinds the ``@backward_compatibility``-decorated class into its own
 globals — a static test
 (``TestNoInternalImportsOfBackwardCompatNames``) forbids any
 ``snowflake.connector.*`` module from doing that, since it would re-couple
-driver internals to the legacy surface. One consequence: because the
-resolution happens through this internal module, the one-shot deprecation
-warning does not fire for callers going through this path (internal callers
-are exempt from the warning by design) — only direct
-``from snowflake.connector.errors import ReauthenticationRequest`` usage
-warns. That's an acceptable trade-off here since the primary known consumer
-of this exact path (Snowpark) is not itself deprecated usage we're trying to
-flag.
+driver internals to the legacy surface. This does *not* mean access through
+this path goes unwarned: ``__getattr__`` below emits an explicit
+``DeprecationWarning`` (for external callers only, matching the rest of the
+driver's backward-compatibility convention — see
+``_internal.backward_compatibility._is_caller_external``) pointing callers at
+``snowflake.connector.errors`` — the import path is what's deprecated here,
+not the class itself, which the driver actively raises.
 """
 
 from __future__ import annotations
 
+import warnings
+
 from typing import Any
+
+from ._internal.backward_compatibility import _is_caller_external
 
 
 __all__ = ["ReauthenticationRequest"]  # noqa: F822 - resolved lazily via __getattr__ below
+
+_warned = False
 
 
 def __getattr__(name: str) -> Any:
     if name == "ReauthenticationRequest":
         from .errors import ReauthenticationRequest
 
+        global _warned
+        if not _warned and _is_caller_external():
+            _warned = True
+            warnings.warn(
+                "snowflake.connector.network.ReauthenticationRequest is deprecated; "
+                "import ReauthenticationRequest from snowflake.connector.errors instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         return ReauthenticationRequest
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
