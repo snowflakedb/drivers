@@ -11,11 +11,12 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
 )
 from ..type_codes import get_type_code
 
+
 _TEXT_TYPES = ("TEXT", "VARCHAR", "CHAR", "STRING")
 
 
 def _column_display_size(col: Any) -> int | None:
-    # Char count; text-only per legacy (numeric types never carry a meaningful value here).
+    # Char count, text-only — a UD-only enhancement (BD#63); legacy never populates this field.
     return col.length if col.HasField("length") and col.type.upper() in _TEXT_TYPES else None
 
 

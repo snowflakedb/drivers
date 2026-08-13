@@ -2952,6 +2952,48 @@ class TestCursorDescribeInternal:
             assert v2_result[0].display_size is None
             assert v1_result[0].display_size is None
 
+    def test_internal_size_per_type(self, cursor):
+        """internal_size is the char count for VARCHAR and None for every other type.
+
+        Ported from legacy's test_dbapi.py::test_description2 expectation table,
+        using an explicit VARCHAR(100) column rather than legacy's bare `name string`
+        column so the expected value is a fixed 100 (legacy's version depends on the
+        server-side ENABLE_FIX_67159 flag, which has no UD equivalent). Identical on
+        both drivers, so asserted unconditionally with no BD marker.
+        """
+        sql = (
+            "SELECT 1::NUMBER AS fixed_col, 'x'::VARCHAR(100) AS varchar_col, "
+            "'2024-01-15'::DATE AS date_col, '12:00:00'::TIME AS time_col, "
+            "'2013-11-03 00:00:00'::TIMESTAMP_NTZ AS ntz_col, "
+            "'2013-11-03 00:00:00'::TIMESTAMP_LTZ AS ltz_col, "
+            "'2013-11-03 00:00:00-07'::TIMESTAMP_TZ AS tz_col, "
+            'TO_VARIANT(PARSE_JSON(\'{"k": "v"}\')) AS variant_col, '
+            "OBJECT_CONSTRUCT('k', 'v') AS object_col, "
+            "ARRAY_CONSTRUCT('a', 'b', 'c') AS array_col, "
+            "TRUE::BOOLEAN AS boolean_col"
+        )
+        v2_result = cursor._describe_internal(sql)
+        v1_result = cursor.describe(sql)
+
+        assert v2_result is not None and v1_result is not None
+
+        expected = {
+            "FIXED_COL": None,
+            "VARCHAR_COL": 100,
+            "DATE_COL": None,
+            "TIME_COL": None,
+            "NTZ_COL": None,
+            "LTZ_COL": None,
+            "TZ_COL": None,
+            "VARIANT_COL": None,
+            "OBJECT_COL": None,
+            "ARRAY_COL": None,
+            "BOOLEAN_COL": None,
+        }
+        for v2_col, v1_col in zip(v2_result, v1_result, strict=True):
+            assert v2_col.internal_size == expected[v2_col.name], v2_col.name
+            assert v1_col.internal_size == expected[v1_col.name], v1_col.name
+
     def test_to_v1_round_trip(self, cursor):
         """_to_result_metadata_v1() produces ResultMetadata matching describe() output."""
         sql = "SELECT 1::INTEGER AS a, 3.14::FLOAT AS b"

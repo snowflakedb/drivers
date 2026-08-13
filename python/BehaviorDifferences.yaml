@@ -985,7 +985,7 @@ behavior_differences:
     type: bug
     reviewed: false
     is_breaking_change: false
-    impact: low
+    impact: medium
     old_driver_behavior: |
       `ResultMetadataV2.from_column` (JSON source) sets `internal_size = col["length"]`
       (the JSON `length` field, the maximum character count for VARCHAR/TEXT columns).
