@@ -813,18 +813,26 @@ impl OdbcError {
     ///   content), produced by `IntoStaticStr`. Renaming a variant
     ///   automatically updates this label, so there is no chance of drift.
     /// - `error_source` is the high-level [`ErrorSource`] bucket from
-    ///   [`OdbcError::error_source`], except [`OdbcError::CoreError`] is
-    ///   split by inner transport vs application failure.
+    ///   [`OdbcError::resolved_error_source`], which splits
+    ///   [`OdbcError::CoreError`] by inner transport vs application failure.
     pub fn telemetry_classification(&self) -> (&'static str, ErrorSource) {
         let exception_type: &'static str = self.into();
-        let error_source = match self {
+        (exception_type, self.resolved_error_source())
+    }
+
+    /// Error source with [`OdbcError::CoreError`] resolved by its inner
+    /// transport-vs-application failure. [`OdbcError::error_source`] alone
+    /// buckets `CoreError` as [`ErrorSource::Unknown`]; this maps transport
+    /// failures to [`ErrorSource::Connectivity`] and application (server)
+    /// failures to [`ErrorSource::ServerError`].
+    fn resolved_error_source(&self) -> ErrorSource {
+        match self {
             OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Transport { .. } => ErrorSource::Connectivity,
                 CoreProtobufError::Application { .. } => ErrorSource::ServerError,
             },
             _ => self.error_source(),
-        };
-        (exception_type, error_source)
+        }
     }
 
     pub fn message_text(&self) -> String {
@@ -843,9 +851,15 @@ impl OdbcError {
         } else {
             base
         };
-        // Per the ODBC spec, driver message text must be prefixed with
-        // [vendor][ODBC-component] so callers can identify the source.
-        format!("[Snowflake][Snowflake ODBC Driver]{body}")
+        // Per ODBC §16.2.16, message text carries [vendor][ODBC-component];
+        // data source-originated (server) errors additionally carry the
+        // [data-source] segment, while driver-originated errors omit it.
+        let prefix = if self.resolved_error_source() == ErrorSource::ServerError {
+            "[Snowflake][Snowflake ODBC Driver][Snowflake]"
+        } else {
+            "[Snowflake][Snowflake ODBC Driver]"
+        };
+        format!("{prefix}{body}")
     }
 
     /// Extract a user-facing message from structured protobuf error fields
@@ -1791,6 +1805,70 @@ mod tests {
                 .contains("does not exist or not authorized"),
             "message_text() must contain the server's original error text, got: {:?}",
             err.message_text()
+        );
+    }
+
+    #[test]
+    fn server_error_message_text_has_data_source_prefix() {
+        // Data source-originated (gRPC application) errors carry the third
+        // [data-source] segment per ODBC §16.2.16.
+        let err = OdbcError::from_protobuf_error(ProtoError::Application(ProtoDriverException {
+            message:
+                "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
+                    .to_string(),
+            status_code: 0,
+            error: Some(
+                sf_core::protobuf::generated::database_driver_v1::DriverError {
+                    error_type: Some(ErrorType::InternalError(
+                        sf_core::protobuf::generated::database_driver_v1::InternalError {},
+                    )),
+                },
+            ),
+            error_trace: vec![],
+            vendor_code: Some(2003),
+            sql_state: Some("42S02".to_string()),
+            query_id: None,
+            request_id: None,
+            root_cause: None,
+        }));
+
+        assert!(
+            err.message_text()
+                .starts_with("[Snowflake][Snowflake ODBC Driver][Snowflake]"),
+            "server error message_text() must carry the 3-part prefix, got: {:?}",
+            err.message_text()
+        );
+    }
+
+    #[test]
+    fn wrapper_server_error_message_text_has_data_source_prefix() {
+        // The wrapper-level server variants (PrepareStatement / SetSqlQuery /
+        // ExecuteStatement) are ServerError too, so they also carry the
+        // [data-source] segment.
+        let err = OdbcError::PrepareStatement {
+            statement: "select 1".into(),
+            location: loc(),
+        };
+        assert!(
+            err.message_text()
+                .starts_with("[Snowflake][Snowflake ODBC Driver][Snowflake]"),
+            "wrapper server error must carry the 3-part prefix, got: {:?}",
+            err.message_text()
+        );
+    }
+
+    #[test]
+    fn driver_error_message_text_omits_data_source_prefix() {
+        // Driver-originated errors use the 2-part prefix (no [data-source]).
+        let err = OdbcError::InvalidHandle { location: loc() };
+        let text = err.message_text();
+        assert!(
+            text.starts_with("[Snowflake][Snowflake ODBC Driver]"),
+            "driver error must carry the vendor/component prefix, got: {text:?}"
+        );
+        assert!(
+            !text.starts_with("[Snowflake][Snowflake ODBC Driver][Snowflake]"),
+            "driver error must NOT carry the [data-source] segment, got: {text:?}"
         );
     }
 
