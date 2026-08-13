@@ -1,5 +1,29 @@
 use crate::logging::url_for_log;
 use snafu::{Location, Snafu};
+use std::fmt;
+
+/// A proxy URL with any embedded credentials stripped via [`url_for_log`].
+///
+/// The only public constructor is [`RedactedUrl::new`], which performs the
+/// redaction — so, unlike a plain `String` field, the *type* guarantees a
+/// credentialed proxy URL can never reach [`TlsError::ProxyBuild`]'s
+/// `Debug`/`ErrorTrace` output: there is no way to populate this field with
+/// an unredacted string without calling `url_for_log` first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedactedUrl(String);
+
+impl RedactedUrl {
+    /// Redacts `url`'s credentials (if any) before storing it.
+    pub fn new(url: &str) -> Self {
+        Self(url_for_log(url))
+    }
+}
+
+impl fmt::Display for RedactedUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(visibility(pub))]
@@ -45,9 +69,9 @@ pub enum TlsError {
         location: Location,
     },
 
-    #[snafu(display("Failed to build proxy from {url_safe}", url_safe = url_for_log(url)))]
+    #[snafu(display("Failed to build proxy from {redacted_url}"))]
     ProxyBuild {
-        url: String,
+        redacted_url: RedactedUrl,
         source: reqwest::Error,
         #[snafu(implicit)]
         location: Location,
