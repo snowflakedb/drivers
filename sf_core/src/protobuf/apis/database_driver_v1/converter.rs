@@ -996,16 +996,10 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// rely on `sql_state` as the single source of truth for error
 /// classification.
 ///
-/// NOTE: currently handles `QueryFailed`, `AsyncQuery`, and `Login` variants.
-/// New query-related error variants should be added here as they are
+/// NOTE: currently handles `QueryFailed`, `AsyncQuery`, and `Login` variants
+/// (including reauth-shaped `Login` failures, per the note above). New
+/// query-related error variants should be added here as they are
 /// introduced.
-///
-/// Deliberately does NOT handle `MasterTokenExpired`/reauth-shaped `Login`
-/// failures: those construct their own dedicated
-/// `ReauthenticationRequiredError` message (see `to_driver_error`) — the
-/// discriminant callers need is the message *type* itself, not a
-/// `vendor_code` value, which is reserved for genuine Snowflake
-/// query-error codes.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
     let (code, sql_state) = match error {
         ApiError::Query { source, .. } => match source.as_ref() {
