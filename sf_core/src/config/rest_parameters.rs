@@ -106,8 +106,10 @@ pub struct ClientInfo {
     pub runtime_version: Option<String>,
     /// Wrapper compiler info (e.g. "Clang 13.0.0 ..."). Only set by language wrappers.
     pub compiler: Option<String>,
-    /// Release type for builds (e.g. `"rc1"`, `"rc2"`). Only set by language wrappers.
-    /// `None` on GA builds; sent as `CLIENT_ENVIRONMENT.RELEASE_TYPE` when set.
+    /// Release type for pre-release builds (e.g. `"rc1"`, `"rc2"`).
+    /// Taken from `client_release_type` when set (wrapper override); otherwise
+    /// derived from the version suffix after the first `-`. `None` on GA builds;
+    /// sent as `CLIENT_ENVIRONMENT.RELEASE_TYPE` when set.
     pub release_type: Option<String>,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
@@ -130,13 +132,18 @@ impl ClientInfo {
             .get_string("application")
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| client_app_id.clone());
+        let version = settings
+            .get_string("client_app_version")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        let release_type = settings
+            .get_string("client_release_type")
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+            .or_else(|| release_type_from_version(&version));
         let client_info = ClientInfo {
             client_app_id,
             application,
-            version: settings
-                .get_string("client_app_version")
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
+            version,
             os: std::env::consts::OS.to_string(),
             os_version: crate::telemetry::environment::detect_os_version(),
             ocsp_mode: Some("FAIL_OPEN".to_string()),
@@ -149,9 +156,7 @@ impl ClientInfo {
             compiler: settings
                 .get_string("client_compiler")
                 .and_then(|s| if s.trim().is_empty() { None } else { Some(s) }),
-            release_type: settings
-                .get_string("client_release_type")
-                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) }),
+            release_type,
             crl_config,
             tls_config,
             proxy_config,
@@ -159,6 +164,20 @@ impl ClientInfo {
             os_details: None,
         };
         Ok(client_info)
+    }
+}
+
+/// Derive `CLIENT_ENVIRONMENT.RELEASE_TYPE` from a package version.
+/// Everything after the first `-` is the release type (e.g. `4.0.0-rc1` →
+/// `Some("rc1")`, `4.0.0-rc1-dev` → `Some("rc1-dev")`,
+/// `4.0.0-rc1+abc123` → `Some("rc1+abc123")`). GA versions without a
+/// pre-release suffix return `None`.
+pub(crate) fn release_type_from_version(version: &str) -> Option<String> {
+    let release_type = version.split_once('-').map(|(_, suffix)| suffix.trim())?;
+    if release_type.is_empty() {
+        None
+    } else {
+        Some(release_type.to_owned())
     }
 }
 
@@ -1295,6 +1314,85 @@ mod tests {
         assert!(info.runtime_name.is_none());
         assert!(info.runtime_version.is_none());
         assert!(info.compiler.is_none());
+        assert!(info.release_type.is_none());
+    }
+
+    #[test]
+    fn test_client_info_derives_release_type_from_version_suffix() {
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            (
+                "client_app_version",
+                Setting::String("4.0.0-rc1".to_string()),
+            ),
+        ]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.version, "4.0.0-rc1");
+        assert_eq!(info.release_type.as_deref(), Some("rc1"));
+    }
+
+    #[test]
+    fn test_client_info_derives_hyphenated_and_metadata_release_type() {
+        let hyphenated = create_test_settings(vec![(
+            "client_app_version",
+            Setting::String("4.0.0-rc1-dev".to_string()),
+        )]);
+        assert_eq!(
+            ClientInfo::from_settings(&hyphenated)
+                .unwrap()
+                .release_type
+                .as_deref(),
+            Some("rc1-dev")
+        );
+
+        let with_metadata = create_test_settings(vec![(
+            "client_app_version",
+            Setting::String("4.0.0-rc1+abc123".to_string()),
+        )]);
+        assert_eq!(
+            ClientInfo::from_settings(&with_metadata)
+                .unwrap()
+                .release_type
+                .as_deref(),
+            Some("rc1+abc123")
+        );
+    }
+
+    #[test]
+    fn test_client_info_release_type_override_wins_over_version_suffix() {
+        let settings = create_test_settings(vec![
+            (
+                "client_app_version",
+                Setting::String("4.0.0-rc1".to_string()),
+            ),
+            (
+                "client_release_type",
+                Setting::String("custom-rc".to_string()),
+            ),
+        ]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.release_type.as_deref(), Some("custom-rc"));
+    }
+
+    #[test]
+    fn test_release_type_from_version() {
+        assert_eq!(release_type_from_version("4.0.0"), None);
+        assert_eq!(release_type_from_version("4.0.0-"), None);
+        assert_eq!(
+            release_type_from_version("4.0.0-rc1"),
+            Some("rc1".to_owned())
+        );
+        assert_eq!(
+            release_type_from_version("4.0.0-rc1-dev"),
+            Some("rc1-dev".to_owned())
+        );
+        assert_eq!(
+            release_type_from_version("4.0.0-rc1+abc123"),
+            Some("rc1+abc123".to_owned())
+        );
     }
 
     #[test]
@@ -1382,6 +1480,7 @@ mod tests {
         assert_eq!(info.runtime_name.as_deref(), Some("OpenJDK"));
         assert_eq!(info.runtime_version.as_deref(), Some("21.0.1"));
         assert_eq!(info.compiler.as_deref(), Some("javac 21.0.1"));
+        assert!(info.release_type.is_none());
     }
 
     #[test]
