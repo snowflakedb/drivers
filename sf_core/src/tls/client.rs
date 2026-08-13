@@ -3,7 +3,7 @@ use crate::crl::worker::SharedCrlWorker;
 use crate::tls::CrlServerCertVerifier;
 use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::error::{
-    ClientBuildSnafu, PemParseSnafu, ProxyBuildSnafu, RootStoreAddSnafu, TlsError,
+    ClientBuildSnafu, PemParseSnafu, ProxyBuildSnafu, RedactedUrl, RootStoreAddSnafu, TlsError,
     VerifierBuildSnafu,
 };
 use reqwest::{Client, ClientBuilder, NoProxy, Proxy};
@@ -451,8 +451,13 @@ pub(crate) fn apply_proxy_to_builder(
         // Explicit proxy → applied for all schemes; reqwest's `.proxy()` call
         // disables auto env detection (matches JDBC/Go/Node precedence).
         let url = build_proxy_url(host, proxy);
+        // `url` is the fully credentialed `http://user:pass@host` form;
+        // `RedactedUrl::new` strips credentials before the value can reach
+        // `ProxyBuild`'s `Debug`/`ErrorTrace` output.
         let reqwest_proxy = Proxy::all(&url)
-            .context(ProxyBuildSnafu { url: url.clone() })?
+            .context(ProxyBuildSnafu {
+                redacted_url: RedactedUrl::new(&url),
+            })?
             .no_proxy(proxy.no_proxy.as_deref().and_then(NoProxy::from_string));
         return Ok(builder.proxy(reqwest_proxy));
     }
@@ -645,5 +650,39 @@ mod tests {
         builder
             .build()
             .expect("explicit disable must build cleanly");
+    }
+
+    #[test]
+    fn proxy_build_error_never_exposes_credentials_in_debug() {
+        // A proxy host containing a URL-forbidden character makes reqwest's
+        // `Proxy::all` reject the built `http://user:pass@host` URL, driving the
+        // `ProxyBuild` error path with credentials present. The password must
+        // not survive into `Debug`/`ErrorTrace`.
+        const PASSWORD: &str = "sup3r-s3cret-pw";
+        let p = proxy(Some("bad<host"), Some(8080), Some("alice"), Some(PASSWORD));
+
+        let err = configure_http_client(Client::builder(), Some(&p))
+            .expect_err("malformed proxy host must fail proxy construction");
+        assert!(
+            matches!(err, TlsError::ProxyBuild { .. }),
+            "expected ProxyBuild, got: {err:?}"
+        );
+
+        let debug = format!("{err:?}");
+        let display = err.to_string();
+        let trace = error_trace::format_error_trace(&error_trace::ErrorTrace::error_trace(&err));
+
+        assert!(
+            !debug.contains(PASSWORD),
+            "Debug output leaked the proxy password: {debug}"
+        );
+        assert!(
+            !display.contains(PASSWORD),
+            "Display output leaked the proxy password: {display}"
+        );
+        assert!(
+            !trace.contains(PASSWORD),
+            "ErrorTrace output leaked the proxy password: {trace}"
+        );
     }
 }
