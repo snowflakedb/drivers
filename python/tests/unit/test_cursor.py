@@ -10,6 +10,12 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from snowflake.connector._common.extras import (
+    MissingOptionalDependency,
+)
+from snowflake.connector._common.extras import (
+    check_dependency as _real_check_dependency,
+)
 from snowflake.connector._internal.api_client.client_api import CHUNK_SIZE, async_core_driver, core_driver
 from snowflake.connector._internal.binding_converters import ParamStyle, parse_stage_binding_threshold
 from snowflake.connector._internal.cursor import CursorBaseMixin, QueryResult, QueryResultWaiter
@@ -17,12 +23,6 @@ from snowflake.connector._internal.errorcode import (
     ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT,
     ER_INVALID_VALUE,
     ER_NO_PYARROW,
-)
-from snowflake.connector._internal.extras import (
-    MissingOptionalDependency,
-)
-from snowflake.connector._internal.extras import (
-    check_dependency as _real_check_dependency,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ABORT_QUERY_OUTCOME_ABORTED,
@@ -1211,7 +1211,7 @@ class TestFetchArrowBatches:
     def _patch_pyarrow(self):
         mock_pa = MagicMock()
         with (
-            patch("snowflake.connector._internal.extras.check_dependency"),
+            patch("snowflake.connector._common.extras.check_dependency"),
             patch("snowflake.connector.cursor._base.pyarrow", new=mock_pa),
         ):
             self.pa = mock_pa
@@ -1241,7 +1241,7 @@ class TestFetchArrowBatches:
     def test_raises_when_pyarrow_not_installed(self, cursor):
         missing = MissingOptionalDependency(dep="pyarrow")
         with patch(
-            "snowflake.connector._internal.extras.check_dependency",
+            "snowflake.connector._common.extras.check_dependency",
             side_effect=lambda _: _real_check_dependency(missing),
         ):
             with pytest.raises(ProgrammingError, match="pyarrow"):
@@ -1282,7 +1282,7 @@ class TestFetchArrowAll:
     def _patch_pyarrow(self):
         mock_pa = MagicMock()
         with (
-            patch("snowflake.connector._internal.extras.check_dependency"),
+            patch("snowflake.connector._common.extras.check_dependency"),
             patch("snowflake.connector.cursor._base.pyarrow", new=mock_pa),
             patch("snowflake.connector._internal.arrow_stream_utils.pyarrow", new=mock_pa),
         ):
@@ -1369,7 +1369,7 @@ class TestFetchPandasBatches:
 
     @pytest.fixture(autouse=True)
     def _patch_deps(self):
-        with patch("snowflake.connector._internal.extras.check_dependency"):
+        with patch("snowflake.connector._common.extras.check_dependency"):
             yield
 
     def test_yields_to_pandas_results(self, cursor):
@@ -1404,7 +1404,7 @@ class TestFetchPandasBatches:
     def test_raises_when_pandas_not_installed(self, cursor):
         missing = MissingOptionalDependency(dep="pandas")
         with patch(
-            "snowflake.connector._internal.extras.check_dependency",
+            "snowflake.connector._common.extras.check_dependency",
             side_effect=lambda _: _real_check_dependency(missing),
         ):
             with pytest.raises(ProgrammingError, match="pandas"):
@@ -1426,7 +1426,7 @@ class TestFetchPandasAll:
 
     @pytest.fixture(autouse=True)
     def _patch_deps(self):
-        with patch("snowflake.connector._internal.extras.check_dependency"):
+        with patch("snowflake.connector._common.extras.check_dependency"):
             yield
 
     def test_returns_to_pandas_result(self, cursor):
@@ -1463,7 +1463,7 @@ class TestFetchPandasAll:
     def test_raises_when_pandas_not_installed(self, cursor):
         missing = MissingOptionalDependency(dep="pandas")
         with patch(
-            "snowflake.connector._internal.extras.check_dependency",
+            "snowflake.connector._common.extras.check_dependency",
             side_effect=lambda _: _real_check_dependency(missing),
         ):
             with pytest.raises(ProgrammingError, match="pandas"):
@@ -3399,7 +3399,7 @@ class TestAsyncFetchPandasKwargs:
 
     @pytest.fixture(autouse=True)
     def _patch_deps(self):
-        with patch("snowflake.connector._internal.extras.check_dependency"):
+        with patch("snowflake.connector._common.extras.check_dependency"):
             yield
 
     def test_fetch_pandas_all_forwards_split_blocks(self, cursor):

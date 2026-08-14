@@ -332,7 +332,7 @@ class TestCreateIterDispatch:
 class TestToArrowConnection:
     @pytest.fixture(autouse=True)
     def _patch_deps(self):
-        with patch("snowflake.connector._internal.extras.check_dependency"):
+        with patch("snowflake.connector._common.extras.check_dependency"):
             yield
 
     def test_to_arrow_uses_explicit_connection(self):
@@ -373,7 +373,7 @@ class TestToArrowConnection:
 class TestToPandasConnection:
     @pytest.fixture(autouse=True)
     def _patch_deps(self):
-        with patch("snowflake.connector._internal.extras.check_dependency"):
+        with patch("snowflake.connector._common.extras.check_dependency"):
             yield
 
     def test_to_pandas_delegates_to_to_arrow(self):

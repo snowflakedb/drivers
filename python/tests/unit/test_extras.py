@@ -2,18 +2,31 @@
 Unit tests for the extras module (optional dependency management).
 """
 
+import warnings
+
 import pytest
 
 from snowflake.connector._internal.errorcode import ER_NO_NUMPY, ER_NO_PYARROW
-from snowflake.connector._internal.extras import (
-    DEP_NUMPY,
-    DEP_PANDAS,
-    DEP_PYARROW,
-    DEP_TZLOCAL,
-    MissingOptionalDependency,
-    check_dependency,
-)
 from snowflake.connector.errors import MissingDependencyError, ProgrammingError
+
+
+# Resolving MissingPandas fires the backward-compat DeprecationWarning; the
+# warning contract itself is asserted in test_backward_compatibility_warnings.py,
+# so suppress it at import here.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    from snowflake.connector._common.extras import (
+        DEP_NUMPY,
+        DEP_PANDAS,
+        DEP_PYARROW,
+        DEP_TZLOCAL,
+        MissingOptionalDependency,
+        MissingPandas,
+        ModuleLikeObject,
+        check_dependency,
+        installed_pandas,
+        installed_pyarrow,
+    )
 
 
 class TestCheckDependencyNumpy:
@@ -85,3 +98,42 @@ class TestMissingOptionalDependency:
         stub = MissingOptionalDependency(DEP_NUMPY)
         with pytest.raises(MissingDependencyError):
             _ = stub.some_attribute
+
+
+class TestSnowparkCompatNames:
+    """Tests for the Snowpark-only names folded in from the deleted ``options.py``.
+
+    The warning-emission contract for ``MissingPandas`` (a class, so it goes
+    through the module's PEP 562 ``__getattr__``) is covered separately in
+    ``test_backward_compatibility_warnings.py``; these tests cover behavior only.
+    """
+
+    def test_missing_pandas_no_arg_resolves_dep_name(self):
+        stub = MissingPandas()
+        assert stub.dep_name == DEP_PANDAS
+
+    def test_missing_pandas_is_missing_optional_dependency_subclass(self):
+        assert issubclass(MissingPandas, MissingOptionalDependency)
+
+    def test_missing_pandas_check_dependency_raises_pyarrow_errno(self):
+        """check_dependency special-cases DEP_PANDAS/DEP_PYARROW identically."""
+        with pytest.raises(ProgrammingError) as exc_info:
+            check_dependency(MissingPandas())
+        assert exc_info.value.errno == ER_NO_PYARROW
+
+    def test_installed_pandas_is_bool_consistent_with_pandas_module(self):
+        from snowflake.connector._common import extras as extras_module
+
+        assert isinstance(installed_pandas, bool)
+        assert installed_pandas == (not isinstance(extras_module.pandas, MissingOptionalDependency))
+
+    def test_installed_pyarrow_is_bool_consistent_with_installed_pandas(self):
+        """Pre-existing quirk: installed_pyarrow mirrors installed_pandas rather
+        than checking pyarrow independently (carried forward, not fixed here)."""
+        assert isinstance(installed_pyarrow, bool)
+        assert installed_pyarrow == installed_pandas
+
+    def test_module_like_object_is_expected_union_type(self):
+        from types import ModuleType
+
+        assert ModuleLikeObject == ModuleType | MissingOptionalDependency

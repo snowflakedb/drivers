@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any, Callable
 import pytz
 
 from .logging import get_logger
-from .extras import numpy as np
-from .extras import tzlocal, MissingOptionalDependency
+from .._common.extras import numpy as np
+from .._common.extras import tzlocal, MissingOptionalDependency
 
 if TYPE_CHECKING:
     from numpy import datetime64, float64, int64, timedelta64

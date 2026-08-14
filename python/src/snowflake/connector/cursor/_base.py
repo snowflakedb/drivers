@@ -8,6 +8,7 @@ import logging
 from collections.abc import Callable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, BinaryIO, overload
 
+from .._common.extras import pandas, pyarrow, requires_dependency
 from .._internal.api_client.client_api import CHUNK_SIZE, core_driver
 from .._internal.arrow_context import ArrowConverterContext
 from .._internal.arrow_stream_utils import (
@@ -39,7 +40,6 @@ from .._internal.decorators import (
     snowpark_compat,
 )
 from .._internal.errorcode import ER_INVALID_VALUE
-from .._internal.extras import pandas, pyarrow, requires_dependency
 from .._internal.logging import get_logger
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     ABORT_QUERY_OUTCOME_ABORTED,

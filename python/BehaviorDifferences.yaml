@@ -1272,3 +1272,41 @@ behavior_differences:
       55). No consumer in Snowpark's source reads `display_size` (CONFIRMED from
       source), so this has no observed runtime impact; it's a strict improvement
       over legacy (extra, correct information) rather than a compatibility risk.
+
+  66:
+    name: "connector.options module removed; MissingPandas now warns on use"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `snowflake.connector.options` is an importable module, added 2026-08-02
+      as a "BACKWARD COMPATIBILITY MODULE ONLY" re-export of `_internal.extras`'s
+      `MissingOptionalDependency`/`pandas`/`pyarrow`, plus four Snowpark-only names
+      it defines itself: `MissingPandas`, `ModuleLikeObject`, `installed_pandas`,
+      `installed_pyarrow`. Importing any of these never warns.
+    new_driver_behavior: |
+      `snowflake.connector.options` no longer exists; importing it raises
+      `ModuleNotFoundError`. The real optional-dependency implementation moved
+      from `_internal.extras` to `_common.extras` (an internal path change with
+      no independent behavioral effect), and the four Snowpark-only names moved
+      directly into `_common.extras`. Of those four, only `MissingPandas` is a
+      class, so only it can go through the driver's existing
+      `@backward_compatibility` + PEP 562 `__getattr__` mechanism
+      (`_internal/backward_compatibility.py`) — resolving `MissingPandas` now
+      emits a one-time-per-process `DeprecationWarning`. `ModuleLikeObject`,
+      `installed_pandas`, and `installed_pyarrow` are plain data attributes,
+      which that mechanism cannot intercept; they are unchanged in behavior,
+      just relocated.
+    description: |
+      `options.py` was three weeks old with Snowpark as its only known consumer,
+      being updated in lockstep with this change — no grace-period re-export
+      shim was kept, unlike the `_request_id` deprecation (entry 56), which
+      concerned code with an unknown, possibly-external caller base. Flagged
+      explicitly for reviewers: if another consumer of `connector.options` is
+      known, this removal should be reconsidered before merge.
+
+      `installed_pyarrow` mirrors `installed_pandas` instead of checking
+      `pyarrow` independently — a pre-existing quirk carried forward unchanged,
+      not introduced or fixed by this move.

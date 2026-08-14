@@ -11,7 +11,9 @@ from typing import Any, TypeVar, cast
 from snowflake.connector import errors
 from snowflake.connector._internal.errorcode import ER_NO_NUMPY, ER_NO_PYARROW
 
-from .logging import get_logger
+from .._internal.backward_compatibility import install_backward_compatibility_getattr
+from .._internal.decorators import backward_compatibility
+from .._internal.logging import get_logger
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -112,3 +114,20 @@ pandas = _import_or_missing(DEP_PANDAS)
 numpy = _import_or_missing(DEP_NUMPY)
 tzlocal = _import_or_missing(DEP_TZLOCAL)
 sqlalchemy = _import_or_missing(DEP_SQLALCHEMY)
+
+
+# Retained for backward compatibility with ``snowflake-connector-python``: Snowpark
+# imports these four names from ``snowflake.connector.options``. The Universal
+# Driver does not use them itself.
+@backward_compatibility
+class MissingPandas(MissingOptionalDependency):
+    _dep_name = "pandas"
+
+
+ModuleLikeObject = ModuleType | MissingOptionalDependency
+
+installed_pandas: bool = not isinstance(pandas, MissingOptionalDependency)
+installed_pyarrow: bool = installed_pandas  # pyarrow availability tracks pandas
+
+# Must be the last statement; see ``install_backward_compatibility_getattr``.
+install_backward_compatibility_getattr(__name__)
