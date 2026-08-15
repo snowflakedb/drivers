@@ -12,7 +12,7 @@ from snowflake.connector import errors
 from snowflake.connector._internal.errorcode import ER_NO_NUMPY, ER_NO_PYARROW
 
 from .._internal.backward_compatibility import install_backward_compatibility_getattr
-from .._internal.decorators import backward_compatibility
+from .._internal.decorators import backward_compatibility, snowpark_compat
 from .._internal.logging import get_logger
 
 
@@ -119,6 +119,7 @@ sqlalchemy = _import_or_missing(DEP_SQLALCHEMY)
 # Retained for backward compatibility with ``snowflake-connector-python``: Snowpark
 # imports these four names from ``snowflake.connector.options``. The Universal
 # Driver does not use them itself.
+@snowpark_compat
 @backward_compatibility
 class MissingPandas(MissingOptionalDependency):
     _dep_name = "pandas"
