@@ -1295,10 +1295,13 @@ behavior_differences:
       class, so only it can go through the driver's existing
       `@backward_compatibility` + PEP 562 `__getattr__` mechanism
       (`_internal/backward_compatibility.py`) — resolving `MissingPandas` now
-      emits a one-time-per-process `DeprecationWarning`. `ModuleLikeObject`,
-      `installed_pandas`, and `installed_pyarrow` are plain data attributes,
-      which that mechanism cannot intercept; they are unchanged in behavior,
-      just relocated.
+      emits a one-time-per-process `DeprecationWarning`. `ModuleLikeObject`
+      and `installed_pandas` are plain data attributes, which that mechanism
+      cannot intercept; they are unchanged in behavior, just relocated.
+      `installed_pyarrow` is also a plain data attribute (never warns), but
+      its *value* now differs from `options.py`'s: it checks `pyarrow`
+      independently (`not isinstance(pyarrow, MissingOptionalDependency)`)
+      instead of mirroring `installed_pandas` — see description below.
     description: |
       `options.py` was three weeks old with Snowpark as its only known consumer,
       being updated in lockstep with this change — no grace-period re-export
@@ -1307,6 +1310,17 @@ behavior_differences:
       explicitly for reviewers: if another consumer of `connector.options` is
       known, this removal should be reconsidered before merge.
 
-      `installed_pyarrow` mirrors `installed_pandas` instead of checking
-      `pyarrow` independently — a pre-existing quirk carried forward unchanged,
-      not introduced or fixed by this move.
+      `installed_pyarrow` previously mirrored `installed_pandas`
+      (`installed_pyarrow: bool = installed_pandas`) instead of checking
+      `pyarrow` independently — a straight port artifact from v4's
+      `options.py`, where pandas+pyarrow were always imported as one coupled
+      unit so the mirroring happened to be accurate. `_common/extras.py`
+      already resolves `pyarrow`/`pandas` independently
+      (`pyarrow = _import_or_missing(DEP_PYARROW)`), so the mirroring line
+      was never updated to match. Fixed here to
+      `not isinstance(pyarrow, MissingOptionalDependency)`: a case where
+      pandas is installed but pyarrow is not (or vice versa) now reports
+      correctly instead of following whichever of the two happens to be
+      installed. This also lets Snowpark drop a local `isinstance`-derived
+      workaround it needed specifically to avoid inheriting this bug on v5
+      (see `fix-snowpark.md`).

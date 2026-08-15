@@ -127,11 +127,14 @@ class TestSnowparkCompatNames:
         assert isinstance(installed_pandas, bool)
         assert installed_pandas == (not isinstance(extras_module.pandas, MissingOptionalDependency))
 
-    def test_installed_pyarrow_is_bool_consistent_with_installed_pandas(self):
-        """Pre-existing quirk: installed_pyarrow mirrors installed_pandas rather
-        than checking pyarrow independently (carried forward, not fixed here)."""
+    def test_installed_pyarrow_is_bool_consistent_with_pyarrow_module(self):
+        """installed_pyarrow checks pyarrow independently rather than mirroring
+        installed_pandas (a fixed port artifact from v4's options.py, where
+        pandas+pyarrow were always imported as one coupled unit)."""
+        from snowflake.connector._common import extras as extras_module
+
         assert isinstance(installed_pyarrow, bool)
-        assert installed_pyarrow == installed_pandas
+        assert installed_pyarrow == (not isinstance(extras_module.pyarrow, MissingOptionalDependency))
 
     def test_module_like_object_is_expected_union_type(self):
         from types import ModuleType

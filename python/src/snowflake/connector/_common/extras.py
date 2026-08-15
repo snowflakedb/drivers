@@ -127,7 +127,7 @@ class MissingPandas(MissingOptionalDependency):
 ModuleLikeObject = ModuleType | MissingOptionalDependency
 
 installed_pandas: bool = not isinstance(pandas, MissingOptionalDependency)
-installed_pyarrow: bool = installed_pandas  # pyarrow availability tracks pandas
+installed_pyarrow: bool = not isinstance(pyarrow, MissingOptionalDependency)
 
 # Must be the last statement; see ``install_backward_compatibility_getattr``.
 install_backward_compatibility_getattr(__name__)
