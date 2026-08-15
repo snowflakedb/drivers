@@ -126,9 +126,8 @@ tzlocal = _import_or_missing(DEP_TZLOCAL)
 sqlalchemy = _import_or_missing(DEP_SQLALCHEMY)
 
 
-# Retained for backward compatibility with ``snowflake-connector-python``: Snowpark
-# imports these three names from ``snowflake.connector.options``. The Universal
-# Driver does not use them itself.
+# Snowpark imported these three names from ``snowflake.connector.options``
+# (now this module). The Universal Driver does not use them itself.
 ModuleLikeObject = ModuleType | MissingOptionalDependency
 
 installed_pandas: bool = not isinstance(pandas, MissingOptionalDependency)

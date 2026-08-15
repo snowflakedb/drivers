@@ -90,8 +90,9 @@ class TestMissingOptionalDependency:
             _ = stub.some_attribute
 
 
-class TestSnowparkCompatNames:
-    """Tests for the Snowpark-only names folded in from the deleted ``options.py``."""
+class TestOptionalDependencyStatus:
+    """Tests for the installed_pandas/installed_pyarrow status flags and the
+    ModuleLikeObject type alias."""
 
     def test_installed_pandas_is_bool_consistent_with_pandas_module(self):
         from snowflake.connector._common import extras as extras_module
