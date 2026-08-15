@@ -109,8 +109,20 @@ def requires_dependency(*modules: ModuleType | MissingOptionalDependency) -> Cal
     return decorator
 
 
+def _import_pandas() -> ModuleType | MissingOptionalDependency:
+    """Lazily import pandas, returning MissingOptionalDependency if not
+    installed.
+    """
+    result = _import_or_missing(DEP_PANDAS)
+    if not isinstance(result, MissingOptionalDependency):
+        # If relative imports without dots are enabled (Snowpark's case), this
+        # import can fail when run from certain test directories.
+        from pandas import DataFrame  # noqa: F401
+    return result
+
+
 pyarrow = _import_or_missing(DEP_PYARROW)
-pandas = _import_or_missing(DEP_PANDAS)
+pandas = _import_pandas()
 numpy = _import_or_missing(DEP_NUMPY)
 tzlocal = _import_or_missing(DEP_TZLOCAL)
 sqlalchemy = _import_or_missing(DEP_SQLALCHEMY)
