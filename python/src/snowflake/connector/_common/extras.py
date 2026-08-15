@@ -11,8 +11,6 @@ from typing import Any, TypeVar, cast
 from snowflake.connector import errors
 from snowflake.connector._internal.errorcode import ER_NO_NUMPY, ER_NO_PYARROW
 
-from .._internal.backward_compatibility import install_backward_compatibility_getattr
-from .._internal.decorators import backward_compatibility, snowpark_compat
 from .._internal.logging import get_logger
 
 
@@ -43,7 +41,7 @@ class MissingOptionalDependency:
     Supports two construction patterns:
     - ``MissingOptionalDependency("pandas")`` — sets dep name from argument.
     - No-arg subclass with a ``_dep_name`` class attribute (Snowpark pattern):
-      ``class MissingPandas(MissingOptionalDependency): _dep_name = "pandas"``
+      ``class MissingFoo(MissingOptionalDependency): _dep_name = "foo"``
     """
 
     _dep_name: str = "not set"
@@ -129,18 +127,9 @@ sqlalchemy = _import_or_missing(DEP_SQLALCHEMY)
 
 
 # Retained for backward compatibility with ``snowflake-connector-python``: Snowpark
-# imports these four names from ``snowflake.connector.options``. The Universal
+# imports these three names from ``snowflake.connector.options``. The Universal
 # Driver does not use them itself.
-@snowpark_compat
-@backward_compatibility
-class MissingPandas(MissingOptionalDependency):
-    _dep_name = "pandas"
-
-
 ModuleLikeObject = ModuleType | MissingOptionalDependency
 
 installed_pandas: bool = not isinstance(pandas, MissingOptionalDependency)
 installed_pyarrow: bool = not isinstance(pyarrow, MissingOptionalDependency)
-
-# Must be the last statement; see ``install_backward_compatibility_getattr``.
-install_backward_compatibility_getattr(__name__)

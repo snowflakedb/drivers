@@ -1274,7 +1274,7 @@ behavior_differences:
       over legacy (extra, correct information) rather than a compatibility risk.
 
   66:
-    name: "connector.options module removed; MissingPandas now warns on use"
+    name: "connector.options module removed; MissingPandas removed entirely"
     status: unknown
     type: api_incompatibility
     reviewed: false
@@ -1290,18 +1290,17 @@ behavior_differences:
       `snowflake.connector.options` no longer exists; importing it raises
       `ModuleNotFoundError`. The real optional-dependency implementation moved
       from `_internal.extras` to `_common.extras` (an internal path change with
-      no independent behavioral effect), and the four Snowpark-only names moved
-      directly into `_common.extras`. Of those four, only `MissingPandas` is a
-      class, so only it can go through the driver's existing
-      `@backward_compatibility` + PEP 562 `__getattr__` mechanism
-      (`_internal/backward_compatibility.py`) — resolving `MissingPandas` now
-      emits a one-time-per-process `DeprecationWarning`. `ModuleLikeObject`
-      and `installed_pandas` are plain data attributes, which that mechanism
-      cannot intercept; they are unchanged in behavior, just relocated.
-      `installed_pyarrow` is also a plain data attribute (never warns), but
-      its *value* now differs from `options.py`'s: it checks `pyarrow`
+      no independent behavioral effect). Of the four Snowpark-only names
+      `options.py` used to export, only three moved into `_common.extras`:
+      `ModuleLikeObject`, `installed_pandas`, and `installed_pyarrow`, all
+      plain data attributes with no warning mechanism attached (there is no
+      `@backward_compatibility`/PEP 562 `__getattr__` machinery in
+      `_common/extras.py` at all — nothing left in this file needs it once
+      `MissingPandas` is gone; see description below). `installed_pyarrow`'s
+      *value* also now differs from `options.py`'s: it checks `pyarrow`
       independently (`not isinstance(pyarrow, MissingOptionalDependency)`)
       instead of mirroring `installed_pandas` — see description below.
+      `MissingPandas` itself has no replacement export; see description.
     description: |
       `options.py` was three weeks old with Snowpark as its only known consumer,
       being updated in lockstep with this change — no grace-period re-export
@@ -1309,6 +1308,23 @@ behavior_differences:
       concerned code with an unknown, possibly-external caller base. Flagged
       explicitly for reviewers: if another consumer of `connector.options` is
       known, this removal should be reconsidered before merge.
+
+      `MissingPandas` is removed entirely, not deprecated with a warning —
+      there is no replacement export. `MissingPandas()` and
+      `MissingOptionalDependency("pandas")` were always behaviorally
+      identical: `MissingPandas` only existed because
+      `MissingOptionalDependency.__init__` originally required a positional
+      `dep` argument, and Snowpark's own pre-existing code calls it with none
+      (`MissingPandas()`). That gap is closed generically —
+      `MissingOptionalDependency.__init__` supports both the arg-based and
+      no-arg-subclass forms — so callers needing a pandas-specific
+      placeholder use `MissingOptionalDependency("pandas")` directly, with
+      identical runtime behavior. No other name in `_common/extras.py` gets a
+      dedicated subclass either (`pyarrow`/`numpy`/`tzlocal`/`sqlalchemy` are
+      all plain `MissingOptionalDependency(dep=...)` instances); `MissingPandas`
+      would have been the only exception, for no remaining reason. No warning
+      fires on removal since there's no deprecation window for something
+      that's simply gone, matching how `options.py` itself is handled above.
 
       `installed_pyarrow` previously mirrored `installed_pandas`
       (`installed_pyarrow: bool = installed_pandas`) instead of checking

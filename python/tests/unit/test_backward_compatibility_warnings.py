@@ -307,41 +307,6 @@ class TestSecretDetectorModuleIntegration:
         assert bc_warnings == []
 
 
-class TestExtrasModuleIntegration:
-    """``_common.extras`` ships ``MissingPandas`` only for Snowpark parity, so
-    resolving it must warn once per process yet stay a usable
-    ``MissingOptionalDependency`` subclass."""
-
-    def test_missing_pandas_warns_once_on_import(self):
-        import snowflake.connector._common.extras as extras_module
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            first = extras_module.MissingPandas
-            second = extras_module.MissingPandas  # second access: deduped
-            assert first is second
-
-        bc_warnings = [
-            w for w in caught if issubclass(w.category, DeprecationWarning) and "MissingPandas" in str(w.message)
-        ]
-        assert len(bc_warnings) == 1, [str(w.message) for w in caught]
-
-    def test_plain_data_globals_do_not_warn(self):
-        """``ModuleLikeObject``/``installed_pandas``/``installed_pyarrow`` are
-        plain data, not classes, so the PEP 562 ``__getattr__`` never intercepts
-        them — resolving them must stay silent."""
-        import snowflake.connector._common.extras as extras_module
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            _ = extras_module.ModuleLikeObject
-            _ = extras_module.installed_pandas
-            _ = extras_module.installed_pyarrow
-
-        bc_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert bc_warnings == []
-
-
 class TestCallTimeWarning:
     """``@backward_compatibility`` on a function should warn on first external
     call, stay silent for internal callers, and share the dedup slot with the
