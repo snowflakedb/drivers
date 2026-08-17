@@ -14,7 +14,7 @@ use crate::api::error::{
     StatementNotExecutedSnafu, StillExecutingSnafu, UnsupportedAttributeSnafu,
     UnsupportedFeatureSnafu,
 };
-use crate::api::handle_registry::HandleId;
+use crate::api::handle_registry::{HandleId, HandleKind};
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
 use crate::api::utils::ApiExitLogDebug;
@@ -1791,7 +1791,7 @@ pub fn set_cursor_name<E: OdbcEncoding>(
     let _exit = ApiExitLogDebug("SQLSetCursorName");
 
     let guard = stmt_from_handle(statement_handle)?;
-    let self_id = HandleId::from(statement_handle);
+    let self_id = HandleId::from(statement_handle).require_kind(HandleKind::Stmt)?;
 
     // Lock the connection first (upholds the documented Connection->inner
     // ordering) and hold it across the whole operation so no two
@@ -2092,7 +2092,7 @@ fn lookup_explicit_desc(
     conn_id: HandleId,
     attribute: i32,
 ) -> OdbcResult<ExplicitDesc> {
-    let desc_id = HandleId::from(desc_handle);
+    let desc_id = HandleId::from(desc_handle).require_kind(HandleKind::Desc)?;
     let g = global().context(OdbcRuntimeSnafu)?;
     let desc_guard = g.desc_manager.get(desc_id)?;
     match *desc_guard {
@@ -2279,11 +2279,12 @@ pub fn set_stmt_attr(
                 // the statement's own implicit ARD handle to mean the same thing.
                 inner.active_ard = None;
             } else {
+                let desc_id = HandleId::from(handle).require_kind(HandleKind::Desc)?;
                 let conn_id = guard.conn_id;
                 drop(inner);
                 let arc = lookup_explicit_desc(handle, conn_id, attribute)?;
                 let mut inner = guard.inner.lock();
-                inner.active_ard = Some((HandleId::from(handle), arc));
+                inner.active_ard = Some((desc_id, arc));
             }
             Ok(())
         }
@@ -2292,11 +2293,12 @@ pub fn set_stmt_attr(
             if handle.is_null() || HandleId::from(handle) == inner.apd_handle {
                 inner.active_apd = None;
             } else {
+                let desc_id = HandleId::from(handle).require_kind(HandleKind::Desc)?;
                 let conn_id = guard.conn_id;
                 drop(inner);
                 let arc = lookup_explicit_desc(handle, conn_id, attribute)?;
                 let mut inner = guard.inner.lock();
-                inner.active_apd = Some((HandleId::from(handle), arc));
+                inner.active_apd = Some((desc_id, arc));
             }
             Ok(())
         }

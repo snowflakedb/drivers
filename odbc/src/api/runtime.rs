@@ -7,7 +7,7 @@ use sf_core::protobuf::apis::database_driver_v1::{
 };
 use snafu::{Location, ResultExt, Snafu};
 
-use crate::api::handle_registry::{DescLookup, HandleManager};
+use crate::api::handle_registry::{DescLookup, HandleKind, HandleManager};
 
 /// Serializes "last environment freed → `OdbcGlobals` destroyed" vs "first environment of the
 /// next epoch allocates a new `OdbcGlobals`".
@@ -186,10 +186,10 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         runtime,
         client,
         dispatch,
-        env_registry: HandleManager::new(),
-        dbc_registry: HandleManager::new(),
-        stmt_registry: HandleManager::new(),
-        desc_manager: HandleManager::new(),
+        env_registry: HandleManager::new(HandleKind::Env),
+        dbc_registry: HandleManager::new(HandleKind::Dbc),
+        stmt_registry: HandleManager::new(HandleKind::Stmt),
+        desc_manager: HandleManager::new(HandleKind::Desc),
     }));
     tracing::info!("ODBC driver starting v{}", env!("CARGO_PKG_VERSION"));
     guard.env_count += 1;
@@ -233,7 +233,7 @@ fn load_ini_config() {
 
 #[cfg(test)]
 mod tests {
-    use crate::api::handle_registry::HandleManager;
+    use crate::api::handle_registry::{HandleKind, HandleManager};
     use crate::api::runtime::OdbcGlobals;
     use sf_core::apis::database_driver_v1::DriverProviders;
     use sf_core::protobuf::apis::database_driver_v1::database_driver_client_with;
@@ -265,10 +265,10 @@ mod tests {
                 .expect("test runtime"),
             client: Arc::new(database_driver_client_with(DriverProviders::default())),
             dispatch,
-            env_registry: HandleManager::new(),
-            dbc_registry: HandleManager::new(),
-            stmt_registry: HandleManager::new(),
-            desc_manager: HandleManager::new(),
+            env_registry: HandleManager::new(HandleKind::Env),
+            dbc_registry: HandleManager::new(HandleKind::Dbc),
+            stmt_registry: HandleManager::new(HandleKind::Stmt),
+            desc_manager: HandleManager::new(HandleKind::Desc),
         }
     }
 

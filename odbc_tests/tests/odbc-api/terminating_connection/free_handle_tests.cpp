@@ -412,10 +412,17 @@ TEST_CASE_METHOD(EnvFixture, "SQLFreeHandle: SQL_INVALID_HANDLE for invalid hand
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: SQL_INVALID_HANDLE for wrong statement/connection handle type",
                  "[odbc-api][freehandle][terminating_connection][error]") {
-  // Under iODBC, SQLFreeHandle(SQL_HANDLE_DBC, stmt) hangs in the new driver's
-  //   mismatched-handle path (ctest Timeout ~1500s). unixODBC / Windows reject
-  //   with SQL_INVALID_HANDLE. Tracked by SNOW-3240580 (handle-type validation).
-  SKIP_NEW_IODBC("BD#59/SNOW-3240580", "SQLFreeHandle(DBC, stmt) hangs under iODBC until handle-type tags land");
+  // iODBC rejects this cross-type call before dispatching to either driver, but its
+  // _SQLFreeHandle_DBC exit path still releases the rejected DM wrapper: ENTER_HDBC
+  // jumps to LEAVE_HDBC's done label, where MEM_FREE(handle) escapes the unbraced
+  // TRACE macro and runs regardless of the SQL_INVALID_HANDLE result. Cleanup then
+  // depends on released wrapper memory. The reference driver's registered Arrow
+  // jemalloc zone preserves the wrapper's type bytes, while the system allocator
+  // used with the universal driver clears them and exposes the invalid DM state.
+  // Neither outcome tests driver behavior, so skip both drivers under iODBC;
+  // unixODBC/Windows and the Rust ABI-level handle-kind tests retain coverage.
+  SKIP_IODBC("iODBC releases a rejected wrong-type handle before driver dispatch (both drivers)");
+
   // Connect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);

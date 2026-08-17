@@ -2,7 +2,7 @@ use crate::api::error::{
     ConnectionStillConnectedSnafu, DisconnectedSnafu, EnvironmentHasConnectionsSnafu,
     InvalidHandleSnafu, OdbcRuntimeSnafu, Required,
 };
-use crate::api::handle_registry::{DescLookup, HandleId};
+use crate::api::handle_registry::{DescLookup, HandleId, HandleKind};
 use crate::api::types::DescriptorKind;
 use crate::api::{
     Connection, ConnectionState, Dbc, Env, Environment, OdbcResult, Statement, conn_from_handle,
@@ -115,7 +115,7 @@ pub fn alloc_connection(env_id: HandleId) -> OdbcResult<sql::Handle> {
 /// Allocate a new statement handle
 pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<sql::Handle> {
     tracing::info!("Allocating new statement handle");
-    let conn_id = HandleId::from(input_handle);
+    let conn_id = HandleId::from(input_handle).require_kind(HandleKind::Dbc)?;
     let dbc = conn_from_handle(input_handle)?;
     let mut conn = dbc.connection.lock();
     let conn_handle = match conn.state {
@@ -162,7 +162,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<sql::Handle> {
 
 /// Free an environment handle
 pub fn free_environment(handle: sql::Handle) -> OdbcResult<()> {
-    let handle_id = HandleId::from(handle);
+    let handle_id = HandleId::from(handle).require_kind(HandleKind::Env)?;
     let delete_guard = global()
         .context(OdbcRuntimeSnafu)?
         .env_registry
@@ -239,7 +239,7 @@ pub fn free_connection(handle: sql::Handle) -> OdbcResult<()> {
     }
 
     tracing::info!("Freeing connection handle");
-    let handle_id = HandleId::from(handle);
+    let handle_id = HandleId::from(handle).require_kind(HandleKind::Dbc)?;
     let delete_guard = global()
         .context(OdbcRuntimeSnafu)?
         .dbc_registry
@@ -278,7 +278,7 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     }
 
     tracing::info!("Freeing statement handle");
-    let handle_id = HandleId::from(handle);
+    let handle_id = HandleId::from(handle).require_kind(HandleKind::Stmt)?;
     let g = global().context(OdbcRuntimeSnafu)?;
 
     // Take exclusive ownership via write lock (waits for all readers to finish).
@@ -329,7 +329,7 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
 /// Allocate an explicit application descriptor on a connection.
 pub fn alloc_descriptor(input_handle: sql::Handle) -> OdbcResult<sql::Handle> {
     tracing::info!("Allocating explicit descriptor handle");
-    let conn_id = HandleId::from(input_handle);
+    let conn_id = HandleId::from(input_handle).require_kind(HandleKind::Dbc)?;
     let dbc = conn_from_handle(input_handle)?;
     let mut conn = dbc.connection.lock();
 
@@ -346,7 +346,7 @@ pub fn free_descriptor(handle: sql::Handle) -> OdbcResult<()> {
         return InvalidHandleSnafu.fail();
     }
     tracing::info!("Freeing explicit descriptor handle");
-    let desc_id = HandleId::from(handle);
+    let desc_id = HandleId::from(handle).require_kind(HandleKind::Desc)?;
     let g = global().context(OdbcRuntimeSnafu)?;
 
     // Validate this is an explicit descriptor
@@ -417,7 +417,7 @@ pub fn sql_alloc_handle(
                 "Allocating new dbc: SQLAllocHandle: handle_type={:?}",
                 handle_type
             );
-            let env_id = HandleId::from(input_handle);
+            let env_id = HandleId::from(input_handle).require_kind(HandleKind::Env)?;
             let handle = alloc_connection(env_id)?;
             unsafe { *output_handle = handle };
             Ok(())
@@ -832,6 +832,109 @@ mod tests {
             free_statement(stmt_handle).expect("free_statement");
             assert_handles_gone_from_registries(&[stmt_id], &descs);
 
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+
+    fn assert_invalid_handle<T: std::fmt::Debug>(result: OdbcResult<T>) {
+        assert!(
+            matches!(result, Err(crate::api::OdbcError::InvalidHandle { .. })),
+            "expected InvalidHandle, got {result:?}"
+        );
+    }
+
+    /// Slot indexes collide across registries (all start at 1); tagged kinds
+    /// must make cross-type free/disconnect fail before touching the peer.
+    #[test]
+    fn mismatched_handle_kinds_return_invalid_handle() {
+        with_env(|env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+            let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+
+            assert_eq!(HandleId::from(env_handle).slot(), 1);
+            assert_eq!(HandleId::from(dbc_handle).slot(), 1);
+            assert_eq!(HandleId::from(stmt_handle).slot(), 1);
+
+            assert_invalid_handle(free_connection(stmt_handle));
+            assert_invalid_handle(free_statement(dbc_handle));
+            assert_invalid_handle(free_environment(dbc_handle));
+            assert_invalid_handle(free_environment(stmt_handle));
+            assert_invalid_handle(crate::api::connection::disconnect(env_handle));
+            assert_invalid_handle(sql_free_handle(sql::HandleType::Stmt, dbc_handle));
+            assert_invalid_handle(sql_free_handle(sql::HandleType::Dbc, stmt_handle));
+            assert_invalid_handle(alloc_statement(env_handle));
+
+            // Peers still usable after rejected cross-type calls.
+            free_statement(stmt_handle).expect("free_statement");
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+
+    #[test]
+    fn double_free_statement_returns_invalid_handle() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+            let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+            free_statement(stmt_handle).expect("first free");
+            assert_invalid_handle(free_statement(stmt_handle));
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+
+    #[test]
+    fn app_row_desc_sqlpointer_round_trips_tagged_handle() {
+        use crate::api::Narrow;
+        use crate::api::StmtAttr;
+        use crate::api::statement::{get_stmt_attr, set_stmt_attr};
+        use crate::conversion::warning::Warnings;
+
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+            let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+            let desc_handle = alloc_descriptor(dbc_handle).expect("alloc_descriptor");
+
+            let mut warnings = Warnings::default();
+            set_stmt_attr(
+                stmt_handle,
+                StmtAttr::AppRowDesc as sql::Integer,
+                desc_handle as sql::Pointer,
+                0,
+                &mut warnings,
+            )
+            .expect("SQLSetStmtAttr APP_ROW_DESC");
+
+            let mut out: sql::Handle = std::ptr::null_mut();
+            get_stmt_attr::<Narrow>(
+                stmt_handle,
+                StmtAttr::AppRowDesc as sql::Integer,
+                &mut out as *mut _ as sql::Pointer,
+                0,
+                std::ptr::null_mut(),
+                &mut warnings,
+            )
+            .expect("SQLGetStmtAttr APP_ROW_DESC");
+            assert_eq!(
+                out, desc_handle,
+                "APP_ROW_DESC must round-trip the tagged SQLHANDLE bit-identically"
+            );
+
+            // Revert to implicit ARD so the explicit desc can be freed.
+            set_stmt_attr(
+                stmt_handle,
+                StmtAttr::AppRowDesc as sql::Integer,
+                std::ptr::null_mut(),
+                0,
+                &mut warnings,
+            )
+            .expect("revert APP_ROW_DESC");
+            free_descriptor(desc_handle).expect("free_descriptor");
+            free_statement(stmt_handle).expect("free_statement");
             mark_dbc_disconnected(dbc_handle);
             free_connection(dbc_handle).expect("free_connection");
         });
