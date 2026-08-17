@@ -60,21 +60,51 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # AWS covers every LTS Java release (8, 11, 17, 21, 25); GCP and Azure
+        # sanity-check the current LTS (21) only. `cloud` selects which
+        # parameters_${cloud}.json decode_secrets.sh decodes — the tests are
+        # cloud-agnostic except for PUT/GET stage I/O (S3 vs GCS vs Azure Blob).
         include:
+          # ── AWS: every LTS ─────────────────────────────────────────────
           - os: ubuntu-latest
             java-version: '8'
+            cloud: aws
             result_format: default
           - os: ubuntu-latest
             java-version: '8'
+            cloud: aws
             result_format: json
-          # Java 21 row exercises wiremock-based tests in net.snowflake.jdbc.wiremock.*
-          # (the vendored WireMock 3.x JAR requires JRE 11+ to launch). Java 8 rows skip
-          # those tests cleanly via assumeTrue(WiremockClient.requiresJava11OrHigher()).
+          # Java 11/17/21/25 rows exercise wiremock-based tests in
+          # net.snowflake.jdbc.wiremock.* (the vendored WireMock 3.x JAR requires
+          # JRE 11+ to launch). Java 8 rows skip those cleanly via
+          # assumeTrue(WiremockClient.requiresJava11OrHigher()).
+          - os: ubuntu-latest
+            java-version: '11'
+            cloud: aws
+            result_format: default
+          - os: ubuntu-latest
+            java-version: '17'
+            cloud: aws
+            result_format: default
           - os: ubuntu-latest
             java-version: '21'
+            cloud: aws
+            result_format: default
+          - os: ubuntu-latest
+            java-version: '25'
+            cloud: aws
+            result_format: default
+          # ── GCP / Azure: current LTS (21) sanity check ─────────────────
+          - os: ubuntu-latest
+            java-version: '21'
+            cloud: gcp
+            result_format: default
+          - os: ubuntu-latest
+            java-version: '21'
+            cloud: azure
             result_format: default
     runs-on: ${{ matrix.os }}
-    name: JDBC Tests (Java ${{ matrix.java-version }}, ${{ matrix.result_format }} format)
+    name: JDBC Tests (Java ${{ matrix.java-version }}, ${{ matrix.cloud }}, ${{ matrix.result_format }} format)
     timeout-minutes: 35
     steps:
       - name: Checkout repository
@@ -110,7 +140,7 @@ jobs:
             ${{ runner.os }}-gradle-
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
           PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
@@ -133,6 +163,9 @@ jobs:
           cd jdbc
           ./gradlew test jacocoTestReport
         env:
+          # Drives the @DisabledOnGCP / @RunOnAWS-style JUnit conditions (matches legacy
+          # snowflake-jdbc's CLOUD_PROVIDER env). Case-insensitive matchers, so lowercase is fine.
+          CLOUD_PROVIDER: ${{ matrix.cloud }}
           # In merge queue, retry each failing test up to 2 times (via Gradle Test Retry Plugin)
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
@@ -140,9 +173,9 @@ jobs:
         if: always() && matrix.result_format == 'default'
         uses: actions/upload-artifact@v4
         with:
-          # Disambiguate per Java version — actions/upload-artifact@v4 requires unique names
-          # within a single workflow run.
-          name: jdbc-tests-artifacts-java${{ matrix.java-version }}
+          # Disambiguate per Java version AND cloud — actions/upload-artifact@v4 requires
+          # unique names within a single workflow run, and Java 21 now runs on aws/gcp/azure.
+          name: jdbc-tests-artifacts-java${{ matrix.java-version }}-${{ matrix.cloud }}
           path: |
             jdbc/build/test-results/test/**/*.xml
             jdbc/build/jacoco/test.exec
@@ -154,7 +187,7 @@ jobs:
         run: |
           python3 jdbc/ci/reference_tests/extract_coverage.py \
             --report jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
-            --label "NEW JDBC (Java ${{ matrix.java-version }})" \
+            --label "NEW JDBC (Java ${{ matrix.java-version }}, ${{ matrix.cloud }})" \
             --summary "$GITHUB_STEP_SUMMARY" \
             --allow-missing
 
@@ -187,16 +220,248 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
 
+  # ── Windows / macOS smoke lanes ──────────────────────────────────────
+  # The jdbc_tests matrix above is Linux-only. These two jobs run a single
+  # sanity lane (Java 21, aws, default format) on the other two desktop OSes so
+  # platform-specific breakage in the native bridge and its JNI loading path is
+  # caught on every PR. They're kept as standalone jobs rather than folded into
+  # the matrix because the native library name/extension and path handling
+  # differ per OS (see CORE_PATH below).
+  jdbc_tests_windows:
+    needs: detect-changes
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_jdbc == 'true'
+    name: JDBC Tests (Windows, Java 21, aws)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    # NOTE: shell is set per-step, not job-wide. The cargo build below MUST run
+    # under the default PowerShell so vendored OpenSSL's Configure finds
+    # Strawberry Perl on the Windows PATH — under git-bash it instead picks up
+    # MSYS perl (missing Locale::Maketext::Simple) and fails to configure a
+    # VC-WIN64A build. Only the POSIX shell-script steps opt into bash.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Decode secrets
+        # decode_secrets.sh is a POSIX shell script — run it under git-bash.
+        shell: bash
+        run: ./scripts/decode_secrets.sh aws
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
+
+      - name: Restore Rust cache
+        id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        # The cargo-cache action keys target/ by runner.os, so this Windows cache
+        # never collides with the Linux "jdbc" caches despite the shared key.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "jdbc"
+
+      - name: Restore Gradle cache
+        id: gradle-cache-win
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-jdbc-
+            ${{ runner.os }}-gradle-
+
+      - name: Build Rust components
+        # Windows runners have no system OpenSSL (openssl-sys can't find one and
+        # the build fails), so build it from source. Mirrors the odbc/python
+        # Windows release builds. Linux/macOS runners ship a discoverable
+        # OpenSSL, so their lanes link it and skip this feature.
+        # Runs under the default PowerShell on purpose — see the job-level note
+        # about Strawberry Perl vs MSYS perl for the vendored OpenSSL Configure.
+        run: cargo build --package jdbc_bridge --features vendored-openssl
+
+      - name: Run JDBC tests
+        shell: bash
+        run: |
+          ls -l target/debug/
+          # Windows cdylib is emitted as jdbc_bridge.dll (no lib prefix). The JVM
+          # is a native Windows process, so hand it Windows-style paths (cygpath
+          # -w) rather than the /d/a/... git-bash form.
+          export PARAMETER_PATH="$(cygpath -w "$(pwd)/parameters.json")"
+          export CORE_PATH="$(cygpath -w "$(pwd)/target/debug/jdbc_bridge.dll")"
+          cd jdbc
+          ./gradlew test jacocoTestReport
+        env:
+          CLOUD_PROVIDER: aws
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
+
+      - name: Upload NEW driver test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-tests-artifacts-java21-aws-windows
+          path: |
+            jdbc/build/test-results/test/**/*.xml
+            jdbc/build/jacoco/test.exec
+            jdbc/build/reports/jacoco/test/**
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps.
+        timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "jdbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      - name: Save Gradle cache
+        if: always() && steps.gradle-cache-win.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+
+  jdbc_tests_macos:
+    needs: detect-changes
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_jdbc == 'true'
+    name: JDBC Tests (macOS, Java 21, aws)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh aws
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
+
+      - name: Restore Rust cache
+        id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        # target/ is keyed by runner.os, so this macOS cache never collides with
+        # the Linux "jdbc" caches despite the shared key.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "jdbc"
+
+      - name: Restore Gradle cache
+        id: gradle-cache-mac
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-jdbc-
+            ${{ runner.os }}-gradle-
+
+      - name: Build Rust components
+        run: cargo build --package jdbc_bridge
+
+      - name: Run JDBC tests
+        run: |
+          ls -l target/debug/
+          # macOS cdylib is emitted as libjdbc_bridge.dylib.
+          export PARAMETER_PATH="$(pwd)/parameters.json"
+          export CORE_PATH="$(pwd)/target/debug/libjdbc_bridge.dylib"
+          cd jdbc
+          ./gradlew test jacocoTestReport
+        env:
+          CLOUD_PROVIDER: aws
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
+
+      - name: Upload NEW driver test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-tests-artifacts-java21-aws-macos
+          path: |
+            jdbc/build/test-results/test/**/*.xml
+            jdbc/build/jacoco/test.exec
+            jdbc/build/reports/jacoco/test/**
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps.
+        timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "jdbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      - name: Save Gradle cache
+        if: always() && steps.gradle-cache-mac.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+
   cleanup_jdbc:
-    needs: [detect-changes, jdbc_tests]
-    if: always() && needs.jdbc_tests.result != 'skipped'
+    needs: [detect-changes, jdbc_tests, jdbc_tests_windows, jdbc_tests_macos]
+    if: always() && (needs.jdbc_tests.result != 'skipped' || needs.jdbc_tests_windows.result != 'skipped' || needs.jdbc_tests_macos.result != 'skipped')
     runs-on: ubuntu-latest
-    name: cleanup_jdbc
+    # jdbc_tests creates PATs on all three cloud accounts, so clean each one.
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp, azure]
+    name: cleanup_jdbc (${{ matrix.cloud }})
     steps:
       - uses: actions/checkout@v4
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
           PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
@@ -375,7 +640,7 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   jdbc-status:
-    needs: [detect-changes, jdbc_tests, cleanup_jdbc, jdbc_tests_reference, jdbc_parity_tests]
+    needs: [detect-changes, jdbc_tests, jdbc_tests_windows, jdbc_tests_macos, cleanup_jdbc, jdbc_tests_reference, jdbc_parity_tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -384,6 +649,8 @@ jobs:
           echo "=== JDBC CI Status ==="
 
           NEW_RESULT="${{ needs.jdbc_tests.result }}"
+          WINDOWS_RESULT="${{ needs.jdbc_tests_windows.result }}"
+          MACOS_RESULT="${{ needs.jdbc_tests_macos.result }}"
           REFERENCE_RESULT="${{ needs.jdbc_tests_reference.result }}"
           PARITY_RESULT="${{ needs.jdbc_parity_tests.result }}"
 
@@ -391,16 +658,18 @@ jobs:
           # "tests skipped" check below: a failure in an upstream job can cause
           # a downstream job to be auto-skipped, which would otherwise be
           # misread as "no relevant changes detected" and pass.
-          if [[ "$NEW_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ || "$PARITY_RESULT" =~ ^(failure|cancelled)$ ]]; then
+          if [[ "$NEW_RESULT" =~ ^(failure|cancelled)$ || "$WINDOWS_RESULT" =~ ^(failure|cancelled)$ || "$MACOS_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ || "$PARITY_RESULT" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ JDBC CI FAILED or CANCELLED"
             echo "  - JDBC Tests (new): $NEW_RESULT"
+            echo "  - JDBC Tests (Windows): $WINDOWS_RESULT"
+            echo "  - JDBC Tests (macOS): $MACOS_RESULT"
             echo "  - JDBC Reference (old): $REFERENCE_RESULT"
             echo "  - JDBC Parity: $PARITY_RESULT"
             exit 1
           fi
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled)
-          if [[ "$NEW_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" && "$PARITY_RESULT" == "skipped" ]]; then
+          if [[ "$NEW_RESULT" == "skipped" && "$WINDOWS_RESULT" == "skipped" && "$MACOS_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" && "$PARITY_RESULT" == "skipped" ]]; then
             echo "✓ JDBC jobs were SKIPPED (no relevant changes detected)"
             echo "  - run_jdbc: ${{ needs.detect-changes.outputs.run_jdbc }}"
             exit 0
@@ -409,6 +678,8 @@ jobs:
           # Tests ran and passed
           echo "✓ JDBC jobs were RUN and PASSED"
           echo "  - JDBC Tests (new): $NEW_RESULT"
+          echo "  - JDBC Tests (Windows): $WINDOWS_RESULT"
+          echo "  - JDBC Tests (macOS): $MACOS_RESULT"
           echo "  - JDBC Reference (old): $REFERENCE_RESULT"
           echo "  - JDBC Parity: $PARITY_RESULT"
           exit 0

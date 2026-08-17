@@ -18,13 +18,21 @@ import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.decorator.AbstractDecorator;
 import net.snowflake.client.internal.api.implementation.exception.DriverRuntimeException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledForJreRange;
 
 /**
  * Guards the runtime exception-carrier model. {@code DriverRuntimeException.toSQLException()} is
  * already compiler-enforced (a new carrier without a mapping will not compile); these rules cover
  * the structural invariants the compiler cannot. The decorator boundary invariant is behavioural,
  * not structural, and is covered by a separate reflection test.
+ *
+ * <p>Disabled on JRE 22+: ArchUnit 1.3.0 (pinned for a Java 8 runtime — see jdbc/build.gradle)
+ * cannot parse class files newer than Java 21, so {@code ClassFileImporter} imports zero classes
+ * and every {@code should()} rule trips {@code failOnEmptyShould}. These arch invariants are
+ * JVM-independent, so exercising them on the Java 8/11/17/21 lanes fully covers them; the Java 25
+ * lane skips this class rather than failing on a toolchain limitation.
  */
+@DisabledForJreRange(minVersion = 22)
 class ExceptionModelArchTest {
 
   private static final JavaClasses PRODUCTION_CLASSES =
