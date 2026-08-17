@@ -315,6 +315,91 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: USER_DATA_TYPE is always 0 
   REQUIRE(sawNonTrivialDataType);
 }
 
+// SQLColumns col 10 (NUM_PREC_RADIX) for FLOAT/DOUBLE/REAL must report decimal
+// radix 10, consistent with col 7 (COLUMN_SIZE) = 15 decimal digits.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: NUM_PREC_RADIX is 10 for FLOAT/DOUBLE/REAL and NUMBER",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
+                             SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Approximate + exact numerics → radix 10; non-numeric → NULL.
+  const std::map<std::string, SQLINTEGER> expectRadix10 = {
+      {"FLOATVAL", 10}, {"DOUBLEVAL", 10}, {"REALVAL", 10}, {"INTVAL", 10}, {"NUM38", 10},
+  };
+  // Approximate numerics report COLUMN_SIZE as decimal digits (15), not bits.
+  const std::map<std::string, SQLINTEGER> expectColumnSize15 = {
+      {"FLOATVAL", 15},
+      {"DOUBLEVAL", 15},
+      {"REALVAL", 15},
+  };
+  const std::string expectNull = "VARCHARVAL";
+
+  std::map<std::string, SQLINTEGER> actualRadix;
+  std::map<std::string, SQLINTEGER> actualColumnSize;
+  bool sawVarcharNull = false;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+
+    SQLINTEGER columnSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN columnSizeInd = 0;
+    ret = SQLGetData(stmt_handle(), 7, SQL_C_SLONG, &columnSize, 0, &columnSizeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    SQLINTEGER radix = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN radixInd = 0;
+    ret = SQLGetData(stmt_handle(), 10, SQL_C_SLONG, &radix, 0, &radixInd);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    if (expectRadix10.count(columnName.text) != 0) {
+      REQUIRE(radixInd == sizeof(SQLINTEGER));
+      actualRadix.emplace(columnName.text, radix);
+    }
+    if (expectColumnSize15.count(columnName.text) != 0) {
+      REQUIRE(columnSizeInd == sizeof(SQLINTEGER));
+      actualColumnSize.emplace(columnName.text, columnSize);
+    }
+    if (columnName.text == expectNull) {
+      CHECK(radixInd == SQL_NULL_DATA);
+      sawVarcharNull = true;
+    }
+  }
+
+  for (const auto& [column, wantRadix] : expectRadix10) {
+    const auto it = actualRadix.find(column);
+    REQUIRE(it != actualRadix.end());
+    INFO("column " << column);
+    CHECK(it->second == wantRadix);
+  }
+  for (const auto& [column, wantSize] : expectColumnSize15) {
+    const auto it = actualColumnSize.find(column);
+    REQUIRE(it != actualColumnSize.end());
+    INFO("column " << column << " COLUMN_SIZE");
+    NEW_DRIVER_ONLY("BD#123") { CHECK(it->second == wantSize); }
+    OLD_DRIVER_ONLY("BD#123") { CHECK(it->second == 38); }
+  }
+  REQUIRE(sawVarcharNull);
+}
+
+// SNOW-3928030 dual-contract guard: query-result ColAttribute for DOUBLE keeps
+// binary radix 2; catalog path above reports 10.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColAttribute: NUM_PREC_RADIX for DOUBLE remains 2 (catalog reports 10)",
+                 "[odbc-api][columns][catalog][col_attribute]") {
+  const std::string sql = std::string("SELECT DOUBLEVAL FROM ") + database_name() + "." + READONLY_SECOND_SCHEMA_NAME +
+                          "." + readonly_db::SECOND_SCHEMA_TABLE;
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN radix = -1;
+  ret = SQLColAttribute(stmt_handle(), 1, SQL_DESC_NUM_PREC_RADIX, nullptr, 0, nullptr, &radix);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(radix == 2);
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: DATA_TYPE is non-NULL for all types (SQL_VARCHAR for unmapped)",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),

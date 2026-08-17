@@ -2100,9 +2100,11 @@ fn append_procedure_column_rows(
         let dec_digits_val = decimal_digits_from_field(&field, numeric_settings)
             .ok()
             .map(|s| s.to_string());
-        let num_prec_radix_val = num_prec_radix_from_field(&field, numeric_settings)
-            .ok()
-            .and_then(|s| if s == 0 { None } else { Some(s.to_string()) });
+        // Catalog radix for REAL/FLOAT/DOUBLE is 10 (same contract as SQLColumns).
+        // Do not use num_prec_radix_from_field here — that is the ColAttribute
+        // binary-radix-2 path. SNOW-3928030.
+        let num_prec_radix_val =
+            catalog_num_prec_radix(logical_type, &field, numeric_settings).map(|s| s.to_string());
         let sql_data_type_val = verbose_sql_type_from_field(&field, numeric_settings)
             .ok()
             .map(|t| t.0.to_string());
@@ -3199,6 +3201,31 @@ fn catalog_type_name_from_logical_type(logical_type: &str) -> String {
     .to_string()
 }
 
+/// Catalog-only `NUM_PREC_RADIX` for `SQLColumns` / `SQLProcedureColumns`.
+///
+/// Approximate numerics (logical type `"REAL"` = FLOAT / DOUBLE / REAL)
+/// report radix **10** so `COLUMN_SIZE` (decimal digits, e.g. 15) is
+/// consistent with the ODBC FLOAT example and the reference driver.
+///
+/// This is deliberately **separate** from `SnowflakeFieldType::num_prec_radix`
+/// (the `SQLColAttribute(SQL_DESC_NUM_PREC_RADIX)` path on query columns),
+/// which correctly returns binary radix **2** for REAL and must not change.
+/// See SNOW-3928030.
+fn catalog_num_prec_radix(
+    logical_type: &str,
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Option<i32> {
+    if logical_type.eq_ignore_ascii_case("REAL") {
+        return Some(10);
+    }
+    // NUM_PREC_RADIX: only ever 2, 10, or inapplicable (→ NULL); 0 is never
+    // a meaningful value, so collapsing 0 → NULL is harmless here.
+    num_prec_radix_from_field(field, numeric_settings)
+        .ok()
+        .and_then(|s| if s == 0 { None } else { i32::try_from(s).ok() })
+}
+
 /// Returns the datetime subcode for `SQL_DATETIME_SUB` (col 15), or `None`
 /// for types where `SQL_DATA_TYPE != SQL_DATETIME`.
 fn sql_datetime_sub_from_logical_type(logical_type: &str) -> Option<i16> {
@@ -3271,11 +3298,11 @@ fn flat_row_from_descriptor(
     // columns (e.g. NUMBER(38,0)) — report it as 0, not NULL. The helper
     // returns Err for types where DECIMAL_DIGITS is inapplicable (→ NULL).
     let dec_digits_val = decimal_digits_from_field(&field, numeric_settings).ok();
-    // NUM_PREC_RADIX: only ever 2, 10, or inapplicable (→ NULL); 0 is never
-    // a meaningful value, so collapsing 0 → NULL is harmless here.
-    let num_prec_radix_val = num_prec_radix_from_field(&field, numeric_settings)
-        .ok()
-        .and_then(|s| if s == 0 { None } else { i32::try_from(s).ok() });
+    // NUM_PREC_RADIX (col 10): catalog reports decimal radix 10 for approximate
+    // numerics (REAL/FLOAT/DOUBLE) so COLUMN_SIZE is consistent — NOT the
+    // binary radix 2 from `num_prec_radix_from_field`, which is the
+    // SQLColAttribute(SQL_DESC_NUM_PREC_RADIX) contract. SNOW-3928030.
+    let num_prec_radix_val = catalog_num_prec_radix(&desc.logical_type, &field, numeric_settings);
     let sql_data_type_val = Some(
         verbose_sql_type_from_field(&field, numeric_settings)
             .map(|t| t.0)
@@ -3765,7 +3792,7 @@ fn catalog_smallint_field(name: &str) -> Field {
 
 /// Arrow field for a nullable INTEGER catalog column (FIXED/scale=0/precision=10).
 fn catalog_int_field(name: &str) -> Field {
-    let metadata: std::collections::HashMap<String, String> = [
+    let metadata: HashMap<String, String> = [
         ("logicalType".to_string(), "FIXED".to_string()),
         ("scale".to_string(), "0".to_string()),
         ("precision".to_string(), "10".to_string()),
@@ -4872,6 +4899,40 @@ mod procedure_columns_tests {
         // its uppercased logical name (OLD's else branch).
         assert_eq!(catalog_type_name_from_logical_type(""), "VARCHAR");
         assert_eq!(catalog_type_name_from_logical_type("vector"), "VECTOR");
+    }
+
+    #[test]
+    fn catalog_num_prec_radix_reports_10_for_real_not_binary_2() {
+        // SNOW-3928030: SQLColumns NUM_PREC_RADIX for FLOAT/DOUBLE/REAL
+        // (SHOW COLUMNS logical type "REAL") must be 10 to match COLUMN_SIZE
+        // decimal digits and the reference driver. Shared num_prec_radix()
+        // still returns 2 for ColAttribute — do not change that path.
+        let ns = NumericSettings::default();
+        let real_field = rehydrate_field("REAL", None, None, None, None, true);
+        assert_eq!(
+            catalog_num_prec_radix("REAL", &real_field, &ns),
+            Some(10),
+            "catalog REAL must report radix 10"
+        );
+        assert_eq!(
+            catalog_num_prec_radix("real", &real_field, &ns),
+            Some(10),
+            "catalog REAL match is case-insensitive"
+        );
+        // Shared helper still reports binary radix 2 for query-result path.
+        assert_eq!(
+            num_prec_radix_from_field(&real_field, &ns).ok(),
+            Some(2),
+            "ColAttribute path must keep radix 2 for REAL"
+        );
+
+        // FIXED / NUMBER still get 10 via the shared helper (regression).
+        let fixed_field = rehydrate_field("FIXED", Some(38), Some(0), None, None, true);
+        assert_eq!(catalog_num_prec_radix("FIXED", &fixed_field, &ns), Some(10));
+
+        // Non-numeric → NULL (inapplicable).
+        let text_field = rehydrate_field("TEXT", None, None, Some(100), None, true);
+        assert_eq!(catalog_num_prec_radix("TEXT", &text_field, &ns), None);
     }
 
     #[test]

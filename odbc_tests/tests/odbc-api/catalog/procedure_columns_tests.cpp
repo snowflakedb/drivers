@@ -204,6 +204,28 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
   REQUIRE(ret == SQL_NO_DATA);
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: NUM_PREC_RADIX is 10 for FLOAT params",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  // MULTI_PARAM_PROC(pname VARCHAR, page FLOAT): page must report catalog radix
+  // 10 (same REAL contract as SQLColumns), not ColAttribute binary radix 2.
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::MULTI_PARAM_PROC), SQL_NTS, sqlchar("PAGE"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER radix = static_cast<SQLINTEGER>(0x7FFFFFFF);
+  SQLLEN radixInd = 0;
+  ret = SQLGetData(stmt_handle(), 11, SQL_C_SLONG, &radix, 0, &radixInd);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(radixInd == sizeof(SQLINTEGER));
+  CHECK(radix == 10);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: DATA_TYPE reflects the VARCHAR return type",
                  "[odbc-api][procedurecolumns][catalog]") {
   // BASIC_PROC(p1 VARCHAR) RETURNS VARCHAR: the return value row (fetched first)

@@ -2355,3 +2355,22 @@ behavior_differences:
       this difference. An earlier revision of this entry also attributed a
       SQLCloseCursor SQL_ERROR to the new driver; that was unverified and is now
       known to be incorrect.
+
+  123:
+    name: "SQLColumns COLUMN_SIZE for FLOAT/DOUBLE/REAL is 15 decimal digits instead of 38"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLColumns reports COLUMN_SIZE 38 for FLOAT, DOUBLE, and REAL catalog rows,
+      using Snowflake's maximum NUMBER precision as a placeholder.
+    new_driver_behavior: |
+      SQLColumns reports COLUMN_SIZE 15 for FLOAT, DOUBLE, and REAL catalog rows,
+      matching the number of significant decimal digits for double precision.
+    description: |
+      The ODBC column-size definition for SQL_DOUBLE / SQL_FLOAT is 15 significant
+      decimal digits. This also keeps SQLColumns COLUMN_SIZE consistent with its
+      decimal NUM_PREC_RADIX value of 10. The paired NEW_DRIVER_ONLY / OLD_DRIVER_ONLY
+      assertions are in odbc-api/catalog/columns_tests.cpp.
