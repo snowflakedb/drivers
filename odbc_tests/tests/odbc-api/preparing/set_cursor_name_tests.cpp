@@ -21,8 +21,6 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Renaming cursor replaces previous name",
                  "[odbc-api][cursorname][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("CursorA"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
