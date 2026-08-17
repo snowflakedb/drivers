@@ -17,6 +17,7 @@ import java.util.Arrays;
 import java.util.List;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.jdbc.utils.DisabledOnGCP;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import net.snowflake.jdbc.utils.WithQueryUtils;
 import org.junit.jupiter.api.Test;
@@ -490,7 +491,12 @@ public class IntervalTests extends SnowflakeIntegrationTestBase
   // BINDING
   // ==========================================================================
 
+  // TODO(SNOW-3953892): the GCP test account's GS rejects the bound INSERT-into-interval path
+  // ("Year-Month Interval '0' is invalid"); AWS and Azure accept it. Re-enable on GCP once that
+  // account catches up. The SELECT-binding tests below are unaffected, so only the two
+  // insert-and-select-back cases are gated.
   @Test
+  @DisabledOnGCP
   public void shouldInsertAndSelectBackIntervalYearToMonthValuesUsingParameterBinding()
       throws Exception {
     // Given Snowflake client is logged in
@@ -530,7 +536,9 @@ public class IntervalTests extends SnowflakeIntegrationTestBase
         });
   }
 
+  // TODO(SNOW-3953892): disabled on GCP for the same reason as the YEAR TO MONTH case above.
   @Test
+  @DisabledOnGCP
   public void shouldInsertAndSelectBackIntervalDayToSecondValuesUsingParameterBinding()
       throws Exception {
     // Given Snowflake client is logged in
