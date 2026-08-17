@@ -1028,7 +1028,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
 
   // Clean up: cancel the stmt and drain the poll loop.
   SQLRETURN cancel_ret = SQLCancelHandle(SQL_HANDLE_STMT, stmt_handle());
-  REQUIRE_THAT(OdbcResult(cancel_ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  // BD#32: old reference driver cannot cancel async operations on a STMT handle;
+  // SQLCancelHandle returns SQL_ERROR. The poll loop below drains by natural completion.
+  NEW_DRIVER_ONLY("BD#32") {
+    REQUIRE_THAT(OdbcResult(cancel_ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  }
   int polls = 0;
   SQLRETURN poll_ret = SQL_STILL_EXECUTING;
   while (poll_ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {

@@ -111,8 +111,6 @@ static const FunctionTest ALL_ODBC_FUNCTIONS[] = {
 TEST_CASE_METHOD(DbcDefaultDSNFixture,
                  "SQLGetFunctions: Returns all supported functions with SQL_API_ODBC3_ALL_FUNCTIONS",
                  "[odbc-api][getfunctions][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: Reference driver requires an active connection
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -150,8 +148,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
 TEST_CASE_METHOD(DbcDefaultDSNFixture,
                  "SQLGetFunctions: Returns all supported functions with SQL_API_ALL_FUNCTIONS (ODBC 2.x)",
                  "[odbc-api][getfunctions][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: Reference driver requires an active connection
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -181,8 +177,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Correctly reports unsupported optional functions",
                  "[odbc-api][getfunctions][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: Reference driver requires an active connection
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -354,14 +348,34 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Reports SQLTransact as 
   REQUIRE(ret == SQL_SUCCESS);
 }
 
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Reports SQLCloseCursor as supported",
+                 "[odbc-api][getfunctions][driver_info]") {
+  // Regression guard: SQLCloseCursor is implemented and exported by both drivers, so
+  // SQLGetFunctions must report it supported. SQL_API_SQLCLOSECURSOR (1003) is within
+  // unixODBC's accepted single-function id range, so the DM answers it from the ODBC3
+  // bitmap for both drivers, which return SQL_SUCCESS + SQL_TRUE (confirmed in CI). This
+  // is unlike SQL_API_SQLCANCELHANDLE (1022), which the DM range-rejects — see BD#120.
+  SKIP_IODBC("iODBC DM answers SQLGetFunctions from its static table regardless of the driver's bitmap");
+
+  const std::string dsn = dsn_name();
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLUSMALLINT supported = SQL_FALSE;
+  ret = SQLGetFunctions(dbc_handle(), SQL_API_SQLCLOSECURSOR, &supported);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(supported == SQL_TRUE);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
 // ============================================================================
 // SQLGetFunctions - Comprehensive Function Coverage Test
 // ============================================================================
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: All known supported functions",
                  "[odbc-api][getfunctions][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: Reference driver requires an active connection
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -380,6 +394,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: All known supported fun
     OLD_IODBC_ONLY("BD#65") {
       if (func.functionId == SQL_API_SQLSETSCROLLOPTIONS) continue;
     }
+    // BD#120: unixODBC range-rejects the per-function SQLGetFunctions(id) probe of
+    //   SQL_API_SQLCANCELHANDLE (id 1022, past the DM's SQL_API_SQLFETCHSCROLL/1021
+    //   guard) with SQL_ERROR on the new driver, even though the ODBC3 bitmap reports
+    //   it supported. iODBC is unaffected (answers from its own static table).
+    //   SQL_API_SQLCLOSECURSOR (1003) is in range and returns SQL_SUCCESS on both
+    //   drivers (confirmed in CI), so it is asserted normally here.
+    NEW_DRIVER_ONLY("BD#120") {
+      if (func.functionId == SQL_API_SQLCANCELHANDLE) continue;
+    }
+    INFO("Testing function: " << func.name << " (ID=" << func.functionId << ")");
     SQLUSMALLINT supported = SQL_FALSE;
     ret = SQLGetFunctions(dbc_handle(), func.functionId, &supported);
     REQUIRE(ret == SQL_SUCCESS);

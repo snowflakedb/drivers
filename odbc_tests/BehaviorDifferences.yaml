@@ -2292,3 +2292,63 @@ behavior_differences:
       column_size equal to the session VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT parameter.
       SQL_DESC_TYPE_NAME returns "VECTOR". Numeric C-type conversions (SQL_C_LONG, etc.) are
       rejected with SQLSTATE 07006, matching the ARRAY/VARIANT precedent.
+
+  120:
+    name: "SQLGetFunctions: per-function probe of SQLCancelHandle range-rejected with SQL_ERROR under unixODBC"
+    status: allowed
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The legacy driver's SQL_API_ODBC3_ALL_FUNCTIONS bitmap omits
+      SQL_API_SQLCANCELHANDLE (documented separately as BD#45), so the loop test
+      already skips SQLCancelHandle for the old driver. The per-function probe of
+      SQL_API_SQLCANCELHANDLE is subject to the same unixODBC range guard described
+      below regardless of driver.
+    new_driver_behavior: |
+      Under the unixODBC Driver Manager the per-function probe
+      `SQLGetFunctions(dbc, SQL_API_SQLCANCELHANDLE, &out)` returns SQL_ERROR
+      (SQLSTATE HY095), even though the ODBC3 bitmap the driver returns for
+      SQL_API_ODBC3_ALL_FUNCTIONS correctly reports SQLCancelHandle supported. The
+      error is injected by the Driver Manager, not by the driver: unixODBC does not
+      forward a per-function SQLGetFunctions(id) query to the driver at all — it
+      answers from a cache built once at connect time (from the driver's
+      SQL_API_ODBC3_ALL_FUNCTIONS bitmap) or range-rejects the id. iODBC is
+      unaffected (it answers SQLGetFunctions from its own static table); Windows is
+      unaffected. Bitmap coverage of SQLCancelHandle is verified independently via
+      SQL_API_ODBC3_ALL_FUNCTIONS, so the function itself is implemented; only the
+      DM's per-function query path range-rejects it.
+    description: |
+      Root cause is a unixODBC Driver Manager limitation, not a defect in the new
+      driver — the driver's ODBC3 bitmap is correct (verified by the passing
+      SQL_API_ODBC3_ALL_FUNCTIONS test), and its enum values match the ODBC headers
+      exactly (SQL_API_SQLCLOSECURSOR = 1003, SQL_API_SQLCANCELHANDLE = 1022).
+
+      unixODBC's SQLGetFunctions (DriverManager/SQLGetFunctions.c) never forwards a
+      per-function query to the driver. It validates the function id against a fixed
+      set of ranges and, for any id it accepts, answers from the connect-time cache
+      via __check_for_function (DriverManager/SQLConnect.c) — which only ever sets
+      *supported to TRUE/FALSE and never returns SQL_ERROR. The id-range guard
+      rejects anything `function_id > SQL_API_SQLFETCHSCROLL` (1021) with SQLSTATE
+      HY095 -> SQL_ERROR. SQL_API_SQLCANCELHANDLE = 1022 falls just past that bound
+      (it is an ODBC 3.8 function the DM's range validation was never extended to
+      cover), so the DM returns SQL_ERROR before the driver is ever consulted. This
+      guard is identical across unixODBC releases (verified in master and v2.3.9).
+
+      There is no driver-side fix: the DM rejects the id structurally and never asks
+      the driver, so the correct-and-only lever the driver has (the
+      SQL_API_ODBC3_ALL_FUNCTIONS bitmap) already reports SQLCancelHandle supported.
+      The per-function probe of SQLCancelHandle is therefore gated with
+      NEW_DRIVER_ONLY("BD#120") in the comprehensive-coverage loop in
+      odbc-api/driver_info/get_functions_tests.cpp (the old driver already skips it
+      via BD#45); SKIP_IODBC covers iODBC's static-table behavior. The proper
+      upstream fix is unixODBC extending its range check past SQL_API_SQLFETCHSCROLL.
+
+      Scope note: this BD covers SQLCancelHandle only. SQL_API_SQLCLOSECURSOR = 1003
+      passes the same range guard (it is within range) and returns SQL_SUCCESS +
+      SQL_TRUE on BOTH drivers under unixODBC — confirmed empirically in CI — so it
+      is asserted with an ordinary (non-driver-conditional) test and is not part of
+      this difference. An earlier revision of this entry also attributed a
+      SQLCloseCursor SQL_ERROR to the new driver; that was unverified and is now
+      known to be incorrect.
