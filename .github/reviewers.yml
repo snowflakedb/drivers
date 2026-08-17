@@ -90,6 +90,7 @@ reviewers:
   filip-pawlowski_snow:
   patryk-czajka_snow:
   tomasz-urbaszek_snow:
+  marcin-erbel_snow:
 
 rules:
   all:
@@ -98,10 +99,13 @@ rules:
     - michal-cepiga_snow
     - piotr-bulawa_snow
     - michal-hofman_snow
+    - dawid-heyman_snow
+    - marcin-erbel_snow
   jdbc:
     - antoni-solarski_snow
     - dawid-heyman_snow
     - rafal-kowalski_snow
+    - marcin-erbel_snow
   nodejs:
     - ruslan-savenok_snow
     - mateusz-wezdenko_snow
