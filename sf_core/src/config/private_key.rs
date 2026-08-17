@@ -4,6 +4,7 @@ use base64::{Engine as _, engine::general_purpose};
 use openssl::pkey::PKey;
 
 use crate::config::settings::{Setting, Settings};
+use crate::config::toml_loader::{FilePermissionCheck, check_file_permissions};
 use crate::config::{
     ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
 };
@@ -123,7 +124,26 @@ pub(super) fn read_private_key(settings: &dyn Settings) -> Result<SensitiveStrin
 
     // File path
     if let Some(private_key_file) = settings.get_string("private_key_file") {
-        let private_key = fs::read_to_string(&private_key_file).map_err(|e| {
+        // Gate the read on the same file-permission check that protects other
+        // credential-bearing config files, honoring the unsafe opt-out.
+        let permission_check =
+            if settings.get_bool("unsafe_skip_config_file_permissions_check") == Some(true) {
+                FilePermissionCheck::UnsafeDisabled
+            } else {
+                FilePermissionCheck::Enabled
+            };
+
+        let path = std::path::Path::new(&private_key_file);
+        // The permission gate only guards files that actually exist — the same
+        // order `load_toml_file` uses. A missing or inaccessible file must
+        // surface the private-key-specific read error below (the driver's
+        // documented error for a bad `private_key_file` path), not a generic
+        // config-read error raised while stat-ing the file for its mode.
+        if path.try_exists().unwrap_or(false) {
+            check_file_permissions(path, permission_check)?;
+        }
+
+        let private_key = fs::read_to_string(path).map_err(|e| {
             InvalidParameterValueSnafu {
                 parameter: "private_key_file".to_string(),
                 value: private_key_file,
@@ -281,6 +301,25 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn read_private_key_file_missing_returns_read_error() {
+        // A nonexistent `private_key_file` must surface the private-key-specific
+        // read error, not the permission gate's config-read error raised while
+        // stat-ing the file for its mode. Regression for the permission-check-
+        // before-read ordering: the JDBC/Python "invalid private key" e2e tests
+        // match on the "Could not read private key file" substring.
+        let settings = settings_with(&[(
+            "private_key_file",
+            Setting::String("/nonexistent/definitely_missing_key.p8".into()),
+        )]);
+        let err = read_private_key(&settings).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::InvalidParameterValue { ref explanation, .. }
+                if explanation.contains("Could not read private key file")),
+            "expected private-key read error, got: {err}"
+        );
+    }
+
     // --- has_private_key_params ---
 
     #[test]
@@ -305,5 +344,73 @@ mod tests {
     fn has_private_key_params_with_neither() {
         let s = settings_with(&[]);
         assert!(!has_private_key_params(&s));
+    }
+
+    // --- private_key_file permission gate (Unix only) ---
+
+    #[cfg(unix)]
+    mod private_key_file_permissions {
+        use super::*;
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::NamedTempFile;
+
+        fn pem_key_content() -> &'static str {
+            "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n"
+        }
+
+        #[test]
+        fn should_reject_private_key_file_writable_by_group_or_others() {
+            let tmp = NamedTempFile::new().unwrap();
+            fs::write(tmp.path(), pem_key_content()).unwrap();
+            // Group/other-writable (0o666) is rejected; read-only-permissive
+            // modes like 0o644 only warn, so use a writable mode here.
+            fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o666)).unwrap();
+
+            let settings = settings_with(&[(
+                "private_key_file",
+                Setting::String(tmp.path().to_str().unwrap().into()),
+            )]);
+            let err = read_private_key(&settings).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::InsecurePermissions { .. }),
+                "Expected InsecurePermissions, got: {err:?}"
+            );
+        }
+
+        #[test]
+        fn should_load_private_key_file_with_restricted_mode() {
+            let tmp = NamedTempFile::new().unwrap();
+            fs::write(tmp.path(), pem_key_content()).unwrap();
+            fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o600)).unwrap();
+
+            let settings = settings_with(&[(
+                "private_key_file",
+                Setting::String(tmp.path().to_str().unwrap().into()),
+            )]);
+            let result = read_private_key(&settings).unwrap();
+            assert_eq!(result.reveal(), pem_key_content());
+        }
+
+        #[test]
+        fn should_skip_permission_check_when_unsafe_opt_out_set() {
+            let tmp = NamedTempFile::new().unwrap();
+            fs::write(tmp.path(), pem_key_content()).unwrap();
+            // 0o666 would be rejected without the opt-out; the bypass lets it load.
+            fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o666)).unwrap();
+
+            let settings = settings_with(&[
+                (
+                    "private_key_file",
+                    Setting::String(tmp.path().to_str().unwrap().into()),
+                ),
+                (
+                    "unsafe_skip_config_file_permissions_check",
+                    Setting::Bool(true),
+                ),
+            ]);
+            let result = read_private_key(&settings).unwrap();
+            assert_eq!(result.reveal(), pem_key_content());
+        }
     }
 }
