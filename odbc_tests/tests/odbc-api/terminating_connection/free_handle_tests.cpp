@@ -353,11 +353,15 @@ TEST_CASE("SQLFreeHandle: SQL_INVALID_HANDLE for null descriptor handle",
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY017 - Cannot free implicit descriptor",
                  "[odbc-api][freehandle][terminating_connection][error]") {
-  // New driver returns SQL_INVALID_HANDLE (no HY017 diagnostic) when freeing an
-  //   implicit ARD, which can segfault the DM / follow-up SQLGetDiagRec. Spec
-  //   requires SQL_ERROR + HY017 with the handle left valid. Tracked by
-  //   SNOW-3240578 (Harden SQLFreeHandle state validation).
-  SKIP_NEW_DRIVER("SNOW-3240578", "SQLFreeHandle on implicit descriptor returns SQL_INVALID_HANDLE instead of HY017");
+  // Freeing an implicit ARD must return SQL_ERROR + HY017 with the handle left valid, per the
+  //   ODBC spec. A bare SQL_INVALID_HANDLE (no HY017 diagnostic) can segfault the DM on a
+  //   follow-up SQLGetDiagRec. Fixed under SNOW-3240578 (Harden SQLFreeHandle state validation).
+  //
+  // iODBC does not safely handle this rejected free and never dispatches it to the driver,
+  // so there is no driver-side behavior to assert under iODBC. Skip for both drivers.
+  SKIP_IODBC(
+      "iODBC does not safely handle freeing an implicit descriptor; the call never "
+      "reaches the driver, so there is no driver-side behavior to assert.");
   // Connect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -376,16 +380,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY017 - Cannot free impli
   // Try to free implicit descriptor
   // HY017: Invalid use of an automatically allocated descriptor handle
   ret = SQLFreeHandle(SQL_HANDLE_DESC, ard);
-  IODBC_ONLY {
-    // Under iODBC both drivers surface a bare SQL_INVALID_HANDLE (no HY017
-    //   diagnostic) — iODBC's DESC dispatch path does not preserve the
-    //   driver-posted SQLSTATE the way unixODBC / Windows DM do (BD#70).
-    //   Spec-correct HY017 is asserted on non-iODBC DMs below.
-    REQUIRE(ret == SQL_INVALID_HANDLE);
-  }
-  else {
-    REQUIRE_EXPECTED_ERROR(ret, "HY017", ard, SQL_HANDLE_DESC);
-  }
+  REQUIRE_EXPECTED_ERROR(ret, "HY017", ard, SQL_HANDLE_DESC);
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   SQLDisconnect(dbc_handle());
