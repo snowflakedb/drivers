@@ -15,6 +15,7 @@ Bug fixes:
 - Fixed `SQLGetInfo(SQL_DRIVER_NAME)` to return the driver library file name (e.g. `libsfodbc.so`) instead of the full on-disk path, matching the ODBC specification. (snowflakedb/drivers#1076)
 - Fixed `SQLColumns` `USER_DATA_TYPE` (column 19) to always return `0` (`UDT_STANDARD_SQL_TYPE`), matching the reference driver (previously mirrored `DATA_TYPE`). (snowflakedb/drivers#1099)
 - Fixed `SQLTables` / `SQLColumns` catalog result IRDs so string columns report `SQL_WVARCHAR` and numeric `SQLColumns` columns report `SQL_SMALLINT` / `SQL_INTEGER`, matching the reference driver (previously all catalog result columns were labeled `SQL_VARCHAR`). (snowflakedb/drivers#1085)
+- Fixed mismatched ODBC handle types (e.g. a statement handle passed where a connection handle is expected) to correctly return `SQL_INVALID_HANDLE`. (snowflakedb/drivers#1040)
 - Fixed `SQLCancelHandle(SQL_HANDLE_DBC)` to return SQLSTATE HY010 when an associated statement is asynchronously executing or mid data-at-execution, matching the ODBC 3.8 Diagnostics table (previously a no-op like the reference driver). (snowflakedb/drivers#871)
 - Fixed the `SecondaryRoles` connection attribute being silently dropped: the connection-string parser uppercases keys with no separator preserved, so `SecondaryRoles=None;` arrived as `SECONDARYROLES` and was never mapped to the shared `secondary_roles` parameter. It is now mapped correctly, restoring parity with legacy ODBC. (snowflakedb/drivers#954)
 

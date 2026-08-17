@@ -1,6 +1,6 @@
 use crate::api::bitmask::Bitmask;
 use crate::api::error::OdbcRuntimeSnafu;
-use crate::api::handle_registry::{DescLookup, HandleGuard, HandleId};
+use crate::api::handle_registry::{DescLookup, HandleGuard, HandleId, HandleKind};
 use crate::api::runtime::global;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::conversion::Binding;
@@ -2521,7 +2521,7 @@ impl Statement {
 
 // Helper functions for handle conversion
 pub fn env_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Env>> {
-    let handle_id = HandleId::from(handle);
+    let handle_id = HandleId::from(handle).require_kind(HandleKind::Env)?;
     global()
         .context(OdbcRuntimeSnafu)?
         .env_registry
@@ -2529,7 +2529,7 @@ pub fn env_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Env>> {
 }
 
 pub fn conn_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Dbc>> {
-    let handle_id = HandleId::from(handle);
+    let handle_id = HandleId::from(handle).require_kind(HandleKind::Dbc)?;
     global()
         .context(OdbcRuntimeSnafu)?
         .dbc_registry
@@ -2537,7 +2537,7 @@ pub fn conn_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Dbc>> {
 }
 
 pub fn stmt_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Statement>> {
-    let handle_id = HandleId::from(handle);
+    let handle_id = HandleId::from(handle).require_kind(HandleKind::Stmt)?;
     global()
         .context(OdbcRuntimeSnafu)?
         .stmt_registry
@@ -2562,7 +2562,7 @@ pub fn desc_from_handle(desc_handle: sql::Handle) -> OdbcResult<DescriptorAccess
             location: snafu::location!(),
         });
     }
-    let desc_id = HandleId::from(desc_handle);
+    let desc_id = HandleId::from(desc_handle).require_kind(HandleKind::Desc)?;
     let g = global().context(OdbcRuntimeSnafu)?;
     let desc_guard = g.desc_manager.get(desc_id)?;
     match *desc_guard {
