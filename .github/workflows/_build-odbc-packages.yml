@@ -65,8 +65,22 @@ jobs:
       - name: Build WiX from source
         if: steps.wix-cache.outputs.cache-hit != 'true'
         shell: cmd
-        working-directory: wix-src
-        run: .\src\build_all.cmd Release
+        working-directory: wix-src\src
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -version [17^,19^) -property installationPath`) do set "VSINSTALL=%%i"
+          if not defined VSINSTALL echo Could not locate a VS 2022 install via vswhere & exit /b 1
+          call "%VSINSTALL%\Common7\Tools\vsdevcmd.bat" -no_logo || exit /b
+          where msbuild || exit /b
+          call build_init.cmd || exit /b
+          call dtf\dtf.cmd Release || exit /b
+          call internal\internal.cmd Release || exit /b
+          call libs\libs.cmd Release || exit /b
+          call api\api.cmd Release || exit /b
+          call burn\burn.cmd Release || exit /b
+          call wix\wix.cmd Release || exit /b
+          call tools\tools.cmd Release || exit /b
+          msbuild ext\Util\util_t.proj -Restore -p:Configuration=Release -m -tl -nologo -warnaserror -bl:..\build\logs\ext_util_build.binlog || exit /b
+          msbuild ext\UI\ui_t.proj -Restore -p:Configuration=Release -m -tl -nologo -warnaserror -bl:..\build\logs\ext_ui_build.binlog || exit /b
 
       - name: Stage WiX nupkgs
         if: steps.wix-cache.outputs.cache-hit != 'true'
@@ -225,8 +239,8 @@ jobs:
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-ud-${{ matrix.config }}-${{ matrix.arch }}
-          path: build/snowflake-odbc-ud-*.msi
+          name: snowflake-odbc-${{ matrix.config }}-${{ matrix.arch }}
+          path: build/snowflake-odbc-*.msi
 
   build_rpm:
     # RPM packaging is independent: it builds the driver from scratch in its own Docker image
@@ -317,8 +331,8 @@ jobs:
       - name: Upload RPM
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-ud-rpm-${{ matrix.arch }}
-          path: build/snowflake-odbc-ud-*.rpm
+          name: snowflake-odbc-rpm-${{ matrix.arch }}
+          path: build/snowflake-odbc-*.rpm
 
   build_pkg:
     runs-on: macos-latest
@@ -398,8 +412,8 @@ jobs:
       - name: Upload pkg
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-ud-macos-universal
-          path: build/snowflake-odbc-ud-*.pkg
+          name: snowflake-odbc-macos-universal
+          path: build/snowflake-odbc-*.pkg
 
   build_deb:
     strategy:
@@ -488,11 +502,11 @@ jobs:
       - name: Upload .deb
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-ud-deb-${{ matrix.arch }}
-          path: build/snowflake-odbc-ud_*.deb
+          name: snowflake-odbc-deb-${{ matrix.arch }}
+          path: build/snowflake-odbc_*.deb
 
       - name: Upload .tgz
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-ud-tgz-${{ matrix.arch }}
-          path: build/snowflake-odbc-ud-*.tar.gz
+          name: snowflake-odbc-tgz-${{ matrix.arch }}
+          path: build/snowflake-odbc-*.tar.gz

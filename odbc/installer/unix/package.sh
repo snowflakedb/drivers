@@ -30,14 +30,27 @@ read_odbc_metadata() {
     ' odbc/Cargo.toml
 }
 
-BASE_VERSION=$(read_odbc_metadata odbc_preview_version)
+read_package_version() {
+    awk '
+        /^\[package\][[:space:]]*$/ { in_section = 1; next }
+        /^\[/                       { in_section = 0 }
+        in_section && /^[[:space:]]*version[[:space:]]*=/ {
+            line = $0
+            sub(/^[^"]*"/, "", line)
+            sub(/".*$/,    "", line)
+            print line
+            exit
+        }
+    ' odbc/Cargo.toml
+}
+
+BASE_VERSION=$(read_package_version)
 ODBC_API_VERSION=$(read_odbc_metadata odbc_api_version)
 if [[ -z "$BASE_VERSION" || -z "$ODBC_API_VERSION" ]]; then
-    echo "Failed to read odbc_preview_version / odbc_api_version from [package.metadata.odbc] in odbc/Cargo.toml"
+    echo "Failed to read package version / odbc_api_version from odbc/Cargo.toml"
     exit 1
 fi
-COMMIT_HASH="${COMMIT_HASH:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-VERSION="${BASE_VERSION}-${COMMIT_HASH}"
+VERSION="${BASE_VERSION}"
 
 PKG_FORMATS="${PKG_FORMATS:-rpm}"
 
@@ -96,17 +109,17 @@ mkdir -p "$BUILD_DIR"
 for fmt in $PKG_FORMATS; do
     case "$fmt" in
         rpm)
-            RPM_NAME="snowflake-odbc-ud-${VERSION}.${SYSTEM_ARCH}.rpm"
+            RPM_NAME="snowflake-odbc-${VERSION}.${SYSTEM_ARCH}.rpm"
             echo "=== Building RPM: $RPM_NAME ==="
             fpm -s dir \
                 -t rpm \
-                -n snowflake-odbc-ud \
+                -n snowflake-odbc \
                 -v "$BASE_VERSION" \
                 -C "$STAGE_DIR" \
                 -p "$BUILD_DIR/$RPM_NAME" \
                 -d unixODBC \
                 --url https://www.snowflake.net/ \
-                --description "Snowflake ODBC UD ($VERSION, Release)" \
+                --description "Snowflake ODBC Driver ($VERSION, Release)" \
                 --license "Commercial" \
                 --vendor "Snowflake Computing, Inc." \
                 --rpm-changelog "$RPM_SCRIPTS_DIR/changelog" \
@@ -116,11 +129,11 @@ for fmt in $PKG_FORMATS; do
             echo "=== Successfully created RPM at $BUILD_DIR/$RPM_NAME ==="
             ;;
         deb)
-            DEB_NAME="snowflake-odbc-ud_${VERSION}_${DEB_ARCH}.deb"
+            DEB_NAME="snowflake-odbc_${VERSION}_${DEB_ARCH}.deb"
             echo "=== Building DEB: $DEB_NAME ==="
             fpm -s dir \
                 -t deb \
-                -n snowflake-odbc-ud \
+                -n snowflake-odbc \
                 -v "$BASE_VERSION" \
                 -C "$STAGE_DIR" \
                 -p "$BUILD_DIR/$DEB_NAME" \
@@ -128,7 +141,7 @@ for fmt in $PKG_FORMATS; do
                 -d unixodbc \
                 -d odbcinst \
                 --url https://www.snowflake.net/ \
-                --description "Snowflake ODBC UD ($VERSION, Release)" \
+                --description "Snowflake ODBC Driver ($VERSION, Release)" \
                 --license "Commercial" \
                 --vendor "Snowflake Computing, Inc." \
                 --after-install "$RPM_SCRIPTS_DIR/after_install.sh" \
@@ -137,7 +150,7 @@ for fmt in $PKG_FORMATS; do
             echo "=== Successfully created DEB at $BUILD_DIR/$DEB_NAME ==="
             ;;
         tgz)
-            TGZ_NAME="snowflake-odbc-ud-${VERSION}.${SYSTEM_ARCH}.tar.gz"
+            TGZ_NAME="snowflake-odbc-${VERSION}.${SYSTEM_ARCH}.tar.gz"
             echo "=== Building TGZ: $TGZ_NAME ==="
             tar -czf "$BUILD_DIR/$TGZ_NAME" -C "$STAGE_DIR" "${ODBC_DIR:1}"
             echo "=== Successfully created TGZ at $BUILD_DIR/$TGZ_NAME ==="

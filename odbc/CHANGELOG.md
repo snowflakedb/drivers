@@ -8,6 +8,9 @@ New features:
 
 Changes:
 
+- Renamed the default ODBC driver registration name from `Snowflake ODBC UD` to `Snowflake ODBC` (custom name still supported via `DRIVER_NAME=` / `SF_DRIVER_NAME`). (snowflakedb/drivers#1143)
+- Renamed Linux/macOS packages from `snowflake-odbc-ud` to `snowflake-odbc` and the macOS install path from `/opt/snowflake/snowflakeodbcud` to `/opt/snowflake/snowflakeodbc`. (snowflakedb/drivers#1143)
+- Dropped `PrPr`/`Private Preview` labels from the Windows MSI product name, DLL version resource, and setup dialog title. (snowflakedb/drivers#1143)
 - Changed `SQLGetInfo(SQL_DRIVER_VER)` to return the zero-padded fixed-width `MM.mm.bbbb` string (e.g. `04.00.0000`) defined by the ODBC spec (`##.##.####`), instead of the unpadded Cargo semver (e.g. `4.0.0`). (snowflakedb/drivers#1074)
 
 Bug fixes:

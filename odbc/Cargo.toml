@@ -1,6 +1,6 @@
 [package]
 name = "odbc"
-version = "4.0.0"
+version = "4.0.0-rc1-dev"
 edition = "2024"
 rust-version = "1.94"
 
@@ -9,12 +9,6 @@ rust-version = "1.94"
 # registered as DriverODBCVer with unixODBC / the Windows ODBC registry.
 # Format is "MM.mm" (e.g. "03.80").
 odbc_api_version = "03.80"
-# Snowflake ODBC UD release version used as the artifact
-# version and embedded in the Windows DLL VERSIONINFO resource. The git
-# short SHA is appended at packaging time to produce the full release string.
-# Format is "<major>.<minor>.<patch>" (e.g. "0.0.1").
-# This is to be removed and the package.version used after moving into the PuPr
-odbc_preview_version = "0.0.9"
 
 [lib]
 name = "sfodbc"

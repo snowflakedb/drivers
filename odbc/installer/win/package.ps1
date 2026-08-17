@@ -22,9 +22,8 @@
     Auto-detected from the Visual Studio installation if not specified.
 
 .PARAMETER Version
-    Version string for the product (e.g. 0.0.1-abc1234).
-    Defaults to [package.metadata.odbc] odbc_preview_version from odbc/Cargo.toml
-    with the git short hash appended.
+    Version string for the product (e.g. 4.0.0).
+    Defaults to [package] version from odbc/Cargo.toml.
 
 .PARAMETER OutputDir
     Directory where the resulting MSI will be placed. Created if it doesn't exist.
@@ -84,14 +83,16 @@ function Read-OdbcMetadata([string]$Key) {
     throw "Could not parse [package.metadata.odbc] $Key from odbc/Cargo.toml"
 }
 
-if (-not $Version) {
-    $baseVersion = Read-OdbcMetadata 'odbc_preview_version'
-    $commitHash = "unknown"
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        $commitHash = (git -C $SourceDir rev-parse --short HEAD 2>$null)
-        if (-not $commitHash) { $commitHash = "unknown" }
+function Read-PackageVersion {
+    $pattern = '(?m)^\[package\][^\[]*?version\s*=\s*"([^"]+)"'
+    if ($cargoTomlContent -match $pattern) {
+        return $Matches[1]
     }
-    $Version = "${baseVersion}-${commitHash}"
+    throw "Could not parse [package] version from odbc/Cargo.toml"
+}
+
+if (-not $Version) {
+    $Version = Read-PackageVersion
 }
 $versionParts = ($Version -replace '-.*', '').Split('.')
 while ($versionParts.Count -lt 3) { $versionParts += "0" }
@@ -163,7 +164,7 @@ Write-Host "  VCRedist dir     : $VCRedistDir"
 Write-Host "  Source dir       : $SourceDir"
 Write-Host "  Output dir       : $OutputDir"
 
-$MsiFile = Join-Path $OutputDir "snowflake-odbc-ud-${Version}${configSuffix}-${Arch}.msi"
+$MsiFile = Join-Path $OutputDir "snowflake-odbc-${Version}${configSuffix}-${Arch}.msi"
 
 Write-Host "`n--- Building MSI ---"
 & wix build `

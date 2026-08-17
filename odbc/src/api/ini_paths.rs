@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 /// Absolute path of the driver-installed default `sf.odbc.ini` on macOS.
 #[cfg(target_os = "macos")]
-const MACOS_INSTALLER_INI: &str = "/opt/snowflake/snowflakeodbcud/sf.odbc.ini";
+const MACOS_INSTALLER_INI: &str = "/opt/snowflake/snowflakeodbc/sf.odbc.ini";
 
 /// Ordered candidates for `sf.odbc.ini` discovery:
 ///
@@ -12,7 +12,7 @@ const MACOS_INSTALLER_INI: &str = "/opt/snowflake/snowflakeodbcud/sf.odbc.ini";
 ///    Support/snowflake/sf.odbc.ini` on macOS, `~/.config/snowflake/sf.odbc.ini`
 ///    on Linux),
 /// 3. `~/.snowflake/sf.odbc.ini`,
-/// 4. (macOS only) `/opt/snowflake/snowflakeodbcud/sf.odbc.ini`
+/// 4. (macOS only) `/opt/snowflake/snowflakeodbc/sf.odbc.ini`
 ///
 /// Paths that cannot be constructed (no home dir, no platform config dir)
 /// are silently omitted.
@@ -106,7 +106,7 @@ mod tests {
             assert!(
                 paths
                     .iter()
-                    .all(|p| !p.to_string_lossy().contains("snowflakeodbcud")),
+                    .all(|p| !p.to_string_lossy().contains("snowflakeodbc")),
                 "non-macOS builds must not probe the macOS installer ini; got {paths:?}"
             );
         });

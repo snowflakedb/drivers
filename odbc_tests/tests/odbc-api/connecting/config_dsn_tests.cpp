@@ -94,7 +94,7 @@ TEST_CASE("ConfigDriver with NULL pcbMsgOut", "[odbc-api][setup-dll][config-driv
 TEST_CASE("ConfigDSNW: returns FALSE with missing DSN attribute", "[odbc-api][setup-dll][config-dsn]") {
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
-  std::wstring driver = L"Snowflake ODBC UD";
+  std::wstring driver = L"Snowflake ODBC";
 
   auto attrs = build_attrs_w({{"SERVER", "test.snowflake.com"}});
   int ret = config_dsn_w(nullptr, ODBC_ADD_DSN, driver.c_str(), attrs.data());
@@ -104,7 +104,7 @@ TEST_CASE("ConfigDSNW: returns FALSE with missing DSN attribute", "[odbc-api][se
 TEST_CASE("ConfigDSNW: returns FALSE with NULL attributes", "[odbc-api][setup-dll][config-dsn]") {
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
-  std::wstring driver = L"Snowflake ODBC UD";
+  std::wstring driver = L"Snowflake ODBC";
 
   int ret = config_dsn_w(nullptr, ODBC_ADD_DSN, driver.c_str(), nullptr);
   REQUIRE(ret == 0);
@@ -113,7 +113,7 @@ TEST_CASE("ConfigDSNW: returns FALSE with NULL attributes", "[odbc-api][setup-dl
 TEST_CASE("ConfigDSNW: returns FALSE for invalid request code", "[odbc-api][setup-dll][config-dsn]") {
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
-  std::wstring driver = L"Snowflake ODBC UD";
+  std::wstring driver = L"Snowflake ODBC";
 
   auto attrs = build_attrs_w({{"DSN", "SomeDSN"}});
   int ret = config_dsn_w(nullptr, 99, driver.c_str(), attrs.data());
@@ -128,7 +128,7 @@ TEST_CASE("ConfigDSN (ANSI): returns FALSE with NULL attributes", "[odbc-api][se
   DriverDll dll;
   auto config_dsn = dll.get<ConfigDSNFn>("ConfigDSN");
 
-  int ret = config_dsn(nullptr, ODBC_ADD_DSN, "Snowflake ODBC UD", nullptr);
+  int ret = config_dsn(nullptr, ODBC_ADD_DSN, "Snowflake ODBC", nullptr);
   REQUIRE(ret == 0);
 }
 

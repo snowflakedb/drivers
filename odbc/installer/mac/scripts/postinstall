@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Post-install script for the Snowflake ODBC UD macOS pkg.
+# Post-install script for the Snowflake ODBC Driver macOS pkg.
 # Registers the driver and a default DSN with the iODBC Driver Manager.
 #
 # Driver registration and DSN content live in ini section templates installed
@@ -16,20 +16,20 @@
 #      and CI). NOTE: sudo resets the environment by default — use `sudo -E`
 #      to preserve env vars:
 #        sudo -E SF_DRIVER_NAME=MyDriver SF_ACCOUNT=myaccount installer \
-#             -pkg snowflake-odbc-ud-*.pkg -target /
+#             -pkg snowflake-odbc-*.pkg -target /
 #   2. An interactive AppleScript dropdown shown to the logged-in console
 #      user when the pkg is launched from Installer.app
-#   3. The default "Snowflake ODBC UD" when neither of the above is
+#   3. The default "Snowflake ODBC Driver" when neither of the above is
 #      available (e.g. fully non-interactive install with no console user).
 #
 
-INSTALL_DIR="/opt/snowflake/snowflakeodbcud"
+INSTALL_DIR="/opt/snowflake/snowflakeodbc"
 DRIVER_PATH="$INSTALL_DIR/lib/libsfodbc.dylib"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-DEFAULT_DRIVER_NAME="Snowflake ODBC UD"
-ALT_DRIVER_NAME="SnowflakeDSIIDriverUD"
+DEFAULT_DRIVER_NAME="Snowflake ODBC"
+ALT_DRIVER_NAME="SnowflakeDSIIDriver"
 
 # pkg postinstall scripts run as root. Resolve the invoking user's home and
 # UID so the driver and DSN land in the per-user iODBC config
