@@ -289,9 +289,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: USER_DATA_TYPE is always 0 
     const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
 
     // DATA_TYPE (col 5) is read only to power the anti-mirror guard below.
-    // It may be NULL for types the driver does not yet map to a concise SQL
-    // type (e.g. GEOGRAPHY) — tracked in SNOW-3954270 — so the guard only trusts
-    // it when the indicator reports a real 2-byte value.
     SQLSMALLINT dataType = static_cast<SQLSMALLINT>(0x7FFF);
     SQLLEN dataTypeInd = SQL_NULL_DATA;
     ret = SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &dataType, 0, &dataTypeInd);
@@ -306,8 +303,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: USER_DATA_TYPE is always 0 
     CHECK(userDataType == 0);
 
     // Guard against a DATA_TYPE-mirror regression: at least one row must have a
-    // non-null, non-trivial DATA_TYPE while USER_DATA_TYPE stays 0. Some catalog
-    // rows may leave DATA_TYPE NULL (SNOW-3954270)
+    // non-trivial DATA_TYPE while USER_DATA_TYPE stays 0.
     if (dataTypeInd == sizeof(SQLSMALLINT) &&
         (dataType == SQL_VARCHAR || dataType == SQL_DECIMAL || dataType == SQL_BIT || dataType == SQL_TYPE_TIMESTAMP)) {
       sawNonTrivialDataType = true;
@@ -321,8 +317,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: USER_DATA_TYPE is always 0 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: DATA_TYPE is non-NULL for all types (SQL_VARCHAR for unmapped)",
                  "[odbc-api][columns][catalog]") {
-  SKIP("SNOW-3954270: SQLColumns DATA_TYPE is NULL for GEOGRAPHY/GEOMETRY; should be SQL_VARCHAR");
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
                              SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);

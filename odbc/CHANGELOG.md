@@ -15,6 +15,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed `SQLColumns` `DATA_TYPE` / `SQL_DATA_TYPE` to fall back to `SQL_VARCHAR` for unmapped catalog types (e.g. GEOGRAPHY, GEOMETRY) instead of returning NULL. (snowflake-eng/drivers#1156)
 - Fixed `SQLGetInfo(SQL_DRIVER_NAME)` to return the driver library file name (e.g. `libsfodbc.so`) instead of the full on-disk path, matching the ODBC specification. (snowflake-eng/drivers#1076)
 - Fixed `SQLColumns` `USER_DATA_TYPE` (column 19) to always return `0` (`UDT_STANDARD_SQL_TYPE`), matching the reference driver (previously mirrored `DATA_TYPE`). (snowflakedb/drivers#1099)
 - Fixed `SQLTables` / `SQLColumns` catalog result IRDs so string columns report `SQL_WVARCHAR` and numeric `SQLColumns` columns report `SQL_SMALLINT` / `SQL_INTEGER`, matching the reference driver (previously all catalog result columns were labeled `SQL_VARCHAR`). (snowflakedb/drivers#1085)
