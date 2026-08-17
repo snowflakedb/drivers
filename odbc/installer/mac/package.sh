@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Package the Snowflake ODBC UD driver as a macOS .pkg (universal binary).
+# Package the Snowflake ODBC Driver as a macOS .pkg (universal binary).
 #
 # Builds or accepts pre-built dylibs for x86_64 and aarch64, merges them
 # with lipo into a universal binary and produces a flat .pkg installer
@@ -29,17 +29,31 @@ read_odbc_metadata() {
     ' odbc/Cargo.toml
 }
 
-BASE_VERSION=$(read_odbc_metadata odbc_preview_version)
+read_package_version() {
+    awk '
+        /^\[package\][[:space:]]*$/ { in_section = 1; next }
+        /^\[/                       { in_section = 0 }
+        in_section && /^[[:space:]]*version[[:space:]]*=/ {
+            line = $0
+            sub(/^[^"]*"/, "", line)
+            sub(/".*$/,    "", line)
+            print line
+            exit
+        }
+    ' odbc/Cargo.toml
+}
+
+BASE_VERSION=$(read_package_version)
 ODBC_API_VERSION=$(read_odbc_metadata odbc_api_version)
 if [[ -z "$BASE_VERSION" || -z "$ODBC_API_VERSION" ]]; then
-    echo "Failed to read odbc_preview_version / odbc_api_version from [package.metadata.odbc] in odbc/Cargo.toml"
+    echo "Failed to read package version / odbc_api_version from odbc/Cargo.toml"
     exit 1
 fi
 COMMIT_HASH="${COMMIT_HASH:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-VERSION="${BASE_VERSION}-${COMMIT_HASH}"
+VERSION="${BASE_VERSION}"
 
-INSTALL_DIR="/opt/snowflake/snowflakeodbcud"
-PKG_IDENTIFIER="net.snowflake.odbc-ud"
+INSTALL_DIR="/opt/snowflake/snowflakeodbc"
+PKG_IDENTIFIER="net.snowflake.odbc"
 BUILD_DIR=build
 SCRIPTS_DIR=odbc/installer/mac/scripts
 TEMPLATES_DIR=odbc/installer/shared/templates
@@ -83,7 +97,7 @@ cp "$TEMPLATES_DIR/odbc.ini.template" "$SCRIPTS_STAGE_DIR/odbc.ini.template"
 
 mkdir -p "$BUILD_DIR"
 
-PKG_NAME="snowflake-odbc-ud-${VERSION}-universal.pkg"
+PKG_NAME="snowflake-odbc-${VERSION}-universal.pkg"
 
 echo "=== Building pkg: $PKG_NAME ==="
 pkgbuild \

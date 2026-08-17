@@ -32,12 +32,12 @@ BEGIN
         BLOCK "040904E4"
         BEGIN
             VALUE "CompanyName",      "Snowflake Computing\0"
-            VALUE "FileDescription",  "Snowflake ODBC UD Driver\0"
+            VALUE "FileDescription",  "Snowflake ODBC Driver\0"
             VALUE "FileVersion",      SF_VERSION_STR
             VALUE "InternalName",     "sfodbc\0"
             VALUE "LegalCopyright",   "Copyright (C) Snowflake Computing. All rights reserved.\0"
             VALUE "OriginalFilename", SF_ORIGINAL_FILENAME
-            VALUE "ProductName",      "Snowflake ODBC UD\0"
+            VALUE "ProductName",      "Snowflake ODBC Driver\0"
             VALUE "ProductVersion",   SF_VERSION_STR
         END
     END
@@ -110,7 +110,7 @@ END
 
 IDD_CONFIG_DSN_EDIT DIALOGEX 0, 0, 279, 444
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Snowflake ODBC UD Configuration"
+CAPTION "Snowflake ODBC Driver Configuration"
 FONT 8, "MS Shell Dlg", 380, 0, 0x1
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,151,422,50,14

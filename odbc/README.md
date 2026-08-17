@@ -10,7 +10,7 @@ The first existing location wins:
 1. `$SF_ODBC_INI` (explicit override; useful in tests and CI),
 2. `<config_dir>/snowflake/sf.odbc.ini` (e.g. `~/Library/Application Support/snowflake/sf.odbc.ini` on macOS, `~/.config/snowflake/sf.odbc.ini` on Linux),
 3. `~/.snowflake/sf.odbc.ini`,
-4. **macOS only**: `/opt/snowflake/snowflakeodbcud/sf.odbc.ini` — the file shipped by the `.pkg` installer next to the dylib. It pins `DriverManagerEncoding=UTF-32` so the driver matches macOS's stock iODBC out of the box; per-user entries above override it.
+4. **macOS only**: `/opt/snowflake/snowflakeodbc/sf.odbc.ini` — the file shipped by the `.pkg` installer next to the dylib. It pins `DriverManagerEncoding=UTF-32` so the driver matches macOS's stock iODBC out of the box; per-user entries above override it.
 
 On Unix the file must be `chmod 600` (owner read/write only); otherwise the
 driver logs a warning and falls back to defaults. The file is read once,

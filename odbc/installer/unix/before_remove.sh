@@ -6,7 +6,7 @@
 # Unregisters the driver and DSN from unixODBC.
 #
 
-DRIVER_NAME="${SF_DRIVER_NAME:-Snowflake ODBC UD}"
+DRIVER_NAME="${SF_DRIVER_NAME:-Snowflake ODBC}"
 
 odbcinst -u -d -n "$DRIVER_NAME" || true
 

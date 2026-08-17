@@ -3,12 +3,12 @@ name: run-odbc-ud-tests
 description: >
   Runbook for building and running ODBC Universal Driver (UD) tests. Use
   when you need to compile the ODBC Rust driver, set up the C++ test harness,
-  and execute ODBC UD tests via run.sh or ctest. Also use for: DRIVER_PATH
+  and execute ODBC tests via run.sh or ctest. Also use for: DRIVER_PATH
   errors, cmake/ninja/make build issues, unixodbc/iodbc setup, libsfodbc not
   found, ODBC ctest failures, or run_reference.sh comparison runs.
 ---
 
-## ODBC UD Test Runner
+## ODBC Test Runner
 
 All commands run from the **repo root** unless stated otherwise.
 

@@ -3,17 +3,17 @@
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 	<Package
-		Name="Snowflake ODBC UD $(var.FullVersion) PrPr (x64)"
+		Name="Snowflake ODBC Driver $(var.FullVersion) (x64)"
 		Language="1033"
 		Version="$(var.ProductVersion)"
 		Manufacturer="Snowflake Computing"
-		UpgradeCode="053DF3DF-4EB2-44E2-87BE-D3334ABDE4C6"
+		UpgradeCode="c5829817-55fc-479e-8fba-cf44e76e0fca"
 		InstallerVersion="405"
 		Scope="perMachine">
 
 		<SummaryInformation
-			Description="Snowflake ODBC UD $(var.FullVersion) Private Preview (64-bit)"
-			Comments="Installs the Snowflake ODBC Driver (Private Preview) built on Universal Driver." />
+			Description="Snowflake ODBC Driver $(var.FullVersion) (64-bit)"
+			Comments="Installs the Snowflake ODBC Driver." />
 
 		<Media Id="1" Cabinet="odbc64.cab" EmbedCab="yes" />
 		<MajorUpgrade AllowDowngrades="yes" />
@@ -46,9 +46,9 @@
 		    lets interactive installs choose between the two preset names or
 		    a custom value via a combo box.
 		-->
-		<Property Id="DRIVER_NAME" Value="Snowflake ODBC UD" Secure="yes" />
-		<Property Id="DRIVER_NAME_CHOICE" Value="Snowflake ODBC UD" Secure="yes" />
-		<Property Id="DRIVER_NAME_CUSTOM" Value="Snowflake ODBC UD" Secure="yes" />
+		<Property Id="DRIVER_NAME" Value="Snowflake ODBC" Secure="yes" />
+		<Property Id="DRIVER_NAME_CHOICE" Value="Snowflake ODBC" Secure="yes" />
+		<Property Id="DRIVER_NAME_CUSTOM" Value="Snowflake ODBC" Secure="yes" />
 
 		<UI>
 			<Dialog Id="DriverNameDlg" Width="370" Height="270" Title="[ProductName] Setup">
@@ -61,8 +61,8 @@
 				<Control Id="ChoiceLabel" Type="Text" X="20" Y="62" Width="290" Height="15" NoPrefix="yes" Text="ODBC driver name (visible to applications via SQLDrivers and used as the section header in odbcinst.ini):" />
 				<Control Id="ChoiceCombo" Type="ComboBox" X="20" Y="92" Width="320" Height="18" Property="DRIVER_NAME_CHOICE" ComboList="yes">
 					<ComboBox Property="DRIVER_NAME_CHOICE">
-						<ListItem Value="Snowflake ODBC UD" />
-						<ListItem Value="SnowflakeDSIIDriverUD" />
+					<ListItem Value="Snowflake ODBC" />
+					<ListItem Value="SnowflakeDSIIDriver" />
 						<ListItem Value="CUSTOM" Text="Other (custom name)..." />
 					</ComboBox>
 				</Control>
@@ -132,19 +132,19 @@
 		<!-- Directory layout                                                  -->
 		<!-- ================================================================ -->
 		<StandardDirectory Id="ProgramFiles6432Folder">
-			<Directory Id="INSTALLDIR" Name="SnowflakeODBCUDDriver">
+			<Directory Id="INSTALLDIR" Name="Snowflake ODBC Driver">
 				<Directory Id="BinDir" Name="Bin" />
 				<Directory Id="IncludeDir" Name="include" />
 				<Directory Id="RedistDir" Name="Redistributable" />
 			</Directory>
 		</StandardDirectory>
 		<StandardDirectory Id="PersonalFolder">
-			<Directory Id="SnowflakeODBCUDDriverLogs" Name="Snowflake ODBC UD">
+			<Directory Id="SnowflakeODBCDriverLogs" Name="Snowflake ODBC Driver">
 				<Directory Id="LogDir" Name="log">
 					<Component Id="LogDir" Guid="81D33977-BED5-49DE-9357-F7A2EA7EB4FD">
 						<CreateFolder />
 						<RemoveFolder Id="LogDir" On="uninstall" />
-						<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCUDDriverLogs" On="uninstall" />
+						<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCDriverLogs" On="uninstall" />
 						<RegistryValue Root="HKCU" Key="Software\Snowflake\ODBCDriver"
 							Name="LogDirectory" Value="true" Type="string" KeyPath="yes" />
 					</Component>
@@ -189,7 +189,7 @@
 		    [DRIVER_NAME] is substituted by Windows Installer from the
 		    DRIVER_NAME property at install time (the property is captured
 		    via DriverNameDlg above, or supplied on the msiexec command
-		    line, and defaults to "Snowflake ODBC UD"). Both the
+		    line, and defaults to "Snowflake ODBC"). Both the
 		    "ODBC Drivers" index entry and the per-driver subkey share the
 		    same value so SQLDrivers() lists the driver under the chosen
 		    name and matches the subkey that follows.
@@ -219,7 +219,7 @@
 		<!-- ================================================================ -->
 		<!-- Feature tree                                                       -->
 		<!-- ================================================================ -->
-		<Feature Id="MainApplication" Title="Snowflake ODBC UD" Level="1">
+		<Feature Id="MainApplication" Title="Snowflake ODBC Driver" Level="1">
 			<ComponentRef Id="sfodbc.dll" />
 			<ComponentRef Id="sf_odbc.h" />
 			<ComponentRef Id="RegistryEntries" />

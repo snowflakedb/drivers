@@ -50,7 +50,7 @@ fn main() {
         let def_path = manifest_path.join("exports.def");
         println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display());
 
-        let (major, minor, patch) = parse_odbc_preview_version(&manifest_dir);
+        let (major, minor, patch) = parse_package_version();
         let commit_hash = resolve_commit_hash();
 
         let target_arch =
@@ -153,23 +153,15 @@ fn try_read_odbc_metadata(manifest_dir: &str, key: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
-fn parse_odbc_preview_version(manifest_dir: &str) -> (u32, u32, u32) {
-    let raw = read_odbc_metadata(manifest_dir, "odbc_preview_version");
-    let parts: Vec<&str> = raw.split('.').collect();
-    assert!(
-        parts.len() == 3,
-        "invalid odbc_preview_version: expected <major>.<minor>.<patch>, got `{raw}`"
-    );
+fn parse_package_version() -> (u32, u32, u32) {
+    let raw = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_string());
+    // Strip any pre-release suffix (e.g. "-rc1") — MSI ProductVersion must be numeric.
+    let base = raw.split('-').next().unwrap_or("0.0.0");
+    let parts: Vec<&str> = base.split('.').collect();
     (
-        parts[0]
-            .parse()
-            .unwrap_or_else(|_| panic!("invalid major version in `{raw}`")),
-        parts[1]
-            .parse()
-            .unwrap_or_else(|_| panic!("invalid minor version in `{raw}`")),
-        parts[2]
-            .parse()
-            .unwrap_or_else(|_| panic!("invalid patch version in `{raw}`")),
+        parts.first().and_then(|s| s.parse().ok()).unwrap_or(0),
+        parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
+        parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0),
     )
 }
 

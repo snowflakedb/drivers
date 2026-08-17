@@ -8,7 +8,7 @@ should_trigger:
   - prompt: "how do I run the odbc tests?"
     notes: "Direct, minimal request — ODBC keyword is the clearest routing signal."
 
-  - prompt: "build and run the odbc ud test suite"
+  - prompt: "build and run the odbc test suite"
     notes: "Direct task request naming both build and run steps for the ODBC driver."
 
   - prompt: "run.sh isn't finding the driver, DRIVER_PATH keeps failing"

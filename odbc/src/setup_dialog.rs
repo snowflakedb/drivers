@@ -1,7 +1,7 @@
 //! Windows ODBC Configuration Dialog
 //!
 //! Implements the Win32 dialog that the ODBC Administrator shows when
-//! adding or modifying a DSN for the Snowflake ODBC UD driver.
+//! adding or modifying a DSN for the Snowflake ODBC Driver.
 
 #![cfg(target_os = "windows")]
 #![allow(non_snake_case, non_camel_case_types)]
@@ -344,7 +344,7 @@ unsafe extern "system" fn config_dialog_proc(
 
             unsafe { center_dialog(dlg) };
 
-            let title = to_wide("Snowflake ODBC UD Configuration");
+            let title = to_wide("Snowflake ODBC Driver Configuration");
             unsafe { SetWindowTextW(dlg, title.as_ptr()) };
 
             unsafe { set_dlg_text(dlg, IDC_DSNEDIT, &ctx.dsn) };
@@ -503,7 +503,7 @@ unsafe fn do_test_connection(dlg: HWND) {
     let driver_name = if !ctx_ptr.is_null() {
         unsafe { &(*ctx_ptr).driver }
     } else {
-        "Snowflake ODBC UD"
+        "Snowflake ODBC"
     };
 
     let pwd = unsafe { get_dlg_text(dlg, IDC_PWDEDIT) };

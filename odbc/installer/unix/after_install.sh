@@ -14,7 +14,7 @@
 ODBC_DIR=/usr/lib64/snowflake/odbc
 DRIVER_PATH=$ODBC_DIR/lib/libsfodbc.so
 TEMPLATES_DIR=$ODBC_DIR/templates
-DRIVER_NAME="${SF_DRIVER_NAME:-Snowflake ODBC UD}"
+DRIVER_NAME="${SF_DRIVER_NAME:-Snowflake ODBC}"
 
 if [[ -z "$SF_ACCOUNT" ]]; then
     echo "[WARN] SF_ACCOUNT is not set, please manually update the odbc.ini file after installation"

@@ -206,7 +206,7 @@ pub use platform::get_private_profile_string;
 /// final fallback by [`resolve_driver_path`] when neither the connection
 /// string's `DRIVER={...}` keyword nor a DSN-mediated lookup produced a
 /// usable section.
-const DEFAULT_DRIVER_SECTION: &str = "Snowflake ODBC UD";
+const DEFAULT_DRIVER_SECTION: &str = "Snowflake ODBC";
 
 /// Ask the dynamic loader where the shared library containing this code
 /// lives on disk. On Unix uses `dladdr`; on Windows uses
@@ -313,7 +313,7 @@ fn current_driver_path() -> Option<String> {
 ///    or `SQLDriverConnect("DSN=Y;...")`), read `[Y]/Driver` from
 ///    `odbc.ini` to get the driver short name, then resolve that short
 ///    name in `odbcinst.ini` exactly as in (1).
-/// 3. **Hardcoded default**: read `[Snowflake ODBC UD]/Driver` from
+/// 3. **Hardcoded default**: read `[Snowflake ODBC]/Driver` from
 ///    `odbcinst.ini` — covers connections that supply neither keyword
 ///    (e.g. `DRIVER={/abs/path/lib.so}` connections where there is no
 ///    section at all).
@@ -472,17 +472,17 @@ mod tests {
     #[test]
     fn direct_driver_section_returns_first_layer_result() {
         let mock = MockLookup::new().with(
-            "Snowflake ODBC UD",
+            "Snowflake ODBC",
             "odbcinst.ini",
             "/opt/snowflake/lib/libsfodbc.so",
         );
         let lookup = mock.lookup();
-        let path = resolve_three_layers(Some("Snowflake ODBC UD"), None, &lookup);
+        let path = resolve_three_layers(Some("Snowflake ODBC"), None, &lookup);
         assert_eq!(path, "/opt/snowflake/lib/libsfodbc.so");
         assert_eq!(
             mock.calls(),
             vec![(
-                "Snowflake ODBC UD".to_string(),
+                "Snowflake ODBC".to_string(),
                 "Driver".to_string(),
                 "odbcinst.ini".to_string(),
             )]
@@ -492,9 +492,9 @@ mod tests {
     #[test]
     fn dsn_mediated_lookup_resolves_through_two_inis() {
         let mock = MockLookup::new()
-            .with("MySnowflake", "odbc.ini", "Snowflake ODBC UD")
+            .with("MySnowflake", "odbc.ini", "Snowflake ODBC")
             .with(
-                "Snowflake ODBC UD",
+                "Snowflake ODBC",
                 "odbcinst.ini",
                 "/opt/snowflake/lib/libsfodbc.so",
             );
@@ -511,8 +511,8 @@ mod tests {
     fn direct_section_takes_precedence_over_dsn() {
         let mock = MockLookup::new()
             .with("CustomSection", "odbcinst.ini", "/from/direct.so")
-            .with("MySnowflake", "odbc.ini", "Snowflake ODBC UD")
-            .with("Snowflake ODBC UD", "odbcinst.ini", "/from/dsn.so");
+            .with("MySnowflake", "odbc.ini", "Snowflake ODBC")
+            .with("Snowflake ODBC", "odbcinst.ini", "/from/dsn.so");
         let lookup = mock.lookup();
         let path = resolve_three_layers(Some("CustomSection"), Some("MySnowflake"), &lookup);
         assert_eq!(path, "/from/direct.so");
@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn falls_back_to_default_section_when_no_hints() {
         let mock = MockLookup::new().with(
-            "Snowflake ODBC UD",
+            "Snowflake ODBC",
             "odbcinst.ini",
             "/opt/snowflake/lib/libsfodbc.so",
         );
@@ -536,7 +536,7 @@ mod tests {
         let mock = MockLookup::new()
             .with("CustomSection", "odbcinst.ini", "")
             .with(
-                "Snowflake ODBC UD",
+                "Snowflake ODBC",
                 "odbcinst.ini",
                 "/opt/snowflake/lib/libsfodbc.so",
             );
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn dsn_short_name_lookup_failure_still_falls_back_to_default() {
         let mock = MockLookup::new().with(
-            "Snowflake ODBC UD",
+            "Snowflake ODBC",
             "odbcinst.ini",
             "/opt/snowflake/lib/libsfodbc.so",
         );
@@ -584,7 +584,7 @@ mod tests {
         // user's configured path takes precedence so that overrides
         // (e.g. `DRIVER={...}` in the connection string) actually win.
         let mock = MockLookup::new().with(
-            "Snowflake ODBC UD",
+            "Snowflake ODBC",
             "odbcinst.ini",
             "/opt/snowflake/lib/libsfodbc.so",
         );
