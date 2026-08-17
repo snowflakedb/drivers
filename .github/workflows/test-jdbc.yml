@@ -161,7 +161,7 @@ jobs:
           export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
           export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
           cd jdbc
-          ./gradlew test jacocoTestReport
+          bash ./ci/gradlew_with_resolve_retry.sh test jacocoTestReport
         env:
           # Drives the @DisabledOnGCP / @RunOnAWS-style JUnit conditions (matches legacy
           # snowflake-jdbc's CLOUD_PROVIDER env). Case-insensitive matchers, so lowercase is fine.
@@ -301,7 +301,7 @@ jobs:
           export PARAMETER_PATH="$(cygpath -w "$(pwd)/parameters.json")"
           export CORE_PATH="$(cygpath -w "$(pwd)/target/debug/jdbc_bridge.dll")"
           cd jdbc
-          ./gradlew test jacocoTestReport
+          bash ./ci/gradlew_with_resolve_retry.sh test jacocoTestReport
         env:
           CLOUD_PROVIDER: aws
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
@@ -403,7 +403,7 @@ jobs:
           export PARAMETER_PATH="$(pwd)/parameters.json"
           export CORE_PATH="$(pwd)/target/debug/libjdbc_bridge.dylib"
           cd jdbc
-          ./gradlew test jacocoTestReport
+          bash ./ci/gradlew_with_resolve_retry.sh test jacocoTestReport
         env:
           CLOUD_PROVIDER: aws
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
@@ -517,7 +517,7 @@ jobs:
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           cd jdbc
-          ./gradlew referenceTest jacocoReferenceReport
+          bash ./ci/gradlew_with_resolve_retry.sh referenceTest jacocoReferenceReport
         env:
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
@@ -616,7 +616,7 @@ jobs:
       - name: Run JDBC parity tests
         run: |
           cd jdbc
-          ./gradlew parityTest
+          bash ./ci/gradlew_with_resolve_retry.sh parityTest
 
       - name: Upload parity test artifacts
         if: always()
