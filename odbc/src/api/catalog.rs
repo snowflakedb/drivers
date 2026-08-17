@@ -3251,9 +3251,11 @@ fn flat_row_from_descriptor(
         desc.nullable,
     );
 
-    let data_type_val = sql_type_from_field(&field, numeric_settings)
-        .ok()
-        .map(|t| t.0);
+    let data_type_val = Some(
+        sql_type_from_field(&field, numeric_settings)
+            .map(|t| t.0)
+            .unwrap_or(odbc_sys::SqlDataType::VARCHAR.0),
+    );
     // TYPE_NAME (col 6) reports the Snowflake external / friendly name
     // (BOOLEAN, TIMESTAMP, VARIANT, STRUCT, ARRAY, GEOGRAPHY, …) — NOT the SDK
     // label from `type_name_from_field`, which is the
@@ -3274,9 +3276,11 @@ fn flat_row_from_descriptor(
     let num_prec_radix_val = num_prec_radix_from_field(&field, numeric_settings)
         .ok()
         .and_then(|s| if s == 0 { None } else { i32::try_from(s).ok() });
-    let sql_data_type_val = verbose_sql_type_from_field(&field, numeric_settings)
-        .ok()
-        .map(|t| t.0);
+    let sql_data_type_val = Some(
+        verbose_sql_type_from_field(&field, numeric_settings)
+            .map(|t| t.0)
+            .unwrap_or(odbc_sys::SqlDataType::VARCHAR.0),
+    );
     let sql_dt_sub_val = sql_datetime_sub_from_logical_type(&desc.logical_type);
     let char_octet_val = match desc.logical_type.as_str() {
         "TEXT" | "BINARY" => octet_length_from_field(&field, numeric_settings)
