@@ -75,7 +75,6 @@
 # team. Domain-specific routing for the bot lives here.
 
 reviewers:
-  dariusz-aniszewski_snow:
   bartosz-oler_snow:
     notify: false
   dawid-heyman_snow:
