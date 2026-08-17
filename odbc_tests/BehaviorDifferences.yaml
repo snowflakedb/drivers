@@ -1216,7 +1216,7 @@ behavior_differences:
     name: "Binding a SQL_C_CHAR/WCHAR character literal as SQL_TYPE_TIMESTAMP shifts the stored wall-clock value by a timezone offset on the old driver"
     status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Realigned to the legacy driver. The new driver originally stored the wall-clock verbatim (treating TIMESTAMP_NTZ as strictly timezone-naive on the bind side), which diverged from the legacy driver's host-/session-timezone-dependent offset. Routing every SQL_TYPE_TIMESTAMP -> TIMESTAMP_NTZ bind through the wall-clock/TEXT path (exactly as TIMESTAMP_LTZ already did) restores the legacy semantics and eliminates the old-vs-new delta.
     is_breaking_change: false
@@ -2024,40 +2024,39 @@ behavior_differences:
     name: "Connecting with WIF-only params set but authenticator != WORKLOAD_IDENTITY now fails; legacy silently ignored"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     status_rationale: |
-      Verified against the real legacy driver source (snowflakedb/snowflake-odbc, v3.19.0):
+      There's no point accepting WIF parameters when these are unused (WORKLOAD_IDENTITY authenticator is not set).
+    old_driver_behavior: |
       SFConnection.cpp registers WORKLOAD_IDENTITY_PROVIDER / WORKLOAD_IDENTITY_ENTRA_RESOURCE /
       WORKLOAD_IDENTITY_IMPERSONATION_PATH as optional accepted keys but reads them only inside the
       authenticator==workload_identity branch of SFConnection::Connect, so a non-WIF authenticator
-      accepts the attributes and never reads them (no cross-param guard). The driver links
-      libsnowflakeclient (the Snowflake C/C++ core) but owns this connection-param dispatch itself.
-      The universal driver's sf_core::validate_settings rejects the combination (ConflictingParameters,
-      Error). Allowed as a bugfix: it matches legacy snowflake-connector-python's long-standing
-      rejection (ProgrammingError errno=251017) and enforces it uniformly across wrappers; no ODBC
-      caller relies on the attributes being silently ignored.
+      accepts the attributes and never reads them (no cross-param guard).
+    new_driver_behavior: |
+      The universal driver's sf_core::validate_settings rejects the combination (ConflictingParameters, Error).
   109:
     name: "workload_identity_impersonation_path with provider=OIDC now fails; legacy silently ignored it"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     status_rationale: |
+      This path does not make sense for this type of authentication. Now the explicit error is returned to the user.
+      snowflake-connector-python/nodejs/.NET all reject this combination client-side; ODBC 3.x never did.
+    old_driver_behavior: |
       ODBC links libsnowflakeclient for attestation creation; its createOIDCAttestation
       (cpp/OIDCAttestation.cpp) never reads the impersonation-path setting for provider=OIDC, so it's
-      silently discarded today. Legacy snowflake-connector-python/nodejs/.NET all reject this
-      combination client-side; legacy ODBC never did. sf_core::validate_settings now rejects it uniformly
-      (ConflictingParameters, Error). Unlike entry 108, this is a genuine new rejection for ODBC, not a
-      relocated one — allowed as a bugfix since silently accepting a no-op param combination is itself a
-      latent bug.
+      silently discarded today.
+    new_driver_behavior: |
+      The driver rejects the workload_identity_impersonation_path with provider=oidc.
   110:
     name: "SQLGetDiagRec/SQLGetDiagField MessageText: new driver prepends the ODBC vendor prefix to server errors"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       The ODBC spec (§16.2.16) requires drivers to prepend [vendor][ODBC-component-identifier] to
       diagnostic message text. The new driver does so uniformly and, for data source-originated
@@ -2088,16 +2087,17 @@ behavior_differences:
 
   111:
     name: "SQLCancelHandle(DBC) returns HY010 when an associated statement is mid-async or in data-at-execution"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
+    status_rationale: |
+      The ODBC 3.8 Diagnostics table requires HY010 (Function sequence error) in those cases.
     old_driver_behavior: |
       SQLCancelHandle(SQL_HANDLE_DBC) is a no-op that returns SQL_SUCCESS even when an associated
       statement is asynchronously executing (SQL_STILL_EXECUTING) or mid data-at-execution
-      (SQL_NEED_DATA). The ODBC 3.8 Diagnostics table requires HY010 (Function sequence error) in
-      those cases.
+      (SQL_NEED_DATA).
     new_driver_behavior: |
       SQLCancelHandle(SQL_HANDLE_DBC) returns SQL_ERROR with SQLSTATE HY010 when any associated
       statement is asynchronously executing or mid data-at-execution, matching the ODBC 3.8
@@ -2115,31 +2115,24 @@ behavior_differences:
     name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      This is a metadata value fix, that allows for better identification of the encryption library,
+      which differs between the drivers.
     old_driver_behavior: |
-      Azure/GCS `encryptiondata` JSON: the legacy driver (libsnowflakeclient) hardcodes
+      Azure/GCS `encryptiondata` JSON: the driver (libsnowflakeclient) hardcodes
       `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"` on its Azure builder, but its own
-      GCS builder emits a different literal, `"openssl 1.1.1i"` -- proof this field is a
-      majority convention, not an enforced constant, even within one driver.
+      GCS builder emits a different literal, `"openssl 1.1.1i"`.
     new_driver_behavior: |
-      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
-      self-identification, matching the same self-identify-honestly instinct ODBC's own GCS
-      builder already follows. Confirmed no reader anywhere consumes this value: not the four
-      legacy drivers' decrypt paths, not UD's own, and not GS's own server-side parser, which
-      validates several sibling fields but never reads `EncryptionLibrary`. GS's own internal
-      C++ encryption library independently emits `"OpenSSL 1.0.1e-fips"` on its GCS path, not
-      `"Java 5.3.0"` --
-      corroborating the pattern at the server side too. Kept deliberately: matching
-      "Java 5.3.0" would misidentify which implementation produced the blob, valuable for
-      diagnostics during the mixed-fleet rollout period.
+      UD emits `"Rust(OpenSSL)"` for the same field on both clouds.
 
   113:
     name: "SQLTables case-fold unquoted identifiers in identifier mode"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
       ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
@@ -2169,9 +2162,11 @@ behavior_differences:
     name: "SQLGetDiagField(SQL_DIAG_SERVER_NAME) is populated instead of returning an empty string"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      This is an enhancement that makes the ODBC API more complete.
     old_driver_behavior: |
       SQLGetDiagField(SQL_DIAG_SERVER_NAME) returns an empty string after a diagnostic is raised
       on a connected statement/connection.
@@ -2180,16 +2175,17 @@ behavior_differences:
       the ODBC definition of the field.
     description: |
       Additive: applications reading SQL_DIAG_SERVER_NAME now receive the connection's server name
-      where the old driver returned "". Verified in
-      odbc-api/diagnostic/diag_field_tests.cpp via NEW_DRIVER_ONLY/OLD_DRIVER_ONLY("BD#114").
+      where the old driver returned "".
 
   115:
     name: "SQLGetDiagField(SQL_DIAG_DYNAMIC_FUNCTION_CODE) classifies the statement instead of returning 0/unknown"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      This fixes the return codes for the call, making the method ODBC-spec compliant.
     old_driver_behavior: |
       SQLGetDiagField(SQL_DIAG_DYNAMIC_FUNCTION_CODE) returns 0 (SQL_DIAG_UNKNOWN_STATEMENT) and
       SQL_DIAG_DYNAMIC_FUNCTION returns an empty string after execution.
@@ -2199,16 +2195,18 @@ behavior_differences:
       their ODBC-spec codes.
     description: |
       Additive: applications reading SQL_DIAG_DYNAMIC_FUNCTION_CODE now get the classified code where
-      the old driver returned 0. Verified in odbc-api/diagnostic/diag_field_tests.cpp via
-      NEW_DRIVER_ONLY/OLD_DRIVER_ONLY("BD#115").
+      the old driver returned 0.
 
   116:
+    # TODO Verify and fix assertions (iODBC narrow entry points?)
     name: "Statement header diagnostic fields are not readable through iODBC's wide SQLGetDiagFieldW entry point"
-    status: allowed
+    status: todo
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      To be checked; maybe there's a way to support it?
     old_driver_behavior: |
       Reading a statement-only header diagnostic field through iODBC's wide entry point
       (SQLGetDiagFieldW) is mishandled: SQL_DIAG_ROW_COUNT and SQL_DIAG_CURSOR_ROW_COUNT abort the
@@ -2237,9 +2235,11 @@ behavior_differences:
     name: "SQLDescribeCol column size for SQL_DOUBLE / SQL_FLOAT is 15 (decimal digits) instead of 53 (binary mantissa bits)"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      This is a spec-alignment fix.
     old_driver_behavior: |
       SQLDescribeCol on a SQL_DOUBLE / SQL_FLOAT column (SQL data type 8) reports a column size of
       53 -- the number of bits in the IEEE-754 double-precision mantissa.
@@ -2252,15 +2252,16 @@ behavior_differences:
       Size" table defines the column size of SQL_DOUBLE / SQL_FLOAT as 15 (decimal digits), not the
       count of binary mantissa bits. Applications that used the old driver's 53 to size buffers will
       now see 15; the value is a precision/display hint and does not change the fetched data.
-      Exercised by odbc_tests/tests/replay/excel/ado/sqlbindcol/test.cpp (SQLDescribeCol cols 8, 9, 10).
 
   118:
     name: "Fractional truncation on a numeric-to-character fetch returns SQLSTATE 01S07 instead of 01000"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      This is a SQLSTATE alignment with the ODBC spec.
     old_driver_behavior: |
       When a fetch converts a high-scale numeric column into a bound character buffer that cannot
       hold all fractional digits, the old driver returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01000
@@ -2271,17 +2272,17 @@ behavior_differences:
       numeric-to-character conversion.
     description: |
       Spec reference: ODBC 3.x defines 01S07 "Fractional truncation" for exactly this case. Both
-      drivers still return SQL_SUCCESS_WITH_INFO, so the (truncated) fetched value is unchanged;
-      applications that matched on the old driver's 01000 must also accept 01S07. Exercised by
-      odbc_tests/tests/replay/excel/ado/sqlbindcol/test.cpp (two SQLFetch cases).
+      drivers still return SQL_SUCCESS_WITH_INFO, so the (truncated) fetched value is unchanged.
 
   119:
     name: "VECTOR type fetch: UD returns JSON array string; reference driver unsupported"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      Implemented VECTOR type support.
     old_driver_behavior: |
       The reference ODBC driver (libsnowflakeclient) has no VECTOR type support. Any query that
       returns a VECTOR column fails at the conversion layer; no data is returned.
@@ -2293,12 +2294,15 @@ behavior_differences:
       rejected with SQLSTATE 07006, matching the ARRAY/VARIANT precedent.
 
   120:
+    # TODO: Verify if on the newest release of unixODBC it is supported; find out why it is not supported
     name: "SQLGetFunctions: per-function probe of SQLCancelHandle range-rejected with SQL_ERROR under unixODBC"
-    status: allowed
+    status: todo
     type: bug
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      This is to be verified with unixODBC newest release - is it inentional? If so, why?
     old_driver_behavior: |
       The legacy driver's SQL_API_ODBC3_ALL_FUNCTIONS bitmap omits
       SQL_API_SQLCANCELHANDLE (documented separately as BD#45), so the loop test
