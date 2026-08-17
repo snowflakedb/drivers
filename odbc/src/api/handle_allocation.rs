@@ -1,6 +1,6 @@
 use crate::api::error::{
     ConnectionStillConnectedSnafu, DisconnectedSnafu, EnvironmentHasConnectionsSnafu,
-    InvalidHandleSnafu, OdbcRuntimeSnafu, Required,
+    InvalidHandleSnafu, InvalidUseOfImplicitDescriptorSnafu, OdbcRuntimeSnafu, Required,
 };
 use crate::api::handle_registry::{DescLookup, HandleId, HandleKind};
 use crate::api::types::DescriptorKind;
@@ -354,7 +354,17 @@ pub fn free_descriptor(handle: sql::Handle) -> OdbcResult<()> {
     let conn_id = match *desc_guard {
         DescLookup::Explicit { conn_id } => conn_id,
         DescLookup::Implicit { .. } => {
-            return InvalidHandleSnafu.fail();
+            // Freeing an automatically-allocated (implicit) descriptor is invalid per the
+            // ODBC spec: return SQL_ERROR with HY017 and leave the handle valid, not
+            // SQL_INVALID_HANDLE. See SNOW-3240578. The HY017 diagnostic is posted onto the
+            // handle by the SQLFreeHandle entry point. Return early without mutating any
+            // connection/statement state so the descriptor stays usable.
+            //
+            // Note: unixODBC and iODBC both answer SQLFreeHandle(SQL_HANDLE_DESC, <implicit>)
+            // from their own descriptor bookkeeping and never dispatch it to the driver, so
+            // this arm is only reached by direct (driver-manager-less) callers. The
+            // handle_allocation unit tests are its sole coverage for that reason.
+            return InvalidUseOfImplicitDescriptorSnafu.fail();
         }
     };
     drop(desc_guard);
@@ -507,6 +517,14 @@ mod tests {
     where
         F: FnOnce(sql::Handle, HandleId) -> R,
     {
+        // Every test in this module operates on the same process-global handle
+        // registries. Serialize them so a concurrent test's live handles can't
+        // perturb slot-index or registry-emptiness assertions under the parallel
+        // test runner. Recover from a poisoned lock so one failing test doesn't
+        // cascade into spurious failures in the rest of the module.
+        static TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
         let env_handle = alloc_environment().expect("alloc_environment");
         let env_id = HandleId::from(env_handle);
         let result = f(env_handle, env_id);
@@ -832,6 +850,39 @@ mod tests {
             free_statement(stmt_handle).expect("free_statement");
             assert_handles_gone_from_registries(&[stmt_id], &descs);
 
+            mark_dbc_disconnected(dbc_handle);
+            free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+
+    /// Both unixODBC and iODBC answer `SQLFreeHandle(SQL_HANDLE_DESC, <implicit>)` from their
+    /// own descriptor bookkeeping without dispatching to the driver, so this unit test is the
+    /// only coverage of the driver-side contract for direct (DM-less) callers.
+    #[test]
+    fn free_descriptor_rejects_implicit_descriptor_and_leaves_it_usable() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+            let stmt_id = HandleId::from(stmt_handle);
+            let descs = stmt_desc_handles(stmt_handle);
+            let ard_handle: sql::Handle = descs[0].into();
+
+            let result = free_descriptor(ard_handle);
+            assert!(
+                matches!(
+                    result,
+                    Err(crate::api::OdbcError::InvalidUseOfImplicitDescriptor { .. })
+                ),
+                "expected InvalidUseOfImplicitDescriptor (HY017), got {result:?}"
+            );
+
+            // HY017 must leave the handle valid: all four implicit descriptors stay registered
+            // and bound to the statement, and the statement itself is untouched.
+            assert_implicit_descs_registered(stmt_id, descs);
+
+            free_statement(stmt_handle).expect("free_statement");
             mark_dbc_disconnected(dbc_handle);
             free_connection(dbc_handle).expect("free_connection");
         });

@@ -875,7 +875,19 @@ pub unsafe extern "system" fn SQLFreeHandle(
 ) -> sql::RetCode {
     set_dispatch!();
     record_api!(handle_type, handle, "SQLFreeHandle");
-    api::handle_allocation::sql_free_handle(handle_type, handle).to_sql_code()
+    let result = api::handle_allocation::sql_free_handle(handle_type, handle);
+    // A successful free destroys the handle, so its diagnostic storage is gone and must not
+    // be touched. A failed free of a descriptor leaves the handle valid — surface the
+    // diagnostic on it so the SQLSTATE (HY017 for an implicit descriptor, SNOW-3240578) is
+    // retrievable via SQLGetDiagRec instead of being lost behind a bare SQL_ERROR. Scoped to
+    // descriptors: the env/dbc/stmt sequence-error paths are already handled by the driver
+    // manager, and posting here as well would risk a duplicate diagnostic record.
+    if handle_type == sql::HandleType::Desc && result.is_err() {
+        api::diagnostic::clear_diag_info(handle_type, handle);
+        api::diagnostic::set_diag_info_from_result(handle_type, handle, &result);
+    }
+    record_err!(handle_type, handle, result);
+    result.to_sql_code()
 }
 /// # Safety
 /// This function is called by the ODBC driver manager.

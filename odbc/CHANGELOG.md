@@ -15,6 +15,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed `SQLFreeHandle(SQL_HANDLE_DESC)` on an implicitly allocated descriptor to return SQLSTATE HY017 with the handle left valid, matching the ODBC specification (previously returned `SQL_INVALID_HANDLE` with no diagnostic). (snowflakedb/drivers#1165)
 - Fixed `SQLColumns` `DATA_TYPE` / `SQL_DATA_TYPE` to fall back to `SQL_VARCHAR` for unmapped catalog types (e.g. GEOGRAPHY, GEOMETRY) instead of returning NULL. (snowflakedb/drivers#1156)
 - Fixed `SQLGetInfo(SQL_DRIVER_NAME)` to return the driver library file name (e.g. `libsfodbc.so`) instead of the full on-disk path, matching the ODBC specification. (snowflakedb/drivers#1076)
 - Fixed `SQLColumns` `USER_DATA_TYPE` (column 19) to always return `0` (`UDT_STANDARD_SQL_TYPE`), matching the reference driver (previously mirrored `DATA_TYPE`). (snowflakedb/drivers#1099)
