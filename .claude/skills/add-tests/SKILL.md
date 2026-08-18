@@ -33,6 +33,7 @@ Ask (or infer from context): which driver, and what kind of test?
 | JDBC   | `jdbc/src/test/java/net/snowflake/client/` | `jdbc/src/test/java/net/snowflake/jdbc/integration/` | `jdbc/src/test/java/net/snowflake/jdbc/e2e/` |
 | ODBC   | `odbc_tests/tests/` (unit) | `odbc_tests/tests/integration/` | `odbc_tests/tests/e2e/` |
 | Rust core | `sf_core/tests/` | `sf_core/tests/integration/` | `sf_core/tests/e2e/` |
+| Node.js | `nodejs/tests/unit/` | — | `nodejs/tests/e2e/` |
 
 **Integration vs E2E distinction (JDBC)**
 - `jdbc/integration/` = WireMock-based; stubs the server, no live Snowflake needed.
@@ -154,7 +155,52 @@ To explicitly exclude a driver: `@jdbc_not_needed` on the feature or scenario.
 
 ---
 
-## Step 6 — Verify locally
+## Step 6 — Node.js E2E: batch parameterized cases into one round trip
+
+**Node.js-specific for now** — don't apply it to JDBC/Python/ODBC/Rust
+
+Node.js E2E tests hit a live Snowflake account, so each query is a real
+network round trip. When a Node.js E2E test wants to check many literal/value
+variations of the same behavior, **do not** issue one query per case via a
+`for`-loop or `it.each`.
+
+Instead, express all cases as **one query** that returns one row with one
+column per case, and assert against the whole row in a single test.
+
+❌ **BAD** — one round trip per case:
+```ts
+it.each([
+  { input: 'a', expected: 'A' },
+  { input: 'b', expected: 'B' },
+  { input: 'c', expected: 'C' },
+  // ... 20 more cases
+])('returns $input as $expected', async ({ input, expected }) => {
+  const { rows } = await executeAsync(connection, `SELECT '${input}'`);
+  expect(Object.values(rows![0])[0]).toBe(expected);
+});
+```
+
+✅ **GOOD** — one round trip for all cases:
+```ts
+it('returns all input values correctly', async () => {
+  const cases = [
+    { input: 'a', expected: 'A' },
+    { input: 'b', expected: 'B' },
+    { input: 'c', expected: 'C' },
+    // ... 20 more cases
+  ];
+  const columns = cases.map(({ input }, i) => `'${input}' AS V${i}`);
+  const { rows } = await executeAsync(connection, `SELECT ${columns.join(', ')}`);
+  expect(Object.values(rows![0])).toEqual(cases.map((c) => c.expected));
+});
+```
+
+This does **not** apply to Node.js unit tests, where there's no real network
+cost per case.
+
+---
+
+## Step 7 — Verify locally
 
 ```bash
 bash tests/tests_format_validator/run_validator.sh
@@ -189,3 +235,4 @@ Is this behavior shared across ≥2 drivers?
 | Creating `tests/definitions/jdbc/` for a JDBC-specific test | Not allowed — validator enforces `shared/` only | Use a standalone file instead (no feature needed) |
 | Live-server test placed in `jdbc/integration/` | Wrong tree — `integration/` is WireMock-only | Move to `jdbc/e2e/` |
 | Using `SHOW PARAMETERS LIKE 'CLIENT_PREFETCH_THREADS'` to verify a client-side hint | Server returns default (4) regardless | Use `SELECT 1` to verify the connection accepts the property |
+| Node.js E2E `it.each`/loop issuing one query per case | N cases = N live round trips; slow test suite | Collapse into one multi-column `SELECT`, assert on the full row (see Step 6) |
