@@ -494,7 +494,14 @@ impl SnowflakeFieldType {
             .unwrap_or("");
         match logical_type {
             "TEXT" => {
-                let len = get_field_metadata(field, "charLength")?;
+                let len = match get_field_metadata(field, "charLength") {
+                    Ok(len) => len,
+                    Err(ConversionError::MissingFieldMetadata { .. }) => {
+                        u32::try_from(numeric_settings.max_varchar_size)
+                            .unwrap_or(SF_DEFAULT_VARCHAR_MAX_LEN as u32)
+                    }
+                    Err(e) => return Err(e),
+                };
                 Ok(Self::Varchar(varchar::SnowflakeVarchar {
                     len,
                     is_semi_structured: false,

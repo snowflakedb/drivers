@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::conversion::error::ConversionError;
-    use crate::conversion::{Binding, NumericSettings, make_converter};
+    use crate::conversion::{Binding, NumericSettings, column_size_from_field, make_converter};
     use arrow::array::{ArrayRef, Int32Array, Int64Array};
     use arrow::datatypes::{DataType, Field};
     use std::collections::HashMap;
@@ -23,6 +23,41 @@ mod tests {
         .into_iter()
         .collect();
         Field::new("col", data_type, true).with_metadata(md)
+    }
+
+    fn text_field(char_length: Option<&str>) -> Field {
+        let mut md = HashMap::from([("logicalType".to_string(), "TEXT".to_string())]);
+        if let Some(char_length) = char_length {
+            md.insert("charLength".to_string(), char_length.to_string());
+        }
+        Field::new("col", DataType::Utf8, true).with_metadata(md)
+    }
+
+    #[test]
+    fn text_without_char_length_uses_configured_varchar_max() {
+        let field = text_field(None);
+        let settings = NumericSettings {
+            max_varchar_size: 134_217_728,
+            ..NumericSettings::default()
+        };
+
+        assert_eq!(
+            column_size_from_field(&field, &settings).unwrap(),
+            134_217_728
+        );
+        make_converter(&field, &settings)
+            .expect("TEXT without charLength must still produce a converter");
+    }
+
+    #[test]
+    fn text_with_invalid_char_length_is_rejected() {
+        let field = text_field(Some("invalid"));
+        let err = column_size_from_field(&field, &NumericSettings::default()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            ConversionError::FieldMetadataParsing { ref key, .. } if key == "charLength"
+        ));
     }
 
     /// Cached converters now downcast at `convert_arrow_value` time, so a

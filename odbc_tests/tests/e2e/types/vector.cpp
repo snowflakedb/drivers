@@ -132,6 +132,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select <subtype> vector boundary val
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should preserve FLOAT smallest-normal", "[datatype][vector]") {
   SKIP_OLD_DRIVER("BD#119", "Reference driver has no VECTOR support");
+  SKIP_FOR_JSON_RESULT_SET(
+      "Server-side JSON serialization flushes FLOAT32 subnormals to zero; "
+      "Arrow format preserves the bit pattern");
 
   // Given Snowflake client is logged in
   Connection conn;
