@@ -16,6 +16,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed `SQLDisconnect` to return `SQL_SUCCESS_WITH_INFO` with SQLSTATE 01002 (Disconnect error) when disconnect succeeds but post-close server or child-handle cleanup fails softly, instead of failing hard or swallowing the warning. (snowflakedb/drivers#1184)
 - Fixed `SQLDisconnect` to free child statement handles and explicitly allocated descriptors after a successful disconnect, and to return SQLSTATE HY010 (without disconnecting) when a child statement is mid data-at-execution or asynchronously executing. (snowflakedb/drivers#1174)
 - Fixed `SQLFreeHandle(SQL_HANDLE_DESC)` on an implicitly allocated descriptor to return SQLSTATE HY017 with the handle left valid, matching the ODBC specification (previously returned `SQL_INVALID_HANDLE` with no diagnostic). (snowflakedb/drivers#1165)
 - Fixed `SQLColumns` `DATA_TYPE` / `SQL_DATA_TYPE` to fall back to `SQL_VARCHAR` for unmapped catalog types (e.g. GEOGRAPHY, GEOMETRY) instead of returning NULL. (snowflake-eng/drivers#1156)

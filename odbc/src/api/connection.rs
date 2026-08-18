@@ -880,7 +880,13 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
 /// statement handles and explicitly allocated descriptors on the connection
 /// (SNOW-3240577). Child statements mid data-at-execution or async execution
 /// reject disconnect with HY010 before any teardown.
-pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
+///
+/// After `connection_close` succeeds, failures in `connection_release`,
+/// `database_release`, or child `statement_release` are non-fatal: the
+/// connection is still marked Disconnected and `Warning::DisconnectError`
+/// (SQLSTATE 01002) is recorded so the caller can return
+/// `SQL_SUCCESS_WITH_INFO` (SNOW-3240576).
+pub fn disconnect(connection_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
     let dbc = conn_from_handle(connection_handle)?;
@@ -925,31 +931,45 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
         }
     }
 
+    // `connection_close` must succeed for disconnect to have succeeded. Soft
+    // failures after close still leave the connection Disconnected (01002).
     g.block_on(async |c| {
         c.connection_close(ConnectionCloseRequest {
             conn_handle: Some(conn_handle),
         })
-        .await?;
+        .await
+    })?;
+
+    if let Err(e) = g.block_on(async |c| {
         c.connection_release(ConnectionReleaseRequest {
             conn_handle: Some(conn_handle),
         })
-        .await?;
+        .await
+    }) {
+        tracing::warn!("disconnect: connection_release failed after close (soft): {e:?}");
+        warnings.push(Warning::DisconnectError);
+    }
+
+    if let Err(e) = g.block_on(async |c| {
         c.database_release(DatabaseReleaseRequest {
             db_handle: Some(db_handle),
         })
-        .await?;
-        Ok::<_, crate::api::OdbcError>(())
-    })?;
+        .await
+    }) {
+        tracing::warn!("disconnect: database_release failed after close (soft): {e:?}");
+        warnings.push(Warning::DisconnectError);
+    }
 
-    // Clear the telemetry cache post-teardown (after the `block_on` succeeds).
+    // Clear the telemetry cache post-teardown (after close succeeds).
     // This runs under the `connection` guard acquired at the top of this
     // function, so `state` and the cache flip together under the lock — the same
     // lock-consistency the connect path gets from its scoped critical section.
     // The clear is deliberately deferred to here rather than done at disconnect
     // entry: `state` stays `Connected` and the cache stays `Some` across the
-    // teardown, so the `?`-returns above leave both set, upholding "cache is
-    // `Some` iff `Connected`". A telemetry read racing the teardown may still
-    // resolve the handle being released — acceptable, since disconnect is
+    // teardown, so a hard `?`-return from `connection_close` leaves both set,
+    // upholding "cache is `Some` iff `Connected`". Soft release failures after
+    // close still mark Disconnected. A telemetry read racing the teardown may
+    // still resolve the handle being released — acceptable, since disconnect is
     // single-threaded under normal ODBC use and telemetry is best-effort (core
     // drops events for released handles). `mark_disconnected` clears `state` and
     // the cache together, upholding "cache is `Some` iff `Connected`".
@@ -961,7 +981,7 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     // Spec: after successfully disconnecting, free statements and explicitly
     // allocated descriptors on this connection so follow-up SQLFreeHandle on
     // those handles returns SQL_INVALID_HANDLE (BD#68 / SNOW-3240577).
-    cleanup_connection(&dbc)?;
+    cleanup_connection(&dbc, warnings)?;
     Ok(())
 }
 

@@ -1701,12 +1701,19 @@ pub unsafe extern "system" fn SQLDisconnect(connection_handle: sql::Handle) -> s
     // finds the connection in `Connected` state.
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLDisconnect");
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
-    let result = api::connection::disconnect(connection_handle);
+    let mut warnings = vec![];
+    let result = api::connection::disconnect(connection_handle, &mut warnings);
     // Post diagnostics so SQLGetDiagRec surfaces SQLSTATE 25000 when disconnect
-    // is refused because a transaction is still in process.
+    // is refused because a transaction is still in process, and 01002 when
+    // disconnect succeeded but soft server/child cleanup failed.
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// Shared dispatch for `SQLEndTran` and `SQLTransact`.

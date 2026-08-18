@@ -9,6 +9,7 @@ use crate::api::{
     diagnostic::DiagnosticInfo,
     runtime::{env_allocated, env_freed, global},
 };
+use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use parking_lot::Mutex;
 use sf_core::protobuf::generated::database_driver_v1::{
@@ -181,7 +182,10 @@ pub fn free_environment(handle: sql::Handle) -> OdbcResult<()> {
 /// connection. Used by [`free_connection`] and by [`crate::api::connection::disconnect`]
 /// after a successful disconnect (ODBC: free statements/explicit descs allocated
 /// on the connection).
-pub(crate) fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
+///
+/// Failures releasing child statements in core are soft: local handles are still
+/// deleted and [`Warning::DisconnectError`] is recorded (SNOW-3240576).
+pub(crate) fn cleanup_connection(dbc: &Dbc, warnings: &mut Warnings) -> OdbcResult<()> {
     let mut conn = dbc.connection.lock();
     // Release any outstanding statements whose ODBC handles were never freed.
     let child_ids: Vec<_> = conn.child_statements.drain(..).collect();
@@ -216,6 +220,7 @@ pub(crate) fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
             .await
         }) {
             tracing::warn!("free_connection: failed to release statement {stmt_handle:?}: {e:?}");
+            warnings.push(Warning::DisconnectError);
         }
         for desc_id in desc_handles {
             if let Ok(dg) = g.desc_manager.get_for_delete(desc_id) {
@@ -270,7 +275,7 @@ pub fn free_connection(handle: sql::Handle) -> OdbcResult<()> {
         .retain(|id| *id != handle_id);
     drop(env_guard);
 
-    cleanup_connection(delete_guard.value())?;
+    cleanup_connection(delete_guard.value(), &mut Vec::new())?;
     delete_guard.delete();
     Ok(())
 }
@@ -514,8 +519,9 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
 mod tests {
     use super::*;
     use crate::api::types::{DaeContext, ExecutionOrigin, StatementState};
+    use crate::conversion::warning::Warning;
     use sf_core::protobuf::generated::database_driver_v1::{
-        ConnectionNewRequest, DatabaseNewRequest,
+        ConnectionNewRequest, DatabaseNewRequest, DatabaseReleaseRequest,
     };
     use std::collections::HashMap;
 
@@ -840,7 +846,7 @@ mod tests {
             assert_eq!(child_statements(dbc_handle).len(), 2);
             assert_eq!(child_descriptor_ids(dbc_handle), vec![explicit_desc_id]);
 
-            crate::api::connection::disconnect(dbc_handle).expect("disconnect");
+            crate::api::connection::disconnect(dbc_handle, &mut Vec::new()).expect("disconnect");
 
             assert!(
                 !connection_is_connected(dbc_handle),
@@ -885,7 +891,7 @@ mod tests {
                 });
             }
 
-            let err = crate::api::connection::disconnect(dbc_handle)
+            let err = crate::api::connection::disconnect(dbc_handle, &mut Vec::new())
                 .expect_err("disconnect must reject NeedData with HY010");
             assert!(
                 matches!(err, crate::api::OdbcError::InvalidDuringDae { .. }),
@@ -916,8 +922,61 @@ mod tests {
                 stmt.inner.lock().state.set(StatementState::Created);
             }
             free_statement(stmt_handle).expect("free_statement");
-            crate::api::connection::disconnect(dbc_handle).expect("disconnect after reset");
+            crate::api::connection::disconnect(dbc_handle, &mut Vec::new())
+                .expect("disconnect after reset");
             free_connection(dbc_handle).expect("free_connection");
+        });
+    }
+
+    /// SNOW-3240576: after `connection_close` succeeds, a soft failure in
+    /// `database_release` still leaves the connection Disconnected and records
+    /// `Warning::DisconnectError` (SQLSTATE 01002 / SQL_SUCCESS_WITH_INFO).
+    #[test]
+    fn disconnect_soft_database_release_failure_records_disconnect_error_warning() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            // Pre-release the database handle so disconnect's database_release
+            // soft-fails after a successful close + connection_release.
+            let g = global().expect("globals");
+            let db_handle = {
+                let dbc = g
+                    .dbc_registry
+                    .get(HandleId::from(dbc_handle))
+                    .expect("dbc in registry");
+                match &dbc.connection.lock().state {
+                    ConnectionState::Connected { db_handle, .. } => *db_handle,
+                    ConnectionState::Disconnected => panic!("expected Connected"),
+                }
+            };
+            g.block_on(async |c| {
+                c.database_release(DatabaseReleaseRequest {
+                    db_handle: Some(db_handle),
+                })
+                .await
+                .expect("pre-release database");
+            });
+
+            let mut warnings = Vec::new();
+            crate::api::connection::disconnect(dbc_handle, &mut warnings)
+                .expect("disconnect must succeed when only post-close release soft-fails");
+
+            assert!(
+                !connection_is_connected(dbc_handle),
+                "soft cleanup failure must still leave the connection Disconnected"
+            );
+            assert_eq!(
+                warnings,
+                vec![Warning::DisconnectError],
+                "expected a single DisconnectError warning for soft database_release failure"
+            );
+
+            let rec = crate::api::diagnostic::from_warning(&Warning::DisconnectError);
+            assert_eq!(rec.sql_state.as_str(), "01002");
+            assert_eq!(rec.message_text, "Disconnect error");
+
+            free_connection(dbc_handle).expect("free_connection after soft-fail disconnect");
         });
     }
 
@@ -1050,7 +1109,10 @@ mod tests {
             assert_invalid_handle(free_statement(dbc_handle));
             assert_invalid_handle(free_environment(dbc_handle));
             assert_invalid_handle(free_environment(stmt_handle));
-            assert_invalid_handle(crate::api::connection::disconnect(env_handle));
+            assert_invalid_handle(crate::api::connection::disconnect(
+                env_handle,
+                &mut Vec::new(),
+            ));
             assert_invalid_handle(sql_free_handle(sql::HandleType::Stmt, dbc_handle));
             assert_invalid_handle(sql_free_handle(sql::HandleType::Dbc, stmt_handle));
             assert_invalid_handle(alloc_statement(env_handle));
