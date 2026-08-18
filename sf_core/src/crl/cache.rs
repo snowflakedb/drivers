@@ -114,6 +114,16 @@ pub(crate) fn write_crl_atomic(dir: &Path, file_name: &str, data: &[u8]) -> std:
         );
     }
     tmp.as_file_mut().write_all(data)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Narrow the mode through the file descriptor (fchmod) rather than by
+        // path: the 0600 mode is applied directly to the open fd, independent of
+        // path resolution and the process umask. Matches the established pattern
+        // in `file_manager/mod.rs`.
+        tmp.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
     // `sync_all` flushes the temp's contents before the rename so a crash
     // cannot publish a rename pointing at unflushed (empty/partial) data.
     // Risk: this runs on the `spawn_blocking` write that `get()` awaits, so on
@@ -982,45 +992,67 @@ impl CrlCache {
             }
             let file_name = Self::url_digest(url);
             let path = dir.join(file_name);
-            if let Ok(bytes) = tokio::fs::read(&path).await {
-                let meta = tokio::fs::metadata(&path).await.ok();
-                // Reject a group/other-accessible cache file (Unix): it may have
-                // been tampered with, so don't trust its contents — treat as a
-                // miss and re-fetch (the re-fetch rewrites it 0600, self-healing).
-                if verify_perms && meta.as_ref().is_some_and(|m| !permissions_owner_only(m)) {
-                    tracing::warn!(
-                        target: "sf_core::crl",
-                        path = %path.display(),
-                        "CRL cache file has insecure permissions; ignoring it (set crl_unsafe_skip_file_permissions_check to override)"
-                    );
+            // Open through the O_NOFOLLOW hardened opener (the same pattern this
+            // file uses for cache-adjacent files) so a planted symlink at the
+            // cache-entry path is rejected rather than followed; the subsequent
+            // metadata and read then operate on that same fd. The sync opener
+            // runs on the blocking pool.
+            let open_path = path.clone();
+            let std_file = match tokio::task::spawn_blocking(move || {
+                crate::fs_lock::open_read_nofollow_nonblock(&open_path)
+            })
+            .await
+            {
+                Ok(Ok(f)) => f,
+                // Missing entry, a symlink rejected by O_NOFOLLOW, or a join
+                // failure: treat as a cache miss and re-fetch.
+                _ => return Ok(None),
+            };
+            let mut file = tokio::fs::File::from_std(std_file);
+            let meta = file.metadata().await.ok();
+            // Reject a group/other-accessible cache file (Unix): it may have
+            // been tampered with, so don't trust its contents — treat as a
+            // miss and re-fetch (the re-fetch rewrites it 0600, self-healing).
+            if verify_perms && meta.as_ref().is_some_and(|m| !permissions_owner_only(m)) {
+                tracing::warn!(
+                    target: "sf_core::crl",
+                    path = %path.display(),
+                    "CRL cache file has insecure permissions; ignoring it (set crl_unsafe_skip_file_permissions_check to override)"
+                );
+                return Ok(None);
+            }
+            let mut bytes = Vec::new();
+            {
+                use tokio::io::AsyncReadExt;
+                if file.read_to_end(&mut bytes).await.is_err() {
                     return Ok(None);
                 }
-                // Use the file's mtime as the download time (same approach as
-                // gosnowflake, which relies on `stat.ModTime()`), so the max
-                // cache-age check reflects the real age rather than "now".
-                let download_time = meta
-                    .and_then(|m| m.modified().ok())
-                    .map(DateTime::<Utc>::from)
-                    .unwrap_or_else(Utc::now);
-                let expires_at = match crate::tls::x509_utils::extract_crl_next_update(&bytes) {
-                    Ok(Some(dt)) => dt,
-                    _ => download_time + self.config.validity_time,
-                };
-                let age = Utc::now() - download_time;
-                if Utc::now() <= expires_at && age <= self.config.validity_time {
-                    let _ = self.put(CachedCrl {
-                        crl: bytes.clone(),
-                        download_time,
-                        url: url.to_string(),
-                        expires_at,
-                        crl_number: crate::tls::x509_utils::extract_crl_number(&bytes)
-                            .ok()
-                            .flatten(),
-                    });
-                    return Ok(Some(bytes));
-                }
-                tracing::debug!(target: "sf_core::crl", "Disk cache entry expired for {url}, refetching");
             }
+            // Use the file's mtime as the download time (same approach as
+            // gosnowflake, which relies on `stat.ModTime()`), so the max
+            // cache-age check reflects the real age rather than "now".
+            let download_time = meta
+                .and_then(|m| m.modified().ok())
+                .map(DateTime::<Utc>::from)
+                .unwrap_or_else(Utc::now);
+            let expires_at = match crate::tls::x509_utils::extract_crl_next_update(&bytes) {
+                Ok(Some(dt)) => dt,
+                _ => download_time + self.config.validity_time,
+            };
+            let age = Utc::now() - download_time;
+            if Utc::now() <= expires_at && age <= self.config.validity_time {
+                let _ = self.put(CachedCrl {
+                    crl: bytes.clone(),
+                    download_time,
+                    url: url.to_string(),
+                    expires_at,
+                    crl_number: crate::tls::x509_utils::extract_crl_number(&bytes)
+                        .ok()
+                        .flatten(),
+                });
+                return Ok(Some(bytes));
+            }
+            tracing::debug!(target: "sf_core::crl", "Disk cache entry expired for {url}, refetching");
         }
         Ok(None)
     }
@@ -1641,6 +1673,21 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn should_write_crl_with_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        write_crl_atomic(dir.path(), "test-entry", b"crl data").unwrap();
+        let path = dir.path().join("test-entry");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "CRL cache file must have owner-only (0o600) permissions"
+        );
+    }
+
     /// Disk cleanup must never delete files it cannot parse as a CRL — those may
     /// be partially written, or belong to another tool sharing the cache dir —
     /// and must be a safe no-op when disk caching is disabled or the directory
@@ -1774,5 +1821,47 @@ mod tests {
             .await
             .expect("within-cap CRL must download");
         assert_eq!(bytes, body);
+    }
+
+    /// A symlinked cache entry is treated as a cache miss: the `O_NOFOLLOW`
+    /// opener refuses to follow it, so `get_from_disk_cache` returns `None`
+    /// rather than the symlink target's contents.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn get_from_disk_cache_rejects_symlinked_entry() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        // Keep the cache dir owner-only so it passes the directory check and the
+        // symlink — not directory permissions — is what forces the rejection.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        // A regular file outside the cache dir, owner-only, as the symlink target.
+        let target = dir.path().join("symlink-target");
+        tokio::fs::write(&target, b"non-CRL bytes").await.unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        // Plant a symlink at the exact path the cache derives for this URL.
+        let url = "http://example/symlink.crl";
+        let entry = dir.path().join(CrlCache::url_digest(url));
+        symlink(&target, &entry).unwrap();
+
+        let cache = CrlCache::new(CrlConfig {
+            enable_disk_caching: true,
+            enable_memory_caching: false,
+            cache_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let got = cache
+            .get_from_disk_cache(url)
+            .await
+            .expect("disk cache lookup must not error");
+        assert!(
+            got.is_none(),
+            "a symlinked cache entry must be rejected (O_NOFOLLOW), got {got:?}"
+        );
     }
 }
