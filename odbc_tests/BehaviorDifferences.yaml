@@ -1900,14 +1900,13 @@ behavior_differences:
       the new driver normalizes it to 1 for consistency with SQL_ATTR_ROW_ARRAY_SIZE.
 
   103:
-    #TODO - add test and confirm behavior
     name: "GCS PUT OVERWRITE=TRUE on matching content re-uploads instead of skipping"
-    status: todo
-    type: bugfix
+    status: fixed
+    type: bug
     reviewed: true
     is_breaking_change: true
     status_rationale: |
-      To be verified, how old driver behaves.
+      Aligned with the old driver. Old driver overwrites properly.
     impact: low
     old_driver_behavior: |
       Against a GCS stage, a PUT with OVERWRITE=TRUE whose local payload matched the remote object's
@@ -2400,3 +2399,23 @@ behavior_differences:
       decimal digits. This also keeps SQLColumns COLUMN_SIZE consistent with its
       decimal NUM_PREC_RADIX value of 10. The paired NEW_DRIVER_ONLY / OLD_DRIVER_ONLY
       assertions are in odbc-api/catalog/columns_tests.cpp.
+
+  124:
+    name: "Remove OCSP support in favor of CRLs"
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: high
+    status_rationale: |
+      This change aligns with the broader move away from OCSP, which has been a frequent cause of production outages and offers little real security in the default fail-open mode.
+    old_driver_behavior: |
+      Certificate revocation uses OCSP, controlled by parameters such as
+      `OCSP_FAIL_OPEN`, `DisableOCSPCheck`, and `SF_OCSP_RESPONSE_CACHE_SERVER_URL`.
+    new_driver_behavior: |
+      OCSP is not implemented. Certificate revocation uses CRLs, configured via
+      CRL parameters (`crl_check_mode`, `crl_enable_memory_caching`,
+      `crl_enable_disk_caching`, etc.). OCSP-specific connection parameters are not accepted.
+    description: |
+      The universal core performs TLS revocation checking in Rust with CRL support shared
+      across wrappers. OCSP was not ported; callers must migrate to CRL configuration.
