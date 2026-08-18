@@ -1,8 +1,19 @@
-# ⚠️ PUBLIC PREVIEW DISCLAIMER ⚠️
+# Snowflake Connector for Python
 
-**This is a preview version of our Universal Driver intended for Snowflake customers who are subject to Snowflake's Preview Terms.**
+> [!CAUTION]
+> This version of the driver is in public preview and is not ready for use with production data and may be unstable.
 
-This driver is not ready for use with production data and may be unstable. Please only use it if you are actively participating in the Universal Driver Preview.
+This package includes the Snowflake Connector for Python, which conforms to the [Python DB API 2.0](https://www.python.org/dev/peps/pep-0249/) specification.
+
+The Snowflake Connector for Python provides an interface for developing Python
+applications that can connect to Snowflake and perform all standard operations. It
+provides a programming alternative to developing applications in Java or C/C++
+using the Snowflake JDBC or ODBC drivers.
+
+The connector has **no** dependencies on JDBC or ODBC.
+It can be installed using ``pip`` on Linux, Mac OSX, and Windows platforms
+where Python 3.10.0 (or higher) is installed.
+
 
 ## Development
 
