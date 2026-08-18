@@ -8,7 +8,7 @@ from typing import Any
 # backward compatibility constant
 # snowflake-sqlalchemy imports this symbol and calls .get(name) in
 # parse_query_param_type to cast URL query-string values to the types the
-# connector expects.  The universal driver validates parameters internally, so
+# connector expects. The universal core validates parameters internally, so
 # an empty dict is correct: every .get() returns None and values pass through
 # uncast.
 DEFAULT_CONFIGURATION: dict[str, tuple[Any, tuple[type, ...]]] = {}

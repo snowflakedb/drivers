@@ -10,19 +10,19 @@ These are what ``sf_core`` status codes map to via ``STATUS_TO_EXCEPTION``.
 Everything after the "Backward compatibility" section below exists solely so
 that ``from snowflake.connector.errors import BadGatewayError`` (etc.) does not
 break user code written against the old ``snowflake-connector-python`` driver.
-None of these classes are raised by the universal driver at runtime:
+None of these classes are raised by the universal core at runtime:
 
   - **HTTP exceptions** (``BadRequest``, ``ServiceUnavailableError``, ...):
     In the old driver, Python's ``requests`` library returned HTTP status codes
     that were wrapped into typed exceptions and used as internal retry-loop
     control flow signals.  They leaked to users only when retries were
-    exhausted.  In the universal driver, the Rust core handles HTTP retries
+    exhausted.  In the universal core, the Rust core handles HTTP retries
     internally; by the time an error reaches Python it is already mapped to a
     PEP 249 type via ``StatusCode``.
 
   - **Auth / token exceptions** (``RefreshTokenError``, ``TokenExpiredError``):
     Used in the old driver as internal signals between the OKTA authenticator
-    and the retry loop.  The universal driver handles token refresh in Rust.
+    and the retry loop. The universal core handles token refresh in Rust.
 
   - **TLS exception** (``RevocationCheckError``):
     OCSP/CRL verification runs inside the Rust TLS layer.
@@ -321,7 +321,7 @@ class MissingConfigOptionError(ConfigSourceError):
 
 
 # ---------------------------------------------------------------------------
-# Backward compatibility (importable, never raised by the universal driver)
+# Backward compatibility (importable, never raised by the universal core)
 #
 # See module docstring for rationale.
 # ---------------------------------------------------------------------------

@@ -338,7 +338,7 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
         this setter has no effect on an already-open connection. The
         synchronous ``Connection`` class overrides this property to also run
         ``ALTER SESSION SET CLIENT_PREFETCH_THREADS`` so the change actually
-        takes effect on subsequent fetches, matching the legacy connector's
+        takes effect on subsequent fetches, matching the old connector's
         immediate, locally-effective setter. Async connections cannot do the
         same through a synchronous property setter (it can't ``await``); use
         ``await conn.set_client_prefetch_threads(value)`` there instead.
@@ -396,7 +396,7 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
         this property, AND the server has confirmed ``CLIENT_TELEMETRY_ENABLED``
         for the session. Unlike ``sf_core``'s own (unrelated) OTEL-export gate,
         an unconfirmed server parameter is treated as disabled, not enabled,
-        matching the legacy driver. Reading this property issues an RPC.
+        matching the old driver version. Reading this property issues an RPC.
         """
         return self._client_param_telemetry_enabled and self._server_param_telemetry_enabled()
 
