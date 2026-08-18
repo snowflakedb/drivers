@@ -7,6 +7,7 @@ pub use crate::apis::database_driver_v1::statement::StatementError;
 use crate::chunks::ChunkError;
 pub use crate::config::ConfigError;
 pub use crate::rest::snowflake::RestError;
+pub use crate::rest::snowflake::workload_identity::AttestationError;
 use crate::tls::error::TlsError;
 use crate::token_cache::TokenCacheError;
 
@@ -226,5 +227,18 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
         source: std::io::Error,
+    },
+    #[snafu(display("Invalid workload_identity_provider: '{provider}'"))]
+    InvalidWifProvider {
+        provider: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Workload Identity Federation attestation failed: {source}"))]
+    WorkloadIdentityAttestation {
+        #[snafu(implicit)]
+        location: Location,
+        #[snafu(source(from(AttestationError, Box::new)))]
+        source: Box<AttestationError>,
     },
 }

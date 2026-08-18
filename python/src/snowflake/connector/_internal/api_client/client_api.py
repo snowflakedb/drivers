@@ -111,6 +111,8 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     TelemetrySendWrapperErrorRequest,
     TokenRequestType,
     UploadStreamHandle,
+    WifCreateAttestationRequest,
+    WifCreateAttestationResponse,
     WrapperIdentity,
 )
 from ..protobuf_gen.database_driver_v1_pb2 import (
@@ -162,10 +164,12 @@ def _extract_error_detail(driver_exception: Any) -> str | None:
     if isinstance(inner, ProtoMissingParameter):
         return f"Missing required parameter: {inner.parameter}" if inner.parameter else None
     if isinstance(inner, ProtoInvalidParameterValue):
-        parts = [f"Invalid value {inner.value!r} for parameter {inner.parameter!r}"]
+        parts = []
+        if inner.parameter:
+            parts.append(f"Invalid value {inner.value!r} for parameter {inner.parameter!r}")
         if inner.explanation:
             parts.append(inner.explanation)
-        return ". ".join(parts)
+        return ". ".join(parts) or None
     # GenericError, InternalError have no extra fields
     return None
 
@@ -645,6 +649,25 @@ class CoreDriver:
     def config_get_paths(self) -> ConfigGetPathsResponse:
         request = ConfigGetPathsRequest()
         return self.client.config_get_paths(request)
+
+    # =====================================================================
+    # Workload Identity Federation (WIF)
+    # =====================================================================
+
+    def wif_create_attestation(
+        self,
+        provider: str,
+        entra_resource: str | None = None,
+        token: str | None = None,
+        impersonation_path: list[str] | None = None,
+    ) -> WifCreateAttestationResponse:
+        request = WifCreateAttestationRequest(
+            provider=provider,
+            entra_resource=entra_resource,
+            token=token,
+            impersonation_path=impersonation_path or [],
+        )
+        return self.client.wif_create_attestation(request)
 
 
 core_driver: CoreDriver = CoreDriver()

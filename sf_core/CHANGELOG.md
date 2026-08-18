@@ -8,6 +8,7 @@ New features:
 - Added server-side query cancel: capture the in-flight `requestId`/`sqlText` on the statement at submit time and add a `statement_cancel` driver API (plus `StatementCancel` RPC) that aborts the running query via `POST /queries/v1/abort-request`, so a cross-thread `SQLCancel` can stop a query on the server. (snowflakedb/drivers#628)
 - Added a shared operation-cancellation registry and `RustTransport::handle_message_cancellable`, letting a bridge cancel an in-flight RPC by handle from any thread and surface cancellation as `DriverException` with `STATUS_CODE_CANCELLED`; the async C API now cancels through this registry. (snowflakedb/drivers#TBD)
 - Added async-first RPCs: an RPC marked `async_first` in the proto generates a `Future`-returning client method, and JDBC's `ConnectionInit` now uses it via new `nativeSubmitMessage`/`nativeAwaitMessage`/`nativeCancel` JNI entries. (snowflakedb/drivers#TBD)
+- Added impersonation-chain support to the standalone `create_attestation` RPC, so callers can acquire a Workload Identity Federation attestation for an assumed AWS role, delegated GCP service account, or impersonated Azure service principal without an active connection. (snowflakedb/drivers#1027)
 
 Bug fixes:
 
@@ -15,6 +16,7 @@ Bug fixes:
 - Fixed an issue where cached OAuth tokens could be incorrectly shared across different Snowflake accounts or roles that used the same identity provider, and where tokens stored by one driver could not be read by another. The token cache key is now a versioned, uniformly hashed value (`SnowflakeTokenCache.v2.<token_type>.<sha256>`) computed identically across drivers. OAuth entries are keyed by IdP URL, Snowflake account URL, username, and role; MFA and ID-token entries are keyed only by Snowflake account URL and username (their flows carry no IdP or role). Existing v1 cache entries are orphaned; the driver re-authenticates transparently on the next connection and writes a v2 entry. (snowflakedb/drivers#735)
 - Fixed `ConnectionAbortQuery` silently collapsing genuine errors (invalid connection handle, transport failures) into a declined-abort outcome; these now surface as proper errors instead. The response also now reports a typed `AbortQueryOutcome` (`ABORTED` / `NOT_RUNNING`) instead of a bare `success` bool. (snowflakedb/drivers#TBD)
 - Fixed string `private_key` to accept plaintext PEM (as already documented), not only base64-encoded material. (snowflakedb/drivers#953)
+- Fixed Workload Identity Federation attestation failures reporting an internally inconsistent error type, which could have caused non-Python bindings to surface the wrong exception category. (snowflakedb/drivers#TBD)
 
 Internal improvements:
 
