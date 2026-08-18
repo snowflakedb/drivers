@@ -316,12 +316,14 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
         Warning::NumericValueTruncated => "Numeric value truncated",
         Warning::RowError => "Error in row",
         Warning::OptionValueChanged => "Option value changed",
+        Warning::DisconnectError => "Disconnect error",
     };
     let sql_state = match warning {
         Warning::StringDataTruncated => SqlState::StringDataRightTruncated,
         Warning::NumericValueTruncated => SqlState::FractionalTruncation,
         Warning::RowError => SqlState::ErrorInRow,
         Warning::OptionValueChanged => SqlState::OptionValueChanged,
+        Warning::DisconnectError => SqlState::DisconnectError,
     };
     let state_str = sql_state.as_str();
     DiagnosticRecord {
@@ -875,6 +877,15 @@ mod tests {
         }
         .fail();
         assert_eq!(result.to_sql_code(), sql::SqlReturn::ERROR.0);
+    }
+
+    #[test]
+    fn from_warning_disconnect_error_maps_to_01002() {
+        let rec = from_warning(&crate::conversion::warning::Warning::DisconnectError);
+        assert_eq!(rec.sql_state, SqlState::DisconnectError);
+        assert_eq!(rec.sql_state.as_str(), "01002");
+        assert_eq!(rec.message_text, "Disconnect error");
+        assert!(rec.sql_state.is_warning());
     }
 
     #[test]

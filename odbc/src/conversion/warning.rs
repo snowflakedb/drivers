@@ -6,4 +6,6 @@ pub enum Warning {
     NumericValueTruncated,
     RowError,
     OptionValueChanged,
+    /// Soft failure during disconnect teardown (SQLSTATE 01002).
+    DisconnectError,
 }
