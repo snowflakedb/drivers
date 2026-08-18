@@ -1,4 +1,4 @@
-@python @odbc @core_not_needed
+@python @odbc @jdbc @core_not_needed
 Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   # Snowflake semi-structured types: VARIANT, OBJECT, ARRAY
   # Internal representation varies by driver and result format (JSON string, parsed
@@ -10,7 +10,7 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should cast semi-structured values to appropriate type
     # Python: Values are returned as JSON strings (str type)
     # ODBC: Values are reported as SQL_VARCHAR
@@ -22,13 +22,13 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should select semi-structured literals
     Given Snowflake client is logged in
     When Query "SELECT PARSE_JSON('{\"key\":\"value\"}'), ARRAY_CONSTRUCT(10, 20, 30), OBJECT_CONSTRUCT('a', 1, 'b', 2)" is executed
     Then Result should contain the expected values for VARIANT, ARRAY, and OBJECT columns
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should select deeply nested semi-structured literals
     Given Snowflake client is logged in
     When Query "SELECT PARSE_JSON('{\"a\":{\"b\":[1,2,{\"c\":true}]}}')" is executed
@@ -38,7 +38,7 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                             NULL handling                                   #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle NULL semi-structured values from literals
     Given Snowflake client is logged in
     When Query "SELECT NULL::VARIANT, NULL::OBJECT, NULL::ARRAY" is executed
@@ -48,14 +48,14 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                           Table operations                                  #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should select semi-structured values from table
     Given Snowflake client is logged in
     And Table with VARIANT, OBJECT, and ARRAY columns exists with JSON values
     When Query "SELECT * FROM <table>" is executed
     Then Data should contain the expected semi-structured values
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle NULL semi-structured values from table
     Given Snowflake client is logged in
     And Table with VARIANT column exists containing NULLs and values
@@ -66,19 +66,19 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                         Empty JSON containers                               #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle empty JSON containers
     Given Snowflake client is logged in
     When Query "SELECT PARSE_JSON('{}'), ARRAY_CONSTRUCT(), OBJECT_CONSTRUCT()" is executed
     Then Each column should return a valid empty container
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle empty JSON array literal
     Given Snowflake client is logged in
     When Query "SELECT PARSE_JSON('[]')" is executed
     Then Result should be an empty JSON array
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should round-trip empty JSON containers through a table
     Given Snowflake client is logged in
     And Table with VARIANT, OBJECT, and ARRAY columns exists with empty containers
@@ -89,13 +89,13 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                       JSON with unicode content                             #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle JSON with unicode content
     Given Snowflake client is logged in
     When Query returning JSON with unicode characters is executed
     Then Result should preserve the unicode characters
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle JSON with unicode in keys
     Given Snowflake client is logged in
     When Query returning JSON with unicode characters in keys is executed
@@ -105,7 +105,7 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                       Multiple chunks downloading                           #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should download semi-structured data in multiple chunks
     Given Snowflake client is logged in
     When Query "SELECT OBJECT_CONSTRUCT('id', seq8()) AS obj FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v ORDER BY 1" is executed
@@ -115,19 +115,19 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                           Parameter binding                                 #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should select variant using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT PARSE_JSON(?)" is executed with bound JSON string '{"bound":true}'
     Then Result should contain a value with "bound" key
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should select NULL variant using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT PARSE_JSON(?)" is executed with bound NULL value
     Then Result should be NULL
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should insert variant using parameter binding
     Given Snowflake client is logged in
     And Table with VARIANT column exists
