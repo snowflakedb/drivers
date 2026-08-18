@@ -97,7 +97,7 @@ cp "$TEMPLATES_DIR/odbc.ini.template" "$SCRIPTS_STAGE_DIR/odbc.ini.template"
 
 mkdir -p "$BUILD_DIR"
 
-PKG_NAME="snowflake-odbc-${VERSION}-universal.pkg"
+PKG_NAME="snowflake-odbc-${VERSION}.universal.pkg"
 
 echo "=== Building pkg: $PKG_NAME ==="
 pkgbuild \
