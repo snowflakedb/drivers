@@ -15,9 +15,10 @@
 //! API calls (same TLS config as for Snowflake).
 
 use crate::config::rest_parameters::WorkloadIdentityConfig;
+use crate::http::retry::{CappedBodyError, read_body_capped};
 use crate::sensitive::SensitiveString;
 use serde::Deserialize;
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{IntoError, Location, ResultExt, Snafu};
 
 use super::AttestationEndpoints;
 
@@ -66,6 +67,15 @@ pub enum GcpAttestationError {
     ResponseParse {
         context: &'static str,
         source: serde_json::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "{context} response body exceeds the maximum allowed size of {max_bytes} bytes"
+    ))]
+    ResponseBodyTooLarge {
+        context: &'static str,
+        max_bytes: u64,
         #[snafu(implicit)]
         location: Location,
     },
@@ -194,6 +204,9 @@ async fn generate_identity_token(
 
     let status = resp.status();
     tracing::info!(status = status.as_u16(), "HTTP response");
+    // TODO: SNOW-3965609 — route this IAM `generateIdToken` response body read
+    // through `read_body_capped` (as the GCE metadata GET now does) so it is
+    // bounded by a size limit.
     let text = resp
         .text()
         .await
@@ -238,12 +251,28 @@ async fn metadata_get(
     .context(RequestTimedOutSnafu { context })?
     .context(RequestSnafu { context })?;
 
+    const MAX_METADATA_RESPONSE_BODY_BYTES: u64 = 20 * 1024 * 1024;
     let status = resp.status();
     tracing::info!(status = status.as_u16(), "HTTP response");
-    let text = resp
-        .text()
-        .await
-        .context(ResponseBodyReadSnafu { context })?;
+    // Stream the body against a fixed size limit so an oversized response is
+    // bounded even under chunked transfer-encoding or an omitted `Content-Length`,
+    // which a bare `content_length()` check does not cover.
+    // `reqwest::Response::text()` already decodes lossily, so `from_utf8_lossy`
+    // preserves the previous behavior for the UTF-8 JSON body.
+    let bytes = match read_body_capped(resp, MAX_METADATA_RESPONSE_BODY_BYTES as usize).await {
+        Ok(bytes) => bytes,
+        Err(CappedBodyError::TooLarge { .. }) => {
+            return ResponseBodyTooLargeSnafu {
+                context,
+                max_bytes: MAX_METADATA_RESPONSE_BODY_BYTES,
+            }
+            .fail();
+        }
+        Err(CappedBodyError::Transport(source)) => {
+            return Err(ResponseBodyReadSnafu { context }.into_error(source));
+        }
+    };
+    let text = String::from_utf8_lossy(&bytes).into_owned();
     if !status.is_success() {
         return UnexpectedHttpStatusSnafu {
             context,
@@ -667,5 +696,52 @@ mod tests {
             "query string leaked into logs"
         );
         assert!(!logs_contain("audience="), "query string leaked into logs");
+    }
+
+    /// Serve one HTTP/1.1 response of `body_len` bytes via chunked
+    /// transfer-encoding with **no** `Content-Length`, then close, so the test
+    /// exercises the streaming size limit where no advertised length is present.
+    async fn serve_chunked_once(body_len: usize) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut scratch = [0u8; 1024];
+                let _ = sock.read(&mut scratch).await;
+                let head =
+                    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(format!("{body_len:x}\r\n").as_bytes()).await;
+                let _ = sock.write_all(&vec![b'x'; body_len]).await;
+                let _ = sock.write_all(b"\r\n0\r\n\r\n").await;
+                let _ = sock.flush().await;
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// A metadata response that streams past the 20 MiB cap using chunked
+    /// encoding (no `Content-Length`) must be rejected with the endpoint's
+    /// `context` label preserved. The header-only guard would have missed this.
+    #[tokio::test]
+    async fn metadata_get_rejects_chunked_body_exceeding_cap_without_content_length() {
+        const CAP: u64 = 20 * 1024 * 1024;
+        let url = serve_chunked_once(CAP as usize + 1).await;
+        let client = reqwest::Client::new();
+
+        let err = metadata_get(&client, &url, "GCE metadata identity token")
+            .await
+            .expect_err("an oversized chunked metadata body must be rejected");
+        assert!(
+            matches!(
+                &err,
+                GcpAttestationError::ResponseBodyTooLarge { max_bytes, context, .. }
+                    if *max_bytes == CAP && *context == "GCE metadata identity token"
+            ),
+            "expected ResponseBodyTooLarge {{ max_bytes: 20 MiB }}, got {err:?}"
+        );
     }
 }

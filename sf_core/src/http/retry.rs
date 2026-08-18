@@ -287,12 +287,56 @@ where
     }
 }
 
-/// Like [`execute_bytes_with_retry`] but streams the response body and aborts
-/// with [`HttpError::ResponseTooLarge`] the moment the advertised
-/// `Content-Length` or the accumulated body size exceeds `max_size`. The size
-/// rejection is a property of the payload (not a transient failure), so it is
-/// surfaced without further retries. Transport/status failures still flow
-/// through the normal retry path.
+/// Error from [`read_body_capped`]. Deliberately narrow — either the payload
+/// exceeded the cap or the transport failed mid-stream — so each call site can
+/// map the two cases into its own error taxonomy without a catch-all arm.
+#[derive(Debug)]
+pub enum CappedBodyError {
+    /// The advertised `Content-Length` or the running accumulated size exceeded
+    /// `max_size`. `size` is the offending byte count observed so far.
+    TooLarge { size: u64, max_size: usize },
+    /// The underlying `reqwest` byte stream failed while reading the body.
+    Transport(reqwest::Error),
+}
+
+/// Stream `resp`'s body into memory, aborting with [`CappedBodyError::TooLarge`]
+/// as soon as the advertised `Content-Length` or the running accumulated size
+/// exceeds `max_size`. Unlike a bare `content_length()` check this bounds memory
+/// even when the response uses `Transfer-Encoding: chunked` or omits the header
+/// entirely. This is the single-shot primitive for call sites that run their own
+/// request execution; [`execute_bytes_with_retry_capped`] wraps it with the
+/// retry path.
+pub async fn read_body_capped(resp: Response, max_size: usize) -> Result<Vec<u8>, CappedBodyError> {
+    use futures::StreamExt;
+    if let Some(len) = resp.content_length()
+        && len > max_size as u64
+    {
+        return Err(CappedBodyError::TooLarge {
+            size: len,
+            max_size,
+        });
+    }
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(CappedBodyError::Transport)?;
+        if buf.len() + chunk.len() > max_size {
+            return Err(CappedBodyError::TooLarge {
+                size: (buf.len() + chunk.len()) as u64,
+                max_size,
+            });
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+/// Like [`execute_bytes_with_retry`] but streams the response body through
+/// [`read_body_capped`] and aborts with [`HttpError::ResponseTooLarge`] the
+/// moment the advertised `Content-Length` or the accumulated body size exceeds
+/// `max_size`. The size rejection is a property of the payload (not a transient
+/// failure), so it is surfaced without further retries. Transport/status
+/// failures still flow through the normal retry path.
 pub async fn execute_bytes_with_retry_capped<B>(
     build: B,
     ctx: &HttpContext,
@@ -302,32 +346,14 @@ pub async fn execute_bytes_with_retry_capped<B>(
 where
     B: Fn() -> reqwest::RequestBuilder,
 {
-    use futures::StreamExt;
     execute_with_retry(build, ctx, policy, |resp| async move {
         let resp = resp.error_for_status().context(TransportSnafu)?;
-        if let Some(len) = resp.content_length()
-            && len > max_size as u64
-        {
-            return ResponseTooLargeSnafu {
-                size: len,
-                max_size,
+        read_body_capped(resp, max_size).await.map_err(|e| match e {
+            CappedBodyError::TooLarge { size, max_size } => {
+                ResponseTooLargeSnafu { size, max_size }.build()
             }
-            .fail();
-        }
-        let mut stream = resp.bytes_stream();
-        let mut buf: Vec<u8> = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.context(TransportSnafu)?;
-            if buf.len() + chunk.len() > max_size {
-                return ResponseTooLargeSnafu {
-                    size: (buf.len() + chunk.len()) as u64,
-                    max_size,
-                }
-                .fail();
-            }
-            buf.extend_from_slice(&chunk);
-        }
-        Ok(buf)
+            CappedBodyError::Transport(source) => TransportSnafu.into_error(source),
+        })
     })
     .await
 }
@@ -365,5 +391,77 @@ mod timeout_tests {
         let result =
             calculate_request_timeout(Some(Duration::from_secs(10)), Some(Duration::from_secs(3)));
         assert_eq!(result, Some(Duration::from_secs(3)));
+    }
+}
+
+#[cfg(test)]
+mod capped_body_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Serve one HTTP/1.1 response that carries `body_len` bytes using
+    /// `Transfer-Encoding: chunked` and **no** `Content-Length`, then closes.
+    /// With no advertised length this exercises the streaming accumulation path
+    /// in [`read_body_capped`]. Returns the URL to GET.
+    async fn serve_chunked_once(body_len: usize) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut scratch = [0u8; 1024];
+                let _ = sock.read(&mut scratch).await; // best-effort drain request
+                let head =
+                    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = sock.write_all(head.as_bytes()).await;
+                // Single chunk of `body_len` bytes, then the terminating chunk.
+                let _ = sock.write_all(format!("{body_len:x}\r\n").as_bytes()).await;
+                let _ = sock.write_all(&vec![b'x'; body_len]).await;
+                let _ = sock.write_all(b"\r\n0\r\n\r\n").await;
+                let _ = sock.flush().await;
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// A chunked response with no `Content-Length` that exceeds the cap is
+    /// rejected once the accumulated size crosses `max_size` — the header-only
+    /// check would have missed this entirely.
+    #[tokio::test]
+    async fn read_body_capped_rejects_chunked_body_without_content_length() {
+        let url = serve_chunked_once(4096).await;
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+        assert!(
+            resp.content_length().is_none(),
+            "chunked server must not advertise Content-Length"
+        );
+        let err = read_body_capped(resp, 512)
+            .await
+            .expect_err("oversized chunked body must be rejected");
+        assert!(
+            matches!(err, CappedBodyError::TooLarge { max_size, .. } if max_size == 512),
+            "expected TooLarge {{ max_size: 512 }}, got {err:?}"
+        );
+    }
+
+    /// A chunked response within the cap is returned verbatim, confirming the
+    /// cap is an upper bound rather than a hard rejection of chunked framing.
+    #[tokio::test]
+    async fn read_body_capped_accepts_chunked_body_within_cap() {
+        let url = serve_chunked_once(100).await;
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+        let bytes = read_body_capped(resp, 4096)
+            .await
+            .expect("within-cap chunked body must be returned");
+        assert_eq!(bytes.len(), 100);
     }
 }
