@@ -34,6 +34,7 @@ use crate::api::get_info_bitmasks::{
     STATIC_CURSOR_ATTRIBUTES2, STATIC_SENSITIVITY, STRING_FUNCTIONS, SUBQUERIES, SYSTEM_FUNCTIONS,
     TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, TXN_ISOLATION_OPTION, UNION, synthesize,
 };
+use crate::api::handle_allocation::cleanup_connection;
 use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
 use crate::api::odbc_installer::resolve_driver_name;
@@ -874,6 +875,11 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
 }
 
 /// Disconnect from the database, performing logout and releasing sf_core handles.
+///
+/// Per the ODBC spec, after a successful disconnect the driver frees all
+/// statement handles and explicitly allocated descriptors on the connection
+/// (SNOW-3240577). Child statements mid data-at-execution or async execution
+/// reject disconnect with HY010 before any teardown.
 pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
@@ -899,7 +905,27 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
         return InvalidTransactionStateSnafu.fail();
     }
 
-    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+    // HY010 if any child statement is mid data-at-execution or async — do not
+    // partially disconnect or free children. Same lock-order pattern as
+    // `cancel_handle` / `commit_or_rollback`: hold `connection` across the
+    // child-statement scan so a concurrent execute cannot slip into NeedData
+    // between cloning the list and the per-stmt check.
+    // Lock order remains `connection` -> `stmt.inner`.
+    let child_ids: Vec<HandleId> = connection.child_statements.clone();
+    let g = global().context(OdbcRuntimeSnafu)?;
+    for &child_id in &child_ids {
+        if let Ok(stmt_guard) = g.stmt_registry.get(child_id) {
+            let inner = stmt_guard.inner.lock();
+            if inner.state.as_ref().is_async_executing() {
+                return AsyncInProgressSnafu.fail();
+            }
+            if inner.state.as_ref().is_need_data() {
+                return InvalidDuringDaeSnafu.fail();
+            }
+        }
+    }
+
+    g.block_on(async |c| {
         c.connection_close(ConnectionCloseRequest {
             conn_handle: Some(conn_handle),
         })
@@ -928,6 +954,14 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     // drops events for released handles). `mark_disconnected` clears `state` and
     // the cache together, upholding "cache is `Some` iff `Connected`".
     dbc.mark_disconnected(&mut connection);
+    // Drop the connection lock before cleanup_connection, which re-acquires it
+    // to drain child_statements / child_descriptors.
+    drop(connection);
+
+    // Spec: after successfully disconnecting, free statements and explicitly
+    // allocated descriptors on this connection so follow-up SQLFreeHandle on
+    // those handles returns SQL_INVALID_HANDLE (BD#68 / SNOW-3240577).
+    cleanup_connection(&dbc)?;
     Ok(())
 }
 
