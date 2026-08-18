@@ -204,7 +204,15 @@ class Error(Exception):
         This is the handler installed on every new ``Connection`` and ``Cursor``
         unless the user overrides ``errorhandler``.
         """
-        raise Error.errorhandler_make_exception(error_class, error_value)
+        # circular-import: errorhandler.py imports Error from this module at top
+        # level, so this helper is imported at call time to avoid the cycle.
+        from ._internal.errorhandler import _mark_errorhandler_routed
+
+        new_exc = Error.errorhandler_make_exception(error_class, error_value)
+        # The reconstructed exception must carry the routed flag so a
+        # @simplified_error_handling caller does not PEP route twice
+        _mark_errorhandler_routed(new_exc)
+        raise new_exc
 
 
 class InterfaceError(Error):

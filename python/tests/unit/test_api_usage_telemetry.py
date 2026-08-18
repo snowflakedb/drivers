@@ -18,7 +18,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from snowflake.connector.constants import SessionParameterName
-from snowflake.connector.errors import ProgrammingError
+from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.helpers.fixtures import _make_execute_response
 
 
@@ -400,6 +400,34 @@ class TestWrapperErrorTelemetry:
 
         assert ("ProgrammingError", "SnowflakeCursor.execute") in self._get_wrapper_errors(mock_db_api)
 
+    def test_fetchone_closed_sends_wrapper_error(self, cursor, mock_db_api):
+        """fetchone uses @simplified_error_handling but still reports wrapper_error on failure."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        cursor.close()
+
+        with pytest.raises(InterfaceError):
+            cursor.fetchone()
+
+        assert ("InterfaceError", "SnowflakeCursor.fetchone") in self._get_wrapper_errors(mock_db_api)
+
+    def test_fetchmany_closed_sends_wrapper_error(self, cursor, mock_db_api):
+        """fetchmany uses @simplified_error_handling but still reports wrapper_error on failure."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        cursor.close()
+
+        with pytest.raises(InterfaceError):
+            cursor.fetchmany(1)
+
+        assert ("InterfaceError", "SnowflakeCursor.fetchmany") in self._get_wrapper_errors(mock_db_api)
+
+    def test_fetchone_success_does_not_send_wrapper_error(self, cursor, mock_db_api):
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        cursor._iterator = iter([(1,)])
+
+        cursor.fetchone()
+
+        assert self._get_wrapper_errors(mock_db_api) == []
+
     def test_connection_commit_error_reports_inner_source(self, connection, mock_db_api):
         """When commit() -> execute() raises, both the inner execute() frame and the
         outer commit() frame report — each wrapped frame that catches the exception
@@ -491,6 +519,15 @@ class TestAsyncWrapperErrorTelemetry:
             _run_async(async_cursor.execute("BAD SQL"))
 
         assert ("ProgrammingError", "SnowflakeCursor.execute") in self._get_wrapper_errors(mock_async_db_api)
+
+    def test_async_fetchone_closed_sends_wrapper_error(self, async_cursor, mock_async_db_api):
+        mock_async_db_api.telemetry_send_wrapper_error.reset_mock()
+        async_cursor.close()
+
+        with pytest.raises(InterfaceError):
+            _run_async(async_cursor.fetchone())
+
+        assert ("InterfaceError", "SnowflakeCursor.fetchone") in self._get_wrapper_errors(mock_async_db_api)
 
     def test_async_connection_commit_error_reports_inner_source(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_wrapper_error.reset_mock()

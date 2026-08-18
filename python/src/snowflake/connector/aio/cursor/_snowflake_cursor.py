@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import cast
 
 from ..._internal.cursor import Row
+from ..._internal.errorhandler import simplified_error_handling
 from ._base import SnowflakeCursorBase
 
 
@@ -18,6 +19,7 @@ class SnowflakeCursor(SnowflakeCursorBase):
     def _use_dict_result(self) -> bool:
         return False
 
+    @simplified_error_handling
     async def fetchone(self) -> Row | None:
         """
         Fetch the next row of a query result set.
@@ -27,6 +29,7 @@ class SnowflakeCursor(SnowflakeCursorBase):
         """
         return cast(Row | None, await self._fetchone())
 
+    @simplified_error_handling
     async def fetchmany(self, size: int | None = None) -> list[Row]:
         """
         Fetch the next set of rows of a query result.

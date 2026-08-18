@@ -12,6 +12,10 @@ This wrapping is also where ``wrapper_error`` telemetry is collected (see
 call that catches an exception reports it, tagged with its own method name,
 but only the outermost frame in a call chain hands the error to the PEP 249
 errorhandler, so PEP 249 routing still fires exactly once.
+
+Hot-path methods may use ``@simplified_error_handling`` instead of the mixin wrap:
+failures still go through ``_reraise_via_errorhandler``, but the success path
+skips the ContextVar round-trip.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ import inspect
 
 from collections.abc import Callable
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 
 from ..errors import Error
 from .decorators import _schedule_async_telemetry, _telemetry_client_if_enabled
@@ -36,6 +40,49 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+F = TypeVar("F", bound=Callable[..., Any])
+
+# Set on an Error that has already been through ``route_exception`` / the
+# default handler, so a @simplified_error_handling hot path does not PEP 249-route
+# twice when an inner wrapped method already did.
+_ROUTED_ATTR = "_sf_errorhandler_routed"
+_SIMPLIFIED_ERROR_HANDLING_ATTR = "_simplified_error_handling"
+
+
+def simplified_error_handling(func: F) -> F:
+    """Route failures without the mixin ContextVar round-trip on the success path.
+
+    Skips ``ErrorHandlerMixin`` auto-wrapping and installs a cheap ``try/except``
+    that calls ``_reraise_via_errorhandler`` (PEP 249 routing + ``wrapper_error`` telemetry).
+    """
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(self: ErrorHandlerMixin, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(self, *args, **kwargs)
+            except Exception as exc:
+                await self._reraise_via_errorhandler_async(func, exc)
+
+        wrapper: Callable[..., Any] = async_wrapper
+    else:
+
+        @functools.wraps(func)
+        def sync_wrapper(self: ErrorHandlerMixin, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(self, *args, **kwargs)
+            except Exception as exc:
+                self._reraise_via_errorhandler(func, exc)
+
+        wrapper = sync_wrapper
+
+    setattr(wrapper, _SIMPLIFIED_ERROR_HANDLING_ATTR, True)
+    return cast(F, wrapper)
+
+
+def _mark_errorhandler_routed(exc: BaseException) -> None:
+    setattr(exc, _ROUTED_ATTR, True)
+
 
 def route_exception(
     connection: Connection | AsyncConnection | None,
@@ -47,6 +94,7 @@ def route_exception(
     The handler may observe, log, or replace the error (by raising a different
     exception), but it cannot suppress it — the original is always re-raised.
     """
+    _mark_errorhandler_routed(exc)
     error_value = _error_to_value(exc)
     Error.hand_to_other_handler(connection, cursor, type(exc), error_value)
     raise exc
@@ -72,6 +120,24 @@ class ErrorHandlerMixin:
     def _errorhandler_cursor(self) -> SnowflakeCursorBase | AsyncSnowflakeCursorBase | None:
         return None
 
+    def _reraise_via_errorhandler(self, method: Callable[..., Any], exc: BaseException) -> NoReturn:
+        """Report ``wrapper_error`` telemetry and PEP 249-route *exc* unless already routed.
+
+        Used by ``@simplified_error_handling`` instead of paying a ContextVar
+        round-trip on every successful call.
+        """
+        _report_wrapper_error(self, method, exc)
+        if isinstance(exc, Error) and not _errorhandler_active.get() and not getattr(exc, _ROUTED_ATTR, False):
+            route_exception(self._errorhandler_connection, self._errorhandler_cursor, exc)
+        raise exc
+
+    async def _reraise_via_errorhandler_async(self, method: Callable[..., Any], exc: BaseException) -> NoReturn:
+        """Async counterpart of :meth:`_reraise_via_errorhandler`."""
+        await _report_wrapper_error_async(self, method, exc)
+        if isinstance(exc, Error) and not _errorhandler_active.get() and not getattr(exc, _ROUTED_ATTR, False):
+            route_exception(self._errorhandler_connection, self._errorhandler_cursor, exc)
+        raise exc
+
 
 def _apply_errorhandler(cls: type) -> None:
     """Wrap public methods of *cls* with error-handler routing."""
@@ -80,6 +146,8 @@ def _apply_errorhandler(cls: type) -> None:
         if name.startswith("_"):
             continue
         attr = vars(cls)[name]
+        if getattr(attr, _SIMPLIFIED_ERROR_HANDLING_ATTR, False):
+            continue
         # descriptors — not regular instance methods
         if isinstance(attr, (property, classmethod, staticmethod)):
             continue

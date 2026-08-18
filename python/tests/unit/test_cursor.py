@@ -187,6 +187,112 @@ class TestFetchone:
         assert result2 is None
 
 
+class TestFetchoneErrorhandlerWrapping:
+    """fetchone uses simplified error handling but still PEP 249-routes."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_fetchone_is_not_errorhandler_wrapped(self):
+        """fetchone uses @simplified_error_handling, not the mixin ContextVar wrap."""
+        from snowflake.connector.cursor import DictCursor
+
+        assert getattr(SnowflakeCursor.fetchone, "_simplified_error_handling", False)
+        assert getattr(DictCursor.fetchone, "_simplified_error_handling", False)
+        assert "_errorhandler_active" not in SnowflakeCursor.fetchone.__code__.co_names
+        assert "_errorhandler_active" in SnowflakeCursor.fetchall.__code__.co_names
+
+    def test_fetchone_on_closed_cursor_routes_error(self, cursor):
+        """Closed fetchone still PEP 249-routes (messages + default handler)."""
+        cursor._connection.messages = []
+        cursor._closed = True
+
+        with pytest.raises(InterfaceError, match="Cursor is closed"):
+            cursor.fetchone()
+
+        assert len(cursor.messages) == 1
+        assert cursor.messages[0][0] is InterfaceError
+        assert len(cursor._connection.messages) == 1
+
+    def test_fetchone_before_execute_routes_error(self, cursor):
+        """Fetch with no result set still PEP 249-routes."""
+        cursor._connection.messages = []
+
+        with pytest.raises(ProgrammingError, match="No results available"):
+            cursor.fetchone()
+
+        assert len(cursor.messages) == 1
+        assert cursor.messages[0][0] is ProgrammingError
+        assert len(cursor._connection.messages) == 1
+
+    def test_fetchone_custom_errorhandler_is_invoked(self, cursor):
+        cursor._connection.messages = []
+        seen: list[type] = []
+        cursor.errorhandler = lambda _c, _cur, cls, _val: seen.append(cls)
+        cursor._closed = True
+
+        with pytest.raises(InterfaceError):
+            cursor.fetchone()
+
+        assert seen == [InterfaceError]
+
+    def test_fetchone_custom_errorhandler_can_replace_error(self, cursor):
+        cursor._connection.messages = []
+
+        def handler(_c, _cur, _cls, _val):
+            raise RuntimeError("replaced")
+
+        cursor.errorhandler = handler
+        cursor._closed = True
+
+        with pytest.raises(RuntimeError, match="replaced"):
+            cursor.fetchone()
+
+    def test_fetchone_prefetch_already_routed_error_is_not_routed_twice(self, cursor):
+        """Prefetch that goes through a wrapped public method must not double-append messages."""
+        from snowflake.connector._internal.errorhandler import route_exception
+
+        cursor._connection.messages = []
+
+        def hook() -> None:
+            route_exception(
+                cursor._connection,
+                cursor,
+                ProgrammingError(msg="async failed", errno=1),
+            )
+
+        cursor._prefetch_hook = hook
+
+        with pytest.raises(ProgrammingError, match="async failed"):
+            cursor.fetchone()
+
+        assert len(cursor.messages) == 1
+
+    def test_fetchone_prefetch_unrouted_error_is_routed(self, cursor):
+        """A raw Error from the prefetch hook (e.g. waiter timeout) is still routed."""
+        from snowflake.connector.errors import DatabaseError
+
+        cursor._connection.messages = []
+
+        def hook() -> None:
+            raise DatabaseError("Cannot retrieve data on the status of this query")
+
+        cursor._prefetch_hook = hook
+
+        with pytest.raises(DatabaseError):
+            cursor.fetchone()
+
+        assert len(cursor.messages) == 1
+        assert cursor.messages[0][0] is DatabaseError
+
+
 class TestFetchall:
     """Unit tests for Cursor.fetchall method."""
 
@@ -498,6 +604,104 @@ class TestFetchmany:
             result = cursor.fetchmany(2)
 
         assert result == [(3,), (4,)]
+
+
+class TestFetchmanyErrorhandlerWrapping:
+    """fetchmany uses simplified error handling but still PEP 249-routes."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_fetchmany_is_not_errorhandler_wrapped(self):
+        from snowflake.connector.cursor import DictCursor
+
+        assert getattr(SnowflakeCursor.fetchmany, "_simplified_error_handling", False)
+        assert getattr(DictCursor.fetchmany, "_simplified_error_handling", False)
+        assert "_errorhandler_active" not in SnowflakeCursor.fetchmany.__code__.co_names
+        assert "_errorhandler_active" in SnowflakeCursor.fetchall.__code__.co_names
+
+    def test_fetchmany_on_closed_cursor_routes_error(self, cursor):
+        cursor._connection.messages = []
+        cursor._closed = True
+
+        with pytest.raises(InterfaceError, match="Cursor is closed"):
+            cursor.fetchmany(1)
+
+        assert len(cursor.messages) == 1
+        assert cursor.messages[0][0] is InterfaceError
+        assert len(cursor._connection.messages) == 1
+
+    def test_fetchmany_before_execute_routes_error(self, cursor):
+        cursor._connection.messages = []
+
+        with pytest.raises(ProgrammingError, match="No results available"):
+            cursor.fetchmany(1)
+
+        assert len(cursor.messages) == 1
+        assert cursor.messages[0][0] is ProgrammingError
+        assert len(cursor._connection.messages) == 1
+
+    def test_fetchmany_negative_size_routes_error(self, cursor):
+        cursor._connection.messages = []
+
+        with pytest.raises(ProgrammingError, match="not zero or positive number"):
+            cursor.fetchmany(-1)
+
+        assert len(cursor.messages) == 1
+        assert cursor.messages[0][0] is ProgrammingError
+
+    def test_fetchmany_custom_errorhandler_is_invoked(self, cursor):
+        cursor._connection.messages = []
+        seen: list[type] = []
+        cursor.errorhandler = lambda _c, _cur, cls, _val: seen.append(cls)
+        cursor._closed = True
+
+        with pytest.raises(InterfaceError):
+            cursor.fetchmany(1)
+
+        assert seen == [InterfaceError]
+
+    def test_fetchmany_prefetch_already_routed_error_is_not_routed_twice(self, cursor):
+        from snowflake.connector._internal.errorhandler import route_exception
+
+        cursor._connection.messages = []
+
+        def hook() -> None:
+            route_exception(
+                cursor._connection,
+                cursor,
+                ProgrammingError(msg="async failed", errno=1),
+            )
+
+        cursor._prefetch_hook = hook
+
+        with pytest.raises(ProgrammingError, match="async failed"):
+            cursor.fetchmany(1)
+
+        assert len(cursor.messages) == 1
+
+    def test_fetchmany_prefetch_unrouted_error_is_routed(self, cursor):
+        from snowflake.connector.errors import DatabaseError
+
+        cursor._connection.messages = []
+
+        def hook() -> None:
+            raise DatabaseError("Cannot retrieve data on the status of this query")
+
+        cursor._prefetch_hook = hook
+
+        with pytest.raises(DatabaseError):
+            cursor.fetchmany(1)
+
+        assert len(cursor.messages) == 1
+        assert cursor.messages[0][0] is DatabaseError
 
 
 class TestHandleLifecycle:
