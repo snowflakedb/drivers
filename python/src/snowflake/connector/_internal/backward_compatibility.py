@@ -53,8 +53,7 @@ _BACKWARD_COMPAT_WARNED: set[tuple[str, str]] = set()
 _MARKED_BACKWARD_COMPAT: set[Any] = set()
 
 _DEPRECATION_WARNING_MSG_SUFFIX = (
-    "is retained only for backward compatibility with snowflake-connector-python "
-    "and is not used by the Universal Driver; "
+    "is retained only for backward compatibility and is not used by the new driver; "
     "it may be removed in a future release."
 )
 

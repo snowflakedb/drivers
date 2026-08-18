@@ -1,8 +1,8 @@
-# ⚠️ PRIVATE PREVIEW DISCLAIMER ⚠️
+# ⚠️ PUBLIC PREVIEW DISCLAIMER ⚠️
 
-**This is a beta version of our Universal Driver intended for Snowflake customers who are subject to Snowflake's Preview Terms.**
+**This is a preview version of our Universal Driver intended for Snowflake customers who are subject to Snowflake's Preview Terms.**
 
-This driver is not ready for use with production data and may be unstable. Please only use it if you are actively participating in the Universal Driver Private Preview.
+This driver is not ready for use with production data and may be unstable. Please only use it if you are actively participating in the Universal Driver Preview.
 
 ## Development
 

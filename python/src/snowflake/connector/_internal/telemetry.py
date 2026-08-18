@@ -59,7 +59,7 @@ class TelemetryClient:
 
     @backward_compatibility
     def send_log_batch(self) -> None:
-        """No-op: the Universal Driver sends telemetry via RPC immediately; there is no batch to flush."""
+        """No-op: the new driver sends telemetry via RPC immediately; there is no batch to flush."""
 
     # Backward-compatibility alias: snowflake-connector-python named this _log_batch.
     _log_batch = send_log_batch

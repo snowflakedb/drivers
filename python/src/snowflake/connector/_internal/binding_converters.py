@@ -1,5 +1,5 @@
 """
-Parameter binding serialization for Snowflake universal driver.
+Parameter binding serialization for Snowflake universal core.
 
 This module handles serialization of Python parameter bindings to JSON format
 for transmission to the Rust core, following the design specified in bindingsdesign.md.

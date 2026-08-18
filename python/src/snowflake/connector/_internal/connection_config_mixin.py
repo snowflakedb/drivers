@@ -77,7 +77,7 @@ class ConnectionConfigMixin:
     Accepted by :class:`Connection` for forward-compatibility with
     snowflake-connector-python: callers can pass it today without breakage.
     Loading the file and merging the named ``connection_name`` profile into
-    this config is **not yet wired up** in the universal driver; until that
+    this config is **not yet wired up** in the universal core; until that
     lands, the value is stored on the dataclass but does not influence
     connection behaviour.  TODO: integrate with ``ConfigManager``."""
 
@@ -188,21 +188,19 @@ class ConnectionConfigMixin:
     ``oauth_socket_uri`` is mapped to ``oauth_redirect_uri``: the legacy
     ``snowflake-connector-python`` allowed the loopback listener to bind
     a different host/port than the URI advertised to the IdP. The
-    universal driver always binds the listener to ``oauth_redirect_uri``,
+    universal core always binds the listener to ``oauth_redirect_uri``,
     so a caller still using the legacy name receives the warning and the
     value flows through under the canonical name.
     """
 
     _UNSUPPORTED_PARAMS: ClassVar[dict[str, str]] = {
-        "client_fetch_use_mp": (
-            "not supported; universal driver uses a thread pool for chunk fetch (see BehaviorDifferences)"
-        ),
+        "client_fetch_use_mp": ("not supported; universal core uses a thread pool for chunk fetch."),
         "oauth_enable_refresh_tokens": (
-            "not supported; the universal driver always uses the refresh token "
-            "returned by the IdP. Use client_store_temporary_credential to gate caching"
+            "not supported; the universal core always uses the refresh token "
+            "returned by the IdP. Use client_store_temporary_credential to gate caching."
         ),
         "enable_crl_cache": (
-            "not supported; the universal driver has independent cache toggles (see BehaviorDifferences #42)."
+            "not supported; the universal core has independent cache toggles."
             "Use enable_crl_memory_cache and enable_crl_file_cache instead"
         ),
     }
@@ -284,7 +282,7 @@ class ConnectionConfigMixin:
 
         # The old snowflake-connector-python exposed a single
         # ``unsafe_skip_file_permissions_check`` that governed BOTH the
-        # config-file and the CRL-cache permission checks. The universal driver
+        # config-file and the CRL-cache permission checks. The universal core version
         # splits these into two params, so fan the legacy flag out onto both
         # (silently), unless the caller set a specific one explicitly.
         if "unsafe_skip_file_permissions_check" in kwargs:
@@ -298,7 +296,7 @@ class ConnectionConfigMixin:
 
         # The old snowflake-connector-python exposes network_timeout (wall-clock,
         # all non-login/query operations) and socket_timeout (per-attempt socket
-        # timeout) as single knobs. The universal driver splits each concept
+        # timeout) as single knobs. The universal core driver splits each concept
         # further, so fan the legacy value out onto both underlying params
         # unless the caller set a specific one explicitly. Using the legacy
         # names emits a DeprecationWarning pointing callers at the split params.
@@ -330,7 +328,7 @@ class ConnectionConfigMixin:
             if key.lower() in cls._UNSUPPORTED_PARAMS:
                 reason = cls._UNSUPPORTED_PARAMS[key.lower()]
                 warnings.warn(
-                    f"{key!r} has no effect in the universal driver: {reason}.",
+                    f"{key!r} has no effect: {reason}.",
                     DeprecationWarning,
                     stacklevel=4,
                 )
@@ -433,7 +431,7 @@ class ConnectionConfigMixin:
             internal_app_version = kwargs.pop("internal_application_version", None)
 
             # Capture emptiness AFTER stripping wrapper-internal levers —
-            # matching the legacy driver's ``is_kwargs_empty = not kwargs``
+            # matching the old driver version ``is_kwargs_empty = not kwargs``
             # (computed before any bookkeeping injection).  ``connect(user="alice")``
             # is NOT bare and must not silently load the default profile.
             no_connection_details = connection_name is None and not kwargs
