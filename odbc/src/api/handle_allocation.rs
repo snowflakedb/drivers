@@ -177,7 +177,11 @@ pub fn free_environment(handle: sql::Handle) -> OdbcResult<()> {
     Ok(())
 }
 
-fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
+/// Drain and free orphaned child statements and explicit descriptors on a
+/// connection. Used by [`free_connection`] and by [`crate::api::connection::disconnect`]
+/// after a successful disconnect (ODBC: free statements/explicit descs allocated
+/// on the connection).
+pub(crate) fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
     let mut conn = dbc.connection.lock();
     // Release any outstanding statements whose ODBC handles were never freed.
     let child_ids: Vec<_> = conn.child_statements.drain(..).collect();
@@ -509,9 +513,11 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::types::{DaeContext, ExecutionOrigin, StatementState};
     use sf_core::protobuf::generated::database_driver_v1::{
-        ConnectionNewRequest, DatabaseHandle as TDatabaseHandle,
+        ConnectionNewRequest, DatabaseNewRequest,
     };
+    use std::collections::HashMap;
 
     fn with_env<F, R>(f: F) -> R
     where
@@ -538,22 +544,26 @@ mod tests {
 
     fn mark_dbc_connected(dbc_handle: sql::Handle) {
         let g = global().expect("globals");
-        let conn_handle = g.block_on(async |c| {
-            c.connection_new(ConnectionNewRequest {})
+        let (db_handle, conn_handle) = g.block_on(async |c| {
+            let db_handle = c
+                .database_new(DatabaseNewRequest {})
+                .await
+                .expect("database_new")
+                .db_handle
+                .expect("db_handle present");
+            let conn_handle = c
+                .connection_new(ConnectionNewRequest {})
                 .await
                 .expect("connection_new")
                 .conn_handle
-                .expect("conn_handle present")
+                .expect("conn_handle present");
+            (db_handle, conn_handle)
         });
         let dbc = g
             .dbc_registry
             .get(HandleId::from(dbc_handle))
             .expect("dbc in registry");
-        dbc.mark_connected(
-            &mut dbc.connection.lock(),
-            TDatabaseHandle::default(),
-            conn_handle,
-        );
+        dbc.mark_connected(&mut dbc.connection.lock(), db_handle, conn_handle);
     }
 
     fn mark_dbc_disconnected(dbc_handle: sql::Handle) {
@@ -578,6 +588,32 @@ mod tests {
             .get(HandleId::from(dbc_handle))
             .expect("dbc in registry");
         dbc.connection.lock().child_statements.clone()
+    }
+
+    fn child_descriptor_ids(dbc_handle: sql::Handle) -> Vec<HandleId> {
+        let g = global().expect("globals");
+        let dbc = g
+            .dbc_registry
+            .get(HandleId::from(dbc_handle))
+            .expect("dbc in registry");
+        dbc.connection
+            .lock()
+            .child_descriptors
+            .iter()
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    fn connection_is_connected(dbc_handle: sql::Handle) -> bool {
+        let g = global().expect("globals");
+        let dbc = g
+            .dbc_registry
+            .get(HandleId::from(dbc_handle))
+            .expect("dbc in registry");
+        matches!(
+            dbc.connection.lock().state,
+            ConnectionState::Connected { .. }
+        )
     }
 
     fn stmt_desc_handles(stmt_handle: sql::Handle) -> [HandleId; 4] {
@@ -780,6 +816,108 @@ mod tests {
             free_connection(dbc_handle).expect("free_connection with orphaned statements");
 
             assert_handles_gone_from_registries(&stmt_ids, &desc_ids);
+        });
+    }
+
+    /// SNOW-3240577: SQLDisconnect must free child statements and explicit
+    /// descriptors so a follow-up SQLFreeHandle returns SQL_INVALID_HANDLE.
+    #[test]
+    fn disconnect_releases_orphaned_child_statements_and_explicit_descriptors() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            let stmt_a = alloc_statement(dbc_handle).expect("alloc_statement a");
+            let stmt_b = alloc_statement(dbc_handle).expect("alloc_statement b");
+            let explicit_desc = alloc_descriptor(dbc_handle).expect("alloc_descriptor");
+            let stmt_ids = [HandleId::from(stmt_a), HandleId::from(stmt_b)];
+            let explicit_desc_id = HandleId::from(explicit_desc);
+            let mut desc_ids = Vec::new();
+            desc_ids.extend(stmt_desc_handles(stmt_a));
+            desc_ids.extend(stmt_desc_handles(stmt_b));
+            desc_ids.push(explicit_desc_id);
+
+            assert_eq!(child_statements(dbc_handle).len(), 2);
+            assert_eq!(child_descriptor_ids(dbc_handle), vec![explicit_desc_id]);
+
+            crate::api::connection::disconnect(dbc_handle).expect("disconnect");
+
+            assert!(
+                !connection_is_connected(dbc_handle),
+                "disconnect must leave the connection Disconnected"
+            );
+            assert!(
+                child_statements(dbc_handle).is_empty(),
+                "child_statements must be drained after disconnect"
+            );
+            assert!(
+                child_descriptor_ids(dbc_handle).is_empty(),
+                "child_descriptors must be drained after disconnect"
+            );
+            assert_handles_gone_from_registries(&stmt_ids, &desc_ids);
+
+            free_connection(dbc_handle).expect("free_connection after disconnect");
+        });
+    }
+
+    /// SNOW-3240577: HY010 before any teardown when a child is mid data-at-execution.
+    #[test]
+    fn disconnect_rejects_when_child_statement_in_need_data() {
+        with_env(|_env_handle, env_id| {
+            let dbc_handle = alloc_tracked_dbc(env_id);
+            mark_dbc_connected(dbc_handle);
+
+            let stmt_handle = alloc_statement(dbc_handle).expect("alloc_statement");
+            let stmt_id = HandleId::from(stmt_handle);
+
+            {
+                let g = global().expect("globals");
+                let stmt = g.stmt_registry.get(stmt_id).expect("stmt in registry");
+                let mut inner = stmt.inner.lock();
+                inner.state.set(StatementState::AwaitingParamData {
+                    dae_context: Box::new(DaeContext {
+                        dae_params: vec![1],
+                        current_index: 0,
+                        pushed_data: HashMap::new(),
+                        deferred_query: None,
+                    }),
+                    origin: ExecutionOrigin::Direct,
+                });
+            }
+
+            let err = crate::api::connection::disconnect(dbc_handle)
+                .expect_err("disconnect must reject NeedData with HY010");
+            assert!(
+                matches!(err, crate::api::OdbcError::InvalidDuringDae { .. }),
+                "expected InvalidDuringDae, got {err:?}"
+            );
+            assert!(
+                connection_is_connected(dbc_handle),
+                "failed disconnect must leave the connection Connected"
+            );
+            assert_eq!(
+                child_statements(dbc_handle),
+                vec![stmt_id],
+                "failed disconnect must not free child statements"
+            );
+            assert!(
+                global()
+                    .expect("globals")
+                    .stmt_registry
+                    .get(stmt_id)
+                    .is_ok(),
+                "stmt must still be registered after rejected disconnect"
+            );
+
+            // Reset state so free_statement / disconnect can complete cleanup.
+            {
+                let g = global().expect("globals");
+                let stmt = g.stmt_registry.get(stmt_id).expect("stmt in registry");
+                stmt.inner.lock().state.set(StatementState::Created);
+            }
+            free_statement(stmt_handle).expect("free_statement");
+            crate::api::connection::disconnect(dbc_handle).expect("disconnect after reset");
+            free_connection(dbc_handle).expect("free_connection");
         });
     }
 
