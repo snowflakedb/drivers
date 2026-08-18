@@ -2,16 +2,25 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <chrono>
+#include <string>
+#include <thread>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "SessionParameterOverride.hpp"
 #include "compatibility.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
+
+namespace {
+constexpr int kMaxPollIterations = 300;
+constexpr auto kPollInterval = std::chrono::milliseconds(100);
+}  // namespace
 
 // ============================================================================
 // SQLFreeStmt - SQL_CLOSE Option
@@ -530,37 +539,56 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
   REQUIRE(count == 2);
 }
 
-TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE from Error state recovers to Created",
-                 "[odbc-api][freestmt][terminating_statement]") {
-  // The Error state occurs when the Arrow stream fails during fetch.
-  // Force this by setting a short statement timeout on a large streaming query.
-  SessionParameterOverride timeout(stmt2_handle(), "STATEMENT_TIMEOUT_IN_SECONDS", "1");
-  REQUIRE(timeout.is_active());
-
+// A statement reaches the internal Error state when an async query fails as it
+// completes: complete_async_poll surfaces the execute/reader error and sets
+// StatementState::Error (odbc/src/api/statement.rs). A *synchronous* failing
+// execute returns the error without mutating state (the statement stays
+// Created/Prepared), so async mode is the only deterministic black-box path to
+// Error. This test drives a statement into Error via a failing async query and
+// verifies SQL_CLOSE recovers it to Created so it can be reused.
+//
+// [flaky]: the old reference driver's async paths can abort (simba_abort /
+// pthread_mutex_lock) under parallel ctest workers, crashing the subprocess —
+// the same class of instability documented on the async cases in
+// e2e/query/async_execution.cpp. Tagged flaky so the blocking reference run is
+// not destabilized. The assertions themselves are the plain ODBC contract
+// (STILL_EXECUTING -> poll to SQL_ERROR -> SQL_CLOSE -> reusable), so no
+// driver-only gating is required.
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE from Error state recovers to Created",
+                 "[odbc-api][freestmt][terminating_statement][async][flaky]") {
   SQLRETURN ret =
-      SQLExecDirect(stmt_handle(), sqlchar("SELECT SEQ8() FROM TABLE(GENERATOR(ROWCOUNT => 10000000000))"), SQL_NTS);
-  if (ret != SQL_SUCCESS) {
-    SKIP("Query timed out before streaming started; cannot reach Error state");
-  }
+      SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+  REQUIRE(ret == SQL_SUCCESS);
 
-  bool hit_error = false;
-  while (!hit_error) {
-    ret = SQLFetch(stmt_handle());
-    if (ret == SQL_ERROR) {
-      hit_error = true;
-    } else if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
-      break;
-    }
-  }
-  if (!hit_error) {
-    SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-    SKIP("Streaming did not error within expected time; cannot reach Error state");
-  }
+  // The division by zero is evaluated server-side, so an async submit returns
+  // immediately with SQL_STILL_EXECUTING; the failure only surfaces on a poll.
+  constexpr const char* kFailingQuery = "SELECT 1 / 0";
+  ret = SQLExecDirect(stmt_handle(), sqlchar(kFailingQuery), SQL_NTS);
+  REQUIRE(ret == SQL_STILL_EXECUTING);
 
+  // Poll by re-issuing the same call until it stops returning STILL_EXECUTING.
+  // The completing poll reports the server error as SQL_ERROR with SQLSTATE
+  // 22012 (division by zero, matching the synchronous case in
+  // exec_direct_tests.cpp), which drives the statement into the internal
+  // Error state.
+  int polls = 0;
+  while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
+    std::this_thread::sleep_for(kPollInterval);
+    ret = SQLExecDirect(stmt_handle(), sqlchar(kFailingQuery), SQL_NTS);
+  }
+  REQUIRE_EXPECTED_ERROR(ret, "22012", stmt_handle(), SQL_HANDLE_STMT);
+
+  // SQL_CLOSE from Error transitions the statement back to Created.
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // SQL_CLOSE from Error transitions to Created: SQLDescribeCol should return HY010.
+  // Run the recovery checks synchronously.
+  ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_OFF), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // A Created statement has no prepared query, so SQLDescribeCol must fail with
+  // the function-sequence error HY010 — proving recovery landed in Created and
+  // did not leave a lingering result set or prepared plan.
   SQLCHAR col_name[128] = {};
   SQLSMALLINT name_len = 0;
   SQLSMALLINT data_type = 0;
@@ -569,8 +597,18 @@ TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE from Error st
   SQLSMALLINT nullable = 0;
   ret = SQLDescribeCol(stmt_handle(), 1, col_name, sizeof(col_name), &name_len, &data_type, &col_size, &decimal_digits,
                        &nullable);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's driver manager may surface the sequence error in its ODBC 2.x
+    // form S1010 before the driver maps it to the spec HY010.
+    REQUIRE(ret == SQL_ERROR);
+    const std::string state = get_sqlstate(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE((state == "HY010" || state == "S1010"));
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  }
 
+  // The statement is fully reusable: a fresh execute runs end to end.
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
