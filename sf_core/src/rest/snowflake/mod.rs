@@ -721,6 +721,10 @@ pub async fn auth_request_data(
             data.dpop_jwk_json = acquired.dpop_jwk_json;
         }
         LoginMethod::WorkloadIdentity(cfg) => {
+            // Verify the host is a recognized Snowflake endpoint before
+            // fetching cloud credentials. See workload_identity::host_allowlist.
+            workload_identity::ensure_allowed_host(&login_parameters.server_url)
+                .context(WorkloadIdentityAttestationSnafu)?;
             let attestation = workload_identity::create_attestation(client, cfg)
                 .await
                 .context(WorkloadIdentityAttestationSnafu)?;
@@ -3979,5 +3983,111 @@ mod tests {
             !display.contains("390100") && !display.contains("Auth failed"),
             "server error payload must not appear in display, got: {display}"
         );
+    }
+
+    /// Proves the WORKLOAD_IDENTITY host guard actually gates dispatch to the
+    /// provider, rather than merely existing alongside it. Uses the OIDC
+    /// provider (no network dependency) with a config that would fail with a
+    /// *different*, provider-specific error (`MissingToken`) if it were ever
+    /// reached. A disallowed `server_url` must short-circuit with the guard's
+    /// `DisallowedHost` error and must never reach — let alone fail inside —
+    /// `workload_identity::create_attestation`.
+    mod workload_identity_host_guard_tests {
+        use super::*;
+        use crate::config::rest_parameters::{WifProvider, WorkloadIdentityConfig};
+
+        /// Concatenates the `Display` message of `err` with every message in
+        /// its `source()` chain. `AuthError::to_string()` only renders the
+        /// outermost variant (e.g. "Workload Identity Federation attestation
+        /// failed"), so assertions that need to see *which* inner error was
+        /// produced must walk the chain, matching the pattern already used
+        /// for root-cause extraction elsewhere in this crate (see
+        /// `protobuf::apis::database_driver_v1::converter::extract_root_cause`).
+        fn full_chain_message(err: &(dyn std::error::Error)) -> String {
+            let mut messages = vec![err.to_string()];
+            let mut current = err.source();
+            while let Some(cause) = current {
+                messages.push(cause.to_string());
+                current = cause.source();
+            }
+            messages.join(" -> ")
+        }
+
+        fn wif_login_params(server_url: &str) -> LoginParameters {
+            LoginParameters {
+                login_method: LoginMethod::WorkloadIdentity(WorkloadIdentityConfig {
+                    provider: WifProvider::Oidc,
+                    entra_resource: None,
+                    impersonation_path: Vec::new(),
+                    // Deliberately absent: if dispatch ever reached the
+                    // provider without the host guard short-circuiting first,
+                    // `oidc::get_token` would fail with `MissingToken`
+                    // instead — a distinct, observable error — proving the
+                    // ambient-credential path was actually reached.
+                    oidc_token: None,
+                }),
+                server_url: server_url.to_string(),
+                ..test_login_params()
+            }
+        }
+
+        #[tokio::test]
+        async fn rejected_host_never_reaches_attestation_provider() {
+            let params = wif_login_params("https://not-snowflake.example");
+
+            let err = auth_request_data(
+                &reqwest::Client::new(),
+                &params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            )
+            .await
+            .expect_err("disallowed WIF host must fail closed");
+
+            let display = full_chain_message(&err);
+            assert!(
+                display.contains("Refusing to send a Workload Identity attestation")
+                    && display.contains("not-snowflake.example"),
+                "expected the host-guard's DisallowedHost error, got: {display}"
+            );
+            assert!(
+                !display.contains("pre-acquired token"),
+                "OIDC provider's MissingToken error leaked through — the guard did not \
+                 short-circuit before create_attestation, got: {display}"
+            );
+        }
+
+        /// Control: the same config against an *allowed* host does reach the
+        /// provider (and fails there, with its own `MissingToken` error,
+        /// since no OIDC token was supplied). This confirms the previous
+        /// test's rejection is actually caused by the host guard and not by
+        /// some unrelated failure that would occur regardless of host.
+        #[tokio::test]
+        async fn allowed_host_does_reach_attestation_provider() {
+            let params = wif_login_params("https://acct.snowflakecomputing.com");
+
+            let err = auth_request_data(
+                &reqwest::Client::new(),
+                &params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            )
+            .await
+            .expect_err("missing OIDC token must fail");
+
+            let display = full_chain_message(&err);
+            assert!(
+                display.contains("pre-acquired token"),
+                "expected the OIDC provider's MissingToken error, got: {display}"
+            );
+            assert!(
+                !display.contains("Refusing to send a Workload Identity attestation"),
+                "allowed host must not trip the host guard, got: {display}"
+            );
+        }
     }
 }

@@ -8,10 +8,12 @@
 mod aws;
 mod azure;
 mod gcp;
+pub(crate) mod host_allowlist;
 mod oidc;
 
 use crate::config::rest_parameters::{WifProvider, WorkloadIdentityConfig};
 use crate::sensitive::SensitiveString;
+use host_allowlist::is_snowflake_host_for_workload_identity;
 use snafu::{Location, ResultExt, Snafu};
 
 /// Resolved identity token to be forwarded to Snowflake GS.
@@ -60,6 +62,46 @@ pub enum AttestationError {
         #[snafu(implicit)]
         location: Location,
     },
+    /// Raised by [`ensure_allowed_host`] before any provider is dispatched.
+    /// This verifies the host is a recognized Snowflake endpoint before
+    /// fetching cloud credentials (see `host_allowlist` module docs); it is
+    /// not a provider failure and never wraps a provider-specific `source`.
+    #[snafu(display("Refusing to send a Workload Identity attestation to '{host}': {reason}"))]
+    DisallowedHost {
+        host: String,
+        reason: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+/// Verifies that `server_url` names a Snowflake host before any ambient
+/// cloud credential is fetched or minted for a WORKLOAD_IDENTITY login.
+///
+/// This MUST run before [`create_attestation`] dispatches to a provider, on
+/// every call path (sync and async). It fails closed: a URL that fails to
+/// parse, or has no host, is rejected the same as an explicitly disallowed
+/// host. See the `host_allowlist` module for the matching rule and the
+/// `SNOWFLAKE_WIF_ALLOWED_HOST_SUFFIXES` escape hatch.
+pub fn ensure_allowed_host(server_url: &str) -> Result<(), AttestationError> {
+    let host = url::Url::parse(server_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_default();
+
+    if is_snowflake_host_for_workload_identity(&host) {
+        return Ok(());
+    }
+
+    tracing::warn!(
+        host = %host,
+        "Rejected Workload Identity attestation: host is not a recognized Snowflake host"
+    );
+    DisallowedHostSnafu {
+        host,
+        reason: "host is not snowflakecomputing.com/.cn/.mil (or an SNOWFLAKE_WIF_ALLOWED_HOST_SUFFIXES entry)",
+    }
+    .fail()
 }
 
 /// Injectable base URLs for the cloud-metadata / IdP endpoints that the
