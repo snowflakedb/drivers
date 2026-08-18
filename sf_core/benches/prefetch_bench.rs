@@ -13,7 +13,7 @@ use pprof::criterion::{Output, PProfProfiler};
 use pprof::flamegraph::Options as FlamegraphOptions;
 use sf_core::chunks::mock::FileChunkDownloader;
 use sf_core::chunks::prefetch::{ArrowChunkParser, JsonChunkParser, PrefetchChunkReader};
-use sf_core::chunks::{ChunkDownloadData, PrefetchConfig};
+use sf_core::chunks::{ChunkDownloadData, ChunkError, PrefetchConfig};
 use sf_core::query_types::RowType;
 
 const DEFAULT_TEXT_MAX_LENGTH: u64 = 16_777_216; // 16 MiB
@@ -197,17 +197,27 @@ fn bench_arrow_prefetch(c: &mut Criterion) {
                     .expect("failed to build tokio runtime");
 
                 b.iter(|| {
-                    let mut chunks = build_chunk_download_data(&dir, &metadata);
+                    let chunks = build_chunk_download_data(&dir, &metadata);
 
-                    let initial_reader = if has_initial {
-                        let bytes = std::fs::read(&initial_path).expect("failed to read initial");
-                        let cursor = io::Cursor::new(bytes);
-                        StreamReader::try_new(cursor, None).expect("failed to parse initial IPC")
+                    let initial = if has_initial {
+                        let initial_path = initial_path.clone();
+                        Some(tokio::task::spawn_blocking(
+                            move || -> Result<_, ChunkError> {
+                                let bytes =
+                                    std::fs::read(&initial_path).expect("failed to read initial");
+                                let cursor = io::Cursor::new(bytes);
+                                let reader = StreamReader::try_new(cursor, None)
+                                    .expect("failed to parse initial IPC");
+                                let schema = reader.schema();
+                                let batches: Vec<_> = reader
+                                    .into_iter()
+                                    .collect::<Result<Vec<_>, _>>()
+                                    .expect("failed to read initial batches");
+                                Ok((schema, batches))
+                            },
+                        ))
                     } else {
-                        let first = chunks.pop_front().expect("no chunks available");
-                        let bytes = std::fs::read(&first.url).expect("failed to read first chunk");
-                        let cursor = io::Cursor::new(bytes);
-                        StreamReader::try_new(cursor, None).expect("failed to parse first chunk")
+                        None
                     };
 
                     let downloader = FileChunkDownloader;
@@ -218,11 +228,7 @@ fn bench_arrow_prefetch(c: &mut Criterion) {
                     };
                     let mut reader = rt
                         .block_on(PrefetchChunkReader::reader(
-                            initial_reader,
-                            chunks,
-                            downloader,
-                            parser,
-                            &config,
+                            initial, chunks, downloader, parser, &config,
                         ))
                         .expect("failed to create prefetch reader");
 
@@ -304,10 +310,11 @@ fn bench_json_prefetch(c: &mut Criterion) {
                 b.iter(|| {
                     let chunks = build_chunk_download_data(&dir, &metadata);
 
-                    let initial_reader = arrow::array::RecordBatchIterator::new(
-                        initial_batches.clone().into_iter().map(Ok),
-                        initial_schema.clone(),
-                    );
+                    let batches = initial_batches.clone();
+                    let schema = initial_schema.clone();
+                    let initial = Some(tokio::task::spawn_blocking(
+                        move || -> Result<_, ChunkError> { Ok((schema, batches)) },
+                    ));
 
                     let downloader = FileChunkDownloader;
                     let parser = JsonChunkParser {
@@ -319,11 +326,7 @@ fn bench_json_prefetch(c: &mut Criterion) {
                     };
                     let mut reader = rt
                         .block_on(PrefetchChunkReader::reader(
-                            initial_reader,
-                            chunks,
-                            downloader,
-                            parser,
-                            &config,
+                            initial, chunks, downloader, parser, &config,
                         ))
                         .expect("failed to create prefetch reader");
 

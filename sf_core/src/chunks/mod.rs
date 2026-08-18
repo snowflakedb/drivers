@@ -97,8 +97,16 @@ async fn json_chunks_reader(
     let parser = JsonChunkParser {
         row_types: row_types.clone(),
     };
+    let initial_future = tokio::task::spawn_blocking(move || {
+        let schema = initial_reader.schema();
+        let batches = initial_reader
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .context(ChunkReadSnafu)?;
+        Ok((schema, batches))
+    });
     PrefetchChunkReader::reader(
-        initial_reader,
+        Some(initial_future),
         chunk_download_data.into(),
         downloader,
         parser,
@@ -109,23 +117,32 @@ async fn json_chunks_reader(
 
 pub async fn arrow_prefetch_reader(
     initial_base64_opt: Option<&str>,
-    mut chunk_download_data: VecDeque<ChunkDownloadData>,
+    chunk_download_data: VecDeque<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-    let initial_reader = get_initial_chunk_reader(
-        initial_base64_opt,
-        &mut chunk_download_data,
-        &client,
-        ChunkFormatKind::ArrowIpc,
-        &[],
-    )
-    .await?;
+    let initial_handle = match initial_base64_opt {
+        Some(b64) => {
+            let b64 = b64.to_owned();
+            Some(tokio::task::spawn_blocking(move || {
+                let bytes = BASE64.decode(b64).context(Base64DecodeSnafu)?;
+                let reader =
+                    StreamReader::try_new(io::Cursor::new(bytes), None).context(ChunkReadSnafu)?;
+                let schema = reader.schema();
+                let batches = reader
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()
+                    .context(ChunkReadSnafu)?;
+                Ok((schema, batches))
+            }))
+        }
+        None => None,
+    };
     let downloader = HttpChunkDownloader { client };
     let parser = ArrowChunkParser;
     let reader = PrefetchChunkReader::reader(
-        initial_reader,
+        initial_handle,
         chunk_download_data,
         downloader,
         parser,
