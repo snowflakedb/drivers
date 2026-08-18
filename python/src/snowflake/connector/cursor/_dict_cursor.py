@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import cast
 
 from .._internal.cursor import DictRow
+from .._internal.errorhandler import simplified_error_handling
 from ._base import SnowflakeCursorBase
 
 
@@ -23,6 +24,7 @@ class DictCursor(SnowflakeCursorBase):
     def _use_dict_result(self) -> bool:
         return True
 
+    @simplified_error_handling
     def fetchone(self) -> DictRow | None:
         """
         Fetch the next row of a query result set as a dictionary.
@@ -33,6 +35,7 @@ class DictCursor(SnowflakeCursorBase):
         """
         return cast(DictRow | None, self._fetchone())
 
+    @simplified_error_handling
     def fetchmany(self, size: int | None = None) -> list[DictRow]:
         """
         Fetch the next set of rows as dictionaries.

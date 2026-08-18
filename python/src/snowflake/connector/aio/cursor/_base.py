@@ -35,7 +35,8 @@ from ..._internal.cursor.decorators import (
     with_prefetch_hook,
 )
 from ..._internal.decorators import api_telemetry, pep249
-from ..._internal.errorcode import ER_INVALID_VALUE
+from ..._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
+from ..._internal.errorhandler import simplified_error_handling
 from ..._internal.extras import pandas, pyarrow, requires_dependency
 from ..._internal.logging import get_logger
 from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -49,7 +50,7 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from ..._internal.statement_utils import async_statement
 from ..._internal.utils import _resolve_alias
-from ...errors import ProgrammingError
+from ...errors import InterfaceError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._result_set_wrapper import _ResultSetWrapper
 
@@ -476,16 +477,25 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # ------------------------------------------------------------------
     # Fetch – shared implementation
     # Intentionally no @api_telemetry on fetch methods - they are hot paths.
+    # fetchone / fetchmany use @simplified_error_handling so the success path
+    # avoids a ContextVar round-trip per call.
     # ------------------------------------------------------------------
 
-    @requires_open_cursor_not_connection
-    @with_prefetch_hook
+    async def _prepare_fetch(self) -> None:
+        # Consciously skip @requires_open_cursor_not_connection and
+        # @with_prefetch_hook on fetch hot paths - both checks live here.
+        if self._closed:
+            raise InterfaceError(msg="Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+        if self._prefetch_hook is not None:
+            await self._prefetch_hook()
+
     async def _fetchone(self) -> Row | DictRow | None:
         """Fetch the next row internally.
 
         Return a dict if ``_use_dict_result`` is True, otherwise a tuple.
         Concrete subclasses expose this through a type-safe ``fetchone``.
         """
+        await self._prepare_fetch()
         if not self._iterator:
             self._iterator = await self._create_row_iterator()
         row = await self._iterator.fetch_next(default=_FETCH_DONE)
@@ -495,13 +505,13 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         return cast(Row | DictRow, row)
 
     @pep249
+    @simplified_error_handling
     @abc.abstractmethod
     async def fetchone(self) -> Row | DictRow | None:
         """Fetch the next row of a query result set."""
 
     @pep249
-    @requires_open_cursor_not_connection
-    @with_prefetch_hook
+    @simplified_error_handling
     async def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
@@ -515,6 +525,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Raises:
             ProgrammingError: If the number of rows is not zero or positive number
         """
+        await self._prepare_fetch()
         if size is None:
             size = self.arraysize
 
@@ -533,8 +544,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         return rows
 
     @pep249
-    @requires_open_cursor_not_connection
-    @with_prefetch_hook
     async def fetchall(self) -> list[Any]:
         """
         Fetch all (remaining) rows of a query result.
@@ -542,6 +551,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Returns:
             sequence: List of all remaining rows
         """
+        await self._prepare_fetch()
         if not self._iterator:
             self._iterator = await self._create_row_iterator()
         rows = await self._iterator.fetch_all()
