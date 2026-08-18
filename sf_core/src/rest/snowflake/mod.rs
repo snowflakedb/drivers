@@ -9,7 +9,7 @@ pub mod logout;
 mod native_okta;
 mod oauth;
 pub mod prompt_lock;
-mod workload_identity;
+pub mod workload_identity;
 /// Re-export of the browser-launcher closure type so that
 /// `crate::config::rest_parameters::OAuthAuthorizationCodeConfig` can
 /// carry a `Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>` factory

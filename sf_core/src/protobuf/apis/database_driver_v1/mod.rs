@@ -3,20 +3,25 @@ mod converter;
 use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
-use crate::apis::database_driver_v1::error::ConfigurationSnafu;
+use crate::apis::database_driver_v1::error::{
+    ConfigurationSnafu, InvalidWifProviderSnafu, WorkloadIdentityAttestationSnafu,
+};
 use crate::apis::operation_ctx::OperationCtx;
 use crate::chunks::ChunkFormatKind;
 use crate::config::config_manager;
 use crate::config::path_resolver;
+use crate::config::rest_parameters::{WifProvider, WorkloadIdentityConfig};
 use crate::config::toml_loader::FilePermissionCheck;
 use crate::handle_manager::Handle;
 use crate::protobuf::generated::database_driver_v1::*;
+use crate::rest::snowflake::workload_identity;
+use crate::sensitive::SensitiveString;
 use converter::{
     ToProtobuf, column_metadata_to_row_type, core_validation_issue_to_proto,
     proto_options_to_hashmap, reader_to_arrow_stream_ptr, toml_value_to_json,
 };
 use error_trace::ErrorTrace;
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::LazyLock;
 use tracing::instrument;
@@ -1188,6 +1193,58 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConfigGetPathsResponse {
             config_file: config_file.to_string_lossy().into_owned(),
             connections_file: connections_file.to_string_lossy().into_owned(),
+        })
+    }
+
+    // -- Workload Identity Federation (WIF) operations --
+
+    #[instrument(name = "DatabaseDriverV1::wif_create_attestation", skip(self, input))]
+    async fn wif_create_attestation(
+        &self,
+        input: WifCreateAttestationRequest,
+    ) -> Result<WifCreateAttestationResponse, DriverException> {
+        let provider = WifProvider::parse_str(&input.provider)
+            .context(InvalidWifProviderSnafu {
+                provider: input.provider.clone(),
+            })
+            .to_protobuf()?;
+
+        let config = WorkloadIdentityConfig {
+            provider,
+            entra_resource: input.entra_resource.filter(|s| !s.is_empty()),
+            impersonation_path: input.impersonation_path,
+            oidc_token: input
+                .token
+                .filter(|s| !s.is_empty())
+                .map(SensitiveString::from),
+        };
+
+        // A plain client is sufficient: the provider modules call cloud
+        // metadata / IdP endpoints (IMDS, Entra, GCP metadata), not
+        // Snowflake itself, so the account-specific TLS/OCSP client used by
+        // the login flow isn't needed here.
+        // Corporate-proxy env vars (HTTP_PROXY/HTTPS_PROXY/NO_PROXY) are
+        // still honored: `reqwest::Client::new()` auto-detects them by
+        // default, identically to passing `proxy: None` through
+        // `create_tls_client_with_proxy` (see `apply_proxy_to_builder`'s
+        // `None` case). What this client *can't* do is honor an explicit
+        // `PROXY` connection parameter, because — unlike the driver's own
+        // WIF login path (`rest::snowflake::workload_identity`, invoked
+        // from `auth_request_data`/`snowflake_login_with_client`, which
+        // reuses the login flow's `ClientInfo`-derived client) — this RPC
+        // has no `conn_handle` in `WifCreateAttestationRequest` to source a
+        // `ProxyConfig` from. Closing that gap needs new proxy-config
+        // plumbing independent of any connection handle. Tracked under
+        // SNOW-2912540.
+        let client = reqwest::Client::new();
+        let attestation = workload_identity::create_attestation(&client, &config)
+            .await
+            .context(WorkloadIdentityAttestationSnafu)
+            .to_protobuf()?;
+
+        Ok(WifCreateAttestationResponse {
+            provider: attestation.provider.to_string(),
+            credential: attestation.token.reveal().to_owned(),
         })
     }
 

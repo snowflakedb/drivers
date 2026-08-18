@@ -772,6 +772,29 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::InvalidArgument { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::InvalidWifProvider { provider, .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
+                InvalidParameterValue {
+                    parameter: "provider".to_string(),
+                    value: provider.clone(),
+                    explanation: Some(format!(
+                        "Allowed values: {}",
+                        crate::config::rest_parameters::WifProvider::allowed_values()
+                    )),
+                    code: None,
+                },
+            )),
+        },
+        ApiError::WorkloadIdentityAttestation { source, .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
+                InvalidParameterValue {
+                    parameter: String::new(),
+                    value: String::new(),
+                    explanation: Some(source.to_string()),
+                    code: None,
+                },
+            )),
+        },
         ApiError::Login { source, .. } => match source.as_ref() {
             RestError::LoginError { message, code, .. } => DriverError {
                 error_type: Some(driver_error::ErrorType::LoginError(LoginError {
@@ -1083,6 +1106,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             ..
         } => StatusCode::InvalidParameterValue,
         ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
+        ApiError::InvalidWifProvider { .. } => StatusCode::InvalidParameterValue,
+        // Use InvalidParameterValue so Python callers see ProgrammingError,
+        // matching the legacy connector's exception class for this function.
+        ApiError::WorkloadIdentityAttestation { .. } => StatusCode::InvalidParameterValue,
         ApiError::Login { source, .. } => match source.as_ref() {
             RestError::LoginError { .. } => StatusCode::LoginError,
             _ => StatusCode::AuthenticationError,
@@ -1719,6 +1746,46 @@ mod tests {
         assert_eq!(
             to_driver_exception(download_err).status_code,
             StatusCode::Io as i32
+        );
+    }
+
+    #[tokio::test]
+    async fn workload_identity_attestation_error_type_and_status_code_agree() {
+        // Regression guard: error_type and status_code must classify this
+        // failure the same way, so Python (which dispatches on status_code)
+        // and any future JDBC/ODBC caller (which would dispatch on
+        // error_type) both see ProgrammingError-equivalent behavior.
+        use crate::config::rest_parameters::{WifProvider, WorkloadIdentityConfig};
+        use crate::rest::snowflake::workload_identity;
+
+        let config = WorkloadIdentityConfig {
+            provider: WifProvider::Oidc,
+            entra_resource: None,
+            impersonation_path: Vec::new(),
+            oidc_token: None,
+        };
+        let client = reqwest::Client::new();
+        let source = workload_identity::create_attestation(&client, &config)
+            .await
+            .expect_err("OIDC provider with no token must fail");
+
+        let err = ApiError::WorkloadIdentityAttestation {
+            location: loc(),
+            source: Box::new(source),
+        };
+
+        let dr_err = to_driver_error(&err);
+        assert!(
+            matches!(
+                dr_err.error_type,
+                Some(driver_error::ErrorType::InvalidParameterValue(_))
+            ),
+            "error_type must be InvalidParameterValue, not GenericError"
+        );
+
+        assert_eq!(
+            to_driver_exception(err).status_code,
+            StatusCode::InvalidParameterValue as i32
         );
     }
 }

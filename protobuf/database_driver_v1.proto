@@ -1023,6 +1023,36 @@ message ConfigGetPathsResponse {
 }
 
 // =============================================================================
+// WORKLOAD IDENTITY FEDERATION (WIF) - standalone attestation
+// =============================================================================
+// Acquires a WIF attestation independently of the driver's own login flow.
+// Reused by Snowpark to authenticate to the external event-table telemetry
+// endpoint with the connection's already-configured WIF provider, not to
+// establish a Snowflake session.
+
+message WifCreateAttestationRequest {
+  // Wire-format provider name: "AWS", "AZURE", "GCP", or "OIDC".
+  string provider = 1;
+  // Azure Entra resource URI. AZURE provider only; ignored otherwise.
+  // Empty ⇒ use the default Snowflake Entra resource.
+  optional string entra_resource = 2;
+  // Pre-acquired OIDC JWT. OIDC provider only; ignored otherwise.
+  optional string token = 3;
+  // Ordered impersonation chain, forwarded verbatim to sf_core's
+  // WorkloadIdentityConfig.impersonation_path. Empty ⇒ use the ambient
+  // workload identity directly (AWS/GCP role chain; Azure: single SP client_id).
+  repeated string impersonation_path = 4;
+}
+
+message WifCreateAttestationResponse {
+  // Wire-format provider name echoed back ("AWS", "AZURE", "GCP", "OIDC").
+  string provider = 1;
+  // The attestation credential (JWT or attested request) to forward to the
+  // relying party as proof of workload identity.
+  string credential = 2;
+}
+
+// =============================================================================
 // TELEMETRY - In-band telemetry messages sent from wrappers via core
 // =============================================================================
 
@@ -1137,6 +1167,9 @@ service DatabaseDriver {
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
   rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
+
+  // Workload Identity Federation (WIF) operations
+  rpc WifCreateAttestation(WifCreateAttestationRequest) returns (WifCreateAttestationResponse);
 
   // Telemetry operations
   rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendResponse);
