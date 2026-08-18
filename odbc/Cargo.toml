@@ -1,6 +1,6 @@
 [package]
 name = "odbc"
-version = "4.0.0-rc1-dev"
+version = "4.0.0-rc1"
 edition = "2024"
 rust-version = "1.94"
 
