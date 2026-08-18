@@ -4,16 +4,21 @@ pub use super::json_parser::JsonChunkParser;
 
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use arrow::array::{RecordBatch, RecordBatchReader};
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{Fields, Schema, SchemaRef};
 use arrow::error::ArrowError;
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 use tokio::sync::mpsc::error::SendError;
+use tokio::task::JoinHandle;
 use tracing::instrument::WithSubscriber;
 
 use super::memory_budget::{MemoryBudget, MemoryTicket};
-use super::{ChunkDownloadData, ChunkError, ChunkReadSnafu, PrefetchConfig};
+use super::{
+    ChunkDownloadData, ChunkError, ChunkReadSnafu, MissingInitialChunkSnafu, PrefetchConfig,
+    SpawnBlockingSnafu,
+};
 use crate::log_foreign_error;
 
 pub trait DownloadChunk: Send + Sync + Clone + 'static {
@@ -56,34 +61,68 @@ pub struct PrefetchChunkReader<D: DownloadChunk, P: ParseChunk> {
     phantom: PhantomData<(D, P)>,
 }
 
-type ChunkTask = tokio::task::JoinHandle<Result<Chunk, ArrowError>>;
+type ChunkTask = JoinHandle<Result<Chunk, ArrowError>>;
+type InitialChunkTask = JoinHandle<Result<(SchemaRef, Vec<RecordBatch>), ChunkError>>;
 
 impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
-    pub async fn reader<R: RecordBatchReader + Send>(
-        initial: R,
-        chunks: VecDeque<ChunkDownloadData>,
+    pub async fn reader(
+        initial: Option<InitialChunkTask>,
+        mut chunks: VecDeque<ChunkDownloadData>,
         downloader: D,
         parser: P,
         config: &PrefetchConfig,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-        let schema = initial.schema();
-        let initial = initial
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .context(ChunkReadSnafu)?;
-
-        let prefetch_concurrency = config.prefetch_threads;
+        let prefetch_concurrency = config.prefetch_threads.max(1);
         let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
         let memory_budget = MemoryBudget::new(config.memory_limit_mb);
+
+        let mut tasks: VecDeque<ChunkTask> = VecDeque::new();
+        fill_window(
+            &downloader,
+            &parser,
+            &mut chunks,
+            &mut tasks,
+            &memory_budget,
+            prefetch_concurrency,
+        )
+        .await;
+
+        let (schema, head_chunk) = match initial {
+            Some(initial_chunk_task) => {
+                let (schema, batches) = initial_chunk_task.await.context(SpawnBlockingSnafu)??;
+                let chunk = if batches.is_empty() {
+                    None
+                } else {
+                    Some(Chunk {
+                        batches: VecDeque::from(batches),
+                        ticket: MemoryTicket::empty(),
+                    })
+                };
+                (schema, chunk)
+            }
+            None => {
+                let task = tasks.pop_front().context(MissingInitialChunkSnafu)?;
+                let chunk = task
+                    .await
+                    .context(SpawnBlockingSnafu)?
+                    .context(ChunkReadSnafu)?;
+                let schema = chunk
+                    .batches
+                    .front()
+                    .map(RecordBatch::schema)
+                    .unwrap_or_else(|| Arc::new(Schema::new(Fields::empty())));
+                (schema, Some(chunk))
+            }
+        };
 
         tokio::spawn(
             Self::prefetch_batches(
                 downloader,
                 parser,
                 chunks,
-                initial,
+                head_chunk,
+                tasks,
                 tx,
-                prefetch_concurrency,
                 memory_budget,
             )
             .with_current_subscriber(),
@@ -101,39 +140,19 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
         downloader: D,
         parser: P,
         mut chunks: VecDeque<ChunkDownloadData>,
-        initial: Vec<RecordBatch>,
+        head_chunk: Option<Chunk>,
+        mut tasks: VecDeque<ChunkTask>,
         tx: tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
-        prefetch_concurrency: usize,
         memory_budget: MemoryBudget,
     ) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
-        if !initial.is_empty() {
-            send_result(
-                &tx,
-                Ok(Chunk {
-                    batches: VecDeque::from(initial),
-                    ticket: MemoryTicket::empty(),
-                }),
-            )
-            .await?;
+        if let Some(chunk) = head_chunk {
+            send_result(&tx, Ok(chunk)).await?;
         }
-
-        let mut chunk_tasks: VecDeque<ChunkTask> = VecDeque::new();
-
-        fill_window(
-            &downloader,
-            &parser,
-            &mut chunks,
-            &mut chunk_tasks,
-            &memory_budget,
-            prefetch_concurrency,
-        )
-        .await;
-
         drain_window(
             &downloader,
             &parser,
             &mut chunks,
-            &mut chunk_tasks,
+            &mut tasks,
             &memory_budget,
             &tx,
         )
