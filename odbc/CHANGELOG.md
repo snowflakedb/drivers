@@ -12,6 +12,7 @@ Changes:
 - Renamed Linux/macOS packages from `snowflake-odbc-ud` to `snowflake-odbc` and the macOS install path from `/opt/snowflake/snowflakeodbcud` to `/opt/snowflake/snowflakeodbc`. (snowflake-eng/drivers#1143)
 - Dropped `PrPr`/`Private Preview` labels from the Windows MSI product name, DLL version resource, and setup dialog title. (snowflake-eng/drivers#1143)
 - Changed `SQLGetInfo(SQL_DRIVER_VER)` to return the zero-padded fixed-width `MM.mm.bbbb` string (e.g. `04.00.0000`) defined by the ODBC spec (`##.##.####`), instead of the unpadded Cargo semver (e.g. `4.0.0`). (snowflakedb/drivers#1074)
+- Changed distributable ODBC package filenames to use a consistent `<version>.<architecture>.<extension>` pattern across Linux, macOS, and Windows. (snowflake-eng/drivers#TBD)
 
 Bug fixes:
 

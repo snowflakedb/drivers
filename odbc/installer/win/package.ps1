@@ -153,9 +153,14 @@ if (-not (Test-Path (Join-Path $VCRedistDir $vcRedistExe))) {
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $OutputDir = (Resolve-Path $OutputDir).Path
 $configSuffix = if ($BuildConfig -eq "debug") { "-debug" } else { "" }
+$artifactArch = switch ($Arch) {
+    "x64"   { "x86_64" }
+    "x86"   { "x86_32" }
+    "arm64" { "aarch64" }
+}
 
 Write-Host "=== Building Snowflake ODBC Driver MSI ==="
-Write-Host "  Architecture     : $Arch"
+Write-Host "  Architecture     : $Arch ($artifactArch)"
 Write-Host "  Config           : $BuildConfig"
 Write-Host "  Version          : $Version (MSI ProductVersion: $WixVersion)"
 Write-Host "  ODBC API version : $OdbcApiVer"
@@ -164,7 +169,7 @@ Write-Host "  VCRedist dir     : $VCRedistDir"
 Write-Host "  Source dir       : $SourceDir"
 Write-Host "  Output dir       : $OutputDir"
 
-$MsiFile = Join-Path $OutputDir "snowflake-odbc-${Version}${configSuffix}-${Arch}.msi"
+$MsiFile = Join-Path $OutputDir "snowflake-odbc-${Version}${configSuffix}.${artifactArch}.msi"
 
 Write-Host "`n--- Building MSI ---"
 & wix build `

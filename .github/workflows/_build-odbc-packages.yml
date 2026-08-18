@@ -413,7 +413,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: snowflake-odbc-macos-universal
-          path: build/snowflake-odbc-*.pkg
+          path: build/snowflake-odbc-*.universal.pkg
 
   build_deb:
     strategy:
@@ -503,7 +503,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: snowflake-odbc-deb-${{ matrix.arch }}
-          path: build/snowflake-odbc_*.deb
+          path: build/snowflake-odbc-*.deb
 
       - name: Upload .tgz
         uses: actions/upload-artifact@v4

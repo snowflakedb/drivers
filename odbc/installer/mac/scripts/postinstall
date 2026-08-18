@@ -16,7 +16,7 @@
 #      and CI). NOTE: sudo resets the environment by default — use `sudo -E`
 #      to preserve env vars:
 #        sudo -E SF_DRIVER_NAME=MyDriver SF_ACCOUNT=myaccount installer \
-#             -pkg snowflake-odbc-*.pkg -target /
+#             -pkg snowflake-odbc-*.universal.pkg -target /
 #   2. An interactive AppleScript dropdown shown to the logged-in console
 #      user when the pkg is launched from Installer.app
 #   3. The default "Snowflake ODBC Driver" when neither of the above is

@@ -129,7 +129,7 @@ for fmt in $PKG_FORMATS; do
             echo "=== Successfully created RPM at $BUILD_DIR/$RPM_NAME ==="
             ;;
         deb)
-            DEB_NAME="snowflake-odbc_${VERSION}_${DEB_ARCH}.deb"
+            DEB_NAME="snowflake-odbc-${VERSION}.${SYSTEM_ARCH}.deb"
             echo "=== Building DEB: $DEB_NAME ==="
             fpm -s dir \
                 -t deb \
