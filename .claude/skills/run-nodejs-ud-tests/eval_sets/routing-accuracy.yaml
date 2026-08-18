@@ -26,8 +26,8 @@ should_trigger:
   - prompt: "SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER — what does this env var do and how do I use it"
     notes: "Asking about the Node.js-specific env var documented only in this skill."
 
-  - prompt: "the nodejs new driver e2e tests are all skipped, is that expected?"
-    notes: "Directly matches the troubleshooting note about skipped new-driver e2e tests; 'nodejs' pins it."
+  - prompt: "nodejs e2e says Cannot find module 'snowflake-sdk-core-darwin-arm64'"
+    notes: "Missing native bridge build; the fix (npm run build:core) is documented only in this skill."
 
   - prompt: "nodejs unit tests, no credentials, what do I need to set up"
     notes: "No-credential unit test path is a distinctive Node.js UD scenario."

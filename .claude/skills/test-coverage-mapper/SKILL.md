@@ -162,8 +162,8 @@ SEARCH CHECKLIST for: "<old test name>"
 | `odbc_tests/tests/odbc-api/` | C++ | Catch2 | Low-level ODBC API function tests |
 | `odbc_tests/tests/basic_tests/` | C++ | Catch2 | Basic ODBC functionality unit tests |
 | `odbc_tests/tests/bindings_tests/` | C++ | Catch2 | ODBC bindings unit tests |
-| `nodejs/tests/unit/` | TypeScript | Jest/Mocha | Node.js unit tests — mocked behavior |
-| `nodejs/tests/e2e/` | TypeScript | Jest/Mocha | Node.js e2e tests with real Snowflake |
+| `nodejs/tests/unit/` | TypeScript | Vitest | Node.js unit tests — mocked behavior |
+| `nodejs/tests/e2e/` | TypeScript | Vitest | Node.js e2e tests with real Snowflake |
 | `tests/definitions/shared/` | Gherkin | BDD | Scenario definitions (intent only, not assertions) |
 | `jdbc/src/test/java/` | Java | JUnit | JDBC test implementations |
 
@@ -269,8 +269,8 @@ Given the assertion inventory from Step 2, locate UD tests that cover the **same
 
 5. **JDBC/Node.js** (for respective mappings):
    - `jdbc/src/test/java/` — JUnit assertions
-   - `nodejs/tests/unit/` — Jest/Mocha unit tests, mocked behavior
-   - `nodejs/tests/e2e/` — Jest/Mocha e2e with real Snowflake
+   - `nodejs/tests/unit/` — Vitest unit tests, mocked behavior
+   - `nodejs/tests/e2e/` — Vitest e2e with real Snowflake
 
 **For each candidate found, you MUST read the full test body.** A file path match or test name match is NOT sufficient. Open the file, read the function, extract every assertion. Example:
 

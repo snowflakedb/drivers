@@ -237,7 +237,7 @@ Run it immediately using the **same wrapper skill** as all other UD tests:
 - **Python** → `run-python-ud-tests` skill (`hatch run dev:unit -k test_regression_snow_XXXXXX`)
 - **ODBC** → `run-odbc-ud-tests` skill (`./odbc_tests/run.sh -R "snow_XXXXXX"`)
 - **JDBC** → `run-jdbc-ud-tests` skill (`./gradlew test --tests "RegressionSnowXXXXXXTest"`)
-- **Node.js** → `run-nodejs-ud-tests` skill (`npx vitest run tests/e2e/regression-snow-XXXXXX.test.ts`)
+- **Node.js** → `run-nodejs-ud-tests` skill (`cd nodejs && npm run build:core && npm run test:e2e -- regression-snow-XXXXXX`)
 
 Interpret the result:
 - **PASS** → UD has no regression for this ticket. Continue to Track 2.
