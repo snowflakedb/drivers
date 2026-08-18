@@ -54,3 +54,11 @@ pub const SNOWFLAKE_TROUBLESHOOTING_ENABLED: &str = "SNOWFLAKE_TROUBLESHOOTING_E
 /// Directory for diagnostic log files when troubleshooting is enabled.
 /// Defaults to the current working directory if unset.
 pub const SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH: &str = "SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH";
+
+/// Additive escape hatch for the WORKLOAD_IDENTITY host allowlist: a
+/// comma-separated list of extra hostname suffixes recognized alongside the
+/// built-in `snowflakecomputing.com`/`.cn`/`.mil` suffixes. Read only from
+/// the process environment, never from the DSN or connection parameters, so
+/// connection configuration cannot influence the allowlist. Entries are
+/// additive: they extend the recognized-host list and cannot disable it.
+pub const SNOWFLAKE_WIF_ALLOWED_HOST_SUFFIXES: &str = "SNOWFLAKE_WIF_ALLOWED_HOST_SUFFIXES";
