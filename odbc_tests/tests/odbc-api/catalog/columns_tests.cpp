@@ -866,3 +866,37 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: metadata_id=FALSE treats Ta
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
 }
+
+// SNOW-3899630 / BD#121: when no column comment / default is specified, the new
+// driver returns SQL_NULL_DATA for REMARKS (col 12) and COLUMN_DEF (col 13).
+// The legacy driver returns a non-null empty string (COLUMN_DEF always "").
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: REMARKS and COLUMN_DEF are SQL_NULL_DATA when absent",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                             sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  int rowCount = 0;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const ColumnValue remarks = sqlcolumns_get_column(stmt_handle(), 12);
+    const ColumnValue columnDef = sqlcolumns_get_column(stmt_handle(), 13);
+
+    NEW_DRIVER_ONLY("BD#121") {
+      CHECK(remarks.is_null());
+      CHECK(columnDef.is_null());
+    }
+    OLD_DRIVER_ONLY("BD#121") {
+      CHECK(!remarks.is_null());
+      CHECK(remarks.text.empty());
+      CHECK(!columnDef.is_null());
+      CHECK(columnDef.text.empty());
+    }
+    rowCount++;
+  }
+
+  REQUIRE(rowCount >= 1);
+}

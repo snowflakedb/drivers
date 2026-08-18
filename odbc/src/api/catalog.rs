@@ -1546,7 +1546,8 @@ fn map_procedures_to_odbc(batch: RecordBatch) -> OdbcResult<RecordBatch> {
         num_inputs.push(Some(count_input_params(&arg_sig)));
         let data_type = utf8_value_at(&batch, idx_data_type, row).unwrap_or_default();
         num_result_sets.push(Some(if returns_table(&data_type) { 1 } else { 0 }));
-        remarks.push(utf8_value_at(&batch, idx_comment, row));
+        // REMARKS: empty comment → NULL (BD#121), matching SQLColumns/SQLTables.
+        remarks.push(utf8_value_at(&batch, idx_comment, row).filter(|s| !s.is_empty()));
     }
 
     RecordBatch::try_new(
@@ -2708,6 +2709,8 @@ fn map_show_objects_to_odbc(
         }
     })?;
     let kind_idx = column_index_by_name(&input, "kind");
+    // Optional: absent on some SHOW variants; empty/null → SQL_NULL_DATA (BD#121).
+    let comment_idx = column_index_by_name(&input, "comment");
 
     let mut rows: Vec<FlatTableRow> = Vec::new();
     for row in 0..batch.num_rows() {
@@ -2743,12 +2746,17 @@ fn map_show_objects_to_odbc(
             continue;
         }
 
+        // REMARKS: plumb SHOW OBJECTS/TABLES/VIEWS comment; empty → NULL (BD#121).
+        let remarks = comment_idx
+            .and_then(|i| utf8_value_at(&batch, i, row))
+            .filter(|s| !s.is_empty());
+
         rows.push((
             Some(db_name),
             Some(sch_name),
             Some(tbl_name),
             Some(normalized_type),
-            Some(String::new()),
+            remarks,
         ));
     }
 
@@ -4752,6 +4760,40 @@ mod procedures_tests {
 
         let proc_type = out.column(7).as_any().downcast_ref::<Int16Array>().unwrap();
         assert_eq!(proc_type.value(0), SQL_PT_FUNCTION);
+    }
+
+    #[test]
+    fn map_procedures_empty_comment_becomes_null() {
+        use arrow::array::StringArray;
+        let input_schema = Arc::new(Schema::new(vec![
+            Field::new("procedure_catalog", DataType::Utf8, true),
+            Field::new("procedure_schema", DataType::Utf8, true),
+            Field::new("procedure_name", DataType::Utf8, true),
+            Field::new("argument_signature", DataType::Utf8, true),
+            Field::new("data_type", DataType::Utf8, true),
+            Field::new("comment", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            input_schema,
+            vec![
+                Arc::new(StringArray::from(vec![Some("DB"), Some("DB")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("S"), Some("S")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("P1"), Some("P2")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("()"), Some("()")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![
+                    Some("NUMBER(38,0)"),
+                    Some("VARCHAR"),
+                ])) as ArrayRef,
+                // Empty string and SQL NULL both become REMARKS NULL (BD#121).
+                Arc::new(StringArray::from(vec![Some(""), None::<&str>])) as ArrayRef,
+            ],
+        )
+        .unwrap();
+
+        let out = map_procedures_to_odbc(batch).expect("map failed");
+        let remarks = out.column(6);
+        assert!(remarks.is_null(0), "empty comment must be SQL NULL");
+        assert!(remarks.is_null(1), "SQL NULL comment must stay NULL");
     }
 }
 

@@ -2356,6 +2356,32 @@ behavior_differences:
       SQLCloseCursor SQL_ERROR to the new driver; that was unverified and is now
       known to be incorrect.
 
+  121:
+    name: "Catalog REMARKS / COLUMN_DEF return SQL_NULL_DATA when absent (not empty string)"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      SQLColumns REMARKS is a (possibly empty) WVARCHAR; COLUMN_DEF is always "".
+      SQLTables REMARKS is a (possibly empty) WVARCHAR from SHOW OBJECTS/TABLES/VIEWS
+      comment — never SQL_NULL_DATA (null comment cells become "").
+      SQLProcedures REMARKS maps a null comment to "".
+    new_driver_behavior: |
+      When the value is absent, SQLGetData returns SQL_NULL_DATA for:
+      - SQLColumns REMARKS and COLUMN_DEF
+      - SQLTables REMARKS
+      - SQLProcedures REMARKS
+      When a real comment is present, SQLTables REMARKS returns that string
+      (plumbed from SHOW OBJECTS.comment). SQLProcedureColumns already returned
+      NULL on both drivers.
+    description: |
+      ODBC documents COLUMN_DEF as NULL when no default was specified. Returning
+      SQL_NULL_DATA for absent REMARKS / COLUMN_DEF is consistent across
+      SQLColumns, SQLTables, and SQLProcedures. The legacy driver typically
+      returns an empty string (and always "" for SQLColumns COLUMN_DEF).
+
   123:
     name: "SQLColumns COLUMN_SIZE for FLOAT/DOUBLE/REAL is 15 decimal digits instead of 38"
     status: allowed

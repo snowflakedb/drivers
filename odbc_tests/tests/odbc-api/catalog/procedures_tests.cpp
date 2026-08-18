@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -503,6 +504,33 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedures: metadata_id=FALSE treats
   SQLRETURN ret = SQLProcedures(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(proc.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
+// SNOW-3899630 / BD#121: when the procedure has no comment, the new driver
+// returns SQL_NULL_DATA for REMARKS (col 7). The legacy driver maps a null
+// comment to a non-null empty string.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedures: REMARKS is SQL_NULL_DATA when procedure has no comment",
+                 "[odbc-api][procedures][catalog]") {
+  SQLRETURN ret = SQLProcedures(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                sqlchar(readonly_db::BASIC_PROC), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  char remarks[256];
+  std::memset(remarks, 0xFF, sizeof(remarks));
+  SQLLEN remarksInd = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 7, SQL_C_CHAR, remarks, sizeof(remarks), &remarksInd) == SQL_SUCCESS);
+
+  NEW_DRIVER_ONLY("BD#121") { CHECK(remarksInd == SQL_NULL_DATA); }
+  OLD_DRIVER_ONLY("BD#121") {
+    CHECK(remarksInd != SQL_NULL_DATA);
+    CHECK(std::string(remarks).empty());
+  }
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
