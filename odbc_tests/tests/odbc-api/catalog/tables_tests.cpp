@@ -12,9 +12,13 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
+#include "ScopedTable.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
+#include "query_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -34,6 +38,23 @@ struct ColumnValue {
 std::string to_lower_copy(const std::string& s) {
   std::string out = s;
   std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return std::tolower(c); });
+  return out;
+}
+
+// Escape \, _, % so a catalog pattern argument matches a literal identifier.
+// Session schema names are TEMP_TEST_SCHEMA_<digits>; left unescaped, the driver
+// cannot recognise them as exact and widens the lookup from
+// `SHOW OBJECTS ... IN SCHEMA` to `IN DATABASE`, scanning every schema in the
+// shared test database.
+std::string escape_odbc_pattern_literal(const std::string& name) {
+  std::string out;
+  out.reserve(name.size() * 2);
+  for (const char c : name) {
+    if (c == '\\' || c == '_' || c == '%') {
+      out.push_back('\\');
+    }
+    out.push_back(c);
+  }
   return out;
 }
 
@@ -665,12 +686,15 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: NULL schema spans all schema
 }
 
 // ============================================================================
-// SQLTables - REMARKS column
+// SQLTables - REMARKS column (BD#121)
 // ============================================================================
 
-TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: REMARKS column is present and not null",
+// SNOW-3899630 / BD#121: absent table comments return SQL_NULL_DATA on the new
+// driver. The legacy driver returns a non-null empty string (null SHOW comment
+// cells are coerced to ""). BASICTABLE has no COMMENT in the readonly fixture.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: REMARKS is SQL_NULL_DATA when table has no comment",
                  "[odbc-api][catalog][tables]") {
-  // Given a known table
+  // Given a known table with no comment
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -679,8 +703,45 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: REMARKS column is present an
   REQUIRE(ret == SQL_SUCCESS);
 
   // When retrieving column 5 (REMARKS)
-  // Then REMARKS is not SQL_NULL_DATA (it may be an empty string)
-  CHECK(!sqltables_get_column(stmt_handle(), 5).is_null());
+  const ColumnValue remarks = sqltables_get_column(stmt_handle(), 5);
+  NEW_DRIVER_ONLY("BD#121") { CHECK(remarks.is_null()); }
+  OLD_DRIVER_ONLY("BD#121") {
+    CHECK(!remarks.is_null());
+    CHECK(remarks.text.empty());
+  }
+}
+
+// Present-comment path for the SQLTables REMARKS plumbing added in SNOW-3899630:
+// when SHOW OBJECTS.comment is non-empty, both drivers return that string (BD#121
+// only covers absent → NULL vs ""). Uses ScopedTable (unique name + RAII drop) so
+// the shared CI schema cannot collide and REQUIRE failures cannot leak the table.
+// The prefix has no underscore on purpose: '_' is an ODBC pattern wildcard, and a
+// wildcard TableName degrades the lookup to a scan of the whole (shared, heavily
+// populated in CI) schema instead of an exact match.
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLTables: REMARKS returns comment text when table has a comment",
+                 "[odbc-api][catalog][tables]") {
+  const std::string comment = "hello remarks";
+  ScopedTable table(conn, "REMARKSCMNT", "ID INT");
+  conn.execute("COMMENT ON TABLE " + table.name() + " IS '" + comment + "'");
+
+  const std::string catalog = escape_odbc_pattern_literal(get_current_database(conn.handleWrapper().getHandle()));
+  const std::string schema = escape_odbc_pattern_literal(Schema::name());
+
+  INFO("catalog=" << catalog << " schema=" << schema << " table=" << table.name());
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLTables(stmt.getHandle(), sqlchar(catalog.c_str()), SQL_NTS, sqlchar(schema.c_str()), SQL_NTS,
+                            sqlchar(table.name().c_str()), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const ColumnValue remarks = sqltables_get_column(stmt.getHandle(), 5);
+  CHECK(!remarks.is_null());
+  CHECK(remarks.text == comment);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
 }
 
 // ============================================================================

@@ -41,10 +41,14 @@ class ScopedTable {
   const std::string& name() const { return name_; }
 
  private:
+  // 'X' rather than '_' joins the parts: ODBC catalog functions treat '_' as a
+  // single-character wildcard in pattern arguments, so an underscore here would
+  // stop callers from looking the table up by an exact SQLTables/SQLColumns
+  // pattern (see scripts/odbc/setup_readonly_metadata_db.sql).
   static std::string generate_name(const std::string& prefix) {
     std::random_device rd;
     std::mt19937_64 gen(rd());
-    return prefix + "_" + std::to_string(GET_PID()) + "_" + std::to_string(gen());
+    return prefix + "X" + std::to_string(GET_PID()) + "X" + std::to_string(gen());
   }
 
   Connection& conn_;
