@@ -19,11 +19,13 @@ use std::sync::{Arc, Mutex};
 use http::header::HeaderValue;
 use http::{Request, Response};
 use oauth2::AsyncHttpClient;
-use snafu::ResultExt;
+use snafu::{IntoError, ResultExt};
 use url::Url;
 
+use crate::http::retry::{CappedBodyError, read_body_capped};
+
 use super::dpop::{self, DPoPKey};
-use super::error::{OAuthError, TransportSnafu};
+use super::error::{OAuthError, ResponseBodyTooLargeSnafu, TransportSnafu};
 
 /// Adapter that lets the `oauth2` crate drive token-endpoint requests
 /// through our shared `reqwest::Client`.
@@ -101,12 +103,27 @@ impl OAuthHttpClient {
             .await
             .context(TransportSnafu)?;
 
+        const MAX_OAUTH_RESPONSE_BODY_BYTES: u64 = 20 * 1024 * 1024;
         let status = response.status();
         let mut builder = http::Response::builder().status(status);
         for (name, value) in response.headers().iter() {
             builder = builder.header(name, value);
         }
-        let body = response.bytes().await.context(TransportSnafu)?.to_vec();
+        // Stream the body against a fixed size limit so an oversized response is
+        // bounded even under chunked transfer-encoding or an omitted
+        // `Content-Length`, which a bare `content_length()` check does not cover.
+        let body = match read_body_capped(response, MAX_OAUTH_RESPONSE_BODY_BYTES as usize).await {
+            Ok(bytes) => bytes,
+            Err(CappedBodyError::TooLarge { .. }) => {
+                return ResponseBodyTooLargeSnafu {
+                    max_bytes: MAX_OAUTH_RESPONSE_BODY_BYTES,
+                }
+                .fail();
+            }
+            Err(CappedBodyError::Transport(source)) => {
+                return Err(TransportSnafu.into_error(source));
+            }
+        };
         Ok(builder
             .body(body)
             .expect("http::Response builder must accept reqwest-provided headers and body"))
@@ -181,4 +198,59 @@ fn clone_request(request: &Request<Vec<u8>>) -> Request<Vec<u8>> {
     builder
         .body(request.body().clone())
         .expect("cloning a well-formed http::Request must succeed")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Serve one HTTP/1.1 response of `body_len` bytes via chunked
+    /// transfer-encoding with **no** `Content-Length`, then close, so the test
+    /// exercises the streaming size limit where no advertised length is present.
+    async fn serve_chunked_once(body_len: usize) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut scratch = [0u8; 1024];
+                let _ = sock.read(&mut scratch).await;
+                let head =
+                    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(format!("{body_len:x}\r\n").as_bytes()).await;
+                let _ = sock.write_all(&vec![b'x'; body_len]).await;
+                let _ = sock.write_all(b"\r\n0\r\n\r\n").await;
+                let _ = sock.flush().await;
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// A token-endpoint response that streams past the 20 MiB cap using chunked
+    /// encoding (no `Content-Length`) must be rejected. Before the streaming cap
+    /// the header-only guard would have let this through and read it all into
+    /// memory.
+    #[tokio::test]
+    async fn send_once_rejects_chunked_body_exceeding_cap_without_content_length() {
+        const CAP: usize = 20 * 1024 * 1024;
+        let url = serve_chunked_once(CAP + 1).await;
+        let client = OAuthHttpClient::new(&reqwest::Client::new());
+        let request = http::Request::builder()
+            .method("GET")
+            .uri(url)
+            .body(Vec::new())
+            .expect("request builder should accept a well-formed GET");
+
+        let err = client
+            .send_once(request, None)
+            .await
+            .expect_err("an oversized chunked token response must be rejected");
+        assert!(
+            matches!(err, OAuthError::ResponseBodyTooLarge { max_bytes, .. } if max_bytes == CAP as u64),
+            "expected ResponseBodyTooLarge {{ max_bytes: 20 MiB }}, got {err:?}"
+        );
+    }
 }

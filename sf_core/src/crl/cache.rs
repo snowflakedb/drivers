@@ -1167,8 +1167,8 @@ impl CrlCache {
 
         let ctx = HttpContext::new(Method::GET, url.to_string());
         let req_builder = || self.http_client.get(url);
-        // Stream the body with a hard size cap so an oversized (or unbounded)
-        // CRL cannot exhaust memory.
+        // Stream the body against a fixed size limit so an oversized CRL
+        // response is bounded.
         let bytes = match execute_bytes_with_retry_capped(
             req_builder,
             &ctx,
@@ -1708,5 +1708,71 @@ mod tests {
         assert!(logs_contain(
             "File permission check is disabled for CRL cache"
         ));
+    }
+
+    /// Production CRL download honors `CrlConfig::max_download_size` (the
+    /// user-tunable `crl_max_download_size`): a CRL whose body exceeds the cap
+    /// is rejected as `DownloadSizeExceeded` instead of being buffered, so an
+    /// oversized response is bounded.
+    #[tokio::test]
+    async fn fetch_rejects_crl_body_exceeding_max_download_size() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let max_download_size = 1024usize;
+        let oversized = vec![0u8; max_download_size + 1];
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(oversized))
+            .mount(&server)
+            .await;
+
+        let cache = CrlCache::new(CrlConfig {
+            max_download_size,
+            ..test_config()
+        })
+        .expect("cache");
+
+        let url = format!("{}/some.crl", server.uri());
+        let err = cache
+            .fetch(&url)
+            .await
+            .expect_err("oversized CRL must be rejected");
+        assert!(
+            matches!(
+                err,
+                CrlError::DownloadSizeExceeded { max_size, .. } if max_size == max_download_size
+            ),
+            "expected DownloadSizeExceeded with max_size={max_download_size}, got: {err:?}"
+        );
+    }
+
+    /// A CRL within the configured cap downloads normally, confirming
+    /// `max_download_size` is an upper bound rather than a fixed size.
+    #[tokio::test]
+    async fn fetch_accepts_crl_body_within_max_download_size() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let max_download_size = 1024usize;
+        let body = vec![7u8; max_download_size / 2];
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.clone()))
+            .mount(&server)
+            .await;
+
+        let cache = CrlCache::new(CrlConfig {
+            max_download_size,
+            ..test_config()
+        })
+        .expect("cache");
+
+        let url = format!("{}/some.crl", server.uri());
+        let bytes = cache
+            .fetch(&url)
+            .await
+            .expect("within-cap CRL must download");
+        assert_eq!(bytes, body);
     }
 }

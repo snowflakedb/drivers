@@ -177,6 +177,14 @@ pub enum OAuthError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display(
+        "OAuth token endpoint response body exceeds the maximum allowed size of {max_bytes} bytes"
+    ))]
+    ResponseBodyTooLarge {
+        max_bytes: u64,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[cfg(test)]

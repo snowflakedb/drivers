@@ -6,7 +6,7 @@ use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
 use crate::sensitive::SensitiveString;
 use reqwest::{Method, StatusCode, header};
 use serde::Deserialize;
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, ResultExt, Snafu, ensure};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -118,6 +118,14 @@ pub enum ExternalBrowserError {
     #[snafu(display("Failed to read from callback connection"))]
     CallbackIo {
         source: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "Browser callback body exceeds the maximum allowed size of {max_bytes} bytes"
+    ))]
+    CallbackBodyTooLarge {
+        max_bytes: usize,
         #[snafu(implicit)]
         location: Location,
     },
@@ -371,6 +379,9 @@ async fn read_http_request(
     let mut raw_request = String::new();
     let mut content_length: usize = 0;
 
+    // TODO: SNOW-3965609 — add a size cap on accumulated header bytes (and a
+    // per-line length limit) for the header-parsing loop below. The body read is
+    // already bounded by `MAX_CALLBACK_BODY_BYTES`.
     loop {
         let mut line = String::new();
         let n = reader.read_line(&mut line).await.context(CallbackIoSnafu)?;
@@ -390,6 +401,13 @@ async fn read_http_request(
     }
 
     if content_length > 0 {
+        const MAX_CALLBACK_BODY_BYTES: usize = 20 * 1024 * 1024;
+        ensure!(
+            content_length <= MAX_CALLBACK_BODY_BYTES,
+            CallbackBodyTooLargeSnafu {
+                max_bytes: MAX_CALLBACK_BODY_BYTES,
+            }
+        );
         let mut body_buf = vec![0u8; content_length];
         reader
             .read_exact(&mut body_buf)
@@ -789,5 +807,20 @@ mod tests {
         .await;
 
         assert!(result.is_err(), "Should time out when no callback arrives");
+    }
+
+    #[tokio::test]
+    async fn should_reject_callback_body_exceeding_size_cap() {
+        let oversized_length = 20 * 1024 * 1024 + 1usize;
+        let header = format!("POST / HTTP/1.1\r\nContent-Length: {oversized_length}\r\n\r\n");
+        let mut stream = std::io::Cursor::new(header.into_bytes());
+        let result = read_http_request(&mut stream).await;
+        assert!(
+            matches!(
+                result,
+                Err(ExternalBrowserError::CallbackBodyTooLarge { .. })
+            ),
+            "expected CallbackBodyTooLarge, got: {result:?}"
+        );
     }
 }

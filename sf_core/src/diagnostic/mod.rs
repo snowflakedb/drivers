@@ -79,6 +79,11 @@ pub struct DiagnosticRunner {
     allowlist_sections: Vec<String>,
     /// Seen-set for O(1) dedup in `run_post_connect`.  Mirrors `allowlist_sections`.
     allowlist_sections_seen: HashSet<String>,
+    /// Maximum bytes to download for a single CRL, mirroring the production
+    /// revocation-check path (`CrlConfig::max_download_size`, tunable via the
+    /// `crl_max_download_size` connection parameter). Bounds the diagnostic's
+    /// raw CRL fetch so both paths honor the same user-configured cap.
+    crl_max_download_size: u64,
 }
 
 impl DiagnosticRunner {
@@ -123,6 +128,11 @@ impl DiagnosticRunner {
             append(&mut results, "INITIAL", &line);
         }
 
+        // CRL download cap: reuse the connection's resolved CRL config so the
+        // diagnostic honors the same `crl_max_download_size` the production
+        // revocation-check path enforces (single source of truth).
+        let crl_max_download_size = client_info.crl_config.max_download_size as u64;
+
         // Probe the main Snowflake host (DNS + peer IP + TLS cert inspection).
         // Initialize tested_crls here so CRL URLs seen in the Snowflake host cert
         // chain are remembered and not re-fetched for post-connect allowlist entries.
@@ -135,6 +145,7 @@ impl DiagnosticRunner {
             &tls_client_config,
             &proxy_config,
             &mut tested_crls,
+            crl_max_download_size,
         );
 
         // ---- Resolve log directory -----------------------------------------
@@ -189,6 +200,7 @@ impl DiagnosticRunner {
             tested_crls,
             allowlist_sections: Vec::new(),
             allowlist_sections_seen: HashSet::new(),
+            crl_max_download_size,
         }
     }
 
@@ -217,6 +229,7 @@ impl DiagnosticRunner {
             // on different fields of `self` across the loop.
             let tls_config = Arc::clone(&self.tls_client_config);
             let proxy_config = self.proxy_config.clone();
+            let crl_max_download_size = self.crl_max_download_size;
             for entry in entries {
                 let host_type = entry
                     .get("type")
@@ -243,6 +256,7 @@ impl DiagnosticRunner {
                     &tls_config,
                     &proxy_config,
                     &mut self.tested_crls,
+                    crl_max_download_size,
                 );
             }
         }
@@ -458,6 +472,7 @@ fn is_private_ip(ip: &std::net::IpAddr) -> bool {
 /// gosnowflake copying the proxy from its transport factory: the TCP connection
 /// is made to the proxy and the target is reached via CONNECT (443/other) or an
 /// absolute-form GET (80).
+#[allow(clippy::too_many_arguments)]
 fn probe_host(
     host: &str,
     port: u16,
@@ -466,6 +481,7 @@ fn probe_host(
     tls_client_config: &Arc<rustls::ClientConfig>,
     proxy_config: &ProxyConfig,
     tested_crls: &mut HashSet<String>,
+    crl_max_download_size: u64,
 ) {
     dns_lookup(host, section, results);
 
@@ -603,6 +619,7 @@ fn probe_host(
             results,
             tls_client_config,
             tested_crls,
+            crl_max_download_size,
         );
     } else if port == 80 {
         // Plain HTTP: a proxy forwards it via an absolute-form request URI (no
@@ -706,6 +723,7 @@ fn inspect_tls(
     results: &mut HashMap<String, Vec<String>>,
     tls_client_config: &Arc<rustls::ClientConfig>,
     tested_crls: &mut HashSet<String>,
+    crl_max_download_size: u64,
 ) {
     let server_name = match ServerName::try_from(host.to_owned()) {
         Ok(n) => n,
@@ -822,6 +840,7 @@ fn inspect_tls(
                             results,
                             tested_crls,
                             issuer_der,
+                            crl_max_download_size,
                         );
                     }
                 }
@@ -856,6 +875,7 @@ fn crl_sig_label(body: &[u8], issuer_der: Option<&[u8]>) -> String {
 /// redundant fetch.  Failed fetches are not recorded, so a transient failure is
 /// retried by the next cert.  Scoped per run rather than process-globally to
 /// avoid stale cached results across runs.
+#[allow(clippy::too_many_arguments)]
 fn fetch_and_parse_crl(
     url: &str,
     host: &str,
@@ -864,6 +884,7 @@ fn fetch_and_parse_crl(
     results: &mut HashMap<String, Vec<String>>,
     tested_crls: &mut HashSet<String>,
     issuer_der: Option<&[u8]>,
+    max_download_size: u64,
 ) {
     if tested_crls.contains(url) {
         tracing::debug!(
@@ -882,7 +903,7 @@ fn fetch_and_parse_crl(
         return;
     }
 
-    match http_get_binary(url) {
+    match http_get_binary(url, max_download_size) {
         Err(e) => {
             append(
                 results,
@@ -931,8 +952,13 @@ fn fetch_and_parse_crl(
 }
 
 /// Minimal HTTP/1.0 GET that returns the response body bytes.
-/// Used for CRL fetching over plain HTTP.
-fn http_get_binary(url: &str) -> Result<Vec<u8>, String> {
+///
+/// Used for CRL fetching over plain HTTP. `max_body_bytes` bounds the total
+/// response read so an oversized response is bounded; callers pass the same CRL
+/// download cap (`CrlConfig::max_download_size`) the
+/// production revocation-check path enforces, so both honor the user-configured
+/// `crl_max_download_size`.
+fn http_get_binary(url: &str, max_body_bytes: u64) -> Result<Vec<u8>, String> {
     // Strip scheme to get host+path.
     let without_scheme = url
         .strip_prefix("http://")
@@ -969,8 +995,14 @@ fn http_get_binary(url: &str) -> Result<Vec<u8>, String> {
 
     let mut response = Vec::new();
     stream
+        .take(max_body_bytes + 1)
         .read_to_end(&mut response)
         .map_err(|e| format!("read error: {e}"))?;
+    if response.len() as u64 > max_body_bytes {
+        return Err(format!(
+            "response body exceeds the maximum allowed size of {max_body_bytes} bytes"
+        ));
+    }
 
     // Find header/body separator.
     let body_start = response
@@ -1197,11 +1229,13 @@ fn collect_proxy_env() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::crl_sig_label;
+    use super::{crl_sig_label, http_get_binary};
     use rcgen::{
         BasicConstraints, CertificateParams, CertificateRevocationListParams, IsCa, KeyPair,
         KeyUsagePurpose, SerialNumber,
     };
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     fn make_ca() -> (rcgen::Certificate, KeyPair, Vec<u8>) {
         let key_pair = KeyPair::generate().unwrap();
@@ -1257,5 +1291,53 @@ mod tests {
             label.starts_with("unverified") && !label.starts_with("unverified (root;"),
             "expected issuer-mismatch unverified label, got: {label}"
         );
+    }
+
+    /// Spawn a one-shot HTTP/1.0 server that answers a single request with a
+    /// `200 OK` carrying `body`, then closes the connection. Returns the URL to
+    /// GET. Used to exercise the raw CRL fetch path without real network access.
+    fn serve_once(body: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                // Best-effort drain of the request line/headers before replying.
+                let mut scratch = [0u8; 1024];
+                let _ = sock.read(&mut scratch);
+                let header = format!(
+                    "HTTP/1.0 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = sock.write_all(header.as_bytes());
+                let _ = sock.write_all(&body);
+                // Dropping the socket closes the connection, giving the client EOF.
+            }
+        });
+        format!("http://{addr}/test.crl")
+    }
+
+    /// A CRL response larger than the caller-supplied cap is rejected before the
+    /// whole body is buffered — this is the diagnostic mirror of the production
+    /// `max_download_size` enforcement.
+    #[test]
+    fn http_get_binary_rejects_body_exceeding_cap() {
+        let cap: u64 = 64;
+        let url = serve_once(vec![b'x'; 4096]);
+        let err = http_get_binary(&url, cap).expect_err("oversized body must be rejected");
+        assert!(
+            err.contains("exceeds the maximum allowed size"),
+            "expected size-cap error, got: {err}"
+        );
+    }
+
+    /// A CRL response within the cap is returned verbatim, confirming the cap is
+    /// an upper bound the caller controls rather than a hardcoded constant.
+    #[test]
+    fn http_get_binary_returns_body_within_cap() {
+        let cap: u64 = 4096;
+        let body = vec![b'C'; 100];
+        let url = serve_once(body.clone());
+        let got = http_get_binary(&url, cap).expect("within-cap body must be returned");
+        assert_eq!(got, body);
     }
 }
