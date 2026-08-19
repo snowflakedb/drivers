@@ -79,6 +79,9 @@ public class ExceptionCarrierQueryIdTest {
         (CoreException) new CoreException(payload, null).withQueryId("attached-id");
 
     assertEquals("attached-id", carrier.getQueryId());
+    SnowflakeSQLException sf =
+        assertInstanceOf(SnowflakeSQLException.class, carrier.toSQLException());
+    assertEquals("attached-id", sf.getQueryId());
   }
 
   @Test
