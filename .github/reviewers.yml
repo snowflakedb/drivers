@@ -91,6 +91,7 @@ reviewers:
   patryk-czajka_snow:
   tomasz-urbaszek_snow:
   marcin-erbel_snow:
+  piotr-fus_snow:
 
 rules:
   all:
@@ -101,6 +102,11 @@ rules:
     - michal-hofman_snow
     - dawid-heyman_snow
     - marcin-erbel_snow
+  gosnowflake:
+    - piotr-fus_snow
+    - bartosz-oler_snow
+    - ruslan-savenok_snow
+    - dawid-heyman_snow
   jdbc:
     - antoni-solarski_snow
     - dawid-heyman_snow
