@@ -6,17 +6,19 @@ import type {
   StatementOption,
 } from 'snowflake-sdk';
 import oldSnowflakeSDK from 'snowflake-sdk';
-// TODO:
-// Ensure tests run against the built package to catch any missing files in the build output.
-// Namespace import (not default): src/index.js only has named exports. A default import
-// works under Vitest interop but fails under plain Node/tsx with
-// "does not provide an export named 'default'".
-import * as newSnowflakeSDK from '../../../src/index.js';
 import getTestParameter from './getTestParameter';
 
 export function isRunningForOldDriver() {
   return !!process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER;
 }
+
+// Importing src/index.js loads the platform-specific native core immediately.
+// Keep that import out of the old-driver project: its CI job intentionally does
+// not build the new core and should exercise only the published legacy SDK.
+// TODO: Import the built package in new-driver tests to catch missing output files.
+const newSnowflakeSDK = isRunningForOldDriver()
+  ? undefined
+  : ((await import('../../../src/index.js')) as unknown as typeof oldSnowflakeSDK);
 
 export function getSnowflakeSDK() {
   if (isRunningForOldDriver()) {
@@ -25,7 +27,7 @@ export function getSnowflakeSDK() {
     // TODO:
     // temporary using `as SnowflakeSDK` to satisfy the type checker until
     // new SDK is fully implemented
-    return newSnowflakeSDK as typeof oldSnowflakeSDK;
+    return newSnowflakeSDK!;
   }
 }
 
