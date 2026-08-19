@@ -45,6 +45,7 @@ pub(crate) fn open_read_nofollow_nonblock(path: &Path) -> io::Result<File> {
 /// Creates a new file exclusively (`O_EXCL` / `create_new`).
 ///
 /// On Unix, sets `O_NOFOLLOW` and optionally the initial file mode.
+#[cfg(unix)]
 pub(crate) fn create_new_nofollow(path: &Path, unix_mode: Option<u32>) -> io::Result<File> {
     let mut opts = OpenOptions::new();
     opts.write(true).create_new(true);
@@ -61,6 +62,7 @@ pub(crate) fn create_new_nofollow(path: &Path, unix_mode: Option<u32>) -> io::Re
 /// Opens an existing file with optional read/write access.
 ///
 /// On Unix, sets `O_NOFOLLOW` to reject symlinks at the target path.
+#[cfg(unix)]
 pub(crate) fn open_existing_nofollow(path: &Path, read: bool, write: bool) -> io::Result<File> {
     let mut opts = OpenOptions::new();
     opts.read(read).write(write);
@@ -73,13 +75,13 @@ pub(crate) fn open_existing_nofollow(path: &Path, read: bool, write: bool) -> io
 ///
 /// Uses `create(true).truncate(false).write(true)`. On Unix, sets
 /// `O_NOFOLLOW` and optionally the initial file mode.
-pub(crate) fn open_lock_file(path: &Path, unix_mode: Option<u32>) -> io::Result<File> {
+pub(crate) fn open_lock_file(path: &Path, _unix_mode: Option<u32>) -> io::Result<File> {
     let mut opts = OpenOptions::new();
     opts.create(true).truncate(false).write(true);
     #[cfg(unix)]
     {
         opts.custom_flags(libc::O_NOFOLLOW);
-        if let Some(mode) = unix_mode {
+        if let Some(mode) = _unix_mode {
             opts.mode(mode);
         }
     }

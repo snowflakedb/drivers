@@ -441,7 +441,6 @@ impl DatabaseDriverV1 {
                 let mut diag_runner = if let Some(diag_cfg) = effective_diag {
                     let account = config.server.account.clone();
                     let host_str = host.clone().unwrap_or_default();
-                    let diag_cfg = config.diagnostic.clone();
                     let diag_proxy = config.proxy.clone();
                     let diag_client_info = login_parameters.client_info.clone();
                     tokio::task::spawn_blocking(move || {

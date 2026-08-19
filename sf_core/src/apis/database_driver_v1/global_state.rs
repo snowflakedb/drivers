@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use super::connection::{Connection, WrapperIdentity};
+use super::connection::Connection;
+#[cfg(feature = "protobuf")]
+use super::connection::WrapperIdentity;
 use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
@@ -187,6 +189,7 @@ impl DatabaseDriverV1 {
     /// Read both `session_id` and `wrapper_identity` under a single lock guard,
     /// eliminating the TOCTOU window that exists when the two fields are fetched
     /// with separate awaits.
+    #[cfg(feature = "protobuf")]
     pub(crate) async fn session_id_and_identity_for_conn(
         &self,
         conn_handle: Handle,

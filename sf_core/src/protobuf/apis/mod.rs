@@ -4,7 +4,6 @@ use crate::protobuf::generated::database_driver_v1::{
     DatabaseDriverServer, DriverException, StatusCode, observes_cancellation,
 };
 use crate::utils::sync::MutexRecoverExt;
-use der::Encode;
 use proto_utils::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

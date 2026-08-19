@@ -1772,7 +1772,7 @@ pub unsafe extern "system" fn SQLEndTran(
     if handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
     }
-    end_tran_dispatch(handle_type, handle, completion_type)
+    unsafe { end_tran_dispatch(handle_type, handle, completion_type) }
 }
 
 /// # Safety
@@ -1798,7 +1798,7 @@ pub unsafe extern "system" fn SQLTransact(
         return sql::SqlReturn::INVALID_HANDLE.0;
     };
     record_api!(handle_type, handle, "SQLTransact");
-    end_tran_dispatch(handle_type, handle, completion_type as sql::SmallInt)
+    unsafe { end_tran_dispatch(handle_type, handle, completion_type as sql::SmallInt) }
 }
 
 /// # Safety

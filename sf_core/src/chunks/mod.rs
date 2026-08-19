@@ -17,9 +17,11 @@ use arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
 use arrow_ipc::reader::StreamReader;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+#[cfg(feature = "protobuf")]
+pub(crate) use error::ArrowIpcEncodeSnafu;
 pub use error::ChunkError;
+pub(crate) use error::ChunkReadSnafu;
 use error::*;
-pub(crate) use error::{ArrowIpcEncodeSnafu, ChunkReadSnafu};
 pub use json_parser::convert_string_rowset_to_arrow_reader;
 use prefetch::{
     ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, ParseChunk, PrefetchChunkReader,

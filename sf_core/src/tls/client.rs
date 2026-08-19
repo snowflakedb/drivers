@@ -633,7 +633,7 @@ mod tests {
             use_proxy_env: true,
             ..Default::default()
         };
-        configure_http_client(Client::builder(), Some(&p)).unwrap();
+        let _ = configure_http_client(Client::builder(), Some(&p)).unwrap();
         assert!(logs_contain("environment variable proxy settings"));
     }
 
