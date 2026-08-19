@@ -1,6 +1,8 @@
 name: Build JDBC JARs
 
 on:
+  schedule:
+    - cron: '0 4 * * *'  # Same slot as JDBC CI nightly; schedule is mirror-only (see job if)
   push:
     branches:
       - 'release/jdbc-**'
@@ -25,8 +27,13 @@ concurrency:
 
 jobs:
   build_jdbc_jars:
+    # Eng: packaging PRs / release pushes / dispatch (schedule is skipped —
+    # JDBC CI already builds natives in the 04:00 nightly).
+    # Mirror: schedule + dispatch + release/* only (no PR tax).
     if: >-
-      github.repository_owner != 'snowflakedb'
-      || github.event_name == 'workflow_dispatch'
-      || startsWith(github.ref, 'refs/heads/release/')
+      (github.repository_owner != 'snowflakedb' && github.event_name != 'schedule')
+      || (github.repository_owner == 'snowflakedb'
+          && (github.event_name == 'schedule'
+              || github.event_name == 'workflow_dispatch'
+              || startsWith(github.ref, 'refs/heads/release/')))
     uses: ./.github/workflows/_build-jdbc-fatjar.yml

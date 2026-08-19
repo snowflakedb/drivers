@@ -30,67 +30,81 @@ runs:
         $ErrorActionPreference = "Stop"
         $arch = "${{ inputs.arch }}"
 
-        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-        if (-not (Test-Path $vswhere)) {
-          throw "vswhere.exe not found at $vswhere"
-        }
-
-        $installPath = & $vswhere -latest -property installationPath
-        if (-not $installPath) {
-          throw "vswhere could not locate a Visual Studio installation"
-        }
-
-        $vcvars = Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat"
-        if (-not (Test-Path $vcvars)) {
-          throw "vcvarsall.bat not found at $vcvars"
-        }
-
-        # Capture vcvarsall output to a variable BEFORE inspecting $LASTEXITCODE.
-        # Piping `cmd /c ... | ForEach-Object` would succeed as a pipeline even if
-        # vcvarsall.bat itself failed, leaving later steps running without cl.exe
-        # or link.exe on PATH.
-        $vcvarsOutput = cmd /c "`"$vcvars`" $arch && set" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "vcvarsall.bat output:"
-          $vcvarsOutput | ForEach-Object { Write-Host $_ }
-          throw "vcvarsall.bat $arch failed with exit code $LASTEXITCODE"
-        }
-
-        $vcvarsOutput | ForEach-Object {
-          if ($_ -match '^([^=]+)=(.*)$') {
-            $name = $Matches[1]
-            $value = $Matches[2]
-            "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            [System.Environment]::SetEnvironmentVariable($name, $value, 'Process')
-          }
-        }
-
-        # vcvarsall.bat can exit 0 with a broken environment (missing components,
-        # wrong host arch). Verify the toolchain is actually usable so the next
-        # build step fails here with a clear message instead of producing a
-        # confusing missing-tool / linker error 3 minutes into the build.
-        foreach ($tool in @('cl.exe', 'link.exe', 'dumpbin.exe')) {
-          if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-            throw "MSVC environment setup completed but $tool is not on PATH (requested arch: $arch)"
-          }
-        }
-
         # vcvarsall arch grammar is `[host_]target`: `x86`, `x64`, `arm64`,
         # `amd64_arm64`, `x86_arm64`, etc. VSCMD_ARG_TGT_ARCH is set to the
         # target portion using x64 (not amd64) terminology.
         $expectedTgt = ($arch -split '_')[-1]
         if ($expectedTgt -eq 'amd64') { $expectedTgt = 'x64' }
-        if ($env:VSCMD_ARG_TGT_ARCH -ne $expectedTgt) {
-          throw "VSCMD_ARG_TGT_ARCH is '$($env:VSCMD_ARG_TGT_ARCH)', expected '$expectedTgt' for arch '$arch'"
-        }
 
-        # vcvarsall.bat prepends VS's bundled cmake (3.x) to PATH. Callers that installed
-        # a newer cmake into $CMAKE_DIR (e.g. Kitware pip wheel for cmake 4.x) need the
-        # newer copy to keep resolving first. The env propagation loop above writes the
-        # post-vcvarsall PATH to GITHUB_ENV; we now overwrite it with $CMAKE_DIR prepended.
-        if ("${{ inputs.restore-cmake-dir }}" -eq "true" -and $env:CMAKE_DIR) {
-          $env:PATH = "$env:CMAKE_DIR;$env:PATH"
-          "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        }
+        # Idempotent: OpenSSL setup (and other callers) may already have sourced
+        # vcvarsall for this target. Re-running prepends MSVC paths again and
+        # can push PATH past CreateProcess limits; setuptools then fails with
+        # vcvarsall exit 255 when it tries a nested invoke.
+        $skipVcvars = ($env:VSCMD_ARG_TGT_ARCH -eq $expectedTgt) -and `
+          (Get-Command cl.exe -ErrorAction SilentlyContinue) -and `
+          (Get-Command link.exe -ErrorAction SilentlyContinue) -and `
+          (Get-Command dumpbin.exe -ErrorAction SilentlyContinue)
 
-        Write-Host "MSVC ready: VS at $installPath, target arch $env:VSCMD_ARG_TGT_ARCH"
+        if ($skipVcvars) {
+          Write-Host "MSVC already configured for target $expectedTgt — skipping vcvarsall"
+        } else {
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found at $vswhere"
+          }
+
+          $installPath = & $vswhere -latest -property installationPath
+          if (-not $installPath) {
+            throw "vswhere could not locate a Visual Studio installation"
+          }
+
+          $vcvars = Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat"
+          if (-not (Test-Path $vcvars)) {
+            throw "vcvarsall.bat not found at $vcvars"
+          }
+
+          # Capture vcvarsall output to a variable BEFORE inspecting $LASTEXITCODE.
+          # Piping `cmd /c ... | ForEach-Object` would succeed as a pipeline even if
+          # vcvarsall.bat itself failed, leaving later steps running without cl.exe
+          # or link.exe on PATH.
+          $vcvarsOutput = cmd /c "`"$vcvars`" $arch && set" 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "vcvarsall.bat output:"
+            $vcvarsOutput | ForEach-Object { Write-Host $_ }
+            throw "vcvarsall.bat $arch failed with exit code $LASTEXITCODE"
+          }
+
+          $vcvarsOutput | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') {
+              $name = $Matches[1]
+              $value = $Matches[2]
+              "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              [System.Environment]::SetEnvironmentVariable($name, $value, 'Process')
+            }
+          }
+
+          # vcvarsall.bat can exit 0 with a broken environment (missing components,
+          # wrong host arch). Verify the toolchain is actually usable so the next
+          # build step fails here with a clear message instead of producing a
+          # confusing missing-tool / linker error 3 minutes into the build.
+          foreach ($tool in @('cl.exe', 'link.exe', 'dumpbin.exe')) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "MSVC environment setup completed but $tool is not on PATH (requested arch: $arch)"
+            }
+          }
+
+          if ($env:VSCMD_ARG_TGT_ARCH -ne $expectedTgt) {
+            throw "VSCMD_ARG_TGT_ARCH is '$($env:VSCMD_ARG_TGT_ARCH)', expected '$expectedTgt' for arch '$arch'"
+          }
+
+          # vcvarsall.bat prepends VS's bundled cmake (3.x) to PATH. Callers that installed
+          # a newer cmake into $CMAKE_DIR (e.g. Kitware pip wheel for cmake 4.x) need the
+          # newer copy to keep resolving first. The env propagation loop above writes the
+          # post-vcvarsall PATH to GITHUB_ENV; we now overwrite it with $CMAKE_DIR prepended.
+          if ("${{ inputs.restore-cmake-dir }}" -eq "true" -and $env:CMAKE_DIR) {
+            $env:PATH = "$env:CMAKE_DIR;$env:PATH"
+            "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+          Write-Host "MSVC ready: VS at $installPath, target arch $env:VSCMD_ARG_TGT_ARCH"
+        }

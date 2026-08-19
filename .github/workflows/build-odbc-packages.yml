@@ -2,6 +2,8 @@ name: Build ODBC Packages
 
 # Builds every distributable ODBC artifact
 on:
+  schedule:
+    - cron: '0 3 * * *'  # Same slot as ODBC CI nightly; schedule is mirror-only (see job if)
   push:
     branches:
       - 'release/odbc-**'
@@ -21,10 +23,13 @@ concurrency:
 
 jobs:
   build_odbc_packages:
-    # Public-side gate: on the mirror (snowflakedb) build only on manual
-    # dispatch or release/* pushes; unchanged on the internal repo.
+    # Eng: packaging PRs / release pushes / dispatch (schedule is skipped —
+    # ODBC CI already builds packages in the 03:00 nightly).
+    # Mirror: schedule + dispatch + release/* only (no PR tax).
     if: >-
-      github.repository_owner != 'snowflakedb'
-      || github.event_name == 'workflow_dispatch'
-      || startsWith(github.ref, 'refs/heads/release/')
+      (github.repository_owner != 'snowflakedb' && github.event_name != 'schedule')
+      || (github.repository_owner == 'snowflakedb'
+          && (github.event_name == 'schedule'
+              || github.event_name == 'workflow_dispatch'
+              || startsWith(github.ref, 'refs/heads/release/')))
     uses: ./.github/workflows/_build-odbc-packages.yml
