@@ -10,6 +10,13 @@ on:
           JSON object mapping platform keys to Python version arrays.
           Example: {"linux_x86": ["3.11","3.12","3.13","3.14"], "macos_x86": ["3.11","3.12"], "windows_arm": ["3.11","3.12"]}
           Supported platforms: linux_x86, linux_aarch, macos_x86, macos_arm, windows_x86, windows_arm.
+      cold_cache:
+        type: boolean
+        required: false
+        default: false
+        description: >
+          When true, skip Rust/vcpkg/rustup cache restores so wheel builds
+          exercise cold (first-build / empty-mirror-cache) paths.
 
 env:
   CARGO_TERM_COLOR: always
@@ -283,7 +290,7 @@ jobs:
       # toolchain (~/.rustup + ~/.cargo/bin) is cached separately — keyed
       # only on a version marker so Cargo.lock churn doesn't invalidate it.
       - name: Restore Rust cache (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && !inputs.cold_cache }}
         id: rust-cache-linux
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
@@ -292,7 +299,7 @@ jobs:
           shared-key: sf-core-release-${{ matrix.artifact_id }}
 
       - name: Restore rustup toolchain cache (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && !inputs.cold_cache }}
         id: rustup-cache-linux
         continue-on-error: true
         uses: actions/cache/restore@v5
@@ -372,7 +379,7 @@ jobs:
 
       # ── python_bridge build: macOS / Windows (direct, no container) ──
       - name: Restore Rust cache
-        if: runner.os != 'Linux'
+        if: ${{ runner.os != 'Linux' && !inputs.cold_cache }}
         id: rust-cache
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
@@ -407,6 +414,15 @@ jobs:
           CARGO_LIB: ${{ matrix.cargo_lib }}
         shell: bash
         run: |
+          # Prefer Strawberry Perl over Git's MSYS perl. openssl-src's Configure
+          # needs Locale::Maketext::Simple (and friends) which Git usr/bin perl
+          # lacks; cold builds that compile vendored OpenSSL fail otherwise.
+          # Only prepend perl/bin — not Strawberry c/bin (gcc/link), which would
+          # shadow MSVC tools if anything ever stops using absolute paths.
+          if [[ -d "/c/Strawberry/perl/bin" ]]; then
+            export PATH="/c/Strawberry/perl/bin:$PATH"
+          fi
+          echo "perl: $(command -v perl)"
           mkdir -p python/src/snowflake/connector/_core
           for V in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
             PY="$(uv python find "$V")"
@@ -573,6 +589,7 @@ jobs:
         uses: ./.github/actions/setup-windows-openssl
         with:
           arch: arm64
+          skip-cache-restore: ${{ inputs.cold_cache }}
 
       - name: Setup MSVC environment (ARM64)
         uses: ./.github/actions/setup-msvc
@@ -589,6 +606,7 @@ jobs:
 
       # ── python_bridge build (per-CPython ABI, same as cibuildwheel Windows path) ──
       - name: Restore Rust cache
+        if: ${{ !inputs.cold_cache }}
         id: rust-cache
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
@@ -640,11 +658,15 @@ jobs:
           path: python/src/snowflake/connector/_internal/protobuf_gen
 
       # ── Build ──
-      # MSVC env from the earlier setup-msvc step persists across steps via
-      # GITHUB_ENV, so no separate `call vcvarsall.bat` is needed here.
+      # MSVC env from setup-msvc persists via GITHUB_ENV. DISTUTILS_USE_SDK /
+      # MSSdk tell setuptools to use that env and skip re-invoking vcvarsall.bat
+      # (a second vcvarsall after a duplicated PATH fails with exit 255).
       - name: Build python wheel
         working-directory: ./python
         shell: cmd
+        env:
+          DISTUTILS_USE_SDK: "1"
+          MSSdk: "1"
         run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
       - name: Inspect wheel

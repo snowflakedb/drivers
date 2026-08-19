@@ -11,6 +11,12 @@ inputs:
     description: "Link mode: static (static-md triplet) or dynamic (shared DLLs)"
     required: false
     default: "static"
+  skip-cache-restore:
+    description: >
+      When true, skip restoring the vcpkg OpenSSL cache (force a cold install).
+      Used by cold_cache wheel builds to exercise first-build paths.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -29,6 +35,7 @@ runs:
 
     - name: Restore vcpkg OpenSSL cache
       id: cache
+      if: inputs.skip-cache-restore != 'true'
       uses: actions/cache/restore@v5
       with:
         path: C:\vcpkg\installed\${{ steps.triplet.outputs.value }}

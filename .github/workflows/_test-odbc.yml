@@ -97,7 +97,17 @@ jobs:
 
       - name: Build ODBC driver (Windows)
         if: runner.os == 'Windows'
-        run: cargo build --package odbc ${{ matrix.cargo_extra }} ${{ matrix.cargo_target && format('--target {0}', matrix.cargo_target) || '' }}
+        # PowerShell (not bash): openssl-src Configure must see Strawberry Perl,
+        # not Git's MSYS perl (missing Locale::Maketext::Simple). Explicitly
+        # prepend perl/bin only — never Strawberry c/bin (gcc/link) ahead of MSVC.
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Strawberry\perl\bin") {
+            $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
+          }
+          Write-Host "perl: $((Get-Command perl -ErrorAction SilentlyContinue).Source)"
+          cargo build --package odbc ${{ matrix.cargo_extra }} ${{ matrix.cargo_target && format('--target {0}', matrix.cargo_target) || '' }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           RUSTFLAGS: "-C linker=rust-lld"
 
