@@ -7,9 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -24,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.stream.Stream;
+import net.snowflake.jdbc.utils.IoTestUtils;
 import net.snowflake.jdbc.utils.SkipOldDriver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -58,7 +57,7 @@ class TroubleshootingTests {
 
     // When a connection is established and a query is executed
     Process p = pb.start();
-    byte[] output = drain(p.getInputStream());
+    byte[] output = IoTestUtils.readAllBytes(p.getInputStream());
     int exitCode = p.waitFor();
     assertEquals(0, exitCode, "Worker JVM failed:\n" + new String(output, StandardCharsets.UTF_8));
 
@@ -105,16 +104,6 @@ class TroubleshootingTests {
     cmd.add(TroubleshootingTests.class.getName());
     cmd.add(tmpDir.toString());
     return cmd;
-  }
-
-  private static byte[] drain(InputStream is) throws IOException {
-    ByteArrayOutputStream out = new ByteArrayOutputStream();
-    byte[] buf = new byte[1024];
-    int n;
-    while ((n = is.read(buf)) != -1) {
-      out.write(buf, 0, n);
-    }
-    return out.toByteArray();
   }
 
   private static String listDir(Path dir) {

@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
+import static net.snowflake.jdbc.utils.IoTestUtils.readAllBytes;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -21,7 +22,6 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.SQLException;
@@ -422,15 +422,5 @@ class UploadDownloadStreamTest {
 
       verify(mockCoreApi, times(1)).connectionDownloadStreamClose(DOWNLOAD_HANDLE);
     }
-  }
-
-  private static byte[] readAllBytes(InputStream is) throws IOException {
-    ByteArrayOutputStream buf = new ByteArrayOutputStream();
-    byte[] chunk = new byte[4096];
-    int n;
-    while ((n = is.read(chunk)) != -1) {
-      buf.write(chunk, 0, n);
-    }
-    return buf.toByteArray();
   }
 }
