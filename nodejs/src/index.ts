@@ -1,6 +1,12 @@
 import type { SnowflakeError } from './error.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
 import { CoreConnection, type CoreConnectionInstance, type CoreStatementInstance } from './core';
+import {
+  updateGlobalConfig,
+  type ConfigureOptions,
+  type CustomParser,
+  type XMlParserConfigOption,
+} from './global-config.js';
 import { collectRows } from './query-result/rows.js';
 import {
   RowStatement,
@@ -19,6 +25,9 @@ export {
   type DataType,
   type FetchRowsOptions,
   type Column,
+  type CustomParser,
+  type XMlParserConfigOption,
+  type ConfigureOptions,
 };
 
 // TODO: implement ConnectionOptions like in old driver
@@ -108,6 +117,6 @@ export class Connection {
   }
 }
 
-export const createConnection = (options: ConnectionOptions) => {
-  return new Connection(options);
-};
+// TODO: JSDoc needed
+export const configure = (options: ConfigureOptions) => updateGlobalConfig(options);
+export const createConnection = (options: ConnectionOptions) => new Connection(options);
