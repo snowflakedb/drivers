@@ -14,8 +14,24 @@ import oldSnowflakeSDK from 'snowflake-sdk';
 import * as newSnowflakeSDK from '../../../src/index.js';
 import getTestParameter from './getTestParameter';
 
+/**
+ * @deprecated Do not use this function in tests. Use isRunningNewDriverWithBD instead.
+ */
 export function isRunningForOldDriver() {
   return !!process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER;
+}
+
+/**
+ * Marks a documented behavior difference between the old and new Node.js
+ * driver, letting a test branch its assertions on which driver is under test.
+ *
+ * `bdRef` is a `BD#<n>` reference whose number must match an entry key in
+ * `nodejs/BehaviorDifferences.yaml`, so the divergence a test relies on is always traceable to a
+ * documented, reviewed behavior difference.
+ */
+export function isRunningNewDriverWithBD(bdRef: `BD#${number}`): boolean {
+  void bdRef;
+  return !isRunningForOldDriver();
 }
 
 export function getSnowflakeSDK() {

@@ -5,7 +5,7 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
-  isRunningForOldDriver,
+  isRunningNewDriverWithBD,
 } from './utils';
 
 describe('Query returning variant data types', () => {
@@ -22,22 +22,28 @@ describe('Query returning variant data types', () => {
   });
 
   it('returns OBJECT/MAP as Object', async () => {
+    // MAP is reported as 'object' because the ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE session
+    // parameter defaults to false. When it is true (and the driver version supports structured
+    // types) the server would return it as a structured MAP, and getType() would then report
+    // 'map'.
     const { statement, rows } = await executeAsync(
       connection,
-      "SELECT OBJECT_CONSTRUCT('key', 'value') as OBJECT_COLUMN, {'key': 'value'}::MAP(VARCHAR, VARCHAR) as MAP_COLUMN",
+      `SELECT
+        OBJECT_CONSTRUCT('key', 'value') as OBJECT_COLUMN,
+        {'key': 'value'}::MAP(VARCHAR, VARCHAR) as MAP_COLUMN
+      `,
     );
     const expectedValue = { key: 'value' };
     const objectColumn = statement.getColumn(0);
     const mapColumn = statement.getColumn(1);
     expect(objectColumn.getType()).toBe('object');
     expect(mapColumn.getType()).toBe('object');
-    // Bug in old driver: isObject() returns false because server doesn't return fieldsMetadata
-    if (isRunningForOldDriver()) {
-      expect(objectColumn.isObject()).toBe(false);
-      expect(mapColumn.isObject()).toBe(false);
-    } else {
+    if (isRunningNewDriverWithBD('BD#4')) {
       expect(objectColumn.isObject()).toBe(true);
       expect(mapColumn.isObject()).toBe(true);
+    } else {
+      expect(objectColumn.isObject()).toBe(false);
+      expect(mapColumn.isObject()).toBe(false);
     }
     expect(rows![0].OBJECT_COLUMN).toEqual(expectedValue);
     expect(rows![0].MAP_COLUMN).toEqual(expectedValue);
@@ -50,11 +56,10 @@ describe('Query returning variant data types', () => {
     );
     const column = statement.getColumn(0);
     expect(column.getType()).toBe('array');
-    // Bug in old driver: isArray() returns false because server doesn't return fieldsMetadata
-    if (isRunningForOldDriver()) {
-      expect(column.isArray()).toBe(false);
-    } else {
+    if (isRunningNewDriverWithBD('BD#4')) {
       expect(column.isArray()).toBe(true);
+    } else {
+      expect(column.isArray()).toBe(false);
     }
     expect(rows![0].ARRAY_COLUMN).toEqual([1, 2, 3]);
   });
