@@ -1,0 +1,60 @@
+id: universal-driver-nodejs
+friendly_name: "Universal Driver Node.js Guidelines"
+status: enabled
+allowed_folders:
+  - "nodejs/src"
+  - "nodejs/tests"
+excluded_folders:
+  - "nodejs/node_modules"
+  - "nodejs/dist"
+allowed_file_extensions:
+  - ".ts"
+rules:
+  - id: ud-node-optional-property-syntax
+    rule: |
+      **OBJECTIVE**: Keep object shapes idiomatic and unambiguous about
+      whether a field can be omitted entirely versus must be present (even
+      if its value is `undefined`).
+
+      **REQUIREMENT**: In `interface` members, `type` alias object members,
+      class fields, and inline object-type-literal members (e.g. a
+      parameter typed as `{ foo: Bar }`), a field whose only variance from
+      required is that it may simply be absent MUST use optional-property
+      syntax (`field?: T`) rather than `field: T | undefined`. Also avoid
+      the redundant `field?: T | undefined` — `field?: T` already allows
+      `undefined` at read time; just drop the explicit union.
+
+      This does **not** apply to a function/method parameter's own type or
+      to a return type: `function f(x: T | undefined)` and
+      `getNumRows(): number | undefined` describe a required parameter or
+      return value that can hold `undefined`, which is a different contract
+      than an omittable object property, and MUST stay as `T | undefined`.
+
+      ❌ **BAD:**
+      ```typescript
+      class Connection {
+        #defaultRowMode: RowMode | undefined;
+      }
+
+      function run(options: { complete: StatementCallback | undefined }) {
+        /* ... */
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```typescript
+      class Connection {
+        #defaultRowMode?: RowMode;
+      }
+
+      function run(options: { complete?: StatementCallback }) {
+        /* ... */
+      }
+      ```
+
+      ✅ **ALSO GOOD (not a violation — parameter/return type, not a property):**
+      ```typescript
+      getNumRows(): number | undefined {
+        /* ... */
+      }
+      ```
