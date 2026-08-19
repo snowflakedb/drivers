@@ -108,7 +108,6 @@ repos:
         entry: bash -c 'cd nodejs && npm run fmt:fix && npm run lint:check'
         pass_filenames: false
         files: ^nodejs/
-        exclude: BehaviorDifferences\.yaml$
         language: system
     -   id: behavior-differences-validator
         name: Behavioral Differences format check

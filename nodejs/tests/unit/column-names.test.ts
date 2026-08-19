@@ -2,9 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   renameDuplicateColumnNames,
   resolveColumnNames,
-  reshapeRowForMode,
-  DEFAULT_ROW_MODE,
-} from '../../src/query-result/row-mode';
+} from '../../src/query-result/column-names';
 
 describe('renameDuplicateColumnNames', () => {
   const cases: Array<{ name: string; input: string[]; expected: string[] }> = [
@@ -75,51 +73,19 @@ describe('renameDuplicateColumnNames', () => {
 });
 
 describe('resolveColumnNames', () => {
+  const columnsNamed = (...names: string[]) => names.map((name) => ({ getName: () => name }));
+
   it('renames duplicates only for object_with_renamed_duplicated_columns', () => {
-    expect(resolveColumnNames(['A', 'A'], 'object_with_renamed_duplicated_columns')).toEqual([
-      'A',
-      'A_2',
-    ]);
+    expect(
+      resolveColumnNames(columnsNamed('A', 'A'), 'object_with_renamed_duplicated_columns'),
+    ).toEqual(['A', 'A_2']);
   });
 
   it('leaves names unchanged for array mode', () => {
-    expect(resolveColumnNames(['A', 'A'], 'array')).toEqual(['A', 'A']);
+    expect(resolveColumnNames(columnsNamed('A', 'A'), 'array')).toEqual(['A', 'A']);
   });
 
   it('leaves names unchanged for object mode', () => {
-    expect(resolveColumnNames(['A', 'A'], 'object')).toEqual(['A', 'A']);
-  });
-});
-
-describe('reshapeRowForMode', () => {
-  const row = [1, 'two', true];
-  const columnNames = ['A', 'B', 'C'];
-
-  it('passes the row through unchanged for array mode', () => {
-    expect(reshapeRowForMode(row, columnNames, 'array')).toBe(row);
-  });
-
-  it('keys the row by column name for object mode', () => {
-    expect(reshapeRowForMode(row, columnNames, 'object')).toEqual({ A: 1, B: 'two', C: true });
-  });
-
-  it('keys the row by the already-resolved column names for object_with_renamed_duplicated_columns', () => {
-    expect(
-      reshapeRowForMode(row, ['A', 'A_2', 'C'], 'object_with_renamed_duplicated_columns'),
-    ).toEqual({
-      A: 1,
-      A_2: 'two',
-      C: true,
-    });
-  });
-
-  it('last value wins when two columns share a name (plain object mode)', () => {
-    expect(reshapeRowForMode([1, 2], ['DUP', 'DUP'], 'object')).toEqual({ DUP: 2 });
-  });
-});
-
-describe('DEFAULT_ROW_MODE', () => {
-  it('is object, matching the old driver default', () => {
-    expect(DEFAULT_ROW_MODE).toBe('object');
+    expect(resolveColumnNames(columnsNamed('A', 'A'), 'object')).toEqual(['A', 'A']);
   });
 });

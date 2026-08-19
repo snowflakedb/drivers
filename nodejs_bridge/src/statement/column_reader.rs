@@ -15,6 +15,7 @@ pub(crate) enum ColumnReader {
     Boolean(BooleanArray),
     Binary(BinaryArray),
     Fixed(StringArray),
+    Variant(StringArray),
 }
 
 impl ColumnReader {
@@ -54,6 +55,17 @@ impl ColumnReader {
                     })?;
                 Ok(Self::Fixed(array))
             }
+            Some("VARIANT" | "OBJECT" | "ARRAY") => {
+                let array = column
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .cloned()
+                    .ok_or_else(|| {
+                        "Arrow column could not be downcast to StringArray for semi-structured column"
+                            .to_string()
+                    })?;
+                Ok(Self::Variant(array))
+            }
             Some(logical_type) => Err(format!(
                 "no decoder registered for logicalType {logical_type:?}"
             )),
@@ -73,6 +85,9 @@ impl ColumnReader {
                 SqlValue::Binary(array.value(row_index).to_vec())
             }),
             Self::Fixed(array) => read_cell(array, row_index, || {
+                SqlValue::String(array.value(row_index).to_string())
+            }),
+            Self::Variant(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())
             }),
         }

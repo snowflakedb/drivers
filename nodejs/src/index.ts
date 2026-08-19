@@ -1,5 +1,12 @@
 import type { SnowflakeError } from './error.js';
-import type { RowMode } from './query-result/row-mode.js';
+import type {
+  StatementCallback,
+  StreamOptions,
+  DataType,
+  FetchRowsOptions,
+  Column,
+  RowMode,
+} from './query-result/types.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
 import { CoreConnection, type CoreConnectionInstance, type CoreStatementInstance } from './core';
 import {
@@ -9,15 +16,7 @@ import {
   type XMlParserConfigOption,
 } from './global-config.js';
 import { collectRows } from './query-result/rows.js';
-import {
-  RowStatement,
-  FileAndStageBindStatement,
-  type StatementCallback,
-  type StreamOptions,
-  type DataType,
-  type FetchRowsOptions,
-  type Column,
-} from './query-result/RowStatement.js';
+import { RowStatement, FileAndStageBindStatement } from './query-result/RowStatement.js';
 
 export {
   RowStatement,
@@ -114,7 +113,7 @@ export class Connection {
     (async () => {
       try {
         if (streamResult === true) {
-          await coreStatement.wait();
+          await coreStatement.waitForCompletion();
           complete?.(undefined, statement, undefined);
         } else {
           complete?.(undefined, statement, await collectRows(coreStatement, statement.rowMode));

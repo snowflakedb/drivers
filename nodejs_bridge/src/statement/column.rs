@@ -120,20 +120,24 @@ impl Column {
     }
 
     // TODO:
-    // - we lack metadata in core to implement same match as in old driver
-    // - validate if old driver implementation actually makes sense and matches other drivers
+    // The old driver distinguished structured OBJECT/ARRAY/MAP from untyped
+    // semi-structured columns using the server's `fields` metadata. For now we
+    // only care about semi-structured handling, so these predicates are derived
+    // purely from the column type name (server sends distinct
+    // `object`/`array`/`map`). Revisit structured-type support (and whether
+    // core already surfaces the needed field metadata) later.
     #[napi]
     pub fn is_object(&self) -> bool {
-        false
+        self.type_name == "object"
     }
 
     #[napi]
     pub fn is_array(&self) -> bool {
-        false
+        self.type_name == "array"
     }
 
     #[napi]
     pub fn is_map(&self) -> bool {
-        false
+        self.type_name == "map"
     }
 }
