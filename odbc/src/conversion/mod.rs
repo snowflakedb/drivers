@@ -65,6 +65,7 @@ pub use error::{
 };
 pub use number::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN, TzOffsetFormatCache};
 
+#[cfg(not(windows))]
 use crate::api::encoding::is_ascii_locale;
 use crate::conversion::error::{
     IncompatibleFieldMetadataSnafu, ReadArrowValueSnafu, UnsupportedArrowDataTypeSnafu,

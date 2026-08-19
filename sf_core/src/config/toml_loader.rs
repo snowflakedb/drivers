@@ -1,4 +1,5 @@
 use super::{ConfigError, ConfigFileReadSnafu, TomlParseSnafu};
+#[cfg(unix)]
 use crate::env_vars;
 use snafu::ResultExt;
 use std::fs;

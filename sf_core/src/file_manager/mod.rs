@@ -318,7 +318,7 @@ pub(crate) fn skip_upload_decision(
 /// need; sharing it here removes the copy-pasted per-cloud builders. The skip
 /// branch returns before the body is streamed, so the empty payload is never
 /// read.
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 pub(crate) fn prepared_upload_with_digest(digest: &str) -> PreparedUpload {
     PreparedUpload {
         source: types::PreparedSource::Bytes(bytes::Bytes::new()),
@@ -1977,6 +1977,7 @@ impl FileManagerError {
     /// error — an input error the proto boundary routes to `InvalidArgument`
     /// rather than `InternalError`. Defined here because the cloud `*FileError`
     /// enums are private to this module.
+    #[cfg(any(test, feature = "protobuf"))]
     pub(crate) fn is_file_too_large(&self) -> bool {
         matches!(
             self,
