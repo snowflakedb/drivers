@@ -1,0 +1,63 @@
+name: Nightly wheels build
+
+# snowflakedb counterpart of Python CI's nightly `build_wheels` job:
+# same generate_matrix nightly targets, packages only (no tests).
+# Python CI's scope-label-gate skips schedule on the mirror, so without
+# this workflow the public repo never builds wheels except on release/*
+# or a manual dispatch — which is why cache-miss failures only showed
+# up there.
+#
+# On snowflake-eng the schedule is a no-op: Python CI already builds
+# these wheels at 02:00 UTC. workflow_dispatch still works on both
+# repos (including cold_cache) so the first-build path can be forced.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Same slot as Python CI nightly
+  pull_request:
+    paths:
+      - '.github/workflows/cold-wheel-check.yml'
+      - '.github/workflows/_build-python-wheels.yml'
+      - '.github/actions/setup-msvc/**'
+      - '.github/actions/setup-windows-openssl/**'
+      - '.github/actions/cargo-cache/**'
+      - 'ci/test_matrix/**'
+  workflow_dispatch:
+    inputs:
+      cold_cache:
+        description: "Skip Rust/vcpkg cache restores (cold build)."
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  load-targets:
+    # Schedule is mirror-only. Dispatch and wheel-infra PRs may run anywhere
+    # so the cold path can be validated before Copybara ships the file.
+    if: >-
+      github.repository_owner == 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+      || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: targets
+        run: |
+          python ci/test_matrix/generate_matrix.py \
+            --driver python --event schedule --emit-build-targets --level nightly \
+            >> "$GITHUB_OUTPUT"
+
+  build_wheels:
+    needs: load-targets
+    uses: ./.github/workflows/_build-python-wheels.yml
+    with:
+      targets: ${{ needs.load-targets.outputs.targets }}
+      # Nightly matches eng (warm caches, keep the mirror populated).
+      # Infra PRs and dispatch default to cold so first-build regressions
+      # still get a dedicated run.
+      cold_cache: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.cold_cache) }}

@@ -192,7 +192,16 @@ jobs:
           wix-version: ${{ env.WIX_VERSION }}
 
       - name: Build ODBC driver
-        run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
+        # PowerShell (not bash): openssl-src Configure must see Strawberry Perl,
+        # not Git's MSYS perl. Prepend perl/bin only — never Strawberry c/bin.
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Strawberry\perl\bin") {
+            $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
+          }
+          Write-Host "perl: $((Get-Command perl -ErrorAction SilentlyContinue).Source)"
+          cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           RUSTFLAGS: "-C linker=rust-lld"
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
