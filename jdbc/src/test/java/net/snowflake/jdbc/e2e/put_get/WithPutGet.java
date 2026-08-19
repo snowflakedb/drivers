@@ -3,7 +3,6 @@ package net.snowflake.jdbc.e2e.put_get;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -16,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.zip.GZIPInputStream;
+import net.snowflake.jdbc.utils.IoTestUtils;
 
 /**
  * Shared PUT/GET helpers for the JDBC e2e mirrors under {@code tests/definitions/shared/put_get/}.
@@ -286,13 +286,7 @@ interface WithPutGet {
   default String readTextMaybeGzip(Path path) throws IOException {
     if (path.getFileName().toString().endsWith(".gz")) {
       try (InputStream in = new GZIPInputStream(Files.newInputStream(path))) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        int read;
-        while ((read = in.read(buffer)) != -1) {
-          out.write(buffer, 0, read);
-        }
-        return new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        return new String(IoTestUtils.readAllBytes(in), java.nio.charset.StandardCharsets.UTF_8);
       }
     }
     return new String(Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8);

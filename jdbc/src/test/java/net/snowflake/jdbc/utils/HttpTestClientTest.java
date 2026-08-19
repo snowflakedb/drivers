@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -64,7 +63,7 @@ public class HttpTestClientTest {
         exchange -> {
           capturedContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
           try (InputStream in = exchange.getRequestBody()) {
-            capturedBody.set(new String(readAll(in), StandardCharsets.UTF_8));
+            capturedBody.set(new String(IoTestUtils.readAllBytes(in), StandardCharsets.UTF_8));
           }
           byte[] resp = "{\"ack\":true}".getBytes(StandardCharsets.UTF_8);
           exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -94,7 +93,7 @@ public class HttpTestClientTest {
         "/zero",
         exchange -> {
           try (InputStream in = exchange.getRequestBody()) {
-            capturedLength.set(readAll(in).length);
+            capturedLength.set(IoTestUtils.readAllBytes(in).length);
           }
           exchange.sendResponseHeaders(200, -1);
           exchange.close();
@@ -125,15 +124,5 @@ public class HttpTestClientTest {
       exchange.getResponseBody().write(payload);
       exchange.close();
     };
-  }
-
-  private static byte[] readAll(InputStream in) throws IOException {
-    ByteArrayOutputStream buf = new ByteArrayOutputStream();
-    byte[] chunk = new byte[4096];
-    int n;
-    while ((n = in.read(chunk)) != -1) {
-      buf.write(chunk, 0, n);
-    }
-    return buf.toByteArray();
   }
 }
