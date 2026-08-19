@@ -1,10 +1,17 @@
 const assert = require('assert');
 const ResultTestCommon = require('./result_test_common');
 const RowMode = require('./../../../../lib/constants/row_mode');
-const ColumnNamesCreator = require('../../../../lib/connection/result/unique_column_name_creator');
 
 // TODO:
-// Translate this into a smaller set of unit tests when implementing rowMode logic in new driver
+// The "create unique names for duplicated column names" describe block that used to live
+// here (testing unique_column_name_creator.js's row-key-rename algorithm) has been migrated
+// to nodejs/tests/unit/row-mode.test.ts and removed from this file.
+//
+// This remaining block is *not* migrated yet: it asserts that Column.getName() reflects
+// renamed columns for object_with_renamed_duplicated_columns row mode, which the new driver
+// does not implement (tracked as BD#1 in nodejs/BehaviorDifferences.yaml -- renameDuplicateColumnNames
+// only renames row keys, not Column metadata). Once BD#1 is resolved, translate this block
+// into a new-driver unit/e2e test and delete this file per the migration README's plan.
 describe('Unique column names', function () {
   describe('result contains renamed columns depend on row mode', function () {
     const columnNames = [
@@ -79,94 +86,6 @@ describe('Unique column names', function () {
             done();
           },
         );
-      });
-    });
-  });
-
-  describe('create unique names for duplicated column names', function () {
-    const testCases = [
-      {
-        name: 'without overridden',
-        columns: [{ name: 'COL1' }, { name: 'COL2' }],
-        expected: [{ name: 'COL1' }, { name: 'COL2' }],
-      },
-      {
-        name: 'single overridden column',
-        columns: [{ name: 'COL1' }, { name: 'COL1' }],
-        expected: [{ name: 'COL1' }, { name: 'COL1', overriddenName: 'COL1_2' }],
-      },
-      {
-        name: 'works with empty column list',
-        columns: [],
-        expected: [],
-      },
-      {
-        name: 'create unique suffixes if column name exists',
-        columns: [{ name: 'COL1' }, { name: 'COL1' }, { name: 'COL1_2' }],
-        expected: [
-          { name: 'COL1' },
-          { name: 'COL1', overriddenName: 'COL1_3' },
-          { name: 'COL1_2' },
-        ],
-      },
-      {
-        name: 'create unique suffixes for multiple columns',
-        columns: [
-          { name: 'COL1' },
-          { name: 'COL1' },
-          { name: 'COL2' },
-          { name: 'COL2' },
-          { name: 'COL2' },
-          { name: 'COL3' },
-          { name: 'COL3' },
-        ],
-        expected: [
-          { name: 'COL1' },
-          { name: 'COL1', overriddenName: 'COL1_2' },
-          { name: 'COL2' },
-          {
-            name: 'COL2',
-            overriddenName: 'COL2_2',
-          },
-          { name: 'COL2', overriddenName: 'COL2_3' },
-          { name: 'COL3' },
-          { name: 'COL3', overriddenName: 'COL3_2' },
-        ],
-      },
-      {
-        name: 'create unique suffixes for multiple columns despite of numeric suffixes',
-        columns: [{ name: 'COL1' }, { name: 'COL1_2' }, { name: 'COL1_2' }, { name: 'COL1' }],
-        expected: [
-          { name: 'COL1' },
-          { name: 'COL1_2' },
-          { name: 'COL1_2', overriddenName: 'COL1_2_2' },
-          {
-            name: 'COL1',
-            overriddenName: 'COL1_3',
-          },
-        ],
-      },
-      {
-        name: 'not changed if empty names',
-        columns: [{ name: '' }, { name: '' }],
-        expected: [{ name: '' }, { name: '' }],
-      },
-      {
-        name: 'not changed if undefined names',
-        columns: [{ name: undefined }, { name: undefined }],
-        expected: [{ name: undefined }, { name: undefined }],
-      },
-      {
-        name: 'not changed if nulls as names',
-        columns: [{ name: null }, { name: null }],
-        expected: [{ name: null }, { name: null }],
-      },
-    ];
-
-    testCases.forEach(({ name, columns, expected }) => {
-      it(name, function () {
-        ColumnNamesCreator.addOverridenNamesForDuplicatedColumns(columns);
-        assert.deepStrictEqual(columns, expected);
       });
     });
   });

@@ -1,6 +1,7 @@
 import type { Readable } from 'node:stream';
 import type { CoreColumnInstance, CoreStatementInstance } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
+import { DEFAULT_ROW_MODE, type RowMode } from './row-mode.js';
 import { createRowStream } from './rows.js';
 
 export type StatementCallback = (
@@ -31,9 +32,15 @@ export interface FetchRowsOptions {
 // Refactor if that won't be the case.
 export class RowStatement {
   #core: CoreStatementInstance;
+  #rowMode: RowMode;
 
-  constructor(core: CoreStatementInstance) {
+  constructor(core: CoreStatementInstance, rowMode?: RowMode) {
     this.#core = core;
+    this.#rowMode = rowMode ?? DEFAULT_ROW_MODE;
+  }
+
+  get rowMode(): RowMode {
+    return this.#rowMode;
   }
 
   getNumRows(): number | undefined {
@@ -56,11 +63,11 @@ export class RowStatement {
   // and the result is already drained. (would suggest a BCR with error)
   // oxlint-disable-next-line no-unused-vars
   streamRows(options?: StreamOptions): Readable {
-    return createRowStream(this.#core);
+    return createRowStream(this.#core, this.#rowMode);
   }
 
   fetchRows(options: FetchRowsOptions): void {
-    const stream = createRowStream(this.#core);
+    const stream = createRowStream(this.#core, this.#rowMode);
     let finished = false;
 
     const onComplete = (err: SnowflakeError | undefined) => {

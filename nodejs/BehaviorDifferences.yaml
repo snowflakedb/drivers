@@ -1,1 +1,58 @@
-behavior_differences: {}
+behavior_differences:
+  1:
+    name: 'object_with_renamed_duplicated_columns row mode does not rename Column metadata'
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Duplicate column names are renamed on the rowtype metadata before Column objects are
+      constructed (result.js:93-96), so Column.getName() and getColumn('NAME_2') reflect the
+      rename.
+    new_driver_behavior: |
+      renameDuplicateColumnNames (row-mode.ts) only produces row keys. RowStatement's
+      getColumns()/getColumn() return core-owned Column metadata unchanged, so row.NAME_2 works
+      identically in both drivers but column-name lookups by the renamed name do not. Disclosed
+      in PR #1196's description as a scoped simplification; not fixed here because doing so
+      requires wrapping/proxying core-owned Column objects, a larger change than that PR's scope.
+
+  2:
+    name: 'ConnectionOptions is not a properly typed interface'
+    status: todo
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      index.d.ts types connection options as real fields (e.g. rowMode?: RowMode), so a
+      TypeScript caller who typos a connection option gets a compile-time error.
+    new_driver_behavior: |
+      ConnectionOptions (index.ts) is Record<string, string> & { rowMode?: RowMode } -- rowMode
+      is now typed to match the old driver, so a typo'd rowMode is caught at compile time same as
+      legacy. Every other connection option is still an untyped string, so a typo there compiles
+      fine and either fails at runtime (if the field is used) or silently passes through
+      (if not). No runtime behavior differs for valid input on any option -- both drivers behave
+      identically at runtime -- so this is a compile-time type-safety/DX gap, not an execution
+      difference. Tracked inline via index.ts's pre-existing "TODO: implement ConnectionOptions
+      like in old driver" comment.
+
+  3:
+    name: 'fetchResult now inherits the connection-level rowMode default'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      execute() inherits the connection-level rowMode default (createStatementPreExec falls back
+      to connectionConfig.getRowMode(), statement.js:480), but fetchResult() does not
+      (createStatementPostExec assigns statementOptions.rowMode directly with no fallback,
+      statement.js:202) -- unset rowMode on fetchResult always resolves to object-shaped rows,
+      regardless of the connection's configured rowMode.
+    new_driver_behavior: |
+      fetchResult() and execute() share the same precedence chain (statement rowMode > connection
+      default > 'object'), so a connection configured with a non-default rowMode now gets
+      consistent shaping from both methods. Legacy's asymmetry is treated as a bug here, not a
+      contract worth preserving -- a connection-level rowMode setting silently being ignored by
+      exactly one of two entry points is surprising behavior, not an intentional feature.
