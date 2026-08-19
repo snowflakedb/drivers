@@ -19,7 +19,9 @@ public enum ErrorCode {
   ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED(200023, "0A000", null),
   FEATURE_UNSUPPORTED(200035, "0A000", null),
   INVALID_PARAMETER_VALUE(200047, "22023", null),
-  CONNECTION_CLOSED(200052, "08003", null);
+  CONNECTION_CLOSED(200052, "08003", null),
+  COMPRESSION_TYPE_NOT_SUPPORTED(200004, "0A000", null),
+  FILE_NOT_FOUND(200008, "22000", null);
 
   private final int messageCode;
   private final String sqlState;

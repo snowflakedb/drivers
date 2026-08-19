@@ -4,8 +4,8 @@ import com.google.protobuf.Message;
 
 /**
  * Thrown when a core RPC returns a service-level (application) error. Carries the decoded error
- * message; {@code SnowflakeSQLException.fromServiceException} maps it to the driver's SQL
- * exception.
+ * payload. The JDBC transport layer wraps it in a {@link
+ * net.snowflake.client.internal.api.implementation.exception.CoreException} carrier.
  *
  * <p>Lives in the transport layer (rather than nested in a generated service interface) so it can
  * be shared by the generated clients and by {@link ResponseDecoder} / {@link CoreFuture}.

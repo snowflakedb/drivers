@@ -228,6 +228,33 @@ interface WithPutGet {
     return filePath;
   }
 
+  default List<String> createNumberedFiles(Path directory, String baseName) throws Exception {
+    List<String> names = new ArrayList<>();
+    for (int i = 1; i <= 5; i++) {
+      String name = baseName + "_" + i + ".csv";
+      writeTextFile(directory, name, "1,2,3\n");
+      names.add(name);
+    }
+    return names;
+  }
+
+  default String posixGlob(Path directory, String glob) {
+    return directory.toAbsolutePath().toString().replace('\\', '/') + "/" + glob;
+  }
+
+  default String baseName(String stagePath) {
+    int slash = stagePath.lastIndexOf('/');
+    return slash >= 0 ? stagePath.substring(slash + 1) : stagePath;
+  }
+
+  default List<String> stagedBaseNames(Connection connection, String stageName) throws Exception {
+    List<String> names = new ArrayList<>();
+    for (String path : listStageFileNames(connection, stageName)) {
+      names.add(baseName(path));
+    }
+    return names;
+  }
+
   /** Read the plain-text contents of a file, gunzip-ing it first when it ends in {@code .gz}. */
   default String readTextMaybeGzip(Path path) throws IOException {
     if (path.getFileName().toString().endsWith(".gz")) {

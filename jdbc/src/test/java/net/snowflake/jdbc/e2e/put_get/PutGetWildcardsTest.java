@@ -20,33 +20,6 @@ import org.junit.jupiter.api.io.TempDir;
  */
 public class PutGetWildcardsTest extends SnowflakeIntegrationTestBase implements WithPutGet {
 
-  private List<String> createNumberedFiles(Path directory, String baseName) throws Exception {
-    List<String> names = new ArrayList<>();
-    for (int i = 1; i <= 5; i++) {
-      String name = baseName + "_" + i + ".csv";
-      writeTextFile(directory, name, "1,2,3\n");
-      names.add(name);
-    }
-    return names;
-  }
-
-  private String posixGlob(Path directory, String glob) {
-    return directory.toAbsolutePath().toString().replace('\\', '/') + "/" + glob;
-  }
-
-  private String baseName(String stagePath) {
-    int slash = stagePath.lastIndexOf('/');
-    return slash >= 0 ? stagePath.substring(slash + 1) : stagePath;
-  }
-
-  private List<String> stagedBaseNames(String stageName) throws Exception {
-    List<String> names = new ArrayList<>();
-    for (String path : listStageFileNames(getDefaultConnection(), stageName)) {
-      names.add(baseName(path));
-    }
-    return names;
-  }
-
   @Test
   public void shouldUploadFilesThatMatchWildcardQuestionMarkPattern(@TempDir Path uploadDir)
       throws Exception {
@@ -77,7 +50,7 @@ public class PutGetWildcardsTest extends SnowflakeIntegrationTestBase implements
     for (PutRow row : uploaded) {
       assertEquals("UPLOADED", row.status, "Every matched file should upload");
     }
-    List<String> stagedNames = stagedBaseNames(stageName);
+    List<String> stagedNames = stagedBaseNames(getDefaultConnection(), stageName);
     for (String name : matchingFiles) {
       assertTrue(stagedNames.contains(name), "Expected " + name + " on the stage");
     }
@@ -118,7 +91,7 @@ public class PutGetWildcardsTest extends SnowflakeIntegrationTestBase implements
     for (PutRow row : uploaded) {
       assertEquals("UPLOADED", row.status, "Every matched file should upload");
     }
-    List<String> stagedNames = stagedBaseNames(stageName);
+    List<String> stagedNames = stagedBaseNames(getDefaultConnection(), stageName);
     for (String name : matchingFiles) {
       assertTrue(stagedNames.contains(name), "Expected " + name + " on the stage");
     }

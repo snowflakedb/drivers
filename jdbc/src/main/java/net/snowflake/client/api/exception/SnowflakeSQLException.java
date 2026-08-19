@@ -2,8 +2,6 @@ package net.snowflake.client.api.exception;
 
 import java.sql.SQLException;
 import lombok.Getter;
-import net.snowflake.client.internal.unicore.ServiceException;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1;
 
 @Getter
 public class SnowflakeSQLException extends SQLException {
@@ -40,20 +38,10 @@ public class SnowflakeSQLException extends SQLException {
     this.queryId = queryId;
   }
 
-  public SnowflakeSQLException(DatabaseDriverV1.DriverException error, Throwable cause) {
-    super(
-        error.hasRootCause() ? error.getRootCause() : error.getMessage(),
-        error.hasSqlState() ? error.getSqlState() : null,
-        error.hasVendorCode() ? error.getVendorCode() : 0,
-        cause);
-    this.queryId = error.hasQueryId() ? error.getQueryId() : null;
-  }
-
-  public static SnowflakeSQLException fromServiceException(ServiceException exception) {
-    if (exception.error instanceof DatabaseDriverV1.DriverException) {
-      return new SnowflakeSQLException(
-          (DatabaseDriverV1.DriverException) exception.error, exception);
-    }
-    return new SnowflakeSQLException(exception.getMessage(), exception);
+  /** As {@link SQLException#SQLException(String, String, int, Throwable)} plus query id. */
+  public SnowflakeSQLException(
+      String reason, String sqlState, int vendorCode, Throwable cause, String queryId) {
+    super(reason, sqlState, vendorCode, cause);
+    this.queryId = queryId;
   }
 }
