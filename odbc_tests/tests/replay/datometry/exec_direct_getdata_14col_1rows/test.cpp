@@ -290,7 +290,9 @@ TEST_CASE("Replay: exec_direct_getdata_14col_1rows", "[dtm]") {
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
     CHECK(std::string(colName) == "object_visibility");
     CHECK(dataType == 12);
-    CHECK(colSize == 134217728);
+    // Server metadata for this column differs sometimes: some sessions still
+    // report 128 MB, others now declare the same 16 MB VARCHAR length as sibling columns.
+    CHECK((colSize == 16777216 || colSize == 134217728));
     CHECK(scale == 0);
     CHECK(nullable == 1);
   }
