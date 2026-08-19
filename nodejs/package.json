@@ -55,6 +55,7 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
-    "big-integer": "^1.6.52"
+    "big-integer": "^1.6.52",
+    "fast-xml-parser": "^5.4.1"
   }
 }
