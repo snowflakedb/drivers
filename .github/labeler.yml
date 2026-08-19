@@ -37,6 +37,11 @@ jdbc:
           - jdbc/**
           - jdbc_bridge/**
 
+gosnowflake:
+  - changed-files:
+      - any-glob-to-any-file:
+          - gosnowflake/**
+
 protobuf:
   - changed-files:
       - any-glob-to-any-file:
