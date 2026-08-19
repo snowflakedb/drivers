@@ -19,7 +19,10 @@ That hold is the `security-signoff` gate, implemented by
    evaluates the PR and publishes a `security-signoff` **commit status**.
 3. The status is **success** when the label is absent, or when a security
    partner other than the author has an `APPROVED` review **on the PR's
-   current head commit**. Otherwise it is **failure**.
+   current head commit**. Otherwise it is **failure**. On failure the action
+   also requests a review from one randomly chosen eligible partner (never
+   the PR author; skipped if a partner is already involved) and keeps a
+   sticky PR comment up to date with the roster and next steps.
 4. Branch protection requires that status, so a labeled PR cannot merge
    until a partner clears it.
 
@@ -67,10 +70,12 @@ next push. Adding one would require a second labeler invocation with
 
 ### Getting a labeled PR cleared
 
-Ask one of the partners in `.github/security-partners.yml` to
-review. When they approve, the status flips to success within a minute — the
-workflow triggers on `pull_request_review`, so it does not wait for another
-push. If you push again afterwards, you need a fresh approval.
+The gate usually requests one partner from `.github/security-partners.yml`
+automatically and posts a sticky comment listing the roster. You can also
+ask any partner on that list to review. When they approve, the status flips
+to success within a minute — the workflow triggers on `pull_request_review`,
+so it does not wait for another push. If you push again afterwards, you need
+a fresh approval.
 
 A non-partner approval does not clear the gate, and neither does your own
 approval of your own PR.

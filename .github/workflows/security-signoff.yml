@@ -1,7 +1,9 @@
 # Publishes the `security-signoff` commit status: success unless the PR carries
 # `security-signoff-required` without an approval from a security partner on its
 # current head commit. Branch protection requires the status, so a labeled PR
-# cannot merge until a partner clears it for public disclosure.
+# cannot merge until a partner clears it for public disclosure. On block the
+# action also requests one random eligible partner and upserts a sticky comment
+# (needs pull-requests: write).
 #
 # Roster: .github/security-partners.yml. Process: NOMIRROR/security-signoff.md.
 name: Security sign-off
@@ -21,7 +23,9 @@ on:
 
 permissions:
   contents: read # read the roster from the base branch
-  pull-requests: read # read labels + reviews
+  # write: read labels/reviews; request one security-partner reviewer; upsert
+  # the sticky guidance comment (security-signoff-action@v0.3.0+).
+  pull-requests: write
   statuses: write # publish the commit status
 
 concurrency:
