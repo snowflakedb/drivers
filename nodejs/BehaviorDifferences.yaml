@@ -1,3 +1,27 @@
+# Behavioral Differences between the new (universal) Node.js driver and the old (legacy) Node.js driver.
+#
+# Allowed statuses:
+#  - unknown (default): status is not yet determined
+#  - todo: BD has to be fixed
+#  - fixed: BD has been addressed, removing the difference between the old and new driver;
+#           once fixed, the entry must be removed from this file
+#  - allowed: the change is expected and is accepted
+#
+# Allowed types:
+#  - unknown (default): type is not yet determined
+#  - api_incompatibility: the new driver removes support for a functionality
+#  - bug: the new driver has a bug/incompatibility relative to the old driver
+#  - bugfix: the new driver fixes incorrect old-driver behavior
+#  - enhancement: the new driver extends or improves existing functionality
+#
+# Reviewed:
+#  - true: the BD has been reviewed and its status is accepted
+#  - false (default): the BD has not yet been reviewed
+#
+# status_rationale (required when reviewed is true):
+#  Explain why this entry has the chosen 'status'. Type and behavior deltas alone often do not
+#  imply whether we intend to ship the difference, regress compatibility, track a fix, etc.
+
 behavior_differences:
   1:
     name: 'object_with_renamed_duplicated_columns row mode does not rename Column metadata'
@@ -56,3 +80,63 @@ behavior_differences:
       consistent shaping from both methods. Legacy's asymmetry is treated as a bug here, not a
       contract worth preserving -- a connection-level rowMode setting silently being ignored by
       exactly one of two entry points is surprising behavior, not an intentional feature.
+
+  4:
+    name: 'Column.isObject/isArray/isMap return the correct value for each semi-structured column type (OBJECT/ARRAY/MAP)'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Old snowflake-sdk always returns false from Column.isObject()/isArray()/isMap() for an untyped
+      semi-structured OBJECT/ARRAY/MAP column (e.g. OBJECT_CONSTRUCT(...) or a `::MAP(VARCHAR, VARCHAR)`
+      cast without ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE enabled on the backend), even though
+      getType() reports "object"/"array"/"map" for that same column.
+    new_driver_behavior: |
+      The new driver derives isObject/isArray/isMap purely from the column type name that the server
+      sends (distinct `object`/`array`/`map`), so these predicates return true for semi-structured
+      columns. A `::MAP(K, V)` cast still comes back as `object` from the server and is surfaced as a
+      plain JS object rather than a JS `Map`, but isObject() now correctly reflects the reported type.
+    description: |
+      In the old driver, SqlTypes.isObject/isArray/isMap require the server to send structured
+      `fields` metadata for the column (they all check `fieldsMetadata != null`). For an untyped
+      semi-structured column the server returns no `fields`, so these predicates return false while
+      getType() still reports the semi-structured type. The new driver derives the predicates from
+      the reported column type name and no longer consults `fields`.
+    status_rationale: |
+      The old driver's dependence on `fields` metadata for these predicates was a bug: it left
+      isObject()/isArray()/isMap() false for the common semi-structured case. The new driver keys off
+      the reported column type, which is correct for semi-structured columns. Structured-type support
+      (typed OBJECT/ARRAY/MAP distinguished via `fields`, returning a real JS `Map` for MAP) is a
+      separate initiative tracked in SNOW-3445814
+
+  5:
+    name: 'Column.isVariant ignores structured `fields` metadata'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Old snowflake-sdk returns true from Column.isVariant() for an untyped semi-structured
+      OBJECT/ARRAY/MAP column (without ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE enabled on the
+      backend), and returns false once the column is a structured type. So for the same
+      OBJECT/ARRAY/MAP column, isVariant() flips depending on whether structured types are enabled.
+    new_driver_behavior: |
+      The new driver classifies VARIANT/OBJECT/ARRAY/MAP as variant purely by the column type name,
+      so isVariant() returns true for these columns regardless of whether structured types would be
+      enabled. The structured-vs-semi-structured distinction the old driver drew for isVariant is
+      not made.
+    description: |
+      In the old driver, SqlTypes.isVariant branches on whether the server sent structured `fields`
+      metadata for the column: variant when `fields` is absent (semi-structured), non-variant when
+      `fields` is present (structured). The new driver derives isVariant from the reported column
+      type name alone and does not consult `fields`, so it no longer draws that distinction. This is
+      consistent with the new driver only supporting semi-structured types today.
+    status_rationale: |
+      Not a public-facing behavior change: the structured-types code path was a work in progress in
+      the old driver, and structured OBJECT/ARRAY/MAP columns are not produced without opting into
+      ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE. The new driver only supports semi-structured types
+      today; full structured-type handling (including the `fields`-based isVariant distinction) is a
+      separate initiative tracked in https://snowflakecomputing.atlassian.net/browse/SNOW-3445814.

@@ -119,13 +119,12 @@ impl Column {
         )
     }
 
-    // TODO:
-    // The old driver distinguished structured OBJECT/ARRAY/MAP from untyped
-    // semi-structured columns using the server's `fields` metadata. For now we
-    // only care about semi-structured handling, so these predicates are derived
-    // purely from the column type name (server sends distinct
-    // `object`/`array`/`map`). Revisit structured-type support (and whether
-    // core already surfaces the needed field metadata) later.
+    // We currently only support semi-structured types. The old driver
+    // distinguished structured OBJECT/ARRAY/MAP from untyped semi-structured
+    // columns using the server's `fields` metadata.
+    //
+    // Structured-type support is a separate initiative
+    // tracked in https://snowflakecomputing.atlassian.net/browse/SNOW-3445814.
     #[napi]
     pub fn is_object(&self) -> bool {
         self.type_name == "object"
@@ -136,6 +135,10 @@ impl Column {
         self.type_name == "array"
     }
 
+    // Semi-structured MAP columns (no structured `fields` metadata) come back as
+    // `object` from the server, so the JS value is a plain object rather than a
+    // JS `Map`. Only structured `::MAP(K, V)` columns (which we don't yet surface
+    // field metadata for — see the TODO above) would report as a true map.
     #[napi]
     pub fn is_map(&self) -> bool {
         self.type_name == "map"
