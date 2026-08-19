@@ -210,6 +210,11 @@ use std::sync::Arc;
 /// matching the historical universal-driver behaviour.
 const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIPPED";
 
+/// Legacy JDBC 200004 text for the PUT `message` column.
+fn jdbc_unsupported_compression_message(type_name: &str) -> String {
+    format!("Copy command does not support compression type {type_name}.")
+}
+
 /// Result of the pre-upload HEAD probe, in cloud-agnostic terms. Each cloud
 /// projects its own HEAD response (or a treated-as-absent error) down to this
 /// shape, so the shared skip decision never depends on a cloud SDK type. The
@@ -475,15 +480,20 @@ pub(crate) async fn upload_prepared_source(
 ) -> Result<UploadResult, FileManagerError> {
     // `preprocess_file_before_upload` reads the source file from disk and
     // AES-encrypts it (blocking I/O + CPU-bound); run it off the async executor
-    // via `spawn_blocking`. `data` is moved in and handed back out so the
-    // cloud dispatch below can keep using it without cloning.
-    let (data, preprocessed) = tokio::task::spawn_blocking(move || {
-        let result = preprocess_file_before_upload(source, &data);
-        (data, result)
-    })
-    .await
-    .context(BlockingTaskSnafu)?;
-    let (prepared, file_metadata) = preprocessed?;
+    // via `spawn_blocking`, including JDBC ERROR-row `stat`. `data` is moved
+    // in and handed back out so the cloud dispatch below can keep using it
+    // without cloning.
+    let preprocess_outcome =
+        tokio::task::spawn_blocking(move || match preprocess_file_before_upload(source, &data) {
+            Ok(ok) => Ok(Ok((data, ok))),
+            Err(e) => on_upload_preprocess_error(&data, e).map(Err),
+        })
+        .await
+        .context(BlockingTaskSnafu)??;
+    let (data, (prepared, file_metadata)) = match preprocess_outcome {
+        Ok(ready) => ready,
+        Err(row) => return Ok(row),
+    };
 
     let status = match data.stage_info.location_type {
         LocationType::S3 => upload_to_s3_or_skip(
@@ -828,6 +838,40 @@ pub async fn download_files(
     }
 
     Ok(results)
+}
+
+/// JDBC-only: map unsupported AUTO_DETECT codecs to a PUT ERROR row. Other
+/// flavors and other preprocess errors still return `Err`.
+fn on_upload_preprocess_error(
+    data: &SingleUploadData,
+    error: FileManagerError,
+) -> Result<UploadResult, FileManagerError> {
+    if data.flavor == PutGetResultsetFlavor::Jdbc
+        && let FileManagerError::CompressionType { source, .. } = &error
+    {
+        let CompressionTypeError::UnsupportedCompressionType { type_name, .. } = source;
+        return Ok(unsupported_compression_error_row(data, type_name));
+    }
+    Err(error)
+}
+
+fn unsupported_compression_error_row(data: &SingleUploadData, type_name: &str) -> UploadResult {
+    let source_size = match &data.source {
+        ByteSource::Path(p) => std::fs::metadata(p).map(|m| m.len() as i64).unwrap_or(0),
+        ByteSource::Bytes(b) => b.len() as i64,
+    };
+    UploadResult {
+        source: data.filename.clone(),
+        target: data.filename.clone(),
+        source_size,
+        target_size: 0,
+        source_compression: type_name.to_string(),
+        target_compression: CompressionType::None
+            .get_snowflake_representation()
+            .to_string(),
+        status: "ERROR".to_string(),
+        message: jdbc_unsupported_compression_message(type_name),
+    }
 }
 
 /// Batch failure policy for a single failed GET. Fail-fast
@@ -2830,6 +2874,29 @@ mod tests {
                 Err(CompressionTypeError::UnsupportedCompressionType { .. })
             ),
             "legacy=false must surface the buffer-detected unsupported error, got: {result:?}",
+        );
+    }
+
+    #[test]
+    fn jdbc_unsupported_autodetect_becomes_error_row() {
+        let data = passthrough_upload_data("test.xz", PutGetResultsetFlavor::Jdbc, false);
+        let err = preprocess_file_before_upload(ByteSource::Bytes(Bytes::new()), &data)
+            .expect_err("xz must be an unsupported AUTO_DETECT codec");
+        let row = on_upload_preprocess_error(&data, err)
+            .expect("JDBC must fold unsupported AUTO_DETECT into an ERROR row");
+        assert_eq!(
+            row.status, "ERROR",
+            "expected ERROR status, got {}",
+            row.status
+        );
+        assert_eq!(row.source, "test.xz");
+        assert_eq!(row.target, "test.xz");
+        assert_eq!(row.source_compression, "XZ");
+        assert_eq!(row.target_compression, "NONE");
+        assert_eq!(
+            row.message, "Copy command does not support compression type XZ.",
+            "JDBC ERROR-row message must match legacy 200004 text, got {}",
+            row.message
         );
     }
 

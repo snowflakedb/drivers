@@ -100,6 +100,11 @@ interface WithPutGet {
             + Paths.get("").toAbsolutePath());
   }
 
+  /** Resolve a fixture under {@code tests/test_data/generated_test_data/compression}. */
+  default Path compressionFile(String filename) {
+    return sharedTestDataDir().resolve("compression").resolve(filename);
+  }
+
   /** Build the {@code file://} URI a PUT/GET command expects for a local path. */
   default String fileUri(Path path) {
     return "file://" + path.toAbsolutePath().toString().replace('\\', '/');
@@ -124,6 +129,30 @@ interface WithPutGet {
       }
     }
     return rows;
+  }
+
+  /** Execute a PUT command and return its single result row. */
+  default PutRow putSingle(Connection connection, String sql) throws Exception {
+    List<PutRow> rows = put(connection, sql);
+    assertEquals(1, rows.size(), "PUT of a single file should return one row");
+    return rows.get(0);
+  }
+
+  /**
+   * Assert a successful PUT: source/target filenames, compression codecs, and {@code UPLOADED}
+   * status.
+   */
+  default void assertPutCompression(
+      PutRow row,
+      String expectedSource,
+      String expectedSourceCompression,
+      String expectedTarget,
+      String expectedTargetCompression) {
+    assertEquals(expectedSource, row.source, "Unexpected source filename");
+    assertEquals(expectedTarget, row.target, "Unexpected target filename");
+    assertEquals(expectedSourceCompression, row.sourceCompression, "Unexpected source compression");
+    assertEquals(expectedTargetCompression, row.targetCompression, "Unexpected target compression");
+    assertEquals("UPLOADED", row.status, "Unexpected status");
   }
 
   /** Execute a GET command and return its rowset (one row per downloaded file). */
@@ -153,9 +182,7 @@ interface WithPutGet {
             stageName,
             String.valueOf(autoCompress).toUpperCase(),
             String.valueOf(overwrite).toUpperCase());
-    List<PutRow> rows = put(connection, putSql);
-    assertEquals(1, rows.size(), "PUT of a single file should return one row");
-    return rows.get(0);
+    return putSingle(connection, putSql);
   }
 
   /** Create a temporary stage and upload a single file to it, asserting UPLOADED. */
