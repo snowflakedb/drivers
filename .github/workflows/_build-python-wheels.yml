@@ -155,18 +155,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore proto-target cache
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: proto-target
           key: ${{ runner.os }}-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
           restore-keys: ${{ runner.os }}-proto-target-v2-
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -186,7 +186,7 @@ jobs:
       # outlive the workflow run itself. We previously deleted it eagerly in a
       # cleanup job, which made any single-job re-run impossible.
       - name: Upload protobuf artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: protobuf-gen
           path: python/src/snowflake/connector/_internal/protobuf_gen/
@@ -197,11 +197,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Cache Cargo registry
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -212,7 +212,7 @@ jobs:
 
       - name: Cache proto generator target
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: proto-target
           key: ${{ runner.os }}-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
@@ -220,7 +220,7 @@ jobs:
             ${{ runner.os }}-proto-target-v2-
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -241,7 +241,7 @@ jobs:
         run: tar tzf dist/*.tar.gz | head -40
 
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-sdist
           path: python/dist/*.tar.gz
@@ -261,11 +261,11 @@ jobs:
     name: build_wheels (${{ matrix.artifact_id }})
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         if: runner.os != 'Linux'
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -302,7 +302,7 @@ jobs:
         if: ${{ runner.os == 'Linux' && !inputs.cold_cache }}
         id: rustup-cache-linux
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.rustup
@@ -466,7 +466,7 @@ jobs:
         continue-on-error: true
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.rustup
@@ -482,14 +482,14 @@ jobs:
 
       # ── Download protobuf ──
       - name: Download pre-built protobuf code
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: protobuf-gen
           path: python/src/snowflake/connector/_internal/protobuf_gen
 
       # ── Build wheels (all Python versions in one cibuildwheel call) ──
       - name: Build wheels with cibuildwheel
-        uses: pypa/cibuildwheel@v3.4
+        uses: pypa/cibuildwheel@v4.2.0
         with:
           package-dir: python
           output-dir: python/dist
@@ -535,7 +535,7 @@ jobs:
       # ── Upload individual wheel artifacts (preserves per-version names) ──
       - name: Upload py3.11 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.11')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_id }}_py3.11
           path: python/dist/*cp311*.whl
@@ -543,7 +543,7 @@ jobs:
 
       - name: Upload py3.12 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.12')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_id }}_py3.12
           path: python/dist/*cp312*.whl
@@ -551,7 +551,7 @@ jobs:
 
       - name: Upload py3.13 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.13')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_id }}_py3.13
           path: python/dist/*cp313*.whl
@@ -559,7 +559,7 @@ jobs:
 
       - name: Upload py3.14 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.14')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_id }}_py3.14
           path: python/dist/*cp314*.whl
@@ -583,7 +583,7 @@ jobs:
       SKIP_PROTO_GENERATION: "true"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup OpenSSL (Windows ARM64)
         uses: ./.github/actions/setup-windows-openssl
@@ -597,7 +597,7 @@ jobs:
           arch: arm64
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -652,7 +652,7 @@ jobs:
 
       # ── Download protobuf ──
       - name: Download pre-built protobuf code
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: protobuf-gen
           path: python/src/snowflake/connector/_internal/protobuf_gen
@@ -685,7 +685,7 @@ jobs:
           '@ $whl
 
       - name: Upload Python wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: python/dist/*.whl

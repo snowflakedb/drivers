@@ -62,7 +62,7 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       build-targets: ${{ steps.targets.outputs.targets }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: matrix
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
@@ -108,7 +108,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Rust cache
         id: rust-cache
@@ -123,7 +123,7 @@ jobs:
         id: core-target-cache
         # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: core-target
           # The key must hash the Rust *sources* of every crate built into this
@@ -145,14 +145,14 @@ jobs:
         id: proto-target-cache-pkg
         # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
           restore-keys: ${{ runner.os }}-rust-packaging-proto-target-v2-
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -195,7 +195,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: core-target
           key: ${{ runner.os }}-rust-packaging-wheel-core-target-v3-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**', 'protobuf/**', 'proto_generator/src/**') }}
@@ -208,7 +208,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
@@ -225,7 +225,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Rust cache
         id: rust-cache
@@ -240,7 +240,7 @@ jobs:
         id: core-target-cache
         # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: core-target
           # See the wheel job's core-target key above: hashing Cargo.lock alone
@@ -254,14 +254,14 @@ jobs:
         id: proto-target-cache-pkg
         # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
           restore-keys: ${{ runner.os }}-rust-packaging-proto-target-v2-
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -308,7 +308,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: core-target
           key: ${{ runner.os }}-rust-packaging-sdist-core-target-v3-${{ hashFiles('**/Cargo.lock', 'sf_core/src/**', 'sf_params_spec/src/**', 'python_bridge/src/**', 'proto_utils/src/**', 'error_trace/src/**', 'error_trace_derive/src/**', 'protobuf/**', 'proto_generator/src/**') }}
@@ -321,7 +321,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
@@ -350,10 +350,10 @@ jobs:
             echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -369,7 +369,7 @@ jobs:
         if: runner.os != 'Windows'
         # Cache restore failures never fail the job — fall back to clean install.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: /tmp/.uv-cache
           key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -383,7 +383,7 @@ jobs:
         if: runner.os == 'Windows'
         # Cache restore failures never fail the job — fall back to clean install.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}\.uv-cache
           key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -398,14 +398,14 @@ jobs:
 
       - name: Download wheel
         if: matrix.wheel_artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.wheel_artifact }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist
         if: matrix.py == '3.10'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-sdist
           path: python/dist
@@ -559,7 +559,7 @@ jobs:
 
       - name: Upload test results as GitHub artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: results-universal-${{ env.MATRIX_KEY }}
           path: python/reports/*-${{ env.MATRIX_KEY }}.*
@@ -580,7 +580,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: /tmp/.uv-cache
           key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -594,7 +594,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}\.uv-cache
           key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -623,7 +623,7 @@ jobs:
     runs-on: ubuntu-latest
     name: cleanup_python (${{ matrix.cloud_provider }})
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
@@ -676,10 +676,10 @@ jobs:
     env:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -710,7 +710,7 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()  # Upload even if tests fail (needed for comparison)
         with:
           name: results-reference-${{ env.MATRIX_KEY }}
@@ -734,17 +734,17 @@ jobs:
         shell: bash
         run: echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
       - name: Restore uv cache
         id: uv-cache-flaky
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: /tmp/.uv-cache
           key: uv-ubuntu-latest-3.13-test-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -757,7 +757,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Download wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: manylinux_x86_64_py3.13
           path: python/dist
@@ -807,7 +807,7 @@ jobs:
 
       - name: Upload test results as GitHub artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: results-flaky-${{ env.MATRIX_KEY }}
           path: python/reports/flaky-${{ env.MATRIX_KEY }}.*
@@ -823,7 +823,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: /tmp/.uv-cache
           key: uv-ubuntu-latest-3.13-test-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -863,21 +863,21 @@ jobs:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}
       REF_MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.ref_hatch_env }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
       - name: Download universal test results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: results-universal-${{ env.MATRIX_KEY }}-${{ matrix.cloud_provider }}
           path: ${{ github.workspace }}/universal-results
 
       - name: Download reference test results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: results-reference-${{ env.REF_MATRIX_KEY }}
           path: ${{ github.workspace }}/reference-results

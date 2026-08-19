@@ -81,7 +81,7 @@ jobs:
       windows_arm_cloud: ${{ steps.split.outputs.windows_arm_cloud }}
       windows_x86_cloud: ${{ steps.split.outputs.windows_x86_cloud }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: read
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
@@ -117,7 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install rustfmt
         run: rustup component add rustfmt && cargo fmt --version
@@ -131,7 +131,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Reclaim ~25 GB on ubuntu-latest before cache extract / compile.
       # See .github/actions/free-disk-space-linux/action.yml for rationale.
@@ -196,7 +196,7 @@ jobs:
       E2E_TLS_SERVER: https://snowflakecomputing.com
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Reclaim ~25 GB on ubuntu-latest before cache extract / compile.
       # See .github/actions/free-disk-space-linux/action.yml for rationale.
@@ -209,7 +209,7 @@ jobs:
         uses: ./.github/actions/free-disk-space-linux
 
       - name: Install Go (required by aws-lc-fips-sys)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: 'stable'
           cache: false
@@ -237,7 +237,7 @@ jobs:
         id: llvm-cov-cache
         # Cache failures never fail the job — fall back to fresh `cargo install`.
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-llvm-cov
           key: cargo-llvm-cov-${{ runner.os }}-${{ steps.rustc-version.outputs.version }}
@@ -428,7 +428,7 @@ jobs:
       E2E_TLS_SERVER: https://snowflakecomputing.com
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Rust cache
         id: rust-cache
@@ -541,7 +541,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rust-core-tests-windows-arm64
           path: target/nextest/ci/junit.xml
@@ -549,7 +549,7 @@ jobs:
 
       - name: Upload flaky test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rust-core-flaky-tests-windows-arm64
           path: target/nextest/ci-flaky/junit.xml
@@ -576,7 +576,7 @@ jobs:
 
       - name: Upload Windows ARM64 diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-arm64-diagnostics
           path: windows-arm64-diagnostics/
@@ -594,7 +594,7 @@ jobs:
         id: vcpkg-static-cache
         # Cache restore failures never fail the job — fall back to clean install.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
           key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
@@ -617,7 +617,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
           key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
@@ -652,7 +652,7 @@ jobs:
       E2E_TLS_SERVER: https://snowflakecomputing.com
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Add i686 target
         run: rustup target add i686-pc-windows-msvc
@@ -772,7 +772,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rust-core-tests-windows-x86
           path: target/nextest/ci/junit.xml
@@ -780,7 +780,7 @@ jobs:
 
       - name: Upload flaky test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rust-core-flaky-tests-windows-x86
           path: target/nextest/ci-flaky/junit.xml
@@ -809,7 +809,7 @@ jobs:
     runs-on: ubuntu-latest
     name: cleanup_rust_core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh

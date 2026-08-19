@@ -108,10 +108,10 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java ${{ matrix.java-version }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
@@ -129,7 +129,7 @@ jobs:
         id: gradle-cache
         # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.gradle/caches
@@ -171,9 +171,9 @@ jobs:
 
       - name: Upload NEW driver test artifacts
         if: always() && matrix.result_format == 'default'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          # Disambiguate per Java version AND cloud — actions/upload-artifact@v4 requires
+          # Disambiguate per Java version AND cloud — actions/upload-artifact@v7 requires
           # unique names within a single workflow run, and Java 21 now runs on aws/gcp/azure.
           name: jdbc-tests-artifacts-java${{ matrix.java-version }}-${{ matrix.cloud }}
           path: |
@@ -213,7 +213,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.gradle/caches
@@ -240,10 +240,10 @@ jobs:
     # VC-WIN64A build. Only the POSIX shell-script steps opt into bash.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -272,7 +272,7 @@ jobs:
       - name: Restore Gradle cache
         id: gradle-cache-win
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.gradle/caches
@@ -308,7 +308,7 @@ jobs:
 
       - name: Upload NEW driver test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jdbc-tests-artifacts-java21-aws-windows
           path: |
@@ -338,7 +338,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.gradle/caches
@@ -353,10 +353,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -383,7 +383,7 @@ jobs:
       - name: Restore Gradle cache
         id: gradle-cache-mac
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.gradle/caches
@@ -410,7 +410,7 @@ jobs:
 
       - name: Upload NEW driver test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jdbc-tests-artifacts-java21-aws-macos
           path: |
@@ -440,7 +440,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.gradle/caches
@@ -458,7 +458,7 @@ jobs:
         cloud: [aws, gcp, azure]
     name: cleanup_jdbc (${{ matrix.cloud }})
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud }}
@@ -483,10 +483,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java 8
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '8'
           distribution: 'temurin'
@@ -495,7 +495,7 @@ jobs:
         id: gradle-cache-ref
         # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.gradle/caches
@@ -523,7 +523,7 @@ jobs:
 
       - name: Upload OLD reference artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jdbc-reference-artifacts
           path: |
@@ -549,7 +549,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.gradle/caches
@@ -569,13 +569,13 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # parityTest requires HotSpot — universal-driver's jdbc_bridge::sflogger_layer overflows
       # the stack on OpenJ9 (see build.gradle comment on the parityTest task). Temurin is
       # HotSpot-based.
       - name: Set up Java 8 (Temurin/HotSpot)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '8'
           distribution: 'temurin'
@@ -592,7 +592,7 @@ jobs:
       - name: Restore Gradle cache
         id: gradle-cache-parity
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.gradle/caches
@@ -620,7 +620,7 @@ jobs:
 
       - name: Upload parity test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jdbc-parity-artifacts
           path: |

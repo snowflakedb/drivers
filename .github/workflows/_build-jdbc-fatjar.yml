@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # On Linux the host cargo/rustup dirs are mounted into the container. rustup is
       # cached separately so Cargo.lock churn doesn't evict it.
@@ -51,7 +51,7 @@ jobs:
         if: runner.os == 'Linux'
         id: rustup-cache-linux
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.rustup
@@ -115,7 +115,7 @@ jobs:
       # JDK 21, not 8: Temurin ships no JDK 8 for macOS aarch64, and the JNI ABI is stable.
       - name: Set up Java (macOS / Windows)
         if: runner.os != 'Linux'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -141,7 +141,7 @@ jobs:
           ls -l "out/${{ matrix.dir }}/"
 
       - name: Upload native lib artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # `path: out` keeps the <os>-<arch>/ prefix so merge-multiple rebuilds the tree.
           name: jdbc-native-${{ matrix.name }}
@@ -166,7 +166,7 @@ jobs:
         continue-on-error: true
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.rustup
@@ -180,17 +180,17 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java 21
         # shadow requires JDK 11+; bytecode stays Java 8 via targetCompatibility in build.gradle.
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Download all native libs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: jdbc-native-*
           merge-multiple: true
@@ -217,7 +217,7 @@ jobs:
             -PnativeLibsDir="$GITHUB_WORKSPACE/jdbc/build/native-staging"
 
       - name: Upload fat JAR bundle (unsigned, ready for signing)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jdbc-fatjar
           path: |
@@ -245,17 +245,17 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java 21
         # shadow requires JDK 11+; bytecode stays Java 8 via targetCompatibility in build.gradle.
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Download all native libs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: jdbc-native-*
           merge-multiple: true
@@ -283,7 +283,7 @@ jobs:
             -PnativeLibsDir="$GITHUB_WORKSPACE/jdbc/build/native-staging"
 
       - name: Upload thin JAR bundle (unsigned, ready for signing)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jdbc-thin
           # Staged Maven-repo layout: native-free main jar + per-platform classifier jars +

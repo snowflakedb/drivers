@@ -103,17 +103,17 @@ jobs:
             echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
       - name: Restore uv cache
         # Cache failures never fail the job — fall back to clean install.
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -126,28 +126,28 @@ jobs:
 
       - name: Download wheel (Linux)
         if: runner.os == 'Linux' && matrix.py != '3.10'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download wheel (macOS)
         if: runner.os == 'macOS' && matrix.py != '3.10'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ (matrix.os == 'macos-15-intel' && 'macosx_x86_64' || 'macosx_arm64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download wheel (Windows)
         if: runner.os == 'Windows' && matrix.py != '3.10'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || 'win_amd64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist
         if: matrix.py == '3.10'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-sdist
           path: python/dist
@@ -294,10 +294,10 @@ jobs:
     env:
       UV_CACHE_DIR: /tmp/.uv-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -305,7 +305,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Download wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: manylinux_x86_64_py3.13
           path: python/dist

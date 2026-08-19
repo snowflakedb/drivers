@@ -78,13 +78,13 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Free runner disk space
         uses: ./.github/actions/free-disk-space-linux
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -102,7 +102,7 @@ jobs:
       - name: Restore proto-target cache
         id: proto-target-cache
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: proto-target
           key: ${{ runner.os }}-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
@@ -118,7 +118,7 @@ jobs:
           PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
 
       - name: Upload wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-wheel-temporary
           path: python/dist/*.whl
@@ -141,7 +141,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: proto-target
           key: ${{ runner.os }}-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
@@ -154,7 +154,7 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup ODBC build environment
         uses: ./.github/actions/setup-odbc-build-env
@@ -181,7 +181,7 @@ jobs:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
       - name: Upload driver
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: odbc-driver-temporary
           path: target/debug/libsfodbc.so
@@ -209,13 +209,13 @@ jobs:
     env:
       MATRIX_KEY: putget-ubuntu-latest-3.13-${{ matrix.cloud_provider }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set UV cache dir
         run: echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.9.28"
 
@@ -224,7 +224,7 @@ jobs:
       # uv installs the same deps regardless of which cloud the suite hits.
       - name: Restore uv cache
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: /tmp/.uv-cache
           key: uv-ubuntu-latest-3.13-test-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -237,7 +237,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Download wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-wheel-temporary
           path: python/dist
@@ -281,7 +281,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: results-${{ env.MATRIX_KEY }}
           path: python/reports/${{ env.MATRIX_KEY }}.*
@@ -307,13 +307,13 @@ jobs:
     env:
       E2E_TLS_SERVER: https://snowflakecomputing.com
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Free runner disk space
         uses: ./.github/actions/free-disk-space-linux
 
       - name: Install Go (required by aws-lc-fips-sys)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: 'stable'
           cache: false
@@ -371,13 +371,13 @@ jobs:
     runs-on: ubuntu-latest
     name: odbc_put_get (linux x64, ${{ matrix.cloud_provider }})
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup ODBC build environment
         uses: ./.github/actions/setup-odbc-build-env
 
       - name: Download ODBC driver
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: odbc-driver-temporary
           path: target/debug
@@ -433,7 +433,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: results-putget-odbc-linux-x64-${{ matrix.cloud_provider }}
           path: odbc-junit.xml

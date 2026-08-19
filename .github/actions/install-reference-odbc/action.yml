@@ -41,7 +41,7 @@ runs:
   steps:
     - name: Cache reference ODBC installer
       continue-on-error: true
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: ${{ inputs.cache-dir }}
         key: ${{ runner.os }}-ref-odbc-${{ hashFiles(inputs.version-file) }}

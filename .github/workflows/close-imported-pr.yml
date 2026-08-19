@@ -51,12 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for git log on dispatch backfill)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Close mirror PRs referenced by incoming commits
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           DISPATCH_SHA: ${{ github.event.inputs.commit_sha }}
         with:

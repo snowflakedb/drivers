@@ -136,7 +136,7 @@ runs:
       id: restore-registry
       if: inputs.mode == 'restore'
       continue-on-error: true
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: |
           ~/.cargo/registry/index
@@ -150,7 +150,7 @@ runs:
       id: restore-target
       if: inputs.mode == 'restore'
       continue-on-error: true
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: ${{ inputs.target-dir }}
         key: ${{ steps.keys.outputs.target }}
@@ -159,7 +159,7 @@ runs:
           ${{ runner.os }}-rust-${{ inputs.shared-key }}-v5-
 
     # ── Save mode ──
-    # Two-layer guard before calling actions/cache/save@v5 (which is the slow step — tar of
+    # Two-layer guard before calling actions/cache/save@v6 (which is the slow step — tar of
     # a multi-hundred-MB Windows cache can take 3+ minutes, and if reservation ultimately
     # fails we've wasted all that tar time):
     #
@@ -169,12 +169,12 @@ runs:
     #   2. lookup-only pre-check: cheap server roundtrip that checks if the key exists NOW,
     #      after the build phase. Catches the race where another concurrent job saved this
     #      key while our job was still building. Without this pre-check we'd tar for 3 min
-    #      only to have actions/cache/save@v5 fail with "Unable to reserve cache".
+    #      only to have actions/cache/save@v6 fail with "Unable to reserve cache".
     - name: Pre-save check — registry cache already exists?
       id: precheck-registry
       if: inputs.mode == 'save' && inputs.registry-cache-hit != 'true'
       continue-on-error: true
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: |
           ~/.cargo/registry/index
@@ -209,7 +209,7 @@ runs:
       continue-on-error: true
       env:
         ZSTD_NBTHREADS: '2'
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         path: |
           ~/.cargo/registry/index
@@ -222,7 +222,7 @@ runs:
       id: precheck-target
       if: inputs.mode == 'save' && inputs.target-cache-hit != 'true'
       continue-on-error: true
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: ${{ inputs.target-dir }}
         key: ${{ steps.keys.outputs.target }}
@@ -408,7 +408,7 @@ runs:
       continue-on-error: true
       env:
         ZSTD_NBTHREADS: '2'
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         path: ${{ inputs.target-dir }}
         key: ${{ steps.keys.outputs.target }}

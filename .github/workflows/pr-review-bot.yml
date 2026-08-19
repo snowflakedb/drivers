@@ -93,10 +93,10 @@ jobs:
     runs-on: ubuntu-slim
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -125,7 +125,7 @@ jobs:
 
       - name: Post assignment notification to Slack
         if: steps.build.outputs.skip != 'true'
-        uses: slackapi/slack-github-action@v2
+        uses: slackapi/slack-github-action@v4
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -139,10 +139,10 @@ jobs:
     runs-on: ubuntu-slim
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -171,7 +171,7 @@ jobs:
 
       - name: Post reminder digest to Slack
         if: steps.build.outputs.skip != 'true'
-        uses: slackapi/slack-github-action@v2
+        uses: slackapi/slack-github-action@v4
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}

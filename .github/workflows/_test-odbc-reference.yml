@@ -39,7 +39,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup ODBC build environment
         uses: ./.github/actions/setup-odbc-build-env
