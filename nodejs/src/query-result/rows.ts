@@ -1,9 +1,45 @@
 import { Readable } from 'node:stream';
-import type { CoreStatementInstance } from '../core/index.js';
-import { resolveColumnNames, reshapeRowForMode, type RowMode } from './row-mode.js';
+import type { CoreColumnInstance, CoreStatementInstance } from '../core/index.js';
+import type { RowMode } from './types.js';
+import { GlobalConfig } from '../global-config.js';
+import { resolveColumnNames } from './column-names.js';
 
-function getColumnNames(coreStatement: CoreStatementInstance): string[] {
-  return (coreStatement.getColumns() ?? []).map((column) => column.getName());
+function transformCell(cell: unknown, column: CoreColumnInstance): unknown {
+  if (column.isVariant()) {
+    if (cell === null || cell === undefined) {
+      return cell;
+    }
+    if (cell === '') {
+      return undefined;
+    }
+    const value = cell as string;
+    try {
+      return GlobalConfig.jsonColumnVariantParser(value);
+    } catch {
+      return GlobalConfig.xmlColumnVariantParser(value);
+    }
+  }
+  return cell;
+}
+
+function transformRow({
+  row,
+  columns,
+  columnNames,
+  rowMode,
+}: {
+  row: unknown[];
+  columns: CoreColumnInstance[];
+  columnNames: string[];
+  rowMode: RowMode;
+}): unknown {
+  if (rowMode === 'array') {
+    return row.map((cell, index) => transformCell(cell, columns[index]));
+  }
+  return row.reduce<Record<string, unknown>>((shaped, cell, index) => {
+    shaped[columnNames[index]] = transformCell(cell, columns[index]);
+    return shaped;
+  }, {});
 }
 
 export async function collectRows(
@@ -11,16 +47,19 @@ export async function collectRows(
   rowMode: RowMode,
 ): Promise<unknown[]> {
   try {
+    await coreStatement.waitForCompletion();
+    const columns = coreStatement.getColumns()!;
+    const columnNames = resolveColumnNames(columns, rowMode);
+
     const rows: unknown[] = [];
-    let columnNames: string[] | undefined;
     while (true) {
       const row = await coreStatement.getNextRow();
       if (row === null) {
         break;
       }
-      columnNames ??= resolveColumnNames(getColumnNames(coreStatement), rowMode);
-      rows.push(reshapeRowForMode(row, columnNames, rowMode));
+      rows.push(transformRow({ row, columns, columnNames, rowMode }));
     }
+
     return rows;
   } finally {
     coreStatement.close();
@@ -28,7 +67,8 @@ export async function collectRows(
 }
 
 export function createRowStream(coreStatement: CoreStatementInstance, rowMode: RowMode): Readable {
-  let columnNames: string[] | undefined;
+  const columns = coreStatement.getColumns()!;
+  const columnNames = resolveColumnNames(columns, rowMode);
   return new Readable({
     objectMode: true,
     read() {
@@ -39,8 +79,7 @@ export function createRowStream(coreStatement: CoreStatementInstance, rowMode: R
             this.push(null);
             return;
           }
-          columnNames ??= resolveColumnNames(getColumnNames(coreStatement), rowMode);
-          this.push(reshapeRowForMode(row, columnNames, rowMode));
+          this.push(transformRow({ row, columns, columnNames, rowMode }));
         })
         .catch((err: Error) => {
           this.destroy(err);

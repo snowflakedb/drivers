@@ -11,7 +11,7 @@ behavior_differences:
       constructed (result.js:93-96), so Column.getName() and getColumn('NAME_2') reflect the
       rename.
     new_driver_behavior: |
-      renameDuplicateColumnNames (row-mode.ts) only produces row keys. RowStatement's
+      renameDuplicateColumnNames (column-names.ts) only produces row keys. RowStatement's
       getColumns()/getColumn() return core-owned Column metadata unchanged, so row.NAME_2 works
       identically in both drivers but column-name lookups by the renamed name do not. Disclosed
       in PR #1196's description as a scoped simplification; not fixed here because doing so

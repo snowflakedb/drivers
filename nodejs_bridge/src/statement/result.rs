@@ -18,7 +18,7 @@ pub(super) struct ResultData {
 ///
 /// The outcome is stored in a [`OnceCell`] and set by the background task
 /// spawned in [`Self::from_future`]. A [`Notify`] wakes any tasks parked in
-/// [`Self::wait`] the moment the cell is filled.
+/// [`Self::ready`] the moment the cell is filled.
 pub(super) struct StatementResult {
     cell: Arc<OnceCell<Result<ResultData, ApiError>>>,
     ready: Arc<Notify>,
@@ -43,7 +43,7 @@ impl StatementResult {
         Self { cell, ready }
     }
 
-    pub(super) async fn wait(&self) -> Result<&ResultData, &ApiError> {
+    pub(super) async fn ready(&self) -> Result<&ResultData, &ApiError> {
         loop {
             let notified = self.ready.notified();
             if let Some(result) = self.cell.get() {

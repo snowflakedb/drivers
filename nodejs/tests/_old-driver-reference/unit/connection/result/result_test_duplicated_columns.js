@@ -5,7 +5,7 @@ const RowMode = require('./../../../../lib/constants/row_mode');
 // TODO:
 // The "create unique names for duplicated column names" describe block that used to live
 // here (testing unique_column_name_creator.js's row-key-rename algorithm) has been migrated
-// to nodejs/tests/unit/row-mode.test.ts and removed from this file.
+// to nodejs/tests/unit/column-names.test.ts and removed from this file.
 //
 // This remaining block is *not* migrated yet: it asserts that Column.getName() reflects
 // renamed columns for object_with_renamed_duplicated_columns row mode, which the new driver

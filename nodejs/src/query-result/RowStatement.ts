@@ -1,29 +1,14 @@
 import type { Readable } from 'node:stream';
-import type { CoreColumnInstance, CoreStatementInstance } from '../core/index.js';
+import type { CoreStatementInstance } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
-import { DEFAULT_ROW_MODE, type RowMode } from './row-mode.js';
+import type {
+  Column,
+  FetchRowsOptions,
+  RowMode,
+  StatementCallback,
+  StreamOptions,
+} from './types.js';
 import { createRowStream } from './rows.js';
-
-export type StatementCallback = (
-  err: SnowflakeError | undefined,
-  stmt: RowStatement | FileAndStageBindStatement,
-  rows: Array<unknown> | undefined,
-) => void;
-
-export type DataType = 'String' | 'Boolean' | 'Number' | 'Date' | 'JSON' | 'Buffer';
-
-export type Column = CoreColumnInstance;
-
-export interface StreamOptions {
-  start?: number;
-  end?: number;
-  fetchAsString?: DataType[];
-}
-
-export interface FetchRowsOptions {
-  each: (row: unknown) => boolean | void;
-  end: (err: SnowflakeError | undefined, stmt: RowStatement | FileAndStageBindStatement) => void;
-}
 
 // TODO:
 // Not sure if we actually need to have a wrapper around core statement.
@@ -36,7 +21,7 @@ export class RowStatement {
 
   constructor(core: CoreStatementInstance, rowMode?: RowMode) {
     this.#core = core;
-    this.#rowMode = rowMode ?? DEFAULT_ROW_MODE;
+    this.#rowMode = rowMode ?? 'object';
   }
 
   get rowMode(): RowMode {

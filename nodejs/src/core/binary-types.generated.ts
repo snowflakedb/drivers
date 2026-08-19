@@ -42,7 +42,7 @@ export declare class Connection {
 }
 
 export declare class Statement {
-  wait(): Promise<void>
+  waitForCompletion(): Promise<void>
   getNextRow(): Promise<Array<unknown> | null>
   getQueryId(): string | null
   getNumRows(): number | null

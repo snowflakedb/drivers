@@ -41,8 +41,8 @@ impl Statement {
     }
 
     #[napi]
-    pub async fn wait(&self) -> Result<()> {
-        self.result.wait().await.as_ref().map_err(to_napi_err)?;
+    pub async fn wait_for_completion(&self) -> Result<()> {
+        self.result.ready().await.as_ref().map_err(to_napi_err)?;
         Ok(())
     }
 
@@ -54,7 +54,7 @@ impl Statement {
     //   automatically generated JS and TypeScript types instead of SqlValue trait and unknown cast.
     #[napi(ts_return_type = "Promise<Array<unknown> | null>")]
     pub async fn get_next_row(&self) -> Result<Option<Vec<SqlValue>>> {
-        let data = self.result.wait().await.map_err(to_napi_err)?;
+        let data = self.result.ready().await.map_err(to_napi_err)?;
         let stream_state = Arc::clone(&data.stream_state);
 
         // `next_row` may block; run on napi's blocking pool so the Node event
