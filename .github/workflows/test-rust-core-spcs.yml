@@ -60,7 +60,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # The probe image is linux/arm64 and the SPCS pool is an ARM family, so
       # this lane MUST run on an arm64 runner. Fail fast if the runner label was
@@ -85,7 +85,7 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -175,7 +175,7 @@ jobs:
           docker push "${REPO_URL}/spcs_probe:${IMAGE_VERSION}"
 
       - name: Install Go (required by aws-lc-fips-sys)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: 'stable'
           cache: false

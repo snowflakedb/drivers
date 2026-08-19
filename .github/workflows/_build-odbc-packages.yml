@@ -28,14 +28,14 @@ jobs:
       - name: Restore WiX build cache
         id: wix-cache
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: wix-artifacts
           key: wix-${{ env.WIX_VERSION }}-${{ runner.os }}
 
       - name: Checkout wixtoolset/wix @ ${{ env.WIX_VERSION }}
         if: steps.wix-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: wixtoolset/wix
           ref: ${{ env.WIX_VERSION }}
@@ -105,13 +105,13 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: wix-artifacts
           key: wix-${{ env.WIX_VERSION }}-${{ runner.os }}
 
       - name: Upload WiX artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wix-toolset-v7
           path: wix-artifacts/
@@ -148,11 +148,11 @@ jobs:
     name: build_msi (${{ matrix.name }})
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Cargo registry cache (MSI build)
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
@@ -164,7 +164,7 @@ jobs:
         # No restore-keys: a stale target dir (from a different Cargo.lock) causes
         # rust-lld linker failures on i686 debug due to cross-CGU symbol mismatches.
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .cargo-target-msi
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
@@ -181,7 +181,7 @@ jobs:
         run: rustup target add ${{ matrix.cargo_target }}
 
       - name: Download self-built WiX
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wix-toolset-v7
           path: wix-artifacts
@@ -213,7 +213,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
@@ -224,7 +224,7 @@ jobs:
         timeout-minutes: 15
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .cargo-target-msi
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
@@ -246,7 +246,7 @@ jobs:
             -BuildConfig ${{ matrix.config }}
 
       - name: Upload MSI
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: snowflake-odbc-${{ matrix.config }}-${{ matrix.arch }}
           path: build/snowflake-odbc-*.msi
@@ -272,12 +272,12 @@ jobs:
     name: build_rpm (${{ matrix.name }})
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Cargo registry cache (RPM build)
         id: rpm-cargo-registry
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
@@ -287,7 +287,7 @@ jobs:
       - name: Restore Rust target cache (RPM build)
         id: rpm-cargo-target
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .cargo-target-rpm
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
@@ -321,7 +321,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
@@ -332,13 +332,13 @@ jobs:
         timeout-minutes: 15
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .cargo-target-rpm
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Upload RPM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: snowflake-odbc-rpm-${{ matrix.arch }}
           path: build/snowflake-odbc-*.rpm
@@ -348,10 +348,10 @@ jobs:
     name: build_pkg (macOS Universal)
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Cargo registry cache (pkg build)
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-universal-cargo-registry-pkg-${{ hashFiles('**/Cargo.lock') }}
@@ -359,7 +359,7 @@ jobs:
             ${{ runner.os }}-universal-cargo-registry-pkg-
 
       - name: Restore Rust target cache (pkg build)
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .cargo-target-pkg
           key: ${{ runner.os }}-universal-rust-pkg-release-target-${{ hashFiles('**/Cargo.lock') }}
@@ -398,7 +398,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 10
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-universal-cargo-registry-pkg-${{ hashFiles('**/Cargo.lock') }}
@@ -407,7 +407,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 15
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .cargo-target-pkg
           key: ${{ runner.os }}-universal-rust-pkg-release-target-${{ hashFiles('**/Cargo.lock') }}
@@ -419,7 +419,7 @@ jobs:
           DRIVER_ARM64: .cargo-target-pkg/aarch64-apple-darwin/release/libsfodbc.dylib
 
       - name: Upload pkg
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: snowflake-odbc-macos-universal
           path: build/snowflake-odbc-*.universal.pkg
@@ -443,12 +443,12 @@ jobs:
     name: build_deb (${{ matrix.name }})
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Cargo registry cache (DEB build)
         id: deb-cargo-registry
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-deb-${{ hashFiles('**/Cargo.lock') }}
@@ -458,7 +458,7 @@ jobs:
       - name: Restore Rust target cache (DEB build)
         id: deb-cargo-target
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .cargo-target-deb
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-deb-release-target-${{ hashFiles('**/Cargo.lock') }}
@@ -492,7 +492,7 @@ jobs:
         timeout-minutes: 10
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-deb-${{ hashFiles('**/Cargo.lock') }}
@@ -503,19 +503,19 @@ jobs:
         timeout-minutes: 15
         env:
           ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .cargo-target-deb
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-deb-release-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Upload .deb
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: snowflake-odbc-deb-${{ matrix.arch }}
           path: build/snowflake-odbc-*.deb
 
       - name: Upload .tgz
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: snowflake-odbc-tgz-${{ matrix.arch }}
           path: build/snowflake-odbc-*.tar.gz

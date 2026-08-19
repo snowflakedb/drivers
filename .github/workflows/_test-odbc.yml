@@ -14,7 +14,7 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       build-matrix: ${{ steps.build.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: matrix
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
@@ -58,7 +58,7 @@ jobs:
     name: build_odbc_driver (${{ matrix.name }})
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup ODBC build environment
         uses: ./.github/actions/setup-odbc-build-env
@@ -133,7 +133,7 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
       - name: Upload ODBC driver
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: odbc-driver-${{ matrix.name }}
           path: ${{ matrix.cargo_target && format('target/{0}/debug', matrix.cargo_target) || 'target/debug' }}/${{ matrix.driver_lib }}
@@ -152,7 +152,7 @@ jobs:
     name: build_odbc_tests_cpp (${{ matrix.name }})
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup ODBC build environment
         uses: ./.github/actions/setup-odbc-build-env
@@ -301,7 +301,7 @@ jobs:
           }
 
       - name: Upload C++ test harness artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: odbc-tests-cpp-${{ matrix.vcpkg_triplet }}
           path: |
@@ -356,13 +356,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup ODBC build environment
         uses: ./.github/actions/setup-odbc-build-env
 
       - name: Download pre-built ODBC driver
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: odbc-driver-${{ matrix.driver_artifact }}
           path: target/debug
@@ -375,7 +375,7 @@ jobs:
       # paths, so download into that directory to restore the layout run_tests expects.
       - name: Download C++ test harness (Windows)
         if: runner.os == 'Windows'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: odbc-tests-cpp-${{ matrix.vcpkg_triplet }}
           path: odbc_tests/cmake-build
@@ -541,7 +541,7 @@ jobs:
 
       - name: Upload ODBC flaky test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: odbc-flaky-tests-${{ matrix.name }}-${{ matrix.cloud_provider }}
           path: odbc-flaky-junit.xml
@@ -549,7 +549,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: odbc-tests-${{ matrix.name }}-${{ matrix.cloud_provider }}${{ matrix.result_format && format('-{0}', matrix.result_format) || '' }}
           path: odbc-junit.xml
@@ -571,7 +571,7 @@ jobs:
       # Save caches unconditionally (not gated on matrix.cloud_provider == 'aws'): when multiple
       # matrix cells finish near-simultaneously, GHA returns a benign "Unable to reserve cache"
       # warning for the late writers. That's acceptable; it's better than losing save-on-failure,
-      # which the combined actions/cache@v5 does NOT support (save-always was removed in v5).
+      # which the combined actions/cache@v6 does NOT support (save-always was removed in v5).
       # Windows caches (test-deps, ccache) are saved by build_odbc_tests_cpp; skip here.
       - name: Save test dependencies cache
         if: always() && runner.os != 'Windows'
@@ -615,7 +615,7 @@ jobs:
     runs-on: ubuntu-latest
     name: cleanup_odbc (${{ matrix.cloud_provider }})
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}

@@ -12,7 +12,7 @@ jobs:
       statuses: write
     steps:
       - name: Accept performance regression
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const sha = context.payload.pull_request.head.sha;
@@ -35,7 +35,7 @@ jobs:
       issues: write
     steps:
       - name: Remove ACCEPT_PERFORMANCE_CHANGES label
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             try {

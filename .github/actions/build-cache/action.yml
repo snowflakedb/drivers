@@ -47,7 +47,7 @@ runs:
       id: r-test-deps
       if: inputs.mode == 'restore' && inputs.kind == 'test-deps'
       continue-on-error: true
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: odbc_tests/cmake-build/_deps
         key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
@@ -58,7 +58,7 @@ runs:
       id: r-ccache
       if: inputs.mode == 'restore' && inputs.kind == 'ccache'
       continue-on-error: true
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: .ccache
         # Include run_id in key so save always creates a new entry (GHA cache
@@ -81,7 +81,7 @@ runs:
       id: r-vcpkg
       if: inputs.mode == 'restore' && inputs.kind == 'vcpkg'
       continue-on-error: true
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: .vcpkg-binary-cache
         key: ${{ runner.os }}-vcpkg-${{ inputs.key-suffix }}-${{ env.VCPKG_VER }}-v3
@@ -97,7 +97,7 @@ runs:
       id: r-brew
       if: inputs.mode == 'restore' && inputs.kind == 'brew'
       continue-on-error: true
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: ~/Library/Caches/Homebrew
         key: macos-brew-odbc-tests-v1
@@ -112,7 +112,7 @@ runs:
       continue-on-error: true
       env:
         ZSTD_NBTHREADS: '2'
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         path: odbc_tests/cmake-build/_deps
         key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
@@ -123,7 +123,7 @@ runs:
       continue-on-error: true
       env:
         ZSTD_NBTHREADS: '2'
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         path: .ccache
         key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-v3-${{ hashFiles('odbc_tests/CMakeLists.txt') }}-${{ github.run_id }}
@@ -133,7 +133,7 @@ runs:
       continue-on-error: true
       env:
         ZSTD_NBTHREADS: '2'
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         path: .vcpkg-binary-cache
         key: ${{ runner.os }}-vcpkg-${{ inputs.key-suffix }}-${{ env.VCPKG_VER }}-v3
@@ -143,7 +143,7 @@ runs:
       continue-on-error: true
       env:
         ZSTD_NBTHREADS: '2'
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         path: ~/Library/Caches/Homebrew
         key: macos-brew-odbc-tests-v1
