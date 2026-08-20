@@ -2,7 +2,7 @@
 # Regenerate by running: python3 ci/mirroring/scripts/generate_mirror_config.py
 name: Import mirror PR
 
-# Imports a labeled PR from snowflakedb/drivers back
+# Imports a labeled PR from snowflakedb/__MIRROR_REPO_NAME__ back
 # into the internal repo as an internal PR so it can run against internal
 # CI before merge.
 #
@@ -40,8 +40,8 @@ permissions:
   contents: read
 
 env:
-  COPYBARA_RELEASE: v20260504
-  COPYBARA_JAR_SHA256: a87af86f628d2754135fc6e3e0b5ee3f22aa781de4fc7a1039e0a69180576c0e
+  COPYBARA_RELEASE: __COPYBARA_RELEASE__
+  COPYBARA_JAR_SHA256: __COPYBARA_JAR_SHA256__
 
 jobs:
   import-pr:
@@ -49,15 +49,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout config
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
       - name: Build Copybara image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v5
         with:
           context: ci/mirroring
           file: ci/mirroring/Dockerfile.copybara
@@ -72,16 +72,16 @@ jobs:
 
       - name: Configure git for Copybara
         env:
-          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
-          DRIVER_MIRROR_TOKEN_SNOWFLAKEDB: ${{ secrets.DRIVER_MIRROR_TOKEN_SNOWFLAKEDB }}
+          __INTERNAL_TOKEN_NAME__: ${{ secrets.__INTERNAL_TOKEN_NAME__ }}
+          __MIRROR_TOKEN_NAME__: ${{ secrets.__MIRROR_TOKEN_NAME__ }}
         run: |
           set -euo pipefail
           git config --global user.name  "Mirror Bot"
           git config --global user.email "mirror-bot@snowflake.com"
           # Two URL-scoped auth headers: origin fetches read from snowflakedb/
           # (the public mirror), destination push goes to snowflake-eng/ (internal).
-          B64_ENG=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN}" | base64 -w0)
-          B64_SDB=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}" | base64 -w0)
+          B64_ENG=$(printf 'x-access-token:%s' "${__INTERNAL_TOKEN_NAME__}" | base64 -w0)
+          B64_SDB=$(printf 'x-access-token:%s' "${__MIRROR_TOKEN_NAME__}" | base64 -w0)
           git config --global "http.https://github.com/snowflake-eng/.extraHeader" "Authorization: Basic ${B64_ENG}"
           git config --global "http.https://github.com/snowflakedb/.extraHeader"   "Authorization: Basic ${B64_SDB}"
 
@@ -90,24 +90,24 @@ jobs:
           # Copybara reads GITHUB_TOKEN to call the mirror's API for the
           # PR metadata (labels, title, body, author) — that's a read
           # against the mirror, so use the mirror token here.
-          GITHUB_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN_SNOWFLAKEDB }}
-          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.__MIRROR_TOKEN_NAME__ }}
+          __INTERNAL_TOKEN_NAME__: ${{ secrets.__INTERNAL_TOKEN_NAME__ }}
           PR_NUMBER: ${{ github.event.inputs.pr_number }}
         run: |
           set -euo pipefail
           # --baseline-for-merge-import: when a PR contains merge commits
-          # from main (author ran "git merge main" instead of rebasing),
+          # from __MAIN_BRANCH__ (author ran "git merge __MAIN_BRANCH__" instead of rebasing),
           # Copybara can't automatically determine the split-point baseline.
           # We always supply it from the PR's current base SHA, which equals
-          # the main-side parent of the most recent merge commit. This is a
+          # the __MAIN_BRANCH__-side parent of the most recent merge commit. This is a
           # no-op for clean linear PRs and fixes the "Cannot read origin
           # revision from baseline" error for PRs with merge commits.
-          BASELINE_SHA=$(gh api "repos/snowflakedb/drivers/pulls/${PR_NUMBER}" \
+          BASELINE_SHA=$(gh api "repos/snowflakedb/__MIRROR_REPO_NAME__/pulls/${PR_NUMBER}" \
             --jq '.base.sha')
           # Outbound mirror commits carry GitOrigin-RevId pointing at the
-          # matching internal main commit. Copybara needs that destination
+          # matching internal __MAIN_BRANCH__ commit. Copybara needs that destination
           # parent explicitly when the PR contains merge commits.
-          DESTINATION_PARENT_SHA=$(gh api "repos/snowflakedb/drivers/commits/${BASELINE_SHA}" \
+          DESTINATION_PARENT_SHA=$(gh api "repos/snowflakedb/__MIRROR_REPO_NAME__/commits/${BASELINE_SHA}" \
             --jq '.commit.message' \
             | grep -E '^GitOrigin-RevId:' \
             | sed 's/^GitOrigin-RevId: //' \
@@ -134,17 +134,17 @@ jobs:
 
           # --nogit-destination-rebase: the mirror is a strict subset of
           # the internal repo (no copy.bara.sky, NOMIRROR directories, adr/,
-          # .github/, …). Rebasing the mirror PR branch onto internal main
+          # .github/, …). Rebasing the mirror PR branch onto internal __MAIN_BRANCH__
           # fails with modify/delete conflicts on those internal-only
           # files. Skipping the rebase applies the PR diff as-is on top
-          # of internal main — safe because the PR only touches files
+          # of internal __MAIN_BRANCH__ — safe because the PR only touches files
           # inside MIRRORED_PATHS.
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workdir" \
             -v "${HOME}/.gitconfig:/root/.gitconfig:ro" \
             -e GITHUB_TOKEN \
             copybara:local migrate ci/mirroring/copy.bara.sky import "${PR_NUMBER}" \
-            --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflake-eng/drivers.git" \
+            --git-destination-url="https://x-access-token:${__INTERNAL_TOKEN_NAME__}@github.com/snowflake-eng/__REPO_NAME__.git" \
             --nogit-destination-rebase \
             --baseline-for-merge-import="${BASELINE_SHA}" \
             --change-request-parent="${DESTINATION_PARENT_SHA}" \
@@ -159,7 +159,7 @@ jobs:
             echo "## Import PR #${PR_NUMBER}"
             echo ""
             echo "- **Dispatched by:** ${{ github.actor }}"
-            echo "- **Source PR:** https://github.com/snowflakedb/drivers/pull/${PR_NUMBER}"
+            echo "- **Source PR:** https://github.com/snowflakedb/__MIRROR_REPO_NAME__/pull/${PR_NUMBER}"
             echo "- **Imported as draft:** ${{ github.event.inputs.draft }}"
             echo "- **Result:** ${{ job.status }}"
             echo ""

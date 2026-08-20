@@ -1,0 +1,33 @@
+  check-generator-staleness:
+    name: Check mirror config staleness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Compare generator hash
+        env:
+          __INTERNAL_TOKEN_NAME__: ${{ secrets.__INTERNAL_TOKEN_NAME__ }}
+        run: |
+          set -euo pipefail
+          HASH_FILE="ci/mirroring/.generator-hash"
+          if [[ ! -f "${HASH_FILE}" ]]; then
+            echo "::warning::No stored generator hash found (${HASH_FILE}). Run ci/mirroring/scripts/sync-mirror-config.sh to initialize."
+            exit 0
+          fi
+          STORED_HASH="$(cat "${HASH_FILE}")"
+          # Fetch the generator via shallow sparse clone (private repo).
+          UPSTREAM_DIR="$(mktemp -d)"
+          git clone --depth 1 --filter=blob:none --sparse --branch main \
+            "https://x-access-token:${__INTERNAL_TOKEN_NAME__}@github.com/snowflake-eng/drivers.git" \
+            "${UPSTREAM_DIR}/drivers" --quiet
+          git -C "${UPSTREAM_DIR}/drivers" sparse-checkout set ci/mirroring/scripts
+          CURRENT_HASH="$(find "${UPSTREAM_DIR}/drivers/ci/mirroring/scripts" -type f | sort | xargs cat | shasum -a 256 | cut -d' ' -f1)"
+          rm -rf "${UPSTREAM_DIR}"
+          if [[ "${STORED_HASH}" != "${CURRENT_HASH}" ]]; then
+            echo "::error::Mirror config is stale — the upstream generator has changed. Run: bash ci/mirroring/scripts/sync-mirror-config.sh"
+            exit 1
+          else
+            echo "Mirror config is up to date (hash: ${STORED_HASH:0:12}...)."
+          fi
+

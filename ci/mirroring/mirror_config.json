@@ -1,0 +1,27 @@
+{
+  "mirror_repo": "snowflakedb/drivers",
+  "nomirror_paths": [
+    "NOMIRROR/**",
+    "**/NOMIRROR/**"
+  ],
+  "import_excluded_paths": [
+    ".ai/**",
+    ".cursor/**",
+    ".claude/**",
+    ".buildkite/**",
+    ".ci/**",
+    ".github/**",
+    "ci/**",
+    "scripts/**",
+    "shell.nix"
+  ],
+  "import_excluded_path_overrides": [
+    ".github/workflows/pre-commit.yml",
+    ".github/workflows/validations.yml",
+    ".github/actions/cargo-cache/action.yml",
+    ".github/workflows/mirror-test-rust-core.yml",
+    ".github/workflows/mirror-test-odbc.yml",
+    ".github/workflows/mirror-test-python.yml",
+    ".github/actions/setup-odbc-build-env/action.yml"
+  ]
+}

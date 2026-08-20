@@ -3,7 +3,7 @@
 #
 # Copybara config: two workflows.
 #
-# 1. `mirror`  — outbound: snowflake-eng/drivers -> snowflakedb/drivers
+# 1. `mirror`  — outbound: snowflake-eng/__REPO_NAME__ -> snowflakedb/__MIRROR_REPO_NAME__
 #                (ITERATIVE, direct push, denylist filter + internal-marker guards)
 #                Runs daily via .github/workflows/mirror.yml.
 #
@@ -12,8 +12,8 @@
 #                before merge. Runs on demand via
 #                .github/workflows/mirror-inbound.yml.
 #
-SOURCE_REPO = "https://github.com/snowflake-eng/drivers"
-MIRROR_REPO = "https://github.com/snowflakedb/drivers"
+SOURCE_REPO = "https://github.com/snowflake-eng/__REPO_NAME__"
+MIRROR_REPO = "https://github.com/snowflakedb/__MIRROR_REPO_NAME__"
 
 load("import_paths", "IMPORT_FILE_GLOBS", "IMPORT_AS_DRAFT")
 
@@ -67,30 +67,19 @@ NOMIRROR_PATHS = [
 # Internal bug-regression tracking: Jira ticket catalogs, analysis status
 # annotations, and the generated HTML report.
 EXCLUDED_PATHS = NOMIRROR_PATHS + [
-    ".ai/**",
-    ".cursor/**",
-    ".claude/**",
-    "scripts/mirror/**",
-    "ci/mirroring/**",
-    ".github/workflows/mirror.yml",
-    ".github/workflows/mirror-inbound.yml",
-    ".github/CODEOWNERS",
-    ".github/workflows/security-signoff.yml",
-    ".github/workflows/security-label.yml",
-    ".github/security-partners.yml",
-    "tests/bugs_analysis/**",
-]
+__EXCLUDED_PATHS_ENTRIES__]
 
 # Per-path overrides that re-include specific files from inside an EXCLUDED_PATHS
 # prefix. NOMIRROR_PATHS remain excluded even if an override names one of them.
 # Kept as a seam (unioned into origin_files below): add a path here to republish
 # a single file from an otherwise-excluded prefix without reopening the whole
 # prefix.
-EXCLUDED_PATH_OVERRIDES = []
+EXCLUDED_PATH_OVERRIDES = [
+__EXCLUDED_PATH_OVERRIDES_ENTRIES__]
 
 
 # ┌─────────────────────────────────────────────────────────────────────┐
-# │ OUTBOUND: internal main -> public mirror main                       │
+# │ OUTBOUND: internal __MAIN_BRANCH__ -> public mirror __MAIN_BRANCH__                       │
 # └─────────────────────────────────────────────────────────────────────┘
 core.workflow(
     name = "mirror",
@@ -100,7 +89,7 @@ core.workflow(
     mode = "ITERATIVE",
     origin = git.github_origin(
         url = SOURCE_REPO,
-        ref = "main",
+        ref = "__MAIN_BRANCH__",
     ),
     # Direct push — no PR gate. Safety relies on the denylist + the
     # verify_match checks below, plus environment approval on dispatch,
@@ -108,7 +97,7 @@ core.workflow(
     # which flags new files in public paths whose content looks internal.
     destination = git.github_destination(
         url = MIRROR_REPO,
-        push = "main",
+        push = "__MAIN_BRANCH__",
     ),
     authoring = authoring.pass_thru(
         "Mirror Bot <mirror-bot@snowflake.com>"
@@ -134,8 +123,8 @@ core.workflow(
         core.transform(
             [
                 core.replace(
-                    before = "snowflake-eng/drivers",
-                    after = "snowflakedb/drivers",
+                    before = "snowflake-eng/__REPO_NAME__",
+                    after = "snowflakedb/__MIRROR_REPO_NAME__",
                 ),
                 # Scrub the internal 1Password vault name from the local-dev
                 # fallback in scripts/decode_secrets.sh (and encode_secrets.sh).
@@ -161,7 +150,7 @@ core.workflow(
         # The mirror workflow itself is excluded because it legitimately
         # names the source repository.
         core.verify_match(
-            regex = "snowflake-eng/drivers",
+            regex = "snowflake-eng/__REPO_NAME__",
             paths = glob(["**"], exclude = [".github/workflows/mirror*"]),
             verify_no_match = True,
         ),
@@ -196,7 +185,7 @@ core.workflow(
 # │                                                                     │
 # │ Contributor authorship is preserved on the imported commits         │
 # │ (authoring.pass_thru). The resulting internal PR runs against full  │
-# │ internal CI before merge; when merged to main the outbound `mirror` │
+# │ internal CI before merge; when merged to __MAIN_BRANCH__ the outbound `mirror` │
 # │ workflow pushes the change back to the mirror on its next run,      │
 # │ closing the loop.                                                   │
 # └─────────────────────────────────────────────────────────────────────┘
@@ -208,7 +197,7 @@ core.workflow(
         required_labels = ["ok-to-import"],
         # Pull only open PRs — merged or closed PRs don't need importing.
         state = "OPEN",
-        branch = "main",
+        branch = "__MAIN_BRANCH__",
     ),
     # Create a PR on the internal repo so internal CI and reviewers see it.
     #
@@ -223,7 +212,7 @@ core.workflow(
     # metadata instead (via authoring.pass_thru below).
     destination = git.github_pr_destination(
         url = SOURCE_REPO,
-        destination_ref = "main",
+        destination_ref = "__MAIN_BRANCH__",
         draft = IMPORT_AS_DRAFT,
         title = "Import mirror PR #${GITHUB_PR_NUMBER}: ${GITHUB_PR_TITLE}",
         body = "Imported from ${GITHUB_PR_URL}.\n\n"
@@ -231,7 +220,7 @@ core.workflow(
                + "${GITHUB_PR_BODY}\n\n"
                + "---\n"
                + "Internal CI validates this change before merge. "
-               + "On merge to main the outbound mirror will push the commit "
+               + "On merge to __MAIN_BRANCH__ the outbound mirror will push the commit "
                + "back to the public repo; close the original mirror PR "
                + "with a link to the mirrored commit.",
         integrates = [],

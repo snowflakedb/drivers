@@ -1,0 +1,106 @@
+
+  notify-on-failure:
+    name: Notify Slack on failure
+    needs: [mirror-main, mirror-release-branches]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      # mirror-main failing means the whole-repo main sync broke — not
+      # attributable to one driver, so no driver-specific handle is added
+      # for that case (see mention-selection step below).
+      #
+      # mirror-release-branches loops over every release/* branch in a
+      # single job and only fails the job at the end if any branch failed,
+      # so a job-level failure can mean 1..N branches failed, each
+      # potentially a different driver (see its failed_branches output,
+      # populated by the "Run Copybara per release branch" step).
+      - name: Select driver-specific mentions
+        id: mention
+        env:
+          RELEASE_BRANCHES_RESULT: ${{ needs.mirror-release-branches.result }}
+          FAILED_BRANCHES: ${{ needs.mirror-release-branches.outputs.failed_branches }}
+        run: |
+          set -euo pipefail
+          driver_mentions=""
+          if [[ "${RELEASE_BRANCHES_RESULT}" == "failure" ]]; then
+            for branch in ${FAILED_BRANCHES}; do
+              # Release branches are named release/<lang>-v<version>, e.g.
+              # release/jdbc-v0.0.1, release/odbc-v0.0.9,
+              # release/python-v5.0.0b6 — the branch name itself names the
+              # driver unambiguously, so this is the one case safe to page
+              # a specific team on. Any branch name that doesn't match this
+              # convention contributes no handle rather than a guess.
+              lang="${branch#release/}"
+              lang="${lang%%-v*}"
+              handle=""
+              # <!subteam^ID> renders as a real, notification-triggering
+              # mention; plain "@drivers-jdbc" text does not (Slack only
+              # auto-links this exact syntax). IDs from Slack Admin > User
+              # Groups (each group's settings page URL), 2026-08-12.
+              case "${lang}" in
+                jdbc)   handle="<!subteam^S09P0PG7NEN>" ;;
+                odbc)   handle="<!subteam^S09P4A2L1FE>" ;;
+                python) handle="<!subteam^S09P4A6EEJ0>" ;;
+                nodejs) handle="<!subteam^S09NK9XSB6K>" ;;
+                dotnet) handle="<!subteam^S09NXA3KC85>" ;;
+                go)     handle="<!subteam^S09NYMY9V2A>" ;;
+                php)    handle="<!subteam^S09NX9VMJJH>" ;;
+                *)
+                  # Unrecognized driver prefix (e.g. a new language added
+                  # without updating this map) — surface it loudly in the
+                  # run log rather than silently falling back to on-call-only.
+                  echo "::warning::No Slack handle mapped for driver prefix '${lang}' (from branch ${branch}) — add a case above. Falling back to on-call-only mention."
+                  ;;
+              esac
+              if [[ -n "${handle}" ]]; then
+                case " ${driver_mentions} " in
+                  *" ${handle} "*) ;; # already added, dedupe
+                  *) driver_mentions="${driver_mentions} ${handle}" ;;
+                esac
+              fi
+            done
+          fi
+          echo "driver_mentions=${driver_mentions}" >> "$GITHUB_OUTPUT"
+
+      # <!subteam^S077RA1UXAS> is @snow-drivers-warsaw-oncall's resolved ID
+      # (Slack Admin > User Groups, 2026-08-12). Confirmed via live test that
+      # plain "@handle" text does not render as a real mention — only this
+      # syntax does. The bot token lacks usergroups:read, so these IDs are
+      # hardcoded rather than resolved dynamically at runtime; re-resolve by
+      # hand if a group is ever recreated (its ID would change).
+      - name: Post Slack alert
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          DRIVER_MENTIONS: ${{ steps.mention.outputs.driver_mentions }}
+          MIRROR_MAIN_RESULT: ${{ needs.mirror-main.result }}
+          RELEASE_BRANCHES_RESULT: ${{ needs.mirror-release-branches.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          text="Copybara mirror failed: snowflake-eng/__REPO_NAME__ -> snowflakedb/__MIRROR_REPO_NAME__
+          mirror-main: ${MIRROR_MAIN_RESULT} | mirror-release-branches: ${RELEASE_BRANCHES_RESULT}
+          cc <!subteam^__SLACK_ONCALL_SUBTEAM_ID__>${DRIVER_MENTIONS}
+          ${RUN_URL}"
+          payload=$(jq -n --arg channel "__SLACK_CHANNEL_ID__" --arg text "${text}" '{channel: $channel, text: $text}')
+          # Slack's API returns HTTP 200 even for logical failures (e.g. the
+          # bot not being a member of the channel), so `curl -f` alone does
+          # NOT catch a failed post — it only fails on HTTP-level errors.
+          # Check the `.ok` field explicitly and fail the step (loudly, in
+          # GitHub Actions' own UI) if Slack rejected it; otherwise this
+          # notification job could report green while silently posting
+          # nothing, the exact failure mode it exists to prevent.
+          #
+          # --retry: retry on transient network/5xx errors only (not on a
+          # logical {"ok":false} response, which is still HTTP 200 and
+          # caught by the .ok check below) so a blip doesn't fail the whole
+          # notify job before Slack is even given a second chance.
+          response=$(curl -s -X POST https://slack.com/api/chat.postMessage \
+            --retry 3 --retry-delay 2 \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d "${payload}")
+          echo "Slack API response: ${response}"
+          if [[ "$(echo "${response}" | jq -r '.ok')" != "true" ]]; then
+            echo "::error::Slack chat.postMessage failed: ${response}"
+            exit 1
+          fi

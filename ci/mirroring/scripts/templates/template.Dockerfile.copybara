@@ -16,8 +16,8 @@
 
 FROM eclipse-temurin:21-jre
 
-ARG COPYBARA_RELEASE=v20260504
-ARG COPYBARA_JAR_SHA256=a87af86f628d2754135fc6e3e0b5ee3f22aa781de4fc7a1039e0a69180576c0e
+ARG COPYBARA_RELEASE=__COPYBARA_RELEASE__
+ARG COPYBARA_JAR_SHA256=__COPYBARA_JAR_SHA256__
 
 # git is needed by Copybara to shell out for fetches/pushes. curl to pull
 # the jar. No rust toolchain, no dev headers — this image is single-purpose.

@@ -2,8 +2,8 @@
 # Regenerate by running: python3 ci/mirroring/scripts/generate_mirror_config.py
 name: Close imported PRs
 
-# Operates on the MIRROR repo (snowflake-eng/drivers). Triggers when the outbound mirror
-# pushes a replayed squash-merge to main, scans the new commit messages
+# Operates on the MIRROR repo (snowflake-eng/__REPO_NAME__). Triggers when the outbound mirror
+# pushes a replayed squash-merge to __MAIN_BRANCH__, scans the new commit messages
 # for `Imported-From-Mirror-PR` / `Imported-From-Mirror-SHA` trailers
 # (written by copy.bara.sky's `import` workflow via metadata.expose_label),
 # and auto-closes the matching mirror PRs with a comment linking to the
@@ -11,7 +11,7 @@ name: Close imported PRs
 #
 # Why mirror-side, not internal-side: the comment must reference a SHA
 # visible to the external contributor. That's a commit on the mirror's
-# main. The internal merge SHA is different (Copybara replays, doesn't
+# __MAIN_BRANCH__. The internal merge SHA is different (Copybara replays, doesn't
 # cherry-pick), and at the moment of the internal merge the replay has
 # not happened yet. Running on the mirror's push event avoids that race.
 #
@@ -23,13 +23,13 @@ name: Close imported PRs
 
 on:
   push:
-    branches: [main]
+    branches: [__MAIN_BRANCH__]
   # Manual backfill for commits pushed before this workflow existed, or
   # if a run got skipped.
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: "Commit SHA on main to re-scan for trailers."
+        description: "Commit SHA on __MAIN_BRANCH__ to re-scan for trailers."
         required: true
 
 permissions:
@@ -43,23 +43,23 @@ jobs:
     # also exists on the internal repo. The trailer scan / PR lookup
     # only makes sense on the mirror side; treat everything else as a
     # no-op. Update this list when the destination flips to
-    # snowflakedb/drivers.
+    # snowflakedb/__MIRROR_REPO_NAME__.
     #
     # Gate 2 — actor guard. Only pushes from the outbound mirror carry
     # the trailers. Skip direct human pushes. Replace `mirror-bot` with
     # the actual login or app slug used to push from the outbound job.
     if: >-
-      github.repository == 'snowflake-eng/drivers'
+      github.repository == 'snowflake-eng/__REPO_NAME__'
       && (github.event_name == 'workflow_dispatch' || github.actor == 'sfc-gh-drivers-sa')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for git log on dispatch backfill)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Close mirror PRs referenced by incoming commits
-        uses: actions/github-script@v9
+        uses: actions/github-script@v7
         env:
           DISPATCH_SHA: ${{ github.event.inputs.commit_sha }}
         with:
@@ -176,7 +176,7 @@ jobs:
                 await github.rest.issues.createComment({
                   owner, repo, issue_number: t.prNumber,
                   body:
-                    `This PR was merged internally and mirrored to \`main\` as ` +
+                    `This PR was merged internally and mirrored to \`__MAIN_BRANCH__\` as ` +
                     `[\`${t.commitSha.slice(0, 12)}\`](${commitUrl}). ` +
                     `Closing automatically — thanks for the contribution!`,
                 });

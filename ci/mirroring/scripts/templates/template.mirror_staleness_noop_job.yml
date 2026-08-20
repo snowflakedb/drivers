@@ -1,0 +1,7 @@
+  check-generator-staleness:
+    name: Check mirror config staleness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Staleness check disabled
+        run: echo "This repo owns the generator — staleness check is a no-op."
+

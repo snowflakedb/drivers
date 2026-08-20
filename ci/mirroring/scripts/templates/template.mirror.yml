@@ -2,10 +2,10 @@
 # Regenerate by running: python3 ci/mirroring/scripts/generate_mirror_config.py
 name: Mirror to public repo
 
-# Mirrors snowflake-eng/drivers -> snowflakedb/drivers
-# (will be flipped to snowflakedb/drivers once validated).
+# Mirrors snowflake-eng/__REPO_NAME__ -> snowflakedb/__MIRROR_REPO_NAME__
+# (will be flipped to snowflakedb/__MIRROR_REPO_NAME__ once validated).
 #
-# Scope: main + every release/* branch.
+# Scope: __MAIN_BRANCH__ + every release/* branch.
 
 on:
   schedule:
@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Single branch to mirror (default: main + all release/*)"
+        description: "Single branch to mirror (default: __MAIN_BRANCH__ + all release/*)"
         required: false
         default: ""
       last_rev:
@@ -43,27 +43,21 @@ permissions:
   deployments: write
 
 env:
-  MIRROR_DESTINATION_URL: https://github.com/snowflakedb/drivers
+  MIRROR_DESTINATION_URL: https://github.com/snowflakedb/__MIRROR_REPO_NAME__
   # Pin to a specific Copybara snapshot release so mirror behavior is
   # reproducible. Bump deliberately; verify SHA below when bumping.
-  COPYBARA_RELEASE: v20260504
-  COPYBARA_JAR_SHA256: a87af86f628d2754135fc6e3e0b5ee3f22aa781de4fc7a1039e0a69180576c0e
+  COPYBARA_RELEASE: __COPYBARA_RELEASE__
+  COPYBARA_JAR_SHA256: __COPYBARA_JAR_SHA256__
 
 jobs:
-  check-generator-staleness:
-    name: Check mirror config staleness
-    runs-on: ubuntu-latest
-    steps:
-      - name: Staleness check disabled
-        run: echo "This repo owns the generator — staleness check is a no-op."
-
+# __INSERT_STALENESS_JOB__
   mirror-main:
-    needs: check-generator-staleness
-    name: Mirror main
+# __INSERT_STALENESS_NEEDS__
+    name: Mirror __MAIN_BRANCH__
     runs-on: ubuntu-latest
     environment:
       name: snowflakedb-mirror
-      url: https://github.com/snowflakedb/drivers
+      url: https://github.com/snowflakedb/__MIRROR_REPO_NAME__
       # Skip deployment record on dry runs
       deployment: ${{ github.event.inputs.dry_run != 'true' }}
     steps:
@@ -79,15 +73,15 @@ jobs:
           fi
 
       - name: Checkout source (full history)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
       - name: Build Copybara image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v5
         with:
           context: ci/mirroring
           file: ci/mirroring/Dockerfile.copybara
@@ -102,7 +96,7 @@ jobs:
 
       - name: Configure git for Copybara
         env:
-          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
+          __INTERNAL_TOKEN_NAME__: ${{ secrets.__INTERNAL_TOKEN_NAME__ }}
         run: |
           set -euo pipefail
           git config --global user.name  "Mirror Bot"
@@ -114,21 +108,21 @@ jobs:
           # unconditionally regardless of cwd.
           #
           # The URL prefix is snowflake-eng/ so the header does NOT leak
-          # onto the destination push to snowflakedb/drivers, which
-          # authenticates with DRIVER_MIRROR_TOKEN_SNOWFLAKEDB inlined into
+          # onto the destination push to snowflakedb/__MIRROR_REPO_NAME__, which
+          # authenticates with __MIRROR_TOKEN_NAME__ inlined into
           # the destination URL on the next step.
-          B64=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN}" | base64 -w0)
+          B64=$(printf 'x-access-token:%s' "${__INTERNAL_TOKEN_NAME__}" | base64 -w0)
           git config --global "http.https://github.com/snowflake-eng/.extraHeader" "Authorization: Basic ${B64}"
 
-      - name: Run Copybara (main)
-        if: ${{ github.event.inputs.ref == '' || github.event.inputs.ref == 'main' }}
+      - name: Run Copybara (__MAIN_BRANCH__)
+        if: ${{ github.event.inputs.ref == '' || github.event.inputs.ref == '__MAIN_BRANCH__' }}
         env:
           # snowflake-eng-scoped token: reads github.com API for origin metadata.
-          GITHUB_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
-          # Mirror destination token (contents:write on snowflakedb/drivers).
+          GITHUB_TOKEN: ${{ secrets.__INTERNAL_TOKEN_NAME__ }}
+          # Mirror destination token (contents:write on snowflakedb/__MIRROR_REPO_NAME__).
           # Inlined into the destination URL so the push authenticates
           # against the public org, not the internal one.
-          DRIVER_MIRROR_TOKEN_SNOWFLAKEDB: ${{ secrets.DRIVER_MIRROR_TOKEN_SNOWFLAKEDB }}
+          __MIRROR_TOKEN_NAME__: ${{ secrets.__MIRROR_TOKEN_NAME__ }}
           LAST_REV: ${{ github.event.inputs.last_rev }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
           FORCE: ${{ github.event.inputs.force }}
@@ -156,19 +150,19 @@ jobs:
             -v "${HOME}/.gitconfig:/root/.gitconfig:ro" \
             -e GITHUB_TOKEN \
             copybara:local migrate ci/mirroring/copy.bara.sky mirror \
-            --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/drivers.git" \
+            --git-destination-url="https://x-access-token:${__MIRROR_TOKEN_NAME__}@github.com/snowflakedb/__MIRROR_REPO_NAME__.git" \
             "${extra_args[@]}"
           rc=$?
           set -e
           # Copybara exits 4 (NO_OP) when there are no new changes to migrate —
-          # the steady state whenever main hasn't advanced since the last run.
+          # the steady state whenever __MAIN_BRANCH__ hasn't advanced since the last run.
           # Always treat it as success; only other non-zero codes are failures.
           if [[ "${rc}" -eq 0 ]]; then
-            echo "Copybara: mirrored new changes to main."
+            echo "Copybara: mirrored new changes to __MAIN_BRANCH__."
           elif [[ "${rc}" -eq 4 ]]; then
             echo "::notice::Copybara: no new changes to mirror (NO_OP, exit 4) — treating as success."
           else
-            echo "::error::Copybara failed for main (exit ${rc})."
+            echo "::error::Copybara failed for __MAIN_BRANCH__ (exit ${rc})."
             exit "${rc}"
           fi
 
@@ -182,15 +176,15 @@ jobs:
       failed_branches: ${{ steps.run_per_branch.outputs.failed_branches }}
     steps:
       - name: Checkout source (full history)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
       - name: Build Copybara image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v5
         with:
           context: ci/mirroring
           file: ci/mirroring/Dockerfile.copybara
@@ -205,7 +199,7 @@ jobs:
 
       - name: Configure git for Copybara
         env:
-          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
+          __INTERNAL_TOKEN_NAME__: ${{ secrets.__INTERNAL_TOKEN_NAME__ }}
         run: |
           set -euo pipefail
           git config --global user.name  "Mirror Bot"
@@ -217,10 +211,10 @@ jobs:
           # unconditionally regardless of cwd.
           #
           # The URL prefix is snowflake-eng/ so the header does NOT leak
-          # onto the destination push to snowflakedb/drivers, which
-          # authenticates with DRIVER_MIRROR_TOKEN_SNOWFLAKEDB inlined into
+          # onto the destination push to snowflakedb/__MIRROR_REPO_NAME__, which
+          # authenticates with __MIRROR_TOKEN_NAME__ inlined into
           # the destination URL on the next step.
-          B64=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN}" | base64 -w0)
+          B64=$(printf 'x-access-token:%s' "${__INTERNAL_TOKEN_NAME__}" | base64 -w0)
           git config --global "http.https://github.com/snowflake-eng/.extraHeader" "Authorization: Basic ${B64}"
 
       - name: Enumerate release branches
@@ -245,11 +239,11 @@ jobs:
         if: ${{ steps.branches.outputs.branches != '' }}
         env:
           # snowflake-eng-scoped token: reads github.com API for origin metadata.
-          GITHUB_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
-          # Mirror destination token (contents:write on snowflakedb/drivers).
+          GITHUB_TOKEN: ${{ secrets.__INTERNAL_TOKEN_NAME__ }}
+          # Mirror destination token (contents:write on snowflakedb/__MIRROR_REPO_NAME__).
           # Inlined into the destination URL so the push authenticates
           # against the public org, not the internal one.
-          DRIVER_MIRROR_TOKEN_SNOWFLAKEDB: ${{ secrets.DRIVER_MIRROR_TOKEN_SNOWFLAKEDB }}
+          __MIRROR_TOKEN_NAME__: ${{ secrets.__MIRROR_TOKEN_NAME__ }}
           BRANCHES: ${{ steps.branches.outputs.branches }}
           # `last_rev` only makes sense when mirroring a single branch:
           # it's a SHA on that branch's source history. Applied only when
@@ -276,20 +270,20 @@ jobs:
             extra_args+=(--force)
           fi
 
-          DEST_URL="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/drivers.git"
+          DEST_URL="https://x-access-token:${__MIRROR_TOKEN_NAME__}@github.com/snowflakedb/__MIRROR_REPO_NAME__.git"
           # actions/checkout injects a local `http.https://github.com/.extraheader`
           # carrying the github-actions[bot] token. That header OVERRIDES the
           # x-access-token credentials embedded in DEST_URL, so host-side git
           # pushes authenticate as the bot — which has no write access to
           # snowflakedb and is rejected with 403. Reset the header (an empty
           # value clears the multi-valued list) so DEST_URL's token is used.
-          # Local-only git ops below (merge-base, log of refs/mirror/main)
+          # Local-only git ops below (merge-base, log of refs/mirror/__MAIN_BRANCH__)
           # touch no remote and don't need it.
           git_mirror=(git -c http.https://github.com/.extraheader=)
-          # Local view of the mirror's main, used only to seed brand-new
+          # Local view of the mirror's __MAIN_BRANCH__, used only to seed brand-new
           # release branches (see below). Fetched into a private ref so the
           # tokenized URL is not persisted as a named remote.
-          "${git_mirror[@]}" fetch --quiet "${DEST_URL}" "+refs/heads/main:refs/mirror/main" || true
+          "${git_mirror[@]}" fetch --quiet "${DEST_URL}" "+refs/heads/__MAIN_BRANCH__:refs/mirror/__MAIN_BRANCH__" || true
 
           failures=0
           # Space-separated list of branches that fail below, so the
@@ -308,17 +302,17 @@ jobs:
             #
             # We deliberately avoid --init-history (it replays the branch's
             # entire history as fresh commits that share no SHAs with the
-            # mirrored main, producing a divergent duplicate). Instead, create
+            # mirrored __MAIN_BRANCH__, producing a divergent duplicate). Instead, create
             # the branch on the mirror from the commit that ALREADY corresponds
-            # to its fork point on main — located via the GitOrigin-RevId
+            # to its fork point on __MAIN_BRANCH__ — located via the GitOrigin-RevId
             # trailer Copybara stamps on every mirrored commit. The mirror's
-            # release branch then shares history with main and Copybara's
+            # release branch then shares history with __MAIN_BRANCH__ and Copybara's
             # normal iterative replay takes over from there with no flags.
             if ! "${git_mirror[@]}" ls-remote --exit-code "${DEST_URL}" "refs/heads/${branch}" >/dev/null 2>&1; then
-              forkpoint="$(git merge-base origin/main "origin/${branch}" || true)"
+              forkpoint="$(git merge-base origin/__MAIN_BRANCH__ "origin/${branch}" || true)"
               seed=""
               if [[ -n "${forkpoint}" ]]; then
-                seed="$(git log refs/mirror/main --grep "GitOrigin-RevId: ${forkpoint}" --format=%H -1 || true)"
+                seed="$(git log refs/mirror/__MAIN_BRANCH__ --grep "GitOrigin-RevId: ${forkpoint}" --format=%H -1 || true)"
               fi
               if [[ -z "${seed}" ]]; then
                 echo "::error::Cannot seed ${branch}: its fork point (${forkpoint:-unknown}) is not yet on the mirror's main. Mirror main first, then retry."
@@ -338,7 +332,7 @@ jobs:
             #
             # The origin ref is passed as the positional `source_ref` argument
             # (migrate <config> <workflow> [source_ref]) to override the
-            # `ref = "main"` baked into copy.bara.sky. Copybara has no `--ref`
+            # `ref = "__MAIN_BRANCH__"` baked into copy.bara.sky. Copybara has no `--ref`
             # flag — passing one is silently consumed as the positional refspec
             # and fails with "Invalid refspec: --ref=...".
             set +e
@@ -383,7 +377,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -401,7 +395,7 @@ jobs:
             echo "- **Time (UTC):** $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
             echo "- **Trigger:** ${{ github.event_name }}"
             echo "- **Actor:** ${{ github.actor }}"
-            echo "- **Source main SHA:** $(git rev-parse refs/remotes/origin/main)"
+            echo "- **Source __MAIN_BRANCH__ SHA:** $(git rev-parse refs/remotes/origin/__MAIN_BRANCH__)"
             echo "- **Release branches:** $(git branch -r --list 'origin/release/*' | wc -l)"
             echo "- **Destination:** ${MIRROR_DESTINATION_URL}"
             echo ""
@@ -410,109 +404,4 @@ jobs:
             echo ""
             echo "Commits were pushed directly to the destination repo — check its commit log to verify."
           } >> "$GITHUB_STEP_SUMMARY"
-
-  notify-on-failure:
-    name: Notify Slack on failure
-    needs: [mirror-main, mirror-release-branches]
-    if: failure()
-    runs-on: ubuntu-latest
-    steps:
-      # mirror-main failing means the whole-repo main sync broke — not
-      # attributable to one driver, so no driver-specific handle is added
-      # for that case (see mention-selection step below).
-      #
-      # mirror-release-branches loops over every release/* branch in a
-      # single job and only fails the job at the end if any branch failed,
-      # so a job-level failure can mean 1..N branches failed, each
-      # potentially a different driver (see its failed_branches output,
-      # populated by the "Run Copybara per release branch" step).
-      - name: Select driver-specific mentions
-        id: mention
-        env:
-          RELEASE_BRANCHES_RESULT: ${{ needs.mirror-release-branches.result }}
-          FAILED_BRANCHES: ${{ needs.mirror-release-branches.outputs.failed_branches }}
-        run: |
-          set -euo pipefail
-          driver_mentions=""
-          if [[ "${RELEASE_BRANCHES_RESULT}" == "failure" ]]; then
-            for branch in ${FAILED_BRANCHES}; do
-              # Release branches are named release/<lang>-v<version>, e.g.
-              # release/jdbc-v0.0.1, release/odbc-v0.0.9,
-              # release/python-v5.0.0b6 — the branch name itself names the
-              # driver unambiguously, so this is the one case safe to page
-              # a specific team on. Any branch name that doesn't match this
-              # convention contributes no handle rather than a guess.
-              lang="${branch#release/}"
-              lang="${lang%%-v*}"
-              handle=""
-              # <!subteam^ID> renders as a real, notification-triggering
-              # mention; plain "@drivers-jdbc" text does not (Slack only
-              # auto-links this exact syntax). IDs from Slack Admin > User
-              # Groups (each group's settings page URL), 2026-08-12.
-              case "${lang}" in
-                jdbc)   handle="<!subteam^S09P0PG7NEN>" ;;
-                odbc)   handle="<!subteam^S09P4A2L1FE>" ;;
-                python) handle="<!subteam^S09P4A6EEJ0>" ;;
-                nodejs) handle="<!subteam^S09NK9XSB6K>" ;;
-                dotnet) handle="<!subteam^S09NXA3KC85>" ;;
-                go)     handle="<!subteam^S09NYMY9V2A>" ;;
-                php)    handle="<!subteam^S09NX9VMJJH>" ;;
-                *)
-                  # Unrecognized driver prefix (e.g. a new language added
-                  # without updating this map) — surface it loudly in the
-                  # run log rather than silently falling back to on-call-only.
-                  echo "::warning::No Slack handle mapped for driver prefix '${lang}' (from branch ${branch}) — add a case above. Falling back to on-call-only mention."
-                  ;;
-              esac
-              if [[ -n "${handle}" ]]; then
-                case " ${driver_mentions} " in
-                  *" ${handle} "*) ;; # already added, dedupe
-                  *) driver_mentions="${driver_mentions} ${handle}" ;;
-                esac
-              fi
-            done
-          fi
-          echo "driver_mentions=${driver_mentions}" >> "$GITHUB_OUTPUT"
-
-      # <!subteam^S077RA1UXAS> is @snow-drivers-warsaw-oncall's resolved ID
-      # (Slack Admin > User Groups, 2026-08-12). Confirmed via live test that
-      # plain "@handle" text does not render as a real mention — only this
-      # syntax does. The bot token lacks usergroups:read, so these IDs are
-      # hardcoded rather than resolved dynamically at runtime; re-resolve by
-      # hand if a group is ever recreated (its ID would change).
-      - name: Post Slack alert
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          DRIVER_MENTIONS: ${{ steps.mention.outputs.driver_mentions }}
-          MIRROR_MAIN_RESULT: ${{ needs.mirror-main.result }}
-          RELEASE_BRANCHES_RESULT: ${{ needs.mirror-release-branches.result }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          text="Copybara mirror failed: snowflake-eng/drivers -> snowflakedb/drivers
-          mirror-main: ${MIRROR_MAIN_RESULT} | mirror-release-branches: ${RELEASE_BRANCHES_RESULT}
-          cc <!subteam^S077RA1UXAS>${DRIVER_MENTIONS}
-          ${RUN_URL}"
-          payload=$(jq -n --arg channel "C092X1UAAMB" --arg text "${text}" '{channel: $channel, text: $text}')
-          # Slack's API returns HTTP 200 even for logical failures (e.g. the
-          # bot not being a member of the channel), so `curl -f` alone does
-          # NOT catch a failed post — it only fails on HTTP-level errors.
-          # Check the `.ok` field explicitly and fail the step (loudly, in
-          # GitHub Actions' own UI) if Slack rejected it; otherwise this
-          # notification job could report green while silently posting
-          # nothing, the exact failure mode it exists to prevent.
-          #
-          # --retry: retry on transient network/5xx errors only (not on a
-          # logical {"ok":false} response, which is still HTTP 200 and
-          # caught by the .ok check below) so a blip doesn't fail the whole
-          # notify job before Slack is even given a second chance.
-          response=$(curl -s -X POST https://slack.com/api/chat.postMessage \
-            --retry 3 --retry-delay 2 \
-            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
-            -H "Content-Type: application/json; charset=utf-8" \
-            -d "${payload}")
-          echo "Slack API response: ${response}"
-          if [[ "$(echo "${response}" | jq -r '.ok')" != "true" ]]; then
-            echo "::error::Slack chat.postMessage failed: ${response}"
-            exit 1
-          fi
+# __INSERT_SLACK_JOB__
