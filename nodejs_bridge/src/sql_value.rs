@@ -1,3 +1,4 @@
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use napi::bindgen_prelude::{Buffer, Null, ToNapiValue};
 use napi::{Result, sys};
 
@@ -13,6 +14,7 @@ pub enum SqlValue {
     Bool(bool),
     String(String),
     Binary(Vec<u8>),
+    Date(NaiveDate),
 }
 
 impl ToNapiValue for SqlValue {
@@ -22,6 +24,9 @@ impl ToNapiValue for SqlValue {
             SqlValue::Bool(val) => unsafe { bool::to_napi_value(env, val) },
             SqlValue::String(val) => unsafe { String::to_napi_value(env, val) },
             SqlValue::Binary(bytes) => unsafe { Buffer::to_napi_value(env, bytes.into()) },
+            SqlValue::Date(date) => unsafe {
+                NaiveDateTime::to_napi_value(env, date.and_time(NaiveTime::MIN))
+            },
         }
     }
 }
