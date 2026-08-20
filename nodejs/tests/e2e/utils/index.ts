@@ -5,6 +5,7 @@ import type {
   RowStatement,
   StatementOption,
 } from 'snowflake-sdk';
+import { randomUUID } from 'node:crypto';
 import oldSnowflakeSDK from 'snowflake-sdk';
 // TODO:
 // Ensure tests run against the built package to catch any missing files in the build output.
@@ -103,4 +104,8 @@ export function executeAsync(
 
 export function sleepAsync(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function randomizeName(prefix: string): string {
+  return `${prefix}${randomUUID().replaceAll('-', '')}`;
 }
