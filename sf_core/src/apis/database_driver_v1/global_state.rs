@@ -46,6 +46,10 @@ pub struct WrapperPresets {
     /// connection-string attrs). `true` = fail-fast (abort on first error);
     /// `false` = collect-all (ODBC's default; failures become ERROR rows).
     pub put_get_fastfail_default: bool,
+    /// When true, GET of a staged path that matches no object returns an empty
+    /// result set (legacy snowflake-jdbc). When false, it errors with
+    /// `RemoteFileNotFound` (Python, ODBC, and core).
+    pub legacy_empty_get_on_missing: bool,
 }
 
 impl Default for WrapperPresets {
@@ -57,6 +61,7 @@ impl Default for WrapperPresets {
             put_get_resultset_flavor: PutGetResultsetFlavor::default(),
             legacy_odbc_compression_autodetect: false,
             put_get_fastfail_default: true,
+            legacy_empty_get_on_missing: false,
         }
     }
 }
@@ -76,6 +81,7 @@ impl WrapperPresets {
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
             legacy_odbc_compression_autodetect: true,
             put_get_fastfail_default: false,
+            legacy_empty_get_on_missing: false,
         }
     }
 
@@ -83,6 +89,7 @@ impl WrapperPresets {
     pub fn jdbc() -> Self {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::Jdbc,
+            legacy_empty_get_on_missing: true,
             ..Self::default()
         }
     }
