@@ -46,7 +46,7 @@ export function getSnowflakeSDK() {
   }
 }
 
-const _baseConnectionOptions = {
+const baseConnectionOptions = {
   account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
   host: getTestParameter('SNOWFLAKE_TEST_HOST'),
   username: getTestParameter('SNOWFLAKE_TEST_USER'),
@@ -56,12 +56,17 @@ const _baseConnectionOptions = {
   role: getTestParameter('SNOWFLAKE_TEST_ROLE'),
 };
 
-export const TEST_CONNECTION_OPTIONS: ConnectionOptions = {
-  ..._baseConnectionOptions,
-  authenticator: 'SNOWFLAKE_JWT',
-  privateKey: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS'),
-  privateKeyPass: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD'),
-};
+export const TEST_CONNECTION_OPTIONS: ConnectionOptions = getTestParameter('SNOWFLAKE_TEST_IS_USUT')
+  ? {
+      ...baseConnectionOptions,
+      password: getTestParameter('SNOWFLAKE_TEST_PASSWORD'),
+    }
+  : {
+      ...baseConnectionOptions,
+      authenticator: 'SNOWFLAKE_JWT',
+      privateKey: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS'),
+      privateKeyPass: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD'),
+    };
 
 export function createTestConnection(
   snowflake: typeof oldSnowflakeSDK,

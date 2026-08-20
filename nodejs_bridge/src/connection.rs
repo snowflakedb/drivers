@@ -13,9 +13,6 @@ use std::collections::HashMap;
 #[napi]
 pub struct Connection {
     handle: Handle,
-    /// Cancellation context for the in-flight `connect()`. Node owns its own
-    /// token rather than going through the transport's handle registry, since it
-    /// calls the driver API directly and never crosses the protobuf layer.
     connect_ctx: OperationCtx,
 }
 
@@ -58,13 +55,6 @@ impl Connection {
             handle: conn_handle,
             connect_ctx: OperationCtx::with_own_token(),
         })
-    }
-
-    /// Cancel an in-flight [`Self::connect`] from another JS tick or thread.
-    /// A no-op once connect has finished.
-    #[napi]
-    pub fn cancel_connect(&self) {
-        self.connect_ctx.cancel();
     }
 
     #[napi]
