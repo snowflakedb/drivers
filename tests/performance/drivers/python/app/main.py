@@ -61,9 +61,15 @@ def _run_cold_start(config):
             print(f"  [{label}] FAILED (exit {proc.returncode})")
             print(proc.stderr)
             sys.exit(1)
-        line = proc.stdout.strip()
-        print(f"  [{label}] {line}")
-        rows.append(line)
+        # the child process may emit extra diagnostic lines before the CSV row
+        lines = proc.stdout.strip().splitlines()
+        if not lines:
+            print(f"  [{label}] FAILED (no output)")
+            print(proc.stderr)
+            sys.exit(1)
+        row = lines[-1]
+        print(f"  [{label}] {row}")
+        rows.append(row)
 
     with open(filename, "w", newline="") as f:
         f.write("timestamp_ms,e2e_s,load_s,connect_s,select1_s,cpu_time_s,peak_rss_mb\n")
