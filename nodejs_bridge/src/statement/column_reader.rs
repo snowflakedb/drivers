@@ -16,12 +16,23 @@ pub(crate) enum ColumnReader {
     Binary(BinaryArray),
     Fixed(StringArray),
     Variant(StringArray),
+    Text(StringArray),
 }
 
 impl ColumnReader {
     // TODO: figure better error handling
     pub(crate) fn for_field(field: &Field, column: &dyn Array) -> Result<Self, String> {
         match field.metadata().get("logicalType").map(String::as_str) {
+            Some("TEXT") => {
+                let array = column
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .cloned()
+                    .ok_or_else(|| {
+                        "Arrow column could not be downcast to StringArray".to_string()
+                    })?;
+                Ok(Self::Text(array))
+            }
             Some("BOOLEAN") => {
                 let array = column
                     .as_any()
@@ -88,6 +99,9 @@ impl ColumnReader {
                 SqlValue::String(array.value(row_index).to_string())
             }),
             Self::Variant(array) => read_cell(array, row_index, || {
+                SqlValue::String(array.value(row_index).to_string())
+            }),
+            Self::Text(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())
             }),
         }
