@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from .utils import assert_type
+from ..utils import assert_type
 
 
 TS_2024_JAN = np.datetime64("2024-01-15T10:30:00", "ns")

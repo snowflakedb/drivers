@@ -326,7 +326,11 @@ jobs:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
 
-  # Combined unit + integration tests with universal connector
+  # Combined unit + integration tests with universal connector.
+  # HatchEnv=test-native-arrow is a matrix cell (see ci/test_matrix/models/python.py):
+  # production wheels omit --features native-arrow, so later PRs rebuild
+  # python_bridge after wheel install. :cov for that cell is a placeholder
+  # until the fetch / Arrow subset lands with the converters.
   python_tests:
     needs: [detect-changes, build_wheels, load-python-matrix]
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python == 'true'
@@ -336,7 +340,7 @@ jobs:
         include: ${{ fromJSON(needs.load-python-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
-    timeout-minutes: ${{ contains(matrix.os, 'windows') && 60 || 30 }}
+    timeout-minutes: ${{ matrix.hatch_env == 'test-native-arrow' && 45 || contains(matrix.os, 'windows') && 60 || 30 }}
     env:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}${{ matrix.result_format && format('-{0}', matrix.result_format) || '' }}
       CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
@@ -420,6 +424,28 @@ jobs:
         with:
           mode: restore
           shared-key: sdist-test
+
+      # Native-arrow rebuilds python_bridge after installing the production
+      # wheel (Cargo feature is compile-time). Isolate the target dir from
+      # the sdist cache so the two cells cannot clobber each other.
+      - name: Set native-arrow cargo target dir
+        if: matrix.hatch_env == 'test-native-arrow'
+        shell: bash
+        run: echo "CORE_CARGO_TARGET_DIR=${{ github.workspace }}/core-target-native-arrow" >> $GITHUB_ENV
+
+      - name: Ensure Rust toolchain (native-arrow)
+        if: matrix.hatch_env == 'test-native-arrow'
+        run: rustup show
+
+      - name: Restore Rust cache (native-arrow)
+        if: matrix.hatch_env == 'test-native-arrow'
+        id: rust-cache-native-arrow
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: native-arrow-bridge
+          target-dir: ${{ github.workspace }}/core-target-native-arrow
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
@@ -612,6 +638,18 @@ jobs:
           shared-key: sdist-test
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      - name: Save Rust cache (native-arrow)
+        if: always() && matrix.hatch_env == 'test-native-arrow'
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: native-arrow-bridge
+          target-dir: ${{ github.workspace }}/core-target-native-arrow
+          registry-cache-hit: ${{ steps.rust-cache-native-arrow.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache-native-arrow.outputs.target-cache-hit }}
 
   cleanup_python:
     needs: [detect-changes, python_tests]

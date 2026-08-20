@@ -211,6 +211,9 @@ jobs:
               - '.github/workflows/_build-odbc-packages.yml'
             python:
               - 'python/**'
+              # Root crate (python/python_bridge is a symlink). Same pattern as
+              # jdbc_bridge / nodejs_bridge in their language filters.
+              - 'python_bridge/**'
               - 'scripts/validate_behavior_differences.py'
               - 'pep249_dbapi/**'
               - 'tests/definitions/python/**'

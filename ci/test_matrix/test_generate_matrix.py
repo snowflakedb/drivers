@@ -1100,8 +1100,8 @@ class PythonMatrixTests(unittest.TestCase):
             self.assertFalse(missing, f"row {r} missing keys {missing}")
 
     def test_ubuntu_linux_present_at_merge_queue(self) -> None:
-        # ubuntu-x64-aws-3.13-test is the single MERGE_QUEUE_CELLS cell — same as
-        # PR_CELLS, most common path. Gets trigger_level="pr" + merge_queue_cell=True.
+        # ubuntu-x64-aws-3.13-test is in both PR_CELLS and MERGE_QUEUE_CELLS.
+        # Gets trigger_level="pr" + merge_queue_cell=True.
         mq_rows = gm.filter_active(self.gha, "merge_queue")
         ubuntu_mq = [
             r for r in mq_rows
@@ -1116,6 +1116,26 @@ class PythonMatrixTests(unittest.TestCase):
             f"got merge_queue rows: {[r['name'] for r in mq_rows]}",
         )
         self.assertTrue(ubuntu_mq[0].get("merge_queue_cell"))
+
+    def test_native_arrow_is_one_linux_cell(self) -> None:
+        # test-native-arrow rebuilds python_bridge with a compile-time Cargo
+        # feature. Pin one ubuntu/x64/aws/py3.13 cell; do not cartesian-product
+        # it across nightly (and skip Windows — Cython↔native diverges there).
+        native = [r for r in self.gha if r["hatch_env"] == "test-native-arrow"]
+        self.assertTrue(native, "expected a test-native-arrow cell in the python matrix")
+        for r in native:
+            self.assertEqual(r["os"], "ubuntu-latest", r["name"])
+            self.assertEqual(r["py"], "3.13", r["name"])
+            self.assertEqual(r["cloud_provider"], "aws", r["name"])
+            self.assertIsNone(r.get("result_format"), r["name"])
+        pr_native = [r for r in native if r["trigger_level"] == "pr"]
+        self.assertEqual(len(pr_native), 1, [r["name"] for r in pr_native])
+        self.assertTrue(pr_native[0].get("merge_queue_cell"))
+        mq_native = [
+            r for r in gm.filter_active(self.gha, "merge_queue")
+            if r["hatch_env"] == "test-native-arrow"
+        ]
+        self.assertEqual(len(mq_native), 1, [r["name"] for r in mq_native])
 
     def test_no_duplicate_macos_rows_at_push_to_main(self) -> None:
         # Regression test for the python.py MERGE_VALID/PR_CELLS sync invariant.
