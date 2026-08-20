@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in contributing to universal-driver!
+Thanks for your interest in contributing to drivers!
 
 > This repository is a public mirror. Changes are reviewed here, then imported
 > into the maintainers' internal repository, validated against the canonical CI,

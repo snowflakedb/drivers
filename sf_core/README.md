@@ -1,6 +1,6 @@
 # SF Core - Rust Core Library
 
-The core Rust library that powers the universal driver. This library provides the fundamental database driver functionality including connection management, query execution, authentication, and data processing.
+The core Rust library that powers the drivers based on unified architecture. This library provides the fundamental database driver functionality including connection management, query execution, authentication, and data processing.
 
 ## Testing
 
