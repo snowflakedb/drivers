@@ -1,0 +1,61 @@
+---
+description: When new nodejs_bridge/sf_core or TS coverage supersedes a test in nodejs/tests/_old-driver-reference/, trim it in the same PR.
+alwaysApply: true
+# DERIVED FROM .claude/rules/old-driver-reference-coverage-trim.md (canonical source).
+# Full content is required here — alwaysApply rules are injected into the agent system
+# prompt at session start. A pointer file would load the body via tool call, placing it
+# in conversation history where context compaction can silently drop it mid-session.
+# Edit the .claude/ file first, then copy its full contents below. The pre-commit hook
+# (ai-rules-sync) or scripts/check-ai-rules-sync.sh will catch any drift.
+---
+
+# Trim Old-Driver-Reference Coverage When You Supersede It
+
+`nodejs/tests/_old-driver-reference/` is a frozen snapshot of the legacy
+`snowflake-connector-nodejs` test suite, kept only as a migration reference (see
+its `README.MD`/`MIGRATION_PLAN.md`). When you add new coverage — a Rust unit
+test in `nodejs_bridge`/`sf_core`, or a new TS unit/e2e test — for behavior that
+already has a test in that snapshot, do the trim in the **same PR**, not as a
+follow-up someone else has to remember.
+
+Before calling a Node.js data-type or behavior change done:
+
+1. **Grep the snapshot** for existing coverage of what you just added, e.g.
+   `grep -ril "TIME\|SfTimestamp" nodejs/tests/_old-driver-reference/unit/`.
+   `MIGRATION_PLAN.md` may blanket-park an entire directory ("park until after
+   beta") — that note can be stale for the specific behavior you just shipped;
+   check the actual files, not just the bookkeeping doc.
+2. **If your new test is a faithful equivalent**, delete the superseded
+   `it()`/`describe()` block from the old-driver-reference file (delete the
+   whole file if it empties out — mirrors Step 6/7 of
+   `.cursor/commands/migrate-nodejs-test.md`). Leave a one-line comment in the
+   old file naming the new file that replaced it, so a reader lands on real
+   coverage instead of a dead end:
+
+   ```js
+   // TODO:
+   // The "create unique names for duplicated column names" describe block that used to live
+   // here has been migrated to nodejs/tests/unit/column-names.test.ts and removed from this file.
+   ```
+
+3. **If coverage is only partial**, keep the block and name the gap explicitly
+   in a comment — cross-reference `nodejs/BehaviorDifferences.yaml` if the gap is
+   a real behavior difference, not just an unported test. Never delete a block
+   because a *similarly-named* new test exists without checking the assertions
+   actually cover the same cases (same format tokens, same boundary values,
+   same precision).
+4. **Update `MIGRATION_PLAN.md`**: if the file/directory you touched is still
+   listed there as blanket-parked, replace that blanket note with a per-file row
+   reflecting the new status, matching how every other section of that doc
+   already itemizes per file.
+
+Don't silently leave a redundant old-driver-reference test in place just because
+it still passes — that's exactly the drift this rule exists to catch: a reviewer
+has to notice by hand that two suites assert the same thing, on the off chance
+they read both.
+
+<!-- sync-target: .cursor/rules/old-driver-reference-coverage-trim.mdc carries this body verbatim plus
+     Cursor frontmatter. alwaysApply rules are injected into the system prompt at session
+     start, so both files need full content (a pointer would land in droppable tool-call
+     history). TO UPDATE: edit this file, copy it below the .mdc frontmatter, then run
+     bash scripts/check-ai-rules-sync.sh (also a pre-commit hook). -->
