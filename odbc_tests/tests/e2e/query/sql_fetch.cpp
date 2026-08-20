@@ -188,7 +188,7 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_SUCCESS for successfully fetc
   REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
-  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute the query that returns 5 rows
@@ -230,7 +230,7 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_SUCCESS_WITH_INFO when data i
   REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
-  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute the query that returns a long string
@@ -270,7 +270,7 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_ERROR when conversion error o
   REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
-  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute the query that returns a non-numeric string
@@ -308,7 +308,7 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_NOROW when rowset overlaps en
   REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set to 10
-  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute the query that returns only 3 rows
@@ -358,7 +358,7 @@ TEST_CASE("SQLFetch respects SQL_DESC_ARRAY_SIZE set on ARD.") {
   REQUIRE(ard != SQL_NULL_HDESC);
 
   constexpr SQLULEN array_size = 5;
-  ret = SQLSetDescField(ard, 0, SQL_DESC_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetDescField(ard, 0, SQL_DESC_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // And SQLExecDirect is called to execute a query that returns 5 rows
@@ -402,7 +402,7 @@ TEST_CASE("SQLFetch respects SQL_DESC_ARRAY_STATUS_PTR set on IRD.") {
   REQUIRE(ret == SQL_SUCCESS);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
-  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // And SQLExecDirect is called to execute a query that returns 3 rows
@@ -499,7 +499,7 @@ TEST_CASE("SQLFetch respects SQL_DESC_BIND_TYPE set on ARD for row-wise binding.
   REQUIRE(ret == SQL_SUCCESS);
 
   // And SQL_DESC_ARRAY_SIZE is set
-  ret = SQLSetDescField(ard, 0, SQL_DESC_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetDescField(ard, 0, SQL_DESC_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // And SQLExecDirect is called to execute a query with two columns
@@ -658,7 +658,7 @@ TEST_CASE("SQLFetch respects SQL_DESC_OCTET_LENGTH set on ARD.") {
 
   ret = SQLSetDescField(ard, 1, SQL_DESC_TYPE, (SQLPOINTER)SQL_C_CHAR, 0);
   REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, (SQLPOINTER)buffer_size, 0);
+  ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, sqlptr_value(buffer_size), 0);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH_PTR, &length, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -695,7 +695,7 @@ TEST_CASE("SQLFetch respects SQL_DESC_OCTET_LENGTH_PTR set on ARD.") {
 
   ret = SQLSetDescField(ard, 1, SQL_DESC_TYPE, (SQLPOINTER)SQL_C_CHAR, 0);
   REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, (SQLPOINTER)buffer_size, 0);
+  ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, sqlptr_value(buffer_size), 0);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH_PTR, &octet_length, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -726,7 +726,7 @@ TEST_CASE("SQLFetch respects SQL_DESC_ROWS_PROCESSED_PTR set on IRD.") {
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
   constexpr int array_size = 5;
-  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // And SQLExecDirect is called to execute a query that returns 3 rows
@@ -799,7 +799,7 @@ TEST_CASE("SQLFetch respects multiple ARD descriptor fields set together.") {
   RowData rows[array_size] = {};
 
   // Set array size
-  ret = SQLSetDescField(ard, 0, SQL_DESC_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetDescField(ard, 0, SQL_DESC_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Set row-wise binding
@@ -860,7 +860,7 @@ TEST_CASE("SQLFetch respects both ARD and IRD descriptor fields.") {
   constexpr int array_size = 4;
 
   // Set ARD fields
-  ret = SQLSetDescField(ard, 0, SQL_DESC_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetDescField(ard, 0, SQL_DESC_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Set IRD fields
@@ -1113,7 +1113,7 @@ TEST_CASE("SQLFetch supports separate length and indicator buffers via descripto
 
   ret = SQLSetDescField(ard, 1, SQL_DESC_TYPE, (SQLPOINTER)SQL_C_CHAR, 0);
   REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, (SQLPOINTER)buffer_size, 0);
+  ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, sqlptr_value(buffer_size), 0);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLSetDescField(ard, 1, SQL_DESC_INDICATOR_PTR, &indicator, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -1189,7 +1189,7 @@ TEST_CASE("SQLGetDiagField returns correct row and column number on fetch error.
 
   // When SQL_ATTR_ROW_ARRAY_SIZE is set for block cursor
   constexpr int array_size = 3;
-  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute a query with data that will cause conversion error
@@ -1248,7 +1248,7 @@ TEST_CASE("SQLFetch returns SQL_SUCCESS_WITH_INFO when error occurs on subset of
 
   // When SQL_ATTR_ROW_ARRAY_SIZE is set for block cursor
   constexpr int array_size = 5;
-  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_STATUS_PTR is set
@@ -1485,7 +1485,7 @@ TEST_CASE("SQLFetchScroll with SQL_FETCH_NEXT fetches block cursor rows correctl
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set for block cursor
   constexpr int array_size = 5;
-  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_STATUS_PTR and SQL_ATTR_ROWS_FETCHED_PTR are set

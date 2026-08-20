@@ -8,6 +8,7 @@
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "test_macros.hpp"
 
 // SQL_CP_DRIVER_AWARE is defined in ODBC 3.8 but may not be in all system headers
@@ -28,7 +29,7 @@ TEST_CASE("should set and get SQL_ATTR_ODBC_VERSION with valid values", "[odbc-a
   REQUIRE(ret == SQL_SUCCESS);
 
   // When SQL_ATTR_ODBC_VERSION is set on that env
-  ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(version), 0);
+  ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, sqlptr_value(version), 0);
 
   if (version == SQL_OV_ODBC3_80) {
     NON_IODBC {

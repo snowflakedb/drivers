@@ -262,7 +262,7 @@ TEST_CASE_METHOD(ConnSchemaFixture,
         "'-9223372036854775809' AS less_than_min");
     // Then the string values should be truncated when converted to integer types
     CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 9223372036854775807LL);
-    CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 2) == -9223372036854775808LL);
+    CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 2) == (-9223372036854775807LL - 1));
     check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 4);
   }

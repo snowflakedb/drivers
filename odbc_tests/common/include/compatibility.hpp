@@ -46,9 +46,9 @@ extern DRIVER_TYPE get_driver_type();
 
 extern bool is_iodbc_test_suite();
 
-#define NEW_DRIVER_ONLY(x) if (get_driver_type() == DRIVER_TYPE::NEW)
+#define NEW_DRIVER_ONLY(...) if (get_driver_type() == DRIVER_TYPE::NEW)
 
-#define OLD_DRIVER_ONLY(x) if (get_driver_type() == DRIVER_TYPE::OLD)
+#define OLD_DRIVER_ONLY(...) if (get_driver_type() == DRIVER_TYPE::OLD)
 
 #define SKIP_OLD_DRIVER(bd, message)                            \
   if (get_driver_type() == DRIVER_TYPE::OLD) {                  \

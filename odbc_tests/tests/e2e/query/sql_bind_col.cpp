@@ -5,6 +5,7 @@
 #include "Connection.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 
 // =============================================================================
 // Tests for SQLBindCol based on ODBC specification:
@@ -1236,7 +1237,7 @@ TEST_CASE("SQLBindCol supports column-wise binding with arrays.", "[query][bind_
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set to fetch 3 rows
   constexpr int array_size = 3;
-  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And a query returning 3 rows is executed
@@ -1290,7 +1291,7 @@ TEST_CASE("SQLBindCol supports row-wise binding.", "[query][bind_col]") {
   REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
-  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And a query with two columns is executed
@@ -1418,7 +1419,7 @@ TEST_CASE("SQLBindCol binds arrays when SQL_ATTR_ROW_ARRAY_SIZE > 1.", "[query][
 
   // When SQL_ATTR_ROW_ARRAY_SIZE is set to 5
   constexpr int array_size = 5;
-  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, sqlptr_value(array_size), 0);
   REQUIRE_ODBC(ret, stmt);
 
   // And a query returning 5 rows is executed

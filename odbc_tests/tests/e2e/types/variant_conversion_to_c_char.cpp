@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
@@ -153,8 +154,8 @@ TEST_CASE("VARIANT to SQL_C_WCHAR", "[variant][conversion][c_char]") {
   auto empty = check_wchar_success(conn.execute_fetch("SELECT PARSE_JSON('{}')"), 1);
 
   // Then JSON wide string representation is returned
-  check_json_eq(std::string(obj.begin(), obj.end()), R"({"w":1})");
-  check_json_eq(std::string(empty.begin(), empty.end()), "{}");
+  check_json_eq(sf::wide::utf32_to_utf8(obj), R"({"w":1})");
+  check_json_eq(sf::wide::utf32_to_utf8(empty), "{}");
 }
 
 TEST_CASE("VARIANT to SQL_C_WCHAR truncation", "[variant][conversion][c_char][01004]") {

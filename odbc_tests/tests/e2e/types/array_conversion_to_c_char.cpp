@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
@@ -136,8 +137,8 @@ TEST_CASE("ARRAY to SQL_C_WCHAR", "[datatype][array][conversion][c_char]") {
   auto empty = check_wchar_success(conn.execute_fetch("SELECT ARRAY_CONSTRUCT()"), 1);
 
   // Then JSON array wide string representation is returned
-  check_json_eq(std::string(int_arr.begin(), int_arr.end()), "[1,2,3]");
-  check_json_eq(std::string(empty.begin(), empty.end()), "[]");
+  check_json_eq(sf::wide::utf32_to_utf8(int_arr), "[1,2,3]");
+  check_json_eq(sf::wide::utf32_to_utf8(empty), "[]");
 }
 
 TEST_CASE("ARRAY to SQL_C_WCHAR truncation", "[datatype][array][conversion][c_char][01004]") {
