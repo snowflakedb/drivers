@@ -1,3 +1,5 @@
+# AUTO-GENERATED — do not edit manually.
+# Regenerate by running: python3 ci/mirroring/scripts/generate_mirror_config.py
 name: Close imported PRs
 
 # Operates on the MIRROR repo (snowflakedb/drivers). Triggers when the outbound mirror
@@ -15,8 +17,9 @@ name: Close imported PRs
 #
 # Deployment: this file is checked in to the internal repo and the
 # Copybara `mirror` workflow ships it to the mirror's .github/workflows/
-# automatically. A copy therefore exists on the internal repo too — the
-# repository guard on the job prevents it from doing anything there.
+# automatically. A copy therefore exists on the internal repo too; the
+# actor guard on the job limits it to pushes from the mirror bot, so
+# routine human pushes on the internal repo are no-ops.
 
 on:
   push:
