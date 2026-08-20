@@ -3696,7 +3696,6 @@ pub fn more_results(statement_handle: sql::Handle) -> OdbcResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::runtime::global;
     use crate::api::{ApdDescriptor, IpdDescriptor, SqlState};
 
     #[test]
@@ -3710,15 +3709,38 @@ mod tests {
         assert!(slot.lock().is_none());
     }
 
+    /// The execute paths arm a [`CancelTokenGuard`] *before* they look up the
+    /// global runtime (`let _cancel_guard = CancelTokenGuard::arm(...)` then
+    /// `global().context(OdbcRuntimeSnafu)?`). If the runtime is unavailable the
+    /// function returns early, and the guard's `Drop` must still clear the
+    /// cancel slot. `Drop` is deliberately runtime-agnostic — it only nulls the
+    /// slot — so we exercise that early-return shape directly.
+    ///
+    /// The earlier version asserted `global().is_err()` to force the "runtime
+    /// unavailable" precondition, but the global runtime is a process-wide
+    /// singleton that other tests initialize; under parallel `cargo test` that
+    /// assertion flaked (globals were already up). Because `Drop` never consults
+    /// the runtime, simulating the early return is equivalent and deterministic.
     #[test]
     fn cancel_token_guard_cleared_after_runtime_unavailable() {
         let slot = parking_lot::Mutex::new(None);
-        {
-            let token = CancellationToken::new();
-            let _guard = CancelTokenGuard::arm(&slot, token);
-            assert!(global().context(OdbcRuntimeSnafu).is_err());
+
+        // Runtime unavailable → the guarded function bails out early while the
+        // guard is still in scope, so its Drop runs as the block exits.
+        let runtime_available = false;
+        'guarded: {
+            let _guard = CancelTokenGuard::arm(&slot, CancellationToken::new());
+            assert!(slot.lock().is_some(), "arm must populate the cancel slot");
+            if !runtime_available {
+                break 'guarded; // mirrors `global().context(OdbcRuntimeSnafu)?` failing
+            }
+            unreachable!("runtime is unavailable in this test");
         }
-        assert!(slot.lock().is_none());
+
+        assert!(
+            slot.lock().is_none(),
+            "guard must clear the cancel slot even when the runtime is unavailable",
+        );
     }
 
     #[test]
