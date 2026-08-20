@@ -116,28 +116,31 @@ pub(super) async fn perform_put_get_transfer(
                 .context(FileUploadSnafu)?;
             Ok(RowsetData::Upload(upload_results))
         }
-        "DOWNLOAD" => {
-            let file_download_data = data
-                .to_file_download_data(
-                    &wrapper_presets.put_get_resultset_flavor,
-                    use_s3_regional_url_session_param,
-                    unsafe_file_write,
-                    get_fastfail,
-                    &transport,
-                )
-                .map_err(|e| {
-                    if e.to_string().contains("source locations") {
-                        RemoteFileNotFoundSnafu.build()
-                    } else {
-                        FileTransferPreparationSnafu.into_error(e)
-                    }
-                })?;
-            let download_results =
-                download_files(file_download_data, retry_policy, refresher_handle)
-                    .await
-                    .context(FileDownloadSnafu)?;
-            Ok(RowsetData::Download(download_results))
-        }
+        "DOWNLOAD" => match data.to_file_download_data(
+            &wrapper_presets.put_get_resultset_flavor,
+            use_s3_regional_url_session_param,
+            unsafe_file_write,
+            get_fastfail,
+            &transport,
+        ) {
+            Ok(file_download_data) => {
+                let download_results =
+                    download_files(file_download_data, retry_policy, refresher_handle)
+                        .await
+                        .context(FileDownloadSnafu)?;
+                Ok(RowsetData::Download(download_results))
+            }
+            Err(QueryResponseError::MissingParameter { parameter, .. })
+                if parameter == "source locations" =>
+            {
+                if wrapper_presets.legacy_empty_get_on_missing {
+                    Ok(RowsetData::Download(Vec::new()))
+                } else {
+                    RemoteFileNotFoundSnafu.fail()
+                }
+            }
+            Err(e) => Err(FileTransferPreparationSnafu.into_error(e)),
+        },
         _ => UnsupportedCommandSnafu {
             command: command.to_string(),
         }
