@@ -67,7 +67,7 @@ def pytest_xdist_auto_num_workers(config):
     return os.cpu_count() or 1
 
 
-@pytest.mark.optionalhook
+@pytest.hookimpl(optionalhook=True)
 def pytest_metadata(metadata):
     metadata["Version of snowflake.connector"] = "Universal" if IS_UNIVERSAL_DRIVER else "Old"
 

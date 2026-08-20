@@ -134,10 +134,10 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-vv",
+    "--disable-warnings",
     # minimum 8 workers configured via pytest_xdist_auto_num_workers in conftest.py
     "-n", "auto",
     "--max-worker-restart=4",
-    "--durations=0",
     # Flaky tests are excluded by default; the python_flaky_tests CI job
     # overrides this with `-m flaky` to run them in isolation.
     "-m", "not flaky and not requires_no_mfa",
