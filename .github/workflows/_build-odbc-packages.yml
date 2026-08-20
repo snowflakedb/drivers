@@ -315,6 +315,17 @@ jobs:
             rpm-build \
             bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
 
+      # Container writes the mounted cache dirs as root, and some crates ship
+      # owner-only file modes, so the runner cannot read them back.
+      - name: Fix ownership of cached dirs
+        if: always()
+        run: |
+          for d in .cargo-cache .cargo-target-rpm; do
+            [ -L "$d" ] && continue
+            [ -e "$d" ] || continue
+            sudo chown -Rh "$(id -u):$(id -g)" "$d"
+          done
+
       - name: Save Cargo registry cache (RPM build)
         if: steps.rpm-cargo-registry.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -485,6 +496,17 @@ jobs:
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
             deb-build \
             bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
+
+      # Container writes the mounted cache dirs as root, and some crates ship
+      # owner-only file modes, so the runner cannot read them back.
+      - name: Fix ownership of cached dirs
+        if: always()
+        run: |
+          for d in .cargo-cache .cargo-target-deb; do
+            [ -L "$d" ] && continue
+            [ -e "$d" ] || continue
+            sudo chown -Rh "$(id -u):$(id -g)" "$d"
+          done
 
       - name: Save Cargo registry cache (DEB build)
         if: steps.deb-cargo-registry.outputs.cache-hit != 'true'
