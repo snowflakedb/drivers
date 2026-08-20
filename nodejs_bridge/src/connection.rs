@@ -78,23 +78,27 @@ impl Connection {
         // - too much map_err calls :/
         // - must release statement or result set on errors?
         let stmt_handle = DRIVER.statement_new(self.handle).map_err(to_napi_err)?;
-        Ok(Statement::from_pending(Some(stmt_handle), async move {
-            DRIVER.statement_set_sql_query(stmt_handle, query).await?;
-            let result = DRIVER
-                .statement_execute_query(stmt_handle, None, None)
-                .await?;
-            let _ = DRIVER.statement_release(stmt_handle);
-            // Node.js does not currently surface request_id to its callers (unlike
-            // Python's cursor._request_id property) — no consumer needs it yet, so
-            // the `request_id` carried on the result is intentionally ignored.
-            Ok(result)
-        }))
+        Ok(Statement::from_pending(
+            Some(stmt_handle),
+            self.handle,
+            async move {
+                DRIVER.statement_set_sql_query(stmt_handle, query).await?;
+                let result = DRIVER
+                    .statement_execute_query(stmt_handle, None, None)
+                    .await?;
+                let _ = DRIVER.statement_release(stmt_handle);
+                // Node.js does not currently surface request_id to its callers (unlike
+                // Python's cursor._request_id property) — no consumer needs it yet, so
+                // the `request_id` carried on the result is intentionally ignored.
+                Ok(result)
+            },
+        ))
     }
 
     #[napi]
     pub fn get_query_result(&self, query_id: String) -> Statement {
         let conn_handle = self.handle;
-        Statement::from_pending(None, async move {
+        Statement::from_pending(None, conn_handle, async move {
             DRIVER
                 .connection_get_query_result(conn_handle, query_id)
                 .await

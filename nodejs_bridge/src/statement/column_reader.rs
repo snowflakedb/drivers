@@ -2,6 +2,7 @@ use arrow::array::{Array, BinaryArray, BooleanArray, PrimitiveArray, StringArray
 use arrow::compute::cast;
 use arrow::datatypes::{DataType, Date32Type, Field};
 
+use crate::session_params::SessionParams;
 use crate::sql_value::SqlValue;
 
 /// Decodes one Arrow column into [`SqlValue`]s, one cell at a time.
@@ -22,7 +23,14 @@ pub(crate) enum ColumnReader {
 
 impl ColumnReader {
     // TODO: figure better error handling
-    pub(crate) fn for_field(field: &Field, column: &dyn Array) -> Result<Self, String> {
+    pub(crate) fn for_field(
+        field: &Field,
+        column: &dyn Array,
+        // Not yet consumed by any arm — wired through so a future TIME
+        // decoder can read it without threading a new parameter all the way
+        // back down from `Connection::execute`.
+        _session_params: &SessionParams,
+    ) -> Result<Self, String> {
         match field.metadata().get("logicalType").map(String::as_str) {
             Some("TEXT") => {
                 let array = column

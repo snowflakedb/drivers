@@ -7,6 +7,7 @@ pub use column::Column;
 
 use crate::DRIVER;
 use crate::error::to_napi_err;
+use crate::session_params::SessionParams;
 use crate::sql_value::SqlValue;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -28,13 +29,14 @@ pub struct Statement {
 impl Statement {
     pub(crate) fn from_pending(
         handle: Option<Handle>,
+        conn_handle: Handle,
         result_future: impl Future<Output = std::result::Result<ExecuteQueryResult, ApiError>>
         + Send
         + 'static,
     ) -> Self {
         Self {
             result: StatementResult::from_future(async move {
-                result_data_from(result_future.await?).await
+                result_data_from(result_future.await?, conn_handle).await
             }),
             handle,
         }
@@ -56,10 +58,11 @@ impl Statement {
     pub async fn get_next_row(&self) -> Result<Option<Vec<SqlValue>>> {
         let data = self.result.ready().await.map_err(to_napi_err)?;
         let stream_state = Arc::clone(&data.stream_state);
+        let session_params = Arc::clone(&data.session_params);
 
         // `next_row` may block; run on napi's blocking pool so the Node event
         // loop stays responsive.
-        spawn_blocking(move || stream_state.lock().unwrap().next_row())
+        spawn_blocking(move || stream_state.lock().unwrap().next_row(&session_params))
             .await
             .unwrap()
             .map_err(to_napi_err)
@@ -145,7 +148,10 @@ impl Statement {
     }
 }
 
-async fn result_data_from(result: ExecuteQueryResult) -> std::result::Result<ResultData, ApiError> {
+async fn result_data_from(
+    result: ExecuteQueryResult,
+    conn_handle: Handle,
+) -> std::result::Result<ResultData, ApiError> {
     let (result_set_handle, result_set_descriptor) = match result {
         ExecuteQueryResult::Single { info, .. } => (info.handle, info.descriptor),
         ExecuteQueryResult::Multi { .. } => {
@@ -156,11 +162,16 @@ async fn result_data_from(result: ExecuteQueryResult) -> std::result::Result<Res
         }
     };
 
+    // Snapshotted once here (rather than per-decoder-call) so every column
+    // reader in this result set shares the same session-parameter snapshot.
+    let session_params = Arc::new(SessionParams::from_connection(conn_handle).await?);
+
     let batch_reader = DRIVER.result_set_get_stream(result_set_handle).await?;
 
     Ok(ResultData {
         result_set_handle,
         result_set_descriptor,
         stream_state: Arc::new(Mutex::new(StreamState::new(batch_reader))),
+        session_params,
     })
 }
