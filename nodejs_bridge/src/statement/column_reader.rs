@@ -1,6 +1,6 @@
-use arrow::array::{Array, BinaryArray, BooleanArray, StringArray};
+use arrow::array::{Array, BinaryArray, BooleanArray, PrimitiveArray, StringArray};
 use arrow::compute::cast;
-use arrow::datatypes::{DataType, Field};
+use arrow::datatypes::{DataType, Date32Type, Field};
 
 use crate::sql_value::SqlValue;
 
@@ -15,6 +15,7 @@ pub(crate) enum ColumnReader {
     Boolean(BooleanArray),
     Binary(BinaryArray),
     Fixed(StringArray),
+    Date(PrimitiveArray<Date32Type>),
     Variant(StringArray),
     Text(StringArray),
 }
@@ -66,6 +67,16 @@ impl ColumnReader {
                     })?;
                 Ok(Self::Fixed(array))
             }
+            Some("DATE") => {
+                let array = column
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<Date32Type>>()
+                    .cloned()
+                    .ok_or_else(|| {
+                        "Arrow column could not be downcast to Date32 array".to_string()
+                    })?;
+                Ok(Self::Date(array))
+            }
             Some("VARIANT" | "OBJECT" | "ARRAY") => {
                 let array = column
                     .as_any()
@@ -97,6 +108,9 @@ impl ColumnReader {
             }),
             Self::Fixed(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())
+            }),
+            Self::Date(array) => read_cell(array, row_index, || {
+                SqlValue::Date(Date32Type::to_naive_date(array.value(row_index)))
             }),
             Self::Variant(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())

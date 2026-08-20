@@ -3152,6 +3152,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6826e5ddc15589b2d68c8ad5321c18e85d40488e93e32962f362e572669bccf6"
 dependencies = [
  "bitflags 2.9.4",
+ "chrono",
  "ctor",
  "futures",
  "napi-build",
@@ -3237,6 +3238,7 @@ name = "nodejs_bridge"
 version = "0.0.1"
 dependencies = [
  "arrow",
+ "chrono",
  "napi",
  "napi-build",
  "napi-derive",
