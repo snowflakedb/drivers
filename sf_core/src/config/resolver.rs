@@ -595,6 +595,37 @@ user = "default_user"
     }
 
     #[test]
+    fn bare_connect_merges_programmatic_base_over_default_profile() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[default]
+account = "profile_account"
+user = "profile_user"
+"#,
+        );
+
+        let mut programmatic_base = ParamStore::new();
+        programmatic_base.insert(
+            "account".to_owned(),
+            Setting::String("database_account".to_owned()),
+        );
+        let resolved = resolve_with_paths(&programmatic_base, &paths, true).unwrap();
+
+        assert_eq!(
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("database_account".to_owned())
+        );
+        assert_eq!(
+            get_str(&resolved, param_names::USER),
+            Some("profile_user".to_owned())
+        );
+    }
+
+    #[test]
     fn bare_connect_honors_default_connection_name_from_env_via_config_manager() {
         // The env-var branch is tested directly in config_manager unit tests.
         // Here we verify resolver wires it end-to-end via config.toml so the

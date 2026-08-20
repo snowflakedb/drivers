@@ -316,7 +316,7 @@ impl DatabaseDriverV1 {
             let (put_get_policy, transport) = {
                 let conn = conn_ptr.lock().await;
                 (
-                    crate::config::retry::RetryPolicy::put_get(&conn.connection_seed),
+                    crate::config::retry::RetryPolicy::put_get(&conn.effective_settings()),
                     file_manager::StageTransport {
                         tls_config: conn.tls_config(),
                         proxy_config: conn.proxy_config(),
@@ -434,7 +434,7 @@ impl DatabaseDriverV1 {
 
             let put_get_policy = {
                 let conn = conn_ptr.lock().await;
-                crate::config::retry::RetryPolicy::put_get(&conn.connection_seed)
+                crate::config::retry::RetryPolicy::put_get(&conn.effective_settings())
             };
 
             // `refresher` only needs to cover opening the stream — it's
