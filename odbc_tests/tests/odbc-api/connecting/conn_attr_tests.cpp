@@ -12,6 +12,7 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "sf_odbc.h"
 #include "test_macros.hpp"
 
@@ -192,7 +193,7 @@ TEST_CASE("should set and get SQL_ATTR_QUIET_MODE", "[odbc-api][conn_attr][quiet
   ConnectionHandleWrapper dbc = env.createConnectionHandle();
 
   // When SQL_ATTR_QUIET_MODE is set to a pointer value
-  SQLPOINTER hwnd = reinterpret_cast<SQLPOINTER>(0xDEADBEEF);
+  SQLPOINTER hwnd = sqlptr_value(0xDEADBEEFULL);
   ret = SQLSetConnectAttr(dbc.getHandle(), SQL_ATTR_QUIET_MODE, hwnd, 0);
 
   NON_IODBC {
