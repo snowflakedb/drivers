@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .utils import assert_floats_equal, assert_type
+from ..utils import assert_floats_equal, assert_type
 
 
 # =============================================================================

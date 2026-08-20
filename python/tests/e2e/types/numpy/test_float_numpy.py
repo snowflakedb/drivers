@@ -11,7 +11,7 @@ from math import inf, nan
 import numpy as np
 import pytest
 
-from .utils import assert_floats_equal, assert_type
+from ..utils import assert_floats_equal, assert_type
 
 
 FLOAT_TYPE_SYNONYMS = [

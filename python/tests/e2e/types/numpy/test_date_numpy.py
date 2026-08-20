@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .utils import assert_type
+from ..utils import assert_type
 
 
 DATE_EPOCH = np.datetime64("1970-01-01", "D")

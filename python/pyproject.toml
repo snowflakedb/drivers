@@ -319,6 +319,23 @@ flaky = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas -m fla
 # Runs @pytest.mark.requires_no_mfa tests (parameters_aws_local.json).
 no_mfa = "pytest tests/e2e/authentication/test_user_password.py -m requires_no_mfa -n 0 --no-cov {args}"
 
+# Like ``test`` but installs the pyarrow extra (needed by native-arrow unit tests).
+# python_tests runs this as a HatchEnv matrix cell. Later PRs rebuild
+# python_bridge with ``--features native-arrow`` after installing the
+# production wheel, then replace ``cov`` with the fetch / Arrow subset.
+[tool.hatch.envs.test-native-arrow]
+template = "test"
+features = ["test", "dev", "pyarrow"]
+
+[[tool.hatch.envs.test-native-arrow.matrix]]
+python = ["3.13"]
+
+[tool.hatch.envs.test-native-arrow.scripts]
+# Named ``cov`` so the shared python_tests step (``:cov``) works. Placeholder
+# until the cell converters land a real pytest subset — without this, the
+# inherited ``test:cov`` would re-run the full Cython suite.
+cov = "true {args}"
+
 # Pandas-specific CI test environment
 [tool.hatch.envs.test-pandas]
 template = "test"
