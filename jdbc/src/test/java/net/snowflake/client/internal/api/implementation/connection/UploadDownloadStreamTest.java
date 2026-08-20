@@ -30,8 +30,10 @@ import java.util.Properties;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
 import net.snowflake.client.api.connection.SnowflakeConnection;
 import net.snowflake.client.api.connection.UploadStreamConfig;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.DriverRuntimeException;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamBeginResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamChunkResponse;
@@ -47,6 +49,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatusCode;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.UploadStreamHandle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -422,5 +426,37 @@ class UploadDownloadStreamTest {
 
       verify(mockCoreApi, times(1)).connectionDownloadStreamClose(DOWNLOAD_HANDLE);
     }
+  }
+
+  @Test
+  void shouldReportMissingRemoteFileAsLegacyNoDataAtDownloadStreamThrowSite() {
+    DriverException payload =
+        DriverException.newBuilder()
+            .setStatusCode(StatusCode.STATUS_CODE_REMOTE_FILE_NOT_FOUND)
+            .setMessage("the file does not exist")
+            .build();
+    when(mockCoreApi.connectionDownloadStreamBegin(any(), anyString(), anyString(), anyBoolean()))
+        .thenThrow(new CoreException(payload, null));
+
+    DriverRuntimeException carrier =
+        assertThrows(
+            DriverRuntimeException.class,
+            () -> connection.downloadStream("@my_stage", "missing.csv"));
+    SQLException surfaced = carrier.toSQLException();
+    assertEquals(ErrorCode.FILE_NOT_FOUND.getMessageCode(), surfaced.getErrorCode());
+    assertEquals("02000", surfaced.getSQLState());
+    assertEquals("File not found: missing.csv", surfaced.getMessage());
+  }
+
+  @Test
+  void shouldPropagateNonMissingFileBeginFailureUnchanged() {
+    CoreException original = new CoreException("stage does not exist");
+    when(mockCoreApi.connectionDownloadStreamBegin(any(), anyString(), anyString(), anyBoolean()))
+        .thenThrow(original);
+
+    CoreException thrown =
+        assertThrows(
+            CoreException.class, () -> connection.downloadStream("@missing_stage", "data.csv"));
+    assertSame(original, thrown, "a non-missing-file begin failure must not be remapped");
   }
 }

@@ -130,9 +130,7 @@ pub(super) async fn perform_put_get_transfer(
                         .context(FileDownloadSnafu)?;
                 Ok(RowsetData::Download(download_results))
             }
-            Err(QueryResponseError::MissingParameter { parameter, .. })
-                if parameter == "source locations" =>
-            {
+            Err(e) if e.is_missing_source_locations() => {
                 if wrapper_presets.legacy_empty_get_on_missing {
                     Ok(RowsetData::Download(Vec::new()))
                 } else {
@@ -907,6 +905,10 @@ pub enum QueryResponseProcessingError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+pub(crate) fn remote_file_not_found() -> QueryResponseProcessingError {
+    RemoteFileNotFoundSnafu.build()
 }
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]

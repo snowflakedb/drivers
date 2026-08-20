@@ -52,14 +52,17 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use snafu::{OptionExt, ResultExt};
+use snafu::{IntoError, OptionExt, ResultExt};
 use tokio::sync::Mutex;
 use tracing::Instrument;
 
 use super::connection::{Connection, FinalSessionNames, RefreshContext};
 use super::error::*;
 use super::global_state::{DatabaseDriverV1, PutGetResultsetFlavor};
-use super::query::{StageInfoRefreshContext, build_and_upload_stream, stream_stage_info_refresher};
+use super::query::{
+    StageInfoRefreshContext, build_and_upload_stream, remote_file_not_found,
+    stream_stage_info_refresher,
+};
 use super::result_set::{ResultSetInfo, resolve_reader_ctx, response_to_descriptor};
 use super::statement::{query_context, skip_leading_whitespace_and_comments};
 use crate::config::rest_parameters::QueryParameters;
@@ -422,7 +425,6 @@ impl DatabaseDriverV1 {
                 use_s3_regional_url,
                 unsafe_file_write,
                 &transport,
-                &source_filename,
             )?;
 
             let refresh_ctx = StageInfoRefreshContext {
@@ -654,7 +656,6 @@ fn resolve_download_target(
     use_s3_regional_url: bool,
     unsafe_file_write: bool,
     transport: &file_manager::StageTransport,
-    source_filename: &str,
 ) -> Result<ResolvedDownload, ApiError> {
     if !response.success {
         return InvalidArgumentSnafu {
@@ -684,10 +685,14 @@ fn resolve_download_target(
             transport,
         )
         .map_err(|e| {
-            InvalidArgumentSnafu {
-                argument: format!("Failed to parse GET response: {e}"),
+            if e.is_missing_source_locations() {
+                QueryResponseProcessSnafu.into_error(remote_file_not_found())
+            } else {
+                InvalidArgumentSnafu {
+                    argument: format!("Failed to parse GET response: {e}"),
+                }
+                .build()
             }
-            .build()
         })?;
 
     let initial_snapshot = gs_data
@@ -702,14 +707,12 @@ fn resolve_download_target(
             argument: "GET response missing stage credentials",
         })?;
 
-    let src_location =
-        download_data
-            .src_locations
-            .into_iter()
-            .next()
-            .context(InvalidArgumentSnafu {
-                argument: format!("File not found on stage: {source_filename}"),
-            })?;
+    let src_location = download_data
+        .src_locations
+        .into_iter()
+        .next()
+        .ok_or_else(remote_file_not_found)
+        .context(QueryResponseProcessSnafu)?;
 
     Ok(ResolvedDownload {
         src_location,
@@ -1375,7 +1378,6 @@ mod tests {
             false,
             false,
             &file_manager::StageTransport::for_test(),
-            "data.csv",
         ) {
             Err(ApiError::InvalidArgument { argument, .. }) => {
                 assert_eq!(argument, "Stage 'MISSING_STAGE' does not exist");
@@ -1399,7 +1401,6 @@ mod tests {
             false,
             false,
             &file_manager::StageTransport::for_test(),
-            "data.csv",
         ) {
             Err(ApiError::InvalidArgument { argument, .. }) => {
                 assert_eq!(argument, "GET command rejected by server");
@@ -1410,12 +1411,10 @@ mod tests {
 
     #[test]
     fn resolve_download_target_rejects_a_response_with_no_source_locations() {
-        // `to_file_download_data` itself rejects an absent/empty
-        // `src_locations` before `resolve_download_target`'s own "File not
-        // found" fallback ever runs — that fallback is defensive and
-        // unreachable through this entry point today. Asserted generically,
-        // not pinned to "File not found", since the actual message comes
-        // from `to_file_download_data`'s check.
+        // Hits `to_file_download_data`'s `MissingParameter("source locations")` check,
+        // which `is_missing_source_locations()` maps to `RemoteFileNotFound`. The
+        // `.next()`-on-empty guard in `resolve_download_target` maps to the same error but
+        // is defensive — unreachable through this entry point, since the check above fires first.
         let response = query_response::Response {
             success: true,
             code: None,
@@ -1423,17 +1422,23 @@ mod tests {
             data: query_response::Data::default(),
         };
 
-        let result = resolve_download_target(
+        match resolve_download_target(
             response,
             PutGetResultsetFlavor::Python,
             false,
             false,
             &file_manager::StageTransport::for_test(),
-            "missing.csv",
-        );
-        assert!(
-            result.is_err(),
-            "a GS response with no source locations must be rejected, not silently resolved"
-        );
+        ) {
+            Err(ApiError::QueryResponseProcess { source, .. }) => {
+                assert!(
+                    matches!(
+                        source.as_ref(),
+                        QueryResponseProcessingError::RemoteFileNotFound { .. }
+                    ),
+                    "missing src_locations must map to RemoteFileNotFound, got {source:?}"
+                );
+            }
+            other => panic!("expected QueryResponseProcess(RemoteFileNotFound), got {other:?}"),
+        }
     }
 }

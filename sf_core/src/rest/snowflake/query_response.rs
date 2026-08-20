@@ -1343,6 +1343,16 @@ pub enum QueryResponseError {
     },
 }
 
+impl QueryResponseError {
+    /// A GS GET response for a missing remote file omits `source locations`.
+    pub(crate) fn is_missing_source_locations(&self) -> bool {
+        matches!(
+            self,
+            QueryResponseError::MissingParameter { parameter, .. } if parameter == "source locations"
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
