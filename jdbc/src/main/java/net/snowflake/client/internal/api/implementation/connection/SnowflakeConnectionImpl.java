@@ -43,6 +43,7 @@ import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.Decorators;
+import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.api.implementation.exception.SFClientInfoException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
@@ -77,8 +78,10 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatusCode;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.UploadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
@@ -810,11 +813,16 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     logger.info("downloadStream: entry");
     try {
       boolean decompress = config != null && config.isDecompress();
-      DownloadStreamHandle downloadHandle =
-          coreDriverApi
-              .connectionDownloadStreamBegin(
-                  connectionHandle, stageName, sourceFileName, decompress)
-              .getDownloadHandle();
+      DownloadStreamHandle downloadHandle;
+      try {
+        downloadHandle =
+            coreDriverApi
+                .connectionDownloadStreamBegin(
+                    connectionHandle, stageName, sourceFileName, decompress)
+                .getDownloadHandle();
+      } catch (CoreException e) {
+        throw remapMissingRemoteFile(e, sourceFileName);
+      }
       ChunkedDownloadInputStream stream =
           new ChunkedDownloadInputStream(
               coreDriverApi, downloadHandle, STREAM_CHUNK_SIZE, openDownloadStreams);
@@ -823,6 +831,17 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     } finally {
       logger.info("downloadStream: session opened");
     }
+  }
+
+  // A missing remote file is remapped to legacy downloadStream's NO_DATA shape (see
+  // SFSQLException.remoteFileNotFound); every other core failure propagates unchanged.
+  private static RuntimeException remapMissingRemoteFile(CoreException e, String sourceFileName) {
+    DriverException payload = e.getError();
+    if (payload == null
+        || payload.getStatusCode() != StatusCode.STATUS_CODE_REMOTE_FILE_NOT_FOUND) {
+      return e;
+    }
+    return SFSQLException.remoteFileNotFound(sourceFileName, e);
   }
 
   @Override
