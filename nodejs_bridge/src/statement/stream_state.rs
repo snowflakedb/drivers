@@ -1,4 +1,5 @@
 use super::column_reader::ColumnReader;
+use crate::session_params::SessionParams;
 use crate::sql_value::SqlValue;
 use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::error::ArrowError;
@@ -16,7 +17,10 @@ impl StreamState {
         }
     }
 
-    pub(super) fn next_row(&mut self) -> Result<Option<Vec<SqlValue>>, ArrowError> {
+    pub(super) fn next_row(
+        &mut self,
+        session_params: &SessionParams,
+    ) -> Result<Option<Vec<SqlValue>>, ArrowError> {
         // Loop so zero-row batches are skipped rather than ending iteration.
         loop {
             if let Some(batch) = &mut self.current_batch {
@@ -26,7 +30,9 @@ impl StreamState {
                 self.current_batch = None;
             }
             match self.batch_reader.next() {
-                Some(batch) => self.current_batch = Some(CurrentBatch::from_batch(&batch?)?),
+                Some(batch) => {
+                    self.current_batch = Some(CurrentBatch::from_batch(&batch?, session_params)?)
+                }
                 None => return Ok(None),
             }
         }
@@ -43,13 +49,15 @@ struct CurrentBatch {
 }
 
 impl CurrentBatch {
-    fn from_batch(batch: &RecordBatch) -> Result<Self, ArrowError> {
+    fn from_batch(batch: &RecordBatch, session_params: &SessionParams) -> Result<Self, ArrowError> {
         let column_readers = batch
             .schema()
             .fields()
             .iter()
             .enumerate()
-            .map(|(index, field)| ColumnReader::for_field(field, batch.column(index)))
+            .map(|(index, field)| {
+                ColumnReader::for_field(field, batch.column(index), session_params)
+            })
             .collect::<Result<Vec<_>, _>>()
             .map_err(ArrowError::ComputeError)?;
         Ok(Self {

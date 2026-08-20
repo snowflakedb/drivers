@@ -1,4 +1,5 @@
 use super::stream_state::StreamState;
+use crate::session_params::SessionParams;
 use napi::bindgen_prelude::spawn;
 use napi::tokio::sync::{Notify, OnceCell};
 use sf_core::apis::database_driver_v1::{ApiError, ResultSetDescriptor};
@@ -9,6 +10,10 @@ use std::sync::{Arc, Mutex};
 pub(super) struct ResultData {
     pub(super) result_set_handle: Handle,
     pub(super) result_set_descriptor: ResultSetDescriptor,
+    /// Not on `StreamState`, so anything reachable from `Statement`'s
+    /// synchronous getters can see it without touching `stream_state`'s
+    /// mutex.
+    pub(super) session_params: Arc<SessionParams>,
     pub(super) stream_state: Arc<Mutex<StreamState>>,
 }
 
