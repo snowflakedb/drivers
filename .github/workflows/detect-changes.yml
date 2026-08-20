@@ -244,7 +244,11 @@ jobs:
               - 'error_trace/**'
               - 'error_trace_derive/**'
               - 'odbc_trace_tool/**'
-              - 'tests/!(performance|tests_format_validator|test_coverage_report|definitions)/**'
+              # `bugs_analysis` and `oldTestsCoverage` are documentation-only
+              # catalogs (per-driver YAML plus their report generators). No CI
+              # job builds or tests against them, so editing one must not flip
+              # `shared` and retrigger every other language's suite.
+              - 'tests/!(performance|tests_format_validator|test_coverage_report|definitions|bugs_analysis|oldTestsCoverage)/**'
               - 'tests/definitions/shared/**'
               - '.github/workflows/detect-changes.yml'
               - '.github/actions/cargo-cache/**'
