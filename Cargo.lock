@@ -3561,7 +3561,7 @@ dependencies = [
 
 [[package]]
 name = "odbc"
-version = "4.0.0-rc1-dev"
+version = "4.0.0-dev"
 dependencies = [
  "arc-swap",
  "arrow",
