@@ -490,7 +490,7 @@ message ConnectionGetParameterRequest {
 }
 
 message ConnectionGetParameterResponse {
-  optional string value = 1;
+  optional ConfigSetting value = 1;
 }
 
 message ConnectionGetAllParametersRequest {
@@ -498,7 +498,7 @@ message ConnectionGetAllParametersRequest {
 }
 
 message ConnectionGetAllParametersResponse {
-  map<string, string> parameters = 1;
+  map<string, ConfigSetting> parameters = 1;
 }
 
 // Reads the Snowflake server version cached from the login response.

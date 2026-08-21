@@ -82,6 +82,24 @@ impl Setting {
             _ => None,
         }
     }
+
+    /// Maps a server-supplied JSON session-parameter value to a typed
+    /// `Setting`, preserving the discriminant GS already sends instead of
+    /// collapsing it to a display string. Whole numbers become `Setting::Int`;
+    /// fractional numbers become `Setting::Double`. `Null` and unsupported
+    /// JSON types (arrays/objects) return `None`, matching the silent-skip
+    /// behavior of the string-collapsing code this replaces.
+    pub fn from_session_parameter_json(value: &serde_json::Value) -> Option<Setting> {
+        match value {
+            serde_json::Value::String(s) => Some(Setting::String(s.clone())),
+            serde_json::Value::Bool(b) => Some(Setting::Bool(*b)),
+            serde_json::Value::Number(n) => match n.as_i64() {
+                Some(i) => Some(Setting::Int(i)),
+                None => n.as_f64().map(Setting::Double),
+            },
+            _ => None,
+        }
+    }
 }
 
 pub trait Settings {

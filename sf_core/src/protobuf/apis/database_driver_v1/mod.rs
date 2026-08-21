@@ -516,7 +516,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .driver
             .connection_get_parameter(conn_handle.into(), input.key)
             .await
-            .to_protobuf()?;
+            .to_protobuf()?
+            .map(Into::into);
 
         Ok(ConnectionGetParameterResponse { value })
     }
@@ -554,7 +555,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .driver
             .connection_get_all_parameters(conn_handle.into())
             .await
-            .to_protobuf()?;
+            .to_protobuf()?
+            .into_iter()
+            .map(|(k, v)| (k, v.into()))
+            .collect();
 
         Ok(ConnectionGetAllParametersResponse { parameters })
     }

@@ -32,6 +32,7 @@ use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
+use crate::config::settings::Setting;
 use crate::crl::worker::SharedCrlWorker;
 use crate::http::retry::{HttpContext, HttpError, TransportSnafu, execute_with_retry};
 use crate::logging::url_for_log;
@@ -185,7 +186,7 @@ pub struct LoginResult {
     /// Session tokens for authentication and refresh
     pub tokens: SessionTokens,
     /// Session parameters returned by the server
-    pub session_parameters: Option<HashMap<String, String>>,
+    pub session_parameters: Option<HashMap<String, Setting>>,
     /// Server-echoed database name from sessionInfo
     pub database_name: Option<String>,
     /// Server-echoed schema name from sessionInfo
@@ -1397,25 +1398,10 @@ pub async fn snowflake_login_with_client(
         params
             .iter()
             .filter_map(|param| {
-                // Convert JSON value to string
-                let value_str = match &param._value {
-                    serde_json::Value::String(s) => Some(s.clone()),
-                    serde_json::Value::Number(n) => Some(n.to_string()),
-                    serde_json::Value::Bool(b) => Some(b.to_string()),
-                    serde_json::Value::Null => None,
-                    other => {
-                        tracing::debug!(
-                            param_name = %param._name,
-                            param_value = ?other,
-                            "Unexpected JSON type for session parameter, skipping"
-                        );
-                        None
-                    }
-                };
-
-                value_str.map(|v| (param._name.to_uppercase(), v))
+                Setting::from_session_parameter_json(&param._value)
+                    .map(|setting| (param._name.to_uppercase(), setting))
             })
-            .collect::<HashMap<String, String>>()
+            .collect::<HashMap<String, Setting>>()
     });
 
     // Extract server-echoed sessionInfo names separately so they can be
