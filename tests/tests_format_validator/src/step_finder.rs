@@ -3,6 +3,28 @@ use crate::utils::{clean_method_name, strings_match_normalized, to_pascal_case, 
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::path::Path;
+use std::sync::LazyLock;
+
+static PYTHON_TEST_METHOD_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"def\s+(test_\w+)\s*\(").unwrap());
+static CATCH2_TEST_CASE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#).unwrap()
+});
+/// Rust: support optional async before fn
+static RUST_FN_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:async\s+)?fn\s+(\w+)").unwrap());
+/// Java method declarations (not annotation lines like `@MethodSource(...)`)
+static JAVA_METHOD_DECL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(?:public|protected|private)?\s*(?:static\s+)?(?:async\s+)?(?:final\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+    )
+    .unwrap()
+});
+/// Rust test attributes like `#[test]`, `#[tokio::test]`, `#[tokio::test(...)]`
+static RUST_TEST_ATTR_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$").unwrap());
+static JS_TEST_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?:it|test)\s*\(\s*['"]([^'"]+)['"]"#).unwrap());
 
 /// Configuration for language-specific step finding
 #[derive(Debug)]
@@ -77,7 +99,10 @@ impl LanguageConfig {
         Self {
             test_annotation: "TEST_CASE(", // Catch2 style (also matches TEST_CASE_METHOD)
             method_pattern: |method_name| {
-                format!(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"{}""#, regex::escape(method_name))
+                format!(
+                    r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"{}""#,
+                    regex::escape(method_name)
+                )
             },
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for C++
@@ -123,16 +148,11 @@ impl MethodBoundaryFinder {
         let lines: Vec<&str> = content.lines().collect();
         let mut methods = Vec::new();
 
-        // Pre-compile regexes outside the loop
-        let test_method_regex = Regex::new(r"def\s+(test_\w+)\s*\(")?;
-        let catch2_regex = Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#)?;
-        // Rust: support optional async before fn
-        let fn_regex = Regex::new(r"(?:async\s+)?fn\s+(\w+)")?;
-        // Match Java method declarations (not annotation lines like @MethodSource(...))
-        let method_regex = Regex::new(
-            r"^(?:public|protected|private)?\s*(?:static\s+)?(?:async\s+)?(?:final\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
-        )?;
-        let rust_test_attr_regex = Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$")?;
+        let test_method_regex = &PYTHON_TEST_METHOD_REGEX;
+        let catch2_regex = &CATCH2_TEST_CASE_REGEX;
+        let fn_regex = &RUST_FN_REGEX;
+        let method_regex = &JAVA_METHOD_DECL_REGEX;
+        let rust_test_attr_regex = &RUST_TEST_ATTR_REGEX;
 
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -250,7 +270,15 @@ impl MethodBoundaryFinder {
         let mut method_end_line: Option<usize> = None;
 
         // Regex to detect Rust test attributes like #[test], #[tokio::test], #[tokio::test(...)]
-        let rust_test_attr_regex = Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$")?;
+        let rust_test_attr_regex = &RUST_TEST_ATTR_REGEX;
+
+        // The method pattern depends only on `method_name`, so build and compile it once
+        // instead of per scanned line. Java matches the pattern literally via `contains`.
+        let pattern = (self.config.method_pattern)(method_name);
+        let method_regex = match self.config.test_annotation {
+            "def test_" | "TEST_CASE(" | "#[test]" => Some(Regex::new(&pattern)?),
+            _ => None,
+        };
 
         // Find the method start
         for (i, line) in lines.iter().enumerate() {
@@ -258,9 +286,7 @@ impl MethodBoundaryFinder {
 
             // Special handling for Python - method declaration is the annotation
             if self.config.test_annotation == "def test_" {
-                let pattern = (self.config.method_pattern)(method_name);
-                let method_regex = Regex::new(&pattern)?;
-                if method_regex.is_match(trimmed) {
+                if method_regex.as_ref().is_some_and(|re| re.is_match(trimmed)) {
                     method_start_line = Some(i);
                     break;
                 }
@@ -280,9 +306,9 @@ impl MethodBoundaryFinder {
                 // Rust special-case: generic test attribute matched above
                 // For C++, the TEST_CASE line itself contains the method name
                 // (or on a continuation line for multi-line declarations)
-                if self.config.test_annotation == "TEST_CASE(" {
-                    let pattern = (self.config.method_pattern)(method_name);
-                    let method_regex = Regex::new(&pattern)?;
+                if let (Some(method_regex), "TEST_CASE(") =
+                    (method_regex.as_ref(), self.config.test_annotation)
+                {
                     if method_regex.is_match(trimmed) {
                         method_start_line = Some(i);
                         break;
@@ -330,11 +356,12 @@ impl MethodBoundaryFinder {
                             continue;
                         }
 
-                        let pattern = (self.config.method_pattern)(method_name);
                         if self.config.test_annotation == "#[test]" {
                             // Rust uses regex pattern
-                            let method_regex = Regex::new(&pattern)?;
-                            if method_regex.is_match(method_line) {
+                            if method_regex
+                                .as_ref()
+                                .is_some_and(|re| re.is_match(method_line))
+                            {
                                 method_start_line = Some(j);
                                 break;
                             }
@@ -891,9 +918,10 @@ impl StepFinder {
                 if uses_fixture {
                     empty_steps.retain(|step| {
                         let s = step.to_lowercase();
-                        !(s.starts_with("given") && (s.contains("logged in")
-                            || s.contains("connection is established")
-                            || s.contains("snowflake connection")))
+                        !(s.starts_with("given")
+                            && (s.contains("logged in")
+                                || s.contains("connection is established")
+                                || s.contains("snowflake connection")))
                     });
                 }
             }
@@ -937,8 +965,8 @@ impl StepFinder {
             let start_idx = line_number.saturating_sub(1);
             let end_idx = boundary_finder.find_method_end_from(&lines, start_idx);
 
-            let method_text = lines[start_idx..=end_idx.min(lines.len().saturating_sub(1))]
-                .join("\n");
+            let method_text =
+                lines[start_idx..=end_idx.min(lines.len().saturating_sub(1))].join("\n");
 
             let mut missing = Vec::new();
             if !when_regex.is_match(&method_text) {
@@ -1091,7 +1119,7 @@ impl StepFinder {
         let mut methods = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
 
-        let test_regex = Regex::new(r#"(?:it|test)\s*\(\s*['"]([^'"]+)['"]"#)?;
+        let test_regex = &JS_TEST_REGEX;
 
         for (i, line) in lines.iter().enumerate() {
             if let Some(captures) = test_regex.captures(line.trim()) {
