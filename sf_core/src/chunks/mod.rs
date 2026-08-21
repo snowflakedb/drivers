@@ -11,6 +11,8 @@ use std::io;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::apis::database_driver_v1::Setting;
+use crate::config::settings::Settings;
 use crate::query_types::RowType;
 use crate::rest::snowflake::query_response::Chunk;
 use arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
@@ -52,14 +54,14 @@ impl Default for PrefetchConfig {
 impl PrefetchConfig {
     /// Resolve from a session parameters map, falling back to defaults for
     /// missing or unparseable values.
-    pub fn from_session_params(params: &HashMap<String, String>) -> Self {
+    pub fn from_session_params(params: &HashMap<String, Setting>) -> Self {
         let prefetch_threads = params
-            .get("CLIENT_PREFETCH_THREADS")
-            .and_then(|v| v.parse::<usize>().ok())
+            .get_u64("CLIENT_PREFETCH_THREADS")
+            .and_then(|v| usize::try_from(v).ok())
             .unwrap_or(DEFAULT_PREFETCH_THREADS);
         let memory_limit_mb = params
-            .get("CLIENT_MEMORY_LIMIT")
-            .and_then(|v| v.parse::<u32>().ok())
+            .get_u64("CLIENT_MEMORY_LIMIT")
+            .and_then(|v| u32::try_from(v).ok())
             .unwrap_or(DEFAULT_MEMORY_LIMIT_MB);
         Self {
             prefetch_threads,
@@ -522,8 +524,8 @@ mod tests {
     #[test]
     fn prefetch_config_from_session_params_parses_valid_values() {
         let mut params = HashMap::new();
-        params.insert("CLIENT_PREFETCH_THREADS".to_string(), "8".to_string());
-        params.insert("CLIENT_MEMORY_LIMIT".to_string(), "2048".to_string());
+        params.insert("CLIENT_PREFETCH_THREADS".to_string(), Setting::Int(8));
+        params.insert("CLIENT_MEMORY_LIMIT".to_string(), Setting::Int(2048));
 
         let config = PrefetchConfig::from_session_params(&params);
         assert_eq!(config.prefetch_threads, 8);
@@ -535,9 +537,9 @@ mod tests {
         let mut params = HashMap::new();
         params.insert(
             "CLIENT_PREFETCH_THREADS".to_string(),
-            "not-a-number".to_string(),
+            Setting::String("not-a-number".to_string()),
         );
-        params.insert("CLIENT_MEMORY_LIMIT".to_string(), "-1".to_string());
+        params.insert("CLIENT_MEMORY_LIMIT".to_string(), Setting::Int(-1));
 
         let config = PrefetchConfig::from_session_params(&params);
         assert_eq!(config.prefetch_threads, DEFAULT_PREFETCH_THREADS);
