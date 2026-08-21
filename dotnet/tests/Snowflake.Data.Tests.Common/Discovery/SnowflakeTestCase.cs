@@ -1,8 +1,6 @@
 using System.ComponentModel;
 using Xunit.Sdk;
 
-#if !OLD_XUNIT
-
 namespace Snowflake.Data.Tests.Discovery;
 
 public class SnowflakeTestCase : XunitTestCase, ISelfExecutingXunitTestCase
@@ -127,71 +125,3 @@ public class SnowflakeEnumeratedTestCase : XunitDelayEnumeratedTheoryTestCase, I
         info.AddValue(nameof(MaxRetries), MaxRetries);
     }
 }
-
-#else
-namespace Snowflake.Data.Tests.Discovery;
-
-public sealed class SnowflakeTestCase : LongLivedMarshalByRefObject, IXunitTestCase
-{
-    private readonly IXunitTestCase _inner;
-    private readonly int _maxRetriesCount;
-
-    [Obsolete("Used for deserialization")]
-    public SnowflakeTestCase()
-    {
-        _inner = null!;
-    }
-
-    public SnowflakeTestCase(IXunitTestCase inner, int maxRetriesCount)
-    {
-        _inner = inner;
-        _maxRetriesCount = maxRetriesCount;
-    }
-
-    public void Deserialize(IXunitSerializationInfo info) => _inner.Deserialize(info);
-    public void Serialize(IXunitSerializationInfo info) => _inner.Serialize(info);
-
-    public string DisplayName => _inner.DisplayName;
-    public string SkipReason => _inner.SkipReason;
-
-    public ISourceInformation SourceInformation
-    {
-        get => _inner.SourceInformation;
-        set => _inner.SourceInformation = value;
-    }
-
-    public ITestMethod TestMethod => _inner.TestMethod;
-    public object[] TestMethodArguments => _inner.TestMethodArguments;
-    public Dictionary<string, List<string>> Traits => _inner.Traits;
-    public string UniqueID => _inner.UniqueID;
-    public Exception InitializationException => _inner.InitializationException;
-    public IMethodInfo Method => _inner.Method;
-    public int Timeout => _inner.Timeout;
-
-    public async Task<RunSummary> RunAsync(
-        IMessageSink diagnosticMessageSink,
-        IMessageBus messageBus,
-        object[] constructorArguments,
-        ExceptionAggregator aggregator,
-        CancellationTokenSource cancellationTokenSource)
-    {
-        var messageBusDecorator = new SnowflakeMessageBus(messageBus, _maxRetriesCount);
-
-        var retriesCount = 0;
-        RunSummary baseResult;
-        do
-        {
-            if (retriesCount > 1)
-                await Task.Delay(500, cancellationTokenSource.Token).ConfigureAwait(false);
-
-            baseResult = await _inner
-                .RunAsync(diagnosticMessageSink, messageBusDecorator, constructorArguments, aggregator, cancellationTokenSource)
-                .ConfigureAwait(false);
-        } while (retriesCount++ < _maxRetriesCount && baseResult.Failed > 0);
-
-        baseResult.Failed -= messageBusDecorator.SkippedCount;
-        baseResult.Skipped += messageBusDecorator.SkippedCount;
-        return baseResult;
-    }
-}
-#endif

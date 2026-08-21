@@ -20,6 +20,9 @@ _CLOUD_FOR_DOTNET = {
 # Interop tests only support these TFMs (must match the test project's TargetFrameworks).
 _INTEROP_TFMS = {"net472", "net9.0", "net10.0"}
 
+# Regression tests only support these TFMs (must match Snowflake.Data.Tests TargetFrameworks).
+_REGRESSION_TFMS = {"net481", "net8.0", "net9.0", "net10.0"}
+
 
 def is_valid(c):
     """Block-list: return False to forbid a combo, fall through to allow."""
@@ -43,9 +46,13 @@ def is_valid(c):
     if c["DotnetVersion"] in ("net8.0", "net9.0", "net10.0") and _CLOUD_FOR_DOTNET[c["DotnetVersion"]] != c["Cloud"]:
         return False
 
-    # --- Interop mode constraints ---
+    # --- Mode / TFM constraints ---
     # Interop tests only target a subset of TFMs.
     if c["Mode"] == "interop" and c["DotnetVersion"] not in _INTEROP_TFMS:
+        return False
+
+    # Regression tests only target TFMs the main test project builds.
+    if c["Mode"] == "regression" and c["DotnetVersion"] not in _REGRESSION_TFMS:
         return False
 
     # Interop doesn't need cloud variation — pin to a single value to collapse the dimension.

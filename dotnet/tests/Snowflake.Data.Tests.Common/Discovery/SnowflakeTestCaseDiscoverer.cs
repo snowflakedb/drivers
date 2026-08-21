@@ -3,11 +3,9 @@ using System.Text.Json;
 using Xunit.Internal;
 using Xunit.Sdk;
 
-#if !OLD_XUNIT
-
 namespace Snowflake.Data.Tests.Discovery;
 
-public sealed class SnowflakeTestCaseDiscovererV3 : IXunitTestCaseDiscoverer
+public sealed class SnowflakeTestCaseDiscoverer : IXunitTestCaseDiscoverer
 {
     public ValueTask<IReadOnlyCollection<IXunitTestCase>> Discover(
         ITestFrameworkDiscoveryOptions discoveryOptions,
@@ -36,7 +34,7 @@ public sealed class SnowflakeTestCaseDiscovererV3 : IXunitTestCaseDiscoverer
     }
 }
 
-public sealed class SnowflakeTheoryDiscovererV3 : TheoryDiscoverer
+public sealed class SnowflakeTheoryDiscoverer : TheoryDiscoverer
 {
     public override async ValueTask<IReadOnlyCollection<IXunitTestCase>> Discover(
         ITestFrameworkDiscoveryOptions discoveryOptions,
@@ -84,53 +82,3 @@ public sealed class SnowflakeTheoryDiscovererV3 : TheoryDiscoverer
         return wrappedCases;
     }
 }
-
-#else
-namespace Snowflake.Data.Tests.Discovery;
-
-public sealed class SnowflakeTestCaseDiscoverer : IXunitTestCaseDiscoverer
-{
-    private readonly FactDiscoverer _decorated;
-
-    public SnowflakeTestCaseDiscoverer(IMessageSink diagnosticMessageSink)
-    {
-        _decorated = new FactDiscoverer(diagnosticMessageSink);
-    }
-
-    public IEnumerable<IXunitTestCase> Discover(
-        ITestFrameworkDiscoveryOptions discoveryOptions,
-        ITestMethod testMethod,
-        IAttributeInfo factAttribute)
-    {
-        var xunitTestCases = _decorated.Discover(discoveryOptions, testMethod, factAttribute);
-        return xunitTestCases.Select(x =>
-        {
-            var retriesCount = (int)((SnowflakeFactAttribute)((ReflectionAttributeInfo)factAttribute).Attribute).RetriesCount;
-            return new SnowflakeTestCase(x, retriesCount);
-        });
-    }
-}
-
-public sealed class SnowflakeTheoryDiscoverer : IXunitTestCaseDiscoverer
-{
-    private readonly TheoryDiscoverer _decorated;
-
-    public SnowflakeTheoryDiscoverer(IMessageSink diagnosticMessageSink)
-    {
-        _decorated = new TheoryDiscoverer(diagnosticMessageSink);
-    }
-
-    public IEnumerable<IXunitTestCase> Discover(
-        ITestFrameworkDiscoveryOptions discoveryOptions,
-        ITestMethod testMethod,
-        IAttributeInfo factAttribute)
-    {
-        var xunitTestCases = _decorated.Discover(discoveryOptions, testMethod, factAttribute);
-        return xunitTestCases.Select(x =>
-        {
-            var retriesCount = (int)((SnowflakeTheoryAttribute)((ReflectionAttributeInfo)factAttribute).Attribute).RetriesCount;
-            return new SnowflakeTestCase(x, retriesCount);
-        });
-    }
-}
-#endif

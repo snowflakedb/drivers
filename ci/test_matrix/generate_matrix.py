@@ -491,10 +491,7 @@ def _build_dotnet_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | N
         "dotnet_version": dotnet_version,
         "sf_core_lib": platform["sf_core_lib"],
         "cargo_flags": platform["cargo_flags"],
-        "test_runner": tfm["test_runner"],
         "copy_native_lib": tfm["copy_native_lib"],
-        "interop_runner_unix": tfm["interop_runner_unix"],
-        "interop_runner_windows": tfm["interop_runner_windows"],
     }
     return row
 
