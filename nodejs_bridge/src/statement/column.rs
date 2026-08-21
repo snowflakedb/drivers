@@ -77,6 +77,11 @@ impl Column {
     }
 
     #[napi]
+    pub fn is_decfloat(&self) -> bool {
+        self.type_name == "decfloat"
+    }
+
+    #[napi]
     pub fn is_boolean(&self) -> bool {
         self.type_name == "boolean"
     }

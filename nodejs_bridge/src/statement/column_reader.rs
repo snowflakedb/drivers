@@ -1,7 +1,11 @@
-use arrow::array::{Array, BinaryArray, BooleanArray, PrimitiveArray, StringArray};
+use arrow::array::{
+    Array, BinaryArray, BooleanArray, Int16Array, PrimitiveArray, StringArray, StringBuilder,
+    StructArray,
+};
 use arrow::compute::cast;
 use arrow::datatypes::{DataType, Date32Type, Field};
 
+use super::decfloat::{format_decfloat, i128_from_big_endian_signed};
 use crate::session_params::SessionParams;
 use crate::sql_value::SqlValue;
 
@@ -19,6 +23,7 @@ pub(crate) enum ColumnReader {
     Date(PrimitiveArray<Date32Type>),
     Variant(StringArray),
     Text(StringArray),
+    Decfloat(StringArray),
 }
 
 impl ColumnReader {
@@ -96,6 +101,33 @@ impl ColumnReader {
                     })?;
                 Ok(Self::Variant(array))
             }
+            // TODO: DECFLOAT iterates over rows in `for_field`, making its `read` arm a
+            // plain lookup like every other variant. Worth revisiting whether the
+            // for_field/read split should just collapse into one eager step for all.
+            Some("DECFLOAT") => {
+                let struct_array = column
+                    .as_any()
+                    .downcast_ref::<StructArray>()
+                    .cloned()
+                    .ok_or_else(|| {
+                        "Arrow column could not be downcast to StructArray".to_string()
+                    })?;
+                let exponent: Int16Array = decfloat_field(&struct_array, "exponent")?;
+                let significand: BinaryArray = decfloat_field(&struct_array, "significand")?;
+                let precision = usize_from_metadata(field, "precision")?;
+
+                let mut builder = StringBuilder::new();
+                for row in 0..struct_array.len() {
+                    if struct_array.is_null(row) {
+                        builder.append_null();
+                    } else {
+                        let sig = i128_from_big_endian_signed(significand.value(row))
+                            .map_err(|e| format!("DECFLOAT significand at row {row}: {e}"))?;
+                        builder.append_value(format_decfloat(sig, exponent.value(row), precision));
+                    }
+                }
+                Ok(Self::Decfloat(builder.finish()))
+            }
             Some(logical_type) => Err(format!(
                 "no decoder registered for logicalType {logical_type:?}"
             )),
@@ -126,6 +158,9 @@ impl ColumnReader {
             Self::Text(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())
             }),
+            Self::Decfloat(array) => read_cell(array, row_index, || {
+                SqlValue::String(array.value(row_index).to_string())
+            }),
         }
     }
 }
@@ -138,4 +173,32 @@ fn read_cell<A: Array>(array: &A, row_index: usize, decode: impl FnOnce() -> Sql
     } else {
         decode()
     }
+}
+
+fn decfloat_field<T: Array + Clone + 'static>(
+    array: &StructArray,
+    name: &str,
+) -> Result<T, String> {
+    let child = array
+        .column_by_name(name)
+        .ok_or_else(|| format!("DECFLOAT struct is missing the {name:?} field"))?;
+    child.as_any().downcast_ref::<T>().cloned().ok_or_else(|| {
+        format!(
+            "DECFLOAT {name:?} field could not be downcast; it is {}",
+            child.data_type()
+        )
+    })
+}
+
+fn usize_from_metadata(field: &Field, key: &str) -> Result<usize, String> {
+    let raw = field
+        .metadata()
+        .get(key)
+        .ok_or_else(|| format!("column {:?} is missing {key} metadata", field.name()))?;
+    raw.parse().map_err(|_| {
+        format!(
+            "column {:?} has non-numeric {key} metadata {raw:?}",
+            field.name()
+        )
+    })
 }

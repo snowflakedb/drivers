@@ -15,6 +15,7 @@ export declare class Column {
   isString(): boolean
   isBinary(): boolean
   isNumber(): boolean
+  isDecfloat(): boolean
   isBoolean(): boolean
   isDate(): boolean
   isTime(): boolean

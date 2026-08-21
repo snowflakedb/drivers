@@ -140,3 +140,46 @@ behavior_differences:
       ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE. The new driver only supports semi-structured types
       today; full structured-type handling (including the `fields`-based isVariant distinction) is a
       separate initiative tracked in https://snowflakecomputing.atlassian.net/browse/SNOW-3445814.
+
+  6:
+    name: 'Column gains an isDecfloat() predicate with no old-driver equivalent'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Old snowflake-sdk's Column has no isDecfloat() method at all -- DECFLOAT columns are only
+      identifiable via getType() === 'decfloat'. Calling isDecfloat() on an old-driver Column
+      throws a TypeError, it does not return false.
+    new_driver_behavior: |
+      Column.isDecfloat() is added, checking type_name == "decfloat" (column.rs), matching the
+      pattern of every other is*() predicate. Purely additive: no existing method's behavior
+      changes, and callers who never call isDecfloat() see no difference.
+    status_rationale: |
+      Closes the gap called out in BCR_LOG.md's "statement.getColumn() API" section ("decfloat is
+      not covered by any is* method"). Since old driver has no equivalent method at all, tests that
+      exercise this predicate branch on isRunningNewDriverWithBD('BD#6') rather than asserting a
+      false/absent value for old driver.
+
+  7:
+    name: 'DECFLOAT above the documented exponent range loses its server-canonical spelling'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Snowflake's DECFLOAT exponent range is -16383 to 16384, so a value needing a larger exponent
+      comes back from the server with a digit shifted into the significand instead: `'1e16385'::DECFLOAT`
+      is sent as `10e16384`. Server-side TO_VARCHAR returns the same, so that spelling is canonical,
+      and the old driver reproduces it by returning the server text untouched.
+    new_driver_behavior: |
+      Returns `1e16385` -- equal in value, but not the string Snowflake produces. sf_core strips
+      trailing zeros off the significand while parsing (chunks/json_parser.rs), which turns
+      `10e16384` into `1e16385` before the Node bridge ever sees it.
+    status_rationale: |
+      Both spellings are mathematically equal; sf_core's normalization produces the more conventional
+      form (a single leading significand digit) rather than preserving the source's shifted-digit
+      quirk. This only affects values beyond the documented exponent range, an edge case with no
+      identified caller dependency on the exact server spelling.
