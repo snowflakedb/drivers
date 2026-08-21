@@ -2,46 +2,31 @@
 
 Row counts approximate p50/p90/p99 of typical customer query result sizes:
 1 row (p50), 15 rows (p90), 400 rows (p99).
-
-fetchmany is the default path and runs for all drivers. fetchall / fetchone /
-pandas require FETCH_MODE and are Python-only.
-
-Each case runs both e2e and recorded_http.
 """
 import pytest
 from catalog import get_sql
+from matrix import cases
 from runner.test_types import PerfTestType
 
-ITERATIONS = 30
-WARMUP_ITERATIONS = 2
+SIZES = (
+    (1, "1_row"),
+    (15, "15_rows"),
+    (400, "400_rows"),
+)
 
-ROW_COUNTS = [(1, "1_row"), (15, "15_rows"), (400, "400_rows")]
-FETCH_MODES = ["fetchmany", "fetchall", "fetchone", "pandas"]
+# Suffixes into VARIANTS. Empty suffix = default fetch.
+SUFFIXES = {
+    "python": ("_fetchall", "_fetchone", "_pandas"),
+    "jdbc": ("",),
+    "odbc": ("",),
+    "core": ("",),
+}
 
-
-def _name(label: str, fetch_mode: str) -> str:
-    return label if fetch_mode == "fetchmany" else f"{label}_{fetch_mode}"
-
-
-def _case(row_count: int, label: str, fetch_mode: str):
-    name = _name(label, fetch_mode)
-    marks = (
-        [pytest.mark.supported_drivers("python")]
-        if fetch_mode != "fetchmany"
-        else []
-    )
-    return pytest.param(row_count, name, fetch_mode, id=name, marks=marks)
+CASES = cases(SIZES, SUFFIXES)
 
 
-CASES = [
-    _case(row_count, label, fetch_mode)
-    for row_count, label in ROW_COUNTS
-    for fetch_mode in FETCH_MODES
-]
-
-
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+@pytest.mark.iterations(15)
+@pytest.mark.warmup_iterations(1)
 @pytest.mark.parametrize("row_count,name,fetch_mode", CASES)
 def test_select_string(perf_test, row_count, name, fetch_mode):
     perf_test(
@@ -51,8 +36,8 @@ def test_select_string(perf_test, row_count, name, fetch_mode):
     )
 
 
-@pytest.mark.iterations(ITERATIONS)
-@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+@pytest.mark.iterations(10)
+@pytest.mark.warmup_iterations(1)
 @pytest.mark.parametrize("row_count,name,fetch_mode", CASES)
 def test_select_string_recorded_http(perf_test, row_count, name, fetch_mode):
     perf_test(
