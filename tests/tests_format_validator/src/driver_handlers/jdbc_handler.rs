@@ -5,7 +5,26 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use walkdir::WalkDir;
+
+static JAVA_TEST_METHOD_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"public\s+void\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(").unwrap());
+static JAVA_METHOD_CALL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"([A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap()
+});
+static NEW_DRIVER_ONLY_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"//\s*NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap());
+static OLD_DRIVER_ONLY_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"//\s*OLD_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap());
+static SKIP_OLD_DRIVER_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"//\s*SKIP_OLD_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap());
+static SKIP_NEW_DRIVER_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"//\s*SKIP_NEW_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap());
+static ASSUME_NEW_DRIVER_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"assumeTrue\s*\(\s*isNewDriver\s*\(\s*\).*?(BD#\d+)"#).unwrap());
+static ASSUME_OLD_DRIVER_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"assumeTrue\s*\(\s*isOldDriver\s*\(\s*\).*?(BD#\d+)"#).unwrap());
 
 pub struct JdbcHandler {
     workspace_root: PathBuf,
@@ -68,11 +87,7 @@ impl BaseDriverHandler for JdbcHandler {
                 // Look for the method declaration in the next few lines
                 for j in (line_num + 1)..std::cmp::min(line_num + 5, lines.len()) {
                     let method_line = lines[j].trim();
-                    if let Some(captures) =
-                        Regex::new(r"public\s+void\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
-                            .unwrap()
-                            .captures(method_line)
-                    {
+                    if let Some(captures) = JAVA_TEST_METHOD_REGEX.captures(method_line) {
                         if let Some(method_name) = captures.get(1) {
                             methods.push(TestMethod {
                                 name: method_name.as_str().to_string(),
@@ -112,10 +127,7 @@ impl BaseDriverHandler for JdbcHandler {
                 }
 
                 // Look for method calls: ClassName.methodName() or methodName()
-                let method_call_re =
-                    Regex::new(r"([A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-                        .unwrap();
-                for captures in method_call_re.captures_iter(trimmed) {
+                for captures in JAVA_METHOD_CALL_REGEX.captures_iter(trimmed) {
                     if let Some(method_name) = captures.get(2) {
                         let method = method_name.as_str();
                         // Filter out common Java methods and keywords
@@ -207,14 +219,12 @@ impl JdbcHandler {
         let mut brace_count = 0;
         let mut method_start_line: usize = 0;
 
-        let new_driver_re = Regex::new(r#"//\s*NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
-        let old_driver_re = Regex::new(r#"//\s*OLD_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
-        let skip_old_re = Regex::new(r#"//\s*SKIP_OLD_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap();
-        let skip_new_re = Regex::new(r#"//\s*SKIP_NEW_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap();
-        let assume_new_re =
-            Regex::new(r#"assumeTrue\s*\(\s*isNewDriver\s*\(\s*\).*?(BD#\d+)"#).unwrap();
-        let assume_old_re =
-            Regex::new(r#"assumeTrue\s*\(\s*isOldDriver\s*\(\s*\).*?(BD#\d+)"#).unwrap();
+        let new_driver_re = &NEW_DRIVER_ONLY_REGEX;
+        let old_driver_re = &OLD_DRIVER_ONLY_REGEX;
+        let skip_old_re = &SKIP_OLD_DRIVER_REGEX;
+        let skip_new_re = &SKIP_NEW_DRIVER_REGEX;
+        let assume_new_re = &ASSUME_NEW_DRIVER_REGEX;
+        let assume_old_re = &ASSUME_OLD_DRIVER_REGEX;
 
         let default_loc = || BehaviorDifferenceLocation {
             new_behaviour_file: None,

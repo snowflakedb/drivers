@@ -6,7 +6,8 @@ Handles Behavior Difference data processing and integration
 with the Rust validator output.
 """
 
-from typing import Dict, List
+from collections import defaultdict
+from typing import Dict, List, Set
 try:
     from .validator_integration import ValidatorIntegration
     from .feature_parser import FeatureParser
@@ -21,6 +22,12 @@ class BehaviorDifferencesHandler:
     def __init__(self, validator: ValidatorIntegration, feature_parser: FeatureParser):
         self.validator = validator
         self.feature_parser = feature_parser
+        # Converted validator mappings, keyed by lowercase driver name.
+        self._mappings_by_driver: Dict[str, Dict] = {}
+        # normalized test_method -> BD ids, keyed by lowercase driver name.
+        self._method_index_by_driver: Dict[str, Dict[str, Set[str]]] = {}
+        # (driver, scenario_name) -> sorted BD ids
+        self._ids_for_scenario: Dict[tuple, List[str]] = {}
     
     def get_behavior_difference_descriptions(self, driver: str = 'odbc') -> Dict[str, str]:
         """Get Behavior Difference descriptions from the validator for a specific driver."""
@@ -46,9 +53,15 @@ class BehaviorDifferencesHandler:
     
     def get_behavior_difference_test_mappings(self, driver: str = 'odbc', features: Dict = None) -> Dict[str, Dict[str, List[Dict[str, any]]]]:
         """Get Behavior Difference test mappings from the validator in Python format."""
+        cache_key = driver.lower()
+        cached = self._mappings_by_driver.get(cache_key)
+        if cached is not None:
+            return cached
+
         behavior_difference_data = self.validator.get_behavior_difference_data()
         if not behavior_difference_data:
             print(f"Warning: Could not get Behavior Difference test mappings for {driver} from Rust validator")
+            self._mappings_by_driver[cache_key] = {}
             return {}
         
         behavior_differences_by_language = behavior_difference_data.get('behavior_differences_by_language', {})
@@ -56,7 +69,7 @@ class BehaviorDifferencesHandler:
         # Convert Rust format to Python format
         result = {}
         for lang, behavior_difference_list in behavior_differences_by_language.items():
-            if lang.lower() == driver.lower():
+            if lang.lower() == cache_key:
                 result[lang] = {}
                 for behavior_difference_info in behavior_difference_list:
                     behavior_difference_id = behavior_difference_info['behavior_difference_id']
@@ -88,21 +101,43 @@ class BehaviorDifferencesHandler:
                         
                         result[lang][behavior_difference_id].append(converted_impl)
         
+        self._mappings_by_driver[cache_key] = result
         return result
+
+    def _method_index_for_driver(self, driver: str) -> Dict[str, Set[str]]:
+        """Build normalized test_method -> BD id sets once per driver."""
+        cache_key = driver.lower()
+        cached = self._method_index_by_driver.get(cache_key)
+        if cached is not None:
+            return cached
+
+        index: Dict[str, Set[str]] = defaultdict(set)
+        mapping = self.get_behavior_difference_test_mappings(driver)
+        for lang, behavior_differences in mapping.items():
+            if lang.lower() != cache_key:
+                continue
+            for behavior_difference_id, implementations in behavior_differences.items():
+                for impl in implementations:
+                    index[FeatureParser.normalize_identifier(impl['test_method'])].add(
+                        behavior_difference_id
+                    )
+
+        self._method_index_by_driver[cache_key] = index
+        return index
     
     def get_behavior_difference_ids_for_scenario(self, scenario_info: Dict, driver: str, features: Dict = None) -> List[str]:
         """Get all Behavior Difference IDs associated with a scenario by looking up test implementations."""
         scenario_name = scenario_info['name']
-        
-        # Look up the actual Behavior Difference IDs from test files for this scenario
-        behavior_difference_test_mapping = self.get_behavior_difference_test_mappings(driver, features)
-        
-        # Find all Behavior Difference IDs associated with test methods that match this scenario
-        matching_behavior_difference_ids = []
-        if driver in behavior_difference_test_mapping:
-            for behavior_difference_id, implementations in behavior_difference_test_mapping[driver].items():
-                for impl in implementations:
-                    if self.feature_parser._method_matches_scenario(impl['test_method'], scenario_name):
-                        if behavior_difference_id not in matching_behavior_difference_ids:
-                            matching_behavior_difference_ids.append(behavior_difference_id)
-        return sorted(matching_behavior_difference_ids)
+        cache_key = (driver.lower(), scenario_name)
+        cached = self._ids_for_scenario.get(cache_key)
+        if cached is not None:
+            return cached
+
+        matching_ids: Set[str] = set()
+        method_index = self._method_index_for_driver(driver)
+        for match_key in FeatureParser.scenario_match_keys(scenario_name):
+            matching_ids.update(method_index.get(match_key, ()))
+
+        result = sorted(matching_ids)
+        self._ids_for_scenario[cache_key] = result
+        return result

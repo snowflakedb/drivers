@@ -3,6 +3,7 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use walkdir::WalkDir;
 
 use crate::driver_handlers::{BaseDriverHandler, DriverHandlerFactory};
@@ -10,6 +11,15 @@ use crate::test_discovery::Language;
 use crate::validator::{
     BehaviorDifferenceImplementation, BehaviorDifferenceInfo, BehaviorDifferencesReport,
 };
+
+static PYTHON_RELATIVE_IMPORT_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"from\s+(\.[\w.]*)\s+import\s+(.+)").unwrap());
+static ODBC_INCLUDE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"#include\s+"([^"]+\.hpp?)""#).unwrap());
+static CPP_FUNCTION_DECL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:void|int|bool|std::\w+(?:<[^>]+>)?|SQLRETURN|[\w:]+(?:<[^>]+>)?)\s+(\w+)\s*\(")
+        .unwrap()
+});
 
 #[derive(Debug, Clone)]
 pub struct FeatureInfo {
@@ -136,9 +146,8 @@ impl BehaviorDifferencesProcessor {
                     // 1. Test methods that match Behavior Difference scenarios (shared features)
                     // 2. Test methods that contain BD# references but have no matching feature
                     //    (language-specific tests)
-                    let has_bd_reference = !matches_behavior_difference_scenario
-                        && content.contains("BD#")
-                        && {
+                    let has_bd_reference =
+                        !matches_behavior_difference_scenario && content.contains("BD#") && {
                             // Quick check: does this method's body contain BD#?
                             handler
                                 .find_behavior_differences_in_method(
@@ -606,10 +615,7 @@ impl BehaviorDifferencesProcessor {
                 let trimmed = line.trim();
 
                 // Handle "from .module import function1, function2" patterns
-                if let Some(captures) = Regex::new(r"from\s+(\.[\w.]*)\s+import\s+(.+)")
-                    .unwrap()
-                    .captures(trimmed)
-                {
+                if let Some(captures) = PYTHON_RELATIVE_IMPORT_REGEX.captures(trimmed) {
                     if let (Some(module_path), Some(imports)) = (captures.get(1), captures.get(2)) {
                         let module_str = module_path.as_str();
 
@@ -731,10 +737,7 @@ impl BehaviorDifferencesProcessor {
             let trimmed = line.trim();
 
             // Handle #include "header.hpp" patterns
-            if let Some(captures) = Regex::new(r#"#include\s+"([^"]+\.hpp?)""#)
-                .unwrap()
-                .captures(trimmed)
-            {
+            if let Some(captures) = ODBC_INCLUDE_REGEX.captures(trimmed) {
                 if let Some(header_name) = captures.get(1) {
                     let header_file = header_name.as_str();
 
@@ -750,8 +753,9 @@ impl BehaviorDifferencesProcessor {
                             if let Ok(header_content) = fs::read_to_string(&header_path) {
                                 // Extract function names from header declarations
                                 // Look for function declarations like: void functionName( or std::vector<Type> functionName(
-                                let function_regex = Regex::new(r"(?:void|int|bool|std::\w+(?:<[^>]+>)?|SQLRETURN|[\w:]+(?:<[^>]+>)?)\s+(\w+)\s*\(").unwrap();
-                                for func_captures in function_regex.captures_iter(&header_content) {
+                                for func_captures in
+                                    CPP_FUNCTION_DECL_REGEX.captures_iter(&header_content)
+                                {
                                     if let Some(function_name) = func_captures.get(1) {
                                         let func_name = function_name.as_str();
                                         // Map function name to the .cpp implementation file
