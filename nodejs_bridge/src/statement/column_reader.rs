@@ -1,11 +1,13 @@
 use arrow::array::{
-    Array, BinaryArray, BooleanArray, Int16Array, PrimitiveArray, StringArray, StringBuilder,
-    StructArray,
+    Array, BinaryArray, BooleanArray, Decimal128Array, Int16Array, Int64Array, PrimitiveArray,
+    StringArray, StringBuilder, StructArray,
 };
-use arrow::compute::cast;
 use arrow::datatypes::{DataType, Date32Type, Field};
 
-use super::decfloat::{format_decfloat, i128_from_big_endian_signed};
+use super::column_reader_util::{
+    decimal_string, read_cell, scale_from_metadata, usize_from_metadata, widen,
+};
+use super::decfloat::{decfloat_field, format_decfloat, i128_from_big_endian_signed};
 use crate::session_params::SessionParams;
 use crate::sql_value::SqlValue;
 
@@ -19,10 +21,11 @@ use crate::sql_value::SqlValue;
 pub(crate) enum ColumnReader {
     Boolean(BooleanArray),
     Binary(BinaryArray),
-    Fixed(StringArray),
     Date(PrimitiveArray<Date32Type>),
     Variant(StringArray),
     Text(StringArray),
+    FixedInt { array: Int64Array, scale: u32 },
+    FixedDecimal { array: Decimal128Array, scale: u32 },
     Decfloat(StringArray),
 }
 
@@ -68,17 +71,27 @@ impl ColumnReader {
                 Ok(Self::Binary(array))
             }
             Some("FIXED") => {
-                // TODO: temporary string casting. We need to figure out how to handle precision loss.
-                let utf8 = cast(column, &DataType::Utf8)
-                    .map_err(|e| format!("could not cast FIXED column to string: {e}"))?;
-                let array = utf8
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .cloned()
-                    .ok_or_else(|| {
-                        "cast of FIXED column did not yield a StringArray".to_string()
-                    })?;
-                Ok(Self::Fixed(array))
+                let scale = scale_from_metadata(field)?;
+                match column.data_type() {
+                    DataType::Decimal128(_, _) => {
+                        let array = column
+                            .as_any()
+                            .downcast_ref::<Decimal128Array>()
+                            .cloned()
+                            .ok_or_else(|| {
+                                "Arrow column could not be downcast to Decimal128Array".to_string()
+                            })?;
+                        Ok(Self::FixedDecimal { array, scale })
+                    }
+                    DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
+                        let array = widen(column, &DataType::Int64, "Int64Array")?;
+                        Ok(Self::FixedInt { array, scale })
+                    }
+                    other => Err(format!(
+                        "FIXED column {:?} has unsupported Arrow type {other}",
+                        field.name()
+                    )),
+                }
             }
             Some("DATE") => {
                 let array = column
@@ -146,8 +159,11 @@ impl ColumnReader {
             Self::Binary(array) => read_cell(array, row_index, || {
                 SqlValue::Binary(array.value(row_index).to_vec())
             }),
-            Self::Fixed(array) => read_cell(array, row_index, || {
-                SqlValue::String(array.value(row_index).to_string())
+            Self::FixedInt { array, scale } => read_cell(array, row_index, || {
+                SqlValue::String(decimal_string(array.value(row_index) as i128, *scale))
+            }),
+            Self::FixedDecimal { array, scale } => read_cell(array, row_index, || {
+                SqlValue::String(decimal_string(array.value(row_index), *scale))
             }),
             Self::Date(array) => read_cell(array, row_index, || {
                 SqlValue::Date(Date32Type::to_naive_date(array.value(row_index)))
@@ -163,42 +179,4 @@ impl ColumnReader {
             }),
         }
     }
-}
-
-/// Decode a cell, mapping null to [`SqlValue::Null`] so each reader arm only
-/// needs to describe the non-null case.
-fn read_cell<A: Array>(array: &A, row_index: usize, decode: impl FnOnce() -> SqlValue) -> SqlValue {
-    if array.is_null(row_index) {
-        SqlValue::Null
-    } else {
-        decode()
-    }
-}
-
-fn decfloat_field<T: Array + Clone + 'static>(
-    array: &StructArray,
-    name: &str,
-) -> Result<T, String> {
-    let child = array
-        .column_by_name(name)
-        .ok_or_else(|| format!("DECFLOAT struct is missing the {name:?} field"))?;
-    child.as_any().downcast_ref::<T>().cloned().ok_or_else(|| {
-        format!(
-            "DECFLOAT {name:?} field could not be downcast; it is {}",
-            child.data_type()
-        )
-    })
-}
-
-fn usize_from_metadata(field: &Field, key: &str) -> Result<usize, String> {
-    let raw = field
-        .metadata()
-        .get(key)
-        .ok_or_else(|| format!("column {:?} is missing {key} metadata", field.name()))?;
-    raw.parse().map_err(|_| {
-        format!(
-            "column {:?} has non-numeric {key} metadata {raw:?}",
-            field.name()
-        )
-    })
 }

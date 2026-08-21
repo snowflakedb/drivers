@@ -14,12 +14,18 @@ use std::collections::HashMap;
 pub struct Connection {
     handle: Handle,
     connect_ctx: OperationCtx,
+
+    /// TEMPORARY: Copied onto every [`Statement`] this connection creates.\
+    session_parameters: HashMap<String, String>,
 }
 
 #[napi]
 impl Connection {
     #[napi(constructor)]
-    pub fn new(options: HashMap<String, String>) -> Result<Self> {
+    pub fn new(
+        options: HashMap<String, String>,
+        session_parameters: HashMap<String, String>,
+    ) -> Result<Self> {
         let conn_handle = DRIVER.connection_new();
 
         // TODO: temporary conversion, proper options mapping will be done later
@@ -54,6 +60,7 @@ impl Connection {
         Ok(Self {
             handle: conn_handle,
             connect_ctx: OperationCtx::with_own_token(),
+            session_parameters,
         })
     }
 
@@ -70,6 +77,11 @@ impl Connection {
             )
             .await
             .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub fn get_session_parameter(&self, name: String) -> Option<String> {
+        self.session_parameters.get(&name).cloned()
     }
 
     #[napi]
