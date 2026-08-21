@@ -4,6 +4,11 @@ pub mod types;
 // These modules are public for integration tests but are not part of the stable API.
 #[doc(hidden)]
 pub mod serialization;
+// Internal machinery shared by both telemetry lanes (span + raw-log).
+pub(crate) mod session_batch;
+// Unified per-session buffer both lanes push into (public for integration tests).
+#[doc(hidden)]
+pub mod session_telemetry;
 #[doc(hidden)]
 pub mod snowflake_exporter;
 #[doc(hidden)]
