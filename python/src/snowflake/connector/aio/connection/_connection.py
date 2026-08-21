@@ -10,6 +10,7 @@ from collections.abc import AsyncGenerator, Iterable
 from io import StringIO
 from typing import Any
 
+from ..._common.telemetry import AsyncTelemetryClient
 from ..._internal.api_client.client_api import async_core_driver, core_driver
 from ..._internal.config_utils import create_config_settings_from_dict
 from ..._internal.connection import (
@@ -44,7 +45,6 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
     DatabaseHandle,
     WrapperIdentity,
 )
-from ..._internal.telemetry import AsyncTelemetryClient
 from ..._internal.text_utils import split_statements
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus
