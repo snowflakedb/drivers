@@ -180,9 +180,9 @@ impl ColumnReader {
             Self::Text(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())
             }),
-            Self::Real(array) => read_cell(array, row_index, || {
-                SqlValue::String(array.value(row_index).to_string())
-            }),
+            Self::Real(array) => {
+                read_cell(array, row_index, || SqlValue::Float(array.value(row_index)))
+            }
             Self::Decfloat(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())
             }),
