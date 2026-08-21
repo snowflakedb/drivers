@@ -1,5 +1,5 @@
 import type { Readable } from 'node:stream';
-import type { CoreStatementInstance } from '../core/index.js';
+import type { CoreConnectionInstance, CoreStatementInstance } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
 import type {
   Column,
@@ -16,10 +16,12 @@ import { createRowStream } from './rows.js';
 // driver methods from Rust or that using so many FFI calls won't be efficient.
 // Refactor if that won't be the case.
 export class RowStatement {
+  #connection: CoreConnectionInstance;
   #core: CoreStatementInstance;
   #rowMode: RowMode;
 
-  constructor(core: CoreStatementInstance, rowMode?: RowMode) {
+  constructor(connection: CoreConnectionInstance, core: CoreStatementInstance, rowMode?: RowMode) {
+    this.#connection = connection;
     this.#core = core;
     this.#rowMode = rowMode ?? 'object';
   }
@@ -48,11 +50,11 @@ export class RowStatement {
   // and the result is already drained. (would suggest a BCR with error)
   // oxlint-disable-next-line no-unused-vars
   streamRows(options?: StreamOptions): Readable {
-    return createRowStream(this.#core, this.#rowMode);
+    return createRowStream(this.#connection, this.#core, this.#rowMode);
   }
 
   fetchRows(options: FetchRowsOptions): void {
-    const stream = createRowStream(this.#core, this.#rowMode);
+    const stream = createRowStream(this.#connection, this.#core, this.#rowMode);
     let finished = false;
 
     const onComplete = (err: SnowflakeError | undefined) => {
@@ -86,7 +88,10 @@ export class RowStatement {
 
 export class FileAndStageBindStatement extends RowStatement {
   constructor() {
-    super(undefined as unknown as CoreStatementInstance);
+    super(
+      undefined as unknown as CoreConnectionInstance,
+      undefined as unknown as CoreStatementInstance,
+    );
     throw new Error('FileAndStageBindStatement is not implemented');
   }
 }

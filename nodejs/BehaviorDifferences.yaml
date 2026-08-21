@@ -183,3 +183,26 @@ behavior_differences:
       form (a single leading significand digit) rather than preserving the source's shifted-digit
       quirk. This only affects values beyond the documented exponent range, an edge case with no
       identified caller dependency on the exact server spelling.
+
+  8:
+    name: 'BigInt-mode FIXED columns come back as a native bigint instead of a big-integer instance'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      When JS_TREAT_INTEGER_AS_BIGINT session parameter is enabled, a FIXED column with scale 0
+      is wrapped in a `big-integer` library instance, not a native JS `bigint`. Callers must use
+      that library's API (`.toString()`, `.equals()`, `BigInteger.isInstance()`) to work with the
+      value.
+    new_driver_behavior: |
+      The same columns are now returned as native `bigint` primitives (cell-mapping.ts). Callers
+      using `typeof value === 'bigint'` or bigint arithmetic/operators work correctly; callers
+      relying on `big-integer`-specific methods or on the value being an `object` do not.
+    status_rationale: |
+      A deliberate modernization, not an oversight: native bigint has been a standard JS feature
+      since ES2020, requires no dependency, and is what the `big-integer` package's own docs now
+      point users toward (it describes itself as a thin polyfill wrapper over the native type).
+      Flagged as breaking because code that special-cases `big-integer` instances, rather than
+      treating the value as an opaque bigint, needs updating.

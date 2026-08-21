@@ -1,48 +1,22 @@
 import { Readable } from 'node:stream';
-import type { CoreColumnInstance, CoreStatementInstance } from '../core/index.js';
+import type { CoreConnectionInstance, CoreStatementInstance } from '../core/index.js';
 import type { RowMode } from './types.js';
-import { GlobalConfig } from '../global-config.js';
+import { createRowMapper } from './cell-mapping.js';
 import { resolveColumnNames } from './column-names.js';
 
-function transformCell(cell: unknown, column: CoreColumnInstance): unknown {
-  if (column.isVariant()) {
-    if (cell === null || cell === undefined) {
-      return cell;
-    }
-    if (cell === '') {
-      return undefined;
-    }
-    const value = cell as string;
-    try {
-      return GlobalConfig.jsonColumnVariantParser(value);
-    } catch {
-      return GlobalConfig.xmlColumnVariantParser(value);
-    }
-  }
-  return cell;
-}
-
-function transformRow({
-  row,
-  columns,
-  columnNames,
-  rowMode,
-}: {
-  row: unknown[];
-  columns: CoreColumnInstance[];
-  columnNames: string[];
-  rowMode: RowMode;
-}): unknown {
+// `row` is shaped in place after `createRowMapper`'s content transforms already ran on it.
+function shapeRow(row: unknown[], columnNames: string[], rowMode: RowMode): unknown {
   if (rowMode === 'array') {
-    return row.map((cell, index) => transformCell(cell, columns[index]));
+    return row;
   }
   return row.reduce<Record<string, unknown>>((shaped, cell, index) => {
-    shaped[columnNames[index]] = transformCell(cell, columns[index]);
+    shaped[columnNames[index]] = cell;
     return shaped;
   }, {});
 }
 
 export async function collectRows(
+  connection: CoreConnectionInstance,
   coreStatement: CoreStatementInstance,
   rowMode: RowMode,
 ): Promise<unknown[]> {
@@ -50,6 +24,7 @@ export async function collectRows(
     await coreStatement.waitForCompletion();
     const columns = coreStatement.getColumns()!;
     const columnNames = resolveColumnNames(columns, rowMode);
+    const remapRow = createRowMapper(columns, connection);
 
     const rows: unknown[] = [];
     while (true) {
@@ -57,7 +32,8 @@ export async function collectRows(
       if (row === null) {
         break;
       }
-      rows.push(transformRow({ row, columns, columnNames, rowMode }));
+      remapRow(row);
+      rows.push(shapeRow(row, columnNames, rowMode));
     }
 
     return rows;
@@ -66,9 +42,14 @@ export async function collectRows(
   }
 }
 
-export function createRowStream(coreStatement: CoreStatementInstance, rowMode: RowMode): Readable {
+export function createRowStream(
+  connection: CoreConnectionInstance,
+  coreStatement: CoreStatementInstance,
+  rowMode: RowMode,
+): Readable {
   const columns = coreStatement.getColumns()!;
   const columnNames = resolveColumnNames(columns, rowMode);
+  const remapRow = createRowMapper(columns, connection);
   return new Readable({
     objectMode: true,
     read() {
@@ -79,7 +60,8 @@ export function createRowStream(coreStatement: CoreStatementInstance, rowMode: R
             this.push(null);
             return;
           }
-          this.push(transformRow({ row, columns, columnNames, rowMode }));
+          remapRow(row);
+          this.push(shapeRow(row, columnNames, rowMode));
         })
         .catch((err: Error) => {
           this.destroy(err);

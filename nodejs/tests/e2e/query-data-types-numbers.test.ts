@@ -9,6 +9,22 @@ import {
   isRunningNewDriverWithBD,
 } from './utils';
 
+/**
+ * Builds one `SELECT` with a column per case, so a table of value variations
+ * costs a single round trip instead of one per case.
+ */
+function selectAll(cases: { expression: string }[]): string {
+  return `SELECT ${cases.map(({ expression }, index) => `${expression} AS V${index}`).join(', ')}`;
+}
+
+// Old driver wraps BigInt-mode values in a `big-integer` instance; the new driver returns a
+// native `bigint` (BD#8).
+function isBigIntValue(value: unknown): boolean {
+  return isRunningNewDriverWithBD('BD#8')
+    ? typeof value === 'bigint'
+    : BigInteger.isInstance(value);
+}
+
 describe('Query returning number data types', () => {
   const snowflake = getSnowflakeSDK();
   let connection: Connection;
@@ -57,6 +73,59 @@ describe('Query returning number data types', () => {
       expect(column.getPrecision()).toBe(10);
       expect(column.getScale()).toBe(3);
     }
+  });
+
+  it('returns scaled fixed-point values as Number', async () => {
+    const cases = [
+      { expression: '1.25::NUMBER(10,2)', expected: 1.25 },
+      { expression: '3.14', expected: 3.14 },
+      { expression: '1.50::NUMBER(10,2)', expected: 1.5 },
+      { expression: '0.005::NUMBER(10,3)', expected: 0.005 },
+      { expression: '-1.25::NUMBER(10,2)', expected: -1.25 },
+      // High scale, where the unscaled integer needs most of the precision.
+      { expression: '1.5::NUMBER(38,23)', expected: 1.5 },
+      { expression: '1.5::NUMBER(38,37)', expected: 1.5 },
+    ];
+    const { rows } = await executeAsync(connection, selectAll(cases));
+    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
+  });
+
+  it('returns fixed-point values across integer widths as Number', async () => {
+    const cases = [
+      { expression: '7::NUMBER(2,0)', expected: 7 },
+      { expression: '1234::NUMBER(4,0)', expected: 1234 },
+      { expression: '123456789::NUMBER(9,0)', expected: 123456789 },
+      { expression: '123456789012345678::NUMBER(18,0)', expected: 123456789012345680 },
+    ];
+    const { rows } = await executeAsync(connection, selectAll(cases));
+    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
+  });
+
+  // Past these magnitudes a Number is no longer exact, and core switches its
+  // storage from i64 to Decimal128.
+  it('returns values at the i64 storage boundary as Number', async () => {
+    const cases = [
+      { expression: '9223372036854775807', expected: 9223372036854776000 },
+      { expression: '9223372036854775808', expected: 9223372036854776000 },
+      { expression: '99999999999999999999999999999999999999', expected: 1e38 },
+      { expression: '-99999999999999999999999999999999999999', expected: -1e38 },
+      {
+        expression: '123456789012345678901234567890.12::NUMBER(38,2)',
+        expected: 1.2345678901234568e29,
+      },
+    ];
+    const { rows } = await executeAsync(connection, selectAll(cases));
+    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
+  });
+
+  it('returns NULL for fixed-point types', async () => {
+    const { rows } = await executeAsync(
+      connection,
+      `SELECT
+        NULL::INT,
+        NULL::NUMBER(10,2)`,
+    );
+    expect(Object.values(rows![0])).toEqual([null, null]);
   });
 
   it('returns float-point types as Number', async () => {
@@ -135,11 +204,11 @@ describe('Query returning number data types', () => {
         'SELECT 90071992547409954434323 as INT_COLUMN',
       );
       const resultColumn = statement.getColumn(0);
-      const selectedValue = rows![0].INT_COLUMN as typeof BigInteger;
+      const selectedValue = rows![0].INT_COLUMN;
       expect(resultColumn.getType()).toBe('fixed');
       expect(resultColumn.isNumber()).toBe(true);
-      expect(BigInteger.isInstance(selectedValue)).toBe(true);
-      expect(selectedValue.toString()).toBe('90071992547409954434323');
+      expect(isBigIntValue(selectedValue)).toBe(true);
+      expect(String(selectedValue)).toBe('90071992547409954434323');
     } finally {
       await destroyConnectionAsync(bigIntConnection);
     }
@@ -211,5 +280,58 @@ describe('Query returning number data types', () => {
     } else {
       expect(value).toBe('10e16384');
     }
+  });
+});
+
+describe('Query returning BigInt data types', () => {
+  const snowflake = getSnowflakeSDK();
+  let connection: Connection;
+
+  beforeAll(async () => {
+    connection = createTestConnection(snowflake, { jsTreatIntegerAsBigInt: true });
+    await connection.connectAsync();
+  });
+
+  afterAll(async () => {
+    await destroyConnectionAsync(connection);
+  });
+
+  it('returns integers as exact BigInt instances', async () => {
+    const cases = [
+      { expression: '7::NUMBER(2,0)', expected: '7' },
+      { expression: '9223372036854775807', expected: '9223372036854775807' },
+      { expression: '9223372036854775808', expected: '9223372036854775808' },
+      {
+        expression: '99999999999999999999999999999999999999',
+        expected: '99999999999999999999999999999999999999',
+      },
+      {
+        expression: '-99999999999999999999999999999999999999',
+        expected: '-99999999999999999999999999999999999999',
+      },
+    ];
+    const { statement, rows } = await executeAsync(connection!, selectAll(cases));
+    const values = Object.values(rows![0]);
+
+    expect(statement.getColumns()!.map((column) => column.getType())).toEqual(
+      cases.map(() => 'fixed'),
+    );
+    expect(values.map((value) => isBigIntValue(value))).toEqual(cases.map(() => true));
+    expect(values.map(String)).toEqual(cases.map(({ expected }) => expected));
+  });
+
+  it('leaves scaled NUMBER(38,2) as a Number', async () => {
+    const { rows } = await executeAsync(
+      connection!,
+      'SELECT 123456789012345678901234567890.12::NUMBER(38,2)',
+    );
+    const value = Object.values(rows![0])[0];
+    expect(isBigIntValue(value)).toBe(false);
+    expect(value).toBe(1.2345678901234568e29);
+  });
+
+  it('returns NULL as null, not a BigInt', async () => {
+    const { rows } = await executeAsync(connection!, 'SELECT NULL::INT');
+    expect(Object.values(rows![0])[0]).toBeNull();
   });
 });

@@ -9,6 +9,23 @@
 //! TODO: refactor into shared code.
 //!
 
+use arrow::array::{Array, StructArray};
+
+pub(super) fn decfloat_field<T: Array + Clone + 'static>(
+    array: &StructArray,
+    name: &str,
+) -> Result<T, String> {
+    let child = array
+        .column_by_name(name)
+        .ok_or_else(|| format!("DECFLOAT struct is missing the {name:?} field"))?;
+    child.as_any().downcast_ref::<T>().cloned().ok_or_else(|| {
+        format!(
+            "DECFLOAT {name:?} field could not be downcast; it is {}",
+            child.data_type()
+        )
+    })
+}
+
 /// Converts a big-endian two's complement byte slice (1–16 bytes) into an i128.
 /// The Arrow wire format trims leading bytes, so we sign-extend to 16 bytes
 /// before calling `i128::from_be_bytes`. Empty input is treated as zero.
