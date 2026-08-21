@@ -13,6 +13,7 @@ pub enum SqlValue {
     Null,
     Bool(bool),
     String(String),
+    Float(f64),
     Binary(Vec<u8>),
     Date(NaiveDate),
 }
@@ -23,6 +24,7 @@ impl ToNapiValue for SqlValue {
             SqlValue::Null => unsafe { Null::to_napi_value(env, Null) },
             SqlValue::Bool(val) => unsafe { bool::to_napi_value(env, val) },
             SqlValue::String(val) => unsafe { String::to_napi_value(env, val) },
+            SqlValue::Float(val) => unsafe { f64::to_napi_value(env, val) },
             SqlValue::Binary(bytes) => unsafe { Buffer::to_napi_value(env, bytes.into()) },
             SqlValue::Date(date) => unsafe {
                 NaiveDateTime::to_napi_value(env, date.and_time(NaiveTime::MIN))

@@ -8,18 +8,6 @@ export type RowMapper = (row: unknown[]) => void;
 
 const toNumberMapper: CellMapper = (value) => (value === null ? null : Number(value));
 const toBigIntMapper: CellMapper = (value) => (value === null ? null : BigInt(value as string));
-const toFloatMapper: CellMapper = (value) => {
-  switch (value) {
-    case null:
-      return null;
-    case 'inf':
-      return Infinity;
-    case '-inf':
-      return -Infinity;
-    default:
-      return Number(value);
-  }
-};
 
 const variantMapper: CellMapper = (value) => {
   if (value === null || value === undefined) {
@@ -52,9 +40,6 @@ function selectMapper(
       column.getScale() === 0
       ? toBigIntMapper
       : toNumberMapper;
-  }
-  if (column.getType() === 'real') {
-    return toFloatMapper;
   }
   return null;
 }
