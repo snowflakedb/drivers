@@ -21,7 +21,7 @@ fi
 
 echo "=== Building ODBC driver (libsfodbc) ==="
 cd "${WORKSPACE_ROOT}"
-cargo build --package odbc
+cargo build --locked --package odbc
 export DRIVER_PATH="${CARGO_TARGET_DIR}/debug/libsfodbc.so"
 
 echo "=== Building ODBC requires_no_mfa tests ==="

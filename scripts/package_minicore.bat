@@ -30,7 +30,7 @@ REM Install cbindgen if not available
 cbindgen --version >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo === Installing cbindgen ===
-    cargo install cbindgen
+    cargo install cbindgen --locked
 )
 
 REM Set build directory
@@ -49,11 +49,11 @@ if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 REM Build release version
 echo === Building dynamic library version ===
-cargo build --release --package sf_mini_core --target %PLATFORM_TARGET%
+cargo build --locked --release --package sf_mini_core --target %PLATFORM_TARGET%
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 echo === Building static library version ===
-cargo build --release --package sf_mini_core_static --target %PLATFORM_TARGET%
+cargo build --locked --release --package sf_mini_core_static --target %PLATFORM_TARGET%
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 REM Copy build artifacts

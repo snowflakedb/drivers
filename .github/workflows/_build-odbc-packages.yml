@@ -200,7 +200,7 @@ jobs:
             $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
           }
           Write-Host "perl: $((Get-Command perl -ErrorAction SilentlyContinue).Source)"
-          cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
+          cargo build --locked ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           RUSTFLAGS: "-C linker=rust-lld"
@@ -313,7 +313,7 @@ jobs:
             -e PKG_FORMATS=rpm \
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
             rpm-build \
-            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
+            bash -c "cargo build --locked --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
 
       # Container writes the mounted cache dirs as root, and some crates ship
       # owner-only file modes, so the runner cannot read them back.
@@ -392,14 +392,14 @@ jobs:
             -Wl,-install_name,libodbc.dylib -o .odbc-stub/libodbc.dylib -
 
       - name: Build ODBC driver (x86_64)
-        run: cargo build --release --package odbc --features vendored-openssl --target x86_64-apple-darwin
+        run: cargo build --locked --release --package odbc --features vendored-openssl --target x86_64-apple-darwin
         env:
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
           CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-pkg
           RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
 
       - name: Build ODBC driver (aarch64)
-        run: cargo build --release --package odbc --features vendored-openssl --target aarch64-apple-darwin
+        run: cargo build --locked --release --package odbc --features vendored-openssl --target aarch64-apple-darwin
         env:
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
           CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-pkg
@@ -495,7 +495,7 @@ jobs:
             -e PKG_FORMATS="deb tgz" \
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
             deb-build \
-            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
+            bash -c "cargo build --locked --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
 
       # Container writes the mounted cache dirs as root, and some crates ship
       # owner-only file modes, so the runner cannot read them back.

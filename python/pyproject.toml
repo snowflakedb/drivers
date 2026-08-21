@@ -108,7 +108,7 @@ exclude = [
 # Individual files need force-include (file symlinks are not dereferenced)
 [tool.hatch.build.targets.sdist.force-include]
 "Cargo.toml.sdist" = "Cargo.toml"
-"../Cargo.lock" = "Cargo.lock"
+"Cargo.lock.sdist" = "Cargo.lock"
 "../build_common.rs" = "build_common.rs"
 
 [tool.hatch.build.targets.wheel]

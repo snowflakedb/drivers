@@ -29,7 +29,7 @@ mkdir -p "$ARTIFACT_DIR"
 # minimal and avoiding an openssl-libs version mismatch on the VM.
 echo "Building sf_core e2e test binary (target: e2e_tests)..."
 SF_CORE_BIN="$(
-  cargo test -p sf_core --test e2e_tests --features vendored-openssl --no-run \
+  cargo test --locked -p sf_core --test e2e_tests --features vendored-openssl --no-run \
     --message-format=json \
     | jq -r 'select(.reason=="compiler-artifact" and .target.name=="e2e_tests" and .executable != null) | .executable' \
     | tail -n 1

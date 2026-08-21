@@ -131,7 +131,7 @@ jobs:
           shared-key: "sf-core"
 
       - name: Build Rust components
-        run: cargo build --package sf_core ${{ matrix.cargo_flags }}
+        run: cargo build --locked --package sf_core ${{ matrix.cargo_flags }}
 
       - name: Save Cargo cache (sf_core)
         if: always()
@@ -360,7 +360,7 @@ jobs:
           shared-key: "sf-core"
 
       - name: Build Rust components
-        run: cargo build --package sf_core
+        run: cargo build --locked --package sf_core
 
       - name: Save Cargo cache (sf_core)
         if: always()

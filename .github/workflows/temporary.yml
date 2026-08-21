@@ -176,7 +176,7 @@ jobs:
       - name: Build ODBC driver
         # Workaround for the Rust 1.89+ linker bug (rust-lang/rust#131292),
         # mirroring odbc_unit_tests in test-odbc.yml.
-        run: cargo build --package odbc
+        run: cargo build --locked --package odbc
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
@@ -348,8 +348,8 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo test --package sf_core --all-features --test e2e_tests put_get -- --nocapture --include-ignored
-          cargo test --package sf_core --all-features --test integration_tests put_get -- --nocapture
+          cargo test --locked --package sf_core --all-features --test e2e_tests put_get -- --nocapture --include-ignored
+          cargo test --locked --package sf_core --all-features --test integration_tests put_get -- --nocapture
 
       - name: Save Rust cache
         if: always()
