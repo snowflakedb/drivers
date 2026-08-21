@@ -19,10 +19,14 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from snowflake.connector.constants import SessionParameterName
 from snowflake.connector.errors import ProgrammingError
-from tests.helpers.fixtures import _make_execute_response
+from tests.helpers.fixtures import (
+    _make_execute_response,
+    make_all_parameters_response,
+    make_parameter_response,
+)
 
 
-def _get_parameter_side_effect(request: object) -> MagicMock:
+def _get_parameter_side_effect(request: object):
     """Default CLIENT_TELEMETRY_ENABLED to "true" so telemetry-assertion tests in this
     file exercise their intended path by default; every other parameter stays unset,
     matching the shared ``mock_db_api`` fixture in ``tests/helpers/fixtures.py``.
@@ -31,8 +35,8 @@ def _get_parameter_side_effect(request: object) -> MagicMock:
     with a single positional ``ConnectionGetParameterRequest``, not ``key=`` kwargs.
     """
     if request.key == SessionParameterName.CLIENT_TELEMETRY_ENABLED:
-        return MagicMock(value="true")
-    return MagicMock(value="")
+        return make_parameter_response(True)
+    return make_parameter_response()
 
 
 @pytest.fixture
@@ -47,8 +51,8 @@ def mock_db_api():
     # Mirrors connection_get_parameter's default: sf_core's connection_get_all_parameters
     # sources from the same session_parameters cache, so the bulk snapshot taken by
     # SessionParametersProxy.freeze() (on close()) must agree with the per-key default.
-    db_api.connection_get_all_parameters.return_value = MagicMock(
-        parameters={SessionParameterName.CLIENT_TELEMETRY_ENABLED: "true"}
+    db_api.connection_get_all_parameters.return_value = make_all_parameters_response(
+        {SessionParameterName.CLIENT_TELEMETRY_ENABLED: True}
     )
 
     def _connection_is_closed(request):
@@ -133,12 +137,12 @@ def mock_async_db_api(mock_async_db_api):
     ``core_driver.client`` and drop ``connection_is_expired``.
     """
     mock_async_db_api.connection_get_all_parameters = AsyncMock(
-        return_value=MagicMock(parameters={SessionParameterName.CLIENT_TELEMETRY_ENABLED: "true"})
+        return_value=make_all_parameters_response({SessionParameterName.CLIENT_TELEMETRY_ENABLED: True})
     )
     sync_api = mock_async_db_api._sync_db_api
     sync_api.connection_get_parameter.side_effect = _get_parameter_side_effect
-    sync_api.connection_get_all_parameters.return_value = MagicMock(
-        parameters={SessionParameterName.CLIENT_TELEMETRY_ENABLED: "true"}
+    sync_api.connection_get_all_parameters.return_value = make_all_parameters_response(
+        {SessionParameterName.CLIENT_TELEMETRY_ENABLED: True}
     )
     return mock_async_db_api
 
@@ -535,7 +539,7 @@ class TestTelemetryEnabledGating:
         mock_db_api.telemetry_send_api_usage.reset_mock()
         assert connection._client_param_telemetry_enabled is True
         mock_db_api.connection_get_parameter.side_effect = None
-        mock_db_api.connection_get_parameter.return_value = MagicMock(value="false")
+        mock_db_api.connection_get_parameter.return_value = make_parameter_response(False)
 
         connection.cursor()
 

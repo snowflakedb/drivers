@@ -29,6 +29,7 @@ from snowflake.connector.constants import QueryStatus
 from snowflake.connector.cursor import SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
+from tests.helpers.fixtures import make_all_parameters_response, make_parameter_response
 
 
 pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires universal driver")
@@ -202,7 +203,12 @@ class TestGetAutocommit:
     def test_get_autocommit_reads_from_sf_core(self, connection, mock_db_api):
         """get_autocommit should read from sf_core via _session_parameters."""
         assert connection.get_autocommit() is False
-        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        mock_db_api.connection_get_parameter.return_value = make_parameter_response("true")
+        assert connection.get_autocommit() is True
+
+    def test_get_autocommit_reads_native_bool_from_sf_core(self, connection, mock_db_api):
+        """A native bool_value (typed session parameter) is honored the same as a string."""
+        mock_db_api.connection_get_parameter.return_value = make_parameter_response(True)
         assert connection.get_autocommit() is True
 
 
@@ -221,19 +227,21 @@ class TestTelemetryEnabled:
             ("True", True),
             ("false", False),
             ("yes", False),
+            (True, True),
+            (False, False),
         ],
     )
     def test_reads_server_param_case_insensitively(self, connection, mock_db_api, server_value, expected):
-        mock_db_api.connection_get_parameter.return_value = MagicMock(value=server_value)
+        mock_db_api.connection_get_parameter.return_value = make_parameter_response(server_value)
         assert connection.telemetry_enabled is expected
 
     def test_client_false_overrides_server_true(self, connection, mock_db_api):
-        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        mock_db_api.connection_get_parameter.return_value = make_parameter_response(True)
         connection.telemetry_enabled = False
         assert connection.telemetry_enabled is False
 
     def test_client_default_and_server_true(self, connection, mock_db_api):
-        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        mock_db_api.connection_get_parameter.return_value = make_parameter_response(True)
         assert connection.telemetry_enabled is True
 
     @pytest.mark.parametrize("raw_value", [1, 0, "", None])
@@ -249,7 +257,7 @@ class TestTelemetryEnabled:
         assert "Telemetry has been disabled by the session parameter CLIENT_TELEMETRY_ENABLED" in caplog.text
 
     def test_enabling_while_server_enabled_does_not_log(self, connection, mock_db_api, caplog):
-        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        mock_db_api.connection_get_parameter.return_value = make_parameter_response(True)
         with caplog.at_level(logging.INFO):
             connection.telemetry_enabled = True
         assert "CLIENT_TELEMETRY_ENABLED" not in caplog.text
@@ -265,8 +273,8 @@ class TestTelemetryEnabled:
 
     def test_read_after_close_uses_frozen_snapshot(self, connection, mock_db_api):
         """Post-close reads should answer from the frozen snapshot, matching legacy retaining its last value."""
-        mock_db_api.connection_get_all_parameters.return_value = MagicMock(
-            parameters={"CLIENT_TELEMETRY_ENABLED": "true"}
+        mock_db_api.connection_get_all_parameters.return_value = make_all_parameters_response(
+            {"CLIENT_TELEMETRY_ENABLED": True}
         )
         connection.close()
 
@@ -746,7 +754,7 @@ class TestContextManagerUnit:
 
     def test_exit_skips_commit_when_autocommit_on(self, connection, mock_db_api):
         """When autocommit is on, __exit__ should not execute COMMIT or ROLLBACK."""
-        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        mock_db_api.connection_get_parameter.return_value = make_parameter_response(True)
         connection.commit = MagicMock()
         connection.rollback = MagicMock()
 
