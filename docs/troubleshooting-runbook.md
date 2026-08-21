@@ -1,6 +1,6 @@
-# Snowflake's Unified Driver Architecture — Troubleshooting Runbook
+# Snowflake's Universal Core Architecture — Troubleshooting Runbook
 
-How to diagnose a problem with Snowflake's Unified Driver Architecture across
+How to diagnose a problem with Snowflake's Universal Core Architecture across
 the Python, ODBC and JDBC wrappers and the shared Rust core (`sf_core`).
 
 | Section | Use it for |
@@ -9,7 +9,33 @@ the Python, ODBC and JDBC wrappers and the shared Rust core (`sf_core`).
 | [2. Connection diagnosis](#2-connection-diagnosis) | DNS / TLS / CRL / proxy / allowlist probe report for connectivity issues. |
 | [3. Native logging integration](#3-native-logging-integration) | Route driver logs into the app's own logging framework. |
 | [4. Configurations supported](#4-configurations-supported) | Where each setting can be set: `.toml`, `.ini`, env vars, connection params. |
-| [Appendix A](#appendix-a--symptom--action) | Symptom → action table. |
+| [Appendix A](#appendix-a--symptom--action) | Symptom → page lookup — pointer to the keyword index. |
+| [Deep-dive pages ↓](troubleshooting/index.md) | Subsystem internals below this runbook: auth, TLS/CRL, query execution, stage transfers, PrivateLink, and per-wrapper (Python / JDBC / ODBC / Node.js / .NET) pages. |
+| [Keyword → page index ↓](troubleshooting/keyword-index.md) | **Agents:** match an exact error string, code, or symptom keyword to the owning deep-dive page. |
+
+---
+
+## Using this runbook with an AI agent
+
+This runbook is written to be driven by an AI coding agent (e.g. Claude Code) with
+the driver source checked out, though the same structure works for a human reading
+top-down. A useful starting prompt:
+
+> Using `docs/troubleshooting-runbook.md` and the deep-dive pages it links, help me
+> diagnose a Universal Core issue. Wrapper + version: **snowflake-connector-python
+> 4.x**. Symptom: on connect I get `<paste the exact error string / code>`, from
+> behind a corporate proxy. First tell me which capture to collect (troubleshooting
+> logs §1 and/or the connection diagnostic §2); then use the keyword index to find
+> the owning deep-dive page and walk me through its symptom → cause → fix. Cite the
+> source paths you rely on, and don't guess when a log or the diagnostic would
+> settle it.
+
+Give the agent three things up front: the **exact** error string or code, the
+**wrapper and version**, and the **auth method** (plus whether a proxy or
+PrivateLink is involved). It should start from the capture-first workflow
+([§1](#1-troubleshooting-logs) / [§2](#2-connection-diagnosis)) and route via the
+[keyword index](troubleshooting/keyword-index.md) rather than pattern-matching on
+the symptom alone.
 
 ---
 
@@ -350,7 +376,10 @@ Discovery order — first existing file wins (`odbc/src/api/ini_paths.rs`):
 2. `<config_dir>/snowflake/sf.odbc.ini` (`~/.config/snowflake/…` on Linux,
    `~/Library/Application Support/snowflake/…` on macOS)
 3. `~/.snowflake/sf.odbc.ini`
-4. *(macOS only)* `/opt/snowflake/snowflakeodbcud/sf.odbc.ini` (installer default)
+4. *(macOS only)* the `.pkg` installer default — `MACOS_INSTALLER_INI`
+   (`odbc/src/api/ini_paths.rs`), placed under the installer's `INSTALL_DIR`
+   (`odbc/installer/mac/package.sh`); currently
+   `/opt/snowflake/snowflakeodbcud/sf.odbc.ini`
 
 Should be `chmod 600` on Unix; the driver warns on looser permissions. Keys are
 listed in [§3.2](#32-odbc).
@@ -375,13 +404,13 @@ read either**; use troubleshooting mode ([§1](#1-troubleshooting-logs)) to capt
 
 ## Appendix A — Symptom → action
 
-| Symptom | First artifact | What to look for |
-|---------|----------------|------------------|
-| **Cannot connect / hangs / timeout** | Diagnostic ([§2](#2-connection-diagnosis)) + logs ([§1](#1-troubleshooting-logs)) | `SNOWFLAKE_URL` reachability; connected peer IP; DNS public/private; proxy section. |
-| **TLS / certificate error** | Diagnostic | Certificate chain (validity, issuer); **CRL DP fetch** failures. |
-| **Behind a corporate proxy** | Diagnostic PROXY section | System vs env proxies; whether 443/80 probes succeed **via proxy**. Check `HTTP(S)_PROXY`. |
-| **PrivateLink** | Diagnostic | `.privatelink.` host resolving to a **public** IP ⇒ private DNS not applied. |
-| **Login OK, stage/PUT/GET fails** | Diagnostic | A `STAGE`/`GATEWAYS` entry fails while `SNOWFLAKE_URL` succeeds ⇒ partial allowlist to cloud storage. |
-| **Query fails / wrong result** | Logs ([§1](#1-troubleshooting-logs)) | Capture the `queryId`; correlate the failing HTTP call and response code. |
-| **Auth / SSO / key-pair failure** | Logs ([§1](#1-troubleshooting-logs)) | Authenticator type; which token-exchange step fails. Never paste tokens. |
-| **Slow / intermittent** | Logs ([§1](#1-troubleshooting-logs)) | Retry lines, per-request timeouts, HTTP durations; note if only some peer IPs are slow. |
+Looking up a **symptom, error string, or error code**? Use the
+**[Keyword → page index](troubleshooting/keyword-index.md)** — it maps exact error
+strings, status codes, and symptom keywords to the owning deep-dive page and the
+heading to jump to. It replaces the short symptom table that used to live here (that
+table had drifted into a partial duplicate of the index).
+
+The capture-first workflow is unchanged: grab **logs**
+([§1](#1-troubleshooting-logs)) and/or run the **connection diagnostic**
+([§2](#2-connection-diagnosis)) before you route — nearly every symptom is diagnosed
+from one of those two artifacts, whichever the index points you at.

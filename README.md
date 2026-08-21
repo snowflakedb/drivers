@@ -110,10 +110,20 @@ cargo run
 - **CI**: Requires pre-built components and explicit environment variables
 - **Docker**: Reference tests use containerized official drivers
 
-## Troubleshooting
+## Troubleshooting the test setup
+
+Problems getting the test suites to build and run:
 
 1. **Missing parameters.json**: Run `./scripts/decode_secrets.sh` or create manually
 2. **Missing Rust library**: Run `cargo build --package sf_core`
+
+## Troubleshooting problems while using the driver
+
+For problems encountered while *using* the driver — which may or may not originate in
+the driver itself: authentication, TLS/CRL, query execution, staging, logging, and
+wrapper-specific issues — see the
+[troubleshooting runbook](docs/troubleshooting-runbook.md) and its
+[deep-dive pages](docs/troubleshooting/index.md).
 
 ## License
 Copyright (c) Snowflake Inc. All rights reserved.
