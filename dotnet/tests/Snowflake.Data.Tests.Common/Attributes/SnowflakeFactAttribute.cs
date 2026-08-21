@@ -1,19 +1,9 @@
 using System.Runtime.CompilerServices;
-
-#if !OLD_XUNIT
-using Xunit.v3;
 using Snowflake.Data.Tests.Discovery;
-#else
-using Xunit.Sdk;
-#endif
 
 namespace Snowflake.Data.Tests.Attributes;
 
-#if !OLD_XUNIT
-[XunitTestCaseDiscoverer(typeof(SnowflakeTestCaseDiscovererV3))]
-#else
-[XunitTestCaseDiscoverer("Snowflake.Data.Tests.Discovery.SnowflakeTestCaseDiscoverer", "Snowflake.Data.Tests.Common")]
-#endif
+[XunitTestCaseDiscoverer(typeof(SnowflakeTestCaseDiscoverer))]
 public sealed class SnowflakeFactAttribute : FactAttribute
 {
     public RetriesCount RetriesCount { get; set; }
@@ -23,9 +13,7 @@ public sealed class SnowflakeFactAttribute : FactAttribute
         RetriesCount retriesCount = RetriesCount.Once,
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
-#if !OLD_XUNIT
         : base(sourceFilePath!, sourceLineNumber)
-#endif
     {
         RetriesCount = retriesCount;
         var skipEvaluationResult = SkipConditionEvaluator.Evaluate(skip);

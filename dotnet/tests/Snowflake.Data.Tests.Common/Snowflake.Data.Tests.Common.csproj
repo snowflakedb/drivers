@@ -1,22 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup Condition="'$(TargetFramework)' == 'net471' OR '$(TargetFramework)' == 'net481'">
-    <DefineConstants>$(DefineConstants);OLD_XUNIT</DefineConstants>
-    <OldXunit>True</OldXunit>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(OldXunit)' != 'True'">
-    <OutputType>Exe</OutputType>
-  </PropertyGroup>
-
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0;net10.0;net471;net472;net481</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net472;net481</TargetFrameworks>
     <RootNamespace>Snowflake.Data.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>false</IsTestProject>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
-  <Import Project="targets/Snowflake.Data.Tests.xunit3.targets" Condition="'$(OldXunit)' != 'True'" />
-  <Import Project="targets/Snowflake.Data.Tests.xunit2.targets" Condition="'$(OldXunit)' == 'True'" />
+  <Import Project="targets/Snowflake.Data.Tests.xunit3.targets" />
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj" />

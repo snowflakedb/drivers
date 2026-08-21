@@ -1,7 +1,5 @@
 using Xunit.Sdk;
 
-#if !OLD_XUNIT
-
 namespace Snowflake.Data.Tests.Discovery;
 
 public class SnowflakeTestCaseRunner : XunitTestCaseRunnerBase<SnowflakeCaseRunnerContext, IXunitTestCase, IXunitTest>
@@ -109,8 +107,3 @@ public class SnowflakeCaseRunnerContext(
     public int MaxRetries { get; } = maxRetries;
     public FixtureMappingManager FixtureMappingManager { get; } = fixtureMappingManager;
 }
-
-#else
-namespace Snowflake.Data.Tests.Discovery;
-// xUnit v2 retry logic is handled in SnowflakeTestCase.RunAsync directly.
-#endif

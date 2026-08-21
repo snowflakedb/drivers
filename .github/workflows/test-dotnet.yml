@@ -151,7 +151,7 @@ jobs:
              "dotnet/tests/Snowflake.Data.Tests/bin/Debug/${{ matrix.dotnet_version }}/"
 
       - name: Run tests (new driver)
-        run: ${{ matrix.test_runner }}
+        run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
         working-directory: dotnet/tests/Snowflake.Data.Tests
         env:
            PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -223,15 +223,9 @@ jobs:
           Copy-Item $stubDll "$outDir/sf_core.dll"
           Copy-Item $stubDll "$outDir/sf_core_stub.dll"
 
-      - name: Run interop tests (unix)
-        if: runner.os != 'Windows' && matrix.interop_runner_unix != ''
-        run: ${{ matrix.interop_runner_unix }}
-        working-directory: dotnet
-
-      - name: Run interop tests (windows)
-        if: runner.os == 'Windows' && matrix.interop_runner_windows != ''
-        run: ${{ matrix.interop_runner_windows }}
-        working-directory: dotnet
+      - name: Run interop tests
+        run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Interop
         
   dotnet_tests_reference:
     needs: detect-changes
