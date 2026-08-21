@@ -23,11 +23,6 @@ use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
 use crate::rest::snowflake::AbortOutcome;
-use crate::rest::snowflake::CREDENTIAL_REJECTION_GS_CODES;
-use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
-use crate::rest::snowflake::SQLSTATE_AUTHORIZATION_FAILURE;
-use crate::rest::snowflake::error::SfError;
-use crate::rest::snowflake::sql_state::sql_state_from_code;
 use arrow::array::RecordBatchReader;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -958,96 +953,6 @@ fn to_driver_error(error: &ApiError) -> DriverError {
     }
 }
 
-/// Extract the Snowflake server vendor code and SQL state from an ApiError, if available.
-///
-/// Populates vendor_code/sql_state for query errors (where the Snowflake server
-/// code is the user-facing error number) and for login/authentication failures,
-/// where the raw GS code (e.g. `390100` for bad credentials) is surfaced as
-/// `vendor_code`, matching the legacy Python connector's behavior (SNOW-3775156) —
-/// a code of `-1` means the server omitted or sent a non-numeric code, in which
-/// case no vendor_code is surfaced and callers fall back to their default errno.
-///
-/// SQLSTATE resolution order (first hit wins):
-///   1. The `sqlState` the server included in its response (verbatim).
-///   2. For login failures, [`SQLSTATE_AUTHORIZATION_FAILURE`] when the code
-///      is a known credential rejection ([`CREDENTIAL_REJECTION_GS_CODES`]);
-///      otherwise left unset so callers fall back to their own default.
-///   3. `sql_state_from_code` lookup against the numeric Snowflake error
-///      code, which covers paths (async-poll, query-monitoring) that drop
-///      `sqlState` on the wire but keep the error code. Scoped to query
-///      errors — login codes are deliberately not added to that table.
-///
-/// We deliberately do NOT inspect the human-readable message text:
-/// classification belongs to the server, and substring matching on
-/// English error messages is locale-fragile and false-positive-prone.
-///
-/// Centralising this here means downstream consumers (ODBC, JDBC, ADBC) can
-/// rely on `sql_state` as the single source of truth for error
-/// classification.
-///
-/// NOTE: currently handles `QueryFailed`, `AsyncQuery`, and `Login` variants.
-/// New query-related error variants should be added here as they are
-/// introduced.
-fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
-    let (code, sql_state) = match error {
-        ApiError::Query { source, .. } => match source.as_ref() {
-            RestError::QueryFailed {
-                code, sql_state, ..
-            } => (*code, sql_state.clone()),
-            RestError::AsyncQuery {
-                source: SfError::SnowflakeBody { code, .. },
-                ..
-            } => (Some(*code), None),
-            _ => (None, None),
-        },
-        ApiError::Login { source, .. } => match source.as_ref() {
-            RestError::LoginError { code, .. } if *code != GS_CODE_UNAVAILABLE => (
-                Some(*code),
-                CREDENTIAL_REJECTION_GS_CODES
-                    .contains(code)
-                    .then(|| SQLSTATE_AUTHORIZATION_FAILURE.to_string()),
-            ),
-            _ => (None, None),
-        },
-        _ => (None, None),
-    };
-
-    let sql_state = sql_state.or_else(|| code.and_then(sql_state_from_code).map(|s| s.to_owned()));
-
-    (code, sql_state)
-}
-
-fn extract_query_id(error: &ApiError) -> Option<String> {
-    match error {
-        ApiError::Query { source, .. } => match source.as_ref() {
-            RestError::QueryFailed { query_id, .. } => query_id.clone(),
-            RestError::AsyncQuery { query_id, .. } => query_id.map(|id| id.to_string()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Extract the client-generated `requestId` used for the query submission.
-///
-/// Unlike [`extract_query_id`] (the server-assigned Snowflake Query ID), this
-/// is the UUID the driver sent as `?requestId=` on the submission request. It
-/// is useful for correlating a failure with server-side dedup/retry logs.
-///
-/// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
-/// New query-related error variants should be added here as they are
-/// introduced.
-fn extract_request_id(error: &ApiError) -> Option<String> {
-    match error {
-        ApiError::Query { source, .. } => match source.as_ref() {
-            RestError::QueryFailed { request_id, .. } => request_id.map(|id| id.to_string()),
-            RestError::AsyncQuery { request_id, .. } => request_id.map(|id| id.to_string()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 fn to_driver_exception(error: ApiError) -> DriverException {
     let status_code = match &error {
         ApiError::GenericError { .. } => StatusCode::GenericError,
@@ -1188,9 +1093,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::SpoolBufferWrite { .. } => StatusCode::InternalError,
     };
 
-    let (vendor_code, sql_state) = extract_vendor_info(&error);
-    let query_id = extract_query_id(&error);
-    let request_id = extract_request_id(&error);
+    let diagnostics = error.diagnostics();
     let message = error.to_string();
     let root_cause = extract_root_cause(&error);
     let driver_error = to_driver_error(&error);
@@ -1210,11 +1113,11 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         status_code: status_code as i32,
         error: Some(driver_error),
         error_trace,
-        vendor_code,
-        sql_state,
+        vendor_code: diagnostics.vendor_code,
+        sql_state: diagnostics.sql_state,
         root_cause,
-        query_id,
-        request_id,
+        query_id: diagnostics.query_id,
+        request_id: diagnostics.request_id,
     }
 }
 
@@ -1260,6 +1163,7 @@ impl From<ApiError> for DriverException {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
     use crate::rest::snowflake::error::SfError;
     use snafu::Location;
 
@@ -1308,11 +1212,16 @@ mod tests {
         }
     }
 
+    fn diagnostic_codes(error: &ApiError) -> (Option<i32>, Option<String>) {
+        let diagnostics = error.diagnostics();
+        (diagnostics.vendor_code, diagnostics.sql_state)
+    }
+
     #[test]
     fn query_failed_passes_through_server_sql_state() {
         let err = query_failed(Some(1003), Some("42000"));
         assert_eq!(
-            extract_vendor_info(&err),
+            diagnostic_codes(&err),
             (Some(1003), Some("42000".to_owned()))
         );
     }
@@ -1323,7 +1232,7 @@ mod tests {
         // 100038 → "22003". The wire value is authoritative.
         let err = query_failed(Some(100038), Some("22000"));
         assert_eq!(
-            extract_vendor_info(&err),
+            diagnostic_codes(&err),
             (Some(100038), Some("22000".to_owned()))
         );
     }
@@ -1332,19 +1241,19 @@ mod tests {
     fn query_failed_falls_back_to_lookup_when_sql_state_missing() {
         let err = query_failed(Some(100038), None);
         assert_eq!(
-            extract_vendor_info(&err),
+            diagnostic_codes(&err),
             (Some(100038), Some("22003".to_owned()))
         );
 
         let err = query_failed(Some(100078), None);
         assert_eq!(
-            extract_vendor_info(&err),
+            diagnostic_codes(&err),
             (Some(100078), Some("22001".to_owned()))
         );
 
         let err = query_failed(Some(1003), None);
         assert_eq!(
-            extract_vendor_info(&err),
+            diagnostic_codes(&err),
             (Some(1003), Some("42000".to_owned()))
         );
     }
@@ -1352,13 +1261,13 @@ mod tests {
     #[test]
     fn unknown_code_with_no_sql_state_stays_none() {
         let err = query_failed(Some(999_999), None);
-        assert_eq!(extract_vendor_info(&err), (Some(999_999), None));
+        assert_eq!(diagnostic_codes(&err), (Some(999_999), None));
     }
 
     #[test]
     fn missing_code_and_sql_state_stays_none() {
         let err = query_failed(None, None);
-        assert_eq!(extract_vendor_info(&err), (None, None));
+        assert_eq!(diagnostic_codes(&err), (None, None));
     }
 
     #[test]
@@ -1367,13 +1276,13 @@ mod tests {
         // the regression this fix is targeting.
         let err = async_query(1003);
         assert_eq!(
-            extract_vendor_info(&err),
+            diagnostic_codes(&err),
             (Some(1003), Some("42000".to_owned()))
         );
 
         let err = async_query(100038);
         assert_eq!(
-            extract_vendor_info(&err),
+            diagnostic_codes(&err),
             (Some(100038), Some("22003".to_owned()))
         );
     }
@@ -1381,14 +1290,14 @@ mod tests {
     #[test]
     fn async_query_unknown_code_keeps_sql_state_none() {
         let err = async_query(424_242);
-        assert_eq!(extract_vendor_info(&err), (Some(424_242), None));
+        assert_eq!(diagnostic_codes(&err), (Some(424_242), None));
     }
 
     #[test]
     fn login_credential_rejection_surfaces_code_and_authorization_sql_state() {
         let err = login_error(390100);
         assert_eq!(
-            extract_vendor_info(&err),
+            diagnostic_codes(&err),
             (Some(390100), Some("28000".to_owned()))
         );
     }
@@ -1399,7 +1308,7 @@ mod tests {
         // passes its vendor_code through, but sql_state is left unset so
         // callers fall back to their own default (e.g. "08001").
         let err = login_error(390111);
-        assert_eq!(extract_vendor_info(&err), (Some(390111), None));
+        assert_eq!(diagnostic_codes(&err), (Some(390111), None));
     }
 
     #[test]
@@ -1408,7 +1317,7 @@ mod tests {
         // non-numeric code; treat as "no vendor code" so callers fall back
         // to their default errno.
         let err = login_error(GS_CODE_UNAVAILABLE);
-        assert_eq!(extract_vendor_info(&err), (None, None));
+        assert_eq!(diagnostic_codes(&err), (None, None));
     }
 
     #[test]
@@ -1645,8 +1554,11 @@ mod tests {
                 location: loc(),
             }),
         };
-        assert_eq!(extract_query_id(&err), Some("01abc-def-12345".to_owned()));
-        assert_eq!(extract_request_id(&err), Some(request_id.to_string()));
+        assert_eq!(
+            err.diagnostics().query_id,
+            Some("01abc-def-12345".to_owned())
+        );
+        assert_eq!(err.diagnostics().request_id, Some(request_id.to_string()));
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, Some("01abc-def-12345".to_owned()));
@@ -1672,8 +1584,8 @@ mod tests {
                 },
             }),
         };
-        assert_eq!(extract_query_id(&err), Some(query_id.to_string()));
-        assert_eq!(extract_request_id(&err), Some(request_id.to_string()));
+        assert_eq!(err.diagnostics().query_id, Some(query_id.to_string()));
+        assert_eq!(err.diagnostics().request_id, Some(request_id.to_string()));
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, Some(query_id.to_string()));
@@ -1685,8 +1597,8 @@ mod tests {
         // When the server omits the query_id and no request_id was recorded,
         // both fields stay None on DriverException.
         let err = query_failed(Some(1003), Some("42000"));
-        assert_eq!(extract_query_id(&err), None);
-        assert_eq!(extract_request_id(&err), None);
+        assert_eq!(err.diagnostics().query_id, None);
+        assert_eq!(err.diagnostics().request_id, None);
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, None);
@@ -1700,8 +1612,8 @@ mod tests {
             argument: "bad".to_owned(),
         }
         .build();
-        assert_eq!(extract_query_id(&err), None);
-        assert_eq!(extract_request_id(&err), None);
+        assert_eq!(err.diagnostics().query_id, None);
+        assert_eq!(err.diagnostics().request_id, None);
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, None);
