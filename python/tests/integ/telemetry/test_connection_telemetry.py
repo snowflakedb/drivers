@@ -1,14 +1,8 @@
-import gzip
 import json
-
-from pathlib import Path
 
 import pytest
 
-from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, load_pem_private_key
-
-from tests.compatibility import is_new_driver
-from tests.private_key_helper import get_test_private_key_path
+from tests.integ.telemetry._telemetry_helpers import collect_log_entries, decode_telemetry_body, jwt_private_key_params
 
 
 def test_session_init_telemetry_sent_on_connection_open(int_test_connection_factory, wiremock):
@@ -21,7 +15,7 @@ def test_session_init_telemetry_sent_on_connection_open(int_test_connection_fact
     wiremock.add_mapping("auth/login_success_jwt.json")
     wiremock.add_mapping("telemetry/telemetry_send_success.json")
 
-    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **jwt_private_key_params())
     connection.close()
 
     # Telemetry is exported synchronously on connection release via
@@ -56,7 +50,7 @@ def test_session_init_telemetry_sent_on_connection_open(int_test_connection_fact
     assert normalized_headers["accept"] == "application/json"
     assert normalized_headers["user-agent"] is not None
 
-    body = _decode_telemetry_body(request)
+    body = decode_telemetry_body(request)
     assert "logs" in body, "Telemetry payload must contain 'logs' array"
     assert isinstance(body["logs"], list)
     assert len(body["logs"]) >= 1, "Expected at least one log entry"
@@ -83,7 +77,7 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
     wiremock.add_mapping("auth/login_success_jwt.json")
     wiremock.add_mapping("telemetry/telemetry_send_success.json")
 
-    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **jwt_private_key_params())
     try:
         cursor = connection.cursor()
         cursor.close()
@@ -95,7 +89,7 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
     telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
     assert len(telemetry_requests) >= 1, "Expected at least one POST to /telemetry/send after cursor creation"
 
-    log_entries = _collect_log_entries(telemetry_requests)
+    log_entries = collect_log_entries(telemetry_requests)
 
     cursor_entries = [
         entry
@@ -205,13 +199,13 @@ def test_api_usage_telemetry_records_constructor_arguments(int_test_connection_f
     # The factory passes a fixed set of kwargs to Connection.__init__ via
     # connector.connect(**params). All of them land in **kwargs on __init__,
     # so _passed_argument_names expands them to their individual key names.
-    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **jwt_private_key_params())
     connection.close()
 
     telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
     assert len(telemetry_requests) >= 1, "Expected at least one POST to /telemetry/send after connection open"
 
-    log_entries = _collect_log_entries(telemetry_requests)
+    log_entries = collect_log_entries(telemetry_requests)
 
     init_entries = [
         entry
@@ -262,7 +256,7 @@ def test_api_usage_telemetry_records_passed_arguments(int_test_connection_factor
     wiremock.add_mapping("auth/login_success_jwt.json")
     wiremock.add_mapping("telemetry/telemetry_send_success.json")
 
-    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **jwt_private_key_params())
     try:
         # Pass cursor_class explicitly so the decorator captures its name.
         cursor = connection.cursor(cursor_class=DictCursor)
@@ -273,7 +267,7 @@ def test_api_usage_telemetry_records_passed_arguments(int_test_connection_factor
     telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
     assert len(telemetry_requests) >= 1, "Expected at least one POST to /telemetry/send after cursor creation"
 
-    log_entries = _collect_log_entries(telemetry_requests)
+    log_entries = collect_log_entries(telemetry_requests)
 
     cursor_entries = [
         entry
@@ -311,7 +305,7 @@ def test_wrapper_error_telemetry_sent_on_execute_failure(int_test_connection_fac
     wiremock.add_mapping("telemetry/telemetry_send_success.json")
     wiremock.add_mapping("session/query_500_always.json")
 
-    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **jwt_private_key_params())
     try:
         with pytest.raises(Exception) as excinfo:
             with connection.cursor() as cursor:
@@ -324,7 +318,7 @@ def test_wrapper_error_telemetry_sent_on_execute_failure(int_test_connection_fac
     telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
     assert len(telemetry_requests) >= 1, "Expected at least one POST to /telemetry/send after the failed execute"
 
-    log_entries = _collect_log_entries(telemetry_requests)
+    log_entries = collect_log_entries(telemetry_requests)
 
     exception_entries = [
         entry
@@ -342,44 +336,3 @@ def test_wrapper_error_telemetry_sent_on_execute_failure(int_test_connection_fac
     assert message.get("exception.type") == expected_type, (
         f"exception.type expected {expected_type!r}, got {message.get('exception.type')!r}. Full message: {message}"
     )
-
-
-def _jwt_private_key_params() -> dict:
-    """Return connection overrides needed for JWT auth against Wiremock.
-
-    The old driver needs ``private_key`` as DER bytes; the universal driver
-    accepts ``private_key_file`` directly.
-    """
-    if is_new_driver():
-        return {}
-    pem_data = Path(get_test_private_key_path()).read_bytes()
-    pk = load_pem_private_key(pem_data, password=None)
-    return {
-        "private_key": pk.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption()),
-        "private_key_file": None,
-    }
-
-
-def _decode_telemetry_body(request: dict) -> dict:
-    """Decode the JSON body of a Wiremock-captured ``/telemetry/send`` request.
-
-    Wiremock may transparently decompress gzip, so try both.
-    """
-    raw_body = request["body"]
-    if isinstance(raw_body, str):
-        raw_body = raw_body.encode("latin-1")
-    try:
-        return json.loads(gzip.decompress(raw_body))
-    except gzip.BadGzipFile:
-        return json.loads(raw_body)
-
-
-def _collect_log_entries(telemetry_requests: list[dict]) -> list[dict]:
-    """Flatten the ``logs`` arrays across every captured telemetry request."""
-    entries: list[dict] = []
-    for request in telemetry_requests:
-        body = _decode_telemetry_body(request)
-        for entry in body.get("logs", []):
-            if isinstance(entry, dict) and isinstance(entry.get("message"), dict):
-                entries.append(entry)
-    return entries

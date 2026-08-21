@@ -177,7 +177,7 @@ def _report_wrapper_error(self: Any, method: Callable[..., Any], exc: BaseExcept
     try:
         # circular-import: telemetry.py imports errorhandler helpers; defer this import
         # to call time so the module-level import graph doesn't cycle.
-        from .telemetry import AsyncTelemetryClient
+        from .._common.telemetry import AsyncTelemetryClient
 
         error_source = f"{type(self).__name__}.{method.__name__}"
         client = _telemetry_client_if_enabled(self)
@@ -198,7 +198,7 @@ async def _report_wrapper_error_async(self: Any, method: Callable[..., Any], exc
     try:
         # circular-import: telemetry.py imports errorhandler helpers; defer this import
         # to call time so the module-level import graph doesn't cycle.
-        from .telemetry import AsyncTelemetryClient
+        from .._common.telemetry import AsyncTelemetryClient
 
         error_source = f"{type(self).__name__}.{method.__name__}"
         client = _telemetry_client_if_enabled(self)

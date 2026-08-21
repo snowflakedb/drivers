@@ -297,7 +297,7 @@ def _schedule_async_telemetry(coro: Any) -> None:
 def _send_api_usage(self: Any, func: Callable[..., Any], passed_arguments: list[str]) -> None:
     """Send the ``{ClassName}.{method_name}`` API-usage telemetry for *self*."""
     try:
-        from snowflake.connector._internal.telemetry import AsyncTelemetryClient
+        from snowflake.connector._common.telemetry import AsyncTelemetryClient
 
         api_name = f"{type(self).__name__}.{func.__name__}"
         client = _telemetry_client_if_enabled(self)
@@ -314,7 +314,7 @@ def _send_api_usage(self: Any, func: Callable[..., Any], passed_arguments: list[
 async def _send_api_usage_async(self: Any, func: Callable[..., Any], passed_arguments: list[str]) -> None:
     """Async counterpart of :func:`_send_api_usage`."""
     try:
-        from snowflake.connector._internal.telemetry import AsyncTelemetryClient
+        from snowflake.connector._common.telemetry import AsyncTelemetryClient
 
         api_name = f"{type(self).__name__}.{func.__name__}"
         client = _telemetry_client_if_enabled(self)
