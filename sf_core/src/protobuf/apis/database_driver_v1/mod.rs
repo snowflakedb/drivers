@@ -1292,6 +1292,15 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         Ok(TelemetrySendResponse {})
     }
+
+    #[instrument(name = "DatabaseDriverV1::telemetry_send_log", skip(self, input))]
+    async fn telemetry_send_log(
+        &self,
+        input: TelemetrySendLogRequest,
+    ) -> Result<TelemetrySendResponse, DriverException> {
+        required(input.conn_handle, "Connection handle is required")?;
+        Ok(TelemetrySendResponse {})
+    }
 }
 
 impl DatabaseDriverServer for DatabaseDriverImpl {}
@@ -1454,6 +1463,10 @@ pub trait DatabaseDriverClientBlockingExt {
     fn telemetry_send_wrapper_error_blocking(
         &self,
         input: TelemetrySendWrapperErrorRequest,
+    ) -> BlockingProtoResult<TelemetrySendResponse>;
+    fn telemetry_send_log_blocking(
+        &self,
+        input: TelemetrySendLogRequest,
     ) -> BlockingProtoResult<TelemetrySendResponse>;
     fn connection_get_query_result_blocking(
         &self,
@@ -1675,6 +1688,13 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: TelemetrySendWrapperErrorRequest,
     ) -> BlockingProtoResult<TelemetrySendResponse> {
         block_on_client_call(self.telemetry_send_wrapper_error(input))
+    }
+
+    fn telemetry_send_log_blocking(
+        &self,
+        input: TelemetrySendLogRequest,
+    ) -> BlockingProtoResult<TelemetrySendResponse> {
+        block_on_client_call(self.telemetry_send_log(input))
     }
 
     fn connection_get_query_result_blocking(

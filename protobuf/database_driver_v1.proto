@@ -1075,6 +1075,12 @@ message TelemetrySendWrapperErrorRequest {
 message TelemetrySendResponse {
 }
 
+message TelemetrySendLogRequest {
+  ConnectionHandle conn_handle = 1;
+  string message_json = 2;
+  int64 timestamp_ms = 3;
+}
+
 // Database Driver service definition
 service DatabaseDriver {
   option (service_error) = "DriverException";
@@ -1174,4 +1180,5 @@ service DatabaseDriver {
   // Telemetry operations
   rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendResponse);
   rpc TelemetrySendWrapperError(TelemetrySendWrapperErrorRequest) returns (TelemetrySendResponse);
+  rpc TelemetrySendLog(TelemetrySendLogRequest) returns (TelemetrySendResponse);
 }
