@@ -118,14 +118,27 @@ describe('Query returning number data types', () => {
     expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
   });
 
-  it('returns NULL for fixed-point types', async () => {
+  it('returns NULL for fixed-point and float-point types', async () => {
     const { rows } = await executeAsync(
       connection,
       `SELECT
         NULL::INT,
-        NULL::NUMBER(10,2)`,
+        NULL::NUMBER(10,2),
+        NULL::FLOAT,
+        NULL::DECFLOAT`,
     );
-    expect(Object.values(rows![0])).toEqual([null, null]);
+    expect(Object.values(rows![0])).toEqual([null, null, null, null]);
+  });
+
+  it('returns fixed-point and float-point columns together in one row', async () => {
+    const { rows } = await executeAsync(
+      connection,
+      `SELECT
+        23::INT,
+        1.25::NUMBER(10,2),
+        1.5::FLOAT`,
+    );
+    expect(Object.values(rows![0])).toEqual([23, 1.25, 1.5]);
   });
 
   it('returns float-point types as Number', async () => {
@@ -146,6 +159,19 @@ describe('Query returning number data types', () => {
     }
   });
 
+  it('returns float-point values at the edges of the f64 range', async () => {
+    const cases = [
+      { expression: '1e-300::FLOAT', expected: 1e-300 },
+      { expression: '1e300::FLOAT', expected: 1e300 },
+      { expression: '-0.0::FLOAT', expected: -0 },
+      { expression: '0.1::FLOAT + 0.2::FLOAT', expected: 0.3 },
+      // First integer beyond MAX_SAFE_INTEGER.
+      { expression: `${Number.MAX_SAFE_INTEGER + 1}::FLOAT`, expected: 9007199254740990 },
+    ];
+    const { rows } = await executeAsync(connection, selectAll(cases));
+    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
+  });
+
   // TODO: this test must have warning and telemetry event check
   it('returns large numbers (> Number.MAX_SAFE_INTEGER) with precision loss', async () => {
     const { rows } = await executeAsync(
@@ -160,20 +186,18 @@ describe('Query returning number data types', () => {
     expect(selectedFloatValue.toString()).toBe('9007199254740930');
   });
 
-  // Bug - doesn't work in old driver
-  // https://snowflake.slack.com/archives/C09TH5U3QP2/p1779268894662169
-  it.todo('returns FLOAT special values "NaN", "inf", "-inf" as JS types', async () => {
+  it('returns FLOAT special values as JS numbers', async () => {
     const { rows } = await executeAsync(
       connection,
       `SELECT
-        'NaN'::FLOAT as NAN_COLUMN,
-        'inf'::FLOAT as INF_COLUMN,
-        '-inf'::FLOAT as -INF_COLUMN
-    `,
+        'NaN'::FLOAT,
+        'inf'::FLOAT,
+        '-inf'::FLOAT`,
     );
-    expect(rows![0].NAN_COLUMN).toBe(NaN);
-    expect(rows![0].INF_COLUMN).toBe(Infinity);
-    expect(rows![0]['-INF_COLUMN']).toBe(-Infinity);
+    const expected = isRunningNewDriverWithBD('BD#9')
+      ? [NaN, Infinity, -Infinity]
+      : [NaN, NaN, NaN];
+    expect(Object.values(rows![0])).toEqual(expected);
   });
 
   it.each([
@@ -216,7 +240,6 @@ describe('Query returning number data types', () => {
 
   it('returns DECFLOAT literals correctly formatted', async () => {
     const cases: { literal: string; expected: string | null }[] = [
-      { literal: 'NULL', expected: null },
       { literal: "'1.5'", expected: '1.5' },
       { literal: "'1.500'", expected: '1.5' },
       { literal: "'0'", expected: '0' },

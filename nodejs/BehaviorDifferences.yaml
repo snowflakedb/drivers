@@ -206,3 +206,25 @@ behavior_differences:
       point users toward (it describes itself as a thin polyfill wrapper over the native type).
       Flagged as breaking because code that special-cases `big-integer` instances, rather than
       treating the value as an opaque bigint, needs updating.
+
+  9:
+    name: 'FLOAT special values NaN/inf/-inf are all collapsed to NaN by the old driver'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      Querying FLOAT special values (NaN, inf, -inf) does not work as documented; all three come
+      back as NaN. The server spells infinity `inf` / `-inf`, but the old driver converts REAL
+      cells with JavaScript's Number(), whose numeric grammar only accepts the spelling `Infinity`
+      -- so `Number('inf')` and `Number('-inf')` both yield NaN, indistinguishable from a genuine
+      NaN cell.
+    new_driver_behavior: |
+      Returns the real values: `inf` as `Infinity`, `-inf` as `-Infinity`, `NaN` as `NaN`.
+    status_rationale: |
+      Callers can now tell an overflow from a genuine NaN and recover its sign, which the old
+      driver's collapse made impossible. This is a real, intentional behavior change: code that
+      relied on comparing against NaN, or on isNaN() being true for an overflow, will now see
+      infinities instead -- hence is_breaking_change: true, though the old behavior was itself the
+      bug being fixed.

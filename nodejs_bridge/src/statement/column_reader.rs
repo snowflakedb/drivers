@@ -1,6 +1,6 @@
 use arrow::array::{
-    Array, BinaryArray, BooleanArray, Decimal128Array, Int16Array, Int64Array, PrimitiveArray,
-    StringArray, StringBuilder, StructArray,
+    Array, BinaryArray, BooleanArray, Decimal128Array, Float64Array, Int16Array, Int64Array,
+    PrimitiveArray, StringArray, StringBuilder, StructArray,
 };
 use arrow::datatypes::{DataType, Date32Type, Field};
 
@@ -26,6 +26,7 @@ pub(crate) enum ColumnReader {
     Text(StringArray),
     FixedInt { array: Int64Array, scale: u32 },
     FixedDecimal { array: Decimal128Array, scale: u32 },
+    Real(Float64Array),
     Decfloat(StringArray),
 }
 
@@ -114,6 +115,11 @@ impl ColumnReader {
                     })?;
                 Ok(Self::Variant(array))
             }
+            Some("REAL") => Ok(Self::Real(widen(
+                column,
+                &DataType::Float64,
+                "Float64Array",
+            )?)),
             // TODO: DECFLOAT iterates over rows in `for_field`, making its `read` arm a
             // plain lookup like every other variant. Worth revisiting whether the
             // for_field/read split should just collapse into one eager step for all.
@@ -172,6 +178,9 @@ impl ColumnReader {
                 SqlValue::String(array.value(row_index).to_string())
             }),
             Self::Text(array) => read_cell(array, row_index, || {
+                SqlValue::String(array.value(row_index).to_string())
+            }),
+            Self::Real(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())
             }),
             Self::Decfloat(array) => read_cell(array, row_index, || {
