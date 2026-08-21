@@ -78,11 +78,21 @@ rules:
 
   - id: ud-no-hardcoded-shared-table-names
     rule: |
-      **OBJECTIVE**: Prevent test pollution and ordering flakiness caused by multiple concurrent test runs colliding on the same database objects.
+      **OBJECTIVE**: Prevent test pollution and ordering flakiness caused by multiple concurrent test runs colliding on the same **account-persistent** database objects.
 
-      **REQUIREMENT**: Tests that create Snowflake tables, schemas, stages, streams, tasks, or any other named database objects MUST use names that are unique per test run (e.g., suffixed with a UUID, timestamp, or pytest's `tmp_path`-style unique ID). A hardcoded name like `TEST_TABLE`, `my_stage`, or `schema_for_test` will collide when two CI builds run against the same account simultaneously, or when a previous run left the object behind after a crash.
+      **REQUIREMENT**: Tests that create Snowflake tables, schemas, stages, streams, tasks, or any other named database objects that persist beyond the session MUST use names that are unique per test run (e.g., suffixed with a UUID, timestamp, or pytest's `tmp_path`-style unique ID). A hardcoded name like `TEST_TABLE`, `my_stage`, or `schema_for_test` will collide when two CI builds run against the same account simultaneously, or when a previous run left the object behind after a crash.
 
       The fix: generate the name once in a fixture and pass it to all steps that need it. Clean up the object in a `finally`/`yield`-fixture teardown, not at the start of the test (start-of-test cleanup silently hides leftovers from a previous crashed run and makes debugging harder).
+
+      **SESSION-SCOPED / TEMPORARY OBJECT EXCEPTION — do NOT flag**: suppress only when **both** are true:
+
+      1. **Keyword, not substring.** Case-insensitive CREATE (optional `OR REPLACE`) is followed by `TEMP` / `TEMPORARY` / `VOLATILE` / `LOCAL TEMPORARY` / `GLOBAL TEMPORARY` (optional `IF NOT EXISTS`) and then `TABLE`, `STAGE`, `FILE FORMAT`, `PROCEDURE`, or `FUNCTION`. Concatenated fragments count only when that keyword is a string literal in the same statement (`"CREATE TEMP TABLE " + name`, `f"CREATE TEMPORARY TABLE {name}"`). Do not suppress `f"CREATE {kind} TABLE {name}"` unless `kind` is a literal `"TEMP"` / `"TEMPORARY"` and cannot be `TRANSIENT` or empty. Do not match identifiers (`CREATE TABLE template_data`, `CREATE STAGE temp_stage`) or comments. Snowflake has no `CREATE TEMPORARY VIEW` / `CREATE TEMPORARY STREAM`. `CREATE TRANSIENT TABLE` is account-persistent — still flag.
+
+      2. **The creating session is not shared across tests.** Unique-per-run names are not required when each test has its own Snowflake session (`function_connection`, `try (Connection c = openConnection())`). Session-scoped objects then cannot collide across CI sessions or leave crash leftovers.
+
+      **Still flag** hardcoded TEMP names when tests reuse one session — Python module-scoped `connection` / `cursor`, JDBC `@TestInstance(PER_CLASS)` / `getDefaultConnection()`, a pool checkout held for the class. In those cases `CREATE TEMP TABLE t` collides, `OR REPLACE` clobbers a sibling, and `IF NOT EXISTS` reuses a dirty stage. Unique names (or a per-test connection) remain required.
+
+      Do NOT suppress `CREATE TABLE`, `CREATE OR REPLACE TABLE`, `CREATE TRANSIENT TABLE`, non-TEMP `CREATE STAGE`, or `CREATE SCHEMA`, even if the test later `DROP`s the object. A name that merely contains "temp" is not session-scoped. This exception does not override `jdbc-multistatement-hardcoded-object-names` (JDBC multistatement tests typically share `getDefaultConnection()`).
 
       ❌ **BAD (Python):**
       ```python
@@ -139,6 +149,26 @@ rules:
       void dropTable() throws SQLException {
           stmt.execute("DROP TABLE IF EXISTS " + table);
       }
+      ```
+
+      ✅ **ALSO FINE — do NOT flag (TEMP TABLE on a per-test session):**
+      ```python
+      def test_returns_dml_status_column(function_connection):
+          with function_connection.cursor() as cur:
+              cur.execute("CREATE OR REPLACE TEMP TABLE _test_di_dml (x INT)")
+      ```
+
+      ❌ **STILL FLAG (TEMP TABLE on a shared module-scoped session):**
+      ```python
+      def test_a(cursor):  # module-scoped connection — one Snowflake session for the file
+          cursor.execute("CREATE TEMP TABLE t (id INT)")
+
+      def test_b(cursor):
+          cursor.execute("CREATE TEMP TABLE t (id INT)")  # already exists
+      ```
+      ```java
+      // SnowflakeIntegrationTestBase is PER_CLASS; getDefaultConnection() is shared
+      stmt.execute("CREATE TEMPORARY STAGE IF NOT EXISTS test_stage");
       ```
 
   - id: ud-no-global-mutable-test-state
@@ -393,7 +423,7 @@ rules:
       - Environment variables mutated with `os.environ["KEY"] = ...` in test bodies without `monkeypatch` (the change leaks to parallel workers in the same process).
 
       Mitigations:
-      - Use worker-scoped unique names for all database objects (see `ud-no-hardcoded-shared-table-names`).
+      - Use worker-scoped unique names for account-persistent database objects (see `ud-no-hardcoded-shared-table-names`; TEMP objects on a per-test session are exempt, TEMP objects on a shared session are not).
       - Use `tmp_path` (pytest) or `tempfile.TemporaryDirectory()` for file isolation.
       - Use `monkeypatch.setenv` for environment variable changes — it scopes changes to the test and undoes them afterward.
       - In Rust, annotate tests that must not run in parallel with `#[serial_test::serial]`, or use `tokio::task_local!` to scope shared values.
@@ -1201,9 +1231,9 @@ rules:
     rule: |
       **OBJECTIVE**: Prevent parallel CI collisions on Snowflake objects created inside multistatement SQL strings.
 
-      **REQUIREMENT**: Multistatement SQL that creates temporary or permanent tables, stages, or schemas MUST use unique names per invocation (UUID suffix). Hardcoded names like `ms_dml_test` or `ms_mix_test` collide when Gradle runs multiple test classes against the same Snowflake schema concurrently.
+      **REQUIREMENT**: Multistatement SQL that creates tables, stages, or schemas MUST use unique names per invocation (UUID suffix). Hardcoded names like `ms_dml_test` or `ms_mix_test` collide when Gradle runs multiple test classes against the same Snowflake schema concurrently, **and** when methods share `getDefaultConnection()` / `@TestInstance(PER_CLASS)` — `CREATE OR REPLACE TEMPORARY TABLE ms_dml_test` still clobbers a sibling on that session.
 
-      **Exempt**: Single-statement tests that create and drop within one try-with-resources block using a UUID-generated name (see `BasicExecuteQueryTests`).
+      **Exempt**: Single-statement tests that create and drop within one try-with-resources block using a UUID-generated name (see `BasicExecuteQueryTests`). The session-scoped exception on `ud-no-hardcoded-shared-table-names` does **not** apply here: JDBC multistatement tests typically reuse one connection, so unique TEMP names remain required.
 
       ❌ **BAD (Java):**
       ```java

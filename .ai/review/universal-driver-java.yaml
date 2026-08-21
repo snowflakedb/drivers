@@ -286,9 +286,11 @@ rules:
     rule: |
       **OBJECTIVE**: Prevent parallel CI collisions on Snowflake tables, stages, schemas, and warehouses.
 
-      **REQUIREMENT**: Tests that create named Snowflake objects MUST generate unique names per test invocation (UUID suffix, `@TempDir`-style token, or fixture-provided name). Hardcoded names like `TEST_TABLE`, `ms_dml_test`, or `test_stage` collide across Gradle workers or leftover crashed runs.
+      **REQUIREMENT**: Tests that create named **account-persistent** Snowflake objects MUST generate unique names per test invocation (UUID suffix, `@TempDir`-style token, or fixture-provided name). Hardcoded names like `TEST_TABLE`, `ms_dml_test`, or `test_stage` collide across Gradle workers or leftover crashed runs.
 
       Clean up in `@AfterEach` / try-with-resources teardown, not only at test start (start-only cleanup hides prior failures). See `ud-no-hardcoded-shared-table-names` and `jdbc-multistatement-hardcoded-object-names` in `universal-driver-flaky-tests.yaml`.
+
+      **SESSION-SCOPED / TEMPORARY OBJECT EXCEPTION — do NOT flag**: same parse as `ud-no-hardcoded-shared-table-names` (TEMP as a CREATE keyword, not a substring). Unique names are not required for TEMP objects on a **per-test** connection. Do not suppress `CREATE TABLE` / `CREATE TRANSIENT TABLE`. Still flag hardcoded TEMP names on `getDefaultConnection()` / `@TestInstance(PER_CLASS)` — including `CREATE OR REPLACE TEMPORARY TABLE ms_dml_test`. Unique interpolated names (`"CREATE TEMP TABLE " + tableName`) remain fine.
 
       ❌ **BAD:**
       ```java
@@ -314,6 +316,11 @@ rules:
       void dropTable() throws Exception {
           stmt.execute("DROP TABLE IF EXISTS " + table);
       }
+      ```
+
+      ✅ **ALSO FINE — do NOT flag (TEMP TABLE with a unique name, even on a shared connection):**
+      ```java
+      stmt.execute("CREATE TEMP TABLE " + tableName + " (id INT)");
       ```
 
   - id: ud-java-resultset-close-or-fully-consume
