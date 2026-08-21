@@ -1,5 +1,6 @@
 mod column;
 mod column_reader;
+mod decfloat;
 mod result;
 mod stream_state;
 
