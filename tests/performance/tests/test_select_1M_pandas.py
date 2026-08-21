@@ -5,6 +5,7 @@ recorded_http for fetch_mode=pandas (fetch_pandas_all) and arrow_batches
 (iterate fetch_arrow_batches).
 """
 import pytest
+from catalog import TYPE_KEYS, get_sql
 from runner.test_types import PerfTestType
 
 # FETCH_MODE is read only by the Python driver app; other drivers ignore it and
@@ -15,90 +16,18 @@ ITERATIONS = 10
 WARMUP_ITERATIONS = 2
 
 FETCH_MODES = ["pandas", "arrow_batches"]
+ORDERED_TYPES = ("string", "number", "15columns")
 
-_TABLE = "SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM"
 
-_15_COLUMNS = """
-            SELECT
-                L_ORDERKEY,
-                L_PARTKEY,
-                L_SUPPKEY,
-                L_LINENUMBER,
-                L_QUANTITY,
-                L_EXTENDEDPRICE,
-                L_DISCOUNT,
-                L_TAX,
-                L_RETURNFLAG,
-                L_LINESTATUS,
-                L_SHIPDATE,
-                L_COMMITDATE,
-                L_RECEIPTDATE,
-                L_SHIPINSTRUCT,
-                L_COMMENT
-            FROM {table}
-            {order_by}
-            LIMIT 1000000
-        """
+def _stem(type_key: str, *, ordered: bool = False) -> str:
+    if ordered:
+        return f"{type_key}_1M_ordered_arrow"
+    return f"{type_key}_1M_arrow"
+
 
 # (name_stem, sql) — name_stem becomes select_{stem}_{fetch_mode}[_recorded_http]
-# Same queries as test_select_1M_recorded_http.py
-QUERIES = [
-    (
-        "string_1M_arrow",
-        f"SELECT L_COMMENT FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "number_1M_arrow",
-        f"SELECT L_LINENUMBER::INT FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "date_1M_arrow",
-        f"SELECT L_SHIPDATE FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "float_1M_arrow",
-        f"SELECT L_EXTENDEDPRICE FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "double_1M_arrow",
-        f"SELECT L_EXTENDEDPRICE::DOUBLE FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "boolean_1M_arrow",
-        f"SELECT (L_TAX > 0.04)::BOOLEAN FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "timestamp_ntz_1M_arrow",
-        f"SELECT L_SHIPDATE::TIMESTAMP_NTZ FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "timestamp_tz_1M_arrow",
-        f"SELECT L_SHIPDATE::TIMESTAMP_TZ FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "time_1M_arrow",
-        f"SELECT TIME_FROM_PARTS(MOD(L_ORDERKEY, 24), MOD(L_PARTKEY, 60), MOD(L_SUPPKEY, 60)) FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "binary_1M_arrow",
-        f"SELECT TO_BINARY(L_COMMENT, 'UTF-8') FROM {_TABLE} LIMIT 1000000",
-    ),
-    (
-        "15columns_1M_arrow",
-        _15_COLUMNS.format(table=_TABLE, order_by=""),
-    ),
-    (
-        "string_1M_ordered_arrow",
-        f"SELECT L_COMMENT FROM {_TABLE} ORDER BY L_ORDERKEY LIMIT 1000000",
-    ),
-    (
-        "number_1M_ordered_arrow",
-        f"SELECT L_LINENUMBER::INT FROM {_TABLE} ORDER BY L_ORDERKEY LIMIT 1000000",
-    ),
-    (
-        "15columns_1M_ordered_arrow",
-        _15_COLUMNS.format(table=_TABLE, order_by="ORDER BY L_ORDERKEY"),
-    ),
+QUERIES = [(_stem(k), get_sql(k, 1_000_000)) for k in TYPE_KEYS] + [
+    (_stem(k, ordered=True), get_sql(k, 1_000_000, ordered=True)) for k in ORDERED_TYPES
 ]
 
 CASES = [

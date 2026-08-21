@@ -9,12 +9,11 @@ pandas require FETCH_MODE and are Python-only.
 Each case runs both e2e and recorded_http.
 """
 import pytest
+from catalog import get_sql
 from runner.test_types import PerfTestType
 
 ITERATIONS = 30
 WARMUP_ITERATIONS = 2
-
-SQL_TEMPLATE = "SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT {n}"
 
 ROW_COUNTS = [(1, "1_row"), (15, "15_rows"), (400, "400_rows")]
 FETCH_MODES = ["fetchmany", "fetchall", "fetchone", "pandas"]
@@ -46,7 +45,7 @@ CASES = [
 @pytest.mark.parametrize("row_count,name,fetch_mode", CASES)
 def test_select_string(perf_test, row_count, name, fetch_mode):
     perf_test(
-        sql_command=SQL_TEMPLATE.format(n=row_count),
+        sql_command=get_sql("string", row_count),
         fetch_mode=fetch_mode,
         test_name=f"select_string_{name}",
     )
@@ -58,7 +57,7 @@ def test_select_string(perf_test, row_count, name, fetch_mode):
 def test_select_string_recorded_http(perf_test, row_count, name, fetch_mode):
     perf_test(
         test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command=SQL_TEMPLATE.format(n=row_count),
+        sql_command=get_sql("string", row_count),
         fetch_mode=fetch_mode,
         test_name=f"select_string_{name}_recorded_http",
     )
