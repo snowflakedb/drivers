@@ -400,6 +400,82 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColAttribute: NUM_PREC_RADIX for DOU
   CHECK(radix == 2);
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: BUFFER_LENGTH is precision+2 for NUMBER/DECIMAL",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
+                             SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // COLUMN_NAME -> COLUMN_SIZE (same on both drivers). BUFFER_LENGTH differs:
+  // NEW = precision + 2; OLD = storage width (NUM38 → 16, NUM18S6 → 8).
+  const std::map<std::string, SQLINTEGER> expectColSize = {
+      {"NUM38", 38},
+      {"NUM18S6", 18},
+  };
+  const std::map<std::string, SQLINTEGER> expectBufLenNew = {
+      {"NUM38", 40},
+      {"NUM18S6", 20},
+  };
+  const std::map<std::string, SQLINTEGER> expectBufLenOld = {
+      {"NUM38", 16},
+      {"NUM18S6", 8},
+  };
+
+  std::map<std::string, std::pair<SQLINTEGER, SQLINTEGER>> actual;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+    if (expectColSize.count(columnName.text) == 0) {
+      continue;
+    }
+
+    SQLINTEGER colSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN colSizeInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 7, SQL_C_SLONG, &colSize, 0, &colSizeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(colSizeInd == sizeof(SQLINTEGER));
+
+    SQLINTEGER bufLen = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN bufLenInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &bufLen, 0, &bufLenInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(bufLenInd == sizeof(SQLINTEGER));
+
+    actual.emplace(columnName.text, std::make_pair(colSize, bufLen));
+  }
+
+  for (const auto& [column, wantSize] : expectColSize) {
+    const auto it = actual.find(column);
+    REQUIRE(it != actual.end());
+    INFO("column " << column);
+    CHECK(it->second.first == wantSize);
+    NEW_DRIVER_ONLY("BD#122") { CHECK(it->second.second == expectBufLenNew.at(column)); }
+    OLD_DRIVER_ONLY("BD#122") { CHECK(it->second.second == expectBufLenOld.at(column)); }
+  }
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLColAttribute: OCTET_LENGTH/DISPLAY_SIZE for NUMBER remains 136 (catalog BUFFER_LENGTH is p+2)",
+                 "[odbc-api][columns][catalog][col_attribute]") {
+  const std::string sql = std::string("SELECT NUM38 FROM ") + database_name() + "." + READONLY_SECOND_SCHEMA_NAME +
+                          "." + readonly_db::SECOND_SCHEMA_TABLE;
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN displaySize = -1;
+  ret = SQLColAttribute(stmt_handle(), 1, SQL_DESC_DISPLAY_SIZE, nullptr, 0, nullptr, &displaySize);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(displaySize == 136);
+
+  SQLLEN octetLength = -1;
+  ret = SQLColAttribute(stmt_handle(), 1, SQL_DESC_OCTET_LENGTH, nullptr, 0, nullptr, &octetLength);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(octetLength == 136);
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: DATA_TYPE is non-NULL for all types (SQL_VARCHAR for unmapped)",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
