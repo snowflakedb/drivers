@@ -18,10 +18,10 @@ public static class AssertExtensions
 
         var error = new StringBuilder("Expected collections to be equivalent.\n");
         foreach (var item in leftMinusRight)
-            error.AppendLine($"Found, but didn't expect: {item}");
+            error.AppendLine($"Found, but didn't expect: {item!.ToString()}");
 
         foreach (var item in rightMinusLeft)
-            error.AppendLine($"Expected, but didn't find: {item}");
+            error.AppendLine($"Expected, but didn't find: {item!.ToString()}");
 
         throw new XunitException(error.ToString());
     }

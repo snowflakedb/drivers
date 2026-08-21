@@ -76,8 +76,7 @@ internal sealed class SfCoreTransport : ICoreTransport
 
     private static unsafe Task<SfCoreResponseData> CallProtoAsync(string api, string method, byte[] request, CancellationToken cancelToken)
     {
-        if (cancelToken.IsCancellationRequested)
-            throw new TaskCanceledException("Operation cancelled before calling the sf_core.");
+        cancelToken.ThrowIfCancellationRequested();
 
         var requestLength = (nuint)request.Length;
         var tcs = new TaskCompletionSource<SfCoreResponseData>(TaskCreationOptions.RunContinuationsAsynchronously);

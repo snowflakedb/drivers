@@ -3,7 +3,7 @@ using Snowflake.Data.Tests.Utilities;
 namespace Snowflake.Data.Tests.Fixtures;
 
 public class ITFixture
-#if !OLD_XUNIT
+#if !NETFRAMEWORK
     : IAsyncLifetime
 #else
     : IDisposable
@@ -29,7 +29,7 @@ public class ITFixture
         InitializeEnvironment();
     }
 
-#if !OLD_XUNIT
+#if !NETFRAMEWORK
     public async ValueTask InitializeAsync()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];

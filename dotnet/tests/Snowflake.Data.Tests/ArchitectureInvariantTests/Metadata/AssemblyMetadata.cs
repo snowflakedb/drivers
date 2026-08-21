@@ -29,6 +29,8 @@ public sealed class AssemblyMetadata
     public override bool Equals(object? obj) => ReferenceEquals(this, obj) || obj is AssemblyMetadata other && Equals(other);
 
     public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(Name);
+
+    public override string ToString() => this;
 }
 
 

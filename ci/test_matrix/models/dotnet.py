@@ -5,6 +5,7 @@ PARAMS = {
     "Arch":          ["x64", "arm"],
     "Cloud":         ["aws", "gcp", "azure"],
     "DotnetVersion": ["net472", "net481", "net8.0", "net9.0", "net10.0"],
+    "Mode":          ["regression", "interop"],
 }
 
 # Cloud rotation: each non-framework dotnet version maps to one cloud. Applied via
@@ -15,6 +16,10 @@ _CLOUD_FOR_DOTNET = {
     "net9.0": "azure",
     "net10.0": "aws",
 }
+
+# Interop tests only support these TFMs (must match the test project's TargetFrameworks).
+_INTEROP_TFMS = {"net472", "net9.0", "net10.0"}
+
 
 def is_valid(c):
     """Block-list: return False to forbid a combo, fall through to allow."""
@@ -33,9 +38,18 @@ def is_valid(c):
     # .NET Framework (net472, net481): Windows only.
     if c["DotnetVersion"] in ("net472", "net481") and c["OS"] != "windows":
         return False
-        
+
     # products space dim restriction
     if c["DotnetVersion"] in ("net8.0", "net9.0", "net10.0") and _CLOUD_FOR_DOTNET[c["DotnetVersion"]] != c["Cloud"]:
+        return False
+
+    # --- Interop mode constraints ---
+    # Interop tests only target a subset of TFMs.
+    if c["Mode"] == "interop" and c["DotnetVersion"] not in _INTEROP_TFMS:
+        return False
+
+    # Interop doesn't need cloud variation — pin to a single value to collapse the dimension.
+    if c["Mode"] == "interop" and c["Cloud"] != "aws":
         return False
 
     return True
@@ -60,16 +74,20 @@ def merge_valid(c):
 MERGE_VALID = [merge_valid]
 
 PR_CELLS = [
-    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws",   "DotnetVersion": "net10.0"},
-    {"OS": "windows", "Arch": "x64", "Cloud": "azure", "DotnetVersion": "net481"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws",   "DotnetVersion": "net10.0", "Mode": "regression"},
+    {"OS": "windows", "Arch": "x64", "Cloud": "azure", "DotnetVersion": "net481",  "Mode": "regression"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws",   "DotnetVersion": "net10.0", "Mode": "interop"},
+    {"OS": "windows", "Arch": "x64", "Cloud": "aws",   "DotnetVersion": "net10.0", "Mode": "interop"},
+    {"OS": "windows", "Arch": "x64", "Cloud": "aws",   "DotnetVersion": "net472",  "Mode": "interop"},
+    {"OS": "macos",   "Arch": "arm", "Cloud": "aws",   "DotnetVersion": "net10.0", "Mode": "interop"},
 ]
 
 MERGE_QUEUE_CELLS = [
-    {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws", "DotnetVersion": "net10.0"}
+    {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws", "DotnetVersion": "net10.0", "Mode": "regression"},
 ]
 
 JSON_CELLS = {
-    "pr": [], 
-    "merge": [], 
+    "pr": [],
+    "merge": [],
     "nightly": []
 }

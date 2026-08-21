@@ -1,0 +1,10 @@
+[workspace]
+
+[package]
+name = "sf_core_stub"
+edition = "2024"
+rust-version = "1.94"
+
+[lib]
+name = "sf_core_stub"
+crate-type = ["cdylib"]
