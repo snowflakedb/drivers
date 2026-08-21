@@ -17,7 +17,9 @@ use crate::api::error::{
 use crate::api::handle_registry::HandleId;
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
-use crate::api::utils::ApiExitLogDebug;
+use crate::api::utils::{
+    ApiExitLogDebug, config_setting_bool, config_setting_string, config_setting_u64,
+};
 use crate::api::{
     ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, ExplicitDesc,
     FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK,
@@ -343,7 +345,7 @@ fn update_numeric_settings(
             .await
             && let Some(value) = resp.value
         {
-            let bool_value = value.eq_ignore_ascii_case("true");
+            let bool_value = config_setting_bool(&value);
             settings.treat_decimal_as_int = bool_value;
             tracing::info!("Server parameter ODBC_TREAT_DECIMAL_AS_INT = {bool_value}");
         }
@@ -356,7 +358,7 @@ fn update_numeric_settings(
             .await
             && let Some(value) = resp.value
         {
-            let bool_value = value.eq_ignore_ascii_case("true");
+            let bool_value = config_setting_bool(&value);
             settings.treat_big_number_as_string = bool_value;
             tracing::info!("Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {bool_value}");
         }
@@ -368,7 +370,7 @@ fn update_numeric_settings(
             })
             .await
             && let Some(value) = resp.value
-            && let Ok(size) = value.parse::<u64>()
+            && let Some(size) = config_setting_u64(&value)
         {
             settings.max_varchar_size = size;
             tracing::info!("Server parameter VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT = {size}");
@@ -414,7 +416,7 @@ fn update_numeric_settings(
                     key: "TIMESTAMP_TZ_OUTPUT_FORMAT".to_string(),
                 })
                 .await
-                .map(|resp| resp.value)
+                .map(|resp| resp.value.and_then(|v| config_setting_string(&v)))
                 .map_err(|e| format!("{e:?}"));
             apply_tz_offset_format_update(&mut settings.tz_offset_format_cache, rpc_result);
         }
@@ -1508,7 +1510,10 @@ fn stage_binding_threshold(conn_handle: &ConnectionHandle) -> OdbcResult<u32> {
     let raw = get_session_parameter(conn_handle, "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD")?;
     // Default Snowflake value is 65280 (255 * 256).  0 would mean "never
     // stage-bind" when the parameter is absent, which is wrong.
-    Ok(raw.and_then(|s| s.parse::<u32>().ok()).unwrap_or(65280))
+    Ok(raw
+        .and_then(|v| config_setting_u64(&v))
+        .and_then(|v| u32::try_from(v).ok())
+        .unwrap_or(65280))
 }
 
 fn effective_param_count(
@@ -1524,7 +1529,10 @@ fn effective_param_count(
     }
 }
 
-fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResult<Option<String>> {
+fn get_session_parameter(
+    conn_handle: &ConnectionHandle,
+    key: &str,
+) -> OdbcResult<Option<ConfigSetting>> {
     crate::api::runtime::global()
         .context(OdbcRuntimeSnafu)?
         .block_on(async |c| {
