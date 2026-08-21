@@ -8,10 +8,10 @@ A single run of this file (or of tests/) executes the complete type × bind_mode
 See test_select_1M_recorded_http.py for the WireMock (CPU-only) counterparts.
 
 Test function names stay stable (`test_select_string_1M_arrow`, …) for Jenkins smoke /
-regression node-id filters; SQL is shared via select_1m_queries.
+regression node-id filters; SQL is shared via catalog.
 """
 import pytest
-from select_1m_queries import TYPE_QUERIES
+from catalog import TYPE_KEYS, get_sql
 
 ITERATIONS = 10
 WARMUP_ITERATIONS = 2
@@ -31,7 +31,8 @@ def _make_select_test(sql: str, bind_mode: str = "char"):
     return test_fn
 
 
-for type_key, sql in TYPE_QUERIES:
+for type_key in TYPE_KEYS:
+    sql = get_sql(type_key, 1_000_000)
     char_name = f"test_select_{type_key}_1M_arrow"
     globals()[char_name] = _make_select_test(sql, "char")
     globals()[char_name].__name__ = char_name
