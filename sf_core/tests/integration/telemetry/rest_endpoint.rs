@@ -1,31 +1,9 @@
-use std::io::Read;
-
 use serde_json::json;
-use sf_core::config::rest_parameters::QueryParameters;
-use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::rest::snowflake::telemetry::send_telemetry;
 use wiremock::matchers::{header, header_regex, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn test_query_parameters(server_url: &str) -> QueryParameters {
-    QueryParameters {
-        server_url: server_url.to_string(),
-        client_info: test_client_info(),
-        log_max_query_length: 80,
-        log_query_text: false,
-        log_query_parameters: false,
-    }
-}
-
-/// Decompress a gzip-encoded body and parse as JSON.
-fn decompress_gzip_json(body: &[u8]) -> serde_json::Value {
-    let mut decoder = flate2::read::GzDecoder::new(body);
-    let mut decompressed = String::new();
-    decoder
-        .read_to_string(&mut decompressed)
-        .expect("Failed to decompress gzip body");
-    serde_json::from_str(&decompressed).expect("Failed to parse decompressed JSON")
-}
+use super::common::{decompress_gzip_json, test_query_parameters};
 
 #[tokio::test]
 async fn telemetry_post_includes_auth_and_content_type_headers() {

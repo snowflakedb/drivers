@@ -11,8 +11,8 @@ use tracing_subscriber::{Layer, Registry};
 use crate::env_vars;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::telemetry::os_details::detect_os_details;
+use crate::telemetry::session_telemetry::SessionTelemetry;
 use crate::telemetry::snowflake_exporter::SessionRegistry;
-use crate::telemetry::snowflake_processor::SessionFlushHandle;
 
 use super::error::{InitSnafu, LogError};
 use super::{EmptyLayer, LoggingConfig};
@@ -113,8 +113,9 @@ impl tracing::Subscriber for DriverSubscriber {
 /// [`DriverProviders`].
 pub struct LogManager {
     dispatch: tracing::dispatcher::Dispatch,
-    telemetry_sessions: SessionRegistry,
-    session_flusher: Option<SessionFlushHandle>,
+    /// Unified per-session telemetry buffer: both the OTel span lane and the
+    /// raw-log lane push into it, and it owns the shared `SessionRegistry`.
+    telemetry: SessionTelemetry,
     os_details: once_cell::sync::OnceCell<Option<HashMap<String, String>>>,
     fs: Arc<dyn FsAdapter>,
     /// Process-wide default for `log_query_text` parsed from `sf.odbc.ini` /
@@ -133,19 +134,24 @@ pub struct LogManager {
 }
 
 impl LogManager {
-    /// Returns the session registry shared with the Snowflake telemetry exporter.
+    /// Returns the session registry shared by both telemetry lanes.
     pub fn telemetry_sessions(&self) -> &SessionRegistry {
-        &self.telemetry_sessions
+        self.telemetry.sessions()
     }
 
-    /// Flush buffered telemetry spans for a specific session.
-    /// Called during connection release before the connection span is dropped.
-    /// Awaits the export so it completes while session tokens are still alive
-    /// (see [`crate::telemetry::snowflake_processor::SessionFlushHandle::flush_session`]).
+    /// Returns the unified per-session telemetry buffer. Wrappers forward
+    /// caller-produced entries via [`SessionTelemetry::add_log`]; registry
+    /// membership is the `CLIENT_TELEMETRY_ENABLED` gate.
+    pub fn telemetry(&self) -> &SessionTelemetry {
+        &self.telemetry
+    }
+
+    /// Flush this session's buffered telemetry (span + raw-log entries together)
+    /// during connection release, before the connection span is dropped. Awaits
+    /// the export so it completes while session tokens are still alive
+    /// (see [`SessionTelemetry::flush_session`]).
     pub async fn flush_session(&self, session_id: i64) {
-        if let Some(ref flusher) = self.session_flusher {
-            flusher.flush_session(session_id).await;
-        }
+        self.telemetry.flush_session(session_id).await;
     }
 
     /// Lazily detects and caches OS details (e.g. `/etc/os-release` on Linux).
@@ -206,10 +212,11 @@ impl LogManager {
     /// application or test harness already configures tracing).
     pub fn with_none_subscriber(fs: Arc<dyn FsAdapter>) -> Self {
         let noop = tracing::dispatcher::Dispatch::none();
+        // No span processor is installed (the subscriber is external), but the
+        // raw-log lane still works: `add_log` buffers against the registry.
         Self {
             dispatch: noop,
-            telemetry_sessions: SessionRegistry::default(),
-            session_flusher: None,
+            telemetry: SessionTelemetry::new(SessionRegistry::default()),
             os_details: once_cell::sync::OnceCell::new(),
             fs,
             log_query_text: None,
@@ -239,23 +246,22 @@ impl LogManager {
     /// `SessionRegistry` so the Snowflake telemetry layer is always
     /// installed.
     pub fn init(config: LoggingConfig) -> Result<Self, LogError> {
-        let sessions = SessionRegistry::default();
+        let telemetry = SessionTelemetry::new(SessionRegistry::default());
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
         let error_trace_enabled = config.error_trace_enabled;
         let troubleshooting_log_dir = Self::resolve_troubleshooting_log_path();
         let troubleshooting = Self::resolve_troubleshooting();
-        let (dispatch, flusher) = Self::try_init(
+        let dispatch = Self::try_init(
             config,
             None::<EmptyLayer>,
-            Some(sessions.clone()),
+            Some(telemetry.clone()),
             troubleshooting,
             &troubleshooting_log_dir,
         )?;
         let lm = Self {
             dispatch,
-            telemetry_sessions: sessions,
-            session_flusher: flusher,
+            telemetry,
             os_details: once_cell::sync::OnceCell::new(),
             fs: Arc::new(RealFs),
             log_query_text,
@@ -281,19 +287,21 @@ impl LogManager {
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
         let error_trace_enabled = config.error_trace_enabled;
+        // The caller owns `registry` (registers/deregisters sessions); the
+        // telemetry buffer holds a clone of the same Arc, so lookups see them.
+        let telemetry = SessionTelemetry::new(registry);
         let troubleshooting_log_dir = Self::resolve_troubleshooting_log_path();
         let troubleshooting = Self::resolve_troubleshooting();
-        let (dispatch, flusher) = Self::try_init(
+        let dispatch = Self::try_init(
             config,
             Some(app_sink),
-            Some(registry.clone()),
+            Some(telemetry.clone()),
             troubleshooting,
             &troubleshooting_log_dir,
         )?;
         let lm = Self {
             dispatch,
-            telemetry_sessions: registry,
-            session_flusher: flusher,
+            telemetry,
             os_details: once_cell::sync::OnceCell::new(),
             fs: Arc::new(RealFs),
             log_query_text,
@@ -381,10 +389,10 @@ impl LogManager {
     fn try_init<L>(
         config: LoggingConfig,
         app_sink: Option<L>,
-        registry: Option<SessionRegistry>,
+        telemetry: Option<SessionTelemetry>,
         troubleshooting: bool,
         troubleshooting_log_dir: &std::path::Path,
-    ) -> Result<(tracing::dispatcher::Dispatch, Option<SessionFlushHandle>), LogError>
+    ) -> Result<tracing::dispatcher::Dispatch, LogError>
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
@@ -404,11 +412,9 @@ impl LogManager {
             layers.push(OpenTelemetryLayer::new(super::opentelemetry::init_tracer()?).boxed());
         }
 
-        let (snowflake_layer, provider, flush_handle) = if let Some(sessions) = registry {
-            let exporter =
-                crate::telemetry::snowflake_exporter::SnowflakeInBandExporter::new(sessions);
-            let (processor, flush_handle) =
-                crate::telemetry::snowflake_processor::SnowflakeSpanProcessor::new(exporter);
+        let (snowflake_layer, provider) = if let Some(telemetry) = telemetry {
+            let processor =
+                crate::telemetry::snowflake_processor::SnowflakeSpanProcessor::new(telemetry);
             let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
                 .with_span_processor(processor)
                 .build();
@@ -416,14 +422,14 @@ impl LogManager {
             // Restrict the OpenTelemetryLayer to spans emitted by sf_core itself.
             // Without this filter every span from tokio, hyper, tower, tonic, …
             // would flow through `SnowflakeSpanProcessor::on_end`, take the
-            // per-session buffers mutex, scan attributes for `snowflake.session.id`
+            // per-session buffer mutex, scan attributes for `snowflake.session.id`
             // (always absent), and be dropped — pure overhead on the hot path.
             let layer = OpenTelemetryLayer::new(tracer).with_filter(
                 tracing_subscriber::filter::Targets::new().with_target("sf_core", Level::TRACE),
             );
-            (Some(layer), Some(provider), Some(flush_handle))
+            (Some(layer), Some(provider))
         } else {
-            (None, None, None)
+            (None, None)
         };
 
         if let Some(layer) = snowflake_layer {
@@ -449,10 +455,7 @@ impl LogManager {
             inner: Box::new(subscriber),
         };
 
-        Ok((
-            tracing::dispatcher::Dispatch::new(driver_subscriber),
-            flush_handle,
-        ))
+        Ok(tracing::dispatcher::Dispatch::new(driver_subscriber))
     }
 
     /// Pre-creates the troubleshooting log file with owner-only (`0o600`) permissions on Unix
@@ -741,9 +744,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn flush_session_is_noop_without_flusher() {
+    async fn flush_session_is_noop_when_nothing_buffered() {
         let lm = LogManager::with_none_subscriber(Arc::new(crate::fs_adapter::RealFs));
-        // session_flusher is None for with_none_subscriber — should not panic
+        // No span processor is installed and nothing is buffered — must not panic.
         lm.flush_session(42).await;
     }
 }

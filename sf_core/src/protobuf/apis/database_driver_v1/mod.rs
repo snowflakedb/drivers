@@ -1298,7 +1298,14 @@ impl DatabaseDriver for DatabaseDriverImpl {
         &self,
         input: TelemetrySendLogRequest,
     ) -> Result<TelemetrySendResponse, DriverException> {
-        required(input.conn_handle, "Connection handle is required")?;
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        self.driver
+            .telemetry_send_log(
+                Handle::from(conn_handle),
+                input.message_json,
+                input.timestamp_ms,
+            )
+            .await;
         Ok(TelemetrySendResponse {})
     }
 }

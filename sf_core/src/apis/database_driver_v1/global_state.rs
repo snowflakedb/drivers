@@ -229,6 +229,30 @@ impl DatabaseDriverV1 {
         }
     }
 
+    /// Forward one caller-produced telemetry entry to the core's in-band batch.
+    /// No-ops when telemetry is unconfigured or the session id is not yet known
+    /// (login incomplete / handle released). Core owns batching, flush threshold,
+    /// and egress.
+    pub(crate) async fn telemetry_send_log(
+        &self,
+        conn_handle: Handle,
+        message_json: String,
+        timestamp_ms: i64,
+    ) {
+        tracing::debug!("telemetry_send_log: entry");
+        let Some(lm) = self.log_manager.as_ref() else {
+            tracing::debug!("telemetry_send_log: exit");
+            return;
+        };
+        let Some(session_id) = self.session_id_for_conn(conn_handle).await else {
+            tracing::debug!("telemetry_send_log: exit");
+            return;
+        };
+        lm.telemetry()
+            .add_log(session_id, message_json, timestamp_ms);
+        tracing::debug!("telemetry_send_log: exit");
+    }
+
     pub fn token_cache(&self) -> Result<Arc<dyn TokenCache>, TokenCacheError> {
         self.token_cache
             .get_or_try_init(|| {
