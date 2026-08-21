@@ -208,7 +208,7 @@ def setupRust(platform) {
 
 def run_cargo_command(platform, command) {
   if (platform_os(platform) == 'aix') {
-    run_aix_command("cargo ${command}")
+    run_aix_command("cargo ${command} --locked")
     return
   }
 
@@ -216,7 +216,7 @@ def run_cargo_command(platform, command) {
     sh """
       [ -f "\$HOME/.cargo/env" ] && . "\$HOME/.cargo/env"
       export PATH="\$HOME/.cargo/bin:\$PATH"
-      cargo xwin ${command}
+      cargo xwin ${command} --locked
     """
     return
   }
@@ -224,7 +224,7 @@ def run_cargo_command(platform, command) {
   if (platform_os(platform) == 'windows') {
     bat """
       set PATH=%PATH%;%USERPROFILE%\\.cargo\\bin
-      cargo ${command}
+      cargo ${command} --locked
     """
     return
   }
@@ -232,7 +232,7 @@ def run_cargo_command(platform, command) {
   sh """
     [ -f "\$HOME/.cargo/env" ] && . "\$HOME/.cargo/env"
     export PATH="\$HOME/.cargo/bin:\$PATH"
-    cargo ${command}
+    cargo ${command} --locked
   """
 }
 

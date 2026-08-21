@@ -88,13 +88,13 @@ jobs:
         # allocator shim symbols, causing sf_core dylib builds to fail.
         id: run_odbc_unit_tests
         continue-on-error: ${{ github.event_name == 'merge_group' }}
-        run: cargo test --package odbc
+        run: cargo test --locked --package odbc
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
       - name: Rerun ODBC unit tests
         if: steps.run_odbc_unit_tests.outcome == 'failure' && github.event_name == 'merge_group'
-        run: cargo test --package odbc
+        run: cargo test --locked --package odbc
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
@@ -189,7 +189,7 @@ jobs:
       - name: Build ODBC driver
         # Workaround for the Rust 1.89+ linker bug (rust-lang/rust#131292),
         # mirroring odbc_unit_tests in test-odbc.yml.
-        run: cargo build --package odbc
+        run: cargo build --locked --package odbc
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 

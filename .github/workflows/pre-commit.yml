@@ -106,7 +106,7 @@ jobs:
         # be on PATH for the .pyi stubs, so install it alongside protoc.
         run: |
           pip install mypy-protobuf
-          cargo run -p proto_generator --bin proto_generator -- \
+          cargo run --locked -p proto_generator --bin proto_generator -- \
             --generator python \
             --input protobuf/database_driver_v1.proto \
             --output python/src/snowflake/connector/_internal/protobuf_gen
@@ -134,7 +134,7 @@ jobs:
         run: |
           set -euo pipefail
           target=python/src/snowflake/connector/connection_config.py
-          cargo run -p sf_params_codegen --bin param_defs_export > "$target"
+          cargo run --locked -p sf_params_codegen --bin param_defs_export > "$target"
           (cd python && hatch run precommit:fix) >/dev/null
           if ! git diff --exit-code -- "$target"; then
             echo "::error::connection_config.py is out of date. Run the 'generate-connection-config' pre-commit hook locally and commit the result."

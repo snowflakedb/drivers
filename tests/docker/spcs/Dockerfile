@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /workdir
 COPY . .
 
-RUN cargo build --release --package sf_core --bin spcs_probe \
+RUN cargo build --locked --release --package sf_core --bin spcs_probe \
     && cp target/release/spcs_probe /usr/local/bin/spcs_probe
 
 FROM debian:bookworm-slim AS runtime

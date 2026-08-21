@@ -20,7 +20,7 @@ esac
 
 echo "=== Building JDBC bridge (libjdbc_bridge) ==="
 cd "${WORKSPACE_ROOT}"
-cargo build -p jdbc_bridge
+cargo build --locked -p jdbc_bridge
 
 echo ""
 echo "=== Running JDBC auth browser E2E tests (task: ${GRADLE_TASK}, tag: requires_browser) ==="

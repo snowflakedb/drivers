@@ -58,7 +58,7 @@ class CoverageReportGenerator:
             features_path = str(self.workspace_root / "tests" / "definitions")
             workspace_path = str(self.workspace_root)
             result = subprocess.run(
-                ["cargo", "run", "--bin", "tests_format_validator", "--", 
+                ["cargo", "run", "--locked", "--bin", "tests_format_validator", "--",
                  "--workspace", workspace_path, 
                  "--features", features_path,
                  "--verbose"],

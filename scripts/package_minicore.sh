@@ -65,7 +65,7 @@ echo "=== Checking if cbindgen is installed ==="
 # Install cbindgen if not available
 if ! command -v cbindgen &> /dev/null; then
     echo "=== Installing cbindgen ==="
-    cargo install cbindgen
+    cargo install cbindgen --locked
     # Ensure cargo bin is in PATH
     if [[ ":$PATH:" != *":$HOME/.cargo/bin:"* ]]; then
         export PATH="$HOME/.cargo/bin:$PATH"
@@ -86,7 +86,7 @@ cbindgen --config sf_mini_core/cbindgen.toml --crate sf_mini_core > $BUILD_DIR/s
 
 # Build release version
 echo "=== Building dynamic library version ==="
-$CARGO_CMD build --release --package sf_mini_core --target $PLATFORM_TARGET 
+$CARGO_CMD build --locked --release --package sf_mini_core --target $PLATFORM_TARGET
 
 # AIX: the Rust toolchain on `powerpc64-ibm-aix` (tier-3) emits LLVM bitcode
 # in an archive section the AIX linker driver can't locate, so any LTO
@@ -114,7 +114,7 @@ echo "=== Building static library version ==="
 # array elements otherwise. Required because the script runs under `set -u`
 # and bash < 4.4 (notably macOS's bash 3.2) treats `"${EMPTY[@]}"` as an
 # unbound-variable reference instead of an empty expansion.
-${STATIC_LTO_OVERRIDE[@]+"${STATIC_LTO_OVERRIDE[@]}"} $CARGO_CMD build --release --package sf_mini_core_static --target $PLATFORM_TARGET
+${STATIC_LTO_OVERRIDE[@]+"${STATIC_LTO_OVERRIDE[@]}"} $CARGO_CMD build --locked --release --package sf_mini_core_static --target $PLATFORM_TARGET
 
 # Determine dynamic library extension based on platform
 case "$PLATFORM" in

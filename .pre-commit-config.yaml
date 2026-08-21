@@ -11,14 +11,14 @@ repos:
     -   id: rust-clippy
         name: Rust clippy
         description: Run cargo clippy on files included in the commit. clippy should be installed before-hand.
-        entry: env OPENSSL_NO_VENDOR=1 cargo clippy --all-targets --all-features -- -Dclippy::all
+        entry: env OPENSSL_NO_VENDOR=1 cargo clippy --locked --all-targets --all-features -- -Dclippy::all
         pass_filenames: false
         types: [file, rust]
         language: system
     -   id: rust-cargo-check
         name: Rust cargo check
         description: Run cargo check on files included in the commit. cargo check should be installed before-hand.
-        entry: env OPENSSL_NO_VENDOR=1 cargo check --all-targets --all-features
+        entry: env OPENSSL_NO_VENDOR=1 cargo check --locked --all-targets --all-features
         pass_filenames: false
         types: [file, rust]
         language: system
@@ -46,7 +46,7 @@ repos:
         # ``set -euo pipefail`` makes any cargo / hatch failure stop the hook
         # immediately, and we deliberately let stderr through so generator or
         # formatter errors are visible in the pre-commit log.
-        entry: bash -c 'set -euo pipefail; cargo run -p sf_params_codegen --bin param_defs_export > python/src/snowflake/connector/connection_config.py && (cd python && hatch run precommit:fix src/snowflake/connector/connection_config.py) && git add python/src/snowflake/connector/connection_config.py'
+        entry: bash -c 'set -euo pipefail; cargo run --locked -p sf_params_codegen --bin param_defs_export > python/src/snowflake/connector/connection_config.py && (cd python && hatch run precommit:fix src/snowflake/connector/connection_config.py) && git add python/src/snowflake/connector/connection_config.py'
         pass_filenames: false
         # Any Rust source in either crate, so a future module split of
         # sf_params_spec/src/lib.rs doesn't silently stop triggering the hook.
@@ -55,7 +55,7 @@ repos:
     -   id: generate-python-stubs
         name: Generate sf_core_python.pyi from Rust source
         description: Regenerate type stubs when python_bridge/src/lib.rs changes
-        entry: bash -c 'set -euo pipefail; cargo run -p python_stub_gen -- python/src/snowflake/connector/_core && git add python/src/snowflake/connector/_core/sf_core_python.pyi'
+        entry: bash -c 'set -euo pipefail; cargo run --locked -p python_stub_gen -- python/src/snowflake/connector/_core && git add python/src/snowflake/connector/_core/sf_core_python.pyi'
         pass_filenames: false
         files: ^python_bridge/src/lib\.rs$
         language: system

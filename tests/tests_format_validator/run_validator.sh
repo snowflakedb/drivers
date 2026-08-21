@@ -16,7 +16,7 @@ echo "Project root: $PROJECT_ROOT"
 cd "$SCRIPT_DIR"
 
 # Run the validator with project-specific paths
-cargo run --release -- \
+cargo run --locked --release -- \
     --workspace "$PROJECT_ROOT" \
     --features "$PROJECT_ROOT/tests/definitions" \
     "$@"
