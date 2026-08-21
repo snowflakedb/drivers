@@ -603,7 +603,7 @@ type PrimaryKeyRow = (
 
 /// Folds a catalog identifier argument to its canonical Snowflake form for
 /// `SQL_ATTR_METADATA_ID = TRUE` (identifier) mode, mirroring
-/// [`catalog_arg_to_pattern`](crate::api::utils::catalog_arg_to_pattern):
+/// [`catalog_arg_to_pattern`](catalog_arg_to_pattern):
 ///
 /// - A quoted `"..."` identifier is case-sensitive: strip the surrounding
 ///   quotes and collapse `""` → `"`.
@@ -2095,15 +2095,14 @@ fn append_procedure_column_rows(
         let col_size_val = column_size_from_field(&field, numeric_settings)
             .ok()
             .map(|s| s.to_string());
-        let buf_len_val = octet_length_from_field(&field, numeric_settings)
-            .ok()
-            .map(|s| s.to_string());
+        let buf_len_val =
+            catalog_buffer_length(logical_type, &field, numeric_settings).map(|s| s.to_string());
         let dec_digits_val = decimal_digits_from_field(&field, numeric_settings)
             .ok()
             .map(|s| s.to_string());
         // Catalog radix for REAL/FLOAT/DOUBLE is 10 (same contract as SQLColumns).
         // Do not use num_prec_radix_from_field here — that is the ColAttribute
-        // binary-radix-2 path. SNOW-3928030.
+        // binary-radix-2 path.
         let num_prec_radix_val =
             catalog_num_prec_radix(logical_type, &field, numeric_settings).map(|s| s.to_string());
         let sql_data_type_val = verbose_sql_type_from_field(&field, numeric_settings)
@@ -3234,6 +3233,39 @@ fn catalog_num_prec_radix(
         .and_then(|s| if s == 0 { None } else { i32::try_from(s).ok() })
 }
 
+/// Catalog-only `BUFFER_LENGTH` for `SQLColumns` / `SQLProcedureColumns`.
+///
+/// Exact numerics (`FIXED` / `DECFLOAT` → `SQL_DECIMAL` / `SQL_NUMERIC`) report
+/// the ODBC transfer octet length under `SQL_C_DEFAULT`: **precision + 2**
+/// (ANSI character representation — digits, sign, and decimal point). See
+/// https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
+/// (e.g. `NUMERIC(10,3)` → 12). Unicode doubling does not apply: this driver's
+/// default C type for Decimal is narrow `SQL_C_CHAR`.
+///
+/// This is deliberately **separate** from `SnowflakeFieldType::octet_length`
+/// (the `SQLColAttribute(SQL_DESC_OCTET_LENGTH / DISPLAY_SIZE)` path on query
+/// columns), which returns the Snowflake display constant **136** for NUMBER
+/// and must not change. SNOW-3900502.
+///
+/// `ODBC_TREAT_DECIMAL_AS_INT` / `ODBC_TREAT_BIG_NUMBER_AS_STRING` only remap
+/// fetch-time `SQL_C_DEFAULT`; catalog `DATA_TYPE` stays `SQL_DECIMAL`, so
+/// `BUFFER_LENGTH` stays precision + 2 regardless of those settings.
+fn catalog_buffer_length(
+    logical_type: &str,
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Option<i32> {
+    if logical_type.eq_ignore_ascii_case("FIXED") || logical_type.eq_ignore_ascii_case("DECFLOAT") {
+        return column_size_from_field(field, numeric_settings)
+            .ok()
+            .and_then(|s| i32::try_from(s).ok())
+            .map(|p| p.saturating_add(2));
+    }
+    octet_length_from_field(field, numeric_settings)
+        .ok()
+        .and_then(|s| i32::try_from(s).ok())
+}
+
 /// Returns the datetime subcode for `SQL_DATETIME_SUB` (col 15), or `None`
 /// for types where `SQL_DATA_TYPE != SQL_DATETIME`.
 fn sql_datetime_sub_from_logical_type(logical_type: &str) -> Option<i16> {
@@ -3292,24 +3324,18 @@ fn flat_row_from_descriptor(
             .unwrap_or(odbc_sys::SqlDataType::VARCHAR.0),
     );
     // TYPE_NAME (col 6) reports the Snowflake external / friendly name
-    // (BOOLEAN, TIMESTAMP, VARIANT, STRUCT, ARRAY, GEOGRAPHY, …) — NOT the SDK
-    // label from `type_name_from_field`, which is the
-    // SQLColAttribute(SQL_DESC_TYPE_NAME) contract. SNOW-3899531.
     let type_name_val = Some(catalog_type_name_from_logical_type(&desc.logical_type));
     let col_size_val = column_size_from_field(&field, numeric_settings)
         .ok()
         .and_then(|s| i32::try_from(s).ok());
-    let buf_len_val = octet_length_from_field(&field, numeric_settings)
-        .ok()
-        .and_then(|s| i32::try_from(s).ok());
+    // BUFFER_LENGTH (col 8): exact numerics use transfer octet length
+    // (precision + 2).
+    let buf_len_val = catalog_buffer_length(&desc.logical_type, &field, numeric_settings);
     // DECIMAL_DIGITS: scale 0 is a valid, meaningful value for exact-numeric
-    // columns (e.g. NUMBER(38,0)) — report it as 0, not NULL. The helper
-    // returns Err for types where DECIMAL_DIGITS is inapplicable (→ NULL).
+    // columns.
     let dec_digits_val = decimal_digits_from_field(&field, numeric_settings).ok();
     // NUM_PREC_RADIX (col 10): catalog reports decimal radix 10 for approximate
-    // numerics (REAL/FLOAT/DOUBLE) so COLUMN_SIZE is consistent — NOT the
-    // binary radix 2 from `num_prec_radix_from_field`, which is the
-    // SQLColAttribute(SQL_DESC_NUM_PREC_RADIX) contract. SNOW-3928030.
+    // numerics (REAL/FLOAT/DOUBLE) so COLUMN_SIZE is consistent.
     let num_prec_radix_val = catalog_num_prec_radix(&desc.logical_type, &field, numeric_settings);
     let sql_data_type_val = Some(
         verbose_sql_type_from_field(&field, numeric_settings)
@@ -3326,9 +3352,8 @@ fn flat_row_from_descriptor(
 
     let nullable_val: i16 = if desc.nullable { 1 } else { 0 };
     let is_nullable_str = if desc.nullable { "YES" } else { "NO" };
-    // USER_DATA_TYPE (col 19): always UDT_STANDARD_SQL_TYPE (0). Snowflake has
-    // no custom UDTs — match ProcedureColumns / TypeInfo and the reference
-    // driver's ColumnsMetadataSource::getUserDataType.
+    // USER_DATA_TYPE (col 19): always UDT_STANDARD_SQL_TYPE (0) as Snowflake has
+    // no custom UDTs.
     let user_data_type_val = Some(0);
 
     FlatColumnRow {
@@ -3785,7 +3810,7 @@ pub fn statistics<E: OdbcEncoding>(
 
 /// Arrow field for a nullable SMALLINT catalog column (FIXED/scale=0/precision=5).
 fn catalog_smallint_field(name: &str) -> Field {
-    let metadata: std::collections::HashMap<String, String> = [
+    let metadata: HashMap<String, String> = [
         ("logicalType".to_string(), "FIXED".to_string()),
         ("scale".to_string(), "0".to_string()),
         ("precision".to_string(), "5".to_string()),
@@ -4975,6 +5000,51 @@ mod procedure_columns_tests {
         // Non-numeric → NULL (inapplicable).
         let text_field = rehydrate_field("TEXT", None, None, Some(100), None, true);
         assert_eq!(catalog_num_prec_radix("TEXT", &text_field, &ns), None);
+    }
+
+    #[test]
+    fn catalog_buffer_length_is_precision_plus_two_for_fixed_not_136() {
+        // SQLColumns / SQLProcedureColumns BUFFER_LENGTH for
+        // NUMBER/DECIMAL (FIXED) must be the ODBC transfer octet length
+        // (precision + 2).
+        let ns = NumericSettings::default();
+
+        let num38 = rehydrate_field("FIXED", Some(38), Some(0), None, None, true);
+        assert_eq!(
+            catalog_buffer_length("FIXED", &num38, &ns),
+            Some(40),
+            "NUMBER(38,0) → BUFFER_LENGTH 40"
+        );
+        assert_eq!(
+            octet_length_from_field(&num38, &ns).ok(),
+            Some(136),
+            "ColAttribute path must keep octet_length 136 for FIXED"
+        );
+
+        let num10 = rehydrate_field("FIXED", Some(10), Some(3), None, None, true);
+        assert_eq!(
+            catalog_buffer_length("FIXED", &num10, &ns),
+            Some(12),
+            "NUMERIC(10,3) → BUFFER_LENGTH 12 (MS transfer-octet example)"
+        );
+        assert_eq!(
+            catalog_buffer_length("fixed", &num10, &ns),
+            Some(12),
+            "catalog FIXED match is case-insensitive"
+        );
+
+        // DECFLOAT is also exact-numeric (SQL_NUMERIC); same formula.
+        let decfloat = rehydrate_field("DECFLOAT", Some(38), None, None, None, true);
+        assert_eq!(catalog_buffer_length("DECFLOAT", &decfloat, &ns), Some(40));
+
+        // Non-numeric still delegates to shared octet_length.
+        let text_field = rehydrate_field("TEXT", None, None, Some(100), None, true);
+        assert_eq!(
+            catalog_buffer_length("TEXT", &text_field, &ns),
+            octet_length_from_field(&text_field, &ns)
+                .ok()
+                .and_then(|s| i32::try_from(s).ok())
+        );
     }
 
     #[test]

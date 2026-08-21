@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <map>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -224,6 +225,64 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: NUM_PREC_RADIX is 
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: BUFFER_LENGTH is precision+2 for NUMBER/DECIMAL",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::NUMBER_BUF_PROC), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Snowflake information_schema.argument_signature omits NUMBER precision/scale
+  // (returns "(NUM38 NUMBER, NUM18S6 NUMBER)"), so both params report the default
+  // NUMBER(38,0) metadata. Only NUM38 is asserted; NUM18S6 would duplicate 38/40.
+  const std::map<std::string, SQLINTEGER> expectColSize = {
+      {"NUM38", 38},
+  };
+  const std::map<std::string, SQLINTEGER> expectBufLenNew = {
+      {"NUM38", 40},
+  };
+  const std::map<std::string, SQLINTEGER> expectBufLenOld = {
+      {"NUM38", 16},
+  };
+
+  std::map<std::string, std::pair<SQLINTEGER, SQLINTEGER>> actual;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    char colName[256] = {};
+    SQLLEN colNameInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), &colNameInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    if (colNameInd == SQL_NULL_DATA || expectColSize.count(colName) == 0) {
+      continue;
+    }
+
+    SQLINTEGER colSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN colSizeInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &colSize, 0, &colSizeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(colSizeInd == sizeof(SQLINTEGER));
+
+    SQLINTEGER bufLen = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN bufLenInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 9, SQL_C_SLONG, &bufLen, 0, &bufLenInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(bufLenInd == sizeof(SQLINTEGER));
+
+    actual.emplace(colName, std::make_pair(colSize, bufLen));
+  }
+
+  for (const auto& [column, wantSize] : expectColSize) {
+    const auto it = actual.find(column);
+    REQUIRE(it != actual.end());
+    INFO("column " << column);
+    CHECK(it->second.first == wantSize);
+    NEW_DRIVER_ONLY("BD#122") { CHECK(it->second.second == expectBufLenNew.at(column)); }
+    OLD_DRIVER_ONLY("BD#122") { CHECK(it->second.second == expectBufLenOld.at(column)); }
+  }
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: DATA_TYPE reflects the VARCHAR return type",
