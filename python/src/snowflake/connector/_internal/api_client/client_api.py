@@ -11,7 +11,7 @@ from snowflake.connector._internal.status_codes import (
     STATUS_TO_EXCEPTION,
     VENDOR_CODE_TO_EXCEPTION,
 )
-from snowflake.connector.errors import DatabaseError, Error, OperationalError
+from snowflake.connector.errors import DatabaseError, Error, OperationalError, ReauthenticationRequest
 
 from ..protobuf_gen.database_driver_v1_pb2 import (
     AuthenticationError as ProtoAuthenticationError,
@@ -171,6 +171,9 @@ def _extract_error_detail(driver_exception: Any) -> str | None:
         return None
 
     if isinstance(inner, ProtoAuthenticationError):
+        # The Rust core already embeds the GS code in `detail`'s text (see
+        # master_token_terminal_detail); appending it again here would defeat
+        # _append_detail's exact-substring dedup and print the code 3x.
         return inner.detail or None
     if isinstance(inner, ProtoLoginError):
         if inner.message and inner.code:
@@ -209,6 +212,21 @@ def _extract_invalid_parameter_info(driver_exception: Any) -> tuple[str, int | N
     return inner.parameter, _get_optional_int(inner, "code")
 
 
+def _is_reauthentication_required(driver_exception: Any) -> bool:
+    """Return whether *driver_exception* is a reauth-shaped ``AuthenticationError``.
+
+    ``reauthentication_required`` is a plain bool: it carries no GS code of
+    its own. The real code, when there is one (absent for a client-predicted
+    expiry with no server round-trip), travels on ``vendor_code`` — the same
+    channel every other error type uses — so there is nothing else to extract
+    here.
+    """
+    error = getattr(driver_exception, "error", None)
+    if error is None or error.WhichOneof("error_type") != "auth_error":
+        return False
+    return bool(error.auth_error.reauthentication_required)
+
+
 def _append_detail(base: str, detail: str) -> str:
     """Append *detail* to *base* with `. ` separator, avoiding double punctuation."""
     if not base:
@@ -231,14 +249,19 @@ def _proto_to_public_error(proto_exc: Exception) -> Error:
     return DatabaseError(str(proto_exc))
 
 
-def _resolve_exception_class(status_code: int, vendor_code: int | None) -> type[Error]:
+def _resolve_exception_class(status_code: int, vendor_code: int | None, reauthentication_required: bool) -> type[Error]:
     """Pick the PEP 249 exception class for a proto error.
 
     Resolution order:
-      1. VENDOR_CODE_TO_EXCEPTION — Snowflake-specific vendor_code overrides (e.g. 100072 → IntegrityError).
-      2. STATUS_TO_EXCEPTION — default mapping from the proto StatusCode.
-      3. DatabaseError — catch-all when the status code is unrecognized.
+      1. ``reauthentication_required`` — the session can never be renewed
+         regardless of what StatusCode/vendor_code the Rust core also
+         reported, so this wins unconditionally.
+      2. VENDOR_CODE_TO_EXCEPTION — Snowflake-specific vendor_code overrides (e.g. 100072 → IntegrityError).
+      3. STATUS_TO_EXCEPTION — default mapping from the proto StatusCode.
+      4. DatabaseError — catch-all when the status code is unrecognized.
     """
+    if reauthentication_required:
+        return ReauthenticationRequest
     if vendor_code is not None:
         cls = VENDOR_CODE_TO_EXCEPTION.get(vendor_code)
         if cls is not None:
@@ -273,7 +296,7 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     # proto status code.
     vendor_code = _get_optional_int(driver_exc, "vendor_code")
 
-    exc_class = _resolve_exception_class(status_code, vendor_code)
+    exc_class = _resolve_exception_class(status_code, vendor_code, _is_reauthentication_required(driver_exc))
     errno = vendor_code if vendor_code is not None else STATUS_TO_ERRNO.get(status_code, status_code)
 
     # Prefer the server-provided sql_state; fall back to a type-derived value.
