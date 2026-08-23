@@ -39,10 +39,14 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 
 - These methods are publicly exported but not documented. There is no practical use case for end users, as heartbeat is sent automatically by the driver.
 
+### Special values for FLOAT
+
+- In the old driver, querying FLOAT special values (`NaN`, `inf`, `-inf`) does not work as documented; all such values are returned as `NaN`.
+
 ### statement.getColumn() API
 
 - The methods `getRowValue(row: object)` and `getRowValueAsString(row: object)` are publicly documented in `index.d.ts`, but they were never covered by tests and do not work as intended. The `(row: object)` parameter requires a special internal row class that is not exposed to users. The public API returns rows as `externalizeRow`, so calling these methods will result in a runtime error.
-- The `is*` methods (e.g. `isString()`) do not cover every data type value that can be returned by `.getType()`. For example, `decfloat` is not covered by any `is*` method. The new driver adds `isDecfloat()` to close this specific gap; old driver has no equivalent method.
+- The `is*` methods (e.g. `isString()`) do not cover every data type value that can be returned by `.getType()`. For example, `decfloat` is not covered by any `is*` method. Consider either extending these methods to handle all possible types, dropping them, or replacing them with a single type discriminator (such as an enum).
 - The `isArray` and `isObject` methods are bugged and return false because server doesn't return `fieldsMetadata`
 
 ### Statement Buffer Monkey Patching
@@ -55,6 +59,6 @@ These are potential improvements to consider after the UD release:
 
 - `snowflake.serializeConnection` should throw or return null when called on a disconnected connection, rather than returning an unusable object.
 - `snowflake.deserializeConnection` should throw an exception when provided an invalid or malformed serialized string, instead of failing in some cases and returning a disconnected connection.
+- Remove the `big-number` dependency and use native `BigInt` throughout the codebase for large integers.
 - Reevaluate the `jsTreatIntegerAsBigInt` parameter; consider either always converting all fixed numeric values to `BigInt`, or using `BigInt` only when the value exceeds the safe integer range (using `Number.isSafeInteger()`), and review approaches for handling floating-point numbers in a similar, consistent manner.
 - Variant JSON/XML parsing is a mess: it is slow, does eval() and adds 6 dependencies (2MB). We should follow other drivers and let user decide how to parse variants. See "parses JSON with undefined, Infinity, NaN as JS types" test
-- `Column` has no `isFloat()` / `isReal()` method for the REAL Snowflake data type; `isNumber()` returns `true` for both FIXED and REAL, so a caller cannot distinguish them without `getType() === 'real'`. To be perfectly correct we should have a dedicated predicate for REAL, matching the pattern of every other `is*()` method.

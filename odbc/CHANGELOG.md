@@ -2,12 +2,6 @@
 
 ## Upcoming Release
 
-Bug fixes:
-
-- Fixed `SQLColumns` `BUFFER_LENGTH` for `NUMBER`/`DECIMAL` to return precision + 2 (ODBC transfer octet length); query-result `SQLColAttribute` octet/display for NUMBER remains 136. (snowflake-eng/drivers#1166)
-
-## v4.0.0-rc1
-
 Breaking changes:
 
 - Changed `SQL_C_CHAR` conversion of DECIMAL/NUMERIC to return `SQL_ERROR` (`22003`) when whole digits do not fit in the buffer; previously returned `SQL_SUCCESS_WITH_INFO` with truncated digits. (snowflakedb/drivers#1270)

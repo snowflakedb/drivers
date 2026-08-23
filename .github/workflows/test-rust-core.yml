@@ -150,7 +150,7 @@ jobs:
           shared-key: "no-protobuf"
 
       - name: Build sf_core without protobuf feature
-        run: cargo build --locked --package sf_core --no-default-features --features fips
+        run: cargo build --package sf_core --no-default-features --features fips
 
       # Compile-test the library's unit tests (tests inside sf_core/src/*) to catch
       # modules that use protobuf types without a `#[cfg(feature = "protobuf")]` guard.
@@ -161,7 +161,7 @@ jobs:
       # (accidentally exposing protobuf-dependent code in the library's public surface).
       # --no-run skips execution so this lane stays fast and doesn't need network access.
       - name: Compile library unit tests without protobuf feature
-        run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips
+        run: cargo test --no-run --lib --package sf_core --no-default-features --features fips
 
       - name: Clean up python_bridge artifacts from target
         if: always()
@@ -290,7 +290,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
 
       - name: Rerun tests with coverage
         if: steps.run_rust_tests.outcome == 'failure' && github.event_name == 'merge_group'
@@ -298,13 +298,13 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
 
       - name: Run flaky tests (non-blocking)
         continue-on-error: true
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }} \
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }} \
             -- --ignored flaky_
 
       # mitmproxy (mitmdump) is the live external proxy for both proxy lanes below:
@@ -335,7 +335,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --package sf_core ${{ matrix.cargo_flags }} \
+          cargo llvm-cov --no-report --package sf_core ${{ matrix.cargo_flags }} \
             -- --ignored large_
 
       # Real PUT/GET through a genuine mitmdump proxy (see PR description for why).
@@ -350,7 +350,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --package sf_core ${{ matrix.cargo_flags }} \
+          cargo llvm-cov --no-report --package sf_core ${{ matrix.cargo_flags }} \
             -- --ignored mitmdump_proxy
 
       # Report step is best-effort and gated on actually having coverage data. If the
@@ -369,7 +369,7 @@ jobs:
         continue-on-error: true
         run: |
           if find target/llvm-cov-target -name '*.profraw' 2>/dev/null | grep -q .; then
-            cargo llvm-cov report --locked --package sf_core ${{ matrix.cargo_flags }} --lcov --output-path lcov.info
+            cargo llvm-cov report --package sf_core ${{ matrix.cargo_flags }} --lcov --output-path lcov.info
             echo "lcov report written to lcov.info (scoped to sf_core ${{ matrix.cargo_flags }})"
           else
             echo "No *.profraw files in target/llvm-cov-target — skipping report"
@@ -479,7 +479,7 @@ jobs:
       # would recompile the whole dependency tree twice.
       - name: Compile (test profile, no run)
         shell: cmd
-        run: cargo nextest run --locked --no-run --package sf_core --target aarch64-pc-windows-msvc
+        run: cargo nextest run --no-run --package sf_core --target aarch64-pc-windows-msvc
 
       # sf_core's cdylib isn't built by `cargo test`, so check a test binary
       # instead — same target triple, so same arch proof.
@@ -519,7 +519,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
+          cargo nextest run --profile ci --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
 
       - name: Rerun tests (Windows ARM64)
         if: steps.run_rust_tests_windows_arm64.outcome == 'failure' && github.event_name == 'merge_group'
@@ -528,7 +528,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
+          cargo nextest run --profile ci --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
 
       - name: Run flaky tests (non-blocking)
         continue-on-error: true
@@ -537,7 +537,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci-flaky --package sf_core --target aarch64-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
+          cargo nextest run --profile ci-flaky --package sf_core --target aarch64-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
 
       - name: Upload test results
         if: always()
@@ -707,7 +707,7 @@ jobs:
       # would recompile the whole dependency tree twice.
       - name: Compile (test profile, no run)
         shell: cmd
-        run: cargo nextest run --locked --no-run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc
+        run: cargo nextest run --no-run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc
 
       # sf_core's cdylib isn't built by `cargo test`, so check a test binary
       # instead — same target triple, so same arch proof.
@@ -750,7 +750,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
+          cargo nextest run --profile ci --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
 
       - name: Rerun tests (Windows x86)
         if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
@@ -759,7 +759,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
+          cargo nextest run --profile ci --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
 
       - name: Run flaky tests (non-blocking)
         continue-on-error: true
@@ -768,7 +768,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci-flaky --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
+          cargo nextest run --profile ci-flaky --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
 
       - name: Upload test results
         if: always()

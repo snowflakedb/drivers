@@ -40,6 +40,7 @@ public sealed class TestPerformanceRecorder : IDisposable
         WriteToFile(toWrite);
     }
 
+#if !OLD_XUNIT
     public void AddEntry(Xunit.Sdk.ITestResultMessage testResult)
     {
         if (!Enabled)
@@ -63,6 +64,31 @@ public sealed class TestPerformanceRecorder : IDisposable
 
         WriteToFile(toWrite);
     }
+#else
+    public void AddEntry(ITestResultMessage testResult)
+    {
+        if (!Enabled)
+            return;
+
+        LogEntry[] toWrite;
+        lock (_lock)
+        {
+            _entries.Enqueue(new LogEntry
+            {
+                TestName = testResult.Test.DisplayName,
+                TestDuration = testResult.ExecutionTime,
+            });
+
+            if (_entries.Count < 100)
+                return;
+
+            toWrite = _entries.ToArray();
+            _entries.Clear();
+        }
+
+        WriteToFile(toWrite);
+    }
+#endif
 
     private static void WriteToFile(LogEntry[] entries)
     {

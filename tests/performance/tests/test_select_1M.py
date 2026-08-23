@@ -1,90 +1,43 @@
-"""Fetch performance for 1M-row result sets.
+"""Live e2e SELECT 1M performance tests (direct Snowflake connection).
 
 Bind-mode matrix (ODBC):
   * no suffix / existing names — SQL_C_CHAR (to_string); historical BenchDash baselines
   * `_default` suffix           — SQL_C_DEFAULT (driver-chosen C type); separate charts
 
-BenchDash `test_name` stays `select_{name}` / `select_{name}_recorded_http` so
-existing charts keep their series. Pytest node ids are parametrized
-(`test_select_1M[string_1M_arrow]`).
+A single run of this file (or of tests/) executes the complete type × bind_mode matrix.
+See test_select_1M_recorded_http.py for the WireMock (CPU-only) counterparts.
+
+Test function names stay stable (`test_select_string_1M_arrow`, …) for Jenkins smoke /
+regression node-id filters; SQL is shared via select_1m_queries.
 """
 import pytest
-from catalog import TYPE_KEYS, get_sql
-from matrix import cases
-from runner.test_types import PerfTestType
+from select_1m_queries import TYPE_QUERIES
 
-SIZES = ((1_000_000, "1M"),)
-
-SUFFIXES = {
-    "python": ("", "_fetchall", "_pandas", "_arrow_batches"),
-    "jdbc": ("",),
-    "odbc": ("", "_default"),
-    "core": ("",),
-}
-
-CASES = cases(SIZES, SUFFIXES, infix="_arrow", types=TYPE_KEYS)
-
-ORDERED_SUFFIXES = {
-    "python": ("", "_fetchall", "_arrow_batches"),
-    "jdbc": ("",),
-    "odbc": ("",),
-    "core": ("",),
-}
-
-ORDERED_CASES = cases(
-    SIZES, ORDERED_SUFFIXES, infix="_ordered_arrow", types=("string", "number"),
-)
+ITERATIONS = 10
+WARMUP_ITERATIONS = 2
 
 
-@pytest.mark.iterations(8)
-@pytest.mark.warmup_iterations(1)
-@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", CASES)
-def test_select_1M(perf_test, row_count, dtype, name, fetch_mode, bind_mode):
-    perf_test(
-        sql_command=get_sql(dtype, row_count),
-        fetch_mode=fetch_mode,
-        bind_mode=bind_mode,
-        test_name=f"select_{name}",
-    )
+def _make_select_test(sql: str, bind_mode: str = "char"):
+    @pytest.mark.iterations(ITERATIONS)
+    @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+    def test_fn(perf_test, _sql=sql, _bind_mode=bind_mode):
+        kwargs = {"sql_command": _sql}
+        if _bind_mode != "char":
+            kwargs["bind_mode"] = _bind_mode
+        perf_test(**kwargs)
+
+    if bind_mode == "default":
+        test_fn = pytest.mark.supported_drivers("odbc")(test_fn)
+    return test_fn
 
 
-@pytest.mark.skip(reason="ORDER BY SELECT cases disabled for now")
-@pytest.mark.iterations(8)
-@pytest.mark.warmup_iterations(1)
-@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", ORDERED_CASES)
-def test_select_1M_ordered(perf_test, row_count, dtype, name, fetch_mode, bind_mode):
-    perf_test(
-        sql_command=get_sql(dtype, row_count, ordered=True),
-        fetch_mode=fetch_mode,
-        bind_mode=bind_mode,
-        test_name=f"select_{name}",
-    )
+for type_key, sql in TYPE_QUERIES:
+    char_name = f"test_select_{type_key}_1M_arrow"
+    globals()[char_name] = _make_select_test(sql, "char")
+    globals()[char_name].__name__ = char_name
+    globals()[char_name].__qualname__ = char_name
 
-
-@pytest.mark.iterations(5)
-@pytest.mark.warmup_iterations(1)
-@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", CASES)
-def test_select_1M_recorded_http(perf_test, row_count, dtype, name, fetch_mode, bind_mode):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command=get_sql(dtype, row_count),
-        fetch_mode=fetch_mode,
-        bind_mode=bind_mode,
-        test_name=f"select_{name}_recorded_http",
-    )
-
-
-@pytest.mark.skip(reason="ORDER BY SELECT cases disabled for now")
-@pytest.mark.iterations(5)
-@pytest.mark.warmup_iterations(1)
-@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", ORDERED_CASES)
-def test_select_1M_ordered_recorded_http(
-    perf_test, row_count, dtype, name, fetch_mode, bind_mode
-):
-    perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command=get_sql(dtype, row_count, ordered=True),
-        fetch_mode=fetch_mode,
-        bind_mode=bind_mode,
-        test_name=f"select_{name}_recorded_http",
-    )
+    default_name = f"test_select_{type_key}_1M_arrow_default"
+    globals()[default_name] = _make_select_test(sql, "default")
+    globals()[default_name].__name__ = default_name
+    globals()[default_name].__qualname__ = default_name

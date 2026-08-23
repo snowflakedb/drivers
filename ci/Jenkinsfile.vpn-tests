@@ -157,7 +157,7 @@ pipeline {
                         # filter below excludes other ignored tests (e.g. stress benches,
                         # parked feature E2Es) that share the `#[ignore]` attribute but
                         # are not meant to run here.
-                        cargo test --locked --package sf_core -- --ignored vpn_
+                        cargo test --package sf_core -- --ignored vpn_
                       '''
                     } finally {
                       sh label: 'Cleanup test PATs', script: '''
@@ -199,7 +199,7 @@ pipeline {
                     try {
                       sh label: 'ODBC VPN E2E tests', script: '''
                         set +x
-                        cargo build --locked --package odbc
+                        cargo build --package odbc
                         source /opt/rh/gcc-toolset-11/enable
                         cd odbc_tests
                         mkdir -p cmake-build

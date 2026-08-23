@@ -115,10 +115,9 @@ cd "$REVOCATION_DIR"
 # framework below does.
 #
 # Rather than revert the binary-size win or patch the external framework, we
-# prepend a shim `cargo` to PATH that enforces `--locked` and auto-injects
-# `--features cli` whenever the framework builds/runs one of sf_core's diagnostic
-# binaries. The shim is local to this script; it does not affect anything outside
-# this CI step.
+# prepend a shim `cargo` to PATH that auto-injects `--features cli` whenever the
+# framework builds/runs one of sf_core's diagnostic binaries. The shim is local
+# to this script; it does not affect anything outside this CI step.
 #
 # This workaround can be removed once either:
 #   - snowflake-eng/revocation-validation supports passing cargo features, or
@@ -133,7 +132,7 @@ fi
 # (see the consolidated cleanup definition near the top of this script).
 cat > "$CARGO_SHIM_DIR/cargo" <<EOF
 #!/bin/bash
-# Shim: enforce the lockfile and auto-enable \`cli\` for sf_core diagnostic bins.
+# Shim: auto-enable \`cli\` feature when building sf_core's diagnostic binaries.
 # See surrounding comment in ci/test_revocation.sh for rationale.
 set -e
 if [[ "\$1" == "build" || "\$1" == "run" || "\$1" == "check" ]]; then
@@ -147,9 +146,9 @@ if [[ "\$1" == "build" || "\$1" == "run" || "\$1" == "check" ]]; then
     if [[ "\$needs_cli" == "true" ]]; then
         # Insert --features cli BEFORE any \`--\` separator so it's parsed as a cargo
         # flag, not passed to the built binary (matters for \`cargo run\`).
-        new_args=("\$1" "--locked")
+        new_args=()
         inserted=false
-        for arg in "\${@:2}"; do
+        for arg in "\$@"; do
             if [[ "\$arg" == "--" && "\$inserted" == "false" ]]; then
                 new_args+=("--features" "cli" "--")
                 inserted=true
@@ -162,7 +161,6 @@ if [[ "\$1" == "build" || "\$1" == "run" || "\$1" == "check" ]]; then
         fi
         exec "$REAL_CARGO" "\${new_args[@]}"
     fi
-    exec "$REAL_CARGO" "\$1" --locked "\${@:2}"
 fi
 exec "$REAL_CARGO" "\$@"
 EOF

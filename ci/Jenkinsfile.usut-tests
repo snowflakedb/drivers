@@ -394,7 +394,7 @@ def installSystemDeps() {
 }
 
 def runJdbcTests() {
-  sh label: 'Build jdbc_bridge', script: 'cargo build --locked --package jdbc_bridge'
+  sh label: 'Build jdbc_bridge', script: 'cargo build --package jdbc_bridge'
   sh label: 'Run JDBC tests', script: """
     set -euo pipefail
     ${LOAD_USUT_ENV}
@@ -408,7 +408,7 @@ def runJdbcTests() {
 def runOdbcTests() {
   sh label: 'Build ODBC driver and test harness', script: """
     ${ACTIVATE_GCC}
-    RUSTFLAGS="-C link-arg=-Wl,--undefined-version" cargo build --locked --package odbc
+    RUSTFLAGS="-C link-arg=-Wl,--undefined-version" cargo build --package odbc
     cd odbc_tests
     mkdir -p cmake-build
     cmake -B cmake-build \\

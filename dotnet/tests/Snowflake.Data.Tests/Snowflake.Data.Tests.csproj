@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup Condition="'$(TargetFramework)' == 'net481'">
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'net481'">
+    <DefineConstants>$(DefineConstants);OLD_XUNIT</DefineConstants>
+    <OldXunit>True</OldXunit>
     <!-- TODO: remove once old Snowflake.Data NuGet reference is dropped — its transitive deps
          pull System.Memory versions that conflict with Apache.Arrow at runtime -->
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -8,11 +10,12 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0;net10.0;net481</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net472;net481</TargetFrameworks>
     <TargetFrameworks Condition="'$(OS)' != 'Windows_NT'">net8.0;net9.0;net10.0</TargetFrameworks>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <OutputType>Exe</OutputType>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <OutputType Condition="'$(OldXunit)' != 'True'">Exe</OutputType>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 

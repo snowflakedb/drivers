@@ -48,6 +48,44 @@ jobs:
           fi
           echo "Generated test data matches repository."
 
+  tests-format-validator:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Restore Rust cache
+        id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "format-validator"
+          target-dir: tests/tests_format_validator/target
+          lockfiles: tests/tests_format_validator/Cargo.lock
+
+      - name: Run tests format validator
+        run: |
+          ./tests/tests_format_validator/run_validator.sh
+
+      - name: Save Rust cache
+        if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save
+        # (~13 min normal, 20 min hard ceiling for outliers).
+        timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "format-validator"
+          target-dir: tests/tests_format_validator/target
+          lockfiles: tests/tests_format_validator/Cargo.lock
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
   test-matrix:
     if: github.repository_owner != 'snowflakedb'
     runs-on: ubuntu-latest
@@ -122,7 +160,7 @@ jobs:
           retention-days: 30
 
   validations-status:
-    needs: [test-data, test-matrix, test-coverage-report]
+    needs: [test-data, tests-format-validator, test-matrix, test-coverage-report]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -132,10 +170,12 @@ jobs:
           
           # Check if any validation failed or was cancelled
           if [[ "${{ needs.test-data.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test-matrix.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test-coverage-report.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Validations FAILED or CANCELLED"
             echo "  - test-data: ${{ needs.test-data.result }}"
+            echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
             echo "  - test-matrix: ${{ needs.test-matrix.result }}"
             echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
             exit 1
@@ -143,6 +183,7 @@ jobs:
           
           echo "✓ Validations PASSED"
           echo "  - test-data: ${{ needs.test-data.result }}"
+          echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
           echo "  - test-matrix: ${{ needs.test-matrix.result }}"
           echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
           exit 0

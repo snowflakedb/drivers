@@ -46,7 +46,6 @@ public static class AssembliesMetadata
     public static readonly AssemblyMetadata RootAssembly = new("Snowflake.Data.UD", "Snowflake.Data", ProtoAssembly);
     public static readonly AssemblyMetadata TestsCommonsAssembly = new("Snowflake.Data.Tests.Common", RootAssembly, ProtoAssembly);
     public static readonly AssemblyMetadata RegressionTestsAssembly = new("Snowflake.Data.Tests.Reference", RootAssembly, ProtoAssembly, OldDriverAssembly, TestsCommonsAssembly);
-    public static readonly AssemblyMetadata InteropTestsAssembly = new("Snowflake.Data.Tests.Interop", RootAssembly, ProtoAssembly, TestsCommonsAssembly);
     public static readonly AssemblyMetadata TestsAssembly = new("Snowflake.Data.Tests", RootAssembly, ProtoAssembly, TestsCommonsAssembly);
 
     public static AssemblyMetadata[] AllAssemblies => DriverAssemblies.Concat([OldDriverAssembly]).ToArray();
@@ -57,7 +56,6 @@ public static class AssembliesMetadata
         ProtoAssembly,
         TestsAssembly,
         TestsCommonsAssembly,
-        InteropTestsAssembly,
         RegressionTestsAssembly
     ];
 
@@ -71,8 +69,7 @@ public static class AssembliesMetadata
     [
         TestsAssembly,
         TestsCommonsAssembly,
-        RegressionTestsAssembly,
-        InteropTestsAssembly,
+        RegressionTestsAssembly
     ];
 
     public static AssemblyMetadata FromName(string name) => AllAssemblies.Single(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));

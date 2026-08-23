@@ -15,7 +15,6 @@ export declare class Column {
   isString(): boolean
   isBinary(): boolean
   isNumber(): boolean
-  isDecfloat(): boolean
   isBoolean(): boolean
   isDate(): boolean
   isTime(): boolean
@@ -30,9 +29,8 @@ export declare class Column {
 }
 
 export declare class Connection {
-  constructor(options: Record<string, string>, sessionParameters: Record<string, string>)
+  constructor(options: Record<string, string>)
   connect(): Promise<void>
-  getSessionParameter(name: string): string | null
   execute(query: string): Statement
   getQueryResult(queryId: string): Statement
   destroy(): Promise<void>

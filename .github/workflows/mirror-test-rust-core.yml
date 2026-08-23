@@ -33,7 +33,7 @@ jobs:
       - name: Run sf_core unit tests
         # --lib runs only the inline #[cfg(test)] tests in src/; excludes the
         # tests/ integration harness which requires a live Snowflake connection.
-        run: cargo test --locked --lib --package sf_core
+        run: cargo test --lib --package sf_core
 
       - name: Save Rust cache
         if: always()

@@ -1,40 +1,13 @@
 use anyhow::{Context, Result};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 use walkdir::WalkDir;
 
 use crate::behavior_differences_processor::BehaviorDifferencesProcessor;
 use crate::feature_parser::Feature;
 use crate::step_finder::StepFinder;
 use crate::test_discovery::{Language, TestDiscovery, TestLevel};
-
-static RUST_TEST_FN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\([^)]*\))?\s*\]\s*(?:\n\s*)*(?:async\s+)?fn\s+(\w+)\s*\(",
-    )
-    .unwrap()
-});
-static JDBC_TEST_METHOD_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"@(?:Test|ParameterizedTest)\b(?:\s*\n\s*@\w+(?:\([^)]*\))?)*\s*\n\s*(?:public|protected|private)?\s*(?:static\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
-    )
-    .unwrap()
-});
-static CATCH2_TEST_CASE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#).unwrap()
-});
-static PYTHON_TEST_FN_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"def\s+(test_\w+)\s*\(").unwrap());
-static BD_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"BD#\d+").unwrap());
-static RUST_FN_DECL_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:async\s+)?fn\s+(\w+)\s*\(").unwrap());
-static ODBC_TEST_CASE_DECL_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\([^"]*"([^"]+)""#).unwrap());
-static JDBC_METHOD_DECL_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(").unwrap());
 
 pub struct GherkinValidator {
     _workspace_root: PathBuf,
@@ -309,14 +282,16 @@ impl GherkinValidator {
                             .unwrap_or("");
                         let has_integration_definition =
                             integration_defined.iter().any(|(lang, stem)| {
-                                lang == language && self.file_name_matches_feature(file_name, stem)
+                                lang == language
+                                    && self.file_name_matches_feature(file_name, stem)
                             });
                         if !has_integration_definition {
                             continue;
                         }
                     }
 
-                    let violations = step_finder.find_methods_missing_when_then(entry.path())?;
+                    let violations =
+                        step_finder.find_methods_missing_when_then(entry.path())?;
                     if !violations.is_empty() {
                         results.push(FileGherkinValidation {
                             file_path: entry.path().to_path_buf(),
@@ -360,10 +335,7 @@ impl GherkinValidator {
             ],
             Language::Odbc => vec![
                 (self._workspace_root.join("odbc_tests/tests/e2e"), false),
-                (
-                    self._workspace_root.join("odbc_tests/tests/integration"),
-                    true,
-                ),
+                (self._workspace_root.join("odbc_tests/tests/integration"), true),
             ],
             Language::Python => vec![
                 (self._workspace_root.join("python/tests/e2e"), false),
@@ -496,7 +468,8 @@ impl GherkinValidator {
             self.validate_feature_prefix(feature_path, &feature_id)?;
 
             // Get generic languages declared at feature level
-            let feature_declared_languages = TestDiscovery::get_generic_languages(&feature.tags);
+            let feature_declared_languages =
+                TestDiscovery::get_generic_languages(&feature.tags);
             let feature_excluded = TestDiscovery::get_excluded_languages(&feature.tags);
             let mut required_languages = std::collections::HashSet::new();
 
@@ -632,7 +605,8 @@ impl GherkinValidator {
                 if !any_feature_requires_language {
                     // No matching feature requires this language - determine why
                     // Use the first matching feature (language-specific preferred over shared)
-                    let reason = self.determine_orphan_reason(matching_feature_ids[0], language)?;
+                    let reason =
+                        self.determine_orphan_reason(matching_feature_ids[0], language)?;
 
                     orphaned_files.push(OrphanedTestFile {
                         file_path: test_file_path.to_path_buf(),
@@ -771,29 +745,38 @@ impl GherkinValidator {
         content: &str,
         language: &Language,
     ) -> Result<Vec<String>> {
+        use regex::Regex;
         let mut methods = Vec::new();
 
         match language {
             Language::Rust => {
                 // Match #[test], #[tokio::test], #[tokio::test(flavor = "multi_thread")], etc.
                 // Also handle async fn for tokio::test cases.
-                for captures in RUST_TEST_FN_REGEX.captures_iter(content) {
+                let test_regex = Regex::new(
+                    r"#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\([^)]*\))?\s*\]\s*(?:\n\s*)*(?:async\s+)?fn\s+(\w+)\s*\(",
+                )?;
+                for captures in test_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }
             }
             Language::Jdbc => {
-                for captures in JDBC_TEST_METHOD_REGEX.captures_iter(content) {
+                let test_regex = Regex::new(
+                    r"@(?:Test|ParameterizedTest)\b(?:\s*\n\s*@\w+(?:\([^)]*\))?)*\s*\n\s*(?:public|protected|private)?\s*(?:static\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+                )?;
+                for captures in test_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }
             }
             Language::Odbc => {
-                for captures in CATCH2_TEST_CASE_REGEX.captures_iter(content) {
+                let catch2_regex = Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#)?;
+                for captures in catch2_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }
             }
             Language::Python => {
                 // Match pytest test functions: def test_something(...):
-                for captures in PYTHON_TEST_FN_REGEX.captures_iter(content) {
+                let test_regex = Regex::new(r"def\s+(test_\w+)\s*\(")?;
+                for captures in test_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }
             }
@@ -1297,11 +1280,7 @@ impl GherkinValidator {
             TestDiscovery::get_test_level_for_language(&scenario.tags, language) == first_level
         });
 
-        if all_same {
-            Some(first_level)
-        } else {
-            None
-        }
+        if all_same { Some(first_level) } else { None }
     }
 
     fn steps_match(&self, implemented_step: &str, feature_step: &str) -> bool {
@@ -1338,7 +1317,8 @@ impl GherkinValidator {
         let mut results = Vec::new();
 
         // Collect all feature names so we can identify files with no match
-        let mut feature_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut feature_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for entry in WalkDir::new(&self.features_dir)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -1358,7 +1338,8 @@ impl GherkinValidator {
             let mut e2e_files: Vec<LanguageSpecificTestFile> = Vec::new();
             let mut integration_files: Vec<LanguageSpecificTestFile> = Vec::new();
 
-            for (test_dir, is_integration) in self.get_all_test_directories_for_language(language) {
+            for (test_dir, is_integration) in self.get_all_test_directories_for_language(language)
+            {
                 if !test_dir.exists() {
                     continue;
                 }
@@ -1396,20 +1377,20 @@ impl GherkinValidator {
                     }
 
                     // Find line numbers for each method and attribute BD# per method
-                    let bd_regex = &BD_ID_REGEX;
+                    let bd_regex = regex::Regex::new(r"BD#\d+")?;
                     let lines: Vec<&str> = content.lines().collect();
 
                     // Build (method_name, start_line) pairs by scanning for method declarations
-                    let method_line_regex: Option<&Regex> = match language {
-                        Language::Rust => Some(&RUST_FN_DECL_REGEX),
-                        Language::Python => Some(&PYTHON_TEST_FN_REGEX),
-                        Language::Odbc => Some(&ODBC_TEST_CASE_DECL_REGEX),
-                        Language::Jdbc => Some(&JDBC_METHOD_DECL_REGEX),
+                    let method_line_regex = match language {
+                        Language::Rust => Some(regex::Regex::new(r"(?:async\s+)?fn\s+(\w+)\s*\(")?),
+                        Language::Python => Some(regex::Regex::new(r"def\s+(test_\w+)\s*\(")?),
+                        Language::Odbc => Some(regex::Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\([^"]*"([^"]+)""#)?),
+                        Language::Jdbc => Some(regex::Regex::new(r"(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(")?),
                         _ => None,
                     };
 
                     let mut method_positions: Vec<(String, usize)> = Vec::new();
-                    if let Some(re) = method_line_regex {
+                    if let Some(ref re) = method_line_regex {
                         for (i, line) in lines.iter().enumerate() {
                             if let Some(caps) = re.captures(line) {
                                 let name = caps[1].to_string();
@@ -1585,9 +1566,11 @@ mod tests {
     use super::*;
 
     fn get_rust_methods(content: &str) -> Vec<String> {
-        let validator =
-            GherkinValidator::new(std::path::PathBuf::from("."), std::path::PathBuf::from("."))
-                .expect("validator creation should not fail");
+        let validator = GherkinValidator::new(
+            std::path::PathBuf::from("."),
+            std::path::PathBuf::from("."),
+        )
+        .expect("validator creation should not fail");
         validator
             .get_all_test_methods_in_file(content, &Language::Rust)
             .expect("regex should not fail")
@@ -1634,10 +1617,7 @@ async fn multi_thread_test() {}
 "#;
         let mut methods = get_rust_methods(content);
         methods.sort();
-        assert_eq!(
-            methods,
-            vec!["async_test", "multi_thread_test", "sync_test"]
-        );
+        assert_eq!(methods, vec!["async_test", "multi_thread_test", "sync_test"]);
     }
 
     #[test]

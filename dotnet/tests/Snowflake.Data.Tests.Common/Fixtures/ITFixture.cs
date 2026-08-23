@@ -3,7 +3,7 @@ using Snowflake.Data.Tests.Utilities;
 namespace Snowflake.Data.Tests.Fixtures;
 
 public class ITFixture
-#if !NETFRAMEWORK
+#if !OLD_XUNIT
     : IAsyncLifetime
 #else
     : IDisposable
@@ -17,14 +17,19 @@ public class ITFixture
     private string? _schemaName;
     public virtual ITestConnectionFactory Factory { get; } = new DefaultTestConnectionFactory();
 
-    private static ITestOutputHelper? TestOutputHelper => TestContext.Current.TestOutputHelper;
+    private static ITestOutputHelper? TestOutputHelper =>
+#if OLD_XUNIT
+        NullTestOutputHelper.Instance;
+#else
+        TestContext.Current.TestOutputHelper;
+#endif
 
     static ITFixture()
     {
         InitializeEnvironment();
     }
 
-#if !NETFRAMEWORK
+#if !OLD_XUNIT
     public async ValueTask InitializeAsync()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -136,3 +141,15 @@ public class ITFixture
         _baseSchema = "PUBLIC";
     }
 }
+
+#if OLD_XUNIT
+file sealed class NullTestOutputHelper : ITestOutputHelper
+{
+    public static NullTestOutputHelper Instance { get; } = new();
+    public string Output => string.Empty;
+    public void Write(string message) { }
+    public void Write(string format, params object[] args) { }
+    public void WriteLine(string message) { }
+    public void WriteLine(string format, params object[] args) { }
+}
+#endif

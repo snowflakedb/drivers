@@ -2,8 +2,6 @@ using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
-using Snowflake.Data.Tests.Compatibility;
-using AssemblyMetadata = Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata.AssemblyMetadata;
 
 namespace Snowflake.Data.Tests.ArchitectureInvariantTests.Utils;
 
@@ -36,40 +34,18 @@ public static class AssemblyUtil
         }
     }
 
-    internal static Assembly LoadAssembly(AssemblyMetadata assemblyMetadata)
+    internal static Assembly LoadAssembly(Metadata.AssemblyMetadata assemblyMetadata)
     {
-        if (TryLoadAs(assemblyMetadata, AssembliesMetadata.RegressionTestsAssembly, out var loadFrom))
-            return loadFrom!;
-        if (TryLoadAs(assemblyMetadata, AssembliesMetadata.InteropTestsAssembly, out loadFrom))
-            return loadFrom!;
+        if (Equals(assemblyMetadata, AssembliesMetadata.RegressionTestsAssembly))
+        {
+            var path = Path.Combine(SolutionRoot, $"tests{Path.DirectorySeparatorChar}{AssembliesMetadata.RegressionTestsAssembly.Name}");
+            var files = Directory.GetFiles(path, $"{AssembliesMetadata.RegressionTestsAssembly.Name}.dll", SearchOption.AllDirectories);
+            var platform = Environment.Version.Major.ToString();
+            var dllFile = files.First(x => x.Contains(platform));
+            return Assembly.LoadFrom(dllFile);
+        }
 
         return Assembly.Load(new AssemblyName(assemblyMetadata));
-    }
-
-    private static bool TryLoadAs(AssemblyMetadata assemblyMetadata, AssemblyMetadata asTarget, out Assembly? result)
-    {
-        if (!Equals(assemblyMetadata.ToString(), asTarget.ToString()))
-        {
-            result = null;
-            return false;
-        }
-
-        var path = Path.Combine(SolutionRoot, $"tests{Path.DirectorySeparatorChar}{asTarget}");
-        var files = Directory.GetFiles(path, $"{asTarget}.dll", SearchOption.AllDirectories);
-        var platform = Environment.Version.Major.ToString();
-        var dllFile = files.FirstOrDefault(x => x.Contains(platform));
-
-        if (dllFile == null)
-        {
-#if NETFRAMEWORK
-            Skip.When(true, "Different versions of .net framework might not be able to load type system properly");
-#else
-            dllFile = files.First();
-#endif
-        }
-
-        result = Assembly.LoadFrom(dllFile!);
-        return true;
     }
 
     private static string FindSolutionRoot()

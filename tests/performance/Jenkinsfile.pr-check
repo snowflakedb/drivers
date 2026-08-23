@@ -8,13 +8,8 @@ import groovy.transform.Field
 @Field def REGRESSION_RERUN_ITERATIONS_PER_RUN = 10
 @Field def REGRESSION_BASELINE_ITERATIONS = 10
 @Field def REGRESSION_WARMUP_ITERATIONS = 2
-@Field def REGRESSION_FAST_TEST_NODES = [
-    "tests/test_select_1M.py::test_select_1M_recorded_http[string_1M_arrow]",
-    "tests/test_select_1M.py::test_select_1M_recorded_http[float_1M_arrow]",
-    "tests/test_select_1M.py::test_select_1M_recorded_http[timestamp_tz_1M_arrow]",
-    "tests/test_select_1M.py::test_select_1M_recorded_http[number_1M_arrow]",
-    "tests/test_select_1M.py::test_select_1M_recorded_http[date_1M_arrow]",
-]
+@Field def REGRESSION_FAST_TEST_FILTER = "test_select_string_1M_arrow_recorded_http or test_select_float_1M_arrow_recorded_http or test_select_timestamp_tz_1M_arrow_recorded_http or test_select_number_1M_arrow_recorded_http or test_select_date_1M_arrow_recorded_http"
+@Field def REGRESSION_TEST_FILTER = "${REGRESSION_FAST_TEST_FILTER}"
 @Field def ACCEPT_PERF_LABEL = 'ACCEPT_PERFORMANCE_CHANGES'
 @Field def REGRESSION_STATUS_CONTEXT = 'performance/regression'
 @Field def REGRESSION_EXIT_CODE = 77
@@ -139,7 +134,8 @@ def runRegressionTests(String driver) {
             source .venv/bin/activate
             export CLOUD=aws
             python -m hatch run -- python -m pytest \
-                ${REGRESSION_FAST_TEST_NODES.join(' ')} \
+                tests/test_select_1M_recorded_http.py \
+                -k "${REGRESSION_FAST_TEST_FILTER}" \
                 --driver=${driver} --driver-type=universal \
                 --iterations=${REGRESSION_SCREEN_ITERATIONS} --warmup-iterations=${REGRESSION_WARMUP_ITERATIONS} \
                 --preserve-mappings \
@@ -175,7 +171,7 @@ ${sep}
         echo "  JDBC     ${exitCodeLabel(jdbc.exit)}"
     }
     echo """${sep}
-  Tests     : ${REGRESSION_FAST_TEST_NODES.join(', ')}
+  Tests     : ${REGRESSION_FAST_TEST_FILTER}
   Threshold : ${REGRESSION_THRESHOLD}%  |  Rerun iters: ${REGRESSION_RERUN_ITERATIONS_PER_RUN}
 ${sep}"""
 
@@ -215,7 +211,8 @@ def runBaselineTests(String driver) {
         source .venv/bin/activate
         export CLOUD=aws
         python -m hatch run -- python -m pytest \
-            ${REGRESSION_FAST_TEST_NODES.join(' ')} \
+            tests/test_select_1M_recorded_http.py \
+            -k "${REGRESSION_TEST_FILTER}" \
             --driver=${driver} --driver-type=universal \
             --iterations=${REGRESSION_BASELINE_ITERATIONS} --warmup-iterations=${REGRESSION_WARMUP_ITERATIONS} \
             --upload-to-benchstore \
@@ -380,7 +377,7 @@ pipeline {
                                         sh '''
                                             source .venv/bin/activate
                                             export CLOUD=aws
-                                            python -m hatch run -- python -m pytest tests/test_select_1M.py::test_select_1M[string_1M_arrow] --driver=core --iterations=1 --warmup-iterations=0 -s -v
+                                            python -m hatch run -- python -m pytest tests/test_select_1M.py::test_select_string_1M_arrow --driver=core --iterations=1 --warmup-iterations=0 -s -v
                                         '''
                                     }
                                 }
@@ -435,7 +432,8 @@ pipeline {
                                                     source .venv/bin/activate
                                                     export CLOUD=aws
                                                     python -m hatch run -- python -m pytest \
-                                                        ${REGRESSION_FAST_TEST_NODES.join(' ')} \
+                                                        tests/test_select_1M_recorded_http.py \
+                                                        -k "${REGRESSION_FAST_TEST_FILTER}" \
                                                         --driver=python --driver-type=universal \
                                                         --iterations=1 --warmup-iterations=0 \
                                                         -s -v
@@ -510,7 +508,8 @@ pipeline {
                                                     source .venv/bin/activate
                                                     export CLOUD=aws
                                                     python -m hatch run -- python -m pytest \
-                                                        ${REGRESSION_FAST_TEST_NODES.join(' ')} \
+                                                        tests/test_select_1M_recorded_http.py \
+                                                        -k "${REGRESSION_FAST_TEST_FILTER}" \
                                                         --driver=odbc --driver-type=universal \
                                                         --iterations=1 --warmup-iterations=0 \
                                                         -s -v
@@ -585,7 +584,8 @@ pipeline {
                                                     source .venv/bin/activate
                                                     export CLOUD=aws
                                                     python -m hatch run -- python -m pytest \
-                                                        ${REGRESSION_FAST_TEST_NODES.join(' ')} \
+                                                        tests/test_select_1M_recorded_http.py \
+                                                        -k "${REGRESSION_FAST_TEST_FILTER}" \
                                                         --driver=jdbc --driver-type=universal \
                                                         --iterations=1 --warmup-iterations=0 \
                                                         -s -v

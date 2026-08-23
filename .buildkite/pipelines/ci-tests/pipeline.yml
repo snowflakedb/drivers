@@ -91,7 +91,7 @@ steps:
               export PARAMETER_PATH=/workdir/parameters.json
 
               echo "--- :hammer: Building sf_core"
-              cargo build --locked --package sf_core
+              cargo build --package sf_core
               cargo install cargo2junit 2>/dev/null || true
 
               echo "--- :test_tube: Running Tests"
@@ -100,7 +100,7 @@ steps:
               useradd -m testuser 2>/dev/null || true
               # RUSTC_BOOTSTRAP=1 enables -Z unstable-options for JSON test output
               export RUSTC_BOOTSTRAP=1
-              cargo test --locked --package sf_core --no-run 2>&1
+              cargo test --package sf_core --no-run 2>&1
               chmod a+rx /root
               chmod -R a+rX /root/.cargo /root/.rustup 2>/dev/null || true
               chmod -R a+rwX /workdir/target /workdir/junit-results
@@ -110,7 +110,7 @@ steps:
               TEST_EXIT=0
               if [ "$$TEST_FILTER" = "ALL" ]; then
                 runuser -u testuser -- env PATH="$$CARGO_BIN:$$PATH" PARAMETER_PATH=/workdir/parameters.json RUSTC_BOOTSTRAP=1 \
-                  cargo test --locked --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | tee /tmp/rust-test-output.json
+                  cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | tee /tmp/rust-test-output.json
                 TEST_EXIT=$${PIPESTATUS[0]}
               else
                 IFS="|" read -ra FILTERS <<< "$$TEST_FILTER"
@@ -118,7 +118,7 @@ steps:
                 for filter in "$${FILTERS[@]}"; do
                   echo "Running: cargo test -- $$filter"
                   runuser -u testuser -- env PATH="$$CARGO_BIN:$$PATH" PARAMETER_PATH=/workdir/parameters.json RUSTC_BOOTSTRAP=1 \
-                    cargo test --locked --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1 | tee -a /tmp/rust-test-output.json
+                    cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1 | tee -a /tmp/rust-test-output.json
                   [ $${PIPESTATUS[0]} -ne 0 ] && TEST_EXIT=1
                 done
               fi
@@ -238,7 +238,7 @@ steps:
               export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
 
               echo "--- :hammer: Building ODBC Driver"
-              cargo build --locked --package odbc
+              cargo build --package odbc
 
               echo "--- :hammer: Building C++ Test Suite"
               source /opt/rh/gcc-toolset-11/enable
@@ -310,8 +310,8 @@ steps:
               export PARAMETER_PATH=/workdir/parameters.json
 
               echo "--- :hammer: Building JDBC Bridge"
-              cargo build --locked --package sf_core
-              cargo build --locked --package jdbc_bridge
+              cargo build --package sf_core
+              cargo build --package jdbc_bridge
 
               echo "--- :test_tube: Running E2E Tests"
               export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so

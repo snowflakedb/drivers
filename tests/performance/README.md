@@ -174,7 +174,7 @@ hatch run core-local --cloud=azure
 hatch run python-universal-local --iterations=10 --warmup-iterations=2
 
 # Specific test
-hatch run core-local tests/test_select_1M.py::test_select_1M[string_1M_arrow]
+hatch run core-local tests/test_select_1M.py::test_select_string_1M_arrow_fetch_s
 
 # Filter by pattern
 hatch run python-both-local -k "1M"
@@ -245,14 +245,16 @@ def test_put_files_12mx100(perf_test):
 - The `s3_download_url` parameter triggers automatic download of test files from S3 before test execution
 - **SELECT tests (Python)**: pass `fetch_mode="fetchone"`, `"fetchall"`, `"pandas"`, or
   `"arrow_batches"` to exercise a different cursor fetch API instead of the default
-  `fetchmany()` chunked loop (see `matrix.py` `VARIANTS` and the `SUFFIXES` dict in each
-  suite file). `"pandas"` uses `cursor.fetch_pandas_all()`; `"arrow_batches"`
+  `fetchmany()` chunked loop (see `tests/test_select_1M_pandas.py`, `test_select_small_rows.py`,
+  `test_select_mid_rows.py`). `"pandas"` uses `cursor.fetch_pandas_all()`; `"arrow_batches"`
   iterates `cursor.fetch_arrow_batches()`. Both require the pandas/pyarrow extras already in
   the Python driver image. Works for both e2e and recorded-HTTP paths.
 - **SELECT tests (ODBC)**: pass `bind_mode="default"` to bind columns with `SQL_C_DEFAULT`
   (driver-chosen C type per SQL type; for Snowflake ODBC, `SQL_DECIMAL` defaults to CHAR)
-  instead of forcing `SQL_C_CHAR`. Default-bind cases live in `test_select_1M.py` via the
-  `_default` suffix so BenchDash charts them separately. Invalid `BIND_MODE` values fail fast.
+  instead of forcing `SQL_C_CHAR`. Default-bind tests live in the same files as the CHAR
+  baselines (`test_select_1M.py`, `test_select_1M_recorded_http.py`) with a `_default` name
+  suffix so BenchDash charts them separately, and are gated with
+  `@pytest.mark.supported_drivers("odbc")`. Invalid `BIND_MODE` values fail fast.
   CHAR baselines keep historical bind-then-`ROW_ARRAY_SIZE` order; default mode sets
   bulk-fetch attrs before `SQLBindCol`.
 
@@ -293,10 +295,10 @@ Tests with recorded HTTP traffic use WireMock to record HTTP traffic to Snowflak
 
 ```bash
 # Run with fresh recording (both record and replay phases)
-hatch run python-universal-local tests/test_select_1M.py::test_select_1M_recorded_http[string_1M_arrow]
+hatch run python-universal-local tests/test_select_1M_recorded_http.py::test_select_string_1M_arrow_recorded_http
 
 # Reuse existing mappings (skip recording, only replay phase)
-hatch run python-universal-local tests/test_select_1M.py::test_select_1M_recorded_http[string_1M_arrow] --reuse-mappings run_20260115_120000
+hatch run python-universal-local tests/test_select_1M_recorded_http.py::test_select_string_1M_arrow_recorded_http --reuse-mappings run_20260115_120000
 ```
 
 ### WireMock-Specific Parameters
@@ -310,7 +312,7 @@ hatch run python-universal-local tests/test_select_1M.py::test_select_1M_recorde
 
 ### Key Details
 
-- **Test naming**: Recorded tests use a `_recorded_http` function suffix (e.g., `test_select_1M_recorded_http[string_1M_arrow]`). BenchDash series stay `select_string_1M_arrow_recorded_http`.
+- **Test naming**: Tests end with `_recorded_http` (e.g., `test_select_string_1M_arrow_recorded_http`)
 - **Benchstore upload**: Only replay phase metrics are uploaded; recording phase results are for debugging only
 - **Docker networking**: Test driver and WireMock containers run in a shared Docker network for communication
 - **Server version**: Marked as "N/A" in replay mode for Old driver since tests don't connect to real Snowflake

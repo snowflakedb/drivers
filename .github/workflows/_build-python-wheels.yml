@@ -358,7 +358,7 @@ jobs:
                 echo "── Building python_bridge for $V ($PY) ──"
                 export PYO3_PYTHON="$PY"
                 # shellcheck disable=SC2086
-                cargo build --locked --release --package python_bridge $CARGO_EXTRA_ARGS
+                cargo build --release --package python_bridge $CARGO_EXTRA_ARGS
                 EXT_SUFFIX="$($PY -c "import sysconfig; print(sysconfig.get_config_var(\"EXT_SUFFIX\"))")"
                 DEST="python/src/snowflake/connector/_core/sf_core_python${EXT_SUFFIX}"
                 cp "target/release/${CARGO_LIB}" "$DEST"
@@ -399,7 +399,7 @@ jobs:
             PY="$(uv python find "$V")"
             echo "── Building python_bridge for $V ($PY) ──"
             export PYO3_PYTHON="$PY"
-            cargo build --locked --release --package python_bridge ${{ matrix.cargo_extra_args }}
+            cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
             EXT_SUFFIX="$("$PY" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
             DEST="python/src/snowflake/connector/_core/sf_core_python${EXT_SUFFIX}"
             cp "target/release/${CARGO_LIB}" "$DEST"
@@ -429,7 +429,7 @@ jobs:
             PY_WIN="$(cygpath -w "$PY")"
             echo "── Building python_bridge for $V ($PY) ──"
             export PYO3_PYTHON="$PY_WIN"
-            cargo build --locked --release --package python_bridge ${{ matrix.cargo_extra_args }}
+            cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
             EXT_SUFFIX="$("$PY" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
             DEST="python/src/snowflake/connector/_core/sf_core_python${EXT_SUFFIX}"
             cp "target/release/${CARGO_LIB}" "$DEST"
@@ -621,7 +621,7 @@ jobs:
           Write-Host "Building python_bridge for py${{ matrix.py }} ($py)"
           $env:PYO3_PYTHON = $py
           $env:PYO3_BUILD_EXTENSION_MODULE = "1"
-          cargo build --locked --release --package python_bridge ${{ matrix.cargo_extra_args }}
+          cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Place python_bridge in python package

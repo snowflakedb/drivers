@@ -23,10 +23,13 @@ RUN rustup show
 # Install cargo-chef
 RUN cargo install cargo-chef --version 0.1.77 --locked
 
-# cargo-chef rewrites workspace manifests into a dependency-only recipe, so its
-# cache-warming cook cannot use the committed workspace lockfile. Keep that
-# temporary resolution compatible with the pinned toolchain; the artifact builds
-# below still use --locked against the committed Cargo.lock.
+# Make cargo's resolver MSRV-aware. `cargo chef cook` re-resolves dependencies
+# from the manifests (it does not honor the committed Cargo.lock), so without
+# this it pulls the newest release of a transitive crate even when that release
+# raises its rust-version above the toolchain pinned in rust-toolchain.toml
+# (e.g. aws-smithy-async 1.3.0 requires rustc 1.94.1 > our 1.91.1). "fallback"
+# makes cargo pick the newest version compatible with the workspace's declared
+# rust-version instead.
 ENV CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback
 
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
@@ -69,30 +72,16 @@ COPY proto_generator/ ./proto_generator/
 COPY odbc_trace_tool/ ./odbc_trace_tool/
 
 # Build dependencies - this is the caching layer
-# The final locked builds below reuse any matching artifacts from this layer.
+# Compiles ALL external crates (AWS SDK, tokio, etc.)
 RUN cargo chef cook --release --recipe-path recipe.json --package sf_core --package odbc --package jdbc_bridge
 
-# Restore the committed lockfile and every workspace manifest that cargo-chef
-# overwrites with its dependency-only recipe. Besides stripping sections such as
-# [lib], the recipe stubs package versions as 0.0.1, which is incompatible with
-# the reviewed lockfile used by the final --locked builds below.
-COPY Cargo.toml Cargo.lock ./
-COPY sf_core/Cargo.toml ./sf_core/Cargo.toml
-COPY sf_core/tests/common/arrow_deserialize_macro/Cargo.toml ./sf_core/tests/common/arrow_deserialize_macro/Cargo.toml
-COPY sf_params_spec/Cargo.toml ./sf_params_spec/Cargo.toml
-COPY sf_params_codegen/Cargo.toml ./sf_params_codegen/Cargo.toml
-COPY sf_mini_core/Cargo.toml ./sf_mini_core/Cargo.toml
-COPY sf_mini_core_static/Cargo.toml ./sf_mini_core_static/Cargo.toml
-COPY proto_utils/Cargo.toml ./proto_utils/Cargo.toml
-COPY proto_generator/Cargo.toml ./proto_generator/Cargo.toml
+# Re-copy Cargo.toml files that cargo-chef may have overwritten from the recipe,
+# which can strip the [lib] section (e.g. proc-macro = true).
+# Also restores the package version, which cargo-chef stubs as 0.0.1 — without
+# this, env!("CARGO_PKG_VERSION") compiles to "0.0.1" instead of the real version.
 COPY error_trace/Cargo.toml ./error_trace/Cargo.toml
 COPY error_trace_derive/Cargo.toml ./error_trace_derive/Cargo.toml
 COPY odbc/Cargo.toml ./odbc/Cargo.toml
-COPY jdbc_bridge/Cargo.toml ./jdbc_bridge/Cargo.toml
-COPY nodejs_bridge/Cargo.toml ./nodejs_bridge/Cargo.toml
-COPY odbc_trace_tool/Cargo.toml ./odbc_trace_tool/Cargo.toml
-COPY python_bridge/Cargo.toml ./python_bridge/Cargo.toml
-COPY python_bridge/stub_gen/Cargo.toml ./python_bridge/stub_gen/Cargo.toml
 
 # Copy source files
 COPY sf_core/src/ ./sf_core/src/
@@ -110,15 +99,15 @@ COPY error_trace_derive/src/ ./error_trace_derive/src/
 COPY odbc_trace_tool/src/ ./odbc_trace_tool/src/
 
 # Build sf_core (with perf_timing instrumentation for performance tests).
-RUN cargo build --locked --release --package sf_core --features perf_timing && \
+RUN cargo build --release --package sf_core --features perf_timing && \
     cp target/release/libsf_core.so /workdir/libsf_core.so
 
 # Build ODBC wrapper (with perf_timing instrumentation for performance tests)
-RUN cargo build --locked --release --package odbc --features perf_timing && \
+RUN cargo build --release --package odbc --features perf_timing && \
     cp target/release/libsfodbc.so /workdir/libsfodbc.so
 
 # Build jdbc_bridge (JNI native lib loaded by the JDBC front-end via CORE_PATH).
 # jdbc_bridge has no perf_timing feature, so the JDBC driver app emits base
 # per-iteration metrics only (no core-instrumentation columns).
-RUN cargo build --locked --release --package jdbc_bridge && \
+RUN cargo build --release --package jdbc_bridge && \
     cp target/release/libjdbc_bridge.so /workdir/libjdbc_bridge.so

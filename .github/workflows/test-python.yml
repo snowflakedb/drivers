@@ -61,7 +61,6 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       build-targets: ${{ steps.targets.outputs.targets }}
-      cleanup-clouds: ${{ steps.cleanup-clouds.outputs.clouds }}
     steps:
       - uses: actions/checkout@v7
       - id: matrix
@@ -92,16 +91,6 @@ jobs:
           python ci/test_matrix/generate_matrix.py \
             --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-build-targets $LEVEL_ARG \
             >> "$GITHUB_OUTPUT"
-      - id: cleanup-clouds
-        env:
-          MATRIX_JSON: ${{ steps.matrix.outputs.matrix }}
-        run: |
-          python3 -c '
-          import json, os
-          rows = json.loads(os.environ["MATRIX_JSON"] or "[]")
-          clouds = sorted({r["cloud_provider"] for r in rows})
-          print("clouds=" + json.dumps(clouds))
-          ' >> "$GITHUB_OUTPUT"
 
   # ── Build all wheels via shared reusable workflow ────────────────────
   build_wheels:
@@ -337,7 +326,7 @@ jobs:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
 
-  # Unit, integration, and e2e tests with universal connector.
+  # Combined unit + integration tests with universal connector.
   # HatchEnv=test-native-arrow is a matrix cell (see ci/test_matrix/models/python.py):
   # production wheels omit --features native-arrow, so later PRs rebuild
   # python_bridge after wheel install. :cov for that cell is a placeholder
@@ -542,116 +531,11 @@ jobs:
         env:
           SKIP_CORE_BUILD: "false"
 
-      # test-pandas cells only collect tests/e2e/pandas (see hatch env scripts).
-      # Keep that as a single e2e step; the split suites apply to the `test` env.
-      - name: Run unit tests with coverage
-        if: matrix.hatch_env != 'test-pandas'
-        id: run_python_unit
-        continue-on-error: true
+      - name: Run tests with coverage (Linux/macOS)
+        if: runner.os != 'Windows'
+        id: run_python_tests_unix
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         working-directory: python
-        shell: bash
-        run: |
-          mkdir -p reports
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:unit \
-            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.unit.json \
-            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.unit.xml \
-            --cov=src/snowflake \
-            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
-            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Rerun failed unit tests
-        if: steps.run_python_unit.outcome == 'failure'
-        working-directory: python
-        shell: bash
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:unit --last-failed
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Run integration tests with coverage
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
-        id: run_python_integ
-        continue-on-error: true
-        working-directory: python
-        shell: bash
-        run: |
-          mkdir -p reports
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:integ \
-            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.integ.json \
-            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.integ.xml \
-            --cov=src/snowflake --cov-append \
-            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
-            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Rerun failed integration tests
-        if: steps.run_python_integ.outcome == 'failure'
-        working-directory: python
-        shell: bash
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:integ --last-failed
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Run e2e tests with coverage
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
-        id: run_python_e2e
-        continue-on-error: true
-        working-directory: python
-        shell: bash
-        run: |
-          mkdir -p reports
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:e2e \
-            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.e2e.json \
-            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.e2e.xml \
-            --cov=src/snowflake --cov-append \
-            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
-            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Rerun failed e2e tests
-        if: steps.run_python_e2e.outcome == 'failure'
-        working-directory: python
-        shell: bash
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:e2e --last-failed
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Merge pytest JSON reports
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
-        working-directory: python
-        shell: bash
-        run: |
-          "$(uv python find ${{ matrix.py }})" - <<'PY'
-          import json
-          from pathlib import Path
-
-          key = """${{ env.MATRIX_KEY }}"""
-          reports = Path("reports")
-          tests = []
-          for suffix in ("unit", "integ", "e2e"):
-              path = reports / f"universal-{key}.{suffix}.json"
-              if path.exists():
-                  tests.extend(json.loads(path.read_text()).get("tests", []))
-          out = reports / f"universal-{key}.json"
-          out.write_text(json.dumps({"tests": tests}))
-          print(f"Merged {len(tests)} test records into {out}")
-          PY
-
-      - name: Run pandas e2e tests with coverage
-        if: matrix.hatch_env == 'test-pandas'
-        id: run_python_pandas
-        continue-on-error: true
-        working-directory: python
-        shell: bash
         run: |
           mkdir -p reports
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov \
@@ -661,16 +545,43 @@ jobs:
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
-      - name: Rerun failed pandas e2e tests
-        if: steps.run_python_pandas.outcome == 'failure'
+      - name: Rerun failed Python tests (Linux/macOS)
+        if: steps.run_python_tests_unix.outcome == 'failure' && github.event_name == 'merge_group'
         working-directory: python
-        shell: bash
         run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
+
+      - name: Run tests with coverage (Windows)
+        if: runner.os == 'Windows'
+        id: run_python_tests_windows
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
+        working-directory: python
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path reports
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov `
+            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.json `
+            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.xml `
+            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml `
+            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+
+
+      - name: Rerun failed Python tests (Windows)
+        if: steps.run_python_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
+        working-directory: python
+        shell: pwsh
+        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+
 
       - name: Upload test results as GitHub artifact
         if: always()
@@ -741,14 +652,12 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache-native-arrow.outputs.target-cache-hit }}
 
   cleanup_python:
-    needs: [detect-changes, python_tests, load-python-matrix]
-    # Unique clouds from the python_tests matrix. Empty (`[]`) fails GHA
-    # strategy.matrix, so skip when no cells ran.
-    if: always() && needs.python_tests.result != 'skipped' && needs.load-python-matrix.outputs.cleanup-clouds != '[]'
+    needs: [detect-changes, python_tests]
+    if: always() && needs.python_tests.result != 'skipped'
     strategy:
       fail-fast: false
       matrix:
-        cloud_provider: ${{ fromJSON(needs.load-python-matrix.outputs.cleanup-clouds) }}
+        cloud_provider: [aws, gcp, azure]
     runs-on: ubuntu-latest
     name: cleanup_python (${{ matrix.cloud_provider }})
     steps:

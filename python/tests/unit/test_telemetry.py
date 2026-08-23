@@ -15,7 +15,6 @@ import warnings
 import pytest
 
 import snowflake.connector.telemetry as telemetry_module
-
 from snowflake.connector.telemetry import TelemetryClient
 
 

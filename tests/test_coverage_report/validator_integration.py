@@ -87,7 +87,7 @@ class ValidatorIntegration:
         print("Building Rust validator...")
         # Use release build for better performance and parallel compilation
         build_result = subprocess.run(
-            ["cargo", "build", "--locked", "--release", "-j", "4"],
+            ["cargo", "build", "--release", "-j", "4"],
             cwd=self.validator_path,
             capture_output=True,
             text=True

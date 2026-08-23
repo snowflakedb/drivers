@@ -186,6 +186,6 @@ jobs:
         run: |
           set -euo pipefail
           export PARAMETER_PATH="$(pwd)/parameters.json"
-          cargo test --locked --package sf_core --test e2e_tests --features auth_spcs_e2e \
+          cargo test --package sf_core --test e2e_tests --features auth_spcs_e2e \
             -- --ignored --exact \
             authentication::spcs_token::should_authenticate_inside_spcs_using_the_injected_session_token

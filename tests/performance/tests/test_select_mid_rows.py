@@ -1,52 +1,91 @@
-"""Fetch performance for mid-size result sets.
+"""Fetch performance for mid-size result sets (Python driver).
 
 10k / 100k rows sit between percentile customer sizes (1/15/400) and the 1M
-throughput suite.
+throughput suite. Datatypes match the core 1M SELECT matrix.
+Modes: fetchall, fetchone, pandas. Each case runs e2e and recorded_http.
+
+FETCH_MODE is read only by the Python driver app — Core/ODBC/JDBC ignore it.
 """
 import pytest
-from catalog import get_sql
-from matrix import cases
 from runner.test_types import PerfTestType
 
-SIZES = (
-    (10_000, "10k"),
-    (100_000, "100k"),
-)
+ITERATIONS = 10
+WARMUP_ITERATIONS = 2
 
-TYPES = ("string", "number", "date", "timestamp_ntz", "15columns")
+ROW_COUNTS = [(10_000, "10k"), (100_000, "100k")]
+FETCH_MODES = ["fetchall", "fetchone", "pandas"]
 
-SUFFIXES = {
-    "python": ("_fetchall", "_fetchone", "_pandas"),
-    "jdbc": ("",),
-    "odbc": ("",),
-    "core": ("",),
-}
+_TABLE = "SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM"
+_15_COLUMNS = """
+            SELECT
+                L_ORDERKEY,
+                L_PARTKEY,
+                L_SUPPKEY,
+                L_LINENUMBER,
+                L_QUANTITY,
+                L_EXTENDEDPRICE,
+                L_DISCOUNT,
+                L_TAX,
+                L_RETURNFLAG,
+                L_LINESTATUS,
+                L_SHIPDATE,
+                L_COMMITDATE,
+                L_RECEIPTDATE,
+                L_SHIPINSTRUCT,
+                L_COMMENT
+            FROM {table}
+            LIMIT {n}
+        """
 
-CASES = cases(SIZES, SUFFIXES, infix="_arrow")
+# (dtype_label, sql_template) — core 1M SELECT datatype set
+QUERIES = [
+    ("string", f"SELECT L_COMMENT FROM {_TABLE} LIMIT {{n}}"),
+    ("number", f"SELECT L_LINENUMBER::INT FROM {_TABLE} LIMIT {{n}}"),
+    ("date", f"SELECT L_SHIPDATE FROM {_TABLE} LIMIT {{n}}"),
+    ("timestamp_ntz", f"SELECT L_SHIPDATE::TIMESTAMP_NTZ FROM {_TABLE} LIMIT {{n}}"),
+    ("15columns", _15_COLUMNS.format(table=_TABLE, n="{n}")),
+]
+
+CASES = [
+    (row_count, dtype, fetch_mode, sql_template)
+    for row_count, _ in ROW_COUNTS
+    for dtype, sql_template in QUERIES
+    for fetch_mode in FETCH_MODES
+]
+IDS = [
+    f"{dtype}_{label}_arrow_{fetch_mode}"
+    for _, label in ROW_COUNTS
+    for dtype, _ in QUERIES
+    for fetch_mode in FETCH_MODES
+]
 
 
-@pytest.mark.iterations(8)
-@pytest.mark.warmup_iterations(1)
-@pytest.mark.parametrize("dtype", TYPES)
-@pytest.mark.parametrize("row_count,name,fetch_mode,bind_mode", CASES)
-def test_select_mid(perf_test, dtype, row_count, name, fetch_mode, bind_mode):
+def _size_label(row_count: int) -> str:
+    return "10k" if row_count == 10_000 else "100k"
+
+
+@pytest.mark.supported_drivers("python")
+@pytest.mark.iterations(ITERATIONS)
+@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+@pytest.mark.parametrize("row_count,dtype,fetch_mode,sql_template", CASES, ids=IDS)
+def test_select_mid(perf_test, row_count, dtype, fetch_mode, sql_template):
+    label = _size_label(row_count)
     perf_test(
-        sql_command=get_sql(dtype, row_count),
+        sql_command=sql_template.format(n=row_count),
         fetch_mode=fetch_mode,
-        bind_mode=bind_mode,
-        test_name=f"select_{dtype}_{name}",
+        test_name=f"select_{dtype}_{label}_arrow_{fetch_mode}",
     )
 
 
-@pytest.mark.iterations(5)
-@pytest.mark.warmup_iterations(1)
-@pytest.mark.parametrize("dtype", TYPES)
-@pytest.mark.parametrize("row_count,name,fetch_mode,bind_mode", CASES)
-def test_select_mid_recorded_http(perf_test, dtype, row_count, name, fetch_mode, bind_mode):
+@pytest.mark.supported_drivers("python")
+@pytest.mark.iterations(ITERATIONS)
+@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+@pytest.mark.parametrize("row_count,dtype,fetch_mode,sql_template", CASES, ids=IDS)
+def test_select_mid_recorded_http(perf_test, row_count, dtype, fetch_mode, sql_template):
+    label = _size_label(row_count)
     perf_test(
         test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command=get_sql(dtype, row_count),
+        sql_command=sql_template.format(n=row_count),
         fetch_mode=fetch_mode,
-        bind_mode=bind_mode,
-        test_name=f"select_{dtype}_{name}_recorded_http",
+        test_name=f"select_{dtype}_{label}_arrow_{fetch_mode}_recorded_http",
     )

@@ -13,8 +13,8 @@ import warnings
 
 import pytest
 
-from snowflake.connector._common.telemetry import TelemetryData, TelemetryField
 from snowflake.connector._internal.backward_compatibility import _BACKWARD_COMPAT_WARNED
+from snowflake.connector._common.telemetry import TelemetryData, TelemetryField
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +105,9 @@ class TestBackwardCompatibilityWarning:
             second = getattr(telemetry_module, class_name)  # deduped
             assert first is second
 
-        bc_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning) and class_name in str(w.message)]
+        bc_warnings = [
+            w for w in caught if issubclass(w.category, DeprecationWarning) and class_name in str(w.message)
+        ]
         assert len(bc_warnings) == 1, [str(w.message) for w in caught]
 
     def test_telemetry_client_access_does_not_warn(self):

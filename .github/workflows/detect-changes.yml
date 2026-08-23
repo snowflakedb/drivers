@@ -110,7 +110,7 @@ jobs:
 
       - name: Detect changed files
         id: filter
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
+        uses: dorny/paths-filter@v3
         with:
           # `list-files: json` makes each filter expose `<filter>_files` as
           # a JSON array of matching paths. The computed step below uses
@@ -259,7 +259,7 @@ jobs:
               - 'scripts/decode_secrets.*'
               - 'scripts/shared/**'
               # Truly-shared `ci/` files only. Negation patterns ('!path') are
-              # NOT used here: dorny/paths-filter runs with the default
+              # NOT used here: dorny/paths-filter@v3 runs with the default
               # `predicate-quantifier: some`, which treats negations as
               # standalone matches, not exclusions — every unrelated file
               # would match a `!foo.py` rule and flip `shared=true`. List

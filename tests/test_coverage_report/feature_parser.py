@@ -8,7 +8,7 @@ annotations, and test method mappings.
 
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 # Pre-compile regex patterns for better performance
 TEST_CASE_PATTERN = re.compile(r'TEST_CASE\s*\(\s*"([^"]+)"')
@@ -298,28 +298,19 @@ class FeatureParser:
         This method is kept for compatibility but returns None."""
         return None
     
-    @staticmethod
-    def normalize_identifier(s: str) -> str:
-        """Strip non-alphanumerics and lowercase for method/scenario name comparison."""
-        return re.sub(r'[^a-zA-Z0-9]', '', s).lower()
-
-    @staticmethod
-    def scenario_match_keys(scenario_name: str) -> Set[str]:
-        """Normalized keys that a test method may use for this scenario name."""
-        scenario_snake = re.sub(r'[^\w\s]', '', scenario_name).replace(' ', '_').lower()
-        scenario_pascal = ''.join(
-            word.capitalize() for word in re.sub(r'[^\w\s]', '', scenario_name).split()
-        )
-        scenario_test_method = f"test_{scenario_snake}"
-        return {
-            FeatureParser.normalize_identifier(scenario_name),
-            FeatureParser.normalize_identifier(scenario_snake),
-            FeatureParser.normalize_identifier(scenario_pascal),
-            FeatureParser.normalize_identifier(scenario_test_method),
-        }
-
     def _method_matches_scenario(self, method_name: str, scenario_name: str) -> bool:
         """Check if a test method name matches a scenario name using various naming conventions."""
-        return FeatureParser.normalize_identifier(method_name) in FeatureParser.scenario_match_keys(
-            scenario_name
-        )
+        def normalize(s):
+            return re.sub(r'[^a-zA-Z0-9]', '', s).lower()
+        
+        # Convert scenario to different naming conventions
+        scenario_snake = re.sub(r'[^\w\s]', '', scenario_name).replace(' ', '_').lower()
+        scenario_pascal = ''.join(word.capitalize() for word in re.sub(r'[^\w\s]', '', scenario_name).split())
+        scenario_test_method = f"test_{scenario_snake}"
+        
+        method_normalized = normalize(method_name)
+        
+        return (method_normalized == normalize(scenario_name) or
+                method_normalized == normalize(scenario_snake) or
+                method_normalized == normalize(scenario_pascal) or
+                method_normalized == normalize(scenario_test_method))

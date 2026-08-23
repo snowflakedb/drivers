@@ -1,73 +1,48 @@
-"""Fetch performance for 50M-row result sets.
-
-E2e coverage (do not expand without a deliberate BenchDash change):
-  * unordered: 15columns only
-  * ordered:   all types (skipped)
-
-Recorded HTTP is a different set: unordered string/number/date only
-(15columns dropped — e2e already covers it and recorded costs 35 min).
-No ordered recorded.
-"""
 import pytest
-from catalog import get_sql
-from matrix import cases
-from runner.test_types import PerfTestType
 
-SIZES = ((50_000_000, "50M"),)
-
-SUFFIXES = {
-    "python": ("",),
-    "jdbc": ("",),
-    "odbc": ("",),
-    "core": ("",),
-}
-
-CASES = cases(SIZES, SUFFIXES, infix="_arrow", types=("15columns",))
-
-ORDERED_CASES = cases(
-    SIZES, SUFFIXES, infix="_ordered_arrow", types=("string", "number")
-)
-
-RECORDED_CASES = cases(
-    SIZES, SUFFIXES, infix="_arrow", types=("string", "number", "date")
-)
+ITERATIONS = 3
+WARMUP_ITERATIONS = 0
 
 
-@pytest.mark.iterations(2)
-@pytest.mark.warmup_iterations(0)
-@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", CASES)
-def test_select_50M(perf_test, row_count, dtype, name, fetch_mode, bind_mode):
+@pytest.mark.iterations(ITERATIONS)
+@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+def test_select_15columns_50M_arrow(perf_test):
     perf_test(
-        sql_command=get_sql(dtype, row_count),
-        fetch_mode=fetch_mode,
-        bind_mode=bind_mode,
-        test_name=f"select_{name}",
+        sql_command="""
+            SELECT 
+                L_ORDERKEY,
+                L_PARTKEY,
+                L_SUPPKEY,
+                L_LINENUMBER,
+                L_QUANTITY,
+                L_EXTENDEDPRICE,
+                L_DISCOUNT,
+                L_TAX,
+                L_RETURNFLAG,
+                L_LINESTATUS,
+                L_SHIPDATE,
+                L_COMMITDATE,
+                L_RECEIPTDATE,
+                L_SHIPINSTRUCT,
+                L_COMMENT
+            FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM 
+            LIMIT 50000000
+        """
     )
 
 
-@pytest.mark.skip(reason="ORDER BY SELECT cases disabled for now")
-@pytest.mark.iterations(2)
-@pytest.mark.warmup_iterations(0)
-@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", ORDERED_CASES)
-def test_select_50M_ordered(perf_test, row_count, dtype, name, fetch_mode, bind_mode):
+@pytest.mark.iterations(ITERATIONS)
+@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+def test_select_string_50M_ordered_arrow(perf_test):
     perf_test(
-        sql_command=get_sql(dtype, row_count, ordered=True),
-        fetch_mode=fetch_mode,
-        bind_mode=bind_mode,
-        test_name=f"select_{name}",
+        sql_command="SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 50000000"
     )
 
 
-@pytest.mark.iterations(2)
-@pytest.mark.warmup_iterations(0)
-@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", RECORDED_CASES)
-def test_select_50M_recorded_http(
-    perf_test, row_count, dtype, name, fetch_mode, bind_mode
-):
+@pytest.mark.iterations(ITERATIONS)
+@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+def test_select_number_50M_ordered_arrow(perf_test):
     perf_test(
-        test_type=PerfTestType.SELECT_RECORDED_HTTP,
-        sql_command=get_sql(dtype, row_count),
-        fetch_mode=fetch_mode,
-        bind_mode=bind_mode,
-        test_name=f"select_{name}_recorded_http",
+        sql_command="SELECT L_LINENUMBER::INT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 50000000"
     )
+

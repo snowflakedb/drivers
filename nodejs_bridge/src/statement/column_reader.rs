@@ -1,13 +1,7 @@
-use arrow::array::{
-    Array, BinaryArray, BooleanArray, Decimal128Array, Float64Array, Int16Array, Int64Array,
-    PrimitiveArray, StringArray, StringBuilder, StructArray,
-};
+use arrow::array::{Array, BinaryArray, BooleanArray, PrimitiveArray, StringArray};
+use arrow::compute::cast;
 use arrow::datatypes::{DataType, Date32Type, Field};
 
-use super::column_reader_util::{
-    decimal_string, read_cell, scale_from_metadata, usize_from_metadata, widen,
-};
-use super::decfloat::{decfloat_field, format_decfloat, i128_from_big_endian_signed};
 use crate::session_params::SessionParams;
 use crate::sql_value::SqlValue;
 
@@ -21,13 +15,10 @@ use crate::sql_value::SqlValue;
 pub(crate) enum ColumnReader {
     Boolean(BooleanArray),
     Binary(BinaryArray),
+    Fixed(StringArray),
     Date(PrimitiveArray<Date32Type>),
     Variant(StringArray),
     Text(StringArray),
-    FixedInt { array: Int64Array, scale: u32 },
-    FixedDecimal { array: Decimal128Array, scale: u32 },
-    Real(Float64Array),
-    Decfloat(StringArray),
 }
 
 impl ColumnReader {
@@ -72,27 +63,17 @@ impl ColumnReader {
                 Ok(Self::Binary(array))
             }
             Some("FIXED") => {
-                let scale = scale_from_metadata(field)?;
-                match column.data_type() {
-                    DataType::Decimal128(_, _) => {
-                        let array = column
-                            .as_any()
-                            .downcast_ref::<Decimal128Array>()
-                            .cloned()
-                            .ok_or_else(|| {
-                                "Arrow column could not be downcast to Decimal128Array".to_string()
-                            })?;
-                        Ok(Self::FixedDecimal { array, scale })
-                    }
-                    DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
-                        let array = widen(column, &DataType::Int64, "Int64Array")?;
-                        Ok(Self::FixedInt { array, scale })
-                    }
-                    other => Err(format!(
-                        "FIXED column {:?} has unsupported Arrow type {other}",
-                        field.name()
-                    )),
-                }
+                // TODO: temporary string casting. We need to figure out how to handle precision loss.
+                let utf8 = cast(column, &DataType::Utf8)
+                    .map_err(|e| format!("could not cast FIXED column to string: {e}"))?;
+                let array = utf8
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .cloned()
+                    .ok_or_else(|| {
+                        "cast of FIXED column did not yield a StringArray".to_string()
+                    })?;
+                Ok(Self::Fixed(array))
             }
             Some("DATE") => {
                 let array = column
@@ -115,38 +96,6 @@ impl ColumnReader {
                     })?;
                 Ok(Self::Variant(array))
             }
-            Some("REAL") => Ok(Self::Real(widen(
-                column,
-                &DataType::Float64,
-                "Float64Array",
-            )?)),
-            // TODO: DECFLOAT iterates over rows in `for_field`, making its `read` arm a
-            // plain lookup like every other variant. Worth revisiting whether the
-            // for_field/read split should just collapse into one eager step for all.
-            Some("DECFLOAT") => {
-                let struct_array = column
-                    .as_any()
-                    .downcast_ref::<StructArray>()
-                    .cloned()
-                    .ok_or_else(|| {
-                        "Arrow column could not be downcast to StructArray".to_string()
-                    })?;
-                let exponent: Int16Array = decfloat_field(&struct_array, "exponent")?;
-                let significand: BinaryArray = decfloat_field(&struct_array, "significand")?;
-                let precision = usize_from_metadata(field, "precision")?;
-
-                let mut builder = StringBuilder::new();
-                for row in 0..struct_array.len() {
-                    if struct_array.is_null(row) {
-                        builder.append_null();
-                    } else {
-                        let sig = i128_from_big_endian_signed(significand.value(row))
-                            .map_err(|e| format!("DECFLOAT significand at row {row}: {e}"))?;
-                        builder.append_value(format_decfloat(sig, exponent.value(row), precision));
-                    }
-                }
-                Ok(Self::Decfloat(builder.finish()))
-            }
             Some(logical_type) => Err(format!(
                 "no decoder registered for logicalType {logical_type:?}"
             )),
@@ -165,11 +114,8 @@ impl ColumnReader {
             Self::Binary(array) => read_cell(array, row_index, || {
                 SqlValue::Binary(array.value(row_index).to_vec())
             }),
-            Self::FixedInt { array, scale } => read_cell(array, row_index, || {
-                SqlValue::String(decimal_string(array.value(row_index) as i128, *scale))
-            }),
-            Self::FixedDecimal { array, scale } => read_cell(array, row_index, || {
-                SqlValue::String(decimal_string(array.value(row_index), *scale))
+            Self::Fixed(array) => read_cell(array, row_index, || {
+                SqlValue::String(array.value(row_index).to_string())
             }),
             Self::Date(array) => read_cell(array, row_index, || {
                 SqlValue::Date(Date32Type::to_naive_date(array.value(row_index)))
@@ -180,12 +126,16 @@ impl ColumnReader {
             Self::Text(array) => read_cell(array, row_index, || {
                 SqlValue::String(array.value(row_index).to_string())
             }),
-            Self::Real(array) => {
-                read_cell(array, row_index, || SqlValue::Float(array.value(row_index)))
-            }
-            Self::Decfloat(array) => read_cell(array, row_index, || {
-                SqlValue::String(array.value(row_index).to_string())
-            }),
         }
+    }
+}
+
+/// Decode a cell, mapping null to [`SqlValue::Null`] so each reader arm only
+/// needs to describe the non-null case.
+fn read_cell<A: Array>(array: &A, row_index: usize, decode: impl FnOnce() -> SqlValue) -> SqlValue {
+    if array.is_null(row_index) {
+        SqlValue::Null
+    } else {
+        decode()
     }
 }

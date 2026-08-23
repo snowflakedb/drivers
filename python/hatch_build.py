@@ -191,7 +191,6 @@ class BuildHook(BuildHookInterface):
             cargo_args = [
                 "cargo",
                 "run",
-                "--locked",
                 "--bin",
                 "proto_generator",
                 "--manifest-path",
@@ -401,7 +400,6 @@ class BuildHook(BuildHookInterface):
             cargo_args = [
                 "cargo",
                 "build",
-                "--locked",
                 "--release",
                 "--package",
                 "python_bridge",

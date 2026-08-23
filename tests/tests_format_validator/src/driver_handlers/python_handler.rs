@@ -5,20 +5,6 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
-
-static PYTHON_TEST_METHOD_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"def\s+(test_\w+)\s*\(").unwrap());
-static SKIP_REFERENCE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"@pytest\.mark\.skip_reference\(.*?(BD#\d+)"#).unwrap());
-static SKIP_UNIVERSAL_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"@pytest\.mark\.skip_universal\(.*?(BD#\d+)"#).unwrap());
-static SELF_CLASS_METHOD_CALL_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"self\.(_\w+)\s*\(").unwrap());
-static FUNCTION_CALL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\w+)\s*\(").unwrap());
-static DRIVER_ONLY_BD_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?:NEW_DRIVER_ONLY|OLD_DRIVER_ONLY)\s*\(\s*"(BD#\d+)"\s*\)"#).unwrap()
-});
 
 pub struct PythonHandler {
     workspace_root: PathBuf,
@@ -68,7 +54,7 @@ impl BaseDriverHandler for PythonHandler {
     fn extract_test_methods(&self, content: &str) -> Vec<TestMethod> {
         let mut methods = Vec::new();
         // Match Python test methods: def test_method_name(
-        let test_method_re = &PYTHON_TEST_METHOD_REGEX;
+        let test_method_re = Regex::new(r"def\s+(test_\w+)\s*\(").unwrap();
 
         for (line_num, line) in content.lines().enumerate() {
             if let Some(captures) = test_method_re.captures(line) {
@@ -134,8 +120,8 @@ impl BaseDriverHandler for PythonHandler {
         let mut breaking_changes: HashMap<String, BehaviorDifferenceLocation> = HashMap::new();
         let lines: Vec<&str> = content.lines().collect();
         let mut in_method = false;
-        let skip_ref_re = &SKIP_REFERENCE_REGEX;
-        let skip_uni_re = &SKIP_UNIVERSAL_REGEX;
+        let skip_ref_re = Regex::new(r#"@pytest\.mark\.skip_reference\(.*?(BD#\d+)"#).unwrap();
+        let skip_uni_re = Regex::new(r#"@pytest\.mark\.skip_universal\(.*?(BD#\d+)"#).unwrap();
 
         // Pre-scan: collect skip decorators that appear immediately before this method
         for (line_num, line) in lines.iter().enumerate() {
@@ -383,14 +369,16 @@ impl PythonHandler {
 
     fn extract_method_call_from_line(&self, line: &str) -> Option<String> {
         // Look for self._method_name() calls (class methods)
-        if let Some(captures) = SELF_CLASS_METHOD_CALL_REGEX.captures(line) {
+        let class_method_re = Regex::new(r"self\.(_\w+)\s*\(").unwrap();
+        if let Some(captures) = class_method_re.captures(line) {
             if let Some(method_name) = captures.get(1) {
                 return Some(method_name.as_str().to_string());
             }
         }
 
         // Look for standalone function calls like function_name()
-        if let Some(captures) = FUNCTION_CALL_REGEX.captures(line) {
+        let function_call_re = Regex::new(r"(\w+)\s*\(").unwrap();
+        if let Some(captures) = function_call_re.captures(line) {
             if let Some(function_name) = captures.get(1) {
                 let func_name = function_name.as_str();
                 // Only consider functions that are likely test helpers (not built-ins or common functions)
@@ -456,7 +444,9 @@ impl PythonHandler {
 
     fn extract_breaking_change_from_line(&self, line: &str) -> Option<String> {
         // Look for NEW_DRIVER_ONLY("BD#X") or OLD_DRIVER_ONLY("BD#X") patterns
-        if let Some(captures) = DRIVER_ONLY_BD_REGEX.captures(line) {
+        let breaking_change_re =
+            Regex::new(r#"(?:NEW_DRIVER_ONLY|OLD_DRIVER_ONLY)\s*\(\s*"(BD#\d+)"\s*\)"#).unwrap();
+        if let Some(captures) = breaking_change_re.captures(line) {
             if let Some(breaking_change_id) = captures.get(1) {
                 return Some(breaking_change_id.as_str().to_string());
             }

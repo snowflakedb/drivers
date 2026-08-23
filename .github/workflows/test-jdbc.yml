@@ -152,7 +152,7 @@ jobs:
         # so a single `cargo build --package jdbc_bridge` transitively builds sf_core.
         # No runtime consumer needs libsf_core.so directly — only libjdbc_bridge.so is loaded by
         # the JDBC tests via CORE_PATH below.
-        run: cargo build --locked --package jdbc_bridge
+        run: cargo build --package jdbc_bridge
 
       - name: Run JDBC tests
         run: |
@@ -289,7 +289,7 @@ jobs:
         # OpenSSL, so their lanes link it and skip this feature.
         # Runs under the default PowerShell on purpose — see the job-level note
         # about Strawberry Perl vs MSYS perl for the vendored OpenSSL Configure.
-        run: cargo build --locked --package jdbc_bridge --features vendored-openssl
+        run: cargo build --package jdbc_bridge --features vendored-openssl
 
       - name: Run JDBC tests
         shell: bash
@@ -394,7 +394,7 @@ jobs:
             ${{ runner.os }}-gradle-
 
       - name: Build Rust components
-        run: cargo build --locked --package jdbc_bridge
+        run: cargo build --package jdbc_bridge
 
       - name: Run JDBC tests
         run: |
@@ -611,7 +611,7 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
       - name: Build Rust components
-        run: cargo build --locked --package jdbc_bridge
+        run: cargo build --package jdbc_bridge
 
       - name: Run JDBC parity tests
         run: |

@@ -1,7 +1,6 @@
 """BACKWARD COMPATIBILITY MODULE ONLY"""
 
 import warnings
-
 from enum import Enum
 
 from ._internal.backward_compatibility import _is_caller_external

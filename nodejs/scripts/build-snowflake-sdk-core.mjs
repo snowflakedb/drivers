@@ -46,7 +46,6 @@ const { task } = await cli.build({
   packageJsonPath: NODE_SDK_PACKAGE_JSON_PATH,
   outputDir: BUILD_CORE_PACKAGE_DIR,
   cwd: ROOT_DIR,
-  cargoOptions: ['--locked'],
   noJsBinding: true,
   dtsHeader: `\
 /**

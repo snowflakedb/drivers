@@ -3,28 +3,9 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 
 use super::base_handler::{BaseDriverHandler, BehaviorDifferenceLocation, TestMethod};
 use crate::behavior_differences_utils::parse_behavior_differences_descriptions as parse_behavior_differences_descriptions_util;
-
-static BD_REFERENCE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(BD#\d+)").unwrap());
-static QUOTED_STRING_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""([^"]+)""#).unwrap());
-static FUNCTION_CALL_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\(").unwrap());
-static NEW_DRIVER_ONLY_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap());
-static OLD_DRIVER_ONLY_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"OLD_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap());
-static SKIP_OLD_DRIVER_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"SKIP_OLD_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap());
-static SKIP_NEW_DRIVER_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"SKIP_NEW_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap());
-static SKIP_OLD_DRIVER_MULTILINE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"SKIP_OLD_DRIVER\s*\(\s*$"#).unwrap());
-static SKIP_NEW_DRIVER_MULTILINE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"SKIP_NEW_DRIVER\s*\(\s*$"#).unwrap());
-static QUOTED_BD_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""(BD#\d+)""#).unwrap());
 
 pub struct OdbcHandler {
     workspace_root: PathBuf,
@@ -36,7 +17,8 @@ impl OdbcHandler {
     }
 
     fn extract_breaking_change_id(&self, breaking_change_reference: &str) -> String {
-        if let Some(captures) = BD_REFERENCE_REGEX.captures(breaking_change_reference) {
+        let breaking_change_re = Regex::new(r"(BD#\d+)").unwrap();
+        if let Some(captures) = breaking_change_re.captures(breaking_change_reference) {
             if let Some(breaking_change_id) = captures.get(1) {
                 return breaking_change_id.as_str().to_string();
             }
@@ -83,7 +65,7 @@ impl BaseDriverHandler for OdbcHandler {
     fn extract_test_methods(&self, content: &str) -> Vec<TestMethod> {
         let mut methods = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
-        let test_name_re = &QUOTED_STRING_REGEX;
+        let test_name_re = Regex::new(r#""([^"]+)""#).unwrap();
 
         let mut i = 0;
         while i < lines.len() {
@@ -189,7 +171,8 @@ impl BaseDriverHandler for OdbcHandler {
                 }
 
                 // Look for function calls
-                for captures in FUNCTION_CALL_REGEX.captures_iter(line) {
+                let call_re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\(").unwrap();
+                for captures in call_re.captures_iter(line) {
                     if let Some(func_name) = captures.get(1) {
                         let name = func_name.as_str();
                         if name != "CHECK"
@@ -228,13 +211,13 @@ impl BaseDriverHandler for OdbcHandler {
         let mut pending_skip_kind: Option<SkipKind> = None;
         let mut method_start_line: usize = 0;
 
-        let new_driver_re = &NEW_DRIVER_ONLY_REGEX;
-        let old_driver_re = &OLD_DRIVER_ONLY_REGEX;
-        let skip_old_re = &SKIP_OLD_DRIVER_REGEX;
-        let skip_new_re = &SKIP_NEW_DRIVER_REGEX;
-        let skip_old_multiline_re = &SKIP_OLD_DRIVER_MULTILINE_REGEX;
-        let skip_new_multiline_re = &SKIP_NEW_DRIVER_MULTILINE_REGEX;
-        let bd_id_re = &QUOTED_BD_ID_REGEX;
+        let new_driver_re = Regex::new(r#"NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+        let old_driver_re = Regex::new(r#"OLD_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+        let skip_old_re = Regex::new(r#"SKIP_OLD_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap();
+        let skip_new_re = Regex::new(r#"SKIP_NEW_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap();
+        let skip_old_multiline_re = Regex::new(r#"SKIP_OLD_DRIVER\s*\(\s*$"#).unwrap();
+        let skip_new_multiline_re = Regex::new(r#"SKIP_NEW_DRIVER\s*\(\s*$"#).unwrap();
+        let bd_id_re = Regex::new(r#""(BD#\d+)""#).unwrap();
 
         let default_loc = || BehaviorDifferenceLocation {
             new_behaviour_file: None,

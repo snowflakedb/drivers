@@ -2,7 +2,7 @@
 Dotnet driver mapping table.
 
 DOTNET_PLATFORM: (OS, Arch) → platform-specific metadata (native lib filename).
-DOTNET_TFM: DotnetVersion → version-specific metadata.
+DOTNET_TFM: DotnetVersion → version-specific metadata (test invocation command).
 """
 
 DOTNET_PLATFORM: dict[tuple[str, str], dict] = {
@@ -12,9 +12,9 @@ DOTNET_PLATFORM: dict[tuple[str, str], dict] = {
 }
 
 DOTNET_TFM: dict[str, dict] = {
-    "net472": {"copy_native_lib": True},
-    "net481": {"copy_native_lib": True},
-    "net8.0": {"copy_native_lib": False},
-    "net9.0": {"copy_native_lib": False},
-    "net10.0": {"copy_native_lib": False},
+    "net472":  {"test_runner": "dotnet test --no-build --framework net472 --verbosity detailed", "copy_native_lib": True},
+    "net481":  {"test_runner": "dotnet test --no-build --framework net481 --verbosity detailed", "copy_native_lib": True},
+    "net8.0":  {"test_runner": "dotnet run --no-build --framework net8.0", "copy_native_lib": False},
+    "net9.0":  {"test_runner": "dotnet run --no-build --framework net9.0", "copy_native_lib": False},
+    "net10.0": {"test_runner": "dotnet run --no-build --framework net10.0", "copy_native_lib": False},
 }

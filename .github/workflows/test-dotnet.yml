@@ -37,8 +37,7 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_dotnet == 'true'
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.split.outputs.matrix }}
-      matrix_interop: ${{ steps.split.outputs.matrix_interop }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
       - id: matrix
@@ -54,11 +53,6 @@ jobs:
           python ci/test_matrix/generate_matrix.py \
             --driver dotnet --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active $LEVEL_ARG \
             >> "$GITHUB_OUTPUT"
-      - id: split
-        run: |
-          FULL='${{ steps.matrix.outputs.matrix }}'
-          echo "matrix=$(echo "$FULL" | jq -c '[.[] | select(.mode == "regression")]')" >> "$GITHUB_OUTPUT"
-          echo "matrix_interop=$(echo "$FULL" | jq -c '[.[] | select(.mode == "interop")]')" >> "$GITHUB_OUTPUT"
 
   dotnet_tests:
     needs: load-dotnet-matrix
@@ -131,7 +125,7 @@ jobs:
           shared-key: "sf-core"
 
       - name: Build Rust components
-        run: cargo build --locked --package sf_core ${{ matrix.cargo_flags }}
+        run: cargo build --package sf_core ${{ matrix.cargo_flags }}
 
       - name: Save Cargo cache (sf_core)
         if: always()
@@ -151,82 +145,12 @@ jobs:
              "dotnet/tests/Snowflake.Data.Tests/bin/Debug/${{ matrix.dotnet_version }}/"
 
       - name: Run tests (new driver)
-        run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
+        run: ${{ matrix.test_runner }}
         working-directory: dotnet/tests/Snowflake.Data.Tests
         env:
-           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-           SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}
 
-  dotnet_tests_interop:
-    needs: load-dotnet-matrix
-    if: needs.load-dotnet-matrix.outputs.matrix_interop != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.load-dotnet-matrix.outputs.matrix_interop) }}
-    runs-on: ${{ matrix.os }}
-    name: dotnet Interop (${{ matrix.name }})
-    timeout-minutes: 20
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up dotnet
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: |
-            8.0.x
-            9.0.x
-            10.0.x
-          dotnet-quality: 'ga'
-
-      - name: Restore dependencies
-        run: dotnet restore
-        working-directory: dotnet
-
-      - name: Restore Cargo cache
-        id: rust-cache
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: "proto-generator"
-
-      - name: Regenerate proto files
-        run: dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/
-        working-directory: dotnet
-
-      - name: Save Cargo cache
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: save
-          shared-key: "proto-generator"
-          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
-          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
-
-      - name: Build
-        run: dotnet build --no-restore -p:SkipCargoBuild=true
-        working-directory: dotnet
-
-      - name: Build sf_core_stub
-        run: cargo build
-        working-directory: dotnet/tests/Snowflake.Data.Tests.Interop/sf_core_stub
-
-      - name: Copy stub DLLs for Framework DllImport
-        if: runner.os == 'Windows' && matrix.dotnet_version == 'net472'
-        shell: pwsh
-        run: |
-          $stubDll = "dotnet/tests/Snowflake.Data.Tests.Interop/sf_core_stub/target/debug/sf_core_stub.dll"
-          $outDir = "dotnet/tests/Snowflake.Data.Tests.Interop/bin/Debug/net472"
-          Copy-Item $stubDll "$outDir/sf_core.dll"
-          Copy-Item $stubDll "$outDir/sf_core_stub.dll"
-
-      - name: Run interop tests
-        run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
-        working-directory: dotnet/tests/Snowflake.Data.Tests.Interop
-        
   dotnet_tests_reference:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_dotnet_reference == 'true'
@@ -360,7 +284,7 @@ jobs:
           shared-key: "sf-core"
 
       - name: Build Rust components
-        run: cargo build --locked --package sf_core
+        run: cargo build --package sf_core
 
       - name: Save Cargo cache (sf_core)
         if: always()
@@ -380,7 +304,7 @@ jobs:
           SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
 
   dotnet-status:
-    needs: [detect-changes, load-dotnet-matrix, dotnet_tests, dotnet_tests_reference, dotnet_tests_interop]
+    needs: [detect-changes, load-dotnet-matrix, dotnet_tests, dotnet_tests_reference]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -390,7 +314,6 @@ jobs:
 
           MATRIX_RESULT="${{ needs.dotnet_tests.result }}"
           REFERENCE_RESULT="${{ needs.dotnet_tests_reference.result }}"
-          INTEROP_RESULT="${{ needs.dotnet_tests_interop.result }}"
 
           # Check if any job failed or was cancelled. This must run before the
           # "tests skipped" check below: a failure in an upstream job can cause
@@ -413,5 +336,4 @@ jobs:
           echo "✓ dotnet jobs were RUN and PASSED"
           echo "  - dotnet_tests (matrix): $MATRIX_RESULT"
           echo "  - dotnet_tests_reference (old driver): $REFERENCE_RESULT"
-          echo "  - dotnet_tests_interop: $INTEROP_RESULT"
           exit 0

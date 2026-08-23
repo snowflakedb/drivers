@@ -19,7 +19,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install Rust components
 RUN rustup component add rustfmt
-RUN cargo install cargo-tarpaulin --version 0.32.8 --locked
+RUN cargo install cargo-tarpaulin --version 0.32.8
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

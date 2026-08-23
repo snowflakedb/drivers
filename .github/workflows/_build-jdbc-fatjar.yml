@@ -99,7 +99,7 @@ jobs:
               else
                 echo "Using cached rustup toolchain"
               fi
-              cargo build --locked --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
+              cargo build --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
             '
 
       # Container writes target/ as root; chown so the cache save can read it (always(), so
@@ -122,14 +122,14 @@ jobs:
 
       - name: Build jdbc_bridge (macOS)
         if: runner.os == 'macOS'
-        run: cargo build --locked --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
+        run: cargo build --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_deployment_target }}
 
       - name: Build jdbc_bridge (Windows)
         if: runner.os == 'Windows'
         shell: cmd
-        run: cargo build --locked --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
+        run: cargo build --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
 
       # Stage under matrix.dir (e.g. linux-x86_64-gnu) to match the JAR resource layout
       # (build.gradle -PnativeLibsDir) and NativeLibraryLoader.osArchDir().

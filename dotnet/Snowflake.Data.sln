@@ -17,8 +17,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Common
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Reference", "tests\Snowflake.Data.Tests.Reference\Snowflake.Data.Tests.Reference.csproj", "{226607A3-8B54-4953-8578-0078AC1199AC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Interop", "tests\Snowflake.Data.Tests.Interop\Snowflake.Data.Tests.Interop.csproj", "{B7EE50B8-A3BB-4752-850C-71A295745D01}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -89,18 +87,6 @@ Global
 		{226607A3-8B54-4953-8578-0078AC1199AC}.Release|x64.Build.0 = Release|Any CPU
 		{226607A3-8B54-4953-8578-0078AC1199AC}.Release|x86.ActiveCfg = Release|Any CPU
 		{226607A3-8B54-4953-8578-0078AC1199AC}.Release|x86.Build.0 = Release|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Debug|x64.Build.0 = Debug|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Debug|x86.Build.0 = Debug|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Release|Any CPU.Build.0 = Release|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Release|x64.ActiveCfg = Release|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Release|x64.Build.0 = Release|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Release|x86.ActiveCfg = Release|Any CPU
-		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -111,6 +97,5 @@ Global
 		{EF751EA0-BE4D-412F-B02E-D3893C499AC9} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{F1E73F67-0A6F-4472-B976-D7E9BA92FD9B} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{226607A3-8B54-4953-8578-0078AC1199AC} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
-		{B7EE50B8-A3BB-4752-850C-71A295745D01} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

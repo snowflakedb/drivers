@@ -31,7 +31,7 @@ case "${AUTH_BROWSER_MODE:-universal}" in
     universal)
         echo "=== Building ODBC driver (libsfodbc) ==="
         cd "${WORKSPACE_ROOT}"
-        cargo build --locked --package odbc
+        cargo build --package odbc
         export DRIVER_PATH="${CARGO_TARGET_DIR}/debug/libsfodbc.so"
         DRIVER_TYPE=NEW
         BUILD_DIR=cmake-build

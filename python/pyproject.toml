@@ -108,7 +108,7 @@ exclude = [
 # Individual files need force-include (file symlinks are not dereferenced)
 [tool.hatch.build.targets.sdist.force-include]
 "Cargo.toml.sdist" = "Cargo.toml"
-"Cargo.lock.sdist" = "Cargo.lock"
+"../Cargo.lock" = "Cargo.lock"
 "../build_common.rs" = "build_common.rs"
 
 [tool.hatch.build.targets.wheel]
@@ -312,12 +312,6 @@ python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 [tool.hatch.envs.test.scripts]
 # Install from wheel
 install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
-# Split suites used by CI (no auto --lf; merge-group last-failed is a separate step).
-# Override the `dev` template scripts: those `|| pytest --lf` wrappers hide
-# failures from GitHub Actions, and `dev:e2e` does not ignore pandas.
-unit = "pytest tests/unit {args}"
-integ = "pytest tests/integ {args}"
-e2e = "pytest tests/e2e --ignore=tests/e2e/pandas {args}"
 cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 # Runs only tests marked @pytest.mark.flaky. `-m flaky` overrides the default
 # `-m "not flaky"` from [tool.pytest.ini_options].addopts.

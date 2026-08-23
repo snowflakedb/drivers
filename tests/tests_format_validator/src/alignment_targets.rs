@@ -1,22 +1,11 @@
 use anyhow::{Context, Result};
-use regex::Regex;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 
 use crate::feature_parser::Feature;
 use crate::step_finder::StepFinder;
 use crate::test_discovery::{Language, TestDiscovery};
 use crate::utils::{clean_method_name, strings_match_normalized, to_snake_case};
-
-static PYTHON_TEST_METHOD_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"def\s+(test_\w+)\s*\(").unwrap());
-static RUST_TEST_FN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\([^)]*\))?\s*\]\s*(?:\n\s*)*(?:async\s+)?fn\s+(\w+)\s*\(",
-    )
-    .unwrap()
-});
 
 // ---------------------------------------------------------------------------
 // Config types
@@ -316,9 +305,12 @@ fn test_file_stem(path: &Path, language: &Language) -> String {
 }
 
 fn collect_test_methods(content: &str, language: &Language) -> Result<Vec<String>> {
-    let re: &Regex = match language {
-        Language::Python => &PYTHON_TEST_METHOD_REGEX,
-        Language::Rust => &RUST_TEST_FN_REGEX,
+    use regex::Regex;
+    let re = match language {
+        Language::Python => Regex::new(r"def\s+(test_\w+)\s*\(")?,
+        Language::Rust => Regex::new(
+            r"#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\([^)]*\))?\s*\]\s*(?:\n\s*)*(?:async\s+)?fn\s+(\w+)\s*\(",
+        )?,
         _ => return Ok(vec![]),
     };
     let mut methods: Vec<String> = re

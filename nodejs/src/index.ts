@@ -8,7 +8,6 @@ import type {
   RowMode,
 } from './query-result/types.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
-import SessionParameterName from './constants/SessionParameterName.js';
 import { CoreConnection, type CoreConnectionInstance, type CoreStatementInstance } from './core';
 import {
   updateGlobalConfig,
@@ -33,10 +32,7 @@ export {
 };
 
 // TODO: implement ConnectionOptions like in old driver (BD#2)
-export type ConnectionOptions = Record<string, unknown> & {
-  rowMode?: RowMode;
-  jsTreatIntegerAsBigInt?: boolean;
-};
+export type ConnectionOptions = Record<string, string> & { rowMode?: RowMode };
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
 
 // This should be called StatementOptions or ExecuteStatementOptions but we keep the name
@@ -62,15 +58,9 @@ export class Connection {
   #defaultRowMode?: RowMode;
 
   constructor(options: ConnectionOptions) {
-    const { rowMode, jsTreatIntegerAsBigInt, ...coreOptions } = options;
+    const { rowMode, ...coreOptions } = options;
     this.#defaultRowMode = rowMode;
-    this.#core = new CoreConnection(
-      // Cast until options are typed across the bridge, which takes strings only.
-      normalizeConnectionOptions(coreOptions as Record<string, string>),
-      jsTreatIntegerAsBigInt === undefined
-        ? {}
-        : { [SessionParameterName.JS_TREAT_INTEGER_AS_BIGINT]: String(jsTreatIntegerAsBigInt) },
-    );
+    this.#core = new CoreConnection(normalizeConnectionOptions(coreOptions));
   }
 
   connect(callback?: ConnectionCallback) {
@@ -119,18 +109,14 @@ export class Connection {
     },
   ): RowStatement | FileAndStageBindStatement {
     const { complete, streamResult, rowMode } = options;
-    const statement = new RowStatement(this.#core, coreStatement, rowMode);
+    const statement = new RowStatement(coreStatement, rowMode);
     (async () => {
       try {
         if (streamResult === true) {
           await coreStatement.waitForCompletion();
           complete?.(undefined, statement, undefined);
         } else {
-          complete?.(
-            undefined,
-            statement,
-            await collectRows(this.#core, coreStatement, statement.rowMode),
-          );
+          complete?.(undefined, statement, await collectRows(coreStatement, statement.rowMode));
         }
       } catch (err) {
         complete?.(err as SnowflakeError, statement, undefined);

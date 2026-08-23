@@ -347,11 +347,8 @@ def _make_name(combo: dict[str, str], result_format: str | None = None) -> str:
     # non-default DM so the existing unixODBC cell names stay stable.
     if dm and dm != "unixodbc":
         parts.append(dm)
-    mode = combo.get("Mode")
     if dotnet_version:
-        parts.append(dotnet_version)
-    if mode and mode != "regression":
-        parts.append(mode)
+        parts.append(f" tfm {dotnet_version}")
     if result_format:
         parts.append(result_format)
     return "-".join(parts)
@@ -462,12 +459,11 @@ def _build_dotnet_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | N
     """
     Build a row for the .NET driver test job.
 
-    Each row targets one (OS, Arch, Cloud, DotnetVersion, Mode) combination.
+    Each row targets one (OS, Arch, Cloud, DotnetVersion) combination.
     Platform metadata from DOTNET_PLATFORM, version metadata from DOTNET_TFM.
     """
     os_, arch, cloud = combo["OS"], combo["Arch"], combo["Cloud"]
     dotnet_version = combo["DotnetVersion"]
-    mode = combo.get("Mode", "regression")
     runner = GHA_RUNNER.get((os_, arch))
     if runner is None:
         return None
@@ -485,12 +481,12 @@ def _build_dotnet_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | N
     row: dict[str, Any] = {
         "name": name,
         "os": runner,
-        "mode": mode,
         "cloud_provider": cloud,
         "trigger_level": trigger,
         "dotnet_version": dotnet_version,
         "sf_core_lib": platform["sf_core_lib"],
         "cargo_flags": platform["cargo_flags"],
+        "test_runner": tfm["test_runner"],
         "copy_native_lib": tfm["copy_native_lib"],
     }
     return row

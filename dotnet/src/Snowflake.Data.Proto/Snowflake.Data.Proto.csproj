@@ -9,7 +9,6 @@
     <InternalsVisibleTo Include="Snowflake.Data.Tests" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Common" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Reference" />
-    <InternalsVisibleTo Include="Snowflake.Data.Tests.Interop" />
   </ItemGroup>
   <!-- The C# sources in this project are generated from the protobuf schema and are NOT committed
        to git (see the .NET section of the root .gitignore). Regenerate them with:

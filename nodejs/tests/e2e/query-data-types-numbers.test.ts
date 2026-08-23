@@ -6,24 +6,7 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
-  isRunningNewDriverWithBD,
 } from './utils';
-
-/**
- * Builds one `SELECT` with a column per case, so a table of value variations
- * costs a single round trip instead of one per case.
- */
-function selectAll(cases: { expression: string }[]): string {
-  return `SELECT ${cases.map(({ expression }, index) => `${expression} AS V${index}`).join(', ')}`;
-}
-
-// Old driver wraps BigInt-mode values in a `big-integer` instance; the new driver returns a
-// native `bigint` (BD#8).
-function isBigIntValue(value: unknown): boolean {
-  return isRunningNewDriverWithBD('BD#8')
-    ? typeof value === 'bigint'
-    : BigInteger.isInstance(value);
-}
 
 describe('Query returning number data types', () => {
   const snowflake = getSnowflakeSDK();
@@ -75,72 +58,6 @@ describe('Query returning number data types', () => {
     }
   });
 
-  it('returns scaled fixed-point values as Number', async () => {
-    const cases = [
-      { expression: '1.25::NUMBER(10,2)', expected: 1.25 },
-      { expression: '3.14', expected: 3.14 },
-      { expression: '1.50::NUMBER(10,2)', expected: 1.5 },
-      { expression: '0.005::NUMBER(10,3)', expected: 0.005 },
-      { expression: '-1.25::NUMBER(10,2)', expected: -1.25 },
-      // High scale, where the unscaled integer needs most of the precision.
-      { expression: '1.5::NUMBER(38,23)', expected: 1.5 },
-      { expression: '1.5::NUMBER(38,37)', expected: 1.5 },
-    ];
-    const { rows } = await executeAsync(connection, selectAll(cases));
-    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
-  });
-
-  it('returns fixed-point values across integer widths as Number', async () => {
-    const cases = [
-      { expression: '7::NUMBER(2,0)', expected: 7 },
-      { expression: '1234::NUMBER(4,0)', expected: 1234 },
-      { expression: '123456789::NUMBER(9,0)', expected: 123456789 },
-      { expression: '123456789012345678::NUMBER(18,0)', expected: 123456789012345680 },
-    ];
-    const { rows } = await executeAsync(connection, selectAll(cases));
-    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
-  });
-
-  // Past these magnitudes a Number is no longer exact, and core switches its
-  // storage from i64 to Decimal128.
-  it('returns values at the i64 storage boundary as Number', async () => {
-    const cases = [
-      { expression: '9223372036854775807', expected: 9223372036854776000 },
-      { expression: '9223372036854775808', expected: 9223372036854776000 },
-      { expression: '99999999999999999999999999999999999999', expected: 1e38 },
-      { expression: '-99999999999999999999999999999999999999', expected: -1e38 },
-      {
-        expression: '123456789012345678901234567890.12::NUMBER(38,2)',
-        expected: 1.2345678901234568e29,
-      },
-    ];
-    const { rows } = await executeAsync(connection, selectAll(cases));
-    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
-  });
-
-  it('returns NULL for fixed-point and float-point types', async () => {
-    const { rows } = await executeAsync(
-      connection,
-      `SELECT
-        NULL::INT,
-        NULL::NUMBER(10,2),
-        NULL::FLOAT,
-        NULL::DECFLOAT`,
-    );
-    expect(Object.values(rows![0])).toEqual([null, null, null, null]);
-  });
-
-  it('returns fixed-point and float-point columns together in one row', async () => {
-    const { rows } = await executeAsync(
-      connection,
-      `SELECT
-        23::INT,
-        1.25::NUMBER(10,2),
-        1.5::FLOAT`,
-    );
-    expect(Object.values(rows![0])).toEqual([23, 1.25, 1.5]);
-  });
-
   it('returns float-point types as Number', async () => {
     const { statement, rows } = await executeAsync(
       connection,
@@ -159,19 +76,6 @@ describe('Query returning number data types', () => {
     }
   });
 
-  it('returns float-point values at the edges of the f64 range', async () => {
-    const cases = [
-      { expression: '1e-300::FLOAT', expected: 1e-300 },
-      { expression: '1e300::FLOAT', expected: 1e300 },
-      { expression: '-0.0::FLOAT', expected: -0 },
-      { expression: '0.1::FLOAT + 0.2::FLOAT', expected: 0.3 },
-      // First integer beyond MAX_SAFE_INTEGER.
-      { expression: `${Number.MAX_SAFE_INTEGER + 1}::FLOAT`, expected: 9007199254740990 },
-    ];
-    const { rows } = await executeAsync(connection, selectAll(cases));
-    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
-  });
-
   // TODO: this test must have warning and telemetry event check
   it('returns large numbers (> Number.MAX_SAFE_INTEGER) with precision loss', async () => {
     const { rows } = await executeAsync(
@@ -186,18 +90,20 @@ describe('Query returning number data types', () => {
     expect(selectedFloatValue.toString()).toBe('9007199254740930');
   });
 
-  it('returns FLOAT special values as JS numbers', async () => {
+  // Bug - doesn't work in old driver
+  // https://snowflake.slack.com/archives/C09TH5U3QP2/p1779268894662169
+  it.todo('returns FLOAT special values "NaN", "inf", "-inf" as JS types', async () => {
     const { rows } = await executeAsync(
       connection,
       `SELECT
-        'NaN'::FLOAT,
-        'inf'::FLOAT,
-        '-inf'::FLOAT`,
+        'NaN'::FLOAT as NAN_COLUMN,
+        'inf'::FLOAT as INF_COLUMN,
+        '-inf'::FLOAT as -INF_COLUMN
+    `,
     );
-    const expected = isRunningNewDriverWithBD('BD#9')
-      ? [NaN, Infinity, -Infinity]
-      : [NaN, NaN, NaN];
-    expect(Object.values(rows![0])).toEqual(expected);
+    expect(rows![0].NAN_COLUMN).toBe(NaN);
+    expect(rows![0].INF_COLUMN).toBe(Infinity);
+    expect(rows![0]['-INF_COLUMN']).toBe(-Infinity);
   });
 
   it.each([
@@ -228,133 +134,23 @@ describe('Query returning number data types', () => {
         'SELECT 90071992547409954434323 as INT_COLUMN',
       );
       const resultColumn = statement.getColumn(0);
-      const selectedValue = rows![0].INT_COLUMN;
+      const selectedValue = rows![0].INT_COLUMN as typeof BigInteger;
       expect(resultColumn.getType()).toBe('fixed');
       expect(resultColumn.isNumber()).toBe(true);
-      expect(isBigIntValue(selectedValue)).toBe(true);
-      expect(String(selectedValue)).toBe('90071992547409954434323');
+      expect(BigInteger.isInstance(selectedValue)).toBe(true);
+      expect(selectedValue.toString()).toBe('90071992547409954434323');
     } finally {
       await destroyConnectionAsync(bigIntConnection);
     }
   });
 
-  it('returns DECFLOAT literals correctly formatted', async () => {
-    const cases: { literal: string; expected: string | null }[] = [
-      { literal: "'1.5'", expected: '1.5' },
-      { literal: "'1.500'", expected: '1.5' },
-      { literal: "'0'", expected: '0' },
-      { literal: "'-0'", expected: '0' },
-      { literal: "'123'", expected: '123' },
-      { literal: "'-123'", expected: '-123' },
-      { literal: "'100'", expected: '100' },
-      { literal: "'0.00001'", expected: '0.00001' },
-      { literal: "'1e10'", expected: '10000000000' },
-      { literal: "'1e-10'", expected: '0.0000000001' },
-      { literal: "'-1.5e-10'", expected: '-0.00000000015' },
-      {
-        literal: "'99999999999999999999999999999999999999'",
-        expected: '99999999999999999999999999999999999999',
-      },
-      // Both sides of the plain/scientific switch, which turns on the adjusted
-      // exponent reaching the precision (38) and is not documented.
-      { literal: "'1e37'", expected: '10000000000000000000000000000000000000' },
-      { literal: "'1e38'", expected: '1e38' },
-      { literal: "'1e-36'", expected: '0.000000000000000000000000000000000001' },
-      { literal: "'1e-37'", expected: '0.0000000000000000000000000000000000001' },
-      { literal: "'1e-38'", expected: '1e-38' },
-      // 38 digits with an adjusted exponent of 0: plain, and no "e0" suffix.
-      {
-        literal: "'1.2345678901234567890123456789012345678'",
-        expected: '1.2345678901234567890123456789012345678',
-      },
-      // The 39th digit is rounded off by the server, not by the driver.
-      {
-        literal: "'1.23456789012345678901234567890123456789'",
-        expected: '1.2345678901234567890123456789012345679',
-      },
-      { literal: "'1000000000000000000000000000000000000000'", expected: '1e39' },
-      // Documented exponent range: -16383 to 16384.
-      { literal: "'1e16384'", expected: '1e16384' },
-      { literal: "'1e-16383'", expected: '1e-16383' },
-      { literal: "'1e-16384'", expected: '0' },
-      {
-        literal: "'1.2345678901234567890123456789012345678e16384'",
-        expected: '1.2345678901234567890123456789012345678e16384',
-      },
-    ];
-    const columns = cases.map(({ literal }, i) => `${literal}::DECFLOAT AS V${i}`);
-    const { statement, rows } = await executeAsync(connection, `SELECT ${columns.join(', ')}`);
-    for (const column of statement.getColumns()!) {
-      expect(column.getType()).toBe('decfloat');
-      if (isRunningNewDriverWithBD('BD#6')) {
-        // @ts-ignore TODO: remove once the test runner's Column type is the new driver's own,
-        // not the old driver's (see utils/index.ts TODO)
-        expect(column.isDecfloat()).toBe(true);
-      }
-    }
-    expect(Object.values(rows![0])).toEqual(cases.map((c) => c.expected));
-  });
-
-  it('returns DECFLOAT above the maximum exponent', async () => {
-    const { rows } = await executeAsync(connection, `SELECT '1e16385'::DECFLOAT`);
-    const value = Object.values(rows![0])[0];
-    if (isRunningNewDriverWithBD('BD#7')) {
-      expect(value).toBe('1e16385');
-    } else {
-      expect(value).toBe('10e16384');
-    }
-  });
-});
-
-describe('Query returning BigInt data types', () => {
-  const snowflake = getSnowflakeSDK();
-  let connection: Connection;
-
-  beforeAll(async () => {
-    connection = createTestConnection(snowflake, { jsTreatIntegerAsBigInt: true });
-    await connection.connectAsync();
-  });
-
-  afterAll(async () => {
-    await destroyConnectionAsync(connection);
-  });
-
-  it('returns integers as exact BigInt instances', async () => {
-    const cases = [
-      { expression: '7::NUMBER(2,0)', expected: '7' },
-      { expression: '9223372036854775807', expected: '9223372036854775807' },
-      { expression: '9223372036854775808', expected: '9223372036854775808' },
-      {
-        expression: '99999999999999999999999999999999999999',
-        expected: '99999999999999999999999999999999999999',
-      },
-      {
-        expression: '-99999999999999999999999999999999999999',
-        expected: '-99999999999999999999999999999999999999',
-      },
-    ];
-    const { statement, rows } = await executeAsync(connection!, selectAll(cases));
-    const values = Object.values(rows![0]);
-
-    expect(statement.getColumns()!.map((column) => column.getType())).toEqual(
-      cases.map(() => 'fixed'),
+  it('returns DECFLOAT as String', async () => {
+    const { statement, rows } = await executeAsync(
+      connection,
+      "SELECT '-9.8765432099999998623226732747455716901e-250'::DECFLOAT as DECFLOAT_COLUMN",
     );
-    expect(values.map((value) => isBigIntValue(value))).toEqual(cases.map(() => true));
-    expect(values.map(String)).toEqual(cases.map(({ expected }) => expected));
-  });
-
-  it('leaves scaled NUMBER(38,2) as a Number', async () => {
-    const { rows } = await executeAsync(
-      connection!,
-      'SELECT 123456789012345678901234567890.12::NUMBER(38,2)',
-    );
-    const value = Object.values(rows![0])[0];
-    expect(isBigIntValue(value)).toBe(false);
-    expect(value).toBe(1.2345678901234568e29);
-  });
-
-  it('returns NULL as null, not a BigInt', async () => {
-    const { rows } = await executeAsync(connection!, 'SELECT NULL::INT');
-    expect(Object.values(rows![0])[0]).toBeNull();
+    // NO isDecfloat method available :/
+    expect(statement.getColumn(0).getType()).toBe('decfloat');
+    expect(rows![0].DECFLOAT_COLUMN).toBe('-9.8765432099999998623226732747455716901e-250');
   });
 });
