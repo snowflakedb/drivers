@@ -1,0 +1,24 @@
+{
+  "name": "Query hangs indefinitely (simulates a slow server for crash-flush tests)",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "fixedDelayMilliseconds": 300000,
+    "jsonBody": {
+      "data": {
+        "queryId": "hanging-query-id",
+        "results": [],
+        "rowtype": [],
+        "total": 0,
+        "returned": 0,
+        "queryResultFormat": "json"
+      },
+      "success": true,
+      "message": null,
+      "code": null
+    }
+  }
+}

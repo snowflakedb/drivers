@@ -875,6 +875,17 @@ class AsyncCoreDriver:
             )
         )
 
+    async def telemetry_send_log(
+        self, conn_handle: ConnectionHandle, message_json: str, timestamp_ms: int
+    ) -> TelemetrySendResponse:
+        return await self.client.telemetry_send_log(
+            TelemetrySendLogRequest(
+                conn_handle=conn_handle,
+                message_json=message_json,
+                timestamp_ms=timestamp_ms,
+            )
+        )
+
     # =====================================================================
     # Statement lifecycle (cursor execute path)
     # =====================================================================
