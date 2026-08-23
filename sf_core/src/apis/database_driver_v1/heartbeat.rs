@@ -151,8 +151,8 @@ async fn heartbeat_loop(
             let token = tokio::select! {
                 result = ctx.refresh_token(last_error.take()) => match result {
                     Ok(t) => t,
-                    Err(ApiError::MasterTokenExpired { .. }) => {
-                        tracing::error!("Master token expired, heartbeat task exiting");
+                    Err(ApiError::MasterTokenTerminal { .. }) => {
+                        tracing::error!("Master token can never be renewed, heartbeat task exiting");
                         return;
                     }
                     Err(ApiError::ConnectionNotInitialized { .. }) => {

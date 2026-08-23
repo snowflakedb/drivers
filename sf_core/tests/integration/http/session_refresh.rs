@@ -101,11 +101,12 @@ async fn should_fail_when_refresh_returns_error() {
     server.await.unwrap();
 }
 
-/// GS 390114 on the refresh endpoint must surface the discriminable
-/// MasterTokenExpired variant (not the generic SessionRefreshFailed), so callers
-/// can mark the connection expired. Unit-level proof of the refresh_session mapping.
+/// GS 390113/390114/390115 on the refresh endpoint must all surface the
+/// discriminable MasterTokenTerminal variant (not the generic
+/// SessionRefreshFailed), carrying the real code, so callers can mark the
+/// connection expired. Unit-level proof of the refresh_session mapping.
 #[tokio::test]
-async fn should_map_390114_to_master_token_expired() {
+async fn should_map_390114_to_master_token_terminal() {
     let (addr, attempts, server) = spawn_refresh_server(|_| async move {
         let body = r#"{"success":false,"code":"390114","message":"Master token has expired"}"#;
         format!(
@@ -121,16 +122,69 @@ async fn should_map_390114_to_master_token_expired() {
     let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
 
     let err = result.expect_err("390114 refresh must fail");
-    assert!(
-        matches!(
-            err,
-            RestError::InvalidSnowflakeResponse {
-                source: SnowflakeResponseError::MasterTokenExpired { .. },
-                ..
-            }
-        ),
-        "expected InvalidSnowflakeResponse{{MasterTokenExpired}}, got {err:?}"
-    );
+    match err {
+        RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::MasterTokenTerminal { code, .. },
+            ..
+        } => assert_eq!(code, 390114, "must preserve the real GS code"),
+        other => panic!("expected InvalidSnowflakeResponse{{MasterTokenTerminal}}, got {other:?}"),
+    }
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn should_map_390113_to_master_token_terminal() {
+    let (addr, attempts, server) = spawn_refresh_server(|_| async move {
+        let body = r#"{"success":false,"code":"390113","message":"Master token not found"}"#;
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        ).into_bytes()
+    }).await;
+
+    let client = reqwest::Client::new();
+    let server_url = format!("http://{}", addr);
+
+    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+
+    let err = result.expect_err("390113 refresh must fail");
+    match err {
+        RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::MasterTokenTerminal { code, .. },
+            ..
+        } => assert_eq!(code, 390113, "must preserve the real GS code"),
+        other => panic!("expected InvalidSnowflakeResponse{{MasterTokenTerminal}}, got {other:?}"),
+    }
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn should_map_390115_to_master_token_terminal() {
+    let (addr, attempts, server) = spawn_refresh_server(|_| async move {
+        let body = r#"{"success":false,"code":"390115","message":"Master token is invalid"}"#;
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        ).into_bytes()
+    }).await;
+
+    let client = reqwest::Client::new();
+    let server_url = format!("http://{}", addr);
+
+    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+
+    let err = result.expect_err("390115 refresh must fail");
+    match err {
+        RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::MasterTokenTerminal { code, .. },
+            ..
+        } => assert_eq!(code, 390115, "must preserve the real GS code"),
+        other => panic!("expected InvalidSnowflakeResponse{{MasterTokenTerminal}}, got {other:?}"),
+    }
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
     server.await.unwrap();
 }

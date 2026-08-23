@@ -7,6 +7,7 @@ pub use crate::apis::database_driver_v1::statement::StatementError;
 use crate::chunks::ChunkError;
 pub use crate::config::ConfigError;
 pub use crate::rest::snowflake::RestError;
+use crate::rest::snowflake::master_token_terminal_detail;
 pub use crate::rest::snowflake::workload_identity::AttestationError;
 use crate::tls::error::TlsError;
 use crate::token_cache::TokenCacheError;
@@ -117,8 +118,12 @@ pub enum ApiError {
         #[snafu(source(from(RestError, Box::new)))]
         source: Box<RestError>,
     },
-    #[snafu(display("Master token expired, full re-authentication required"))]
-    MasterTokenExpired {
+    #[snafu(display("{}", master_token_terminal_detail(*master_token_gs_code)))]
+    MasterTokenTerminal {
+        /// The GS code the server sent (390113/390114/390115), or `None` when
+        /// expiry was predicted from a locally-tracked deadline with no
+        /// server round-trip.
+        master_token_gs_code: Option<i32>,
         #[snafu(implicit)]
         location: Location,
     },

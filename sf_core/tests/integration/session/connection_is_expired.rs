@@ -281,3 +281,93 @@ async fn should_set_is_expired_when_refresh_returns_390114() {
         "is_expired must be true after the refresh endpoint returns GS 390114"
     );
 }
+
+/// Same as `should_set_is_expired_when_refresh_returns_390114`, but for GS
+/// 390113 (master token not found): the master token can never be renewed
+/// here either, so the connection must be marked expired.
+#[tokio::test]
+async fn should_set_is_expired_when_refresh_returns_390113() {
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .respond_with(ResponseTemplate::new(401))
+        .named("query_401")
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/session/token-request"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": "390113",
+            "message": "Master token not found."
+        })))
+        .named("refresh_390113")
+        .mount(&server)
+        .await;
+
+    let server_uri = server.uri();
+    let is_expired = tokio::task::spawn_blocking(move || {
+        let client = SnowflakeTestClient::connect_integration_test(Some(&server_uri));
+        let query_result = client.execute_query_no_unwrap("SELECT 1");
+        assert!(
+            query_result.is_err(),
+            "query should fail once the master token is reported not found"
+        );
+        client.connection_is_expired_blocking().unwrap()
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        is_expired,
+        "is_expired must be true after the refresh endpoint returns GS 390113"
+    );
+}
+
+/// Same as `should_set_is_expired_when_refresh_returns_390114`, but for GS
+/// 390115 (master token invalid): the master token can never be renewed
+/// here either, so the connection must be marked expired.
+#[tokio::test]
+async fn should_set_is_expired_when_refresh_returns_390115() {
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .respond_with(ResponseTemplate::new(401))
+        .named("query_401")
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/session/token-request"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": "390115",
+            "message": "Master token is invalid."
+        })))
+        .named("refresh_390115")
+        .mount(&server)
+        .await;
+
+    let server_uri = server.uri();
+    let is_expired = tokio::task::spawn_blocking(move || {
+        let client = SnowflakeTestClient::connect_integration_test(Some(&server_uri));
+        let query_result = client.execute_query_no_unwrap("SELECT 1");
+        assert!(
+            query_result.is_err(),
+            "query should fail once the master token is reported invalid"
+        );
+        client.connection_is_expired_blocking().unwrap()
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        is_expired,
+        "is_expired must be true after the refresh endpoint returns GS 390115"
+    );
+}

@@ -67,6 +67,12 @@ message ErrorDetail {
 // Authentication error details
 message AuthenticationError {
   string detail = 1;
+  // True iff the session can never be renewed and the caller must open a new
+  // connection. Additive field number, so DriverError's oneof is untouched
+  // and exhaustive matchers still compile. The real GS code, when there is
+  // one, travels on DriverException.vendor_code — the same channel every
+  // other error type uses — not duplicated here.
+  bool reauthentication_required = 2;
 }
 
 // Generic error (empty message)

@@ -26,7 +26,9 @@ use crate::rest::snowflake::AbortOutcome;
 use crate::rest::snowflake::CREDENTIAL_REJECTION_GS_CODES;
 use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
 use crate::rest::snowflake::SQLSTATE_AUTHORIZATION_FAILURE;
+use crate::rest::snowflake::SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED;
 use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::master_token_terminal_detail;
 use crate::rest::snowflake::sql_state::sql_state_from_code;
 use arrow::array::RecordBatchReader;
 use arrow::ffi::FFI_ArrowSchema;
@@ -796,6 +798,23 @@ fn to_driver_error(error: &ApiError) -> DriverError {
             )),
         },
         ApiError::Login { source, .. } => match source.as_ref() {
+            // Reauth-shaped terminal login failure: the driver's own
+            // evict-and-retry ladder already gave up on a cached credential
+            // (is_reauthentication_required, computed in mod.rs). This is the
+            // same "open a new connection" signal as MasterTokenTerminal
+            // below, so it routes through the same AuthenticationError shape
+            // rather than LoginError.
+            RestError::LoginError {
+                message,
+                code,
+                reauthentication_required: true,
+                ..
+            } => DriverError {
+                error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
+                    detail: message.clone(),
+                    reauthentication_required: true,
+                })),
+            },
             RestError::LoginError { message, code, .. } => DriverError {
                 error_type: Some(driver_error::ErrorType::LoginError(LoginError {
                     message: message.clone(),
@@ -805,6 +824,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
             _ => DriverError {
                 error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
                     detail: source.to_string(),
+                    reauthentication_required: false,
                 })),
             },
         },
@@ -826,11 +846,13 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::TlsClientCreation { source, .. } => DriverError {
             error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
                 detail: source.to_string(),
+                reauthentication_required: false,
             })),
         },
         ApiError::SessionRefresh { source, .. } => DriverError {
             error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
                 detail: source.to_string(),
+                reauthentication_required: false,
             })),
         },
         ApiError::Statement { .. } => DriverError {
@@ -839,9 +861,13 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::Query { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::MasterTokenExpired { .. } => DriverError {
+        ApiError::MasterTokenTerminal {
+            master_token_gs_code,
+            ..
+        } => DriverError {
             error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                detail: "Master token expired, full re-authentication required".to_string(),
+                detail: master_token_terminal_detail(*master_token_gs_code),
+                reauthentication_required: true,
             })),
         },
         ApiError::InvalidRefreshState { .. } => DriverError {
@@ -891,6 +917,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::TokenCacheInitialization { source, .. } => DriverError {
             error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
                 detail: source.to_string(),
+                reauthentication_required: false,
             })),
         },
         ApiError::HttpRequest { .. } => DriverError {
@@ -899,6 +926,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::TokenRequest { source, .. } => DriverError {
             error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
                 detail: source.to_string(),
+                reauthentication_required: false,
             })),
         },
         ApiError::Configuration {
@@ -961,21 +989,34 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// Extract the Snowflake server vendor code and SQL state from an ApiError, if available.
 ///
 /// Populates vendor_code/sql_state for query errors (where the Snowflake server
-/// code is the user-facing error number) and for login/authentication failures,
-/// where the raw GS code (e.g. `390100` for bad credentials) is surfaced as
-/// `vendor_code`, matching the legacy Python connector's behavior (SNOW-3775156) —
-/// a code of `-1` means the server omitted or sent a non-numeric code, in which
-/// case no vendor_code is surfaced and callers fall back to their default errno.
+/// code is the user-facing error number), for login/authentication failures
+/// (including reauth-shaped ones — a session that must be renewed by opening a
+/// new connection is not a credential rejection), and for master-token expiry.
+/// The raw GS code (e.g. `390100` for bad credentials, `390114` for an expired
+/// master token) is surfaced as `vendor_code`, matching the legacy Python
+/// connector's behavior — a code of `-1` means the server omitted or sent a
+/// non-numeric code, in which case no vendor_code is surfaced and callers fall
+/// back to their default errno. Master-token expiry can also legitimately have
+/// no code at all (client-predicted expiry with no server round-trip); never
+/// fabricate one.
 ///
 /// SQLSTATE resolution order (first hit wins):
 ///   1. The `sqlState` the server included in its response (verbatim).
-///   2. For login failures, [`SQLSTATE_AUTHORIZATION_FAILURE`] when the code
-///      is a known credential rejection ([`CREDENTIAL_REJECTION_GS_CODES`]);
-///      otherwise left unset so callers fall back to their own default.
-///   3. `sql_state_from_code` lookup against the numeric Snowflake error
+///   2. For login failures, [`SQLSTATE_AUTHORIZATION_FAILURE`] ("28000") when
+///      the code is a known credential rejection
+///      ([`CREDENTIAL_REJECTION_GS_CODES`]); [`SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED`]
+///      ("08001") when the login failure is reauth-shaped; otherwise left
+///      unset so callers fall back to their own default -- legacy ODBC and
+///      Python disagree on that default (28000 vs 08001), so it isn't
+///      resolved centrally.
+///   3. For master-token expiry, always
+///      [`SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED`] — the master-token
+///      terminal codes never indicate a credential rejection.
+///   4. `sql_state_from_code` lookup against the numeric Snowflake error
 ///      code, which covers paths (async-poll, query-monitoring) that drop
 ///      `sqlState` on the wire but keep the error code. Scoped to query
-///      errors — login codes are deliberately not added to that table.
+///      errors — login and master-token codes are deliberately not added to
+///      that table, since they're already resolved by steps 2 and 3.
 ///
 /// We deliberately do NOT inspect the human-readable message text:
 /// classification belongs to the server, and substring matching on
@@ -985,9 +1026,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// rely on `sql_state` as the single source of truth for error
 /// classification.
 ///
-/// NOTE: currently handles `QueryFailed`, `AsyncQuery`, and `Login` variants.
-/// New query-related error variants should be added here as they are
-/// introduced.
+/// NOTE: currently handles `QueryFailed`, `AsyncQuery`, `Login`, and
+/// `MasterTokenTerminal` variants. New query-related error variants should be
+/// added here as they are introduced.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
     let (code, sql_state) = match error {
         ApiError::Query { source, .. } => match source.as_ref() {
@@ -1001,14 +1042,29 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
             _ => (None, None),
         },
         ApiError::Login { source, .. } => match source.as_ref() {
-            RestError::LoginError { code, .. } if *code != GS_CODE_UNAVAILABLE => (
+            RestError::LoginError {
+                code,
+                reauthentication_required,
+                ..
+            } if *code != GS_CODE_UNAVAILABLE => (
                 Some(*code),
-                CREDENTIAL_REJECTION_GS_CODES
-                    .contains(code)
-                    .then(|| SQLSTATE_AUTHORIZATION_FAILURE.to_string()),
+                if CREDENTIAL_REJECTION_GS_CODES.contains(code) {
+                    Some(SQLSTATE_AUTHORIZATION_FAILURE.to_string())
+                } else if *reauthentication_required {
+                    Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string())
+                } else {
+                    None
+                },
             ),
             _ => (None, None),
         },
+        ApiError::MasterTokenTerminal {
+            master_token_gs_code,
+            ..
+        } => (
+            *master_token_gs_code,
+            Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string()),
+        ),
         _ => (None, None),
     };
 
@@ -1156,7 +1212,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,
         ApiError::Statement { .. } => StatusCode::InternalError,
         ApiError::Query { .. } => StatusCode::InternalError,
-        ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
+        ApiError::MasterTokenTerminal { .. } => StatusCode::AuthenticationError,
         ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
         ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
         ApiError::ChunkFetch { .. } => StatusCode::InternalError,
@@ -1297,14 +1353,22 @@ mod tests {
         }
     }
 
-    fn login_error(code: i32) -> ApiError {
+    fn login_error(code: i32, reauthentication_required: bool) -> ApiError {
         ApiError::Login {
             location: loc(),
             source: Box::new(RestError::LoginError {
                 message: "test".to_owned(),
                 code,
+                reauthentication_required,
                 location: loc(),
             }),
+        }
+    }
+
+    fn master_token_terminal(code: Option<i32>) -> ApiError {
+        ApiError::MasterTokenTerminal {
+            master_token_gs_code: code,
+            location: loc(),
         }
     }
 
@@ -1386,7 +1450,7 @@ mod tests {
 
     #[test]
     fn login_credential_rejection_surfaces_code_and_authorization_sql_state() {
-        let err = login_error(390100);
+        let err = login_error(390100, false);
         assert_eq!(
             extract_vendor_info(&err),
             (Some(390100), Some("28000".to_owned()))
@@ -1394,11 +1458,10 @@ mod tests {
     }
 
     #[test]
-    fn login_non_rejection_code_surfaces_code_with_no_sql_state() {
-        // A login failure code outside the credential-rejection set still
-        // passes its vendor_code through, but sql_state is left unset so
-        // callers fall back to their own default (e.g. "08001").
-        let err = login_error(390111);
+    fn login_non_rejection_non_reauth_code_surfaces_code_with_no_sql_state() {
+        // Neither a credential rejection nor reauth-shaped: sql_state stays
+        // unset so callers apply their own default.
+        let err = login_error(390111, false);
         assert_eq!(extract_vendor_info(&err), (Some(390111), None));
     }
 
@@ -1407,8 +1470,39 @@ mod tests {
         // GS_CODE_UNAVAILABLE is used when the server omitted or sent a
         // non-numeric code; treat as "no vendor code" so callers fall back
         // to their default errno.
-        let err = login_error(GS_CODE_UNAVAILABLE);
+        let err = login_error(GS_CODE_UNAVAILABLE, false);
         assert_eq!(extract_vendor_info(&err), (None, None));
+    }
+
+    #[test]
+    fn master_token_terminal_populates_vendor_code_and_connection_sql_state() {
+        // MasterTokenTerminal codes (390113/390114/390115) never indicate a
+        // credential rejection, so sql_state is unconditionally "08001".
+        let err = master_token_terminal(Some(390114));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(390114), Some("08001".to_owned()))
+        );
+    }
+
+    #[test]
+    fn master_token_terminal_with_no_server_code_still_gets_connection_sql_state() {
+        // Client-predicted expiry with no server round-trip: no vendor_code
+        // to surface, but the SQLSTATE classification doesn't depend on
+        // having a code.
+        let err = master_token_terminal(None);
+        assert_eq!(extract_vendor_info(&err), (None, Some("08001".to_owned())));
+    }
+
+    #[test]
+    fn login_reauth_flag_now_populates_vendor_code_and_connection_sql_state() {
+        // reauthentication_required=true resolves to "08001" regardless of
+        // CREDENTIAL_REJECTION_GS_CODES membership.
+        let err = login_error(390195, true);
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(390195), Some("08001".to_owned()))
+        );
     }
 
     #[test]
@@ -1604,6 +1698,64 @@ mod tests {
                 assert_eq!(inner.parameter, "account");
             }
             other => panic!("expected MissingParameter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn master_token_terminal_constructs_auth_error_with_reauth_required() {
+        let err = master_token_terminal(Some(390113));
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::AuthError(inner)) => {
+                assert!(inner.reauthentication_required);
+            }
+            other => panic!("expected AuthError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn master_token_terminal_with_no_server_code_still_sets_reauth_required() {
+        // Client-side-predicted expiry: no server round-trip, so no GS code
+        // exists anywhere for this error — but the discriminant is still
+        // `true`, since the session genuinely can't be renewed either way.
+        // The real code (when there is one) travels via vendor_code, not
+        // through this field, so its absence here doesn't affect the flag.
+        let err = master_token_terminal(None);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::AuthError(inner)) => {
+                assert!(inner.reauthentication_required);
+            }
+            other => panic!("expected AuthError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn login_reauth_flag_constructs_auth_error_not_login_error() {
+        let err = login_error(390195, true);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::AuthError(inner)) => {
+                assert!(inner.reauthentication_required);
+            }
+            other => panic!("expected AuthError for reauth-shaped Login, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn login_error_with_flag_false_stays_a_plain_login_error() {
+        // 390100 is not reauth-shaped either way — a weaker guard than 390195
+        // below, which IS reauth-shaped, so this also pins that `to_driver_error`
+        // trusts the flag rather than re-deriving reauth-ness from the code.
+        for code in [390100, 390195] {
+            let err = login_error(code, false);
+            let driver_error = to_driver_error(&err);
+            match driver_error.error_type {
+                Some(driver_error::ErrorType::LoginError(inner)) => {
+                    assert_eq!(inner.code, code);
+                }
+                other => panic!("expected LoginError, got {other:?} for code={code}"),
+            }
         }
     }
 

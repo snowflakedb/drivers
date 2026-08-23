@@ -93,9 +93,26 @@ pub const SESSION_GONE: i32 = 390111;
 /// GS error code returned when the session token has expired.
 /// The caller must use the master token to obtain a fresh session token and retry.
 pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
+/// GS error code returned when the master token could not be found on the
+/// server. Same terminal handling as [`MASTER_TOKEN_EXPIRED`]. Matches
+/// legacy's `MASTER_TOKEN_NOTFOUND_GS_CODE` (`network.py`); JDBC has the
+/// equivalent case under the same numeric value.
+pub const MASTER_TOKEN_NOT_FOUND: i32 = 390113;
 /// GS error code returned when the master token has expired.
 /// Full re-authentication is required; the session can never be renewed.
 pub const MASTER_TOKEN_EXPIRED: i32 = 390114;
+/// GS error code returned when the master token is invalid. Same terminal
+/// handling as [`MASTER_TOKEN_EXPIRED`]. Matches legacy's
+/// `MASTER_TOKEN_INVALD_GS_CODE` (sic — legacy's own constant misspells
+/// "invalid") (`network.py`).
+pub const MASTER_TOKEN_INVALID: i32 = 390115;
+/// GS codes that mean the master token can never be renewed — not found,
+/// expired, or invalid.
+const MASTER_TOKEN_TERMINAL_CODES: [i32; 3] = [
+    MASTER_TOKEN_NOT_FOUND,
+    MASTER_TOKEN_EXPIRED,
+    MASTER_TOKEN_INVALID,
+];
 /// GS error code returned when the OAuth access token presented at login is
 /// invalid. Treated cross-driver as a signal to evict the cached access
 /// token and replay the OAuth flow.
@@ -130,6 +147,14 @@ pub const CREDENTIAL_REJECTION_GS_CODES: [i32; 9] = [
 /// [`CREDENTIAL_REJECTION_GS_CODES`]. Mirrors `SQLSTATE_AUTHORIZATION_FAILURE`
 /// in the legacy Python connector's `sqlstate.py`.
 pub const SQLSTATE_AUTHORIZATION_FAILURE: &str = "28000";
+/// ANSI SQLSTATE for "connection exception: connection does not exist" —
+/// used for terminal, non-renewable authentication states (master-token
+/// expiry, reauth-shaped login failures) that are not a credential
+/// rejection. The session can never be renewed, but the credentials
+/// themselves were not rejected, so `SQLSTATE_AUTHORIZATION_FAILURE` (class
+/// 28) would misclassify it. Mirrors `SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED`
+/// in the legacy Python connector's `sqlstate.py`.
+pub const SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED: &str = "08001";
 /// Sentinel for a login-failure `code` the server omitted or sent as a
 /// non-numeric value — not a real GS error code. Produced at the `code`
 /// extraction site feeding [`LoginSnafu`] below.
@@ -405,6 +430,11 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
     }
 }
 
+/// GS error code returned when a cached id_token presented at login is
+/// invalid or stale. Matches legacy's `ID_TOKEN_INVALID_LOGIN_REQUEST_GS_CODE`
+/// (`network.py`).
+const ID_TOKEN_INVALID_LOGIN_REQUEST: i32 = 390195;
+
 const EXT_AUTHN_ERROR_CODES: [i32; 8] = [
     390120, // EXT_AUTHN_DENIED
     390122, // EXT_AUTHN_NOT_ENROLLED
@@ -413,8 +443,51 @@ const EXT_AUTHN_ERROR_CODES: [i32; 8] = [
     390127, // EXT_AUTHN_INVALID
     390129, // EXT_AUTHN_EXCEPTION
     390132, // EXT_AUTHN_DUO_PUSH_DISABLED
-    390195, // ID_TOKEN_INVALID
+    ID_TOKEN_INVALID_LOGIN_REQUEST,
 ];
+
+/// GS codes that mean a cached credential was rejected. Necessary but not
+/// sufficient: see [`driver_can_reacquire_credential`].
+///
+/// Deliberately narrower than all of [`EXT_AUTHN_ERROR_CODES`]: the other
+/// seven are MFA-flow failures (denied, not enrolled, locked, timeout,
+/// invalid, exception, DUO push disabled), not a dead cached credential — a
+/// locked account is not fixed by opening a new connection, so surfacing
+/// `ReauthenticationRequest` for them would be actively misleading. They
+/// stay plain login failures. Matches legacy's set in `auth/_auth.py`.
+fn code_is_reauth_shaped(code: i32) -> bool {
+    code == ID_TOKEN_INVALID_LOGIN_REQUEST || OAUTH_REFRESH_ERROR_CODES.contains(&code)
+}
+
+/// True when the driver can re-drive credential acquisition itself; false
+/// when the credential was supplied by the caller verbatim or there's no
+/// re-drive mechanism. Not "is a human involved": browser auth is `true`
+/// (driver drives the whole flow) but MFA is `false` (evicting the cached
+/// token and replaying is cache invalidation, not reauthentication — the
+/// user must satisfy the second factor again). Mirrors legacy's three real
+/// `reauthenticate()` implementations (`auth/idtoken.py`, `auth/webbrowser.py`,
+/// `auth/_oauth_base.py`) vs. its six `{"success": False}` stubs.
+fn driver_can_reacquire_credential(m: &LoginMethod) -> bool {
+    match m {
+        LoginMethod::ExternalBrowser { .. }
+        | LoginMethod::OAuthAuthorizationCode(_)
+        | LoginMethod::OAuthClientCredentials(_) => true,
+
+        LoginMethod::Password { .. }
+        | LoginMethod::NativeOkta(_)
+        | LoginMethod::PrivateKey { .. }
+        | LoginMethod::Pat { .. }
+        | LoginMethod::UserPasswordMfa { .. }
+        | LoginMethod::OAuthAccessToken { .. }
+        | LoginMethod::SessionToken { .. }
+        | LoginMethod::WorkloadIdentity(_) => false,
+        // no `_` arm — a new LoginMethod MUST be classified here
+    }
+}
+
+fn is_reauthentication_required(code: i32, m: &LoginMethod) -> bool {
+    code_is_reauth_shaped(code) && driver_can_reacquire_credential(m)
+}
 
 /// Sets the DUO second-factor fields on the login request.
 /// Matches the behavior of the old JDBC, .NET, and ODBC drivers:
@@ -1242,7 +1315,14 @@ pub async fn snowflake_login_with_client(
                 .await;
             }
         }
-        LoginSnafu { message, code }.fail()?;
+        let reauthentication_required =
+            is_reauthentication_required(code, &login_parameters.login_method);
+        LoginSnafu {
+            message,
+            code,
+            reauthentication_required,
+        }
+        .fail()?;
     }
 
     tracing::debug!("Login successful, extracting session tokens");
@@ -1452,12 +1532,13 @@ pub async fn refresh_session(
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
         tracing::error!(code, message = %message, "Session refresh failed");
-        // GS 390114 on the refresh endpoint means the master token itself has
-        // expired: the session can never be renewed. Surface the discriminable
-        // MasterTokenExpired variant so callers can mark the connection expired,
-        // mirroring the query-response path in read_response_json.
-        if code == MASTER_TOKEN_EXPIRED {
-            return MasterTokenExpiredSnafu
+        // GS 390113/390114/390115 on the refresh endpoint all mean the master
+        // token can never be renewed (not found, expired, or invalid).
+        // Surface the discriminable MasterTokenTerminal variant, carrying the
+        // real code, so callers can mark the connection expired, mirroring
+        // the query-response path in read_response_json.
+        if MASTER_TOKEN_TERMINAL_CODES.contains(&code) {
+            return MasterTokenTerminalSnafu { code }
                 .fail()
                 .context(InvalidSnowflakeResponseSnafu);
         }
@@ -2396,13 +2477,16 @@ where
         return SessionExpiredSnafu.fail();
     }
 
-    // 2xx with `success:false, code:"390114"` means the master token has expired.
-    // The session can never be renewed; surface it so RefreshContext can set
-    // `is_master_token_expired = true` and propagate `MasterTokenExpired` to the caller.
-    if !parsed.success
-        && parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) == Some(MASTER_TOKEN_EXPIRED)
-    {
-        return MasterTokenExpiredSnafu.fail();
+    // 2xx with `success:false, code:"390113"/"390114"/"390115"` means the
+    // master token can never be renewed. Surface it so RefreshContext can set
+    // `is_master_token_expired = true` and propagate `MasterTokenTerminal` to
+    // the caller, carrying the real code.
+    if !parsed.success {
+        if let Some(code) = parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) {
+            if MASTER_TOKEN_TERMINAL_CODES.contains(&code) {
+                return MasterTokenTerminalSnafu { code }.fail();
+            }
+        }
     }
 
     Ok(parsed)
@@ -2515,6 +2599,10 @@ pub enum RestError {
     LoginError {
         message: String,
         code: i32,
+        /// True when `code` is reauth-shaped AND the driver can re-drive the
+        /// credential-acquisition flow itself for this login method — the
+        /// conjunction of both predicates, per [`is_reauthentication_required`].
+        reauthentication_required: bool,
         #[snafu(implicit)]
         location: Location,
     },
@@ -2641,11 +2729,33 @@ pub enum SnowflakeResponseError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Master token expired - full re-authentication required (GS code 390114)"))]
-    MasterTokenExpired {
+    #[snafu(display("{}", master_token_terminal_detail(Some(*code))))]
+    MasterTokenTerminal {
+        /// The real GS code (390113/390114/390115) that triggered this. Always
+        /// present here — this variant is only constructed at the two
+        /// server-round-trip detection sites above.
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+/// Single wording source for "master token can never be renewed", shared by
+/// [`SnowflakeResponseError::MasterTokenTerminal`]'s `Display`, the `ApiError`
+/// layer's equivalent variant, and the proto `AuthenticationError.detail`
+/// text. `client_api.py`'s `_append_detail` dedupes by exact substring, so any
+/// paraphrase between these sites prints the GS code multiple times in the
+/// user-visible message. `code` is `None` only for a client-side-predicted
+/// expiry with no server round-trip — never fabricate a code for that case.
+pub(crate) fn master_token_terminal_detail(code: Option<i32>) -> String {
+    match code {
+        Some(code) => {
+            format!(
+                "Master token can never be renewed - full re-authentication required (GS code {code})"
+            )
+        }
+        None => "Master token can never be renewed - full re-authentication required".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -2658,6 +2768,59 @@ mod tests {
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
+
+    #[test]
+    fn is_reauthentication_required_covers_id_token_and_oauth_codes() {
+        let browser = LoginMethod::ExternalBrowser {
+            username: "testuser".to_string(),
+            authentication_timeout_secs: 120,
+            client_store_temporary_credential: true,
+        };
+        assert!(is_reauthentication_required(
+            ID_TOKEN_INVALID_LOGIN_REQUEST,
+            &browser
+        ));
+
+        let oauth_access = LoginMethod::OAuthAccessToken {
+            username: "testuser".to_string(),
+            token: "token".into(),
+        };
+        for code in [OAUTH_ACCESS_TOKEN_INVALID, OAUTH_ACCESS_TOKEN_EXPIRED] {
+            // OAuth v1 (raw access token, caller-supplied) must stay excluded:
+            // legacy's positive `isinstance(auth_instance, AuthByOAuthBase)`
+            // gate excludes it too.
+            assert!(!is_reauthentication_required(code, &oauth_access));
+        }
+    }
+
+    #[test]
+    fn is_reauthentication_required_excludes_ordinary_login_failures() {
+        let browser = LoginMethod::ExternalBrowser {
+            username: "testuser".to_string(),
+            authentication_timeout_secs: 120,
+            client_store_temporary_credential: true,
+        };
+        assert!(!is_reauthentication_required(390100, &browser));
+    }
+
+    #[test]
+    fn is_reauthentication_required_excludes_mfa_even_for_id_token_code() {
+        // Cache-invalidation (evict + replay) is not reauthentication: the
+        // driver reacquires nothing, the user must satisfy the second factor
+        // again. Legacy's `AuthByUsrPwdMfa.reauthenticate()` returns
+        // `{"success": False}` — no self-driven recovery.
+        let mfa = LoginMethod::UserPasswordMfa {
+            username: "testuser".to_string(),
+            password: "testpass".into(),
+            passcode_in_password: false,
+            passcode: None,
+            client_store_temporary_credential: true,
+        };
+        assert!(!is_reauthentication_required(
+            ID_TOKEN_INVALID_LOGIN_REQUEST,
+            &mfa
+        ));
+    }
 
     struct StubTokenCache {
         store: Mutex<HashMap<String, String>>,
@@ -3941,6 +4104,49 @@ mod tests {
             matches!(result, Err(SnowflakeResponseError::SessionExpired { .. })),
             "expected SessionExpired, got {result:?}"
         );
+    }
+
+    /// GS 390113/390114/390115 on a 2xx query response all mean the master
+    /// token can never be renewed. Each must map to `MasterTokenTerminal`,
+    /// carrying the real code — not a fabricated one.
+    #[tokio::test]
+    async fn read_response_json_maps_master_token_terminal_codes() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        for code in [
+            MASTER_TOKEN_NOT_FOUND,
+            MASTER_TOKEN_EXPIRED,
+            MASTER_TOKEN_INVALID,
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": false,
+                    "code": code.to_string(),
+                    "message": "Master token is no longer valid",
+                })))
+                .mount(&server)
+                .await;
+
+            let response = reqwest::Client::new()
+                .post(server.uri())
+                .send()
+                .await
+                .expect("mock request sends");
+
+            let result = read_response_json::<serde_json::Value>(response).await;
+            match result {
+                Err(SnowflakeResponseError::MasterTokenTerminal { code: got, .. }) => {
+                    assert_eq!(
+                        got, code,
+                        "must preserve the real GS code, not fabricate one"
+                    );
+                }
+                other => panic!("expected MasterTokenTerminal for code {code}, got {other:?}"),
+            }
+        }
     }
 
     /// Non-2xx bodies can carry tokens in JSON `data`; the error Display must
