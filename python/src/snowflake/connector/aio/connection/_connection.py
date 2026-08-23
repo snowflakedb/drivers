@@ -48,7 +48,7 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
 from ..._internal.text_utils import split_statements
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus
-from ...errors import Error, ProgrammingError
+from ...errors import Error, InterfaceError, ProgrammingError
 from ...version import __version__
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 
@@ -324,6 +324,48 @@ class Connection(ConnectionMixin[CursorInstance]):
             return bool(response.valid)
         except Exception:
             return False
+
+    @api_telemetry
+    async def is_expired(self) -> bool:  # type: ignore[override]
+        """Return True if the connection's master token has expired (async).
+
+        Overrides ``ConnectionMixin.is_expired()`` (a blocking sync method) with
+        a coroutine that uses ``async_core_driver`` instead, so checking expiry
+        does not block the event loop. Once True, the session can no longer be
+        renewed and the connection must be replaced; full re-authentication is
+        required.
+
+        Note: the inherited ``expired`` property (``ConnectionMixin.expired``)
+        calls ``self.is_expired()`` synchronously and is documented as a
+        sync-only name — it is overridden below to raise ``InterfaceError``
+        rather than silently return an unawaited coroutine. Always
+        ``await conn.is_expired()`` on an async connection instead.
+
+        ``# type: ignore[override]``: this intentionally widens the return
+        type from ``bool`` to a coroutine of ``bool`` relative to
+        ``ConnectionMixin.is_expired()`` — a deliberate, narrow Liskov
+        violation so the async connection never makes a blocking sync gRPC
+        call from a coroutine.
+        """
+        if self.conn_handle is None:
+            return False
+        try:
+            response = await async_core_driver.connection_is_expired(conn_handle=self.conn_handle)
+            return bool(response.is_expired)
+        except Exception:
+            return True
+
+    @property
+    def expired(self) -> bool:  # type: ignore[override]
+        """Whether the master token has expired. Sync-only on this class.
+
+        ``ConnectionMixin.expired`` calls ``self.is_expired()`` synchronously;
+        on this class that would return an unawaited coroutine (always
+        truthy, never a bool) rather than raise or await it — silently wrong
+        for any pool/application code checking this flag. Raise instead of
+        returning a misleading value.
+        """
+        raise InterfaceError(msg="`expired` is sync-only; use `await conn.is_expired()` on an async connection.")
 
     # ------------------------------------------------------------------
     # Multi-statement execution

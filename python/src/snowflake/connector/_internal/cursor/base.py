@@ -93,7 +93,7 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         - name: Column name (str)
         - type_code: Integer type code (int)
         - display_size: Display size in characters (int | None)
-        - internal_size: Internal size in bytes (int | None)
+        - internal_size: Internal size in characters (int | None)
         - precision: Precision for numeric types (int | None)
         - scale: Scale for numeric types (int | None)
         - null_ok: True if column can contain NULLs (bool | None)

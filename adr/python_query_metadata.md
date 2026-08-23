@@ -58,7 +58,7 @@ No breaking changes. The property is backed by `execute_result.query_id` from th
 
 Both drivers populate `description` immediately after `execute()` returns, before any rows are fetched. The metadata comes from the `columns` field of the execute response (protobuf `ColumnMetadata` messages). Each column's optional fields (`length`, `byte_length`, `precision`, `scale`) are set to `None` when the server omits them.
 
-`display_size` is only populated for text types (`TEXT`, `VARCHAR`, `CHAR`, `STRING`); all other types report `None`. This matches the old driver.
+`display_size` is only populated for text types (`TEXT`, `VARCHAR`, `CHAR`, `STRING`); all other types report `None`. The old driver never populates `display_size` — it is always `None` there, for every type. This is a deliberate, accepted divergence (see `BehaviorDifferences.yaml` entry 63); `internal_size` still carries the character count on both drivers.
 
 ## Consequences
 
