@@ -113,6 +113,7 @@ class AsyncTelemetryClient:
 
     def __init__(self, conn_handle: ConnectionHandle) -> None:
         self._conn_handle = conn_handle
+        self._closed = False
 
     async def send_api_usage(self, api_method: str, passed_arguments: list[str] | None = None) -> None:
         """Record an API method call for telemetry.
@@ -139,3 +140,28 @@ class AsyncTelemetryClient:
             )
         except Exception:
             logger.debug("Failed to send wrapper_error telemetry", exc_info=True)
+
+    async def add_log_to_batch(self, telemetry_data: TelemetryData) -> None:
+        """Forward one caller-produced telemetry entry (e.g. Snowpark's) to sf_core.
+
+        Core owns batching, flush threshold, and ``/telemetry/send`` egress.
+        Raises :class:`~snowflake.connector.errors.InterfaceError` if the client
+        has been closed; use :meth:`try_add_log_to_batch` for the fire-and-forget
+        hot path.
+        """
+        if self._closed:
+            raise InterfaceError(
+                "Cannot add log to batch: TelemetryClient is closed. Obtain a fresh client from a new connection."
+            )
+        await async_core_driver.telemetry_send_log(
+            conn_handle=self._conn_handle,
+            message_json=json.dumps(telemetry_data.message),
+            timestamp_ms=int(telemetry_data.timestamp),
+        )
+
+    async def try_add_log_to_batch(self, telemetry_data: TelemetryData) -> None:
+        """Exception-swallowing wrapper over :meth:`add_log_to_batch` — the hot path."""
+        try:
+            await self.add_log_to_batch(telemetry_data)
+        except Exception:
+            logger.debug("Failed to add log to telemetry", exc_info=True)
