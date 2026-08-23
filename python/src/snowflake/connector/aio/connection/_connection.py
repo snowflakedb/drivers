@@ -366,7 +366,6 @@ class Connection(ConnectionMixin[CursorInstance]):
         returning a misleading value.
         """
         raise InterfaceError(msg="`expired` is sync-only; use `await conn.is_expired()` on an async connection.")
-
     # ------------------------------------------------------------------
     # Multi-statement execution
     # ------------------------------------------------------------------

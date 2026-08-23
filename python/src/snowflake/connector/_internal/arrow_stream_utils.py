@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from .._common.extras import pyarrow
 from .arrow_context import ArrowConverterContext
 from .arrow_stream_iterator import ArrowStreamIterator, ArrowStreamTableIterator
-from .extras import pyarrow
 from .type_codes import FIXED
 
 

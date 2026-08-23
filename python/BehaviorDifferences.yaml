@@ -1062,6 +1062,17 @@ behavior_differences:
       warnings into errors, so existing tests are unaffected. CONFIRMED from source (both
       connectors and Snowpark).
 
+      `_request_id` was never public API; it's kept only for any community code (Snowpark
+      included) that came to depend on this legacy connector attribute despite the leading
+      underscore. Outright removing the attribute was considered — Snowpark's own read of
+      it would only need a one-line change — but rejected here in favor of the deprecation
+      warning above: any caller still on `_request_id` gets a heads-up and a migration
+      window instead of an immediate break tied to this driver's release.
+      `_BACKWARD_COMPAT_WARNED` dedup means test suites that access `_request_id` see at
+      most one warning per process, and the repo's pytest configuration does not turn
+      warnings into errors, so existing tests are unaffected. CONFIRMED from source (both
+      connectors and Snowpark).
+
 
 
   65:
@@ -1128,6 +1139,7 @@ behavior_differences:
     description: |
       Tracked under SNOW-3965431.
 
+
   63:
     name: "display_size is populated for text columns; legacy always returns None"
     status: allowed
@@ -1148,3 +1160,42 @@ behavior_differences:
       55). No consumer in Snowpark's source reads `display_size` (CONFIRMED from
       source), so this has no observed runtime impact; it's a strict improvement
       over legacy (extra, correct information) rather than a compatibility risk.
+
+  66:
+    name: "connector.options module removed; MissingPandas removed entirely"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `snowflake.connector.options` is importable, re-exporting
+      `MissingOptionalDependency`/`pandas`/`pyarrow` plus four Snowpark-only
+      names: `MissingPandas`, `ModuleLikeObject`, `installed_pandas`,
+      `installed_pyarrow`. `installed_pyarrow` mirrors `installed_pandas`
+      instead of checking `pyarrow` independently.
+    new_driver_behavior: |
+      `snowflake.connector.options` no longer exists; importing it raises
+      `ModuleNotFoundError`. The implementation now lives in
+      `snowflake.connector._common.extras`. Of the four Snowpark-only names,
+      `ModuleLikeObject` and `installed_pandas` relocate unchanged;
+      `installed_pyarrow` now checks `pyarrow` independently
+      (`not isinstance(pyarrow, MissingOptionalDependency)`); `MissingPandas`
+      has no replacement — use `MissingOptionalDependency("pandas")`
+      directly, which is behaviorally identical.
+    description: |
+      `options.py` was three weeks old with Snowpark as its only known
+      consumer, updated in lockstep with this change. Flagged for reviewers
+      in case another consumer exists.
+
+      `MissingOptionalDependency.__init__` accepts both a positional `dep`
+      argument and the no-arg-subclass pattern, so `MissingPandas` added
+      nothing over calling `MissingOptionalDependency("pandas")` directly.
+      No other optional dependency in this file (`pyarrow`/`numpy`/`tzlocal`/`sqlalchemy`)
+      gets a dedicated subclass either.
+
+      `installed_pyarrow` mirroring `installed_pandas` was a port artifact
+      from v4's `options.py`, where pandas and pyarrow were always imported
+      together. `_common/extras.py` already resolves them independently, so
+      a case where only one is installed now reports correctly instead of
+      following whichever happens to be installed.
