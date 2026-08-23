@@ -12,7 +12,7 @@ import pytest
 from snowflake.connector.cursor import QueryResultStats, ResultMetadata, ResultMetadataV2, SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import NEW_DRIVER_ONLY, is_new_driver
-from tests.conftest import run_against_sync_and_async, skip_async, with_paramstyle
+from tests.conftest import randomize_name, run_against_sync_and_async, skip_async, with_paramstyle
 from tests.e2e.types.utils import assert_sequential_values
 
 
@@ -2888,8 +2888,9 @@ class TestCursorDescribeInternal:
         a mocked empty-columns prepare result).
         """
         with function_connection.cursor() as cur:
-            cur.execute("CREATE OR REPLACE TEMP TABLE _test_di_dml (x INT)")
-            result = cur._describe_internal("INSERT INTO _test_di_dml VALUES (1)")
+            table = randomize_name("di_dml_test")
+            cur.execute(f"CREATE OR REPLACE TEMP TABLE {table} (x INT)")
+            result = cur._describe_internal(f"INSERT INTO {table} VALUES (1)")
 
             assert result is not None
             assert len(result) == 1
@@ -2929,7 +2930,7 @@ class TestCursorDescribeInternal:
         assert result[0].type_code == 16  # VECTOR
         assert result[0].vector_dimension == 3
 
-    def test_display_size_and_internal_size_for_varchar(self, cursor):
+    def test_display_size_and_internal_size_for_varchar(self, function_connection):
         """display_size/internal_size map the proto length and byte_length fields (BD#55).
 
         UD routes the char count to ``display_size`` and the byte count to
@@ -2937,25 +2938,33 @@ class TestCursorDescribeInternal:
         count as ``internal_size``. The mapping lives in ``from_column``, which both the
         V1 ``describe()`` and V2 ``_describe_internal()`` views share, so both are
         asserted here.
+
+        Uses a real table column rather than a ``::VARCHAR(100)`` cast literal: the
+        server's describe-only (prepare, no execute) path does not reliably report
+        ``length`` for a compiler-inferred cast expression, only for a column with a
+        declared width in its DDL.
         """
-        sql = "SELECT 'x'::VARCHAR(100) AS s"
-        v2_result = cursor._describe_internal(sql)
-        v1_result = cursor.describe(sql)
+        with function_connection.cursor() as cur:
+            table = randomize_name("di_varchar_test")
+            cur.execute(f"CREATE OR REPLACE TEMP TABLE {table} (s VARCHAR(100))")
+            sql = f"SELECT s FROM {table}"
+            v2_result = cur._describe_internal(sql)
+            v1_result = cur.describe(sql)
 
-        assert v2_result is not None and v1_result is not None
+            assert v2_result is not None and v1_result is not None
 
-        if NEW_DRIVER_ONLY("BD#55"):
-            # proto `length` (chars) -> display_size, `byte_length` -> internal_size.
-            assert v2_result[0].display_size == 100
-            assert v2_result[0].internal_size == 400  # UTF-8, 4 bytes/char
-            assert v1_result[0].display_size == 100
-            assert v1_result[0].internal_size == 400
-        else:
-            # JSON `length` (chars) -> internal_size; display_size is never populated.
-            assert v2_result[0].display_size is None
-            assert v2_result[0].internal_size == 100
-            assert v1_result[0].display_size is None
-            assert v1_result[0].internal_size == 100
+            if NEW_DRIVER_ONLY("BD#55"):
+                # proto `length` (chars) -> display_size, `byte_length` -> internal_size.
+                assert v2_result[0].display_size == 100
+                assert v2_result[0].internal_size == 400  # UTF-8, 4 bytes/char
+                assert v1_result[0].display_size == 100
+                assert v1_result[0].internal_size == 400
+            else:
+                # JSON `length` (chars) -> internal_size; display_size is never populated.
+                assert v2_result[0].display_size is None
+                assert v2_result[0].internal_size == 100
+                assert v1_result[0].display_size is None
+                assert v1_result[0].internal_size == 100
 
     def test_to_v1_round_trip(self, cursor):
         """_to_result_metadata_v1() produces ResultMetadata matching describe() output."""
