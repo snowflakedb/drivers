@@ -170,7 +170,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         *,
         params: Sequence[Any] | dict[str, Any] | None = None,
         _force_qmark_paramstyle: bool = False,
-        _statement_params: dict[str, str] | None = None,
+        _statement_params: dict[str, Any] | None = None,
         file_stream: BinaryIO | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
@@ -214,9 +214,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         statement_parameters = self._collect_statement_params(
             skip_upload_on_content_match=_skip_upload_on_content_match,
             num_statements=num_statements,
+            statement_params=_statement_params,
         )
-        if _statement_params:
-            statement_parameters.update(_statement_params)
 
         self.reset()
         return self._execute(
