@@ -21,7 +21,7 @@ from ..binding_converters import (
     parse_stage_binding_threshold,
 )
 from ..config_utils import create_config_setting
-from ..decorators import api_telemetry, pep249
+from ..decorators import api_telemetry, backward_compatibility, pep249, snowpark_compat
 from ..errorcode import ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT, ER_INVALID_VALUE
 from ..errorhandler import ErrorHandlerMixin
 from ..extras import check_dependency, pandas, pyarrow
@@ -177,8 +177,15 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         return self._query_result.request_id
 
     @property
+    @snowpark_compat
+    @backward_compatibility(recommendation="Use the public `request_id` property instead.")
     def _request_id(self) -> str | None:
-        """Private alias of :attr:`request_id`, kept for Snowpark's expected attribute name."""
+        """Private alias of :attr:`request_id`, kept for Snowpark's expected attribute name.
+
+        Deprecated: this private attribute is retained only for backward
+        compatibility with code that accessed it directly; use the public
+        ``request_id`` property instead.
+        """
         return self.request_id
 
     @property

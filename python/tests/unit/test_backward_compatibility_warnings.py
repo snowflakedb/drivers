@@ -366,6 +366,31 @@ class TestCallTimeWarning:
         ]
         assert len(external_warnings) == 1
 
+    def test_recommendation_is_appended_to_warning_message(self):
+        """``@backward_compatibility(recommendation=...)`` should append the
+        given text to the emitted warning, naming the replacement API."""
+        from snowflake.connector._internal.decorators import backward_compatibility
+
+        class _Holder:
+            @backward_compatibility(recommendation="Use `new_thing` instead.")
+            def legacy_method(self, x: int) -> int:
+                return x + 1
+
+        _Holder.__module__ = "snowflake.connector._test_bc_recommendation"
+        _Holder.legacy_method.__module__ = "snowflake.connector._test_bc_recommendation"
+
+        ns_external: dict = {"h": _Holder(), "__name__": "customer.app.main"}
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            exec("r = h.legacy_method(1)", ns_external)
+        assert ns_external["r"] == 2
+
+        bc_warnings = [
+            w for w in caught if issubclass(w.category, DeprecationWarning) and "legacy_method" in str(w.message)
+        ]
+        assert len(bc_warnings) == 1
+        assert str(bc_warnings[0].message).endswith("Use `new_thing` instead.")
+
     def test_module_access_and_function_call_share_dedup_slot(self):
         """White-box regression guard for the shared-dedup-set invariant.
 
