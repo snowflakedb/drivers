@@ -41,12 +41,15 @@ inputs:
   #   "default":    remove incremental/, *.d, examples/, llvm-cov-target/, tarpaulin/
   #                 — safe for all jobs. Keeps deps/*.rlib + .fingerprint/ + workspace
   #                   binaries, so warm builds reuse everything.
-  #   "aggressive": all of the above PLUS workspace-crate test binaries (the *huge*
-  #                 contributor for coverage builds). Trade-off: workspace test crates
-  #                 must rebuild from cached deps on the next run (+1-2 min), but cache
-  #                 size drops dramatically (e.g. 70 GB → 5 GB for tarpaulin/llvm-cov).
+  #   "aggressive": all of the above PLUS workspace-crate test binaries and the MSVC
+  #                 .pdb paired with each one (the *huge* contributor for coverage
+  #                 builds on Linux, and for MSVC debug builds on Windows). Trade-off:
+  #                 workspace test crates must relink from cached deps on the next run
+  #                 (+1-2 min), but cache size drops dramatically (e.g. 70 GB → 5 GB
+  #                 for tarpaulin/llvm-cov).
   #                 Recommended for coverage jobs where instrumented binaries are stale
-  #                 across CI runs anyway.
+  #                 across CI runs anyway, and for Windows debug builds whose
+  #                 statically-linked test binaries + .pdb dominate target/.
   slim-mode:
     description: Slim aggressiveness level. "default" or "aggressive".
     default: 'default'
@@ -316,7 +319,11 @@ runs:
                 ;;
               *.exe)
                 # Windows executables — these are the test binaries we want to drop.
-                rm -f "$f" 2>/dev/null || true
+                # MSVC emits debug info to a sibling <stem>.pdb, routinely as large as
+                # the .exe itself. Once the .exe is gone the .pdb is dead weight, so
+                # drop it too — the generic *.pdb keep-arm above deliberately does not
+                # cover these, since it exists to protect dependency .pdb files.
+                rm -f "$f" "${f%.exe}.pdb" 2>/dev/null || true
                 ;;
               *)
                 # On Unix, executables have no extension. Test if it's a regular file

@@ -392,8 +392,19 @@ jobs:
     if: inputs.run_rust_core && needs.load-core-matrix.outputs.windows_arm_active == 'true'
     runs-on: windows-11-arm
     name: test (Windows ARM64, non-FIPS)
+    timeout-minutes: 60
     env:
       E2E_TLS_SERVER: https://snowflakecomputing.com
+      # Shrink target/ so the cache save clears the action's 6 GB cap (see the
+      # `Save Rust cache` step below). Workspace crates and test targets are the only
+      # things still carrying full debug info — dependencies are already at debug = 0
+      # via `[profile.dev.package."*"]` in the root Cargo.toml — and on MSVC that info
+      # lands in .pdb files as large as the binaries themselves. line-tables-only keeps
+      # file/line resolution in panic backtraces, which is all CI triage needs.
+      # DEV covers workspace libs (cargo builds dependencies-of-tests with `dev`);
+      # TEST covers the test targets themselves (`test` profile inherits `dev`).
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -606,6 +617,16 @@ jobs:
         with:
           mode: save
           shared-key: "arm64-nonfips"
+          # Aggressive slim is mandatory on the Windows lanes, not an optimisation.
+          # With default slim this job's post-slim target/ measured 7.6 GB — over the
+          # action's 6 GB cap — so the save was skipped on EVERY run. The restore then
+          # fell back to a restore-keys prefix match against a cache built from an older
+          # Cargo.lock, cargo invalidated the dep graph, and the job recompiled ~130
+          # crates cold every time (21 min of a 30 min job). Skipping the save is
+          # self-perpetuating: no save means the stale cache is never replaced.
+          # MSVC debug test binaries + their .pdb are what blow past the cap here, and
+          # they are exactly what aggressive slim drops.
+          slim-mode: aggressive
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
@@ -614,8 +635,15 @@ jobs:
     if: inputs.run_rust_core && needs.load-core-matrix.outputs.windows_x86_active == 'true'
     runs-on: windows-latest
     name: test (Windows x86)
+    # A bit more than other jobs due to slower compilation.
+    timeout-minutes: 75
     env:
       E2E_TLS_SERVER: https://snowflakecomputing.com
+      # See the ARM64 lane for the rationale. This lane needs it more: it carries two
+      # dep trees in target/ (i686 target artifacts plus x86_64 host build scripts and
+      # proc-macros), and measured 9.3 GB post-slim against the 6 GB cap.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -762,10 +790,18 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
           shared-key: "x86-core-test"
+          # See the ARM64 lane's save step for the full rationale. This lane was the
+          # worse of the two: post-slim target/ measured 9.3 GB against the 6 GB cap,
+          # so the save never landed and the job recompiled ~458 crates cold on every
+          # run (43 min of a 52 min job).
+          slim-mode: aggressive
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
