@@ -79,9 +79,9 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorKind;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatusCode;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.UploadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
@@ -837,8 +837,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   // SFSQLException.remoteFileNotFound); every other core failure propagates unchanged.
   private static RuntimeException remapMissingRemoteFile(CoreException e, String sourceFileName) {
     DriverException payload = e.getError();
-    if (payload == null
-        || payload.getStatusCode() != StatusCode.STATUS_CODE_REMOTE_FILE_NOT_FOUND) {
+    if (payload == null || payload.getKind() != ErrorKind.ERROR_KIND_REMOTE_FILE_NOT_FOUND) {
       return e;
     }
     return SFSQLException.remoteFileNotFound(sourceFileName, e);

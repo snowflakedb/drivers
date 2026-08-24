@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatusCode;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorKind;
 import org.junit.jupiter.api.Test;
 
 class ResponseDecoderTest {
@@ -25,7 +25,7 @@ class ResponseDecoderTest {
   @Test
   void shouldThrowServiceExceptionOnApplicationError() {
     DriverException error =
-        DriverException.newBuilder().setStatusCode(StatusCode.STATUS_CODE_CANCELLED).build();
+        DriverException.newBuilder().setKind(ErrorKind.ERROR_KIND_CANCELLED).build();
     CoreTransport.TransportResponse response =
         new CoreTransport.TransportResponse(
             CoreTransport.CODE_APPLICATION_ERROR, error.toByteArray());

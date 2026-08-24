@@ -1,7 +1,7 @@
 use crate::apis::operation_ctx::OperationCtx;
 use crate::protobuf::apis::database_driver_v1::{DatabaseDriverImpl, DriverProviders};
 use crate::protobuf::generated::database_driver_v1::{
-    DatabaseDriverServer, DriverException, StatusCode, observes_cancellation,
+    DatabaseDriverServer, DriverException, ErrorKind, observes_cancellation,
 };
 use crate::utils::sync::MutexRecoverExt;
 use proto_utils::*;
@@ -74,12 +74,12 @@ impl RustTransport {
     }
 }
 
-/// Encode a `DriverException { status_code: CANCELLED }` for the case where an
+/// Encode a `DriverException { kind: CANCELLED }` for the case where an
 /// operation could not even be started under its handle.
 ///
 /// The normal cancelled response does **not** come from here: an operation that
 /// observes its token returns `ApiError::Cancelled`, which the regular
-/// `ApiError → DriverException` converter maps to `STATUS_CODE_CANCELLED`. This
+/// `ApiError → DriverException` converter maps to `ERROR_KIND_CANCELLED`. This
 /// covers only the pre-dispatch race where the handle was cancelled (or had
 /// already completed) before the ctx could be built, plus the unmarked-RPC
 /// fallback above.
@@ -90,7 +90,7 @@ impl RustTransport {
 fn encode_cancelled() -> Vec<u8> {
     use prost::Message as _;
     DriverException {
-        status_code: StatusCode::Cancelled as i32,
+        kind: ErrorKind::Cancelled as i32,
         ..Default::default()
     }
     .encode_to_vec()
@@ -252,7 +252,7 @@ mod tests {
         match result {
             Err(ProtoError::Application(bytes)) => {
                 let ex = DriverException::decode(&bytes[..]).expect("decodes as DriverException");
-                assert_eq!(ex.status_code, StatusCode::Cancelled as i32);
+                assert_eq!(ex.kind, ErrorKind::Cancelled as i32);
             }
             _ => panic!("expected a cancelled application error"),
         }

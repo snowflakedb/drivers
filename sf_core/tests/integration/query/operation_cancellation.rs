@@ -8,7 +8,7 @@
 //!   way `SQLCancel` / `Statement.cancel()` / a signal handler would;
 //! * it reaches an RPC genuinely parked on network I/O (`login-request`), not a
 //!   ready-made future;
-//! * the caller gets `STATUS_CODE_CANCELLED` **without** waiting for the server,
+//! * the caller gets `ERROR_KIND_CANCELLED` **without** waiting for the server,
 //!   which is the whole point of cancelling.
 //!
 //! Every wait here is bounded: the mock deliberately never answers, so an
@@ -21,8 +21,9 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConfigSetting, ConnectionInitRequest, ConnectionInitResponse, ConnectionNewRequest,
     ConnectionNewResponse, ConnectionSetOptionsRequest, ConnectionSetOptionsResponse,
     DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest, DatabaseNewResponse,
-    DriverException, StatementExecuteQueryRequest, StatementNewRequest, StatementNewResponse,
-    StatementSetSqlQueryRequest, StatementSetSqlQueryResponse, StatusCode, config_setting,
+    DriverException, ErrorKind, StatementExecuteQueryRequest, StatementNewRequest,
+    StatementNewResponse, StatementSetSqlQueryRequest, StatementSetSqlQueryResponse,
+    config_setting,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -439,9 +440,9 @@ async fn cancelling_a_handle_from_another_thread_unblocks_an_in_flight_login() {
         Err(ProtoError::Application(bytes)) => {
             let ex = DriverException::decode(&bytes[..]).expect("decodes as DriverException");
             assert_eq!(
-                ex.status_code,
-                StatusCode::Cancelled as i32,
-                "a cancelled operation must report STATUS_CODE_CANCELLED, got {ex:?}"
+                ex.kind,
+                ErrorKind::Cancelled as i32,
+                "a cancelled operation must report ERROR_KIND_CANCELLED, got {ex:?}"
             );
         }
         other => panic!("expected a cancelled application error, got {other:?}"),
@@ -533,9 +534,9 @@ async fn cancelling_an_in_flight_query_aborts_it_server_side() {
         Err(ProtoError::Application(bytes)) => {
             let ex = DriverException::decode(&bytes[..]).expect("decodes as DriverException");
             assert_eq!(
-                ex.status_code,
-                StatusCode::Cancelled as i32,
-                "a cancelled query must report STATUS_CODE_CANCELLED, got {ex:?}"
+                ex.kind,
+                ErrorKind::Cancelled as i32,
+                "a cancelled query must report ERROR_KIND_CANCELLED, got {ex:?}"
             );
         }
         other => panic!("expected a cancelled application error, got {other:?}"),

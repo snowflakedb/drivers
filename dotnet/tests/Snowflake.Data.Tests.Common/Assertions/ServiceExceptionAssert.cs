@@ -5,9 +5,9 @@ namespace Snowflake.Data.Tests.Assertions;
 // TODO will be used in the future
 internal static class ServiceExceptionAssert
 {
-    public static void HasStatusCode(ServiceException exception, StatusCode expected)
+    public static void HasErrorKind(ServiceException exception, ErrorKind expected)
     {
-        Assert.Equal(expected, exception.Error.StatusCode);
+        Assert.Equal(expected, exception.Error.Kind);
     }
 
     public static void HasVendorCode(ServiceException exception, int expectedVendorCode)
@@ -16,15 +16,15 @@ internal static class ServiceExceptionAssert
         Assert.Equal(expectedVendorCode, exception.Error.VendorCode);
     }
 
-    public static void HasStatusCodeInExceptionChain(Exception exception, StatusCode expected)
+    public static void HasErrorKindInExceptionChain(Exception exception, ErrorKind expected)
     {
         var exceptions = CollectExceptions(exception);
-        var statusCodes = exceptions
+        var kinds = exceptions
             .OfType<ServiceException>()
-            .Select(x => x.Error.StatusCode)
+            .Select(x => x.Error.Kind)
             .Distinct()
             .ToArray();
-        Assert.Contains(expected, statusCodes);
+        Assert.Contains(expected, kinds);
     }
 
     public static void HasVendorCodeInExceptionChain(Exception exception, int expectedVendorCode)

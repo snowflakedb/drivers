@@ -17,29 +17,22 @@ extend google.protobuf.MethodOptions {
   optional bool async_first = 412313;
 }
 
-// Status codes corresponding to Thrift StatusCode enum
-enum StatusCode {
-  STATUS_CODE_UNSPECIFIED = 0;
-  STATUS_CODE_OK = 1;
-  STATUS_CODE_AUTHENTICATION_ERROR = 2;
-  STATUS_CODE_NOT_IMPLEMENTED = 3;
-  STATUS_CODE_NOT_FOUND = 4;
-  STATUS_CODE_ALREADY_EXISTS = 5;
-  STATUS_CODE_INVALID_ARGUMENT = 6;
-  STATUS_CODE_INVALID_STATE = 7;
-  STATUS_CODE_INVALID_DATA = 8;
-  STATUS_CODE_IO = 9;
-  STATUS_CODE_CANCELLED = 10;
-  STATUS_CODE_UNAUTHENTICATED = 11;
-  STATUS_CODE_UNAUTHORIZED = 12;
-  STATUS_CODE_GENERIC_ERROR = 13;
-  STATUS_CODE_INTERNAL_ERROR = 14;
-  STATUS_CODE_MISSING_PARAMETER = 15;
-  STATUS_CODE_INVALID_PARAMETER_VALUE = 16;
-  STATUS_CODE_LOGIN_ERROR = 17;
-  STATUS_CODE_LOCAL_FILE_NOT_FOUND = 18;
-  STATUS_CODE_REMOTE_FILE_NOT_FOUND = 19;
-  STATUS_CODE_UNSUPPORTED_COMPRESSION = 20;
+// classifies a DriverException, wrappers dispatch on `DriverException.kind`.
+enum ErrorKind {
+  ERROR_KIND_UNSPECIFIED = 0;
+  ERROR_KIND_AUTHENTICATION_ERROR = 1;
+  ERROR_KIND_NOT_IMPLEMENTED = 2;
+  ERROR_KIND_INVALID_ARGUMENT = 3;
+  ERROR_KIND_IO = 4;
+  ERROR_KIND_CANCELLED = 5;
+  ERROR_KIND_GENERIC_ERROR = 6;
+  ERROR_KIND_INTERNAL_ERROR = 7;
+  ERROR_KIND_MISSING_PARAMETER = 8;
+  ERROR_KIND_INVALID_PARAMETER_VALUE = 9;
+  ERROR_KIND_LOGIN_ERROR = 10;
+  ERROR_KIND_LOCAL_FILE_NOT_FOUND = 11;
+  ERROR_KIND_REMOTE_FILE_NOT_FOUND = 12;
+  ERROR_KIND_UNSUPPORTED_COMPRESSION = 13;
 }
 
 // Info codes corresponding to Thrift InfoCode enum
@@ -101,8 +94,11 @@ message InvalidParameterValue {
   optional ValidationCode code = 4;
 }
 
-// Driver error union (using oneof)
+// Deprecated: classify on `DriverException.kind`. Still populated for existing
+// wrappers; do not add arms. Kind-specific payloads will move onto
+// DriverException in a follow-up.
 message DriverError {
+  option deprecated = true;
   oneof error_type {
     AuthenticationError auth_error = 1;
     GenericError generic_error = 2;
@@ -124,8 +120,8 @@ message ErrorTraceEntry {
 // Driver exception
 message DriverException {
   string message = 1;
-  StatusCode status_code = 2;
-  DriverError error = 3;
+  ErrorKind kind = 2;
+  DriverError error = 3 [deprecated = true];
   repeated ErrorTraceEntry error_trace = 4;
   // Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
   // Present when the error originated from a Snowflake server response.

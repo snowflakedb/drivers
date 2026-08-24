@@ -1189,7 +1189,7 @@ impl OdbcError {
                         .unwrap_or(ErrorType::GenericError(GenericError {})),
                 ),
                 message: driver_exception.message,
-                status_code: driver_exception.status_code,
+                kind: driver_exception.kind,
                 error_trace: driver_exception.error_trace,
                 sql_state: driver_exception.sql_state,
                 vendor_code: driver_exception.vendor_code,
@@ -1218,7 +1218,7 @@ pub enum CoreProtobufError {
     Application {
         error: Box<ErrorType>,
         message: String,
-        status_code: i32,
+        kind: i32,
         error_trace: Vec<ErrorTraceEntry>,
         /// ANSI SQL state forwarded from the server response, if present.
         sql_state: Option<String>,
@@ -1386,7 +1386,7 @@ mod tests {
                         sf_core::protobuf::generated::database_driver_v1::GenericError {},
                     )),
                     message: "boom".into(),
-                    status_code: 0,
+                    kind: 0,
                     error_trace: vec![],
                     sql_state: None,
                     vendor_code: None,
@@ -1451,7 +1451,7 @@ mod tests {
                     sf_core::protobuf::generated::database_driver_v1::GenericError {},
                 )),
                 message: "Some other server error".to_string(),
-                status_code: 0,
+                kind: 0,
                 error_trace: vec![],
                 sql_state: None,
                 vendor_code: None,
@@ -1484,7 +1484,7 @@ mod tests {
                         sf_core::protobuf::generated::database_driver_v1::GenericError {},
                     )),
                     message: message.to_string(),
-                    status_code: 0,
+                    kind: 0,
                     error_trace: vec![],
                     sql_state: None,
                     vendor_code: None,
@@ -1514,7 +1514,7 @@ mod tests {
                     sf_core::protobuf::generated::database_driver_v1::GenericError {},
                 )),
                 message: "String 'hello world' is too long and would be truncated".to_string(),
-                status_code: 0,
+                kind: 0,
                 error_trace: vec![],
                 sql_state: Some("22000".to_string()),
                 vendor_code: None,
@@ -1552,7 +1552,7 @@ mod tests {
                         sf_core::protobuf::generated::database_driver_v1::GenericError {},
                     )),
                     message: "boom".to_string(),
-                    status_code: 0,
+                    kind: 0,
                     error_trace: vec![],
                     sql_state: Some(state.to_string()),
                     vendor_code: None,
@@ -1612,7 +1612,7 @@ mod tests {
                     sf_core::protobuf::generated::database_driver_v1::GenericError {},
                 )),
                 message: "String 'hello world' is too long and would be truncated".to_string(),
-                status_code: 0,
+                kind: 0,
                 error_trace: vec![],
                 sql_state: Some("22001".to_string()),
                 vendor_code: None,
@@ -1638,7 +1638,7 @@ mod tests {
                     sf_core::protobuf::generated::database_driver_v1::GenericError {},
                 )),
                 message: "SQL execution canceled".to_string(),
-                status_code: 0,
+                kind: 0,
                 error_trace: vec![],
                 sql_state: Some("57014".to_string()),
                 vendor_code: Some(sf_core::rest::snowflake::QUERY_CANCELED),
@@ -1755,7 +1755,7 @@ mod tests {
             message:
                 "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
                     .to_string(),
-            status_code: 0,
+            kind: 0,
             error: Some(
                 sf_core::protobuf::generated::database_driver_v1::DriverError {
                     error_type: Some(ErrorType::InternalError(
@@ -1784,7 +1784,7 @@ mod tests {
             message:
                 "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
                     .to_string(),
-            status_code: 0,
+            kind: 0,
             error: Some(
                 sf_core::protobuf::generated::database_driver_v1::DriverError {
                     error_type: Some(ErrorType::InternalError(
@@ -1816,7 +1816,7 @@ mod tests {
             message:
                 "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
                     .to_string(),
-            status_code: 0,
+            kind: 0,
             error: Some(
                 sf_core::protobuf::generated::database_driver_v1::DriverError {
                     error_type: Some(ErrorType::InternalError(
@@ -1878,7 +1878,7 @@ mod tests {
             message:
                 "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
                     .to_string(),
-            status_code: 0,
+            kind: 0,
             error: Some(
                 sf_core::protobuf::generated::database_driver_v1::DriverError {
                     error_type: Some(ErrorType::InternalError(
@@ -1905,7 +1905,7 @@ mod tests {
     fn server_query_error_without_vendor_code_has_zero_native_error() {
         let err = OdbcError::from_protobuf_error(ProtoError::Application(ProtoDriverException {
             message: "Generic server error".to_string(),
-            status_code: 0,
+            kind: 0,
             error: Some(
                 sf_core::protobuf::generated::database_driver_v1::DriverError {
                     error_type: Some(ErrorType::GenericError(

@@ -68,8 +68,8 @@ public class SFSQLException extends SnowflakeSQLExceptionCarrier {
   /**
    * Legacy {@code downloadStream} parity: a missing remote file surfaces as NO_DATA ({@code 02000})
    * with vendor {@link ErrorCode#FILE_NOT_FOUND}, not FILE_NOT_FOUND's own {@code 22000}. The
-   * override lives at the {@code downloadStream} throw site rather than in {@code
-   * StatusCodeMapper}, so SQL GET keeps {@code 22000} for the same core status.
+   * override lives at the {@code downloadStream} throw site rather than in {@code ErrorKindMapper},
+   * so SQL GET keeps {@code 22000} for the same core status.
    */
   public static SFSQLException remoteFileNotFound(String fileName, Throwable cause) {
     return surfacing(
