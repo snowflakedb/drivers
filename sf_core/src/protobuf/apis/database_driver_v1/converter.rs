@@ -274,7 +274,7 @@ impl TryFrom<&ResultChunk> for FetchChunkInput {
     fn try_from(chunk: &ResultChunk) -> Result<Self, Self::Error> {
         let data = chunk.data.clone().ok_or_else(|| DriverException {
             message: "Chunk data is required".to_string(),
-            status_code: StatusCode::InvalidArgument as i32,
+            kind: ErrorKind::InvalidArgument as i32,
             ..Default::default()
         })?;
 
@@ -1049,49 +1049,49 @@ fn extract_request_id(error: &ApiError) -> Option<String> {
 }
 
 fn to_driver_exception(error: ApiError) -> DriverException {
-    let status_code = match &error {
-        ApiError::GenericError { .. } => StatusCode::GenericError,
-        ApiError::RuntimeCreation { .. } => StatusCode::InternalError,
+    let kind = match &error {
+        ApiError::GenericError { .. } => ErrorKind::GenericError,
+        ApiError::RuntimeCreation { .. } => ErrorKind::InternalError,
         ApiError::Configuration {
             source: ConfigError::InvalidParameterValue { .. },
             ..
-        } => StatusCode::InvalidParameterValue,
+        } => ErrorKind::InvalidParameterValue,
         ApiError::Configuration {
             source: ConfigError::MissingParameter { .. },
             ..
-        } => StatusCode::MissingParameter,
+        } => ErrorKind::MissingParameter,
         ApiError::Configuration {
             source: ConfigError::ConflictingParameters { .. },
             ..
-        } => StatusCode::InvalidParameterValue,
+        } => ErrorKind::InvalidParameterValue,
         ApiError::Configuration {
             source: ConfigError::ConfigFileRead { .. },
             ..
-        } => StatusCode::InternalError,
+        } => ErrorKind::InternalError,
         ApiError::Configuration {
             source: ConfigError::TomlParse { .. },
             ..
-        } => StatusCode::InternalError,
+        } => ErrorKind::InternalError,
         ApiError::Configuration {
             source: ConfigError::IniParse { .. },
             ..
-        } => StatusCode::InternalError,
+        } => ErrorKind::InternalError,
         ApiError::Configuration {
             source: ConfigError::IniAlreadyLoaded { .. },
             ..
-        } => StatusCode::InternalError,
+        } => ErrorKind::InternalError,
         ApiError::Configuration {
             source: ConfigError::InsecurePermissions { .. },
             ..
-        } => StatusCode::InternalError,
+        } => ErrorKind::InternalError,
         ApiError::Configuration {
             source: ConfigError::ConfigDirNotFound { .. },
             ..
-        } => StatusCode::InternalError,
+        } => ErrorKind::InternalError,
         ApiError::Configuration {
             source: ConfigError::ConnectionNotFound { .. },
             ..
-        } => StatusCode::MissingParameter,
+        } => ErrorKind::MissingParameter,
         ApiError::Configuration {
             source: ConfigError::Validation { issues, .. },
             ..
@@ -1099,24 +1099,24 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             .iter()
             .any(|i| i.code == CoreValidationCode::MissingRequired) =>
         {
-            StatusCode::MissingParameter
+            ErrorKind::MissingParameter
         }
         ApiError::Configuration {
             source: ConfigError::Validation { .. },
             ..
-        } => StatusCode::InvalidParameterValue,
-        ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
-        ApiError::InvalidWifProvider { .. } => StatusCode::InvalidParameterValue,
+        } => ErrorKind::InvalidParameterValue,
+        ApiError::InvalidArgument { .. } => ErrorKind::InvalidArgument,
+        ApiError::InvalidWifProvider { .. } => ErrorKind::InvalidParameterValue,
         // Use InvalidParameterValue so Python callers see ProgrammingError,
         // matching the legacy connector's exception class for this function.
-        ApiError::WorkloadIdentityAttestation { .. } => StatusCode::InvalidParameterValue,
+        ApiError::WorkloadIdentityAttestation { .. } => ErrorKind::InvalidParameterValue,
         ApiError::Login { source, .. } => match source.as_ref() {
-            RestError::LoginError { .. } => StatusCode::LoginError,
-            _ => StatusCode::AuthenticationError,
+            RestError::LoginError { .. } => ErrorKind::LoginError,
+            _ => ErrorKind::AuthenticationError,
         },
-        ApiError::ConnectionLock { .. } => StatusCode::InternalError,
-        ApiError::StatementLocking { .. } => StatusCode::InternalError,
-        ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
+        ApiError::ConnectionLock { .. } => ErrorKind::InternalError,
+        ApiError::StatementLocking { .. } => ErrorKind::InternalError,
+        ApiError::DatabaseLocking { .. } => ErrorKind::InternalError,
         ApiError::QueryResponseProcess {
             source: boxed_error,
             ..
@@ -1128,64 +1128,64 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             match boxed_error.as_ref() {
                 QueryResponseProcessingError::FileUpload { source, .. }
                 | QueryResponseProcessingError::FileDownload { source, .. } => match source {
-                    FileManagerError::NoFilesMatched { .. } => StatusCode::LocalFileNotFound,
+                    FileManagerError::NoFilesMatched { .. } => ErrorKind::LocalFileNotFound,
                     FileManagerError::CompressionType {
                         source: CompressionTypeError::UnsupportedCompressionType { .. },
                         ..
-                    } => StatusCode::UnsupportedCompression,
+                    } => ErrorKind::UnsupportedCompression,
                     // A too-large source file / stage object is an input
                     // error, not a driver fault — surface it as
                     // `InvalidArgument` rather than `InternalError`.
-                    s if s.is_file_too_large() => StatusCode::InvalidArgument,
+                    s if s.is_file_too_large() => ErrorKind::InvalidArgument,
                     // Everything else here (Io, UploadBatch, cloud
                     // transport errors, ...) is an environmental/transfer
                     // failure, not an internal driver bug — `Io` maps to
                     // `OperationalError` on the Python side, matching the
                     // reference connector's own classification for the
                     // same class of failure.
-                    _ => StatusCode::Io,
+                    _ => ErrorKind::Io,
                 },
                 QueryResponseProcessingError::RemoteFileNotFound { .. } => {
-                    StatusCode::RemoteFileNotFound
+                    ErrorKind::RemoteFileNotFound
                 }
-                _ => StatusCode::InternalError,
+                _ => ErrorKind::InternalError,
             }
         }
-        ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
-        ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
-        ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,
-        ApiError::Statement { .. } => StatusCode::InternalError,
-        ApiError::Query { .. } => StatusCode::InternalError,
-        ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
-        ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
-        ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
-        ApiError::ChunkFetch { .. } => StatusCode::InternalError,
-        ApiError::ArrowParse { .. } => StatusCode::InternalError,
-        ApiError::JsonChunkDecode { .. } => StatusCode::InternalError,
-        ApiError::BlockingTaskJoin { .. } => StatusCode::InternalError,
-        ApiError::InlineJsonEncode { .. } => StatusCode::InternalError,
-        ApiError::InvalidColumnMetadata { .. } => StatusCode::InvalidArgument,
-        ApiError::Base64Decode { .. } => StatusCode::InternalError,
-        ApiError::UnsupportedQueryResultFormat { .. } => StatusCode::InternalError,
-        ApiError::HttpRequest { .. } => StatusCode::GenericError,
-        ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
-        ApiError::ConnectionClosed { .. } => StatusCode::InvalidArgument,
-        ApiError::Logout { .. } => StatusCode::InternalError,
+        ApiError::ConnectionNotInitialized { .. } => ErrorKind::InternalError,
+        ApiError::TlsClientCreation { .. } => ErrorKind::AuthenticationError,
+        ApiError::SessionRefresh { .. } => ErrorKind::AuthenticationError,
+        ApiError::Statement { .. } => ErrorKind::InternalError,
+        ApiError::Query { .. } => ErrorKind::InternalError,
+        ApiError::MasterTokenExpired { .. } => ErrorKind::AuthenticationError,
+        ApiError::InvalidRefreshState { .. } => ErrorKind::InternalError,
+        ApiError::TokenCacheInitialization { .. } => ErrorKind::AuthenticationError,
+        ApiError::ChunkFetch { .. } => ErrorKind::InternalError,
+        ApiError::ArrowParse { .. } => ErrorKind::InternalError,
+        ApiError::JsonChunkDecode { .. } => ErrorKind::InternalError,
+        ApiError::BlockingTaskJoin { .. } => ErrorKind::InternalError,
+        ApiError::InlineJsonEncode { .. } => ErrorKind::InternalError,
+        ApiError::InvalidColumnMetadata { .. } => ErrorKind::InvalidArgument,
+        ApiError::Base64Decode { .. } => ErrorKind::InternalError,
+        ApiError::UnsupportedQueryResultFormat { .. } => ErrorKind::InternalError,
+        ApiError::HttpRequest { .. } => ErrorKind::GenericError,
+        ApiError::TokenRequest { .. } => ErrorKind::AuthenticationError,
+        ApiError::ConnectionClosed { .. } => ErrorKind::InvalidArgument,
+        ApiError::Logout { .. } => ErrorKind::InternalError,
         // Stage-binding failures are surfaced as a transport-layer
-        // generic error for now (no dedicated proto status code yet);
+        // generic error for now (no dedicated proto ErrorKind yet);
         // the wrapper-side fallback work will add a dedicated variant and
         // map to it. Until then, `GenericError` is the right bucket — the
         // error trace carries enough detail for diagnostics.
-        ApiError::StageBinding { .. } => StatusCode::GenericError,
-        // TODO(SNOW-2872503): Add a dedicated proto StatusCode for query timeout so
+        ApiError::StageBinding { .. } => ErrorKind::GenericError,
+        // TODO(SNOW-2872503): Add a dedicated proto ErrorKind for query timeout so
         // language wrappers can surface HYT00 / OperationalError correctly.
-        ApiError::QueryTimeout { .. } => StatusCode::GenericError,
-        ApiError::CancelTimeout { .. } => StatusCode::GenericError,
-        ApiError::Cancelled { .. } => StatusCode::Cancelled,
+        ApiError::QueryTimeout { .. } => ErrorKind::GenericError,
+        ApiError::CancelTimeout { .. } => ErrorKind::GenericError,
+        ApiError::Cancelled { .. } => ErrorKind::Cancelled,
 
         // Local temp-file / in-memory spool I/O failure while buffering a
         // chunked upload-stream chunk — a driver-side fault, not caller input.
-        ApiError::SpoolBufferWrite { .. } => StatusCode::InternalError,
+        ApiError::SpoolBufferWrite { .. } => ErrorKind::InternalError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
@@ -1207,7 +1207,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         .collect();
     DriverException {
         message,
-        status_code: status_code as i32,
+        kind: kind as i32,
         error: Some(driver_error),
         error_trace,
         vendor_code,
@@ -1709,10 +1709,10 @@ mod tests {
     }
 
     #[test]
-    fn file_transfer_io_error_maps_to_io_status_code_not_internal_error() {
+    fn file_transfer_io_error_maps_to_io_kind_not_internal_error() {
         // A local file-transfer I/O failure (e.g. permission denied reading
         // the source file) is an environmental/transfer fault, not an
-        // internal driver bug — it must map to `StatusCode::Io`
+        // internal driver bug — it must map to `ErrorKind::Io`
         // (-> `OperationalError` in Python), matching the reference
         // connector's own classification for the same class of failure.
         use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
@@ -1728,10 +1728,7 @@ mod tests {
                 location: loc(),
             }),
         };
-        assert_eq!(
-            to_driver_exception(upload_err).status_code,
-            StatusCode::Io as i32
-        );
+        assert_eq!(to_driver_exception(upload_err).kind, ErrorKind::Io as i32);
 
         let download_err = ApiError::QueryResponseProcess {
             location: loc(),
@@ -1743,16 +1740,13 @@ mod tests {
                 location: loc(),
             }),
         };
-        assert_eq!(
-            to_driver_exception(download_err).status_code,
-            StatusCode::Io as i32
-        );
+        assert_eq!(to_driver_exception(download_err).kind, ErrorKind::Io as i32);
     }
 
     #[tokio::test]
-    async fn workload_identity_attestation_error_type_and_status_code_agree() {
-        // Regression guard: error_type and status_code must classify this
-        // failure the same way, so Python (which dispatches on status_code)
+    async fn workload_identity_attestation_error_type_and_kind_agree() {
+        // Regression guard: error_type and kind must classify this
+        // failure the same way, so Python (which dispatches on kind)
         // and any future JDBC/ODBC caller (which would dispatch on
         // error_type) both see ProgrammingError-equivalent behavior.
         use crate::config::rest_parameters::{WifProvider, WorkloadIdentityConfig};
@@ -1784,8 +1778,8 @@ mod tests {
         );
 
         assert_eq!(
-            to_driver_exception(err).status_code,
-            StatusCode::InvalidParameterValue as i32
+            to_driver_exception(err).kind,
+            ErrorKind::InvalidParameterValue as i32
         );
     }
 }

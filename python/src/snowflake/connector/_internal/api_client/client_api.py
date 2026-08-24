@@ -4,10 +4,10 @@ import threading
 
 from typing import Any
 
-from snowflake.connector._internal.status_codes import (
-    STATUS_CODE_LABELS,
-    STATUS_TO_ERRNO,
-    STATUS_TO_EXCEPTION,
+from snowflake.connector._internal.error_kinds import (
+    ERROR_KIND_LABELS,
+    KIND_TO_ERRNO,
+    KIND_TO_EXCEPTION,
     VENDOR_CODE_TO_EXCEPTION,
 )
 from snowflake.connector.errors import DatabaseError, Error, OperationalError
@@ -217,19 +217,19 @@ def _proto_to_public_error(proto_exc: Exception) -> Error:
     return DatabaseError(str(proto_exc))
 
 
-def _resolve_exception_class(status_code: int, vendor_code: int | None) -> type[Error]:
+def _resolve_exception_class(kind: int, vendor_code: int | None) -> type[Error]:
     """Pick the PEP 249 exception class for a proto error.
 
     Resolution order:
       1. VENDOR_CODE_TO_EXCEPTION — Snowflake-specific vendor_code overrides (e.g. 100072 → IntegrityError).
-      2. STATUS_TO_EXCEPTION — default mapping from the proto StatusCode.
-      3. DatabaseError — catch-all when the status code is unrecognized.
+      2. KIND_TO_EXCEPTION — default mapping from the proto ErrorKind.
+      3. DatabaseError — catch-all when the kind is unrecognized.
     """
     if vendor_code is not None:
         cls = VENDOR_CODE_TO_EXCEPTION.get(vendor_code)
         if cls is not None:
             return cls
-    return STATUS_TO_EXCEPTION.get(status_code, DatabaseError)
+    return KIND_TO_EXCEPTION.get(kind, DatabaseError)
 
 
 def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
@@ -237,7 +237,7 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     if driver_exc is None:
         return DatabaseError(str(proto_exc))
 
-    status_code = getattr(driver_exc, "status_code", 0)
+    kind = getattr(driver_exc, "kind", 0)
     message = getattr(driver_exc, "message", "") or ""
 
     # The root_cause field carries the deepest error in the chain from the
@@ -251,16 +251,16 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
         message = _append_detail(message, detail)
 
     if not message:
-        message = STATUS_CODE_LABELS.get(status_code, "Unknown error")
+        message = ERROR_KIND_LABELS.get(kind, "Unknown error")
 
     # Prefer the Snowflake server vendor_code when the core driver provides it
     # (e.g. 1003 for syntax error, 904 for invalid identifier).
     # Fall back to the old-driver-compatible errno mapping, then to the raw
-    # proto status code.
+    # proto ErrorKind.
     vendor_code = _get_optional_int(driver_exc, "vendor_code")
 
-    exc_class = _resolve_exception_class(status_code, vendor_code)
-    errno = vendor_code if vendor_code is not None else STATUS_TO_ERRNO.get(status_code, status_code)
+    exc_class = _resolve_exception_class(kind, vendor_code)
+    errno = vendor_code if vendor_code is not None else KIND_TO_ERRNO.get(kind, kind)
 
     # Prefer the server-provided sql_state; fall back to a type-derived value.
     sqlstate = _get_optional_str(driver_exc, "sql_state") or _derive_sqlstate(driver_exc)

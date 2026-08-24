@@ -215,7 +215,7 @@ pub enum ApiError {
     ///
     /// Raised by the operation itself, not synthesised at the FFI boundary, so
     /// callers below the protobuf layer (Node, in-process Rust) see the same
-    /// typed error the protobuf layer maps to `STATUS_CODE_CANCELLED`.
+    /// typed error the protobuf layer maps to `ERROR_KIND_CANCELLED`.
     #[snafu(display("Operation was cancelled"))]
     #[snafu(visibility(pub))]
     Cancelled {

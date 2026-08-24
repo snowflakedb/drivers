@@ -30,7 +30,7 @@ use tracing::instrument;
 fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
     value.ok_or_else(|| DriverException {
         message: message.to_string(),
-        status_code: StatusCode::InvalidArgument as i32,
+        kind: ErrorKind::InvalidArgument as i32,
         ..Default::default()
     })
 }
@@ -38,7 +38,7 @@ fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
 fn not_implemented(message: &str) -> DriverException {
     DriverException {
         message: message.to_string(),
-        status_code: StatusCode::NotImplemented as i32,
+        kind: ErrorKind::NotImplemented as i32,
         ..Default::default()
     }
 }
@@ -828,7 +828,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             _ => {
                 return Err(DriverException {
                     message: "request_type must be ISSUE or RENEW".to_string(),
-                    status_code: StatusCode::InvalidArgument as i32,
+                    kind: ErrorKind::InvalidArgument as i32,
                     ..Default::default()
                 });
             }
@@ -1023,7 +1023,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .transpose()
             .map_err(|e| DriverException {
                 message: e,
-                status_code: StatusCode::InvalidArgument as i32,
+                kind: ErrorKind::InvalidArgument as i32,
                 ..Default::default()
             })?;
 
@@ -1052,7 +1052,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .transpose()
             .map_err(|e| DriverException {
                 message: e,
-                status_code: StatusCode::InvalidArgument as i32,
+                kind: ErrorKind::InvalidArgument as i32,
                 ..Default::default()
             })?;
 
@@ -1166,7 +1166,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let nested_json = toml_value_to_json(&merged_toml);
         let config_json = serde_json::to_string(&nested_json).map_err(|e| DriverException {
             message: format!("Failed to serialize config to JSON: {e}"),
-            status_code: StatusCode::InternalError as i32,
+            kind: ErrorKind::InternalError as i32,
             ..Default::default()
         })?;
 
@@ -1184,13 +1184,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let config_file = paths.config_file.ok_or_else(|| DriverException {
             message: "Configuration path for config file is unavailable".to_string(),
-            status_code: StatusCode::InternalError as i32,
+            kind: ErrorKind::InternalError as i32,
             ..Default::default()
         })?;
 
         let connections_file = paths.connections_file.ok_or_else(|| DriverException {
             message: "Configuration path for connections file is unavailable".to_string(),
-            status_code: StatusCode::InternalError as i32,
+            kind: ErrorKind::InternalError as i32,
             ..Default::default()
         })?;
 

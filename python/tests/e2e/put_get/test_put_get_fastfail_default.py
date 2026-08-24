@@ -50,9 +50,9 @@ def test_should_raise_instead_of_returning_error_rows_when_put_batch_has_a_faili
     With auto_detect off, the failure happens during transfer instead, where both
     drivers wrap it as `OperationalError` (SNOW-3838438 follow-up: the universal
     driver previously mapped local transfer I/O failures to the generic
-    `StatusCode::InternalError` -> `ProgrammingError` bucket meant for Snowflake
+    `ErrorKind::InternalError` -> `ProgrammingError` bucket meant for Snowflake
     query failures, not transfer faults; fixed to use the dedicated
-    `StatusCode::Io` -> `OperationalError`, matching the reference connector's
+    `ErrorKind::Io` -> `OperationalError`, matching the reference connector's
     own classification). The reference connector also, unlike the universal
     driver, transfers in parallel and attempts every file regardless of
     others' failures — its own collect-all-style default."""

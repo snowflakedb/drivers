@@ -5,7 +5,7 @@ This module defines the exception hierarchy for the Snowflake connector.
 
 The **active** exceptions (raised at runtime) are the PEP 249 hierarchy plus a
 handful of driver-specific types (``MissingDependencyError``, config errors).
-These are what ``sf_core`` status codes map to via ``STATUS_TO_EXCEPTION``.
+These are what ``sf_core`` error kinds map to via ``KIND_TO_EXCEPTION``.
 
 Everything after the "Backward compatibility" section below exists solely so
 that ``from snowflake.connector.errors import BadGatewayError`` (etc.) does not
@@ -18,7 +18,7 @@ None of these classes are raised by the universal core at runtime:
     control flow signals.  They leaked to users only when retries were
     exhausted.  In the universal core, the Rust core handles HTTP retries
     internally; by the time an error reaches Python it is already mapped to a
-    PEP 249 type via ``StatusCode``.
+    PEP 249 type via ``ErrorKind``.
 
   - **Auth / token exceptions** (``RefreshTokenError``, ``TokenExpiredError``):
     Used in the old driver as internal signals between the OKTA authenticator

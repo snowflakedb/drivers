@@ -10,7 +10,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1;
  * net.snowflake.client.internal.unicore.CoreDriverApi}. Any {@link
  * DatabaseDriverV1.DriverException} payload is retained verbatim in {@link #error} for
  * describe-mode inspection. {@link #toSQLException()} copies SQLState / vendor code / query id from
- * the payload, falling back via {@link StatusCodeMapper} when the payload carries none.
+ * the payload, falling back via {@link ErrorKindMapper} when the payload carries none.
  */
 @Getter
 public class CoreException extends SnowflakeSQLExceptionCarrier {
@@ -46,7 +46,7 @@ public class CoreException extends SnowflakeSQLExceptionCarrier {
   /**
    * Builds from the payload when present (preserving its SQLState / vendor code / query id),
    * otherwise from the carrier message (transport / payload-less failures). Retains {@code this} as
-   * the cause. StatusCodes with no server vendor code fall back via {@link StatusCodeMapper}.
+   * the cause. Error kinds with no server vendor code fall back via {@link ErrorKindMapper}.
    */
   @Override
   public SQLException toSQLException() {
@@ -55,8 +55,8 @@ public class CoreException extends SnowflakeSQLExceptionCarrier {
     }
     return new SnowflakeSQLException(
         error.hasRootCause() ? error.getRootCause() : error.getMessage(),
-        StatusCodeMapper.sqlState(error),
-        StatusCodeMapper.vendorCode(error),
+        ErrorKindMapper.sqlState(error),
+        ErrorKindMapper.vendorCode(error),
         this,
         getQueryId());
   }

@@ -50,7 +50,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatusCode;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorKind;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.UploadStreamHandle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -432,7 +432,7 @@ class UploadDownloadStreamTest {
   void shouldReportMissingRemoteFileAsLegacyNoDataAtDownloadStreamThrowSite() {
     DriverException payload =
         DriverException.newBuilder()
-            .setStatusCode(StatusCode.STATUS_CODE_REMOTE_FILE_NOT_FOUND)
+            .setKind(ErrorKind.ERROR_KIND_REMOTE_FILE_NOT_FOUND)
             .setMessage("the file does not exist")
             .build();
     when(mockCoreApi.connectionDownloadStreamBegin(any(), anyString(), anyString(), anyBoolean()))
