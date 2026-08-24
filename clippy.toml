@@ -1,0 +1,16 @@
+# Size above which `clippy::large_futures` fires (bytes).
+#
+# NOT set by any current fix: boxed, the call site that prompted this lint is
+# ~630 B and would pass clippy's 16 KiB default easily. The threshold is raised
+# only because ~34 pre-existing futures in this crate (`get_objects`,
+# `stream_transfer`, the protobuf handlers) sit at 17-30 KB, and boxing them is a
+# separate cleanup. 40000 is just above that ceiling.
+#
+# What it still catches is the failure mode that motivated it: composing an
+# already-large future *by value* into a combinator, which multiplies rather than
+# adds. That measured ~120 KB and overflowed the tokio worker stack under
+# `cargo llvm-cov` — an abort on Linux, SIGBUS on macOS. Fix shape: `Box::pin` the
+# inner future before handing it to the combinator.
+#
+# Ratchet this down as the pre-existing sites get boxed.
+future-size-threshold = 40000

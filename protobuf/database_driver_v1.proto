@@ -1158,7 +1158,9 @@ service DatabaseDriver {
   rpc StatementPrepare(StatementPrepareRequest) returns (StatementPrepareResponse);
   rpc StatementSetOptions(StatementSetOptionsRequest) returns (StatementSetOptionsResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
-  rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (ExecuteQueryResponse);
+  rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (ExecuteQueryResponse) {
+    option (async_first) = true;
+  }
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
   rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);

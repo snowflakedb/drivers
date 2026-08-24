@@ -23,9 +23,6 @@ pub(crate) struct InflightQuery {
     pub request_id: String,
     /// The SQL text, echoed back in the abort-request body.
     pub sql_text: String,
-    /// Set once a cancel has been initiated for this query so a second
-    /// concurrent cancel is a no-op (at most one abort-request is emitted).
-    pub cancelling: bool,
 }
 
 /// Independently-lockable in-flight slot shared between the execute and cancel
@@ -48,22 +45,18 @@ pub(crate) fn set_inflight(slot: &InflightSlot, query: InflightQuery) {
     *lock_inflight(slot) = Some(query);
 }
 
-/// Atomically claim the in-flight query for cancellation.
+/// Read the identity of the query currently in flight, if any.
 ///
-/// Returns `Some((request_id, sql_text))` and sets the `cancelling` flag when a
-/// query is in flight and no cancel has been started yet; returns `None` (a
-/// no-op) when the slot is empty or a cancel is already in flight. The flag is
-/// set under the slot lock so two racing cancels emit at most one abort-request.
-pub(crate) fn take_and_mark_cancelling(slot: &InflightSlot) -> Option<(String, String)> {
-    let mut guard = lock_inflight(slot);
-    match guard.as_mut() {
-        None => None,
-        Some(q) if q.cancelling => None,
-        Some(q) => {
-            q.cancelling = true;
-            Some((q.request_id.clone(), q.sql_text.clone()))
-        }
-    }
+/// There is deliberately no dedup here. Aborts are idempotent — a second
+/// abort-request for the same `requestId` comes back `000605` / not-executing —
+/// so the two emitters (the cross-thread cancel RPC and the cancellation cleanup)
+/// are allowed to race, and the loser simply wastes one round trip. That is
+/// cheaper than tracking a claim whose lifetime has to outlive
+/// [`InflightGuard`].
+pub(crate) fn read_inflight(slot: &InflightSlot) -> Option<(String, String)> {
+    lock_inflight(slot)
+        .as_ref()
+        .map(|q| (q.request_id.clone(), q.sql_text.clone()))
 }
 
 /// RAII guard that clears the in-flight slot on drop, covering every exit from
@@ -81,47 +74,37 @@ impl Drop for InflightGuard {
 mod tests {
     use super::*;
 
-    fn inflight(request_id: &str, sql: &str, cancelling: bool) -> InflightQuery {
+    fn inflight(request_id: &str, sql: &str) -> InflightQuery {
         InflightQuery {
             request_id: request_id.to_string(),
             sql_text: sql.to_string(),
-            cancelling,
         }
     }
 
-    #[test]
-    fn take_and_mark_cancelling_no_ops_when_slot_empty() {
-        let slot: InflightSlot = Arc::new(std::sync::Mutex::new(None));
-        assert_eq!(take_and_mark_cancelling(&slot), None);
+    fn empty() -> InflightSlot {
+        Arc::new(std::sync::Mutex::new(None))
     }
 
     #[test]
-    fn take_and_mark_cancelling_claims_running_query_and_sets_flag() {
-        let slot: InflightSlot = Arc::new(std::sync::Mutex::new(Some(inflight(
-            "req-1", "SELECT 1", false,
-        ))));
-
-        let claimed = take_and_mark_cancelling(&slot);
-        assert_eq!(claimed, Some(("req-1".to_string(), "SELECT 1".to_string())));
-        // The claim marks `cancelling` so a second cancel is a no-op.
-        assert!(lock_inflight(&slot).as_ref().unwrap().cancelling);
+    fn read_inflight_is_none_when_no_query_in_flight() {
+        assert_eq!(read_inflight(&empty()), None);
     }
 
     #[test]
-    fn take_and_mark_cancelling_is_idempotent_for_double_cancel() {
-        let slot: InflightSlot = Arc::new(std::sync::Mutex::new(Some(inflight(
-            "req-1", "SELECT 1", false,
-        ))));
+    fn read_inflight_returns_published_identity() {
+        let slot = empty();
+        set_inflight(&slot, inflight("req-1", "SELECT 1"));
 
-        assert!(take_and_mark_cancelling(&slot).is_some());
-        // A racing second cancel must not re-claim (→ at most one abort POST).
-        assert_eq!(take_and_mark_cancelling(&slot), None);
+        assert_eq!(
+            read_inflight(&slot),
+            Some(("req-1".to_string(), "SELECT 1".to_string()))
+        );
     }
 
     #[test]
     fn inflight_guard_clears_slot_on_drop() {
-        let slot: InflightSlot = Arc::new(std::sync::Mutex::new(None));
-        set_inflight(&slot, inflight("req-1", "SELECT 1", false));
+        let slot = empty();
+        set_inflight(&slot, inflight("req-1", "SELECT 1"));
         assert!(lock_inflight(&slot).is_some());
 
         {

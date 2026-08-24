@@ -45,7 +45,9 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value"] }
 futures = "0.3"
 tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
-tokio-util = { version = "0.7", features = ["time"] }
+# `rt` provides `task::TaskTracker`, used by `OperationCtx` to track the
+# cancellation-cleanup tasks that must outlive a dropped operation future.
+tokio-util = { version = "0.7", features = ["time", "rt"] }
 tokio-stream = "0.1"
 toml = "0.8"
 uuid = { version = "1.18", features = ["v4"] }
@@ -217,3 +219,10 @@ required-features = ["protobuf"]
 [[bench]]
 name = "prefetch_bench"
 harness = false
+
+[lints.clippy]
+# Composing a large future by value into a combinator multiplies its stack size
+# and can overflow a worker/thread stack (see clippy.toml for the incident and
+# the `future-size-threshold` rationale). Denied so the compiler catches it
+# instead of CI catching it as an opaque SIGBUS/abort.
+large_futures = "deny"

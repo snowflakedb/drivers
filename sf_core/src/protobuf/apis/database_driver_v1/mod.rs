@@ -1005,9 +1005,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_execute_query", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_execute_query",
+        skip(self, ctx, input)
+    )]
     async fn statement_execute_query(
         &self,
+        ctx: Option<&OperationCtx>,
         input: StatementExecuteQueryRequest,
     ) -> Result<ExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
@@ -1027,7 +1031,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .statement_execute_query(stmt_handle.into(), bindings_opt, timeout_seconds)
+            .statement_execute_query(ctx, stmt_handle.into(), bindings_opt, timeout_seconds)
             .await
             .to_protobuf()?;
 

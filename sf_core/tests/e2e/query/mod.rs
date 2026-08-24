@@ -4,4 +4,5 @@ mod distributed_fetch;
 mod large_result_set;
 mod multistatement;
 mod parameters_bind;
+mod query_cancellation;
 mod query_tag;

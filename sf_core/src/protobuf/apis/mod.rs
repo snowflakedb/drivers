@@ -362,6 +362,10 @@ mod tests {
             "connection_init is marked async_first in the proto"
         );
         assert!(
+            observes_cancellation("statement_execute_query"),
+            "statement_execute_query is marked async_first in the proto"
+        );
+        assert!(
             !observes_cancellation("connection_new"),
             "unmarked RPCs must not claim to observe cancellation themselves"
         );
