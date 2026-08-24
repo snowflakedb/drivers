@@ -1,3 +1,8 @@
+---
+description: Setting up parameters.json and PARAMETER_PATH before running Universal Driver integration or e2e tests — the decode_secrets.sh route, the 1Password passphrase, and the manual fallback.
+no-pointer: true
+---
+
 # UD Test Credentials Setup
 
 Full procedure for setting up `parameters.json` before running UD integration
@@ -42,6 +47,4 @@ PARAMETERS_SECRET=<passphrase> ./scripts/decode_secrets.sh
 export PARAMETER_PATH="$(pwd)/parameters.json"
 ```
 
-<!-- sync-target: this file is a reference doc loaded on demand via @ include in
-     skills. It is NOT alwaysApply, so no .cursor/rules counterpart is needed.
-     Edit this file only. -->
+Never write a credential value into this kb; name the file or secret and where it comes from. The per-wrapper test procedures that depend on this setup are catalogued in [README.md](README.md).

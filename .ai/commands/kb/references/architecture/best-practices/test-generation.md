@@ -1,6 +1,6 @@
 ---
-description: rules for generating integration/E2E tests
-alwaysApply: false
+description: Conventions for generating integration and end-to-end Universal Driver tests, and how to run them once written.
+no-pointer: true
 ---
 
 # E2E/integration Test Generation Guidelines
@@ -66,3 +66,10 @@ For wrapper tests, follow this strict order:
 
 ## Validate format 
 At the end always run tests/tests_format_validator to validate the created tests format.
+
+## Running what you wrote
+
+A test that connects to Snowflake needs `PARAMETER_PATH` exported and pointing at
+`parameters.json` at the repo root; without it the test does not run. The setup
+procedure is [../../tools/credentials.md](../../tools/credentials.md), and the
+per-wrapper run commands are catalogued in [../../tools/README.md](../../tools/README.md).

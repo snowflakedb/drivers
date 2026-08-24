@@ -1,3 +1,8 @@
+---
+description: The four legacy driver repos the Universal Driver replaces — their GitHub identifiers, the local paths a checkout is expected at, and the GitHub MCP fallback when no checkout exists.
+no-pointer: true
+---
+
 # Driver Repository Locations
 
 Canonical reference for original driver repo identifiers and local paths.
@@ -14,6 +19,4 @@ If a repo does not exist at the expected local path, tell the user and ask for
 the correct location, or fall back to GitHub MCP (`mcp__github__github_get_file`)
 using the GitHub repo column.
 
-<!-- sync-target: this file is a reference doc loaded on demand via @ include in
-     skills. It is NOT alwaysApply, so no .cursor/rules counterpart is needed.
-     Edit this file only. -->
+These repos are not precloned into an agent workspace; resolve one through a local checkout or the GitHub MCP tools. Which of their tests the Universal Driver covers is tracked separately — see [../../concepts/old-driver-coverage-attribution.md](../../concepts/old-driver-coverage-attribution.md).

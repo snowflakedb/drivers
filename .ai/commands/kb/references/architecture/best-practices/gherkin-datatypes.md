@@ -1,6 +1,6 @@
 ---
-description: Guidelines for generating datatype tests
-alwaysApply: false
+description: Writing Gherkin feature scenarios for datatype coverage — the scenario shape and the datatype conventions a feature file follows.
+no-pointer: true
 ---
 
 # Test kinds

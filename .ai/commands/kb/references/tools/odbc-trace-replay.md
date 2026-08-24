@@ -1,6 +1,6 @@
 ---
-description: Generate representative replay tests from an ODBC trace file
-alwaysApply: false
+description: Turning a captured ODBC trace into representative replay tests — sampling the trace and generating the test cases from it.
+no-pointer: true
 ---
 
 # ODBC Trace Replay Sampling

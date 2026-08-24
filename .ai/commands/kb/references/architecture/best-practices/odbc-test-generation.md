@@ -1,6 +1,6 @@
 ---
-description: ODBC specific test generation 
-alwaysApply: false
+description: Generating ODBC Universal Driver tests — the C++ test layout, the datatype conventions an ODBC test follows, and the checks a new test must pass before it lands.
+no-pointer: true
 ---
 
 # ODBC Test Generation Rules
@@ -336,6 +336,22 @@ TEST_CASE_METHOD(StmtFixture, "SQLGetData: should return trimmed string", "[sqlg
 - `DRIVER_PATH` - Path to driver library
 - `PARAMETER_PATH` - Path to parameters.json
 - `GIT_ROOT` - Repository root path
+
+## Datatype implementation and conversion
+
+Apply these when modifying ODBC datatype code or writing a test for it.
+
+**`SQLBindCol`** — when the length buffer is not null, write the size of the
+bound column into it. A test asserts that:
+
+```cpp
+// The length buffer receives the size of the data, here for SQL_C_LONG
+SQLINTEGER value = 0;
+SQLLEN indicator = 0;
+ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+ret = SQLFetch(stmt.getHandle());
+CHECK(indicator == sizeof(SQLINTEGER));
+```
 
 ## Checklist Before Completion
 

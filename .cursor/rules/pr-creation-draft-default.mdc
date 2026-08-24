@@ -1,6 +1,7 @@
 ---
 description: Always create GitHub pull requests in draft state (gh pr create --draft), unless the user explicitly asks for a non-draft PR.
 alwaysApply: true
+exception: "alwaysApply rule — the full body must exist in both engines; a generated pointer would place it in tool-call history where compaction can drop it mid-session. Canonical source is .claude/rules/<name>.md, kept in sync by the ai-rules-sync hook."
 # DERIVED FROM .claude/rules/pr-creation-draft-default.md (canonical source).
 # Full content is required here — alwaysApply rules are injected into the agent system
 # prompt at session start. A pointer file would load the body via tool call, placing it

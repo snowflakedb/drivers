@@ -1,7 +1,6 @@
 ---
-description: ODBC test reviewer agent — reviews test code for best practices, anti-patterns, and correctness
-globs: odbc_tests/**/*.cpp,odbc_tests/**/*.hpp
-alwaysApply: false
+description: What makes an ODBC test correct — the best practices, anti-patterns, and correctness checks a review applies to C++ tests under odbc_tests/.
+no-pointer: true
 ---
 
 # ODBC Test Reviewer Agent
@@ -18,7 +17,16 @@ When asked to review ODBC test code, systematically check each category below. R
 ## 2. Test Structure
 
 - E2E tests (`odbc_tests/tests/e2e/`): require `TEST_CASE` + `Connection` RAII. Must have Given-When-Then comments, each followed by code (no empty Gherkin stubs).
-- API tests (`odbc_tests/tests/basic_tests/`, `odbc_tests/tests/datatype_tests/`): require `TEST_CASE_METHOD(Fixture, ...)` with the appropriate fixture (`EnvFixture`, `DbcFixture`, `StmtFixture`).
+- API tests (`odbc_tests/tests/basic_tests/`, `odbc_tests/tests/bindings_tests/`): require `TEST_CASE_METHOD(Fixture, ...)` with the appropriate fixture (`EnvFixture`, `DbcFixture`, `StmtFixture`).
+
+  > **Two mismatches against the tree, for the ODBC owners to settle.** This rule previously named
+  > `odbc_tests/tests/datatype_tests/`, which no longer exists — those tests were moved to
+  > `odbc_tests/tests/e2e/types/` (see the `// Migrated from odbc_tests/tests/datatype_tests/...`
+  > comments there), and they use a mix of `TEST_CASE` and `TEST_CASE_METHOD`. Separately, every
+  > file in `basic_tests/` currently uses plain `TEST_CASE`, not `TEST_CASE_METHOD`. Treat the rule
+  > as the standard for *new* API tests and confirm the intended scope before enforcing it on the
+  > existing ones. `odbc_tests/tests/conversion_matrix/` holds the bindparam matrix and is not
+  > covered by either rule above.
 - Test names: E2E should start with "should …"; API tests use `SQLFunctionName: description`.
 - Flag leftover debug sections named "TEST".
 

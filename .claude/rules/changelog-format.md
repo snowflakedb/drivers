@@ -1,15 +1,3 @@
----
-description: Rules for writing and reviewing CHANGELOG.md — required format, section names, and mandatory PR link on every entry.
-alwaysApply: true
-exception: "alwaysApply rule — the full body must exist in both engines; a generated pointer would place it in tool-call history where compaction can drop it mid-session. Canonical source is .claude/rules/<name>.md, kept in sync by the ai-rules-sync hook."
-# DERIVED FROM .claude/rules/changelog-format.md (canonical source).
-# Full content is required here — alwaysApply rules are injected into the agent system
-# prompt at session start. A pointer file would load the body via tool call, placing it
-# in conversation history where context compaction can silently drop it mid-session.
-# Edit the .claude/ file first, then copy its full contents below. The pre-commit hook
-# (ai-rules-sync) or scripts/check-ai-rules-sync.sh will catch any drift.
----
-
 # Changelog Format
 
 Apply this rule whenever you write, edit, or review a `CHANGELOG.md` file in this repo.

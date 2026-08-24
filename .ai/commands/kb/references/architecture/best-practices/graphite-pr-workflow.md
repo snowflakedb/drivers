@@ -1,6 +1,6 @@
 ---
-description: Rules for creating commits and PRs using Graphite CLI with SNOW-ticket conventions
-alwaysApply: false
+description: Creating commits and pull requests in this repo with the Graphite CLI, including the SNOW-ticket title convention.
+no-pointer: true
 ---
 
 # PR and Commit Workflow

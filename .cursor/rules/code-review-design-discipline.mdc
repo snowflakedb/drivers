@@ -1,6 +1,7 @@
 ---
 description: Design-time discipline for changes that touch existing pipelines, error types, public APIs, or test seams. Distilled from review findings across the OAuth-core work; applies to any non-trivial change.
 alwaysApply: true
+exception: "alwaysApply rule — the full body must exist in both engines; a generated pointer would place it in tool-call history where compaction can drop it mid-session. Canonical source is .claude/rules/<name>.md, kept in sync by the ai-rules-sync hook."
 # DERIVED FROM .claude/rules/code-review-design-discipline.md (canonical source).
 # Full content is required here — alwaysApply rules are injected into the agent system
 # prompt at session start. A pointer file would load the body via tool call, placing it

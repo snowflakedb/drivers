@@ -1,6 +1,6 @@
 ---
-description: rules for writing and editing rust error handling code
-alwaysApply: false
+description: How error handling is written in this repo's Rust code — the error types, the conversions across the FFI boundary, and the patterns to avoid.
+no-pointer: true
 ---
 # Rust Error Handling Rules with Snafu
 
