@@ -13,8 +13,10 @@ use crate::common::test_server::{
 use serde_json::json;
 use sf_core::config::logout::{ErrorStrategy, LogoutConfig};
 use sf_core::config::rest_parameters::ClientInfo;
-use sf_core::config::retry::RetryPolicy;
+use sf_core::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use sf_core::protobuf::generated::database_driver_v1::*;
+use sf_core::rest::snowflake::RestError;
+use sf_core::rest::snowflake::error::SfError;
 use sf_core::rest::snowflake::logout::logout_session;
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
@@ -1115,72 +1117,177 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
     }
 }
 
+/// A response that arrives slowly but inside `max_elapsed` succeeds.
+///
+/// Scale is milliseconds rather than seconds on purpose. With
+/// `per_request_timeout: None`, `calculate_request_timeout` hands the remaining
+/// budget straight to `reqwest` as the per-attempt timeout, so "slow but in
+/// budget" takes the same branch at every magnitude — the four seconds-scale
+/// (timeout, delay) pairs this replaced differed only in arithmetic, which
+/// `http::retry::timeout_tests` already covers as pure unit tests. They also
+/// each ran twice, once per `ErrorStrategy`, even though `logout_session` takes
+/// no `LogoutConfig`; the strategy never reached the code under test. Total cost
+/// was 148s of real sleeping.
 #[tokio::test]
-async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type() {
-    // Scenario Outline: Examples (strategy_type, timeout_seconds, delay_seconds)
-    for (strategy_name, error_strategy, timeout_seconds, delay_seconds) in [
-        ("strict", ErrorStrategy::Strict, 5, 3),
-        ("best-effort", ErrorStrategy::BestEffort, 5, 3),
-        ("strict", ErrorStrategy::Strict, 10, 8),
-        ("best-effort", ErrorStrategy::BestEffort, 10, 8),
-        ("strict", ErrorStrategy::Strict, 15, 13),
-        ("best-effort", ErrorStrategy::BestEffort, 15, 13),
-        ("strict", ErrorStrategy::Strict, 300, 50),
-        ("best-effort", ErrorStrategy::BestEffort, 300, 50),
-    ] {
-        //Given Core logout function called with <strategy_type> strategy
-        let _config = LogoutConfig {
-            error_strategy,
-            ..Default::default()
-        };
+async fn should_succeed_when_logout_response_arrives_before_deadline() {
+    //Given Timeout configured well above the server's response delay
+    const DELAY: Duration = Duration::from_millis(200);
+    const TIMEOUT: Duration = Duration::from_secs(5);
 
-        //And Timeout configured to <timeout_seconds> seconds
-        let timeout = Duration::from_secs(timeout_seconds);
+    let retry_policy = RetryPolicy {
+        max_elapsed: Some(TIMEOUT),
+        ..Default::default()
+    };
 
-        //And Retry policy allows the default attempt number
-        let retry_policy = RetryPolicy {
-            max_elapsed: Some(timeout),
-            ..Default::default()
-        };
+    //And Mock HTTP server delays its response but stays inside the budget
+    let (addr, attempts, server) = spawn_test_server(1, |_| async {
+        sleep(DELAY).await;
+        json_response(r#"{"success":true}"#)
+    })
+    .await;
 
-        //And Mock HTTP server delays response by <delay_seconds> seconds then returns 200
-        let (addr, _, server) = spawn_test_server(1, move |_| {
-            let delay = delay_seconds;
-            async move {
-                sleep(Duration::from_secs(delay)).await;
-                json_response(r#"{"success":true}"#)
+    let server_url = format!("http://{}", addr);
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client_info = test_client_info();
+
+    //When Logout is executed
+    let start = Instant::now();
+    let result = logout_session(
+        &client,
+        &server_url,
+        &SensitiveString::from("test_token"),
+        &client_info,
+        &retry_policy,
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    //Then Logout succeeds
+    assert!(result.is_ok(), "Logout should succeed: {:?}", result.err());
+
+    //And The client waited for the delayed response instead of giving up early
+    // Lower bound only: `sleep` guarantees at least DELAY, so this cannot race a
+    // loaded runner. Asserting an upper bound here would be exactly the
+    // wall-clock flake the old `elapsed < timeout + 2` check invited (it passed
+    // with 250s of slack on the 300s row); the deadline is covered by
+    // `should_fail_when_logout_response_exceeds_deadline` instead.
+    assert!(
+        elapsed >= DELAY,
+        "Should have waited for the delayed response, took {:?}",
+        elapsed
+    );
+
+    //And Exactly one attempt is made
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "A successful logout should not be retried"
+    );
+
+    server.await.unwrap();
+}
+
+/// A response that never arrives is abandoned at `max_elapsed`, not awaited
+/// forever.
+///
+/// Deliberately *not* on a paused clock, unlike
+/// `rest::snowflake::workload_identity::gcp::get_identity_token_times_out_when_metadata_server_is_slow`.
+/// `execute_with_retry` measures the `max_elapsed` budget with
+/// `std::time::Instant` (`http/retry.rs`) but derives the per-attempt timeout it
+/// hands to `reqwest` from tokio's clock. Under `start_paused` the two diverge:
+/// each attempt times out on the virtual clock while the real-clock budget check
+/// never fires, so the loop burns `max_attempts` and reports `Transport` instead
+/// of `DeadlineExceeded`. Real time at millisecond scale is what actually
+/// exercises the deadline.
+///
+/// The backoff is pinned explicitly rather than defaulted: with the default
+/// `Jitter::Decorrelated` curve the first retry delay is a random 250–750ms, so
+/// a sub-second budget would sometimes trip `RetryAfterExceeded` (delay exceeds
+/// remaining budget) instead of the deadline check, and a budget large enough to
+/// be safe against it would put the seconds back into this test.
+#[tokio::test]
+async fn should_fail_when_logout_response_exceeds_deadline() {
+    //Given Timeout configured below the server's response delay
+    const TIMEOUT: Duration = Duration::from_millis(300);
+    const SERVER_DELAY: Duration = Duration::from_secs(30);
+
+    let retry_policy = RetryPolicy {
+        max_elapsed: Some(TIMEOUT),
+        backoff: BackoffConfig {
+            base: Duration::from_millis(10),
+            factor: 2.0,
+            cap: Duration::from_millis(20),
+            jitter: Jitter::None,
+        },
+        ..Default::default()
+    };
+
+    //And Mock HTTP server accepts the request but never responds in time
+    let (addr, attempts, server) = spawn_test_server(1, |_| async {
+        sleep(SERVER_DELAY).await;
+        json_response(r#"{"success":true}"#)
+    })
+    .await;
+
+    let server_url = format!("http://{}", addr);
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client_info = test_client_info();
+
+    //When Logout is executed
+    let start = Instant::now();
+    let result = logout_session(
+        &client,
+        &server_url,
+        &SensitiveString::from("test_token"),
+        &client_info,
+        &retry_policy,
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    //Then Logout fails with a deadline error rather than hanging
+    let err = result.expect_err("Logout should fail once the budget is exhausted");
+    assert!(
+        matches!(
+            err,
+            RestError::AsyncQuery {
+                source: SfError::DeadlineExceeded { .. },
+                ..
             }
-        })
-        .await;
+        ),
+        "Expected DeadlineExceeded, got: {:?}",
+        err
+    );
 
-        let server_url = format!("http://{}", addr);
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let client_info = test_client_info();
+    //And The whole budget was spent before giving up
+    // Lower bound is safe: the first attempt's timeout is the remaining budget,
+    // so it cannot fire early.
+    assert!(
+        elapsed >= TIMEOUT,
+        "Should have used the full {:?} budget, gave up after {:?}",
+        TIMEOUT,
+        elapsed
+    );
 
-        //When Logout is executed
-        let start = Instant::now();
-        let result = logout_session(
-            &client,
-            &server_url,
-            &SensitiveString::from("test_token"),
-            &client_info,
-            &retry_policy,
-        )
-        .await;
-        let elapsed = start.elapsed();
+    //And Logout gave up long before the server would have answered
+    // Deliberately loose (~30s of slack) so it states the intent without
+    // becoming a load-sensitive wall-clock assertion.
+    assert!(
+        elapsed < SERVER_DELAY,
+        "Should have abandoned the request, not waited out the {:?} server delay",
+        SERVER_DELAY
+    );
 
-        //Then Request completes within <timeout_seconds> seconds
-        assert!(
-            elapsed < Duration::from_secs(timeout_seconds + 2), // +2 buffer
-            "Should complete within timeout for {}",
-            strategy_name
-        );
+    //And No attempt is retried past the deadline
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "Budget is exhausted by the first attempt, so no second request should be sent"
+    );
 
-        //Then Close succeeds
-        assert!(result.is_ok(), "Should succeed for {}", strategy_name);
-
-        server.await.unwrap();
-    }
+    // The server task is still parked in its never-ending delay; cancel it
+    // explicitly so it cannot outlive the test.
+    server.abort();
 }
 
 // ===========================================================================
