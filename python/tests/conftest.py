@@ -5,7 +5,6 @@ pytest configuration and fixtures for PEP 249 tests.
 from __future__ import annotations
 
 import os
-import uuid
 
 from typing import Any
 from urllib.parse import urlparse
@@ -191,11 +190,6 @@ def with_paramstyles(*styles: str):
     return pytest.mark.parametrize("connection", list(styles), indirect=True)
 
 
-def randomize_name(prefix: str) -> str:
-    """Generate a random, collision-resistant name for a test object (table, stage, etc.)."""
-    return f"{prefix}_{uuid.uuid4().hex[:8]}"
-
-
 @pytest.fixture(scope="module")
 def connection(request, connector_adapter, connection_backend, cursor_backend):
     """Module-scoped test connection; shared across tests in the same module.
@@ -329,7 +323,9 @@ def executemany_insert(cursor):
 @pytest.fixture
 def tmp_schema(cursor):
     """Create a temporary schema."""
-    schema_name = randomize_name("test_schema")
+    import uuid
+
+    schema_name = f"test_schema_{uuid.uuid4().hex}"
     cursor.execute(f"CREATE SCHEMA {schema_name}")
     try:
         yield schema_name
