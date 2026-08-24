@@ -104,9 +104,9 @@ ODBC and core test jobs skipped.
 Adding a scope-up label cancels the in-flight run (via the workflow's
 `concurrency` group) and starts a fresh one at the upgraded scope. This
 re-runs cells that already ran at the lower scope — see the
-`scope-label-gate` job in each `test-{driver}.yml` for the full filter.
-Adding any other label (e.g. an auto-applied `python` or `shared` tag)
-does not disturb in-flight runs.
+`scope-label-gate` job in `.github/workflows/driver-status.yml` for the
+full filter. Adding any other label (e.g. an auto-applied `python` or
+`shared` tag) does not disturb in-flight runs.
 
 Removing a scope-up label is silently a no-op — the workflow does not
 re-trigger, and the in-flight run keeps the upgraded scope it computed

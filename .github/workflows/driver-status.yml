@@ -1,0 +1,345 @@
+name: Driver CI
+
+# Entry point for driver *test* CI. The per-driver test workflows are
+# `workflow_call`-only and are invoked from here, so PR, merge-queue, push,
+# nightly, and dispatch all resolve which suites to run in one place (the
+# `plan` job below).
+#
+# Packaging / release builds (build-python-release.yml, build-jdbc-jars.yml,
+# build-odbc-packages.yml, cold-wheel-check.yml) stay as their own workflows.
+on:
+  pull_request:
+    # Scope labels re-run the orchestrator at the requested matrix level.
+    # Unrelated label events are filtered by `scope-label-gate`.
+    types: [opened, synchronize, reopened, labeled]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main, 'release/**']
+  schedule:
+    # Same stagger the per-driver workflows used, so nightly matrices do
+    # not all contend for runners at once. `plan` maps github.event.schedule
+    # onto the driver that owned that slot. Node.js and .NET had no nightly.
+    - cron: '0 2 * * *'  # python
+    - cron: '0 3 * * *'  # odbc
+    - cron: '0 4 * * *'  # jdbc
+    - cron: '0 5 * * *'  # rust-core
+  workflow_dispatch:
+    inputs:
+      driver:
+        description: 'Driver suite to run'
+        type: choice
+        default: all
+        options:
+          - all
+          - python
+          - jdbc
+          - odbc
+          - rust-core
+          - nodejs
+          - dotnet
+
+concurrency:
+  # Literal prefix, distinct from every workflow this one calls: a callee that
+  # lands in the caller's group is treated as a deadlock and fails instantly.
+  # Group by PR number for PRs; fall back to the run ID everywhere else so
+  # back-to-back main pushes and nightly runs never cancel each other.
+  group: driver-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly","run_long_running_tests"]'), github.event.label.name) }}
+
+jobs:
+  # Same gate the driver workflows used to own: skip the public mirror except
+  # dispatch / release/*, and ignore PR `labeled` events that are not a
+  # scope-up (or ODBC's on-demand long-running lane). A skipped gate skips
+  # detect-changes, plan, and every driver call, so Driver CI stays green
+  # instead of re-running the matrix for auto-labeler noise.
+  scope-label-gate:
+    if: >-
+      (github.repository_owner != 'snowflakedb'
+       || github.event_name == 'workflow_dispatch'
+       || startsWith(github.ref, 'refs/heads/release/'))
+      && (github.event.action != 'labeled'
+          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly","run_long_running_tests"]'), github.event.label.name))
+    runs-on: ubuntu-slim
+    steps:
+      - run: 'true'
+
+  # Only change-gated events need file detection. Push, schedule and dispatch
+  # run whole suites, so they skip the clone + paths-filter entirely.
+  detect-changes:
+    needs: scope-label-gate
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    uses: ./.github/workflows/detect-changes.yml
+
+  # Resolves which driver suites run, for every event type. Kept as one bash
+  # step rather than six copies of a compound `if:` so the rules stay readable
+  # and reviewable in a single place.
+  plan:
+    needs: [scope-label-gate, detect-changes]
+    # always() so a skipped detect-changes (push / schedule / dispatch) does
+    # not suppress this job. The gate-success check still swallows unrelated
+    # labels and the public-mirror no-op. A detect failure must not silently
+    # turn into "run everything".
+    if: always() && needs.scope-label-gate.result == 'success' && needs.detect-changes.result != 'failure'
+    runs-on: ubuntu-slim
+    outputs:
+      python: ${{ steps.resolve.outputs.python }}
+      python_packaging: ${{ steps.resolve.outputs.python_packaging }}
+      python_reference: ${{ steps.resolve.outputs.python_reference }}
+      jdbc: ${{ steps.resolve.outputs.jdbc }}
+      jdbc_reference: ${{ steps.resolve.outputs.jdbc_reference }}
+      odbc: ${{ steps.resolve.outputs.odbc }}
+      odbc_reference: ${{ steps.resolve.outputs.odbc_reference }}
+      rust_core: ${{ steps.resolve.outputs.rust_core }}
+      nodejs: ${{ steps.resolve.outputs.nodejs }}
+      nodejs_reference: ${{ steps.resolve.outputs.nodejs_reference }}
+      dotnet: ${{ steps.resolve.outputs.dotnet }}
+      dotnet_reference: ${{ steps.resolve.outputs.dotnet_reference }}
+      odbc_long_running: ${{ steps.resolve.outputs.odbc_long_running }}
+    steps:
+      - name: Resolve driver suites
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          OWNER: ${{ github.repository_owner }}
+          DISPATCH_DRIVER: ${{ inputs.driver }}
+          SCHEDULE: ${{ github.event.schedule }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
+          RUN_PYTHON: ${{ needs.detect-changes.outputs.run_python }}
+          RUN_PYTHON_PACKAGING: ${{ needs.detect-changes.outputs.run_python_packaging }}
+          RUN_PYTHON_REFERENCE: ${{ needs.detect-changes.outputs.run_python_reference }}
+          RUN_JDBC: ${{ needs.detect-changes.outputs.run_jdbc }}
+          RUN_JDBC_REFERENCE: ${{ needs.detect-changes.outputs.run_jdbc_reference }}
+          RUN_ODBC: ${{ needs.detect-changes.outputs.run_odbc }}
+          RUN_ODBC_REFERENCE: ${{ needs.detect-changes.outputs.run_odbc_reference }}
+          RUN_RUST_CORE: ${{ needs.detect-changes.outputs.run_rust_core }}
+          RUN_NODEJS: ${{ needs.detect-changes.outputs.run_nodejs }}
+          RUN_NODEJS_REFERENCE: ${{ needs.detect-changes.outputs.run_nodejs_reference }}
+          RUN_DOTNET: ${{ needs.detect-changes.outputs.run_dotnet }}
+          RUN_DOTNET_REFERENCE: ${{ needs.detect-changes.outputs.run_dotnet_reference }}
+        run: |
+          set -euo pipefail
+
+          py=false; py_pkg=false; py_ref=false
+          jdbc=false; jdbc_ref=false
+          odbc=false; odbc_ref=false
+          core=false
+          node=false; node_ref=false
+          net=false; net_ref=false
+          odbc_long=false
+
+          # Turn on every lane of a driver. Used by whole-suite events
+          # (push, dispatch) and by the per-driver nightly cron slots.
+          enable() {
+            case "$1" in
+              python)    py=true; py_pkg=true; py_ref=true ;;
+              jdbc)      jdbc=true; jdbc_ref=true ;;
+              odbc)      odbc=true; odbc_ref=true ;;
+              rust-core) core=true ;;
+              nodejs)    node=true; node_ref=true ;;
+              dotnet)    net=true; net_ref=true ;;
+              all)       enable python; enable jdbc; enable odbc
+                         enable rust-core; enable nodejs; enable dotnet ;;
+              *)         echo "::error::Unknown driver '$1'"; exit 1 ;;
+            esac
+          }
+
+          # detect-changes emits "true"/"false"; anything else (unset output on a
+          # skipped job) must land on false rather than leaking an empty value.
+          norm() { if [[ "${1:-}" == "true" ]]; then echo true; else echo false; fi; }
+
+          emit() {
+            {
+              echo "python=$py"
+              echo "python_packaging=$py_pkg"
+              echo "python_reference=$py_ref"
+              echo "jdbc=$jdbc"
+              echo "jdbc_reference=$jdbc_ref"
+              echo "odbc=$odbc"
+              echo "odbc_reference=$odbc_ref"
+              echo "rust_core=$core"
+              echo "nodejs=$node"
+              echo "nodejs_reference=$node_ref"
+              echo "dotnet=$net"
+              echo "dotnet_reference=$net_ref"
+              echo "odbc_long_running=$odbc_long"
+            } | tee -a "$GITHUB_OUTPUT"
+          }
+
+          # The public mirror runs the full pipeline only on demand or for
+          # release branches — never on every push or nightly.
+          if [[ "$OWNER" == "snowflakedb" \
+                && "$EVENT" != "workflow_dispatch" \
+                && "$REF" != refs/heads/release/* ]]; then
+            echo "Public mirror on '$EVENT': no driver suites selected."
+            emit
+            exit 0
+          fi
+
+          case "$EVENT" in
+            pull_request|merge_group)
+              if [[ "$DETECT_RESULT" != "success" ]]; then
+                echo "::error::detect-changes did not run for $EVENT (result=$DETECT_RESULT)."
+                exit 1
+              fi
+              py=$(norm "$RUN_PYTHON")
+              py_pkg=$(norm "$RUN_PYTHON_PACKAGING")
+              py_ref=$(norm "$RUN_PYTHON_REFERENCE")
+              jdbc=$(norm "$RUN_JDBC")
+              jdbc_ref=$(norm "$RUN_JDBC_REFERENCE")
+              odbc=$(norm "$RUN_ODBC")
+              odbc_ref=$(norm "$RUN_ODBC_REFERENCE")
+              core=$(norm "$RUN_RUST_CORE")
+              node=$(norm "$RUN_NODEJS")
+              node_ref=$(norm "$RUN_NODEJS_REFERENCE")
+              net=$(norm "$RUN_DOTNET")
+              net_ref=$(norm "$RUN_DOTNET_REFERENCE")
+              # Label-only re-run of ODBC's on-demand long-running lane. Do
+              # not flip odbc=true: that would also run the default matrix,
+              # which detect-changes already decided. Calling test-odbc.yml
+              # with run_odbc=false still lets odbc_long_running fire.
+              if [[ ",${PR_LABELS}," == *",run_long_running_tests,"* ]]; then
+                odbc_long=true
+              fi
+              echo "Change-gated $EVENT:"
+              ;;
+            schedule)
+              # github.event.schedule is the cron string that fired this run.
+              case "$SCHEDULE" in
+                '0 2 * * *') enable python ;;
+                '0 3 * * *') enable odbc ;;
+                '0 4 * * *') enable jdbc ;;
+                '0 5 * * *') enable rust-core ;;
+                *) echo "::error::No driver mapped to schedule '$SCHEDULE'."; exit 1 ;;
+              esac
+              echo "Nightly schedule '$SCHEDULE':"
+              ;;
+            workflow_dispatch)
+              enable "${DISPATCH_DRIVER:-all}"
+              echo "Manual dispatch of '${DISPATCH_DRIVER:-all}':"
+              ;;
+            push)
+              # main exercises every driver; a release branch only builds its
+              # own driver. Rust Core, Node.js and .NET have no release lines.
+              case "$REF" in
+                refs/heads/main)             enable all ;;
+                refs/heads/release/python-*) enable python ;;
+                refs/heads/release/jdbc-*)   enable jdbc ;;
+                refs/heads/release/odbc-*)   enable odbc ;;
+                *) echo "::warning::No driver suite mapped to '$REF'." ;;
+              esac
+              echo "Push to $REF:"
+              ;;
+            *)
+              echo "::error::Unhandled event '$EVENT'"
+              exit 1
+              ;;
+          esac
+
+          emit
+
+  python:
+    needs: plan
+    if: >-
+      needs.plan.outputs.python == 'true'
+      || needs.plan.outputs.python_packaging == 'true'
+      || needs.plan.outputs.python_reference == 'true'
+    uses: ./.github/workflows/test-python.yml
+    secrets: inherit
+    with:
+      run_python: ${{ needs.plan.outputs.python == 'true' }}
+      run_python_packaging: ${{ needs.plan.outputs.python_packaging == 'true' }}
+      run_python_reference: ${{ needs.plan.outputs.python_reference == 'true' }}
+
+  jdbc:
+    needs: plan
+    if: >-
+      needs.plan.outputs.jdbc == 'true'
+      || needs.plan.outputs.jdbc_reference == 'true'
+    uses: ./.github/workflows/test-jdbc.yml
+    secrets: inherit
+    with:
+      run_jdbc: ${{ needs.plan.outputs.jdbc == 'true' }}
+      run_jdbc_reference: ${{ needs.plan.outputs.jdbc_reference == 'true' }}
+
+  odbc:
+    needs: plan
+    if: >-
+      needs.plan.outputs.odbc == 'true'
+      || needs.plan.outputs.odbc_reference == 'true'
+      || needs.plan.outputs.odbc_long_running == 'true'
+    uses: ./.github/workflows/test-odbc.yml
+    secrets: inherit
+    with:
+      run_odbc: ${{ needs.plan.outputs.odbc == 'true' }}
+      run_odbc_reference: ${{ needs.plan.outputs.odbc_reference == 'true' }}
+
+  rust-core:
+    needs: plan
+    if: needs.plan.outputs.rust_core == 'true'
+    uses: ./.github/workflows/test-rust-core.yml
+    secrets: inherit
+    with:
+      run_rust_core: ${{ needs.plan.outputs.rust_core == 'true' }}
+
+  nodejs:
+    needs: plan
+    if: >-
+      needs.plan.outputs.nodejs == 'true'
+      || needs.plan.outputs.nodejs_reference == 'true'
+    uses: ./.github/workflows/test-nodejs.yml
+    secrets: inherit
+    with:
+      run_nodejs: ${{ needs.plan.outputs.nodejs == 'true' }}
+      run_nodejs_reference: ${{ needs.plan.outputs.nodejs_reference == 'true' }}
+
+  dotnet:
+    needs: plan
+    if: >-
+      needs.plan.outputs.dotnet == 'true'
+      || needs.plan.outputs.dotnet_reference == 'true'
+    uses: ./.github/workflows/test-dotnet.yml
+    secrets: inherit
+    with:
+      run_dotnet: ${{ needs.plan.outputs.dotnet == 'true' }}
+      run_dotnet_reference: ${{ needs.plan.outputs.dotnet_reference == 'true' }}
+
+  driver-status:
+    name: driver-status
+    needs: [scope-label-gate, detect-changes, plan, python, jdbc, odbc, rust-core, nodejs, dotnet]
+    if: always()
+    runs-on: ubuntu-slim
+    steps:
+      - name: Check driver workflows
+        env:
+          GATE_RESULT: ${{ needs.scope-label-gate.result }}
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+          JDBC_RESULT: ${{ needs.jdbc.result }}
+          ODBC_RESULT: ${{ needs.odbc.result }}
+          RUST_CORE_RESULT: ${{ needs.rust-core.result }}
+          NODEJS_RESULT: ${{ needs.nodejs.result }}
+          DOTNET_RESULT: ${{ needs.dotnet.result }}
+        run: |
+          failed=0
+          for entry in \
+            "scope-label-gate:$GATE_RESULT" \
+            "detect-changes:$DETECT_RESULT" \
+            "plan:$PLAN_RESULT" \
+            "python:$PYTHON_RESULT" \
+            "jdbc:$JDBC_RESULT" \
+            "odbc:$ODBC_RESULT" \
+            "rust-core:$RUST_CORE_RESULT" \
+            "nodejs:$NODEJS_RESULT" \
+            "dotnet:$DOTNET_RESULT"; do
+            name="${entry%%:*}"
+            result="${entry#*:}"
+            echo "$name: $result"
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              failed=1
+            fi
+          done
+          exit "$failed"

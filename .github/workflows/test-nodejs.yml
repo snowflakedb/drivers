@@ -1,34 +1,35 @@
 name: Node.js CI
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-  merge_group:
-    types: [ checks_requested ]
-  # Lets the mirror (snowflakedb) run on demand — see the detect-changes gate.
-  workflow_dispatch:
+  # Every event is orchestrated by driver-status.yml, which resolves the
+  # suites to run and invokes only the affected driver workflows.
+  workflow_call:
+    inputs:
+      run_nodejs:
+        description: "Run Node.js tests."
+        type: boolean
+        required: false
+        default: false
+      run_nodejs_reference:
+        description: "Run Node.js reference tests."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel).
   # Using github.run_id (not github.ref) for the fallback so back-to-back main pushes don't cancel each other.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  #
+  # The prefix is a literal, not ${{ github.workflow }}: inside a workflow_call
+  # the github context belongs to the caller, so github.workflow would resolve
+  # to "Driver CI" and put this run in the orchestrator's own group. GitHub
+  # reads that as a deadlock and fails the call before any job starts.
+  group: nodejs-ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  detect-changes:
-    # Public-side gate: on the mirror (snowflakedb) run only on manual dispatch
-    # or release/* pushes; gating this root job skips the whole workflow there.
-    # Internal repo (repository_owner != 'snowflakedb') unchanged.
-    if: >-
-      github.repository_owner != 'snowflakedb'
-      || github.event_name == 'workflow_dispatch'
-      || startsWith(github.ref, 'refs/heads/release/')
-    uses: ./.github/workflows/detect-changes.yml
-
   nodejs_tests:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_nodejs == 'true'
+    if: inputs.run_nodejs
     name: Node.js Tests (new driver)
     runs-on: ubuntu-latest
     steps:
@@ -87,8 +88,7 @@ jobs:
       #     PARAMETER_PATH: ${{ github.workspace }}/parameters.json
 
   nodejs_tests_reference:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_nodejs_reference == 'true'
+    if: inputs.run_nodejs_reference
     name: Node.js Old Driver Reference Tests
     runs-on: ubuntu-latest
     steps:
@@ -119,7 +119,7 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
 
   nodejs-status:
-    needs: [detect-changes, nodejs_tests, nodejs_tests_reference]
+    needs: [nodejs_tests, nodejs_tests_reference]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -143,8 +143,14 @@ jobs:
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled)
           if [[ "$NEW_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
-            echo "✓ Node.js jobs were SKIPPED (no relevant changes detected)"
-            echo "  - run_nodejs: ${{ needs.detect-changes.outputs.run_nodejs }}"
+            # Driver CI only invokes this workflow for drivers it selected, so a
+            # skip here means the gating is broken rather than "nothing to do".
+            if [[ "${{ inputs.run_nodejs }}" == "true" ]]; then
+              echo "✗ Driver CI requested Node.js tests but every Node.js job was SKIPPED — check the job-level if: conditions."
+              exit 1
+            fi
+            echo "✓ Node.js jobs were SKIPPED (not requested by Driver CI)"
+            echo "  - run_nodejs: ${{ inputs.run_nodejs }}"
             exit 0
           fi
 

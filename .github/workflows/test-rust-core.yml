@@ -1,25 +1,25 @@
 name: Rust Core CI
 
 on:
-  schedule:
-    - cron: '0 5 * * *'  # Nightly at 05:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
-  push:
-    branches: [main]
-  pull_request:
-    # `labeled` is included so applying ci:scope-merge / ci:scope-nightly to
-    # a PR re-runs the workflow at the upgraded scope without needing a new
-    # commit. Unrelated labels are filtered by the `scope-label-gate` job
-    # below; concurrency keeps in-flight runs alive for those.
-    types: [opened, synchronize, reopened, labeled]
-  merge_group:
-    types: [ checks_requested ]
-  # Lets the mirror (snowflakedb) run on demand — see scope-label-gate.
-  workflow_dispatch:
+  # Every event is orchestrated by driver-status.yml, which resolves the
+  # suites to run and invokes only the affected driver workflows.
+  workflow_call:
+    inputs:
+      run_rust_core:
+        description: "Run Rust Core tests."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   # Group by PR number for PRs; fall back to run ID for push-to-main and
   # merge_group runs (each run is unique so they won't cancel each other).
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  #
+  # The prefix is a literal, not ${{ github.workflow }}: inside a workflow_call
+  # the github context belongs to the caller, so github.workflow would resolve
+  # to "Driver CI" and put this run in the orchestrator's own group. GitHub
+  # reads that as a deadlock and fails the call before any job starts.
+  group: rust-core-ci-${{ github.event.pull_request.number || github.run_id }}
   # Don't cancel an in-flight run when an unrelated label is added/removed —
   # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
   # push/synchronize/reopen events should replace the running matrix.
@@ -29,31 +29,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Filter out PR runs triggered solely by adding an unrelated label
-  # (e.g. auto-labeler bot tagging `python` or `shared`). The `if:`
-  # evaluates to false on those events, this job is skipped, and every
-  # downstream job that `needs:` it is skipped too. Scope-up labels
-  # (ci:scope-merge, ci:scope-nightly) pass through and re-run the
-  # workflow at the upgraded scope.
-  scope-label-gate:
-    # Public-side gate: on the mirror (snowflakedb) run only on manual dispatch
-    # or release/* pushes, never on every PR/push-to-main. Internal repo
-    # (repository_owner != 'snowflakedb') unchanged. AND-merged with the
-    # existing scope-label filter.
-    if: >-
-      (github.repository_owner != 'snowflakedb'
-       || github.event_name == 'workflow_dispatch'
-       || startsWith(github.ref, 'refs/heads/release/'))
-      && (github.event.action != 'labeled'
-          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name))
-    runs-on: ubuntu-latest
-    steps:
-      - run: 'true'
-
-  detect-changes:
-    needs: scope-label-gate
-    uses: ./.github/workflows/detect-changes.yml
-
   # Generate the test matrix from ci/test_matrix/models/core.pict at workflow
   # run time. Pattern mirrors load-odbc-matrix in test-odbc.yml and
   # load-python-matrix in test-python.yml. Outputs:
@@ -71,7 +46,6 @@ jobs:
   #                          Falls back to 'aws' when the lane is absent.
   #   - windows_x86_cloud:   cloud_provider of the windows-x86 lane (same scheme).
   load-core-matrix:
-    needs: scope-label-gate
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
@@ -112,8 +86,7 @@ jobs:
   # compile the crate, it only parses source files. A cache would add restore overhead
   # for no benefit. Keep this job lightweight; it finishes in under 30 seconds.
   format:
-    needs: detect-changes
-    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true'
+    if: inputs.run_rust_core
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -126,8 +99,7 @@ jobs:
         run: cargo fmt --all -- --check
 
   build-without-protobuf:
-    needs: detect-changes
-    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true'
+    if: inputs.run_rust_core
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -182,10 +154,8 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   test:
-    needs: [detect-changes, load-core-matrix]
-    if: |
-      (github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true')
-      && needs.load-core-matrix.outputs.test_matrix != '[]'
+    needs: load-core-matrix
+    if: inputs.run_rust_core && needs.load-core-matrix.outputs.test_matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
@@ -418,10 +388,8 @@ jobs:
   # behind cfg(feature = "fips"). Only the linked TLS crypto backend differs
   # (aws-lc-sys vs aws-lc-fips-sys).
   test_windows_arm64_nonfips:
-    needs: [detect-changes, load-core-matrix]
-    if: |
-      (github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true')
-      && needs.load-core-matrix.outputs.windows_arm_active == 'true'
+    needs: load-core-matrix
+    if: inputs.run_rust_core && needs.load-core-matrix.outputs.windows_arm_active == 'true'
     runs-on: windows-11-arm
     name: test (Windows ARM64, non-FIPS)
     env:
@@ -642,10 +610,8 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   test_windows_x86:
-    needs: [detect-changes, load-core-matrix]
-    if: |
-      (github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true')
-      && needs.load-core-matrix.outputs.windows_x86_active == 'true'
+    needs: load-core-matrix
+    if: inputs.run_rust_core && needs.load-core-matrix.outputs.windows_x86_active == 'true'
     runs-on: windows-latest
     name: test (Windows x86)
     env:
@@ -804,7 +770,7 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   cleanup_rust_core:
-    needs: [detect-changes, test, test_windows_arm64_nonfips, test_windows_x86]
+    needs: [test, test_windows_arm64_nonfips, test_windows_x86]
     if: always() && (needs.test.result != 'skipped' || needs.test_windows_arm64_nonfips.result != 'skipped' || needs.test_windows_x86.result != 'skipped')
     runs-on: ubuntu-latest
     name: cleanup_rust_core
@@ -828,7 +794,7 @@ jobs:
             --parameter-path "${{ github.workspace }}/parameters.json"
 
   rust-core-status:
-    needs: [detect-changes, format, build-without-protobuf, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
+    needs: [format, build-without-protobuf, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -856,8 +822,14 @@ jobs:
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled)
           if [[ "${{ needs.test.result }}" == "skipped" ]]; then
-            echo "✓ Rust Core tests were SKIPPED (no relevant changes detected)"
-            echo "  - run_rust_core: ${{ needs.detect-changes.outputs.run_rust_core }}"
+            # Driver CI only invokes this workflow for drivers it selected, so a
+            # skip here means the gating is broken rather than "nothing to do".
+            if [[ "${{ inputs.run_rust_core }}" == "true" ]]; then
+              echo "✗ Driver CI requested Rust Core tests but test was SKIPPED — check the job-level if: conditions."
+              exit 1
+            fi
+            echo "✓ Rust Core tests were SKIPPED (not requested by Driver CI)"
+            echo "  - run_rust_core: ${{ inputs.run_rust_core }}"
             exit 0
           fi
           
