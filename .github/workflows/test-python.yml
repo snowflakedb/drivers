@@ -1,26 +1,36 @@
 name: Python CI
 
 on:
-  schedule:
-    - cron: '0 2 * * *'  # Nightly at 02:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
-  push:
-    branches: [main, 'release/python-**']
-  pull_request:
-    # `labeled` is included so applying ci:scope-merge / ci:scope-nightly to
-    # a PR re-runs the workflow at the upgraded scope without needing a new
-    # commit. Unrelated labels are filtered by the `scope-label-gate` job
-    # below; concurrency keeps in-flight runs alive for those.
-    types: [opened, synchronize, reopened, labeled]
-  merge_group:
-    types: [ checks_requested ]
-  # Lets the mirror (snowflakedb) build/test on demand — see scope-label-gate.
-  workflow_dispatch:
+  # Every event is orchestrated by driver-status.yml, which resolves the
+  # suites to run and invokes only the affected driver workflows.
+  workflow_call:
+    inputs:
+      run_python:
+        description: "Run Python tests."
+        type: boolean
+        required: false
+        default: false
+      run_python_packaging:
+        description: "Run Python packaging tests."
+        type: boolean
+        required: false
+        default: false
+      run_python_reference:
+        description: "Run Python reference tests."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   # Group by PR number for PRs; fall back to run ID for push-to-main,
   # push-to-release, and merge_group runs (each run is unique so they
   # won't cancel each other).
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  #
+  # The prefix is a literal, not ${{ github.workflow }}: inside a workflow_call
+  # the github context belongs to the caller, so github.workflow would resolve
+  # to "Driver CI" and put this run in the orchestrator's own group. GitHub
+  # reads that as a deadlock and fails the call before any job starts.
+  group: python-ci-${{ github.event.pull_request.number || github.run_id }}
   # Don't cancel an in-flight run when an unrelated label is added/removed —
   # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
   # push/synchronize/reopen events should replace the running matrix.
@@ -30,33 +40,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Filter out PR runs triggered solely by adding an unrelated label
-  # (e.g. auto-labeler bot tagging `python` or `shared`). The `if:`
-  # evaluates to false on those events, this job is skipped, and every
-  # downstream job that `needs:` it is skipped too. Scope-up labels
-  # (ci:scope-merge, ci:scope-nightly) pass through and re-run the
-  # workflow at the upgraded scope.
-  scope-label-gate:
-    # Public-side gate: on the mirror (snowflakedb) this pipeline runs only on
-    # manual dispatch or release/* pushes, never on every PR/push-to-main. On
-    # the internal repo (repository_owner != 'snowflakedb') behavior is
-    # unchanged. AND-merged with the existing scope-label filter.
-    if: >-
-      (github.repository_owner != 'snowflakedb'
-       || github.event_name == 'workflow_dispatch'
-       || startsWith(github.ref, 'refs/heads/release/'))
-      && (github.event.action != 'labeled'
-          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name))
-    runs-on: ubuntu-latest
-    steps:
-      - run: 'true'
-
-  detect-changes:
-    needs: scope-label-gate
-    uses: ./.github/workflows/detect-changes.yml
-
   load-python-matrix:
-    needs: scope-label-gate
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -105,16 +89,15 @@ jobs:
 
   # ── Build all wheels via shared reusable workflow ────────────────────
   build_wheels:
-    needs: [detect-changes, load-python-matrix]
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python == 'true'
+    needs: load-python-matrix
+    if: inputs.run_python
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
       targets: ${{ needs.load-python-matrix.outputs.build-targets }}
 
   # Packaging tests — wheel build path (full workspace, lto = "thin")
   packaging_tests_wheel:
-    needs: [detect-changes]
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python_packaging == 'true'
+    if: inputs.run_python_packaging
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -226,8 +209,7 @@ jobs:
 
   # Packaging tests — sdist install path (minimal workspace, lto = false)
   packaging_tests_sdist:
-    needs: [detect-changes]
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python_packaging == 'true'
+    if: inputs.run_python_packaging
     runs-on: ubuntu-latest
     # A core-target cache miss forces a cold `cargo build --release` of the
     # full workspace inside the sdist install step (see SDIST_INSTALL_TIMEOUT
@@ -343,8 +325,8 @@ jobs:
   # python_bridge after wheel install. :cov for that cell is a placeholder
   # until the fetch / Arrow subset lands with the converters.
   python_tests:
-    needs: [detect-changes, build_wheels, load-python-matrix]
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python == 'true'
+    needs: [build_wheels, load-python-matrix]
+    if: inputs.run_python
     strategy:
       fail-fast: false
       matrix:
@@ -741,7 +723,7 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache-native-arrow.outputs.target-cache-hit }}
 
   cleanup_python:
-    needs: [detect-changes, python_tests, load-python-matrix]
+    needs: [python_tests, load-python-matrix]
     # Unique clouds from the python_tests matrix. Empty (`[]`) fails GHA
     # strategy.matrix, so skip when no cells ran.
     if: always() && needs.python_tests.result != 'skipped' && needs.load-python-matrix.outputs.cleanup-clouds != '[]'
@@ -779,8 +761,10 @@ jobs:
   # PyPI (python/pyproject.toml reference / reference-pandas) and inherit
   # skip-install=true, so no universal wheel download is needed.
   python_tests_reference:
-    needs: [detect-changes, build_wheels]
-    if: "!contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue') && github.event_name != 'merge_group' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python_reference == 'true')"
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue')
+      && github.event_name != 'merge_group'
+      && inputs.run_python_reference
     strategy:
       fail-fast: false
       matrix:
@@ -850,8 +834,8 @@ jobs:
   # `-m "not flaky"` in python/pyproject.toml addopts). Failures here do
   # not gate merges and the job is intentionally omitted from python-status.
   python_flaky_tests:
-    needs: [detect-changes, build_wheels]
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python == 'true'
+    needs: build_wheels
+    if: inputs.run_python
     runs-on: ubuntu-latest
     name: python_flaky_tests (ubuntu-latest, py3.13, aws)
     timeout-minutes: 10
@@ -965,7 +949,7 @@ jobs:
   # with PR_CELLS in ci/test_matrix/models/python.py — otherwise the
   # artifact downloads below 404.
   python_compare_results:
-    needs: [detect-changes, python_tests, python_tests_reference]
+    needs: [python_tests, python_tests_reference]
     if: |
       always() &&
       needs.python_tests.result != 'skipped' &&
@@ -1026,7 +1010,7 @@ jobs:
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
   python-status:
-    needs: [detect-changes, build_wheels, packaging_tests_wheel, packaging_tests_sdist, load-python-matrix, python_tests, cleanup_python, python_tests_reference, python_compare_results]
+    needs: [build_wheels, packaging_tests_wheel, packaging_tests_sdist, load-python-matrix, python_tests, cleanup_python, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1056,8 +1040,14 @@ jobs:
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled)
           if [[ "${{ needs.python_tests.result }}" == "skipped" ]]; then
-            echo "✓ Python tests were SKIPPED (no relevant changes detected)"
-            echo "  - run_python: ${{ needs.detect-changes.outputs.run_python }}"
+            # Driver CI only invokes this workflow for drivers it selected, so a
+            # skip here means the gating is broken rather than "nothing to do".
+            if [[ "${{ inputs.run_python }}" == "true" ]]; then
+              echo "✗ Driver CI requested Python tests but python_tests was SKIPPED — check the job-level if: conditions."
+              exit 1
+            fi
+            echo "✓ Python tests were SKIPPED (run_python was not requested)"
+            echo "  - run_python: ${{ inputs.run_python }}"
             exit 0
           fi
 

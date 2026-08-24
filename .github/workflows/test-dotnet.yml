@@ -1,40 +1,32 @@
 name: dotnet CI
 
 on:
-# TODO later milestones
-#  schedule:
-#    - cron: '0 3 * * *'  # Nightly at 03:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
-  push:
-    branches: [ "main" ]
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-  merge_group:
-    types: [ checks_requested ]
-  workflow_dispatch:
+  # Every event is orchestrated by driver-status.yml, which resolves the
+  # suites to run and invokes only the affected driver workflows.
+  workflow_call:
+    inputs:
+      run_dotnet:
+        description: "Run .NET tests."
+        type: boolean
+        required: false
+        default: false
+      run_dotnet_reference:
+        description: "Run .NET reference tests."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  # The prefix is a literal, not ${{ github.workflow }}: inside a workflow_call
+  # the github context belongs to the caller, so github.workflow would resolve
+  # to "Driver CI" and put this run in the orchestrator's own group. GitHub
+  # reads that as a deadlock and fails the call before any job starts.
+  group: dotnet-ci-${{ github.event.pull_request.number || github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
 
 jobs:
-  scope-label-gate:
-    if: >-
-      (github.repository_owner != 'snowflakedb'
-       || github.event_name == 'workflow_dispatch'
-       || startsWith(github.ref, 'refs/heads/release/'))
-      && (github.event.action != 'labeled'
-          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name))
-    runs-on: ubuntu-latest
-    steps:
-      - run: 'true'
-
-  detect-changes:
-    needs: scope-label-gate
-    uses: ./.github/workflows/detect-changes.yml
-
   load-dotnet-matrix:
-    needs: detect-changes
-    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_dotnet == 'true'
+    if: inputs.run_dotnet
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.split.outputs.matrix }}
@@ -228,8 +220,7 @@ jobs:
         working-directory: dotnet/tests/Snowflake.Data.Tests.Interop
         
   dotnet_tests_reference:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_dotnet_reference == 'true'
+    if: inputs.run_dotnet_reference
     name: dotnet Reference Tests (old driver)
     runs-on: ubuntu-latest
     steps:
@@ -295,8 +286,7 @@ jobs:
         working-directory: dotnet
 
   dotnet_tests_reference_new_driver:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_dotnet_reference == 'true'
+    if: inputs.run_dotnet_reference
     continue-on-error: true
     name: dotnet Reference Tests (new driver)
     runs-on: ubuntu-latest
@@ -380,7 +370,7 @@ jobs:
           SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
 
   dotnet-status:
-    needs: [detect-changes, load-dotnet-matrix, dotnet_tests, dotnet_tests_reference, dotnet_tests_interop]
+    needs: [load-dotnet-matrix, dotnet_tests, dotnet_tests_reference, dotnet_tests_interop]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -405,7 +395,13 @@ jobs:
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled)
           if [[ "$MATRIX_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
-            echo "✓ dotnet jobs were SKIPPED (no relevant changes detected)"
+            # Driver CI only invokes this workflow for drivers it selected, so a
+            # skip here means the gating is broken rather than "nothing to do".
+            if [[ "${{ inputs.run_dotnet }}" == "true" ]]; then
+              echo "✗ Driver CI requested dotnet tests but every dotnet job was SKIPPED — check the job-level if: conditions."
+              exit 1
+            fi
+            echo "✓ dotnet jobs were SKIPPED (not requested by Driver CI)"
             exit 0
           fi
 

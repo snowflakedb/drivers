@@ -1,63 +1,38 @@
 name: ODBC CI
 
 on:
-  schedule:
-    - cron: '0 3 * * *'  # Nightly at 03:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
-  push:
-    branches:
-      - main
-      - 'release/odbc-**'
-  pull_request:
-    # `labeled` is included so applying ci:scope-merge / ci:scope-nightly to
-    # a PR re-runs the workflow at the upgraded scope without needing a new
-    # commit. Unrelated labels are filtered by the `scope-label-gate` job
-    # below; concurrency keeps in-flight runs alive for those.
-    types: [opened, synchronize, reopened, labeled]
-  # Allow stacked PRs to trigger this workflow.
-  # detect-changes still decides whether ODBC jobs actually run.
-  merge_group:
-    types: [ checks_requested ]
-  # Lets the mirror (snowflakedb) build/test on demand — see scope-label-gate.
-  workflow_dispatch:
+  # Every event is orchestrated by driver-status.yml, which resolves the
+  # suites to run and invokes only the affected driver workflows.
+  workflow_call:
+    inputs:
+      run_odbc:
+        description: "Run ODBC tests."
+        type: boolean
+        required: false
+        default: false
+      run_odbc_reference:
+        description: "Run ODBC reference tests."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   # Group by PR number for PRs; by branch for pushes; fall back to run ID for
   # merge_group runs (each run is unique so they won't cancel each other).
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  #
+  # The prefix is a literal, not ${{ github.workflow }}: inside a workflow_call
+  # the github context belongs to the caller, so github.workflow would resolve
+  # to "Driver CI" and put this run in the orchestrator's own group. GitHub
+  # reads that as a deadlock and fails the call before any job starts.
+  group: odbc-ci-${{ github.event.pull_request.number || github.ref || github.run_id }}
   # Don't cancel an in-flight run when an unrelated label is added/removed —
   # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
   # push/synchronize/reopen events should replace the running matrix.
   cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly","run_long_running_tests"]'), github.event.label.name) }}
 
 jobs:
-  # Filter out PR runs triggered solely by adding an unrelated label
-  # (e.g. auto-labeler bot tagging `python` or `shared`). The `if:`
-  # evaluates to false on those events, this job is skipped, and every
-  # downstream job that `needs:` it is skipped too. Scope-up labels
-  # (ci:scope-merge, ci:scope-nightly) pass through and re-run the
-  # workflow at the upgraded scope.
-  scope-label-gate:
-    # Public-side gate: on the mirror (snowflakedb) this pipeline runs only on
-    # manual dispatch or release/* pushes, never on every PR/push-to-main. On
-    # the internal repo (repository_owner != 'snowflakedb') behavior is
-    # unchanged. AND-merged with the existing scope-label filter.
-    if: >-
-      (github.repository_owner != 'snowflakedb'
-       || github.event_name == 'workflow_dispatch'
-       || startsWith(github.ref, 'refs/heads/release/'))
-      && (github.event.action != 'labeled'
-          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly","run_long_running_tests"]'), github.event.label.name))
-    runs-on: ubuntu-latest
-    steps:
-      - run: 'true'
-
-  detect-changes:
-    needs: scope-label-gate
-    uses: ./.github/workflows/detect-changes.yml
-
   odbc_unit_tests:
-    needs: detect-changes
-    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_odbc == 'true'
+    if: inputs.run_odbc
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -113,8 +88,10 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   odbc_tests_reference:
-    needs: detect-changes
-    if: "!contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue') && github.event_name != 'merge_group' && (github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_odbc_reference == 'true')"
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue')
+      && github.event_name != 'merge_group'
+      && inputs.run_odbc_reference
     uses: ./.github/workflows/_test-odbc-reference.yml
     # secrets.PARAMETERS_SECRET is read by decode_secrets inside the
     # reusable workflow; reusable workflows do NOT auto-inherit secrets
@@ -122,8 +99,7 @@ jobs:
     secrets: inherit
 
   odbc_tests:
-    needs: detect-changes
-    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_odbc == 'true'
+    if: inputs.run_odbc
     uses: ./.github/workflows/_test-odbc.yml
     # See odbc_tests_reference above for the secrets-inherit rationale.
     secrets: inherit
@@ -135,12 +111,11 @@ jobs:
   # job opts them back in on demand.
   #
   # Triggers when the PR carries the `run_long_running_tests` label (applying the
-  # label re-runs the workflow — see scope-label-gate's labeled-event allowlist)
+  # label re-runs the workflow — see Driver CI's labeled-event allowlist)
   # and on the nightly schedule. Single Linux x64 / AWS lane. Intentionally NOT a
   # dependency of `odbc-status`, so it never blocks a merge — it is an on-demand
   # diagnostic lane, mirroring the label-gated `run_full_put_get_tests` workflow.
   odbc_long_running:
-    needs: scope-label-gate
     if: >-
       github.event_name == 'schedule'
       || contains(github.event.pull_request.labels.*.name, 'run_long_running_tests')
@@ -233,7 +208,7 @@ jobs:
 
 
   odbc-status:
-    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, odbc_tests]
+    needs: [odbc_unit_tests, odbc_tests_reference, odbc_tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -262,12 +237,16 @@ jobs:
           fi
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled).
-          # needs.odbc_tests is the reusable-workflow call (_test-odbc.yml) — when
-          # detect-changes says no relevant changes, the call is skipped and so is
-          # its aggregate result, which is the trigger for the "skipped" path here.
+          # needs.odbc_tests is the reusable-workflow call (_test-odbc.yml).
           if [[ "${{ needs.odbc_tests.result }}" == "skipped" ]]; then
-            echo "✓ ODBC tests were SKIPPED (no relevant changes detected)"
-            echo "  - run_odbc: ${{ needs.detect-changes.outputs.run_odbc }}"
+            # Driver CI only invokes this workflow for drivers it selected, so a
+            # skip here means the gating is broken rather than "nothing to do".
+            if [[ "${{ inputs.run_odbc }}" == "true" ]]; then
+              echo "✗ Driver CI requested ODBC tests but odbc_tests was SKIPPED — check the job-level if: conditions."
+              exit 1
+            fi
+            echo "✓ ODBC tests were SKIPPED (not requested by Driver CI)"
+            echo "  - run_odbc: ${{ inputs.run_odbc }}"
             exit 0
           fi
 

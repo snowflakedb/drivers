@@ -254,6 +254,7 @@ jobs:
               - 'tests/!(performance|tests_format_validator|test_coverage_report|definitions|bugs_analysis|oldTestsCoverage)/**'
               - 'tests/definitions/shared/**'
               - '.github/workflows/detect-changes.yml'
+              - '.github/workflows/driver-status.yml'
               - '.github/actions/cargo-cache/**'
               - '.buildkite/**'
               - 'scripts/decode_secrets.*'

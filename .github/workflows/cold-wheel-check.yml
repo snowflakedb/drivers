@@ -2,7 +2,7 @@ name: Nightly wheels build
 
 # snowflakedb counterpart of Python CI's nightly `build_wheels` job:
 # same generate_matrix nightly targets, packages only (no tests).
-# Python CI's scope-label-gate skips schedule on the mirror, so without
+# Driver CI's scope-label-gate skips schedule on the mirror, so without
 # this workflow the public repo never builds wheels except on release/*
 # or a manual dispatch — which is why cache-miss failures only showed
 # up there.
