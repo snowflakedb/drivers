@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 
-from typing import TYPE_CHECKING
+from enum import Enum, unique
+from typing import TYPE_CHECKING, Any
 
 from .._internal.api_client.client_api import async_core_driver, core_driver
+from .._internal.backward_compatibility import install_backward_compatibility_getattr
 from .._internal.decorators import backward_compatibility
 from .._internal.logging import get_logger
 from ..errors import InterfaceError
@@ -20,9 +22,43 @@ if TYPE_CHECKING:
     from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
         ConnectionHandle,
     )
-    from snowflake.connector.telemetry import TelemetryData
 
 logger = get_logger(__name__)
+
+
+@backward_compatibility
+@unique
+class TelemetryField(Enum):
+    """Old-driver keys for telemetry message dicts."""
+
+    KEY_SOURCE = "source"
+    KEY_TYPE = "type"
+    KEY_SFQID = "query_id"
+
+
+@backward_compatibility
+class TelemetryData:
+    """Old-driver telemetry data holder, forwarded to :class:`TelemetryClient`."""
+
+    TRUE = "true"
+    FALSE = "false"
+
+    def __init__(self, message: Any = None, timestamp: int = 0) -> None:
+        self.message = message
+        self.timestamp = timestamp
+
+    @classmethod
+    def from_telemetry_data_dict(
+        cls,
+        from_dict: dict[str, Any],
+        timestamp: int,
+        connection: Any = None,
+        is_oob_telemetry: bool = False,
+    ) -> TelemetryData:
+        return cls(message=from_dict, timestamp=timestamp)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"message": self.message, "timestamp": str(self.timestamp)}
 
 
 class TelemetryClient:
@@ -165,3 +201,7 @@ class AsyncTelemetryClient:
             await self.add_log_to_batch(telemetry_data)
         except Exception:
             logger.debug("Failed to add log to telemetry", exc_info=True)
+
+
+# Must be the last statement; see ``install_backward_compatibility_getattr``.
+install_backward_compatibility_getattr(__name__)

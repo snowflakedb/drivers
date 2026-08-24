@@ -9,11 +9,18 @@ Python-specific tests are in tests/integ/query/test_multistatement.py
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from snowflake.connector.errors import ProgrammingError
 
-from ...conftest import randomize_name, with_paramstyle
+from ...conftest import with_paramstyle
+
+
+def random_table_name(prefix: str = "ms_test") -> str:
+    """Generate a random table name to avoid conflicts."""
+    return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
 class TestMultipleSelectStatements:
@@ -66,7 +73,7 @@ class TestMultipleDMLStatements:
         # Given Snowflake client is logged in
         pass
         # When multistatement query with CREATE TABLE, INSERT, and DROP is executed
-        table_name = randomize_name("ms_dml")
+        table_name = random_table_name("ms_dml")
         sql = (
             f"CREATE OR REPLACE TEMPORARY TABLE {table_name}(id INT); "
             f"INSERT INTO {table_name} VALUES (1),(2),(3); "
@@ -101,7 +108,7 @@ class TestMixedStatementTypes:
         # Given Snowflake client is logged in
         pass
         # When multistatement query with various types is executed
-        table_name = randomize_name("ms_mix")
+        table_name = random_table_name("ms_mix")
         sql = (
             "ALTER SESSION SET TIMEZONE='UTC'; "
             f"CREATE OR REPLACE TEMPORARY TABLE {table_name}(val TEXT); "
@@ -181,7 +188,7 @@ class TestMultistatementWithParameters:
         # Given Snowflake client is logged in
         pass
         # And A temporary table with column (id NUMBER) exists
-        table_name = randomize_name("ms_bind_dml")
+        table_name = random_table_name("ms_bind_dml")
         cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name}(id NUMBER)")
 
         # When Multistatement INSERT chain is executed with 3 positional parameters
