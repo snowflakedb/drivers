@@ -6,6 +6,7 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Period;
+import java.util.List;
 import java.util.TimeZone;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
@@ -204,6 +205,11 @@ class ArrowRowReader implements RowReader {
   @Override
   public Duration getDuration(int columnIndex) {
     return convertColumn(columnIndex, ArrowVectorConverter::toDuration);
+  }
+
+  @Override
+  public List<?> getList(int columnIndex) {
+    return convertColumn(columnIndex, ArrowVectorConverter::toList);
   }
 
   private void checkState() {

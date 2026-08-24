@@ -3,6 +3,7 @@ package net.snowflake.jdbc.e2e.types;
 import static java.sql.ResultSetMetaData.columnNullable;
 import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -10,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Types;
@@ -19,6 +21,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import net.snowflake.client.api.resultset.FieldMetadata;
+import net.snowflake.client.api.resultset.SnowflakeResultSet;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.jdbc.utils.SkipForJSONResultSet;
@@ -34,7 +37,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  *
  * <p>VECTOR(INT, n) and VECTOR(FLOAT, n) arrive as Arrow {@code FixedSizeList} and are exposed via
  * {@code getString()} / {@code getObject()} as compact JSON-style strings ({@code [1,2,3]} / {@code
- * [-1.2,5.1]}), matching snowflake-jdbc parity.
+ * [-1.2,5.1]}), matching snowflake-jdbc parity. Typed access uses {@code
+ * SnowflakeResultSet.getArray(col, Integer/Float.class)}.
  */
 class VectorTests extends SnowflakeIntegrationTestBase implements WithQueryUtils {
 
@@ -61,10 +65,9 @@ class VectorTests extends SnowflakeIntegrationTestBase implements WithQueryUtils
         resultSet -> {
           // Then All values should be returned as appropriate type
           assertTrue(resultSet.next());
-          assertEquals("[1,2,3]", resultSet.getString(1));
-          assertFalse(resultSet.wasNull());
-          assertEquals("[1.5,2.5,3.5]", resultSet.getString(2));
-          assertFalse(resultSet.wasNull());
+          assertAllVectorGetters(resultSet, 1, "[1,2,3]", Integer.class, new Integer[] {1, 2, 3});
+          assertAllVectorGetters(
+              resultSet, 2, "[1.5,2.5,3.5]", Float.class, new Float[] {1.5f, 2.5f, 3.5f});
 
           ResultSetMetaData meta = resultSet.getMetaData();
           SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
@@ -361,6 +364,23 @@ class VectorTests extends SnowflakeIntegrationTestBase implements WithQueryUtils
           }
           assertEquals(LARGE_RESULT_SET_SIZE, rowCount, "Expected vector row count");
         });
+  }
+
+  private static <T> void assertAllVectorGetters(
+      ResultSet resultSet,
+      int columnIndex,
+      String expectedString,
+      Class<T> elementType,
+      T[] expectedArray)
+      throws Exception {
+    assertEquals(expectedString, resultSet.getString(columnIndex));
+    assertFalse(resultSet.wasNull());
+    assertEquals(expectedString, resultSet.getObject(columnIndex));
+    assertFalse(resultSet.wasNull());
+    assertArrayEquals(
+        expectedArray,
+        resultSet.unwrap(SnowflakeResultSet.class).getArray(columnIndex, elementType));
+    assertFalse(resultSet.wasNull());
   }
 
   private static void assertVectorResultSetMetadata(

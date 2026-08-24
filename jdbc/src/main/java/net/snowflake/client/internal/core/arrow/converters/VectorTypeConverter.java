@@ -37,4 +37,9 @@ public class VectorTypeConverter extends AbstractArrowVectorConverter {
   public byte[] toBytes(int index) {
     return isNull(index) ? null : toString(index).getBytes();
   }
+
+  @Override
+  public List<?> toList(int index) {
+    return vector.getObject(index);
+  }
 }

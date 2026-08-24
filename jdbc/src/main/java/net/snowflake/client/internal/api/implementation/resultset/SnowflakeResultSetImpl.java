@@ -28,6 +28,7 @@ import java.util.TimeZone;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.Decorators;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
@@ -1255,7 +1256,28 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public <T> T[] getArray(int columnIndex, Class<T> type) {
-    throw new NotImplementedException();
+    checkClosed();
+    // TODO(SNOW-3445814): getArray supported for structured types (not only VECTOR)
+    if (resultSetMetaData.getColumnType(columnIndex) != SnowflakeType.EXTRA_TYPES_VECTOR) {
+      throw new SFSQLFeatureNotSupportedException("getArray is only supported for VECTOR columns");
+    }
+    // Exact int & float match only (snowflake-jdbc does proper type coercion via Converters).
+    // TODO(SNOW-3445814): add broad type coercion for structured types
+    if (!Integer.class.equals(type) && !Float.class.equals(type)) {
+      throw new SFSQLFeatureNotSupportedException(
+          "Type passed to 'getArray(int columnIndex, Class<T> type)' is unsupported. Type: "
+              + type.getName());
+    }
+    List<?> elements = rowReader.getList(columnIndex);
+    if (elements == null) {
+      return null;
+    }
+    try {
+      return elements.toArray((T[]) java.lang.reflect.Array.newInstance(type, elements.size()));
+    } catch (ArrayStoreException e) {
+      throw new SFSQLFeatureNotSupportedException(
+          "VECTOR elements cannot be converted to " + type.getName());
+    }
   }
 
   @Override

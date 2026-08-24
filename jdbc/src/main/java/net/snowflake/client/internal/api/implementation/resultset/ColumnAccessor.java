@@ -6,6 +6,7 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Period;
+import java.util.List;
 import java.util.TimeZone;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
@@ -71,6 +72,10 @@ public interface ColumnAccessor {
    */
   default Duration getDuration(int columnIndex) {
     throw new SFSQLFeatureNotSupportedException("getDuration is not supported for this result set");
+  }
+
+  default List<?> getList(int columnIndex) {
+    throw new SFSQLFeatureNotSupportedException("getList is not supported for this result set");
   }
 
   int getColumnCount();
