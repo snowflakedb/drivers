@@ -373,7 +373,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
       builder.setBindings(bindings);
     }
     StatementExecuteQueryRequest request = builder.build();
-    return invoke(() -> client.statementExecuteQuery(request));
+    return await(client.statementExecuteQuery(request));
   }
 
   public StatementExecuteAsyncResponse statementExecuteAsync(
@@ -560,7 +560,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
           cause != null ? cause : e);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      throw new CoreException("Interrupted while waiting for connection init", e);
+      throw new CoreException("Interrupted while waiting for the core operation to complete", e);
     }
   }
 

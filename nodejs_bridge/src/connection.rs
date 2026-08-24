@@ -96,7 +96,7 @@ impl Connection {
             async move {
                 DRIVER.statement_set_sql_query(stmt_handle, query).await?;
                 let result = DRIVER
-                    .statement_execute_query(stmt_handle, None, None)
+                    .statement_execute_query(None, stmt_handle, None, None)
                     .await?;
                 let _ = DRIVER.statement_release(stmt_handle);
                 // Node.js does not currently surface request_id to its callers (unlike
