@@ -240,12 +240,17 @@ jobs:
 
           emit
 
+  # !cancelled() is required: detect-changes is skipped on push/schedule/
+  # dispatch, and without a status function GitHub skips these jobs even
+  # when plan ran and selected them (skip cascades through plan's needs).
   python:
     needs: plan
     if: >-
-      needs.plan.outputs.python == 'true'
-      || needs.plan.outputs.python_packaging == 'true'
-      || needs.plan.outputs.python_reference == 'true'
+      !cancelled()
+      && needs.plan.result == 'success'
+      && (needs.plan.outputs.python == 'true'
+          || needs.plan.outputs.python_packaging == 'true'
+          || needs.plan.outputs.python_reference == 'true')
     uses: ./.github/workflows/test-python.yml
     secrets: inherit
     with:
@@ -256,8 +261,10 @@ jobs:
   jdbc:
     needs: plan
     if: >-
-      needs.plan.outputs.jdbc == 'true'
-      || needs.plan.outputs.jdbc_reference == 'true'
+      !cancelled()
+      && needs.plan.result == 'success'
+      && (needs.plan.outputs.jdbc == 'true'
+          || needs.plan.outputs.jdbc_reference == 'true')
     uses: ./.github/workflows/test-jdbc.yml
     secrets: inherit
     with:
@@ -267,9 +274,11 @@ jobs:
   odbc:
     needs: plan
     if: >-
-      needs.plan.outputs.odbc == 'true'
-      || needs.plan.outputs.odbc_reference == 'true'
-      || needs.plan.outputs.odbc_long_running == 'true'
+      !cancelled()
+      && needs.plan.result == 'success'
+      && (needs.plan.outputs.odbc == 'true'
+          || needs.plan.outputs.odbc_reference == 'true'
+          || needs.plan.outputs.odbc_long_running == 'true')
     uses: ./.github/workflows/test-odbc.yml
     secrets: inherit
     with:
@@ -278,7 +287,10 @@ jobs:
 
   rust-core:
     needs: plan
-    if: needs.plan.outputs.rust_core == 'true'
+    if: >-
+      !cancelled()
+      && needs.plan.result == 'success'
+      && needs.plan.outputs.rust_core == 'true'
     uses: ./.github/workflows/test-rust-core.yml
     secrets: inherit
     with:
@@ -287,8 +299,10 @@ jobs:
   nodejs:
     needs: plan
     if: >-
-      needs.plan.outputs.nodejs == 'true'
-      || needs.plan.outputs.nodejs_reference == 'true'
+      !cancelled()
+      && needs.plan.result == 'success'
+      && (needs.plan.outputs.nodejs == 'true'
+          || needs.plan.outputs.nodejs_reference == 'true')
     uses: ./.github/workflows/test-nodejs.yml
     secrets: inherit
     with:
@@ -298,8 +312,10 @@ jobs:
   dotnet:
     needs: plan
     if: >-
-      needs.plan.outputs.dotnet == 'true'
-      || needs.plan.outputs.dotnet_reference == 'true'
+      !cancelled()
+      && needs.plan.result == 'success'
+      && (needs.plan.outputs.dotnet == 'true'
+          || needs.plan.outputs.dotnet_reference == 'true')
     uses: ./.github/workflows/test-dotnet.yml
     secrets: inherit
     with:
@@ -323,6 +339,12 @@ jobs:
           RUST_CORE_RESULT: ${{ needs.rust-core.result }}
           NODEJS_RESULT: ${{ needs.nodejs.result }}
           DOTNET_RESULT: ${{ needs.dotnet.result }}
+          PYTHON_WANTED: ${{ needs.plan.outputs.python == 'true' || needs.plan.outputs.python_packaging == 'true' || needs.plan.outputs.python_reference == 'true' }}
+          JDBC_WANTED: ${{ needs.plan.outputs.jdbc == 'true' || needs.plan.outputs.jdbc_reference == 'true' }}
+          ODBC_WANTED: ${{ needs.plan.outputs.odbc == 'true' || needs.plan.outputs.odbc_reference == 'true' || needs.plan.outputs.odbc_long_running == 'true' }}
+          RUST_CORE_WANTED: ${{ needs.plan.outputs.rust_core }}
+          NODEJS_WANTED: ${{ needs.plan.outputs.nodejs == 'true' || needs.plan.outputs.nodejs_reference == 'true' }}
+          DOTNET_WANTED: ${{ needs.plan.outputs.dotnet == 'true' || needs.plan.outputs.dotnet_reference == 'true' }}
         run: |
           failed=0
           for entry in \
@@ -342,4 +364,24 @@ jobs:
               failed=1
             fi
           done
+          # Plan selected a suite but the callee never started — the skip
+          # cascade from a skipped detect-changes used to hide this as green.
+          if [[ "$PLAN_RESULT" == "success" ]]; then
+            for entry in \
+              "python:$PYTHON_WANTED:$PYTHON_RESULT" \
+              "jdbc:$JDBC_WANTED:$JDBC_RESULT" \
+              "odbc:$ODBC_WANTED:$ODBC_RESULT" \
+              "rust-core:$RUST_CORE_WANTED:$RUST_CORE_RESULT" \
+              "nodejs:$NODEJS_WANTED:$NODEJS_RESULT" \
+              "dotnet:$DOTNET_WANTED:$DOTNET_RESULT"; do
+              name="${entry%%:*}"
+              rest="${entry#*:}"
+              wanted="${rest%%:*}"
+              result="${rest#*:}"
+              if [[ "$wanted" == "true" && "$result" == "skipped" ]]; then
+                echo "✗ $name was selected by plan but skipped"
+                failed=1
+              fi
+            done
+          fi
           exit "$failed"
