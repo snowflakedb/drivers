@@ -12,6 +12,7 @@ Feature: VECTOR type support
   @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should cast vector values to appropriate type
     # Python: INT vectors should be list[int], FLOAT vectors should be list[float]
+    # JDBC: getString returns compact JSON-style strings; getArray returns Integer[] / Float[]
     Given Snowflake client is logged in
     When Query "SELECT [1, 2, 3]::VECTOR(INT, 3), [1.5, 2.5, 3.5]::VECTOR(FLOAT, 3)" is executed
     Then All values should be returned as appropriate type

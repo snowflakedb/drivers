@@ -6,6 +6,7 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Period;
+import java.util.List;
 import java.util.TimeZone;
 
 public interface ArrowVectorConverter {
@@ -41,6 +42,8 @@ public interface ArrowVectorConverter {
   Period toPeriod(int index);
 
   Duration toDuration(int index);
+
+  List<?> toList(int index);
 
   Object toObject(int index);
 }

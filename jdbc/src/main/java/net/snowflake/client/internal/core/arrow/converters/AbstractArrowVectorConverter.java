@@ -6,6 +6,7 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Period;
+import java.util.List;
 import java.util.TimeZone;
 import lombok.Getter;
 import net.snowflake.client.api.exception.ErrorCode;
@@ -148,6 +149,14 @@ abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
     }
     throw SFSQLException.fromErrorCode(
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "duration", "");
+  }
+
+  @Override
+  public List<?> toList(int index) {
+    if (isNull(index)) {
+      return null;
+    }
+    throw SFSQLException.fromErrorCode(ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "list", "");
   }
 
   @Override
