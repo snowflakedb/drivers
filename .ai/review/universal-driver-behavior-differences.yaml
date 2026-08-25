@@ -239,3 +239,34 @@ rules:
       assert result.compression == "GZIP"
       ```
 
+  - id: ud-bd-entry-terminology
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: BD prose calls the drivers "new driver" / "old driver" — not the internal
+      "Universal Driver"/"UD" codename or "legacy driver/connector".
+
+      **REQUIREMENT**: In any BD entry added or edited in this PR, in any `BehaviorDifferences.yaml`:
+      replace "Universal Driver" / "UD" / "universal driver" with "the new driver"; replace "legacy
+      driver" / "legacy connector" (the reference driver as actor) with "the old driver". Do NOT
+      flag "legacy" describing a deprecated parameter/alias/identifier (e.g. "the legacy name
+      `client_request_mfa_token` is still accepted" is correct). Only flag lines this PR touches.
+
+      ❌ `The universal driver always uses a thread pool; UD has no equivalent to the legacy connector's process-pool option.`
+      ✅ `The new driver always uses a thread pool; it has no equivalent to the old driver's process-pool option.`
+
+  - id: ud-bd-behavior-fields-observable-only
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: `old_driver_behavior`/`new_driver_behavior` state what a caller observes, not
+      how it's implemented.
+
+      **REQUIREMENT**: In any `old_driver_behavior`/`new_driver_behavior` added or edited in this PR,
+      keep only observable facts — accepted/rejected parameters, return values, raised exceptions,
+      API surface. Flag internal mechanics (private methods, which module/component handles it) or
+      "why this is safe" rationale in these fields; move that to `description` instead. Don't flag
+      when the internal detail IS the observable difference (e.g. a specific error message/code a
+      caller matches on). Only flag lines this PR touches.
+
+      ❌ `Chunk fetching is handled internally by the Rust core, so there is no Python-level HTTP session management to configure on individual batches.`
+      ✅ `ResultBatch does not have session_manager or http_config properties.`
+
