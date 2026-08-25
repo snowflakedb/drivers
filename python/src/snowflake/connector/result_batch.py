@@ -157,7 +157,12 @@ class ResultBatch(ResultBatchMixin):
             )
 
         stream_ptr = self._take_arrow_stream_ptr(conn)
-        return create_row_iterator(stream_ptr, context=self._arrow_context, use_dict_result=use_dict_result)
+        return create_row_iterator(
+            stream_ptr,
+            context=self._arrow_context,
+            use_dict_result=use_dict_result,
+            use_numpy=self._numpy,
+        )
 
     @requires_dependency(pyarrow)
     def to_arrow(

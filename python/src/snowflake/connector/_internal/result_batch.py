@@ -55,6 +55,7 @@ class ResultBatchMixin(ErrorHandlerMixin):
     _connection: Connection | AsyncConnection | None
     _columns: list[ColumnMetadata]
     _arrow_context: ArrowConverterContext
+    _numpy: bool
     _arrow_stream_ptr: int | None
 
     def __init__(
@@ -71,6 +72,7 @@ class ResultBatchMixin(ErrorHandlerMixin):
         self._arrow_context = (
             ArrowConverterContext.create(connection) if connection is not None else ArrowConverterContext()
         )
+        self._numpy = bool(connection.config.numpy) if connection is not None else False
         self._arrow_stream_ptr = None
 
     @classmethod
@@ -124,6 +126,7 @@ class ResultBatchMixin(ErrorHandlerMixin):
             "description": self._description,
             "column_bytes": [c.SerializeToString() for c in self._columns],
             "arrow_context": self._arrow_context,
+            "numpy": self._numpy,
         }
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -138,5 +141,6 @@ class ResultBatchMixin(ErrorHandlerMixin):
             columns.append(col)
         self._columns = columns
         self._arrow_context = state.get("arrow_context", ArrowConverterContext())
+        self._numpy = state.get("numpy", False)
         self._connection = None
         self._arrow_stream_ptr = None
