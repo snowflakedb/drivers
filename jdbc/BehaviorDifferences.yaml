@@ -991,3 +991,18 @@ behavior_differences:
       columns follow the normal scale-0 rule and report BIGINT. Column counts, names, and values are
       at full parity; only the size columns' JDBC type differs. Matching legacy's DECIMAL would mean
       leaking a JDBC-only quirk into the shared metadata format.
+  55:
+    name: "Concurrent interactive auth prompts are serialized (DISABLE_PARALLEL_USER_PROMPT)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When multiple connections are opened concurrently for the same user and host and interactive
+      authentication is required, each connection runs its own interactive flow.
+    new_driver_behavior: |
+      Interactive auths are serialized by a process-global lock, so the first connection runs
+      the interactive flow and caches the token. Connections that arrive while it holds the lock
+      wait and then reuse the cached token, so the user sees only one prompt.
+      Locking engages only when `DISABLE_PARALLEL_USER_PROMPT=true` (the default).
