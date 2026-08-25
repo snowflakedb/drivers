@@ -112,9 +112,18 @@ ENV JDBC_CLASSPATH="/opt/jdbc/app:/opt/jdbc/snowflake-jdbc-old.jar:/opt/jdbc/sha
 
 # No CORE_PATH: the released jar carries its own JNI transport. Results.writeRunMetadata already
 # gates build_rust_version on driver_type=universal, so "N/A" here is never emitted to metadata.
+# Old snowflake-jdbc's SFTrustManager uses the JVM default truststore (cacerts), not the OS CA
+# bundle. Import the WireMock MITM CA there so replay does not fail TLS after useProxy is set.
 CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
     if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
         CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
         printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
+        keytool -delete -alias wiremock -keystore "$JAVA_HOME/lib/security/cacerts" \
+          -storepass changeit >/dev/null 2>&1 || true; \
+        keytool -importcert -noprompt -alias wiremock \
+          -file "$WIREMOCK_CA_CERT" \
+          -keystore "$JAVA_HOME/lib/security/cacerts" \
+          -storepass changeit; \
+        echo "Old driver: imported WireMock CA into JVM cacerts"; \
     fi && \
     java ${JDBC_JAVA_OPTS} -cp "${JDBC_CLASSPATH}" net.snowflake.perf.Main

@@ -1,6 +1,7 @@
 package net.snowflake.perf;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -86,21 +87,50 @@ final class Config {
   }
 
   /**
-   * Opt the universal driver into HTTP(S)_PROXY env detection for the recorded-HTTP (WireMock) lane.
+   * Route recorded-HTTP traffic through the WireMock proxy when HTTP(S)_PROXY is set.
    *
-   * <p>The WireMock harness routes traffic via proxy env vars, not explicit proxy properties, and
-   * sf_core ignores those env vars unless {@code use_proxy_env=true} (mirrors the odbc app's
-   * {@code USE_PROXY_ENV=true} and python's {@code _enable_proxy_env_for_wiremock}). No CA/OCSP knob
-   * is needed: the driver's TLS runs in sf_core, which loads the OS CA bundle the Dockerfile appends
-   * the WireMock CA to, and defaults to OCSP FAIL_OPEN.
+   * <p>Universal JDBC: sf_core ignores proxy env vars unless {@code use_proxy_env=true}. TLS uses
+   * the OS CA bundle the Dockerfile appends the WireMock CA to, and OCSP defaults to FAIL_OPEN.
+   *
+   * <p>Old snowflake-jdbc: does not honor {@code use_proxy_env} or HTTP(S)_PROXY. It only proxies
+   * when {@code useProxy}/{@code proxyHost}/{@code proxyPort} are set (same knobs as
+   * snowflake-jdbc's own WireMock ITs). OCSP must be off because WireMock MITM certs have no
+   * responder. The Dockerfile imports the WireMock CA into the JVM cacerts that {@code
+   * SFTrustManager} loads.
    */
   private void applyWiremockProxy(Properties props) {
-    boolean proxyEnvSet =
-        !isBlank(System.getenv("HTTPS_PROXY")) || !isBlank(System.getenv("HTTP_PROXY"));
-    if (proxyEnvSet) {
+    String proxyUrl = firstNonBlank(System.getenv("HTTPS_PROXY"), System.getenv("HTTP_PROXY"));
+    if (proxyUrl == null) {
+      return;
+    }
+    if ("old".equals(driverType)) {
+      applyOldDriverProxy(props, proxyUrl);
+    } else {
       props.setProperty("use_proxy_env", "true");
       System.out.println("Universal driver: use_proxy_env=true (WireMock proxy env detected)");
     }
+  }
+
+  private static void applyOldDriverProxy(Properties props, String proxyUrl) {
+    URI uri = URI.create(proxyUrl.trim());
+    String host = uri.getHost();
+    if (isBlank(host)) {
+      throw new IllegalStateException("Cannot parse proxy host from HTTP(S)_PROXY=" + proxyUrl);
+    }
+    int port = uri.getPort();
+    if (port < 0) {
+      port = "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    }
+    props.setProperty("useProxy", "true");
+    props.setProperty("proxyHost", host);
+    props.setProperty("proxyPort", Integer.toString(port));
+    props.setProperty("disableOCSPChecks", "true");
+    System.out.println(
+        "Old driver: useProxy=true proxyHost="
+            + host
+            + " proxyPort="
+            + port
+            + " disableOCSPChecks=true (WireMock proxy)");
   }
 
   String jdbcUrl(Properties props) {
@@ -174,5 +204,12 @@ final class Config {
 
   private static boolean isBlank(String s) {
     return s == null || s.trim().isEmpty();
+  }
+
+  private static String firstNonBlank(String a, String b) {
+    if (!isBlank(a)) {
+      return a;
+    }
+    return isBlank(b) ? null : b;
   }
 }

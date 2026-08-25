@@ -482,7 +482,11 @@ def _log_wiremock_metrics(metrics: dict, warmup_iterations: int = 0, iterations:
         logger.info("No requests recorded")
         logger.info("=" * 80)
         logger.info("")
-        return
+        raise RuntimeError(
+            "WireMock replay saw 0 requests. The driver did not use the proxy "
+            "(HTTPS_PROXY / useProxy), so results would measure live Snowflake "
+            "instead of recorded HTTP."
+        )
 
     serve_all = metrics.get("serve_times", [])
     send_all = metrics.get("send_times", [])
