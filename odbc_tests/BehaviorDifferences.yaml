@@ -2544,3 +2544,21 @@ behavior_differences:
       SQLColAttribute DISPLAY_SIZE for TIMESTAMP remains 29 (unchanged).
     description: |
       Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/column-size
+
+  129:
+    name: "SQLColumns TIMESTAMP BUFFER_LENGTH is 16 (not legacy 35)"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      SQLColumns BUFFER_LENGTH (col 8) for TIMESTAMP* copies COLUMN_SIZE and
+      therefore returns 35.
+    new_driver_behavior: |
+      SQLColumns BUFFER_LENGTH for TIMESTAMP* is 16 (sizeof SQL_TIMESTAMP_STRUCT),
+      the ODBC transfer octet length under SQL_C_DEFAULT. COLUMN_SIZE remains
+      20+scale. Query-result SQLColAttribute OCTET_LENGTH for
+      TIMESTAMP remains 16 (unchanged).
+    description: |
+      Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
