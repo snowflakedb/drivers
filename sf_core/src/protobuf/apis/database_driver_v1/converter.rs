@@ -8,7 +8,8 @@ use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescr
 use crate::apis::database_driver_v1::ResultSetInfo as NativeResultSetInfo;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::{
-    ConfigError, InlineJsonEncodeSnafu, InvalidColumnMetadataSnafu, RestError,
+    ConfigError, InlineJsonEncodeSnafu, InvalidColumnMetadataSnafu, QueryResponseProcessingError,
+    RestError,
 };
 use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
@@ -19,6 +20,8 @@ use crate::chunks::{
     ArrowIpcEncodeSnafu, ChunkDownloadData, ChunkError, ChunkFormatKind, ChunkReadSnafu,
     FetchChunkInput, convert_string_rowset_to_arrow_reader,
 };
+use crate::compression_types::CompressionTypeError;
+use crate::file_manager::FileManagerError;
 use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
@@ -660,301 +663,110 @@ pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> Vali
 }
 
 // ---------------------------------------------------------------------------
-// Error conversion (ApiError → DriverError / DriverException)
+// Error conversion (ApiError → DriverException)
 // ---------------------------------------------------------------------------
 
-fn to_driver_error(error: &ApiError) -> DriverError {
-    match error {
-        ApiError::GenericError { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
-        },
-        ApiError::RuntimeCreation { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::Configuration {
-            source:
-                ConfigError::InvalidParameterValue {
-                    parameter,
-                    value,
-                    explanation,
-                    ..
-                },
-            ..
-        } => DriverError {
-            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
-                InvalidParameterValue {
-                    parameter: parameter.clone(),
-                    value: value.clone(),
-                    explanation: Some(explanation.clone()),
-                    code: None,
-                },
-            )),
-        },
-        ApiError::Configuration {
-            source: ConfigError::MissingParameter { parameter, .. },
-            ..
-        } => DriverError {
-            error_type: Some(driver_error::ErrorType::MissingParameter(
-                MissingParameter {
-                    parameter: parameter.clone(),
-                },
-            )),
-        },
-        ApiError::Configuration {
-            source: ConfigError::ConflictingParameters { explanation, .. },
-            ..
-        } => DriverError {
-            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
-                InvalidParameterValue {
-                    parameter: "private_key/private_key_file".to_string(),
-                    value: "(both set)".to_string(),
-                    explanation: Some(explanation.clone()),
-                    // Not produced by validate_settings (this is a separate, older
-                    // check in read_private_key), so no ValidationCode to report.
-                    code: None,
-                },
-            )),
-        },
-        ApiError::Configuration {
-            source: ConfigError::Validation { issues, .. },
+fn classify_config(
+    source: &ConfigError,
+    parameter: &mut Option<String>,
+    parameter_value: &mut Option<String>,
+    validation_code: &mut Option<i32>,
+) -> ErrorKind {
+    match source {
+        ConfigError::InvalidParameterValue {
+            parameter: name,
+            value,
             ..
         } => {
-            let summary = issues
-                .iter()
-                .map(|issue| format!("{}: {}", issue.parameter, issue.message))
-                .collect::<Vec<_>>()
-                .join("; ");
-            let first_param = issues
-                .first()
-                .map(|issue| issue.parameter.clone())
-                .unwrap_or_default();
-            let first_missing_param = issues
-                .iter()
-                .find(|issue| issue.code == CoreValidationCode::MissingRequired)
-                .map(|issue| issue.parameter.clone())
-                .unwrap_or_else(|| first_param.clone());
-            if issues
-                .iter()
-                .any(|i| i.code == CoreValidationCode::MissingRequired)
-            {
-                DriverError {
-                    error_type: Some(driver_error::ErrorType::MissingParameter(
-                        MissingParameter {
-                            parameter: first_missing_param,
-                        },
-                    )),
-                }
-            } else {
-                // Mirrors the MissingRequired handling above: a WIF-conflict
-                // issue must win over blind `.first()` selection, or
-                // `_is_wif_conflict` on the Python side silently misses it
-                // whenever validate_settings also pushes an unrelated
-                // Error-severity issue earlier in the same call.
-                let wif_issue = issues
-                    .iter()
-                    .find(|issue| issue.code == CoreValidationCode::ConflictingWifParameters);
-                let (chosen_param, chosen_code) = match wif_issue {
-                    Some(issue) => (issue.parameter.clone(), Some(issue.code)),
-                    None => (first_param, issues.first().map(|issue| issue.code)),
-                };
-                DriverError {
-                    error_type: Some(driver_error::ErrorType::InvalidParameterValue(
-                        InvalidParameterValue {
-                            parameter: chosen_param,
-                            value: String::new(),
-                            explanation: Some(summary),
-                            code: chosen_code.map(core_validation_code_to_proto),
-                        },
-                    )),
-                }
-            }
+            *parameter = Some(name.clone());
+            *parameter_value = Some(value.clone());
+            ErrorKind::InvalidParameterValue
         }
-        ApiError::InvalidArgument { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::InvalidWifProvider { provider, .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
-                InvalidParameterValue {
-                    parameter: "provider".to_string(),
-                    value: provider.clone(),
-                    explanation: Some(format!(
-                        "Allowed values: {}",
-                        crate::config::rest_parameters::WifProvider::allowed_values()
-                    )),
-                    code: None,
-                },
-            )),
-        },
-        ApiError::WorkloadIdentityAttestation { source, .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
-                InvalidParameterValue {
-                    parameter: String::new(),
-                    value: String::new(),
-                    explanation: Some(source.to_string()),
-                    code: None,
-                },
-            )),
-        },
-        ApiError::Login { source, .. } => match source.as_ref() {
-            RestError::LoginError { message, code, .. } => DriverError {
-                error_type: Some(driver_error::ErrorType::LoginError(LoginError {
-                    message: message.clone(),
-                    code: *code,
-                })),
-            },
-            _ => DriverError {
-                error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                    detail: source.to_string(),
-                })),
-            },
-        },
-        ApiError::ConnectionLock { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::StatementLocking { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::DatabaseLocking { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::QueryResponseProcess { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::ConnectionNotInitialized { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::TlsClientCreation { source, .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                detail: source.to_string(),
-            })),
-        },
-        ApiError::SessionRefresh { source, .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                detail: source.to_string(),
-            })),
-        },
-        ApiError::Statement { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::Query { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::MasterTokenExpired { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                detail: "Master token expired, full re-authentication required".to_string(),
-            })),
-        },
-        ApiError::InvalidRefreshState { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::ChunkFetch { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::ArrowParse { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::JsonChunkDecode { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::BlockingTaskJoin { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::InlineJsonEncode { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::InvalidColumnMetadata { column, .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
-                InvalidParameterValue {
-                    parameter: format!("column: {column}"),
-                    value: String::new(),
-                    explanation: Some("Failed to parse column metadata".to_string()),
-                    code: None,
-                },
-            )),
-        },
-        ApiError::Base64Decode { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::UnsupportedQueryResultFormat { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
-        ApiError::StageBinding { .. } => DriverError {
-            // Surface as `GenericError` for now: the wrapper-side fallback
-            // (catch `ApiError::StageBinding`, re-issue with inline JSON
-            // bindings) lives in a separate PR. A dedicated proto variant
-            // for stage-binding failures can land alongside that work —
-            // the underlying snafu source-chain (logged via the
-            // `error_trace::ErrorTrace` derive on `StageBindingError`)
-            // already carries the diagnostic detail.
-            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
-        },
-        ApiError::TokenCacheInitialization { source, .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                detail: source.to_string(),
-            })),
-        },
-        ApiError::HttpRequest { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
-        },
-        ApiError::TokenRequest { source, .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                detail: source.to_string(),
-            })),
-        },
-        ApiError::Configuration {
-            source: ConfigError::ConfigFileRead { .. },
-            ..
+        ConfigError::MissingParameter {
+            parameter: name, ..
+        } => {
+            *parameter = Some(name.clone());
+            ErrorKind::MissingParameter
         }
-        | ApiError::Configuration {
-            source: ConfigError::TomlParse { .. },
+        ConfigError::ConflictingParameters {
+            parameter: name,
+            value,
             ..
+        } => {
+            *parameter = Some(name.clone());
+            *parameter_value = Some(value.clone());
+            ErrorKind::InvalidParameterValue
         }
-        | ApiError::Configuration {
-            source: ConfigError::IniParse { .. },
-            ..
+        ConfigError::ConnectionNotFound { name, .. } => {
+            *parameter = Some(format!("connection: {name}"));
+            ErrorKind::MissingParameter
         }
-        | ApiError::Configuration {
-            source: ConfigError::IniAlreadyLoaded { .. },
-            ..
+        ConfigError::Validation { issues, .. } => {
+            classify_validation(issues, parameter, validation_code)
         }
-        | ApiError::Configuration {
-            source: ConfigError::InsecurePermissions { .. },
-            ..
-        }
-        | ApiError::Configuration {
-            source: ConfigError::ConfigDirNotFound { .. },
-            ..
-        } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        ConfigError::ConfigFileRead { .. }
+        | ConfigError::TomlParse { .. }
+        | ConfigError::IniParse { .. }
+        | ConfigError::IniAlreadyLoaded { .. }
+        | ConfigError::InsecurePermissions { .. }
+        | ConfigError::ConfigDirNotFound { .. } => ErrorKind::InternalError,
+    }
+}
+
+fn classify_validation(
+    issues: &[CoreValidationIssue],
+    parameter: &mut Option<String>,
+    validation_code: &mut Option<i32>,
+) -> ErrorKind {
+    if let Some(issue) = issues
+        .iter()
+        .find(|issue| issue.code == CoreValidationCode::MissingRequired)
+    {
+        *parameter = Some(issue.parameter.clone());
+        return ErrorKind::MissingParameter;
+    }
+    // A WIF-conflict issue must win over blind `.first()` selection,
+    // or `_is_wif_conflict` on the Python side silently misses it
+    // whenever validate_settings also pushes an unrelated
+    // Error-severity issue earlier in the same call.
+    let wif_issue = issues
+        .iter()
+        .find(|issue| issue.code == CoreValidationCode::ConflictingWifParameters);
+    let (chosen_param, chosen_code) = match wif_issue {
+        Some(issue) => (Some(issue.parameter.clone()), Some(issue.code)),
+        None => (
+            issues.first().map(|issue| issue.parameter.clone()),
+            issues.first().map(|issue| issue.code),
+        ),
+    };
+    *parameter = chosen_param;
+    *validation_code = chosen_code.map(core_validation_code_to_proto);
+    ErrorKind::InvalidParameterValue
+}
+
+fn classify_query_response(source: &QueryResponseProcessingError) -> ErrorKind {
+    match source {
+        QueryResponseProcessingError::FileUpload { source, .. }
+        | QueryResponseProcessingError::FileDownload { source, .. } => match source {
+            FileManagerError::NoFilesMatched { .. } => ErrorKind::LocalFileNotFound,
+            FileManagerError::CompressionType {
+                source: CompressionTypeError::UnsupportedCompressionType { .. },
+                ..
+            } => ErrorKind::UnsupportedCompression,
+            // A too-large source file / stage object is an input
+            // error, not a driver fault — surface it as
+            // `InvalidArgument` rather than `InternalError`.
+            s if s.is_file_too_large() => ErrorKind::InvalidArgument,
+            // Everything else here (Io, UploadBatch, cloud
+            // transport errors, ...) is an environmental/transfer
+            // failure, not an internal driver bug — `Io` maps to
+            // `OperationalError` on the Python side, matching the
+            // reference connector's own classification for the
+            // same class of failure.
+            _ => ErrorKind::Io,
         },
-        ApiError::Configuration {
-            source: ConfigError::ConnectionNotFound { name, .. },
-            ..
-        } => DriverError {
-            error_type: Some(driver_error::ErrorType::MissingParameter(
-                MissingParameter {
-                    parameter: format!("connection: {}", name),
-                },
-            )),
-        },
-        ApiError::ConnectionClosed { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
-        },
-        ApiError::Logout { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
-        },
-        ApiError::QueryTimeout { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
-        },
-        ApiError::CancelTimeout { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
-        },
-        ApiError::Cancelled { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
-        },
-        ApiError::SpoolBufferWrite { .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
-        },
+        QueryResponseProcessingError::RemoteFileNotFound { .. } => ErrorKind::RemoteFileNotFound,
+        _ => ErrorKind::InternalError,
     }
 }
 
@@ -1049,128 +861,47 @@ fn extract_request_id(error: &ApiError) -> Option<String> {
 }
 
 fn to_driver_exception(error: ApiError) -> DriverException {
+    let mut parameter = None;
+    let mut parameter_value = None;
+    let mut validation_code = None;
+
     let kind = match &error {
-        ApiError::GenericError { .. } => ErrorKind::GenericError,
-        ApiError::RuntimeCreation { .. } => ErrorKind::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::InvalidParameterValue { .. },
-            ..
-        } => ErrorKind::InvalidParameterValue,
-        ApiError::Configuration {
-            source: ConfigError::MissingParameter { .. },
-            ..
-        } => ErrorKind::MissingParameter,
-        ApiError::Configuration {
-            source: ConfigError::ConflictingParameters { .. },
-            ..
-        } => ErrorKind::InvalidParameterValue,
-        ApiError::Configuration {
-            source: ConfigError::ConfigFileRead { .. },
-            ..
-        } => ErrorKind::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::TomlParse { .. },
-            ..
-        } => ErrorKind::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::IniParse { .. },
-            ..
-        } => ErrorKind::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::IniAlreadyLoaded { .. },
-            ..
-        } => ErrorKind::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::InsecurePermissions { .. },
-            ..
-        } => ErrorKind::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::ConfigDirNotFound { .. },
-            ..
-        } => ErrorKind::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::ConnectionNotFound { .. },
-            ..
-        } => ErrorKind::MissingParameter,
-        ApiError::Configuration {
-            source: ConfigError::Validation { issues, .. },
-            ..
-        } if issues
-            .iter()
-            .any(|i| i.code == CoreValidationCode::MissingRequired) =>
-        {
-            ErrorKind::MissingParameter
+        ApiError::Configuration { source, .. } => classify_config(
+            source,
+            &mut parameter,
+            &mut parameter_value,
+            &mut validation_code,
+        ),
+        ApiError::QueryResponseProcess { source, .. } => classify_query_response(source),
+
+        ApiError::InvalidColumnMetadata { column, .. } => {
+            parameter = Some(format!("column: {column}"));
+            ErrorKind::InvalidArgument
         }
-        ApiError::Configuration {
-            source: ConfigError::Validation { .. },
-            ..
-        } => ErrorKind::InvalidParameterValue,
-        ApiError::InvalidArgument { .. } => ErrorKind::InvalidArgument,
-        ApiError::InvalidWifProvider { .. } => ErrorKind::InvalidParameterValue,
+        ApiError::InvalidWifProvider { provider, .. } => {
+            parameter = Some("provider".to_string());
+            parameter_value = Some(provider.clone());
+            ErrorKind::InvalidParameterValue
+        }
         // Use InvalidParameterValue so Python callers see ProgrammingError,
         // matching the legacy connector's exception class for this function.
         ApiError::WorkloadIdentityAttestation { .. } => ErrorKind::InvalidParameterValue,
+
         ApiError::Login { source, .. } => match source.as_ref() {
             RestError::LoginError { .. } => ErrorKind::LoginError,
             _ => ErrorKind::AuthenticationError,
         },
-        ApiError::ConnectionLock { .. } => ErrorKind::InternalError,
-        ApiError::StatementLocking { .. } => ErrorKind::InternalError,
-        ApiError::DatabaseLocking { .. } => ErrorKind::InternalError,
-        ApiError::QueryResponseProcess {
-            source: boxed_error,
-            ..
-        } => {
-            use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
-            use crate::compression_types::CompressionTypeError;
-            use crate::file_manager::FileManagerError;
+        ApiError::TlsClientCreation { .. }
+        | ApiError::SessionRefresh { .. }
+        | ApiError::MasterTokenExpired { .. }
+        | ApiError::TokenCacheInitialization { .. }
+        | ApiError::TokenRequest { .. } => ErrorKind::AuthenticationError,
 
-            match boxed_error.as_ref() {
-                QueryResponseProcessingError::FileUpload { source, .. }
-                | QueryResponseProcessingError::FileDownload { source, .. } => match source {
-                    FileManagerError::NoFilesMatched { .. } => ErrorKind::LocalFileNotFound,
-                    FileManagerError::CompressionType {
-                        source: CompressionTypeError::UnsupportedCompressionType { .. },
-                        ..
-                    } => ErrorKind::UnsupportedCompression,
-                    // A too-large source file / stage object is an input
-                    // error, not a driver fault — surface it as
-                    // `InvalidArgument` rather than `InternalError`.
-                    s if s.is_file_too_large() => ErrorKind::InvalidArgument,
-                    // Everything else here (Io, UploadBatch, cloud
-                    // transport errors, ...) is an environmental/transfer
-                    // failure, not an internal driver bug — `Io` maps to
-                    // `OperationalError` on the Python side, matching the
-                    // reference connector's own classification for the
-                    // same class of failure.
-                    _ => ErrorKind::Io,
-                },
-                QueryResponseProcessingError::RemoteFileNotFound { .. } => {
-                    ErrorKind::RemoteFileNotFound
-                }
-                _ => ErrorKind::InternalError,
-            }
+        ApiError::InvalidArgument { .. } | ApiError::ConnectionClosed { .. } => {
+            ErrorKind::InvalidArgument
         }
-        ApiError::ConnectionNotInitialized { .. } => ErrorKind::InternalError,
-        ApiError::TlsClientCreation { .. } => ErrorKind::AuthenticationError,
-        ApiError::SessionRefresh { .. } => ErrorKind::AuthenticationError,
-        ApiError::Statement { .. } => ErrorKind::InternalError,
-        ApiError::Query { .. } => ErrorKind::InternalError,
-        ApiError::MasterTokenExpired { .. } => ErrorKind::AuthenticationError,
-        ApiError::InvalidRefreshState { .. } => ErrorKind::InternalError,
-        ApiError::TokenCacheInitialization { .. } => ErrorKind::AuthenticationError,
-        ApiError::ChunkFetch { .. } => ErrorKind::InternalError,
-        ApiError::ArrowParse { .. } => ErrorKind::InternalError,
-        ApiError::JsonChunkDecode { .. } => ErrorKind::InternalError,
-        ApiError::BlockingTaskJoin { .. } => ErrorKind::InternalError,
-        ApiError::InlineJsonEncode { .. } => ErrorKind::InternalError,
-        ApiError::InvalidColumnMetadata { .. } => ErrorKind::InvalidArgument,
-        ApiError::Base64Decode { .. } => ErrorKind::InternalError,
-        ApiError::UnsupportedQueryResultFormat { .. } => ErrorKind::InternalError,
-        ApiError::HttpRequest { .. } => ErrorKind::GenericError,
-        ApiError::TokenRequest { .. } => ErrorKind::AuthenticationError,
-        ApiError::ConnectionClosed { .. } => ErrorKind::InvalidArgument,
-        ApiError::Logout { .. } => ErrorKind::InternalError,
+
+        ApiError::GenericError { .. } | ApiError::HttpRequest { .. } => ErrorKind::GenericError,
         // Stage-binding failures are surfaced as a transport-layer
         // generic error for now (no dedicated proto ErrorKind yet);
         // the wrapper-side fallback work will add a dedicated variant and
@@ -1183,9 +914,25 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::CancelTimeout { .. } => ErrorKind::GenericError,
         ApiError::Cancelled { .. } => ErrorKind::Cancelled,
 
+        ApiError::Query { .. }
+        | ApiError::Statement { .. }
+        | ApiError::ConnectionLock { .. }
+        | ApiError::StatementLocking { .. }
+        | ApiError::DatabaseLocking { .. }
+        | ApiError::ConnectionNotInitialized { .. }
+        | ApiError::InvalidRefreshState { .. }
+        | ApiError::Logout { .. }
+        | ApiError::RuntimeCreation { .. }
+        | ApiError::ChunkFetch { .. }
+        | ApiError::ArrowParse { .. }
+        | ApiError::JsonChunkDecode { .. }
+        | ApiError::BlockingTaskJoin { .. }
+        | ApiError::InlineJsonEncode { .. }
+        | ApiError::Base64Decode { .. }
+        | ApiError::UnsupportedQueryResultFormat { .. }
         // Local temp-file / in-memory spool I/O failure while buffering a
         // chunked upload-stream chunk — a driver-side fault, not caller input.
-        ApiError::SpoolBufferWrite { .. } => ErrorKind::InternalError,
+        | ApiError::SpoolBufferWrite { .. } => ErrorKind::InternalError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
@@ -1193,7 +940,6 @@ fn to_driver_exception(error: ApiError) -> DriverException {
     let request_id = extract_request_id(&error);
     let message = error.to_string();
     let root_cause = extract_root_cause(&error);
-    let driver_error = to_driver_error(&error);
 
     let error_trace = error
         .error_trace()
@@ -1208,13 +954,15 @@ fn to_driver_exception(error: ApiError) -> DriverException {
     DriverException {
         message,
         kind: kind as i32,
-        error: Some(driver_error),
         error_trace,
         vendor_code,
         sql_state,
         root_cause,
         query_id,
         request_id,
+        parameter,
+        parameter_value,
+        validation_code,
     }
 }
 
@@ -1454,10 +1202,10 @@ mod tests {
     fn validation_error(issues: Vec<CoreValidationIssue>) -> ApiError {
         ApiError::Configuration {
             location: loc(),
-            source: ConfigError::Validation {
+            source: Box::from(ConfigError::Validation {
                 issues,
                 location: loc(),
-            },
+            }),
         }
     }
 
@@ -1487,17 +1235,12 @@ mod tests {
             "workload_identity_provider",
             "workload_identity_provider was set but authenticator was not set to WORKLOAD_IDENTITY",
         )]);
-        let driver_error = to_driver_error(&err);
-        match driver_error.error_type {
-            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
-                assert_eq!(inner.parameter, "workload_identity_provider");
-                assert_eq!(
-                    inner.code,
-                    Some(ValidationCode::ConflictingWifParameters as i32)
-                );
-            }
-            other => panic!("expected InvalidParameterValue, got {other:?}"),
-        }
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.parameter.as_deref(), Some("workload_identity_provider"));
+        assert_eq!(
+            exc.validation_code,
+            Some(ValidationCode::ConflictingWifParameters as i32)
+        );
     }
 
     #[test]
@@ -1518,17 +1261,21 @@ mod tests {
                 code: CoreValidationCode::InvalidValue,
             },
         ]);
-        let driver_error = to_driver_error(&err);
-        match driver_error.error_type {
-            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
-                assert_eq!(inner.parameter, "workload_identity_impersonation_path");
-                assert_eq!(
-                    inner.code,
-                    Some(ValidationCode::ConflictingWifParameters as i32)
-                );
-            }
-            other => panic!("expected InvalidParameterValue, got {other:?}"),
-        }
+        let exc = to_driver_exception(err);
+        assert_eq!(
+            exc.parameter.as_deref(),
+            Some("workload_identity_impersonation_path")
+        );
+        assert_eq!(
+            exc.validation_code,
+            Some(ValidationCode::ConflictingWifParameters as i32)
+        );
+        assert_eq!(
+            exc.message,
+            "Configuration error: Configuration validation failed (2 issue(s)): \
+             workload_identity_impersonation_path: unsupported for OIDC; \
+             token: Missing required parameter 'token'"
+        );
     }
 
     #[test]
@@ -1549,17 +1296,12 @@ mod tests {
                 "workload_identity_provider was set but authenticator was not WORKLOAD_IDENTITY",
             ),
         ]);
-        let driver_error = to_driver_error(&err);
-        match driver_error.error_type {
-            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
-                assert_eq!(inner.parameter, "workload_identity_provider");
-                assert_eq!(
-                    inner.code,
-                    Some(ValidationCode::ConflictingWifParameters as i32)
-                );
-            }
-            other => panic!("expected InvalidParameterValue, got {other:?}"),
-        }
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.parameter.as_deref(), Some("workload_identity_provider"));
+        assert_eq!(
+            exc.validation_code,
+            Some(ValidationCode::ConflictingWifParameters as i32)
+        );
     }
 
     #[test]
@@ -1571,24 +1313,19 @@ mod tests {
             "private_key",
             "Both 'private_key' and 'private_key_file' are set. Please provide only one.",
         )]);
-        let driver_error = to_driver_error(&err);
-        match driver_error.error_type {
-            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
-                assert_eq!(inner.parameter, "private_key");
-                assert_eq!(
-                    inner.code,
-                    Some(ValidationCode::ConflictingParameters as i32)
-                );
-            }
-            other => panic!("expected InvalidParameterValue, got {other:?}"),
-        }
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.parameter.as_deref(), Some("private_key"));
+        assert_eq!(
+            exc.validation_code,
+            Some(ValidationCode::ConflictingParameters as i32)
+        );
     }
 
     #[test]
     fn validation_error_missing_required_takes_priority_over_code_field() {
         // Existing behavior: any MissingRequired issue routes to MissingParameter
         // instead of InvalidParameterValue, regardless of ValidationCode on other
-        // issues. MissingParameter has no `code` field — nothing new to carry.
+        // issues. MissingParameter carries no validation_code.
         let err = validation_error(vec![
             conflicting_parameters_issue("workload_identity_provider", "conflict"),
             CoreValidationIssue {
@@ -1598,13 +1335,10 @@ mod tests {
                 code: CoreValidationCode::MissingRequired,
             },
         ]);
-        let driver_error = to_driver_error(&err);
-        match driver_error.error_type {
-            Some(driver_error::ErrorType::MissingParameter(inner)) => {
-                assert_eq!(inner.parameter, "account");
-            }
-            other => panic!("expected MissingParameter, got {other:?}"),
-        }
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::MissingParameter as i32);
+        assert_eq!(exc.parameter.as_deref(), Some("account"));
+        assert_eq!(exc.validation_code, None);
     }
 
     #[test]
@@ -1613,20 +1347,53 @@ mod tests {
         // validate_settings, so it carries no ValidationCode.
         let err = ApiError::Configuration {
             location: loc(),
-            source: ConfigError::InvalidParameterValue {
+            source: Box::from(ConfigError::InvalidParameterValue {
                 parameter: "authenticator".to_owned(),
                 value: "BAD".to_owned(),
                 explanation: "not supported".to_owned(),
                 location: loc(),
-            },
+            }),
         };
-        let driver_error = to_driver_error(&err);
-        match driver_error.error_type {
-            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
-                assert_eq!(inner.code, None);
-            }
-            other => panic!("expected InvalidParameterValue, got {other:?}"),
-        }
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.parameter.as_deref(), Some("authenticator"));
+        assert_eq!(exc.parameter_value.as_deref(), Some("BAD"));
+        assert_eq!(exc.validation_code, None);
+    }
+
+    #[test]
+    fn conflicting_parameters_copies_fields_from_the_error() {
+        let err = ApiError::Configuration {
+            location: loc(),
+            source: Box::from(ConfigError::ConflictingParameters {
+                parameter: "private_key".to_owned(),
+                value: "private_key_file".to_owned(),
+                explanation:
+                    "Both 'private_key' and 'private_key_file' are set. Please provide only one."
+                        .to_owned(),
+                location: loc(),
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::InvalidParameterValue as i32);
+        assert_eq!(exc.parameter.as_deref(), Some("private_key"));
+        assert_eq!(exc.parameter_value.as_deref(), Some("private_key_file"));
+        assert_eq!(exc.validation_code, None);
+    }
+
+    #[test]
+    fn invalid_wif_provider_message_lists_allowed_values() {
+        let exc = to_driver_exception(ApiError::InvalidWifProvider {
+            provider: "invalid".to_owned(),
+            location: loc(),
+        });
+
+        assert_eq!(
+            exc.message,
+            format!(
+                "Invalid workload_identity_provider: 'invalid'. Allowed values: {}",
+                crate::config::rest_parameters::WifProvider::allowed_values()
+            )
+        );
     }
 
     #[test]
@@ -1744,11 +1511,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workload_identity_attestation_error_type_and_kind_agree() {
-        // Regression guard: error_type and kind must classify this
-        // failure the same way, so Python (which dispatches on kind)
-        // and any future JDBC/ODBC caller (which would dispatch on
-        // error_type) both see ProgrammingError-equivalent behavior.
+    async fn workload_identity_attestation_kind_is_invalid_parameter_value() {
         use crate::config::rest_parameters::{WifProvider, WorkloadIdentityConfig};
         use crate::rest::snowflake::workload_identity;
 
@@ -1767,16 +1530,6 @@ mod tests {
             location: loc(),
             source: Box::new(source),
         };
-
-        let dr_err = to_driver_error(&err);
-        assert!(
-            matches!(
-                dr_err.error_type,
-                Some(driver_error::ErrorType::InvalidParameterValue(_))
-            ),
-            "error_type must be InvalidParameterValue, not GenericError"
-        );
-
         assert_eq!(
             to_driver_exception(err).kind,
             ErrorKind::InvalidParameterValue as i32

@@ -56,9 +56,10 @@ pub(super) fn read_private_key(settings: &dyn Settings) -> Result<SensitiveStrin
 
     if has_private_key && has_private_key_file {
         return ConflictingParametersSnafu {
+            parameter: "private_key",
+            value: "private_key_file",
             explanation:
-                "Both 'private_key' and 'private_key_file' are set. Please provide only one."
-                    .to_string(),
+                "Both 'private_key' and 'private_key_file' are set. Please provide only one.",
         }
         .fail();
     }
@@ -286,10 +287,18 @@ mod tests {
             ),
             ("private_key_file", Setting::String("/some/path".into())),
         ]);
-        assert!(matches!(
-            read_private_key(&settings),
-            Err(ConfigError::ConflictingParameters { .. })
-        ));
+        let err = read_private_key(&settings).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::ConflictingParameters {
+                    ref parameter,
+                    ref value,
+                    ..
+                } if parameter == "private_key" && value == "private_key_file"
+            ),
+            "expected ConflictingParameters with parameter/value from construction, got: {err:?}"
+        );
     }
 
     #[test]

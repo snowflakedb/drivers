@@ -14,8 +14,7 @@ use arrow::error::ArrowError;
 use odbc_sys as sql;
 use proto_utils::ProtoError;
 use sf_core::protobuf::generated::database_driver_v1::{
-    ErrorTraceEntry, GenericError, InvalidParameterValue as ProtoInvalidParameterValue,
-    MissingParameter as ProtoMissingParameter, driver_error::ErrorType,
+    ErrorKind as ProtoErrorKind, ErrorTraceEntry,
 };
 
 use error_trace::ErrorTrace;
@@ -868,22 +867,23 @@ impl OdbcError {
     fn structured_message(&self) -> Option<String> {
         match self {
             OdbcError::CoreError { source, .. } => match source.as_ref() {
-                CoreProtobufError::Application { error, message, .. } => match error.as_ref() {
-                    ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
-                        explanation: Some(explanation),
-                        ..
-                    }) => Some(explanation.clone()),
-                    ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
-                        Some(format!("Missing required parameter: {parameter}"))
+                CoreProtobufError::Application {
+                    kind,
+                    message,
+                    parameter,
+                    ..
+                } => {
+                    if *kind == ProtoErrorKind::MissingParameter as i32
+                        && let Some(parameter) = parameter
+                    {
+                        return Some(format!("Missing required parameter: {parameter}"));
                     }
-                    _ => {
-                        // Surface the server message directly so `SQLGetDiagRec`
-                        // sees the original server text (e.g. "SQL compilation
-                        // error: Object 'X' does not exist or not authorized")
-                        // instead of the generic "Received core protobuf error".
-                        Some(message.clone()).filter(|m| !m.is_empty())
-                    }
-                },
+                    // Surface the server message directly so `SQLGetDiagRec`
+                    // sees the original server text (e.g. "SQL compilation
+                    // error: Object 'X' does not exist or not authorized")
+                    // instead of the generic "Received core protobuf error".
+                    Some(message.clone()).filter(|m| !m.is_empty())
+                }
                 _ => None,
             },
             _ => None,
@@ -1019,7 +1019,8 @@ impl OdbcError {
             OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Transport { .. } => SqlState::ClientUnableToEstablishConnection,
                 CoreProtobufError::Application {
-                    error,
+                    kind,
+                    parameter,
                     sql_state: server_sql_state,
                     vendor_code,
                     ..
@@ -1078,9 +1079,24 @@ impl OdbcError {
                             .parse()
                             .unwrap_or_else(|_| SqlState::Unknown(state.to_owned()));
                     }
-                    match error.as_ref() {
-                        ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
-                        ErrorType::GenericError(_) | ErrorType::InternalError(_) => {
+                    match *kind {
+                        k if k == ProtoErrorKind::AuthenticationError as i32
+                            || k == ProtoErrorKind::LoginError as i32 =>
+                        {
+                            SqlState::InvalidAuthorizationSpecification
+                        }
+                        k if k == ProtoErrorKind::InvalidParameterValue as i32
+                            || k == ProtoErrorKind::MissingParameter as i32 =>
+                        {
+                            if parameter.as_ref().is_some_and(|p| {
+                                AUTHENTICATOR_PARAMETERS.contains(&p.to_uppercase())
+                            }) {
+                                SqlState::InvalidAuthorizationSpecification
+                            } else {
+                                SqlState::InvalidConnectionStringAttribute
+                            }
+                        }
+                        _ => {
                             // No usable SQLSTATE on the wire and `sf_core`'s
                             // `extract_vendor_info` couldn't recover one
                             // from the numeric error code either, so HY000
@@ -1089,24 +1105,6 @@ impl OdbcError {
                             // server, not to the driver.
                             SqlState::GeneralError
                         }
-                        ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
-                            parameter,
-                            ..
-                        }) => {
-                            if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
-                                SqlState::InvalidAuthorizationSpecification
-                            } else {
-                                SqlState::InvalidConnectionStringAttribute
-                            }
-                        }
-                        ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
-                            if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
-                                SqlState::InvalidAuthorizationSpecification
-                            } else {
-                                SqlState::InvalidConnectionStringAttribute
-                            }
-                        }
-                        ErrorType::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
                     }
                 }
             },
@@ -1138,17 +1136,7 @@ impl OdbcError {
     pub fn to_native_error(&self) -> sql::Integer {
         match self {
             OdbcError::CoreError { source, .. } => match source.as_ref() {
-                CoreProtobufError::Application {
-                    error, vendor_code, ..
-                } => {
-                    if let Some(code) = vendor_code {
-                        return *code;
-                    }
-                    match error.as_ref() {
-                        ErrorType::LoginError(login_error) => login_error.code,
-                        _ => 0,
-                    }
-                }
+                CoreProtobufError::Application { vendor_code, .. } => vendor_code.unwrap_or(0),
                 CoreProtobufError::Transport { .. } => 0,
             },
             _ => 0,
@@ -1182,18 +1170,13 @@ impl OdbcError {
         let location = Location::new(loc.file(), loc.line(), loc.column());
         let core_error = match error {
             ProtoError::Application(driver_exception) => CoreProtobufError::Application {
-                error: Box::new(
-                    driver_exception
-                        .error
-                        .and_then(|error| error.error_type)
-                        .unwrap_or(ErrorType::GenericError(GenericError {})),
-                ),
                 message: driver_exception.message,
                 kind: driver_exception.kind,
                 error_trace: driver_exception.error_trace,
                 sql_state: driver_exception.sql_state,
                 vendor_code: driver_exception.vendor_code,
                 query_id: driver_exception.query_id,
+                parameter: driver_exception.parameter,
                 location,
             },
             ProtoError::Transport(message) => CoreProtobufError::Transport { message, location },
@@ -1216,7 +1199,6 @@ impl From<ProtoError<ProtoDriverException>> for OdbcError {
 pub enum CoreProtobufError {
     #[snafu(display("Application error: {message}"))]
     Application {
-        error: Box<ErrorType>,
         message: String,
         kind: i32,
         error_trace: Vec<ErrorTraceEntry>,
@@ -1228,6 +1210,8 @@ pub enum CoreProtobufError {
         vendor_code: Option<i32>,
         /// Snowflake Query ID from the failed query, if available.
         query_id: Option<String>,
+        /// Offending config/bind parameter name, when the failure is about a parameter.
+        parameter: Option<String>,
         location: Location,
     },
     #[snafu(display("Transport error: {message}"))]
@@ -1382,15 +1366,13 @@ mod tests {
         assert_eq!(
             OdbcError::CoreError {
                 source: Box::new(CoreProtobufError::Application {
-                    error: Box::new(ErrorType::GenericError(
-                        sf_core::protobuf::generated::database_driver_v1::GenericError {},
-                    )),
                     message: "boom".into(),
                     kind: 0,
                     error_trace: vec![],
                     sql_state: None,
                     vendor_code: None,
                     query_id: None,
+                    parameter: None,
                     location: loc(),
                 }),
                 location: loc(),
@@ -1447,15 +1429,13 @@ mod tests {
     fn server_generic_error_maps_to_hy000() {
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
-                error: Box::new(ErrorType::GenericError(
-                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
-                )),
                 message: "Some other server error".to_string(),
                 kind: 0,
                 error_trace: vec![],
                 sql_state: None,
                 vendor_code: None,
                 query_id: None,
+                parameter: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1480,15 +1460,13 @@ mod tests {
         for message in sniffable_messages {
             let odbc_err = OdbcError::CoreError {
                 source: Box::new(CoreProtobufError::Application {
-                    error: Box::new(ErrorType::GenericError(
-                        sf_core::protobuf::generated::database_driver_v1::GenericError {},
-                    )),
                     message: message.to_string(),
                     kind: 0,
                     error_trace: vec![],
                     sql_state: None,
                     vendor_code: None,
                     query_id: None,
+                    parameter: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -1510,15 +1488,13 @@ mod tests {
         // collapsing it to HY000.
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
-                error: Box::new(ErrorType::GenericError(
-                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
-                )),
                 message: "String 'hello world' is too long and would be truncated".to_string(),
                 kind: 0,
                 error_trace: vec![],
                 sql_state: Some("22000".to_string()),
                 vendor_code: None,
                 query_id: None,
+                parameter: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1548,15 +1524,13 @@ mod tests {
         for state in malformed {
             let odbc_err = OdbcError::CoreError {
                 source: Box::new(CoreProtobufError::Application {
-                    error: Box::new(ErrorType::GenericError(
-                        sf_core::protobuf::generated::database_driver_v1::GenericError {},
-                    )),
                     message: "boom".to_string(),
                     kind: 0,
                     error_trace: vec![],
                     sql_state: Some(state.to_string()),
                     vendor_code: None,
                     query_id: None,
+                    parameter: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -1608,15 +1582,13 @@ mod tests {
         // that value without inspecting the human-readable message.
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
-                error: Box::new(ErrorType::GenericError(
-                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
-                )),
                 message: "String 'hello world' is too long and would be truncated".to_string(),
                 kind: 0,
                 error_trace: vec![],
                 sql_state: Some("22001".to_string()),
                 vendor_code: None,
                 query_id: None,
+                parameter: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1634,15 +1606,13 @@ mod tests {
         // cross-thread SQLCancel race.
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
-                error: Box::new(ErrorType::GenericError(
-                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
-                )),
                 message: "SQL execution canceled".to_string(),
                 kind: 0,
                 error_trace: vec![],
                 sql_state: Some("57014".to_string()),
                 vendor_code: Some(sf_core::rest::snowflake::QUERY_CANCELED),
                 query_id: None,
+                parameter: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1755,20 +1725,10 @@ mod tests {
             message:
                 "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
                     .to_string(),
-            kind: 0,
-            error: Some(
-                sf_core::protobuf::generated::database_driver_v1::DriverError {
-                    error_type: Some(ErrorType::InternalError(
-                        sf_core::protobuf::generated::database_driver_v1::InternalError {},
-                    )),
-                },
-            ),
-            error_trace: vec![],
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
-            request_id: None,
-            root_cause: None,
+            ..Default::default()
         }));
 
         assert_eq!(
@@ -1784,20 +1744,10 @@ mod tests {
             message:
                 "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
                     .to_string(),
-            kind: 0,
-            error: Some(
-                sf_core::protobuf::generated::database_driver_v1::DriverError {
-                    error_type: Some(ErrorType::InternalError(
-                        sf_core::protobuf::generated::database_driver_v1::InternalError {},
-                    )),
-                },
-            ),
-            error_trace: vec![],
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
-            request_id: None,
-            root_cause: None,
+            ..Default::default()
         }));
 
         assert!(
@@ -1816,20 +1766,9 @@ mod tests {
             message:
                 "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
                     .to_string(),
-            kind: 0,
-            error: Some(
-                sf_core::protobuf::generated::database_driver_v1::DriverError {
-                    error_type: Some(ErrorType::InternalError(
-                        sf_core::protobuf::generated::database_driver_v1::InternalError {},
-                    )),
-                },
-            ),
-            error_trace: vec![],
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
-            query_id: None,
-            request_id: None,
-            root_cause: None,
+            ..Default::default()
         }));
 
         assert!(
@@ -1878,20 +1817,10 @@ mod tests {
             message:
                 "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
                     .to_string(),
-            kind: 0,
-            error: Some(
-                sf_core::protobuf::generated::database_driver_v1::DriverError {
-                    error_type: Some(ErrorType::InternalError(
-                        sf_core::protobuf::generated::database_driver_v1::InternalError {},
-                    )),
-                },
-            ),
-            error_trace: vec![],
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
-            request_id: None,
-            root_cause: None,
+            ..Default::default()
         }));
 
         assert_eq!(
@@ -1905,20 +1834,7 @@ mod tests {
     fn server_query_error_without_vendor_code_has_zero_native_error() {
         let err = OdbcError::from_protobuf_error(ProtoError::Application(ProtoDriverException {
             message: "Generic server error".to_string(),
-            kind: 0,
-            error: Some(
-                sf_core::protobuf::generated::database_driver_v1::DriverError {
-                    error_type: Some(ErrorType::GenericError(
-                        sf_core::protobuf::generated::database_driver_v1::GenericError {},
-                    )),
-                },
-            ),
-            error_trace: vec![],
-            vendor_code: None,
-            sql_state: None,
-            query_id: None,
-            request_id: None,
-            root_cause: None,
+            ..Default::default()
         }));
 
         assert_eq!(

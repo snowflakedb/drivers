@@ -6,16 +6,15 @@ import threading
 from typing import Any
 
 from snowflake.connector._internal.error_kinds import (
+    ERROR_KIND_AUTHENTICATION_ERROR,
     ERROR_KIND_LABELS,
+    ERROR_KIND_LOGIN_ERROR,
     KIND_TO_ERRNO,
     KIND_TO_EXCEPTION,
     VENDOR_CODE_TO_EXCEPTION,
 )
 from snowflake.connector.errors import DatabaseError, Error, OperationalError
 
-from ..protobuf_gen.database_driver_v1_pb2 import (
-    AuthenticationError as ProtoAuthenticationError,
-)
 from ..protobuf_gen.database_driver_v1_pb2 import (
     ColumnMetadata,
     ConfigGetPathsRequest,
@@ -117,15 +116,6 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     WifCreateAttestationResponse,
     WrapperIdentity,
 )
-from ..protobuf_gen.database_driver_v1_pb2 import (
-    InvalidParameterValue as ProtoInvalidParameterValue,
-)
-from ..protobuf_gen.database_driver_v1_pb2 import (
-    LoginError as ProtoLoginError,
-)
-from ..protobuf_gen.database_driver_v1_pb2 import (
-    MissingParameter as ProtoMissingParameter,
-)
 from ..protobuf_gen.database_driver_v1_services import AsyncDatabaseDriverClient, DatabaseDriverClient
 from ..protobuf_gen.proto_exception import (
     ProtoApplicationException,
@@ -155,58 +145,6 @@ def _stringify_session_parameters(parameters: dict[str, Any]) -> dict[str, str]:
     ``None`` -> ``"null"``, etc.) rather than serializing as a Python repr.
     """
     return {key: (value if isinstance(value, str) else json.dumps(value)) for key, value in parameters.items()}
-
-
-def _extract_error_detail(driver_exception: Any) -> str | None:
-    error = getattr(driver_exception, "error", None)
-    if error is None:
-        return None
-
-    error_type = error.WhichOneof("error_type")
-    if error_type is None:
-        return None
-
-    inner = getattr(error, error_type, None)
-    if inner is None:
-        return None
-
-    if isinstance(inner, ProtoAuthenticationError):
-        return inner.detail or None
-    if isinstance(inner, ProtoLoginError):
-        if inner.message and inner.code:
-            return f"{inner.message} (code={inner.code})"
-        return inner.message or None
-    if isinstance(inner, ProtoMissingParameter):
-        return f"Missing required parameter: {inner.parameter}" if inner.parameter else None
-    if isinstance(inner, ProtoInvalidParameterValue):
-        parts = []
-        if inner.parameter:
-            parts.append(f"Invalid value {inner.value!r} for parameter {inner.parameter!r}")
-        if inner.explanation:
-            parts.append(inner.explanation)
-        return ". ".join(parts) or None
-    # GenericError, InternalError have no extra fields
-    return None
-
-
-def _extract_invalid_parameter_info(driver_exception: Any) -> tuple[str, int | None] | None:
-    """Return ``(parameter, validation_code)`` for an InvalidParameterValue error, or ``None``.
-
-    ``validation_code`` is the raw sf_core ``ValidationCode`` enum value (see
-    ``protobuf_gen.database_driver_v1_pb2.ValidationCode``), carried on the wire only when
-    the error originated from connection-config validation (``validate_settings`` in the
-    Rust core); ``None`` for InvalidParameterValue errors from other sources.
-    """
-    error = getattr(driver_exception, "error", None)
-    if error is None or error.WhichOneof("error_type") != "invalid_parameter_value":
-        return None
-    inner = error.invalid_parameter_value
-    # `code` is `optional ValidationCode`; HasField("code") is only True when the
-    # Rust side explicitly sets a concrete code. validate_settings never assigns
-    # VALIDATION_CODE_UNSPECIFIED (0), so _get_optional_int can't currently return
-    # 0 for a "real" code here — if that ever changes, this would need to treat
-    # 0 as unset too.
-    return inner.parameter, _get_optional_int(inner, "code")
 
 
 def _append_detail(base: str, detail: str) -> str:
@@ -260,10 +198,6 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     if root_cause and root_cause not in message:
         message = _append_detail(message, root_cause)
 
-    detail = _extract_error_detail(driver_exc)
-    if detail and detail not in message:
-        message = _append_detail(message, detail)
-
     if not message:
         message = ERROR_KIND_LABELS.get(kind, "Unknown error")
 
@@ -285,9 +219,10 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     # originated from a query execution attempt.
     request_id = _get_optional_str(driver_exc, "request_id")
 
-    # Structured attributes for InvalidParameterValue errors (e.g. connection-config
-    # validation failures), so callers can discriminate without matching message text.
-    parameter, validation_code = _extract_invalid_parameter_info(driver_exc) or (None, None)
+    # Structured extras for parameter errors (e.g. connection-config validation),
+    # so callers can discriminate without matching message text.
+    parameter = _get_optional_str(driver_exc, "parameter")
+    validation_code = _get_optional_int(driver_exc, "validation_code")
 
     return exc_class(
         message,
@@ -323,17 +258,12 @@ def _get_optional_str(msg: Any, field: str) -> str | None:
 
 
 def _derive_sqlstate(driver_exception: Any) -> str | None:
-    """Derive sqlstate from the error type when the proto does not carry it.
+    """Derive sqlstate from ErrorKind when the proto does not carry it.
 
     Only login/auth errors have an obvious ANSI SQL state mapping today.
-    Other error types (missing_parameter, invalid_parameter_value, etc.)
-    will return ``None``; extend this function as mappings become clear.
     """
-    error = getattr(driver_exception, "error", None)
-    if error is None:
-        return None
-    error_type = error.WhichOneof("error_type")
-    if error_type in ("login_error", "auth_error"):
+    kind = getattr(driver_exception, "kind", 0)
+    if kind in (ERROR_KIND_LOGIN_ERROR, ERROR_KIND_AUTHENTICATION_ERROR):
         return "08001"  # SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED
     return None
 

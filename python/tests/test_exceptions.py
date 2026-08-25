@@ -16,13 +16,7 @@ from snowflake.connector._internal.error_kinds import (
     KIND_TO_EXCEPTION,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-    DriverError as ProtoDriverError,
-)
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     DriverException as ProtoDriverException,
-)
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-    LoginError as ProtoLoginError,
 )
 from snowflake.connector.errors import (
     DatabaseError,
@@ -170,106 +164,6 @@ class TestErrorKindMapping:
         assert KIND_TO_EXCEPTION[ERROR_KIND_INVALID_PARAMETER_VALUE] is ProgrammingError
 
 
-class TestExtractErrorDetail:
-    """Test _extract_error_detail helper."""
-
-    def test_no_error_field(self):
-        from snowflake.connector._internal.api_client.client_api import _extract_error_detail
-
-        driver_exc = MagicMock()
-        driver_exc.error = None
-        assert _extract_error_detail(driver_exc) is None
-
-    def test_missing_parameter(self):
-        from snowflake.connector._internal.api_client.client_api import _extract_error_detail
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            MissingParameter as ProtoMissingParameter,
-        )
-
-        driver_exc = MagicMock()
-        driver_exc.error.WhichOneof.return_value = "missing_parameter"
-        driver_exc.error.missing_parameter = ProtoMissingParameter(parameter="account")
-        result = _extract_error_detail(driver_exc)
-        assert "account" in result
-
-    def test_invalid_parameter_value(self):
-        from snowflake.connector._internal.api_client.client_api import _extract_error_detail
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            InvalidParameterValue as ProtoInvalidParameterValue,
-        )
-
-        driver_exc = MagicMock()
-        driver_exc.error.WhichOneof.return_value = "invalid_parameter_value"
-        driver_exc.error.invalid_parameter_value = ProtoInvalidParameterValue(
-            parameter="authenticator", value="BAD", explanation="not supported"
-        )
-        result = _extract_error_detail(driver_exc)
-        assert "authenticator" in result
-        assert "BAD" in result
-
-
-class TestExtractInvalidParameterInfo:
-    """Test _extract_invalid_parameter_info helper (parameter + ValidationCode discriminant)."""
-
-    def test_no_error_field(self):
-        from snowflake.connector._internal.api_client.client_api import (
-            _extract_invalid_parameter_info,
-        )
-
-        driver_exc = MagicMock()
-        driver_exc.error = None
-        assert _extract_invalid_parameter_info(driver_exc) is None
-
-    def test_non_invalid_parameter_value_error_returns_none(self):
-        from snowflake.connector._internal.api_client.client_api import (
-            _extract_invalid_parameter_info,
-        )
-
-        driver_exc = MagicMock()
-        driver_exc.error.WhichOneof.return_value = "missing_parameter"
-        assert _extract_invalid_parameter_info(driver_exc) is None
-
-    def test_invalid_parameter_value_without_code_returns_none_code(self):
-        from snowflake.connector._internal.api_client.client_api import (
-            _extract_invalid_parameter_info,
-        )
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            InvalidParameterValue as ProtoInvalidParameterValue,
-        )
-
-        driver_exc = MagicMock()
-        driver_exc.error.WhichOneof.return_value = "invalid_parameter_value"
-        driver_exc.error.invalid_parameter_value = ProtoInvalidParameterValue(
-            parameter="authenticator", value="BAD", explanation="not supported"
-        )
-        parameter, validation_code = _extract_invalid_parameter_info(driver_exc)
-        assert parameter == "authenticator"
-        assert validation_code is None
-
-    def test_invalid_parameter_value_with_code_is_surfaced(self):
-        from snowflake.connector._internal.api_client.client_api import (
-            _extract_invalid_parameter_info,
-        )
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
-        )
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            InvalidParameterValue as ProtoInvalidParameterValue,
-        )
-
-        driver_exc = MagicMock()
-        driver_exc.error.WhichOneof.return_value = "invalid_parameter_value"
-        driver_exc.error.invalid_parameter_value = ProtoInvalidParameterValue(
-            parameter="workload_identity_provider",
-            value="",
-            explanation="workload_identity_provider was set but authenticator was not WORKLOAD_IDENTITY",
-            code=VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
-        )
-        parameter, validation_code = _extract_invalid_parameter_info(driver_exc)
-        assert parameter == "workload_identity_provider"
-        assert validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
-
-
 class TestConvertProtoError:
     """Test _proto_to_public_error end-to-end conversion."""
 
@@ -282,7 +176,6 @@ class TestConvertProtoError:
         driver_exc.message = "Query failed"
         driver_exc.kind = ERROR_KIND_INVALID_ARGUMENT
         driver_exc.report = ""
-        driver_exc.error = None
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
@@ -291,24 +184,15 @@ class TestConvertProtoError:
         assert "Query failed" in str(result)
 
     def test_application_exception_authentication(self):
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            AuthenticationError as ProtoAuthenticationError,
-        )
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            DriverError as ProtoDriverError,
-        )
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
         )
 
-        driver_exc = MagicMock()
-        driver_exc.message = "Authentication failed"
-        driver_exc.kind = ERROR_KIND_AUTHENTICATION_ERROR
-        driver_exc.report = ""
-        driver_exc.error = ProtoDriverError(
-            auth_error=ProtoAuthenticationError(detail="Token expired"),
+        driver_exc = ProtoDriverException(
+            message="Authentication failed",
+            kind=ERROR_KIND_AUTHENTICATION_ERROR,
+            root_cause="Token expired",
         )
-        driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
         result = _proto_to_public_error(proto_exc)
@@ -316,6 +200,7 @@ class TestConvertProtoError:
         assert "Authentication failed" in str(result)
         assert "Token expired" in str(result)
         assert result.errno == 250001
+        assert result.sqlstate == "08001"
 
     def test_application_exception_not_implemented(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
@@ -326,7 +211,6 @@ class TestConvertProtoError:
         driver_exc.message = "Feature X not implemented"
         driver_exc.kind = ERROR_KIND_NOT_IMPLEMENTED
         driver_exc.report = ""
-        driver_exc.error = None
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
@@ -356,7 +240,6 @@ class TestConvertProtoError:
         driver_exc.message = "Internal"
         driver_exc.kind = ERROR_KIND_INTERNAL_ERROR
         driver_exc.report = ""
-        driver_exc.error = None
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
@@ -370,17 +253,10 @@ class TestConvertProtoError:
             ProtoApplicationException,
         )
 
-        driver_exc = MagicMock()
-        driver_exc.message = "Login failed"
-        driver_exc.kind = ERROR_KIND_LOGIN_ERROR
-        driver_exc.report = ""
-        driver_exc.error = ProtoDriverError(
-            login_error=ProtoLoginError(
-                message="Incorrect username or password",
-                code=390100,
-            ),
+        driver_exc = ProtoDriverException(
+            message="Login failed",
+            kind=ERROR_KIND_LOGIN_ERROR,
         )
-        driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
         result = _proto_to_public_error(proto_exc)
@@ -404,12 +280,6 @@ class TestConvertProtoError:
             kind=ERROR_KIND_LOGIN_ERROR,
             vendor_code=390100,
             sql_state="28000",
-            error=ProtoDriverError(
-                login_error=ProtoLoginError(
-                    message="Incorrect username or password",
-                    code=390100,
-                ),
-            ),
         )
         proto_exc = ProtoApplicationException(driver_exc)
 
@@ -560,7 +430,6 @@ class TestConvertProtoError:
         driver_exc.message = "Query failed"
         driver_exc.kind = ERROR_KIND_INVALID_ARGUMENT
         driver_exc.report = "Diagnostic report:\n  line 1: unexpected token"
-        driver_exc.error = None
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
@@ -576,9 +445,6 @@ class TestConvertProtoError:
         from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
             VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
         )
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            InvalidParameterValue as ProtoInvalidParameterValue,
-        )
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
         )
@@ -586,14 +452,8 @@ class TestConvertProtoError:
         driver_exc = ProtoDriverException(
             message="workload_identity_provider was set but authenticator was not set to WORKLOAD_IDENTITY",
             kind=ERROR_KIND_INVALID_PARAMETER_VALUE,
-            error=ProtoDriverError(
-                invalid_parameter_value=ProtoInvalidParameterValue(
-                    parameter="workload_identity_provider",
-                    value="",
-                    explanation="workload_identity_provider was set but authenticator was not WORKLOAD_IDENTITY",
-                    code=VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
-                ),
-            ),
+            parameter="workload_identity_provider",
+            validation_code=VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
         )
         proto_exc = ProtoApplicationException(driver_exc)
 
@@ -606,9 +466,6 @@ class TestConvertProtoError:
         # An InvalidParameterValue error that did not originate from
         # validate_settings (e.g. an unknown authenticator) carries no
         # ValidationCode on the wire, so `validation_code` stays None.
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            InvalidParameterValue as ProtoInvalidParameterValue,
-        )
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
         )
@@ -616,13 +473,8 @@ class TestConvertProtoError:
         driver_exc = ProtoDriverException(
             message="Invalid authenticator",
             kind=ERROR_KIND_INVALID_PARAMETER_VALUE,
-            error=ProtoDriverError(
-                invalid_parameter_value=ProtoInvalidParameterValue(
-                    parameter="authenticator",
-                    value="BAD",
-                    explanation="not supported",
-                ),
-            ),
+            parameter="authenticator",
+            parameter_value="BAD",
         )
         proto_exc = ProtoApplicationException(driver_exc)
 
@@ -630,25 +482,20 @@ class TestConvertProtoError:
         assert result.parameter == "authenticator"
         assert result.validation_code is None
 
-    def test_application_exception_missing_parameter_leaves_parameter_and_code_none(self):
-        # Non-InvalidParameterValue error types don't have a parameter/code to
-        # report; both attributes should default to None rather than error out.
-        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-            MissingParameter as ProtoMissingParameter,
-        )
+    def test_application_exception_missing_parameter_surfaces_parameter(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
         )
 
         driver_exc = ProtoDriverException(
             message="Missing required parameter: account",
-            kind=ERROR_KIND_INVALID_PARAMETER_VALUE,
-            error=ProtoDriverError(missing_parameter=ProtoMissingParameter(parameter="account")),
+            kind=ERROR_KIND_MISSING_PARAMETER,
+            parameter="account",
         )
         proto_exc = ProtoApplicationException(driver_exc)
 
         result = _proto_to_public_error(proto_exc)
-        assert result.parameter is None
+        assert result.parameter == "account"
         assert result.validation_code is None
 
 
