@@ -1,11 +1,11 @@
 """
 Integration tests for the Snowflake error contract.
 
-Tests verify that real Snowflake server errors are surfaced as proper PEP 249
-exceptions with correct types, error codes, messages, and structured attributes.
+Authentication login-failure errno/sqlstate coverage uses Wiremock so the
+server GS code under test is deterministic (mirroring snowflake-connector-python
+SNOW-3775156). Live Snowflake auth-failure smoke belongs in e2e.
 
-Object-lifecycle errors (closed cursor, closed connection) live in the test
-files for those objects (test_cursor.py, test_connection.py).
+Query/object error classes below still hit a real Snowflake account.
 
 These tests are designed to pass against both the new (universal) driver and
 the old (reference) snowflake-connector-python driver.
@@ -19,73 +19,94 @@ from snowflake.connector.errors import DatabaseError, Error, ProgrammingError
 from tests.compatibility import is_new_driver, is_old_driver
 
 
-# Password authenticator name differs between drivers.
-# Old driver: "snowflake" (DEFAULT_AUTHENTICATOR = "SNOWFLAKE")
-# New driver: "SNOWFLAKE_PASSWORD"
-PASSWORD_AUTH = "SNOWFLAKE_PASSWORD" if is_new_driver() else "snowflake"
+# SQLSTATE values asserted as literals so both UD (_internal.sqlstate) and
+# reference (sqlstate) agree without dual import paths.
+SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED = "08001"
+SQLSTATE_AUTHORIZATION_FAILURE = "28000"
+
+
+def _surfaces_server_login_error_codes() -> bool:
+    """True when the installed driver surfaces GS login codes (SNOW-3775156 / SNOW-3888007).
+
+    PyPI reference 4.7.1 still hardcodes errno 250001; post-fix reference
+    exposes ``CREDENTIAL_REJECTION_GS_CODES`` on ``network``.
+    """
+    if is_new_driver():
+        return True
+    try:
+        from snowflake.connector.network import CREDENTIAL_REJECTION_GS_CODES  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _require_server_login_error_codes() -> None:
+    if not _surfaces_server_login_error_codes():
+        pytest.skip(
+            "Reference driver predates SNOW-3775156 (no CREDENTIAL_REJECTION_GS_CODES); "
+            "still hardcodes errno 250001 for login failures"
+        )
 
 
 class TestAuthenticationErrors:
-    """Test that authentication failures raise proper errors."""
+    """Login-failure errno/sqlstate contract via Wiremock (deterministic GS codes).
 
-    def test_invalid_password(self, connection_factory):
-        """Test that wrong password raises a DatabaseError subclass with descriptive message."""
+    Credential-rejection codes (390100, 390144, …) must surface as the server's
+    own errno with SQLSTATE 28000. Other login codes still surface the server
+    errno but keep SQLSTATE 08001. See SNOW-3775156 / SNOW-3888007.
+    """
+
+    def test_should_surface_credential_rejection_errno_and_sqlstate_28000(self, int_test_connection_factory, wiremock):
+        """GS 390100 (AUTHORIZATION_FAILURE) → errno 390100, sqlstate 28000."""
+        _require_server_login_error_codes()
+        wiremock.add_mapping("auth/login_failure_credential_rejection.json")
+
         with pytest.raises(DatabaseError) as excinfo:
-            connection_factory(authenticator=PASSWORD_AUTH, password="wrong_password_12345")
+            # Unique LOGIN_NAME keeps this stub from matching other suites' logins.
+            int_test_connection_factory(
+                server_url=wiremock.http_url(),
+                user="wiremock_login_failure_390100",
+            )
         error = excinfo.value
+
+        assert error.errno == 390100
+        assert error.sqlstate == SQLSTATE_AUTHORIZATION_FAILURE
         assert "incorrect username or password" in error.msg.lower()
-        # Universal driver and old driver behave identically here: both
-        # surface the server's raw GS code for credential rejections
-        # (SNOW-3775156).
-        assert error.errno == 390100
-        assert error.sqlstate == "28000"
 
-    def test_invalid_user(self, connection_factory):
-        """Test that a non-existent user raises a DatabaseError subclass."""
+    def test_should_surface_jwt_invalid_errno_and_sqlstate_28000(self, int_test_connection_factory, wiremock):
+        """GS 390144 (JWT_TOKEN_INVALID) → errno 390144, sqlstate 28000."""
+        _require_server_login_error_codes()
+        wiremock.add_mapping("auth/login_failure_jwt_token_invalid.json")
+
         with pytest.raises(DatabaseError) as excinfo:
-            connection_factory(
-                authenticator=PASSWORD_AUTH,
-                user=f"nonexistent_user_{uuid.uuid4().hex[:8]}",
-                password="dummy",
+            int_test_connection_factory(
+                server_url=wiremock.http_url(),
+                user="wiremock_login_failure_390144",
             )
         error = excinfo.value
-        assert error.msg
-        # Universal driver and old driver behave identically here: both
-        # surface the server's raw GS code for credential rejections
-        # (SNOW-3775156).
-        assert error.errno == 390100
-        assert error.sqlstate == "28000"
 
-    def test_invalid_account(self, connection_factory):
-        """Test that a non-existent account raises an Error subclass."""
-        with pytest.raises(Error) as excinfo:
-            connection_factory(
-                account=f"nonexistent_account_{uuid.uuid4().hex[:8]}",
-                authenticator=PASSWORD_AUTH,
-                password="dummy",
+        assert error.errno == 390144
+        assert error.sqlstate == SQLSTATE_AUTHORIZATION_FAILURE
+        assert "jwt" in error.msg.lower()
+
+    def test_should_surface_generic_login_errno_with_sqlstate_08001(self, int_test_connection_factory, wiremock):
+        """Non-credential-rejection GS 390401 → errno 390401, sqlstate 08001."""
+        _require_server_login_error_codes()
+        wiremock.add_mapping("auth/login_failure_generic.json")
+
+        with pytest.raises(DatabaseError) as excinfo:
+            int_test_connection_factory(
+                server_url=wiremock.http_url(),
+                user="wiremock_login_failure_390401",
             )
         error = excinfo.value
-        assert error.errno != -1
-        if is_new_driver():
-            # Depends on whether the account lookup resolves through the
-            # generic connection-failure path (250001) or the
-            # credential-rejection login path (390100, SNOW-3775156) — both
-            # are observed depending on the target deployment.
-            assert error.errno in (250001, 390100)
-            return
 
-        # Old driver: HttpError (290404) when the server returns a 404 for an
-        # unknown account — version-independent, unrelated to SNOW-3775156.
-        if error.errno == 290404:
-            return
+        assert error.errno == 390401
+        assert error.sqlstate == SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED
 
-        # Otherwise this is a connection-level login failure: old driver
-        # surfaces the raw GS code (390100), matching universal driver's
-        # login-failure path above (SNOW-3775156).
-        assert error.errno == 390100
-
-    def test_invalid_authenticator_value(self, connection_factory):
-        """Test that an unsupported authenticator value raises ProgrammingError."""
+    def test_should_reject_unsupported_authenticator_value(self, connection_factory):
+        """Unsupported authenticator fails client-side before any server round-trip."""
         with pytest.raises(ProgrammingError) as excinfo:
             connection_factory(authenticator="INVALID_AUTH_METHOD", password="dummy")
         error = excinfo.value

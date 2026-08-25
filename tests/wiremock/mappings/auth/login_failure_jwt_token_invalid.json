@@ -1,0 +1,27 @@
+{
+  "name": "Login failure with JWT_TOKEN_INVALID GS code (390144)",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.LOGIN_NAME == 'wiremock_login_failure_390144')]"
+      },
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'SNOWFLAKE_JWT')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "data": {},
+      "success": false,
+      "code": "390144",
+      "message": "JWT token is invalid."
+    }
+  }
+}
