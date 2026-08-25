@@ -42,6 +42,10 @@ class HandleWrapper {
   SQLHANDLE getHandle() const { return handle; }
   SQLSMALLINT getType() const { return type; }
 
+  // Relinquish ownership so ~HandleWrapper does not SQLFreeHandle. Use after the
+  // test has already freed the handle (SQLFreeHandle / SQLFreeConnect / SQLFreeEnv).
+  void release() { handle = SQL_NULL_HANDLE; }
+
  protected:
   SQLHANDLE handle;
   SQLSMALLINT type;
