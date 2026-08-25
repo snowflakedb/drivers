@@ -2503,3 +2503,27 @@ behavior_differences:
       Applications that double-free a statement under iODBC against the old driver
       see SQL_ERROR + HY000 on the DBC; the new driver returns the spec
       SQL_INVALID_HANDLE.
+
+  127:
+    name: "SQLGetFunctions ODBC3 bitmap reports SQLFreeConnect / SQLFreeEnv as supported under iODBC instead of omitting them"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Under iODBC, SQLGetFunctions(SQL_API_ODBC3_ALL_FUNCTIONS) omits
+      SQL_API_SQLFREECONNECT and SQL_API_SQLFREEENV from the returned bitmap.
+      Per-function SQLGetFunctions(id) and SQL_API_ALL_FUNCTIONS (ODBC 2.x array)
+      still report both supported. The reference driver does not export these
+      entry points (the DM maps them to SQLFreeHandle).
+    new_driver_behavior: |
+      Exports SQLFreeConnect / SQLFreeEnv and reports both in the ODBC3 bitmap on
+      all DMs, including iODBC.
+    description: |
+      Applications that probe the ODBC3 function bitmap under iODBC against the
+      old driver will incorrectly believe SQLFreeConnect / SQLFreeEnv are
+      unsupported, even though the DM still dispatches the mapped FreeHandle path.
+      The new driver reports both bits set. Gated with OLD_IODBC_ONLY("BD#127") in
+      the SQL_API_ODBC3_ALL_FUNCTIONS coverage loop in
+      odbc-api/driver_info/get_functions_tests.cpp.

@@ -94,6 +94,7 @@ static const FunctionTest ALL_ODBC_FUNCTIONS[] = {
 
     // Disconnection Functions
     {SQL_API_SQLDISCONNECT, "SQLDisconnect", true},
+    {SQL_API_SQLFREECONNECT, "SQLFreeConnect", true},
     {SQL_API_SQLFREEHANDLE, "SQLFreeHandle", false},
 
     // Statement Termination Functions
@@ -137,6 +138,12 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
     OLD_IODBC_ONLY("BD#65") {
       if (func.functionId == SQL_API_SQLSETSCROLLOPTIONS) continue;
       if (func.functionId == SQL_API_SQLPARAMOPTIONS) continue;
+    }
+    // BD#127: old driver under iODBC omits SQLFreeConnect from the ODBC3 bitmap
+    //   (it does not export the symbol; DM maps it to SQLFreeHandle). Per-function
+    //   and SQL_API_ALL_FUNCTIONS probes still report it supported.
+    OLD_IODBC_ONLY("BD#127") {
+      if (func.functionId == SQL_API_SQLFREECONNECT) continue;
     }
     INFO("Function: " << func.name << " (ID=" << func.functionId << ")");
     REQUIRE(SQL_FUNC_EXISTS(supported, func.functionId));
@@ -341,6 +348,21 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Reports SQLTransact as 
 
   SQLUSMALLINT supported = SQL_FALSE;
   ret = SQLGetFunctions(dbc_handle(), SQL_API_SQLTRANSACT, &supported);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(supported == SQL_TRUE);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Reports SQLFreeConnect as supported",
+                 "[odbc-api][getfunctions][driver_info]") {
+  const std::string dsn = dsn_name();
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLUSMALLINT supported = SQL_FALSE;
+  ret = SQLGetFunctions(dbc_handle(), SQL_API_SQLFREECONNECT, &supported);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(supported == SQL_TRUE);
 
