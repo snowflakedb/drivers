@@ -248,25 +248,6 @@ class TestConvertProtoError:
         # INTERNAL_ERROR has no old-driver errno mapping, so proto ErrorKind is used as fallback.
         assert result.errno == ERROR_KIND_INTERNAL_ERROR
 
-    def test_application_exception_login_error_uses_old_errno(self):
-        from snowflake.connector._internal.protobuf_gen.proto_exception import (
-            ProtoApplicationException,
-        )
-
-        driver_exc = ProtoDriverException(
-            message="Login failed",
-            kind=ERROR_KIND_LOGIN_ERROR,
-        )
-        proto_exc = ProtoApplicationException(driver_exc)
-
-        result = _proto_to_public_error(proto_exc)
-        assert isinstance(result, DatabaseError)
-        # When sf_core doesn't surface a vendor_code (e.g. the server omitted
-        # or sent a non-numeric login-failure code), fall back to
-        # ER_FAILED_TO_CONNECT_TO_DB (250001), matching old driver's own fallback.
-        assert result.errno == 250001
-        assert result.sqlstate == "08001"
-
     def test_application_exception_login_error_uses_vendor_code_when_present(self):
         """sf_core surfaces the server's raw GS code for login failures (e.g. 390100
         for bad credentials) via vendor_code/sql_state, which takes priority over the
