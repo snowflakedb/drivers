@@ -2,9 +2,13 @@
 
 ## Upcoming Release
 
+New features:
+
+- Implemented `SQLFreeConnect` (ODBC 2.x) as a thin wrapper around `SQLFreeHandle(SQL_HANDLE_DBC, …)` for direct-link and ODBC 2.x applications that bypass the Driver Manager. (snowflakedb/drivers#1186)
+
 Bug fixes:
 
-- Fixed `SQLColumns` `BUFFER_LENGTH` for `NUMBER`/`DECIMAL` to return precision + 2 (ODBC transfer octet length); query-result `SQLColAttribute` octet/display for NUMBER remains 136. (snowflake-eng/drivers#1166)
+- Fixed `SQLColumns` `BUFFER_LENGTH` for `NUMBER`/`DECIMAL` to return precision + 2 (ODBC transfer octet length); query-result `SQLColAttribute` octet/display for NUMBER remains 136. (snowflakedb/drivers#1166)
 
 ## v4.0.0-rc1
 

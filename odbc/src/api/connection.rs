@@ -2226,6 +2226,7 @@ const SQL_FALSE_U16: sql::USmallInt = 0;
 enum OdbcFunction {
     // ---- Handle management ------------------------------------------------
     AllocHandle = 1001,
+    FreeConnect = 14,
     FreeHandle = 1006,
     FreeStmt = 16,
 
@@ -2317,6 +2318,7 @@ impl TryFrom<u16> for OdbcFunction {
     fn try_from(v: u16) -> Result<Self, ()> {
         match v {
             1001 => Ok(Self::AllocHandle),
+            14   => Ok(Self::FreeConnect),
             1006 => Ok(Self::FreeHandle),
             16   => Ok(Self::FreeStmt),
             55   => Ok(Self::BrowseConnect),
@@ -2397,6 +2399,7 @@ impl OdbcFunction {
 
     const ALL: &[Self] = &[
         Self::AllocHandle,
+        Self::FreeConnect,
         Self::FreeHandle,
         Self::FreeStmt,
         Self::BrowseConnect,
@@ -3368,6 +3371,14 @@ mod tests {
     /// the bitmap and refuse to dispatch `SQLEndTran`, returning `SQL_ERROR`
     /// before the driver's entry point ever runs (iODBC / Windows dispatch
     /// regardless, which is why the regression only showed up under unixODBC).
+    #[test]
+    fn free_connect_is_reported_supported() {
+        assert!(
+            OdbcFunction::FreeConnect.is_supported(),
+            "SQLFreeConnect is exported in c_api.rs; SQLGetFunctions must report it supported"
+        );
+    }
+
     #[test]
     fn transact_is_reported_supported() {
         assert!(

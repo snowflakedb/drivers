@@ -71,6 +71,20 @@ pub unsafe extern "system" fn SQLAllocConnect(
     result.to_sql_code()
 }
 
+/// ODBC 2.x connection-handle free. Equivalent to
+/// `SQLFreeHandle(SQL_HANDLE_DBC, connection_handle)`.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLFreeConnect(connection_handle: sql::Handle) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Dbc, connection_handle, "SQLFreeConnect");
+    let result = api::handle_allocation::sql_free_handle(sql::HandleType::Dbc, connection_handle);
+    record_err!(sql::HandleType::Dbc, connection_handle, result);
+    result.to_sql_code()
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
