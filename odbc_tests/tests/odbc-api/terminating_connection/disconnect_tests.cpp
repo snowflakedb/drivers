@@ -324,9 +324,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: After failed connection a
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With multiple statement handles",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_OLD_IODBC("BD#59",
-                 "old driver SQLDisconnect leaves per-statement entries valid in iODBC's alloc table; "
-                 "freeing them afterwards SIGSEGVs inside the driver's per-statement cleanup path");
   // Connect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -343,9 +340,21 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With multiple statement h
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt1);
-  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt2);
-  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt3);
+  OLD_IODBC_ONLY("BD#68") {
+    // Same alloc-table leak as "Closes open statements automatically": after the
+    //   old driver's SQLDisconnect, iODBC still has the child statement entries,
+    //   so a follow-up SQLFreeHandle does not return SQL_INVALID_HANDLE.
+    // Probe only the first child. Freeing every leftover statement (or freeing
+    //   the last remaining child, then the DBC in fixture teardown) SIGSEGVs
+    //   inside the old driver's per-statement cleanup (BD#59).
+    ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt1);
+    REQUIRE(ret != SQL_INVALID_HANDLE);
+  }
+  else {
+    REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt1);
+    REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt2);
+    REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt3);
+  }
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Preserves connection handle for reuse",

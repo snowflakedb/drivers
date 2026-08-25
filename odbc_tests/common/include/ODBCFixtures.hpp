@@ -52,6 +52,13 @@ class EnvFixture {
   [[nodiscard]] std::string connection_string() const { return config.value().connection_string(); }
   [[nodiscard]] std::string expected_user_name() const { return config.value().user_name(); }
 
+  // Relinquish the fixture-owned HENV so ~HandleWrapper does not SQLFreeHandle
+  // after the test has already freed it (SQLFreeHandle / SQLFreeEnv).
+  void release_env() {
+    env_wrapper->release();
+    env_wrapper.reset();
+  }
+
  protected:
   [[nodiscard]] ConnectionHandleWrapper create_connection_handle() { return env_wrapper->createConnectionHandle(); }
 };
@@ -73,9 +80,14 @@ class DbcFixture : public EnvFixture {
 
   [[nodiscard]] SQLHDBC dbc_handle() const { return dbc_wrapper->getHandle(); }
 
-  // Releases the connection handle wrapper, preventing double-free when test
-  // code has already freed the underlying HDBC via SQLFreeHandle.
-  void release_dbc() { dbc_wrapper.reset(); }
+  [[nodiscard]] StatementHandleWrapper create_statement_handle() { return dbc_wrapper->createStatementHandle(); }
+
+  // Relinquish the fixture-owned HDBC so ~HandleWrapper does not SQLFreeHandle
+  // after the test has already freed it (SQLFreeHandle / SQLFreeConnect).
+  void release_dbc() {
+    dbc_wrapper->release();
+    dbc_wrapper.reset();
+  }
 };
 
 // ============================================================================

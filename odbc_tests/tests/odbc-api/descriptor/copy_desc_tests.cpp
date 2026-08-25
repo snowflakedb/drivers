@@ -256,12 +256,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: SQL_INVALID_HANDLE for nul
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: SQL_INVALID_HANDLE for null target",
                  "[odbc-api][copydesc][descriptor][error]") {
   // Under iODBC the DriverManager services SQLCopyDesc inside its own
-  // handle-dispatch layer and SIGSEGVs when the target is a null handle
-  // (BD#59 / BD#932) — the crash happens in the DM before either driver's
-  // SQLCopyDesc runs, so it is identical for the new and old driver. Skip for
-  // both drivers under iODBC (a SIGSEGV cannot be asserted around anyway); the
-  // null-handle contract is still covered on unixODBC and Windows below.
-  SKIP_IODBC("BD#59 - iODBC DM SegFaults on SQLCopyDesc with a null target (both drivers)");
+  // handle-dispatch layer and SIGSEGVs when the target is a null handle —
+  // the crash happens in the DM before either driver's SQLCopyDesc runs, so
+  // it is identical for the new and old driver. Skip for both drivers under
+  // iODBC (a SIGSEGV cannot be asserted around anyway); the null-handle
+  // contract is still covered on unixODBC and Windows below.
+  SKIP_IODBC("iODBC DM SegFaults on SQLCopyDesc with a null target (both drivers)");
 
   const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 

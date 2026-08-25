@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
@@ -40,10 +41,9 @@ TEST_CASE("SQLFreeHandle: SQL_INVALID_HANDLE for null environment handle",
 
 TEST_CASE_METHOD(EnvFixture, "SQLFreeHandle: HY010 - Cannot free environment with active connections",
                  "[odbc-api][freehandle][terminating_connection][error]") {
-  // Both drivers abort inside iODBC's handle-dispatch path on this sequence
-  // (subprocess aborted / SIGTRAP). unixODBC and Windows exercise the same
-  // driver HY010 path without crashing — see BD#59.
-  SKIP_IODBC("BD#59 - iODBC aborts on SQLFreeHandle(ENV) with active connections (both drivers)");
+  // iODBC still SIGTRAPs here on both drivers (LEAVE_HENV MEM_FREEs the env
+  // wrapper even when the call is rejected as HY010) — not a fixture leak.
+  SKIP_IODBC("iODBC aborts on SQLFreeHandle(ENV) with active connections (both drivers)");
   // Allocate connection on environment
   SQLHDBC dbc = SQL_NULL_HDBC;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DBC, env_handle(), &dbc);
@@ -117,8 +117,9 @@ TEST_CASE("SQLFreeHandle: SQL_INVALID_HANDLE for null connection handle",
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY010 - Cannot free connected connection handle",
                  "[odbc-api][freehandle][terminating_connection][error]") {
-  // Both drivers SIGTRAP inside iODBC's handle-dispatch path — see BD#59.
-  SKIP_IODBC("BD#59 - iODBC SIGTRAPs on SQLFreeHandle(DBC) while still connected (both drivers)");
+  // iODBC still SIGTRAPs here on both drivers (LEAVE_HDBC MEM_FREEs the
+  // wrapper even when the call is rejected as HY010) — not a fixture leak.
+  SKIP_IODBC("iODBC SIGTRAPs on SQLFreeHandle(DBC) while still connected (both drivers)");
   // Connect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -134,8 +135,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY010 - Cannot free conne
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free disconnected connection handle",
                  "[odbc-api][freehandle][terminating_connection]") {
-  // Both drivers SIGTRAP inside iODBC's handle-dispatch path — see BD#59.
-  SKIP_IODBC("BD#59 - iODBC SIGTRAPs on SQLFreeHandle(DBC) after disconnect (both drivers)");
   // Connect and disconnect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -154,14 +153,10 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free disconnected con
 TEST_CASE_METHOD(DbcDefaultDSNFixture,
                  "SQLFreeHandle: Frees dependent statement handles when connection handle is freed",
                  "[odbc-api][freehandle][terminating_connection]") {
-  // Both drivers SIGTRAP inside iODBC's handle-dispatch path — see BD#59.
-  SKIP_IODBC("BD#59 - iODBC SIGTRAPs when freeing DBC that still has child stmts in the DM table");
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
+  StatementHandleWrapper stmt = create_statement_handle();
 
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
@@ -170,13 +165,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
   REQUIRE(ret == SQL_SUCCESS);
   release_dbc();
 
-  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt.getHandle());
+  stmt.release();
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free connection handle",
                  "[odbc-api][freehandle][terminating_connection][error]") {
-  // Both drivers SIGTRAP inside iODBC's handle-dispatch path — see BD#59.
-  SKIP_IODBC("BD#59 - iODBC SIGTRAPs on double-free of connection handle (both drivers)");
+  // In-process, a second SQLFreeHandle(DBC) SIGTRAPs (new) or SIGABRTs (old)
+  // inside iODBC. REQUIRE_INVALID_HANDLE forks and only treats SIGSEGV/SIGBUS as
+  // a crash, so it misreports the abort as SQL_SUCCESS.
+  SKIP_IODBC("iODBC aborts on a second SQLFreeHandle(DBC) (both drivers)");
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -304,7 +302,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with b
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free statement handle",
                  "[odbc-api][freehandle][terminating_connection][error]") {
-  SKIP_OLD_IODBC("BD#59", "old driver aborts (Subprocess aborted) inside iODBC's handle-dispatch path");
   // Connect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -317,7 +314,18 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free statement han
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
-  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
+  // Probe in-process. REQUIRE_INVALID_HANDLE forks and maps any non-INVALID_HANDLE
+  //   return (including SQL_ERROR) to SQL_SUCCESS, which hid the old-driver result.
+  const SQLRETURN second = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  OLD_IODBC_ONLY("BD#126") {
+    // The old driver still accepts the second free through iODBC and posts
+    //   SQL_ERROR + HY000 on the DBC; a third SQLFreeHandle then returns
+    //   SQL_INVALID_HANDLE.
+    REQUIRE_EXPECTED_ERROR(second, "HY000", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  else {
+    REQUIRE(second == SQL_INVALID_HANDLE);
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -491,8 +499,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free multiple stateme
 
 TEST_CASE("SQLFreeHandle: Complete handle hierarchy cleanup in correct order",
           "[odbc-api][freehandle][terminating_connection]") {
-  // Both drivers SIGTRAP inside iODBC's handle-dispatch path — see BD#59.
-  SKIP_IODBC("BD#59 - iODBC SIGTRAPs on ENV/DBC hierarchy free sequences (both drivers)");
+  // iODBC still SIGTRAPs here on both drivers (LEAVE_HENV MEM_FREEs the env
+  // wrapper even when the call is rejected as HY010) — not a fixture leak.
+  SKIP_IODBC("iODBC SIGTRAPs on ENV/DBC hierarchy free sequences (both drivers)");
   // Create hierarchy: ENV -> DBC
   SQLHENV env = SQL_NULL_HENV;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);

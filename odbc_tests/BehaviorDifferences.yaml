@@ -950,20 +950,39 @@ behavior_differences:
     description: |
       Applications that call SQLNumResultCols after closing a cursor on a prepared statement will get the correct column count on the new driver. This matches the ODBC spec: SQLCloseCursor from S5 should return to S3 (Prepared).
   59:
-    name: "SQLFreeHandle / SQLDisconnect / SQLCopyDesc do not abort or SegFault inside iODBC's handle-dispatch path"
+    name: "SQLFreeHandle on leftover child statements after SQLDisconnect does not SIGSEGV under iODBC"
     status: allowed
     type: bugfix
     reviewed: true
     status_rationale: |
-      The crashes are inside the old driver's per-handle cleanup hooks. The new driver coordinates with iODBC's alloc table correctly. The old driver path is not safely usable under iODBC for these calls because the process aborts before the caller can recover.
+      After SQLDisconnect the old driver leaves child statements in iODBC's alloc
+      table (BD#68). A follow-up SQLFreeHandle(STMT) on that leftover handle, then
+      freeing the DBC, SIGSEGVs inside the old driver's per-statement cleanup.
+      The new driver invalidates the child entries on disconnect (BD#68), so this
+      abort path is not reachable. Distinct from iODBC DM aborts that hit both
+      drivers (rejected HY010 frees, ENV/DBC hierarchy, SQLCopyDesc with a null
+      target, double-free of a DBC) and from BD#126 (statement double-free returns
+      SQL_ERROR + HY000, no abort).
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Under iODBC, calls into the old driver's handle hierarchy (SQLFreeHandle on an environment/connection with active children, double-free of statement/connection, complete-hierarchy cleanup, SQLDisconnect with multiple live statements, SQLCopyDesc with a NULL target) crash with "Subprocess aborted" or SIGSEGV inside the driver's per-handle cleanup callbacks. The same calls succeed under unixODBC (which uses a different dispatch model) and on Windows.
+      Under iODBC, SQLDisconnect succeeds but leaves child statement handles in the
+      DM alloc table. SQLFreeHandle(SQL_HANDLE_STMT) on a leftover child does not
+      return SQL_INVALID_HANDLE; when that was the last remaining child, subsequent
+      DBC teardown SIGSEGVs inside the old driver's cleanup. unixODBC and Windows
+      do not abort.
     new_driver_behavior: |
-      The new driver participates correctly in iODBC's alloc table and either succeeds or surfaces the spec-mandated diagnostic. There is no process abort.
+      SQLDisconnect invalidates child statement entries in iODBC's alloc table
+      (BD#68). A follow-up SQLFreeHandle on those handles returns SQL_INVALID_HANDLE
+      and the process does not abort.
     description: |
-      Applications that call into these paths through iODBC on the old driver lose the entire process to a SIGSEGV / abort before any diagnostic surfaces; the call site has no opportunity to react or clean up. The new driver completes the call or returns the spec diagnostic without crashing.
+      Applications that disconnect under iODBC on the old driver and then free the
+      leftover statement handles (or let DBC teardown run after probing them) can
+      lose the process to a SIGSEGV. The new driver returns SQL_INVALID_HANDLE
+      without crashing. Other iODBC aborts (HY010 free-while-connected, free ENV
+      with a live DBC, SQLCopyDesc null target, double-free DBC) still fire for
+      both drivers and are skipped with SKIP_IODBC, not this BD.
+
   60:
     #TODO: Add asserts before reviewing
     name: "SQLBindParameter SQL_C_INTERVAL_SECOND with fractional seconds bound to exact-numeric SQL targets truncates the fraction instead of overflowing"
@@ -2462,3 +2481,25 @@ behavior_differences:
     description: |
       ODBC requires SQLColumns col 14 (SQL_DATA_TYPE) to return the nonconcise
       type SQL_DATETIME for date/time, with the subtype in SQL_DATETIME_SUB.
+
+  126:
+    name: "A second SQLFreeHandle on an already-freed statement returns SQL_INVALID_HANDLE under iODBC instead of SQL_ERROR + HY000 on the connection"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Under iODBC, SQLFreeHandle(SQL_HANDLE_STMT) on a statement that was already
+      freed returns SQL_ERROR and posts SQLSTATE HY000 on the parent connection
+      handle. SQLGetStmtAttr on the same pointer already returns SQL_INVALID_HANDLE.
+      A third SQLFreeHandle then returns SQL_INVALID_HANDLE. Under unixODBC the
+      second SQLFreeHandle returns SQL_INVALID_HANDLE.
+    new_driver_behavior: |
+      The second SQLFreeHandle(SQL_HANDLE_STMT) on a freed statement returns
+      SQL_INVALID_HANDLE on every DM, including iODBC. No diagnostic is posted on
+      the connection.
+    description: |
+      Applications that double-free a statement under iODBC against the old driver
+      see SQL_ERROR + HY000 on the DBC; the new driver returns the spec
+      SQL_INVALID_HANDLE.
