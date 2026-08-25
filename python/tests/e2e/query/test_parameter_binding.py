@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pytest
 
+from snowflake.connector import ProgrammingError
+
 from ...conftest import with_paramstyle
 
 
@@ -231,7 +233,7 @@ class TestEdgeCases:
         # Then Result should match the type-casted parameters [42, "hello", True]
         assert result == (42, "hello", True)
 
-    def test_should_raise_error_when_placeholder_count_mismatches_argument_count(self, cursor):
+    def test_should_silently_ignore_extra_positional_parameters(self, cursor):
         # Given Snowflake client is logged in
         pass
 
@@ -239,16 +241,19 @@ class TestEdgeCases:
         cursor.execute("SELECT ?, ?", (1, 2, 3))
         result = cursor.fetchone()
 
-        # Then Query should successfully execute
-        assert result is not None
+        # Then Query should successfully execute, ignoring the extra argument
+        assert result == (1, 2)
 
-        from snowflake.connector import DatabaseError
+    def test_should_raise_error_for_too_few_positional_parameters(self, cursor):
+        # Given Snowflake client is logged in
+        pass
 
         # When Query with 3 placeholders is executed with 1 argument
         sql = "SELECT ?, ?, ?"
         params = (1,)
-        # Then Error should be raised for too few arguments
-        with pytest.raises(DatabaseError):
+
+        # Then Error should be raised for the unbound placeholders
+        with pytest.raises(ProgrammingError, match="Bind variable"):
             cursor.execute(sql, params)
 
 

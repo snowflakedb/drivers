@@ -107,12 +107,16 @@ Feature: Parameter binding
     Then Result should match the type-casted parameters [42, "hello", True]
 
   @python_e2e @jdbc_e2e
-  Scenario: should raise error when placeholder count mismatches argument count
+  Scenario: should silently ignore extra positional parameters
     Given Snowflake client is logged in
     When Query with 2 placeholders is executed with 3 arguments
-    Then Query should successfully execute
+    Then Query should successfully execute, ignoring the extra argument
+
+  @python_e2e @jdbc_e2e
+  Scenario: should raise error for too few positional parameters
+    Given Snowflake client is logged in
     When Query with 3 placeholders is executed with 1 argument
-    Then Error should be raised for too few arguments
+    Then Error should be raised for the unbound placeholders
 
   # =========================================================================== #
   #                        Multirow binding                                   #

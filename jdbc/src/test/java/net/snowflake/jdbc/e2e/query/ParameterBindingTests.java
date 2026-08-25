@@ -592,7 +592,7 @@ public class ParameterBindingTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  public void shouldRaiseErrorWhenPlaceholderCountMismatchesArgumentCount() throws Exception {
+  public void shouldSilentlyIgnoreExtraPositionalParameters() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
@@ -604,9 +604,15 @@ public class ParameterBindingTests extends SnowflakeIntegrationTestBase {
       preparedStatement.setInt(3, 3);
       boolean hasResultSet = preparedStatement.execute();
 
-      // Then Query should successfully execute
+      // Then Query should successfully execute, ignoring the extra argument
       assertTrue(hasResultSet, "Expected query with extra arguments to execute successfully");
     }
+  }
+
+  @Test
+  public void shouldRaiseErrorForTooFewPositionalParameters() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
 
     // When Query with 3 placeholders is executed with 1 argument
     String tooFewArgumentsSql = "SELECT ?, ?, ?";
@@ -615,11 +621,15 @@ public class ParameterBindingTests extends SnowflakeIntegrationTestBase {
       SQLException tooFewArgumentsException =
           assertThrows(SQLException.class, preparedStatement::executeQuery);
 
-      // Then Error should be raised for too few arguments
-      assertTrue(
-          tooFewArgumentsException.getMessage() != null
-              && !tooFewArgumentsException.getMessage().isEmpty(),
-          "Expected message for too few arguments");
+      // Then Error should be raised for the unbound placeholders
+      assertEquals(
+          "42601",
+          tooFewArgumentsException.getSQLState(),
+          "Expected SQLState for unbound placeholders");
+      assertEquals(
+          2049,
+          tooFewArgumentsException.getErrorCode(),
+          "Expected Snowflake vendor code for unbound placeholders");
     }
   }
 }

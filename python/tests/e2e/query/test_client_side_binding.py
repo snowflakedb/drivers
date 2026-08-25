@@ -528,7 +528,6 @@ class TestClientSideBindingErrors:
     """Tests for error handling in client-side binding."""
 
     def test_should_raise_error_for_too_many_positional_parameters(self, cursor):
-        """Test that too many positional parameters raises TypeError."""
         # Given Snowflake client is logged in with pyformat paramstyle
         pass
         # When Query "SELECT %s, %s" is executed with 3 parameters
@@ -539,7 +538,6 @@ class TestClientSideBindingErrors:
             cursor.execute(sql, params)
 
     def test_should_raise_error_for_not_enough_positional_parameters(self, cursor):
-        """Test that not enough positional parameters raises TypeError."""
         # Given Snowflake client is logged in with pyformat paramstyle
         pass
         # When Query "SELECT %s, %s, %s" is executed with 2 parameters
@@ -711,6 +709,28 @@ class TestFormatParamstyleErrors:
         params = dict(name="Alice")
         # Then ProgrammingError should be raised indicating dict parameters not supported
         with pytest.raises(ProgrammingError, match="Dict parameters not supported"):
+            cursor.execute(sql, params)
+
+    def test_should_raise_error_for_too_many_positional_parameters(self, cursor):
+        """Test that too many positional parameters raises TypeError."""
+        # Given Snowflake client is logged in with format paramstyle
+        pass
+        # When Query "SELECT %s, %s" is executed with 3 parameters
+        sql = "SELECT %s, %s"
+        params = (1, 2, 3)
+        # Then TypeError should be raised indicating not all arguments converted
+        with pytest.raises(TypeError, match="not all arguments converted"):
+            cursor.execute(sql, params)
+
+    def test_should_raise_error_for_not_enough_positional_parameters(self, cursor):
+        """Test that not enough positional parameters raises TypeError."""
+        # Given Snowflake client is logged in with format paramstyle
+        pass
+        # When Query "SELECT %s, %s, %s" is executed with 2 parameters
+        sql = "SELECT %s, %s, %s"
+        params = (1, 2)
+        # Then TypeError should be raised indicating not enough arguments
+        with pytest.raises(TypeError, match="not enough arguments"):
             cursor.execute(sql, params)
 
 
