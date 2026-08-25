@@ -45,6 +45,8 @@ pub enum ConfigError {
     },
     #[snafu(display("Conflicting parameters: {explanation}"))]
     ConflictingParameters {
+        parameter: String,
+        value: String,
         explanation: String,
         #[snafu(implicit)]
         location: Location,
@@ -99,9 +101,10 @@ pub enum ConfigError {
         "Configuration validation failed ({} issue(s)): {}",
         issues.len(),
         issues
-            .first()
+            .iter()
             .map(|i| format!("{}: {}", i.parameter, i.message))
-            .unwrap_or_default()
+            .collect::<Vec<_>>()
+            .join("; ")
     ))]
     Validation {
         issues: Vec<crate::config::connection_config::ValidationIssue>,

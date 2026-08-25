@@ -29,7 +29,8 @@ pub enum ApiError {
     Configuration {
         #[snafu(implicit)]
         location: Location,
-        source: ConfigError,
+        #[snafu(source(from(ConfigError, Box::new)))]
+        source: Box<ConfigError>,
     },
     #[snafu(display("Invalid argument: {argument}"))]
     InvalidArgument {
@@ -228,7 +229,10 @@ pub enum ApiError {
         location: Location,
         source: std::io::Error,
     },
-    #[snafu(display("Invalid workload_identity_provider: '{provider}'"))]
+    #[snafu(display(
+        "Invalid workload_identity_provider: '{provider}'. Allowed values: {}",
+        crate::config::rest_parameters::WifProvider::allowed_values()
+    ))]
     InvalidWifProvider {
         provider: String,
         #[snafu(implicit)]
