@@ -29,6 +29,17 @@ repos:
         pass_filenames: false
         files: (rust-toolchain\.toml$|Cargo\.toml$)
         language: system
+    -   id: python-sdist-cargo-lock
+        name: Python sdist Cargo.lock is --locked
+        description: >
+          Fail if python/Cargo.lock.sdist is stale for Cargo.toml.sdist.
+          hatch_build.py installs sdists with cargo --locked; a stale sdist
+          lockfile breaks packaging_tests_sdist and python_tests on every
+          platform. Refresh with scripts/python-sdist-cargo-lock.sh refresh.
+        entry: bash scripts/python-sdist-cargo-lock.sh
+        pass_filenames: false
+        files: ^(Cargo\.lock|python/Cargo\.lock\.sdist|python/Cargo\.toml\.sdist|(sf_core|python_bridge|sf_params_spec|proto_utils|error_trace|error_trace_derive|proto_generator)/Cargo\.toml)$
+        language: system
     -   id: clang-format
         name: clang-format
         description: Run clang-format on C/C++ files included in the commit. clang-format should be installed before-hand.
