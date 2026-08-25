@@ -14,7 +14,9 @@
 #include "get_data.hpp"
 #include "test_setup.hpp"
 
-// Old driver returns "INFINITY"/"-INFINITY", new driver returns "inf"/"-inf"
+// Both drivers render +/-Infinity as the uppercase word "INFINITY"/"-INFINITY"
+// (the new driver matches the legacy fetch format as of this change). The matcher
+// stays case-insensitive and also accepts the short "inf" form defensively.
 static bool is_positive_infinity_str(const std::string& s) {
   std::string lower = s;
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);

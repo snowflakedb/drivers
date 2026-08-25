@@ -652,6 +652,78 @@ mod tests {
     }
 
     // ======================================================================
+    // SQL_C_CHAR / SQL_C_WCHAR — non-finite values
+    //
+    // The legacy driver renders +/-Infinity fetched as a string using the
+    // full uppercase word ("INFINITY" / "-INFINITY"), not Rust's Display
+    // short form ("inf" / "-inf"). This is a distinct convention from
+    // write_wire's bind-side "Infinity" / "-Infinity" (see the write_wire
+    // tests below) — the fetch path must not reuse that casing.
+    // ======================================================================
+
+    #[test]
+    fn real_char_positive_infinity_renders_uppercase_word() {
+        let sr = make_real();
+        let mut buffer = vec![0u8; 32];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+
+        sr.write_odbc_type(f64::INFINITY, &binding, &mut None)
+            .unwrap();
+
+        let expected = b"INFINITY";
+        assert_eq!(str_len, expected.len() as sql::Len);
+        assert_eq!(&buffer[..expected.len()], expected);
+        assert_eq!(buffer[expected.len()], 0);
+    }
+
+    #[test]
+    fn real_char_negative_infinity_renders_uppercase_word() {
+        let sr = make_real();
+        let mut buffer = vec![0u8; 32];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+
+        sr.write_odbc_type(f64::NEG_INFINITY, &binding, &mut None)
+            .unwrap();
+
+        let expected = b"-INFINITY";
+        assert_eq!(str_len, expected.len() as sql::Len);
+        assert_eq!(&buffer[..expected.len()], expected);
+        assert_eq!(buffer[expected.len()], 0);
+    }
+
+    #[test]
+    fn real_wchar_positive_infinity_renders_uppercase_word() {
+        let sr = make_real();
+        let mut buffer = vec![0 as WideChar; 32];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
+
+        sr.write_odbc_type(f64::INFINITY, &binding, &mut None)
+            .unwrap();
+
+        let expected = encode_wide("INFINITY");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
+        assert_eq!(&buffer[..expected.len()], &expected[..]);
+    }
+
+    #[test]
+    fn real_wchar_negative_infinity_renders_uppercase_word() {
+        let sr = make_real();
+        let mut buffer = vec![0 as WideChar; 32];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
+
+        sr.write_odbc_type(f64::NEG_INFINITY, &binding, &mut None)
+            .unwrap();
+
+        let expected = encode_wide("-INFINITY");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
+        assert_eq!(&buffer[..expected.len()], &expected[..]);
+    }
+
+    // ======================================================================
     // SQL_C_NUMERIC
     // ======================================================================
 

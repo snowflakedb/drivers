@@ -81,6 +81,28 @@ fn format_f64_display_into(value: f64, buf: &mut [u8; 384]) -> Result<&str, Writ
     Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) })
 }
 
+/// Formats an `f64` for SQL_C_CHAR / SQL_C_WCHAR fetches, matching the legacy
+/// driver's convention for non-finite values.
+///
+/// Delegates to [`format_f64_display_into`] for every finite value (byte-identical
+/// to `f64::to_string()`). +/-Infinity is rendered as the legacy driver's
+/// uppercase `"INFINITY"` / `"-INFINITY"` instead of Rust's Display short form
+/// (`"inf"` / `"-inf"`). This is a *different* convention than
+/// [`WriteWire::write_wire`]'s bind-side `"Infinity"` / `"-Infinity"` — that
+/// casing is dictated by the server's bind parser, not the legacy driver's
+/// fetch-side format, so the two constants intentionally do not share a
+/// string literal. NaN is left to `format_f64_display_into` (`"NaN"`), matching
+/// both the legacy driver and the bind-side wire format.
+fn format_f64_for_char_fetch(value: f64, buf: &mut [u8; 384]) -> Result<&str, WriteOdbcError> {
+    if value == f64::INFINITY {
+        return Ok("INFINITY");
+    }
+    if value == f64::NEG_INFINITY {
+        return Ok("-INFINITY");
+    }
+    format_f64_display_into(value, buf)
+}
+
 fn check_float_range(value: f64, min: f64, max: f64) -> Result<(), WriteOdbcError> {
     if value.is_nan() {
         return NumericValueOutOfRangeSnafu {
@@ -335,7 +357,7 @@ impl WriteODBCType for SnowflakeReal {
             }
             CDataType::Char => {
                 let mut num_buf = [0u8; 384];
-                let num_str = format_f64_display_into(snowflake_value, &mut num_buf)?;
+                let num_str = format_f64_for_char_fetch(snowflake_value, &mut num_buf)?;
                 let warnings = binding.write_char_string(num_str, get_data_offset);
                 if warnings
                     .iter()
@@ -357,7 +379,7 @@ impl WriteODBCType for SnowflakeReal {
             }
             CDataType::WChar => {
                 let mut num_buf = [0u8; 384];
-                let num_str = format_f64_display_into(snowflake_value, &mut num_buf)?;
+                let num_str = format_f64_for_char_fetch(snowflake_value, &mut num_buf)?;
                 let warnings = binding.write_wchar_string(num_str, get_data_offset);
                 if warnings
                     .iter()
