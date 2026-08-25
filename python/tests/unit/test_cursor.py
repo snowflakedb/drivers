@@ -2598,6 +2598,75 @@ class TestExecuteSkipUploadOnContentMatch:
         )
 
 
+class TestExecuteStatementParams:
+    """`_statement_params` is applied per-call (parity with the legacy connector):
+    caller-supplied keys reach the statement-parameters channel, never persist on
+    the cursor, and driver fold-ins (num_statements) win on key collision.
+    """
+
+    @pytest.fixture
+    def mock_connection(self):
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @staticmethod
+    def _capture_per_call(cursor):
+        """Capture the `statement_parameters` kwarg at the moment `_execute` runs."""
+        captured = {}
+
+        def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return MagicMock()
+
+        return captured, side_effect
+
+    def test_statement_params_passed_as_per_call(self, cursor):
+        captured, side_effect = self._capture_per_call(cursor)
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
+        assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
+        # Never persisted on the cursor.
+        assert "DATE_INPUT_FORMAT" not in cursor._statement_parameters
+
+    def test_statement_params_not_persisted_across_calls(self, cursor):
+        with (
+            patch.object(cursor, "_execute"),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
+
+        captured, side_effect = self._capture_per_call(cursor)
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("SELECT 2")
+        assert "DATE_INPUT_FORMAT" not in captured, "second call must NOT inherit the first call's statement params"
+
+    def test_num_statements_wins_over_statement_params_collision(self, cursor):
+        # Driver fold-in (num_statements) must override a caller-supplied
+        # MULTI_STATEMENT_COUNT — matches legacy (which spreads it last).
+        captured, side_effect = self._capture_per_call(cursor)
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute(
+                "SELECT 1; SELECT 2",
+                num_statements=2,
+                _statement_params={StatementParameterName.MULTI_STATEMENT_COUNT: 5},
+            )
+        assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 2
+
+
 class TestExecuteNumStatements:
     """`num_statements` is a per-call execute() kwarg: a value on call N
     must not bleed into call N+1.
@@ -3636,3 +3705,55 @@ class TestAsyncExecutemanyReturnsCursor:
         ):
             result = asyncio.run(cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)]))
         assert result is cursor
+
+
+class TestAsyncExecuteStatementParams:
+    """Async parity: execute() threads `_statement_params` into the per-call
+    statement-parameters channel (shared `_collect_statement_params`).
+    """
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.is_closed.return_value = False
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection, no_native_stream_ops):
+        return AsyncSnowflakeCursor(mock_connection)
+
+    def test_statement_params_passed_as_per_call(self, cursor):
+        captured = {}
+
+        async def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return MagicMock()
+
+        with (
+            patch.object(cursor, "_execute", new=AsyncMock(side_effect=side_effect)),
+            patch.object(cursor, "reset", new=AsyncMock()),
+        ):
+            asyncio.run(cursor.execute("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"}))
+        assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
+
+    def test_num_statements_wins_over_statement_params_collision(self, cursor):
+        # Driver fold-in (num_statements) must override a caller-supplied
+        # MULTI_STATEMENT_COUNT -- matches legacy (which spreads it last).
+        captured = {}
+
+        async def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return MagicMock()
+
+        with (
+            patch.object(cursor, "_execute", new=AsyncMock(side_effect=side_effect)),
+            patch.object(cursor, "reset", new=AsyncMock()),
+        ):
+            asyncio.run(
+                cursor.execute(
+                    "SELECT 1; SELECT 2",
+                    num_statements=2,
+                    _statement_params={StatementParameterName.MULTI_STATEMENT_COUNT: 5},
+                )
+            )
+        assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 2

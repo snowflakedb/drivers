@@ -445,15 +445,24 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         return stripped.replace(fmt, ",".join(values), 1)
 
     def _collect_statement_params(
-        self, *, skip_upload_on_content_match: bool, num_statements: int | None = None
+        self,
+        *,
+        skip_upload_on_content_match: bool,
+        num_statements: int | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Collect per-call statement parameters for a single execute().
 
-        Scoped to one call and never written to the cursor's sticky
-        `_statement_parameters`, so a per-call value cannot bleed into a
-        later execute() that omits the kwarg.
+        Merges the caller-supplied ``_statement_params`` bag (opaque passthrough,
+        e.g. ``DATE_INPUT_FORMAT``) with the driver's known per-call fold-ins
+        (``num_statements`` → MULTI_STATEMENT_COUNT, ``skip_upload_on_content_match``
+        → SKIP_UPLOAD_ON_CONTENT_MATCH). Scoped to one call and never written to
+        the cursor's sticky `_statement_parameters`.
         """
-        params: dict[str, Any] = {}
+        # Seed from the caller's bag, then apply the driver fold-ins on top so
+        # they win on a key collision — matches legacy, which spreads
+        # ``{**_statement_params, "MULTI_STATEMENT_COUNT": num_statements}``.
+        params: dict[str, Any] = dict(statement_params or {})
         if skip_upload_on_content_match:
             params[StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH] = True
         if num_statements is not None:
