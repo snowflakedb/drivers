@@ -476,6 +476,91 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
   CHECK(octetLength == 136);
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: SQL_DATA_TYPE is verbose SQL_DATETIME for date/time types",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
+                             SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  struct DateTimeCols {
+    SQLSMALLINT concise;
+    SQLSMALLINT dtSub;
+  };
+  const std::map<std::string, DateTimeCols> expectDt = {
+      {"DATEVAL", {SQL_TYPE_DATE, SQL_CODE_DATE}},         {"TIMEVAL", {SQL_TYPE_TIME, SQL_CODE_TIME}},
+      {"TSNTZ", {SQL_TYPE_TIMESTAMP, SQL_CODE_TIMESTAMP}}, {"TSLTZ", {SQL_TYPE_TIMESTAMP, SQL_CODE_TIMESTAMP}},
+      {"TSTZ", {SQL_TYPE_TIMESTAMP, SQL_CODE_TIMESTAMP}},
+  };
+  const std::string nonDatetime = "NUM38";
+
+  struct ActualDt {
+    SQLSMALLINT dataType;
+    SQLSMALLINT sqlDataType;
+    SQLSMALLINT dtSub;
+  };
+  std::map<std::string, ActualDt> actualDt;
+  SQLSMALLINT num38DataType = static_cast<SQLSMALLINT>(0x7FFF);
+  SQLSMALLINT num38SqlDataType = static_cast<SQLSMALLINT>(0x7FFF);
+  SQLLEN num38DtSubInd = 0;
+  bool sawNum38 = false;
+
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+    const bool wantDt = expectDt.count(columnName.text) != 0;
+    const bool wantNum38 = columnName.text == nonDatetime;
+    if (!wantDt && !wantNum38) {
+      continue;
+    }
+
+    SQLSMALLINT dataType = static_cast<SQLSMALLINT>(0x7FFF);
+    SQLLEN dataTypeInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &dataType, 0, &dataTypeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(dataTypeInd == sizeof(SQLSMALLINT));
+
+    SQLSMALLINT sqlDataType = static_cast<SQLSMALLINT>(0x7FFF);
+    SQLLEN sqlDataTypeInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 14, SQL_C_SSHORT, &sqlDataType, 0, &sqlDataTypeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(sqlDataTypeInd == sizeof(SQLSMALLINT));
+
+    SQLSMALLINT dtSub = static_cast<SQLSMALLINT>(0x7FFF);
+    SQLLEN dtSubInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 15, SQL_C_SSHORT, &dtSub, 0, &dtSubInd);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    if (wantNum38) {
+      num38DataType = dataType;
+      num38SqlDataType = sqlDataType;
+      num38DtSubInd = dtSubInd;
+      sawNum38 = true;
+      continue;
+    }
+
+    REQUIRE(dtSubInd == sizeof(SQLSMALLINT));
+    actualDt.emplace(columnName.text, ActualDt{dataType, sqlDataType, dtSub});
+  }
+
+  for (const auto& [column, want] : expectDt) {
+    const auto it = actualDt.find(column);
+    REQUIRE(it != actualDt.end());
+    INFO("column " << column);
+    CHECK(it->second.dataType == want.concise);
+    CHECK(it->second.dtSub == want.dtSub);
+    NEW_DRIVER_ONLY("BD#125") { CHECK(it->second.sqlDataType == SQL_DATETIME); }
+    OLD_DRIVER_ONLY("BD#125") { CHECK(it->second.sqlDataType == want.concise); }
+  }
+
+  REQUIRE(sawNum38);
+  REQUIRE(num38DtSubInd == SQL_NULL_DATA);
+  CHECK(num38SqlDataType == num38DataType);
+  CHECK(num38SqlDataType != SQL_DATETIME);
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: DATA_TYPE is non-NULL for all types (SQL_VARCHAR for unmapped)",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),

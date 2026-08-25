@@ -2442,3 +2442,23 @@ behavior_differences:
     description: |
       The universal core performs TLS revocation checking in Rust with CRL support shared
       across wrappers. OCSP was not ported; callers must migrate to CRL configuration.
+
+  125:
+    name: "SQLColumns SQL_DATA_TYPE returns verbose SQL_DATETIME (9) for date/time types"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      For DATE/TIME/TIMESTAMP rows, SQLColumns col 14 (SQL_DATA_TYPE) equals
+      col 5 (DATA_TYPE): 91 / 92 / 93. Col 15 (SQL_DATETIME_SUB) is still filled
+      (1 / 2 / 3).
+    new_driver_behavior: |
+      For DATE/TIME/TIMESTAMP rows, SQLColumns col 14 returns SQL_DATETIME (9)
+      and col 15 returns the corresponding SQL_CODE_* (1 / 2 / 3). Col 5 still
+      returns the concise type (91 / 92 / 93). Non-datetime rows are unchanged
+      (verbose == concise).
+    description: |
+      ODBC requires SQLColumns col 14 (SQL_DATA_TYPE) to return the nonconcise
+      type SQL_DATETIME for date/time, with the subtype in SQL_DATETIME_SUB.
