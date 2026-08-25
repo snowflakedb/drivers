@@ -602,6 +602,44 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: COLUMN_SIZE is 20+scale for
   }
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: BUFFER_LENGTH is 16 for TIMESTAMP types",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
+                             SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const std::vector<std::string> tsColumns = {"TSNTZ", "TSLTZ", "TSTZ"};
+  constexpr SQLINTEGER kTimestampStructBytes = static_cast<SQLINTEGER>(sizeof(SQL_TIMESTAMP_STRUCT));
+  constexpr SQLINTEGER kLegacyCopiedColumnSize = 35;
+
+  std::map<std::string, SQLINTEGER> actual;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+    if (std::find(tsColumns.begin(), tsColumns.end(), columnName.text) == tsColumns.end()) {
+      continue;
+    }
+
+    SQLINTEGER bufLen = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN bufLenInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &bufLen, 0, &bufLenInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(bufLenInd == sizeof(SQLINTEGER));
+    actual.emplace(columnName.text, bufLen);
+  }
+
+  for (const auto& column : tsColumns) {
+    const auto it = actual.find(column);
+    REQUIRE(it != actual.end());
+    INFO("column " << column);
+    NEW_DRIVER_ONLY("BD#129") { CHECK(it->second == kTimestampStructBytes); }
+    OLD_DRIVER_ONLY("BD#129") { CHECK(it->second == kLegacyCopiedColumnSize); }
+  }
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: DATA_TYPE is non-NULL for all types (SQL_VARCHAR for unmapped)",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
