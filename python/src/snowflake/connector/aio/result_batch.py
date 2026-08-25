@@ -117,7 +117,12 @@ class ResultBatch(ResultBatchMixin):
 
         stream_ptr = await self._take_arrow_stream_ptr(conn)
         iterator = AsyncArrowStreamIterator(
-            create_row_iterator(stream_ptr, context=self._arrow_context, use_dict_result=use_dict_result)
+            create_row_iterator(
+                stream_ptr,
+                context=self._arrow_context,
+                use_dict_result=use_dict_result,
+                use_numpy=self._numpy,
+            )
         )
         async for row in iterator:
             yield row
