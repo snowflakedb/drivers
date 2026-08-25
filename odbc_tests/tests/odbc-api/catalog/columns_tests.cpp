@@ -561,6 +561,47 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: SQL_DATA_TYPE is verbose SQ
   CHECK(num38SqlDataType != SQL_DATETIME);
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: COLUMN_SIZE is 20+scale for TIMESTAMP types",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
+                             SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const std::map<std::string, SQLINTEGER> expectTs = {
+      {"TSNTZ", 29},
+      {"TSLTZ", 29},
+      {"TSTZ", 29},
+  };
+  constexpr SQLINTEGER kLegacyTimestampColumnSize = 35;
+
+  std::map<std::string, SQLINTEGER> actual;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+    if (expectTs.count(columnName.text) == 0) {
+      continue;
+    }
+
+    SQLINTEGER colSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN colSizeInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 7, SQL_C_SLONG, &colSize, 0, &colSizeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(colSizeInd == sizeof(SQLINTEGER));
+    actual.emplace(columnName.text, colSize);
+  }
+
+  for (const auto& [column, wantNew] : expectTs) {
+    const auto it = actual.find(column);
+    REQUIRE(it != actual.end());
+    INFO("column " << column);
+    NEW_DRIVER_ONLY("BD#128") { CHECK(it->second == wantNew); }
+    OLD_DRIVER_ONLY("BD#128") { CHECK(it->second == kLegacyTimestampColumnSize); }
+  }
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: DATA_TYPE is non-NULL for all types (SQL_VARCHAR for unmapped)",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),

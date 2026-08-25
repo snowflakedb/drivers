@@ -2527,3 +2527,20 @@ behavior_differences:
       The new driver reports both bits set. Gated with OLD_IODBC_ONLY("BD#127") in
       the SQL_API_ODBC3_ALL_FUNCTIONS coverage loop in
       odbc-api/driver_info/get_functions_tests.cpp.
+
+  128:
+    name: "SQLColumns TIMESTAMP COLUMN_SIZE is 20+scale (not legacy fixed 35)"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      SQLColumns COLUMN_SIZE (col 7) for TIMESTAMP_NTZ / LTZ / TZ is a fixed 35
+      (worst-case TIMESTAMP_TZ string), regardless of scale.
+    new_driver_behavior: |
+      SQLColumns COLUMN_SIZE for TIMESTAMP* is 20 + scale (19 when scale is 0).
+      Default Snowflake scale 9 therefore reports 29. Query-result
+      SQLColAttribute DISPLAY_SIZE for TIMESTAMP remains 29 (unchanged).
+    description: |
+      Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/column-size
