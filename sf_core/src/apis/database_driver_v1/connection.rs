@@ -1520,14 +1520,18 @@ impl RefreshContext {
                 // immediately so the connection's `is_master_token_expired` flag is visible to
                 // external observers before the error propagates.
                 Some(RestError::InvalidSnowflakeResponse {
-                    source: SnowflakeResponseError::MasterTokenExpired { .. },
+                    source: SnowflakeResponseError::MasterTokenTerminal { code, .. },
                     ..
                 }) => {
                     tracing::error!(
-                        "Server reported master token expired (390114), full re-authentication required"
+                        code,
+                        "Server reported master token can never be renewed, full re-authentication required"
                     );
                     self.is_master_token_expired.store(true, Ordering::SeqCst);
-                    MasterTokenExpiredSnafu.fail()
+                    MasterTokenTerminalSnafu {
+                        master_token_gs_code: Some(code),
+                    }
+                    .fail()
                 }
                 Some(RestError::InvalidSnowflakeResponse {
                     source: SnowflakeResponseError::SessionExpired { .. },
@@ -1551,11 +1555,16 @@ impl RefreshContext {
                         return Ok(tokens.session_token.clone());
                     }
 
-                    // Check if master token is expired
+                    // Check if master token is expired. This is a client-side,
+                    // time-based prediction — no server round-trip happened, so
+                    // there is no real GS code to carry; never fabricate one.
                     if tokens.is_master_expired() {
                         tracing::error!("Master token expired, full re-authentication required");
                         self.is_master_token_expired.store(true, Ordering::SeqCst);
-                        return MasterTokenExpiredSnafu.fail();
+                        return MasterTokenTerminalSnafu {
+                            master_token_gs_code: None,
+                        }
+                        .fail();
                     }
 
                     // Refresh session (still holding write lock to prevent concurrent refreshes)
@@ -1569,18 +1578,19 @@ impl RefreshContext {
                     {
                         Ok(new_tokens) => new_tokens,
                         Err(refresh_err) => {
-                            // GS 390114 from the refresh endpoint means the master
-                            // token has expired: mark the connection expired before
-                            // propagating, mirroring the query-response path.
+                            // GS 390113/390114/390115 from the refresh endpoint mean
+                            // the master token can never be renewed: mark the
+                            // connection expired before propagating, mirroring the
+                            // query-response path.
                             if matches!(
                                 &refresh_err,
                                 RestError::InvalidSnowflakeResponse {
-                                    source: SnowflakeResponseError::MasterTokenExpired { .. },
+                                    source: SnowflakeResponseError::MasterTokenTerminal { .. },
                                     ..
                                 },
                             ) {
                                 tracing::error!(
-                                    "Server reported master token expired (390114) during refresh, full re-authentication required"
+                                    "Server reported master token can never be renewed during refresh, full re-authentication required"
                                 );
                                 self.is_master_token_expired.store(true, Ordering::SeqCst);
                             }
@@ -1663,17 +1673,17 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
         let ApiError::Query { source, .. } = err else {
             return false;
         };
-        // GS 390114: master token expired — mark connection as expired and do
-        // NOT attempt a refresh; the session can never be renewed.
+        // GS 390113/390114/390115: master token can never be renewed — mark
+        // connection as expired and do NOT attempt a refresh.
         if matches!(
             source.as_ref(),
             RestError::InvalidSnowflakeResponse {
-                source: SnowflakeResponseError::MasterTokenExpired { .. },
+                source: SnowflakeResponseError::MasterTokenTerminal { .. },
                 ..
             },
         ) {
             tracing::error!(
-                "Server reported master token expired (390114), full re-authentication required"
+                "Server reported master token can never be renewed, full re-authentication required"
             );
             self.is_master_token_expired.store(true, Ordering::SeqCst);
             return false;
@@ -1727,9 +1737,15 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
             }
 
             if tokens.is_master_expired() {
+                // Client-side, time-based prediction — no server round-trip
+                // happened, so there is no real GS code to carry; never
+                // fabricate one (see the matching comment in refresh_token above).
                 tracing::error!("Master token expired, full re-authentication required");
                 self.is_master_token_expired.store(true, Ordering::SeqCst);
-                return MasterTokenExpiredSnafu.fail();
+                return MasterTokenTerminalSnafu {
+                    master_token_gs_code: None,
+                }
+                .fail();
             }
 
             tracing::info!("Session expired, attempting refresh");
@@ -1743,20 +1759,21 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
             {
                 Ok(new_tokens) => new_tokens,
                 Err(refresh_err) => {
-                    // The refresh endpoint can itself return GS 390114 (master
-                    // token expired). refresh_session surfaces that as
-                    // InvalidSnowflakeResponse { MasterTokenExpired }; mark the
-                    // connection expired before propagating, mirroring
+                    // The refresh endpoint can itself return GS 390113/390114/
+                    // 390115 (master token can never be renewed).
+                    // refresh_session surfaces that as
+                    // InvalidSnowflakeResponse { MasterTokenTerminal }; mark
+                    // the connection expired before propagating, mirroring
                     // should_refresh() on the query path.
                     if matches!(
                         &refresh_err,
                         RestError::InvalidSnowflakeResponse {
-                            source: SnowflakeResponseError::MasterTokenExpired { .. },
+                            source: SnowflakeResponseError::MasterTokenTerminal { .. },
                             ..
                         },
                     ) {
                         tracing::error!(
-                            "Server reported master token expired (390114) during refresh, full re-authentication required"
+                            "Server reported master token can never be renewed during refresh, full re-authentication required"
                         );
                         self.is_master_token_expired.store(true, Ordering::SeqCst);
                     }
