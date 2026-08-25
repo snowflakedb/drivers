@@ -1062,3 +1062,45 @@ behavior_differences:
       don't have visibility into whether GS's session-parameter parser is
       strict about JSON type, so this stays `impact: low` rather than
       overclaiming.
+
+  58:
+    name: "backoff_policy callable parameter removed; retry backoff now configured via typed retry_backoff_* parameters with different defaults"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `backoff_policy` accepts a callable — a generator function such as `exponential_backoff()`
+      (the default) or `mixed_backoff()`, or a fully custom one — that computes the delay before
+      each retry across every retry loop (login, query, general HTTP, PUT/GET).
+    new_driver_behavior: |
+      `backoff_policy` no longer exists. The backoff curve is configured instead through four typed
+      parameters — `retry_backoff_base_ms`, `retry_backoff_cap_ms`, `retry_backoff_factor`, and
+      `retry_backoff_jitter` (one of `"none"`, `"full"`, `"decorrelated"`) — which select among
+      built-in strategies but cannot express an arbitrary custom generator. The defaults these
+      parameters resolve to also changed: 250ms initial delay (vs. legacy's 1s) and
+      `"decorrelated"` jitter (vs. legacy's `"full"`); the 2x growth factor and 16s cap are
+      unchanged.
+
+  80:
+    name: "Easy-logging YAML config-file feature removed; replaced by SNOWFLAKE_TROUBLESHOOTING_ENABLED env var"
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `EasyLoggingConfigPython` reads a YAML config file (`log.save_logs`, `log.path`, etc.) to
+      configure a `RotatingFileHandler` for driver logging.
+    new_driver_behavior: |
+      No YAML-config-driven logging exists in UD. Logging is controlled instead by the Rust
+      `SNOWFLAKE_TROUBLESHOOTING_ENABLED` env var (confirmed in `sf_core/src/env_vars.rs` and
+      `sf_core/src/logging/log_manager.rs`). There is no user-configurable log file path or YAML
+      schema; confirmed no `easy_logging`/`EasyLogging` references remain anywhere under `python/`.
+    description: |
+      Decided acceptable for GA as-is: UD intentionally trades the YAML config surface (arbitrary
+      log path, rotation size, per-module levels) for a single boolean env var covering the
+      primary use case (turning on driver-internal troubleshooting logs). No code fix planned.
+      Worth a migration-guide callout for users who relied on custom `log.path`/rotation settings,
+      but that's a docs follow-up, not a driver change.
