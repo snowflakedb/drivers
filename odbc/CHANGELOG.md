@@ -87,6 +87,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed reauth-required authentication failures to report SQLSTATE `08001` instead of `28000`, matching the legacy connector and the Python wrapper. (snowflakedb/drivers#1133)
 - Fixed failed `GET` downloads to leave no partial or corrupt file at the destination; the driver now writes to a `.part` temporary file and renames it on successful completion. (snowflakedb/drivers#812)
 - Fixed concurrent `SQLDisconnect` to be thread-safe. (snowflakedb/drivers#1018)
 - Fixed `SQLDisconnect` to free child statement handles and explicitly allocated descriptors after a successful disconnect so a later `SQLFreeHandle` on those handles returns `SQL_INVALID_HANDLE`. (snowflakedb/drivers#1174)

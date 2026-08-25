@@ -85,6 +85,11 @@ message DriverException {
   // Discriminant for which sf_core validation rule produced this error, when
   // known. Unset when the error did not originate from `validate_settings`.
   optional ValidationCode validation_code = 11;
+  // True when the session cannot be renewed automatically; the caller must
+  // open a new connection. Additive field, default false. The GS code, if
+  // any, travels on vendor_code — the same channel every other error type
+  // uses — not duplicated here.
+  bool reauthentication_required = 12;
 }
 
 // Column metadata for description

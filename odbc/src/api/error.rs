@@ -1875,4 +1875,30 @@ mod tests {
             SqlState::InvalidAttributeOptionIdentifier, // HY092
         );
     }
+
+    /// ODBC's blanket `AuthError` arm doesn't branch on
+    /// `reauthentication_required` -- both values map to the same SQLSTATE.
+    /// In production a reauth-shaped error gets `sql_state = "08001"` from
+    /// `sf_core::extract_vendor_info`, forwarded by this match's earlier
+    /// well-formed-sql_state check before reaching this arm; `sql_state:
+    /// None` below exercises only the no-override fallback. `bool` has two
+    /// values, so no wildcard arm is needed.
+    #[test]
+    fn auth_error_reauthentication_required_presence_maps_to_invalid_authorization_specification() {
+        for reauthentication_required in [false, true] {
+            let err =
+                OdbcError::from_protobuf_error(ProtoError::Application(ProtoDriverException {
+                    message: "Authentication failed".to_string(),
+                    kind: ProtoErrorKind::AuthenticationError as i32,
+                    reauthentication_required,
+                    ..Default::default()
+                }));
+
+            assert_eq!(
+                err.to_sql_state(),
+                SqlState::InvalidAuthorizationSpecification,
+                "reauthentication_required={reauthentication_required}"
+            );
+        }
+    }
 }

@@ -1,7 +1,10 @@
 //! Integration tests for session token refresh functionality.
 
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
-use sf_core::rest::snowflake::{RestError, SessionTokens, SnowflakeResponseError, refresh_session};
+use sf_core::rest::snowflake::{
+    MASTER_TOKEN_EXPIRED, MASTER_TOKEN_INVALID, MASTER_TOKEN_NOT_FOUND, RestError, SessionTokens,
+    SnowflakeResponseError, refresh_session,
+};
 use sf_core::sensitive::SensitiveString;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -101,38 +104,54 @@ async fn should_fail_when_refresh_returns_error() {
     server.await.unwrap();
 }
 
-/// GS 390114 on the refresh endpoint must surface the discriminable
-/// MasterTokenExpired variant (not the generic SessionRefreshFailed), so callers
-/// can mark the connection expired. Unit-level proof of the refresh_session mapping.
+/// GS 390113/390114/390115 on the refresh endpoint must all surface the
+/// discriminable MasterTokenTerminal variant (not the generic
+/// SessionRefreshFailed), carrying the real code, so callers can mark the
+/// connection expired. Unit-level proof of the refresh_session mapping.
 #[tokio::test]
-async fn should_map_390114_to_master_token_expired() {
-    let (addr, attempts, server) = spawn_refresh_server(|_| async move {
-        let body = r#"{"success":false,"code":"390114","message":"Master token has expired"}"#;
-        format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        ).into_bytes()
-    }).await;
-
-    let client = reqwest::Client::new();
-    let server_url = format!("http://{}", addr);
-
-    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
-
-    let err = result.expect_err("390114 refresh must fail");
-    assert!(
-        matches!(
-            err,
-            RestError::InvalidSnowflakeResponse {
-                source: SnowflakeResponseError::MasterTokenExpired { .. },
-                ..
+async fn should_map_master_token_terminal_gs_codes_on_refresh() {
+    for code in [
+        MASTER_TOKEN_NOT_FOUND,
+        MASTER_TOKEN_EXPIRED,
+        MASTER_TOKEN_INVALID,
+    ] {
+        // Given a refresh endpoint that returns this master-token-terminal GS code
+        let json_body = format!(
+            r#"{{"success":false,"code":"{code}","message":"Master token is no longer valid"}}"#
+        );
+        let (addr, attempts, server) = spawn_refresh_server(move |_| {
+            let json_body = json_body.clone();
+            async move {
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json_body}",
+                    json_body.len(),
+                )
+                .into_bytes()
             }
-        ),
-        "expected InvalidSnowflakeResponse{{MasterTokenExpired}}, got {err:?}"
-    );
-    assert_eq!(attempts.load(Ordering::SeqCst), 1);
-    server.await.unwrap();
+        })
+        .await;
+
+        let client = reqwest::Client::new();
+        let server_url = format!("http://{addr}");
+
+        // When we refresh the session
+        let result =
+            refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+
+        // Then the error is MasterTokenTerminal carrying the real GS code
+        let err = result.expect_err("master-token-terminal refresh must fail");
+        match err {
+            RestError::InvalidSnowflakeResponse {
+                source: SnowflakeResponseError::MasterTokenTerminal { code: got, .. },
+                ..
+            } => assert_eq!(got, code, "must preserve the real GS code"),
+            other => panic!(
+                "expected InvalidSnowflakeResponse{{MasterTokenTerminal}} for GS {code}, got {other:?}"
+            ),
+        }
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        server.await.unwrap();
+    }
 }
 
 async fn spawn_refresh_server<F, Fut>(

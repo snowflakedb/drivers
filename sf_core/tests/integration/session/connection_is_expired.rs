@@ -4,6 +4,9 @@ use sf_core::protobuf::apis::database_driver_v1::{
     DatabaseDriverClientBlockingExt, database_driver_client,
 };
 use sf_core::protobuf::generated::database_driver_v1::*;
+use sf_core::rest::snowflake::{
+    MASTER_TOKEN_EXPIRED, MASTER_TOKEN_INVALID, MASTER_TOKEN_NOT_FOUND,
+};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -227,57 +230,62 @@ async fn should_not_set_is_expired_on_successful_token_refresh() {
 }
 
 /// When a query triggers a session-token refresh and the token-request endpoint
-/// returns GS 390114 (master token expired), the connection must be marked
-/// expired: the master token can never be renewed. Proves the refresh path
-/// preserves the 390114 discriminant and reaches the `is_master_token_expired`
-/// flag, matching the query-response path.
+/// returns a master-token-terminal GS code (390113 not found / 390114 expired /
+/// 390115 invalid), the connection must be marked expired: the master token can
+/// never be renewed. Proves the refresh path preserves the discriminant and
+/// reaches the `is_master_token_expired` flag, matching the query-response path.
 #[tokio::test]
-async fn should_set_is_expired_when_refresh_returns_390114() {
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
+async fn should_set_is_expired_when_refresh_returns_master_token_terminal() {
+    for code in [
+        MASTER_TOKEN_NOT_FOUND,
+        MASTER_TOKEN_EXPIRED,
+        MASTER_TOKEN_INVALID,
+    ] {
+        let server = MockServer::start().await;
+        mount_jwt_login_success(&server).await;
 
-    // Every query gets 401 → triggers a session-token refresh.
-    Mock::given(method("POST"))
-        .and(path_regex(r"/queries/v1/query-request.*"))
-        .respond_with(ResponseTemplate::new(401))
-        .named("query_401")
-        .mount(&server)
-        .await;
+        // Every query gets 401 → triggers a session-token refresh.
+        Mock::given(method("POST"))
+            .and(path_regex(r"/queries/v1/query-request.*"))
+            .respond_with(ResponseTemplate::new(401))
+            .named("query_401")
+            .mount(&server)
+            .await;
 
-    // The refresh (token-request) endpoint returns GS 390114: master token expired.
-    Mock::given(method("POST"))
-        .and(path("/session/token-request"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "success": false,
-            "code": "390114",
-            "message": "Master token has expired. The session is no longer active."
-        })))
-        .named("refresh_390114")
-        .mount(&server)
-        .await;
+        Mock::given(method("POST"))
+            .and(path("/session/token-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": false,
+                "code": code.to_string(),
+                "message": "Master token is no longer valid."
+            })))
+            .named(format!("refresh_{code}"))
+            .mount(&server)
+            .await;
 
-    let server_uri = server.uri();
-    // Run connect, the (failing) query, and the is_expired check on one blocking
-    // thread that owns `client`: handle registries are per client instance and
-    // SnowflakeTestClient releases its connection on Drop, so the check must go
-    // through the owning client while it is still alive. The `_blocking` calls
-    // also drive block_on internally and so must run off the tokio runtime thread.
-    let is_expired = tokio::task::spawn_blocking(move || {
-        let client = SnowflakeTestClient::connect_integration_test(Some(&server_uri));
-        // 401 → refresh → 390114; the query must fail (guards against a vacuous
-        // flag check if the mock ever let the query succeed).
-        let query_result = client.execute_query_no_unwrap("SELECT 1");
+        let server_uri = server.uri();
+        // Run connect, the (failing) query, and the is_expired check on one blocking
+        // thread that owns `client`: handle registries are per client instance and
+        // SnowflakeTestClient releases its connection on Drop, so the check must go
+        // through the owning client while it is still alive. The `_blocking` calls
+        // also drive block_on internally and so must run off the tokio runtime thread.
+        let is_expired = tokio::task::spawn_blocking(move || {
+            let client = SnowflakeTestClient::connect_integration_test(Some(&server_uri));
+            // 401 → refresh → terminal GS code; the query must fail (guards against
+            // a vacuous flag check if the mock ever let the query succeed).
+            let query_result = client.execute_query_no_unwrap("SELECT 1");
+            assert!(
+                query_result.is_err(),
+                "query should fail once the master token is reported terminal (GS {code})"
+            );
+            client.connection_is_expired_blocking().unwrap()
+        })
+        .await
+        .unwrap();
+
         assert!(
-            query_result.is_err(),
-            "query should fail once the master token is reported expired"
+            is_expired,
+            "is_expired must be true after the refresh endpoint returns GS {code}"
         );
-        client.connection_is_expired_blocking().unwrap()
-    })
-    .await
-    .unwrap();
-
-    assert!(
-        is_expired,
-        "is_expired must be true after the refresh endpoint returns GS 390114"
-    );
+    }
 }
