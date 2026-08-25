@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 
 from typing import Any
@@ -141,6 +142,19 @@ CHUNK_SIZE = 8 * 1024 * 1024
 # ---------------------------------------------------------------------------
 # Proto-to-PEP-249 error conversion (kept here, at the transport boundary)
 # ---------------------------------------------------------------------------
+
+
+def _stringify_session_parameters(parameters: dict[str, Any]) -> dict[str, str]:
+    """Coerce session parameter values to ``str`` for the string-only protobuf map.
+
+    Legacy ``snowflake-connector-python`` forwards ``session_parameters`` values
+    as-is (bool/int/str/float), but ``ConnectionSetSessionParametersRequest.parameters``
+    is a ``map<string, string>``, so non-string values must be coerced here.
+    ``str`` values pass through unchanged; everything else goes through
+    ``json.dumps`` so it round-trips (``bool`` -> lowercase ``"true"``/``"false"``,
+    ``None`` -> ``"null"``, etc.) rather than serializing as a Python repr.
+    """
+    return {key: (value if isinstance(value, str) else json.dumps(value)) for key, value in parameters.items()}
 
 
 def _extract_error_detail(driver_exception: Any) -> str | None:
@@ -408,9 +422,11 @@ class CoreDriver:
         return self.client.connection_set_options(request)
 
     def connection_set_session_parameters(
-        self, conn_handle: ConnectionHandle, parameters: dict[str, str]
+        self, conn_handle: ConnectionHandle, parameters: dict[str, Any]
     ) -> ConnectionSetSessionParametersResponse:
-        request = ConnectionSetSessionParametersRequest(conn_handle=conn_handle, parameters=parameters)
+        request = ConnectionSetSessionParametersRequest(
+            conn_handle=conn_handle, parameters=_stringify_session_parameters(parameters)
+        )
         return self.client.connection_set_session_parameters(request)
 
     def connection_close(self, conn_handle: ConnectionHandle) -> ConnectionCloseResponse:
@@ -772,10 +788,12 @@ class AsyncCoreDriver:
         )
 
     async def connection_set_session_parameters(
-        self, conn_handle: ConnectionHandle, parameters: dict[str, str]
+        self, conn_handle: ConnectionHandle, parameters: dict[str, Any]
     ) -> ConnectionSetSessionParametersResponse:
         return await self.client.connection_set_session_parameters(
-            ConnectionSetSessionParametersRequest(conn_handle=conn_handle, parameters=parameters)
+            ConnectionSetSessionParametersRequest(
+                conn_handle=conn_handle, parameters=_stringify_session_parameters(parameters)
+            )
         )
 
     async def connection_close(self, conn_handle: ConnectionHandle) -> ConnectionCloseResponse:
