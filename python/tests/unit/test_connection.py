@@ -312,6 +312,30 @@ class TestAutocommitKwargUnit:
         # If connection_set_session_parameters was not called at all, that's also correct
 
 
+class TestSessionParametersKwargUnit:
+    """Unit tests for non-string session_parameters coercion at connection time."""
+
+    def test_non_string_session_parameter_is_coerced(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        Connection(user="test_user", account="test_account", session_parameters={"FOO": True, "BAR": 1})
+        call_args = mock_db_api.connection_set_session_parameters.call_args
+        params = call_args[0][0].parameters
+        assert params == {"FOO": "true", "BAR": "1"}
+
+    def test_non_string_session_parameter_is_coerced_async(self, mock_async_db_api):
+        import asyncio
+
+        from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
+
+        conn = AsyncConnection(user="test_user", account="test_account", session_parameters={"FOO": True, "BAR": 1})
+        asyncio.run(conn.connect())
+
+        call_args = mock_async_db_api.connection_set_session_parameters.call_args
+        params = call_args[0][0].parameters
+        assert params == {"FOO": "true", "BAR": "1"}
+
+
 class TestClientSessionKeepAliveKwargUnit:
     """Unit tests for client_session_keep_alive[_heartbeat_frequency] kwargs."""
 

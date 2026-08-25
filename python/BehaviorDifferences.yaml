@@ -1017,3 +1017,48 @@ behavior_differences:
       proto already guarantees well-formed, purely to reproduce a legacy implementation
       detail. Tests that need to compare or UUID-parse the value normalize through
       `str()` so they hold on both drivers. CONFIRMED from source (both connectors).
+
+  57:
+    name: "session_parameters values are coerced to str before the protobuf map (legacy allows any JSON-serializable value)"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Legacy `snowflake-connector-python` puts the raw Python dict into
+      `body["data"]["SESSION_PARAMETERS"]` untouched (`auth/_auth.py:269`); a
+      single `json.dumps(body, cls=SnowflakeRestfulJsonEncoder)` call in
+      `network.py` serializes the whole request body in one pass, so native
+      Python `bool`/`int` values become native JSON `true`/`5` literals on
+      the wire — there is no string-only type contract, and no coercion
+      happens on the Python side.
+    new_driver_behavior: |
+      `ConnectionSetSessionParametersRequest.parameters` is a string-only
+      protobuf `map<string, string>`, and `auth_request_data`
+      (`sf_core/src/rest/snowflake/mod.rs:603-608`) unconditionally wraps
+      every session-parameter value as `serde_json::Value::String` when
+      building the login request — this is pre-existing UD behavior, not
+      introduced by this fix. This fix's coercion (`bool` → lowercase
+      `"true"`/`"false"` via `json.dumps`, everything else via
+      `json.dumps(value)`, `str` passthrough) lets non-string values reach
+      that point instead of crashing with `TypeError: bad argument type for
+      built-in operation` beforehand. The practical effect: every
+      non-string session-parameter value's JSON type is flattened to a JSON
+      string on the wire (e.g. `true` → `"true"`, `5` → `"5"`) — the
+      character content matches legacy, but the JSON type does not. String
+      values are unaffected (identical logical content; only a cosmetic
+      JSON-escaping style difference between Python's and Rust's default
+      encoders, immaterial to any compliant JSON parser).
+    description: |
+      Found via `Session.builder.configs(...).create()` (Snowpark) passing a
+      non-string value (a Python `bool`) in `session_parameters`, which
+      previously crashed with `TypeError: bad argument type for built-in
+      operation` because `ConnectionSetSessionParametersRequest.parameters`
+      is a string-only protobuf map and nothing coerced values before
+      assignment. Previously undocumented gap; now closed by coercing
+      non-string values to their JSON-scalar string form
+      (`_stringify_session_parameters`) before constructing the request. We
+      don't have visibility into whether GS's session-parameter parser is
+      strict about JSON type, so this stays `impact: low` rather than
+      overclaiming.
