@@ -6,7 +6,7 @@
 //! - the **span lane** ([`super::snowflake_processor`]): a driver-instrumented
 //!   `SpanData` → [`span_to_log_entries`] (message built from scalar attributes);
 //! - the **raw-log lane** (caller JSON forwarded by wrappers, e.g. Snowpark): a
-//!   `message_json` string → parsed and embedded verbatim.
+//!   `message_json` string → parsed and embedded as an object.
 //!
 //! Everything after that is identical — both build the same `{message, timestamp}`
 //! shape via [`log_entry`]/[`logs_payload`] and POST through the same
@@ -15,7 +15,7 @@
 //! time, so the span-end hot path only enqueues the `SpanData`.
 
 use opentelemetry_sdk::trace::SpanData;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::serialization::{log_entry, logs_payload, span_to_log_entries};
 use super::session_batch::{SessionBuffer, flush_bounded, spawn_best_effort};
@@ -36,13 +36,31 @@ pub(crate) struct RawLogEntry {
 }
 
 impl RawLogEntry {
-    /// Parse the caller's `message_json` and wrap it as a single log entry. A
-    /// malformed entry falls back to sending the raw string as the message —
-    /// one bad entry must never sink the whole batch, but it also shouldn't
-    /// silently vanish.
+    /// Parse the caller's `message_json` and wrap it as a single log entry.
+    ///
+    /// The `message` is always a JSON **object**. Consumers read payload fields
+    /// as `message:data:<field>` against a VARIANT, and against a scalar or an
+    /// array that yields NULL rather than an error — so a caller sending the
+    /// wrong shape would produce rows that look present but carry no readable
+    /// payload, with nothing reported on either side.
+    ///
+    /// Anything that is not an object is therefore nested under `message`
+    /// rather than dropped, whether it parsed as valid JSON of the wrong shape
+    /// or failed to parse at all: one bad entry must never sink the whole
+    /// batch, but it also shouldn't silently vanish.
     fn into_log_entries(self) -> Vec<Value> {
-        let message = serde_json::from_str::<Value>(&self.message_json)
-            .unwrap_or(Value::String(self.message_json));
+        let parsed = serde_json::from_str::<Value>(&self.message_json);
+        let message = match parsed {
+            Ok(Value::Object(fields)) => Value::Object(fields),
+            Ok(other) => {
+                tracing::debug!("Raw log message is not a JSON object; nesting it under `message`");
+                json!({ "message": other })
+            }
+            Err(_) => {
+                tracing::debug!("Raw log message is not valid JSON; nesting it under `message`");
+                json!({ "message": self.message_json })
+            }
+        };
         vec![log_entry(message, self.timestamp_ms)]
     }
 }
@@ -358,14 +376,62 @@ mod tests {
     }
 
     #[test]
-    fn raw_log_entry_falls_back_to_string_for_malformed_json() {
+    fn raw_log_entry_nests_malformed_json_under_message() {
         let entry = RawLogEntry {
             message_json: "not valid json".to_string(),
             timestamp_ms: 1700000000000,
         };
         let logs = entry.into_log_entries();
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0]["message"], "not valid json");
+        // Retained rather than dropped, but nested so `message` stays an object.
+        assert!(logs[0]["message"].is_object());
+        assert_eq!(logs[0]["message"]["message"], "not valid json");
         assert_eq!(logs[0]["timestamp"], "1700000000000");
+    }
+
+    /// Valid JSON of the wrong shape is the case that used to slip through:
+    /// it parsed, so it was embedded as-is, and `message:data:<field>` then
+    /// read NULL downstream instead of failing.
+    #[test]
+    fn raw_log_entry_nests_non_object_json_under_message() {
+        for (input, expected) in [
+            ("42", json!(42)),
+            ("[1,2,3]", json!([1, 2, 3])),
+            (r#""text""#, json!("text")),
+            ("true", json!(true)),
+            ("null", json!(null)),
+        ] {
+            let entry = RawLogEntry {
+                message_json: input.to_string(),
+                timestamp_ms: 1700000000123,
+            };
+            let logs = entry.into_log_entries();
+            assert_eq!(logs.len(), 1);
+            let msg = &logs[0]["message"];
+            assert!(
+                msg.is_object(),
+                "message must be an object for input {input}"
+            );
+            assert_eq!(
+                msg["message"], expected,
+                "payload preserved for input {input}"
+            );
+            assert_eq!(logs[0]["timestamp"], "1700000000123");
+        }
+    }
+
+    /// An object is passed through untouched — no extra nesting level, so the
+    /// well-behaved caller's field paths are unchanged.
+    #[test]
+    fn raw_log_entry_does_not_nest_an_object_message() {
+        let entry = RawLogEntry {
+            message_json: r#"{"type":"ct","data":{"k":1}}"#.to_string(),
+            timestamp_ms: 1700000000123,
+        };
+        let logs = entry.into_log_entries();
+        let msg = &logs[0]["message"];
+        assert_eq!(msg["type"], "ct");
+        assert_eq!(msg["data"]["k"], 1);
+        assert!(msg.get("message").is_none());
     }
 }
