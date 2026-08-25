@@ -366,7 +366,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         *,
         seqparams: Sequence[Sequence[Any] | dict[str, Any]] | None = None,
         _force_qmark_paramstyle: bool = False,
-    ) -> None:
+    ) -> SnowflakeCursorBase:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
@@ -388,6 +388,10 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             _force_qmark_paramstyle: If True, treat as qmark even when the
                 connection's paramstyle is pyformat/format.
 
+        Returns:
+            The cursor itself (``self``), so callers can read ``.sfqid`` after
+            execution — matching the legacy connector.
+
         Raises:
             InterfaceError: If parameter sequences have inconsistent lengths
         """
@@ -396,7 +400,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         )
 
         if not seq_of_parameters:
-            return  # Empty sequence - no-op per PEP 249
+            return self  # Empty sequence - no-op per PEP 249
 
         paramstyle = ParamStyle.QMARK if _force_qmark_paramstyle else self._connection.paramstyle
         first_params = seq_of_parameters[0]
@@ -412,10 +416,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 if rewritten is not None:
                     # Values were already interpolated and escaped by
                     # ClientSideBindingConverter.interpolate_query — no further binding needed.
-                    await self.execute(rewritten)
-                    return
+                    return await self.execute(rewritten)
             await self._executemany_per_row(operation, seq_of_parameters, _force_qmark_paramstyle)
-            return
+            return self
 
         # Validate row widths and pre-compute column-major layout before the server
         # round-trip so InterfaceError from mismatched lengths surfaces early.
@@ -430,10 +433,10 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             # Per-row fallback: server does not support array binding for this
             # statement type (e.g. UPDATE, DELETE, MERGE).
             await self._executemany_per_row(operation, seq_of_parameters, _force_qmark_paramstyle)
-            return
+            return self
 
         # Server confirmed array binding: use pre-computed column-major params.
-        await self.execute(operation, transposed, _force_qmark_paramstyle=_force_qmark_paramstyle)
+        return await self.execute(operation, transposed, _force_qmark_paramstyle=_force_qmark_paramstyle)
 
     @api_telemetry
     @requires_open

@@ -2965,6 +2965,53 @@ class TestParamsAliasAndForceQmark:
         assert sql_request.query == "INSERT INTO t VALUES (%s)"  # not interpolated
 
 
+class TestExecutemanyReturnsCursor:
+    """executemany() returns the cursor (``self``) on every path, matching the
+    legacy connector so callers (e.g. Snowpark's query listener) can read
+    ``results_cursor.sfqid`` afterwards.
+    """
+
+    @pytest.fixture
+    def mock_connection(self, mock_core_client):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.PYFORMAT
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_core_client.statement_execute_query.return_value.result = execute_result
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        cur = SnowflakeCursor(mock_connection)
+        yield cur
+        cur.close()
+
+    def test_empty_sequence_returns_cursor(self, cursor):
+        assert cursor.executemany("INSERT INTO t VALUES (?)", []) is cursor
+
+    def test_per_row_path_returns_cursor(self, cursor):
+        # pyformat paramstyle -> client-side per-row execution.
+        assert cursor.executemany("INSERT INTO t VALUES (%s)", [(1,), (2,)]) is cursor
+
+    def test_array_bind_path_returns_cursor(self, cursor):
+        # force qmark -> server array-binding (single batch) execute.
+        result = cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)], _force_qmark_paramstyle=True)
+        assert result is cursor
+
+    def test_array_bind_unsupported_fallback_returns_cursor(self, cursor):
+        # Server reports array binding unsupported -> per-row fallback still returns self.
+        prepare_result = MagicMock()
+        prepare_result.array_bind_supported = False
+        with patch.object(cursor, "_prepare", return_value=prepare_result):
+            result = cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)], _force_qmark_paramstyle=True)
+        assert result is cursor
+
+
 class TestRequestId:
     """Unit tests for Cursor._request_id property."""
 
@@ -3172,8 +3219,9 @@ class TestExecutemanyMultirowInsertRewrite:
 
     def test_should_rewrite_simple_multirow_insert_for_pyformat(self, cursor, mock_core_client):
         """A pyformat INSERT with positional params is sent as one multi-row INSERT."""
-        cursor.executemany("INSERT INTO t VALUES (%s)", [(1,), (2,), (3,)])
+        result = cursor.executemany("INSERT INTO t VALUES (%s)", [(1,), (2,), (3,)])
 
+        assert result is cursor  # rewritten path returns self, matching every other executemany() path
         assert mock_core_client.statement_execute_query.call_count == 1
         sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
         assert sql_request.query == "INSERT INTO t VALUES (1),(2),(3)"
@@ -3518,3 +3566,73 @@ class TestAsyncFetchPandasKwargs:
         assert result == ["df"]
         mock_arrow.assert_called_once_with(force_microsecond_precision=False)
         mock_tp.assert_awaited_once_with(table, split_blocks=True)
+
+
+class _AsyncCM:
+    """Minimal async context manager for patching ``async_statement`` in tests."""
+
+    def __init__(self, value):
+        self._value = value
+
+    async def __aenter__(self):
+        return self._value
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class TestAsyncExecutemanyReturnsCursor:
+    """Async parity for ISSUE-4: executemany() returns the cursor (``self``) on
+    every path, so Snowpark can read ``results_cursor.sfqid`` afterwards.
+    """
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.PYFORMAT
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection, no_native_stream_ops):
+        return AsyncSnowflakeCursor(mock_connection)
+
+    def test_empty_sequence_returns_cursor(self, cursor):
+        assert asyncio.run(cursor.executemany("INSERT INTO t VALUES (?)", [])) is cursor
+
+    def test_per_row_path_returns_cursor(self, cursor):
+        # pyformat paramstyle, non-INSERT -> not multirow-rewritable, client-side per-row execution.
+        with patch.object(cursor, "_executemany_per_row", new=AsyncMock()):
+            result = asyncio.run(cursor.executemany("UPDATE t SET x = %s WHERE id = %s", [(1, 10), (2, 20)]))
+        assert result is cursor
+
+    def test_array_bind_path_returns_cursor(self, cursor):
+        # qmark paramstyle -> server array-binding; delegates to execute(), which returns self.
+        cursor._connection.paramstyle = ParamStyle.QMARK
+        with (
+            patch.object(cursor, "_build_array_binding_params", return_value=[[1, 2]]),
+            patch(
+                "snowflake.connector.aio.cursor._base.async_statement",
+                return_value=_AsyncCM(StatementHandle(id=1)),
+            ),
+            patch.object(cursor, "_prepare", new=AsyncMock(return_value=MagicMock(array_bind_supported=True))),
+            patch.object(cursor, "execute", new=AsyncMock(return_value=cursor)),
+        ):
+            result = asyncio.run(cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)]))
+        assert result is cursor
+
+    def test_array_bind_unsupported_fallback_returns_cursor(self, cursor):
+        # Server reports array binding unsupported -> per-row fallback still returns self.
+        cursor._connection.paramstyle = ParamStyle.QMARK
+        with (
+            patch.object(cursor, "_build_array_binding_params", return_value=[[1, 2]]),
+            patch(
+                "snowflake.connector.aio.cursor._base.async_statement",
+                return_value=_AsyncCM(StatementHandle(id=1)),
+            ),
+            patch.object(cursor, "_prepare", new=AsyncMock(return_value=MagicMock(array_bind_supported=False))),
+            patch.object(cursor, "_executemany_per_row", new=AsyncMock()),
+        ):
+            result = asyncio.run(cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)]))
+        assert result is cursor
