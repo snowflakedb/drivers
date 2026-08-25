@@ -179,6 +179,22 @@ class TestSdistPackaging:
         # Step 4: Verify installation
         self._verify_installation(python_exe)
 
+    def test_sdist_cargo_lock_accepts_locked_metadata(self) -> None:
+        """Fail fast if Cargo.lock.sdist would be rewritten under --locked.
+
+        The full sdist install is slow; this catches the lock-graph mismatch
+        that otherwise fails hatch_build.py proto generation on every platform.
+        """
+        python_dir = get_python_dir()
+        script = python_dir.parent / "scripts" / "python-sdist-cargo-lock.sh"
+        result = self._run_command(["bash", str(script)], cwd=python_dir.parent, timeout=120)
+        if result.returncode != 0:
+            pytest.fail(
+                "python/Cargo.lock.sdist is stale for the sdist workspace.\n"
+                "Refresh with: scripts/python-sdist-cargo-lock.sh refresh\n"
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+
     @pytest.mark.slow
     def test_sdist_contains_rust_sources(self, temp_env: Path) -> None:
         """Test that the sdist contains all necessary Rust sources."""
