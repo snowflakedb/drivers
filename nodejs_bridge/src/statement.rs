@@ -4,6 +4,7 @@ mod column_reader_util;
 mod decfloat;
 mod result;
 mod stream_state;
+mod time_format;
 
 pub use column::Column;
 
@@ -60,6 +61,10 @@ impl Statement {
     pub async fn get_next_row(&self) -> Result<Option<Vec<SqlValue>>> {
         let data = self.result.ready().await.map_err(to_napi_err)?;
         let stream_state = Arc::clone(&data.stream_state);
+        // Cheap refcount bump, not a re-fetch -- `ResultData::session_params`
+        // is set once in `result_data_from` and never mutated afterward, so
+        // every row of this statement sees the same value regardless of
+        // which storage location it's read from.
         let session_params = Arc::clone(&data.session_params);
 
         // `next_row` may block; run on napi's blocking pool so the Node event
