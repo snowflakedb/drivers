@@ -4,7 +4,8 @@ import type { RowMode } from './types.js';
 import { createRowMapper } from './cell-mapping.js';
 import { resolveColumnNames } from './column-names.js';
 
-// `row` is shaped in place after `createRowMapper`'s content transforms already ran on it.
+// TODO:
+// Consider combining remapRow and shapeRow into 1 util function
 function shapeRow(row: unknown[], columnNames: string[], rowMode: RowMode): unknown {
   if (rowMode === 'array') {
     return row;
@@ -27,13 +28,12 @@ export async function collectRows(
     const remapRow = createRowMapper(columns, connection);
 
     const rows: unknown[] = [];
-    while (true) {
-      const row = await coreStatement.getNextRow();
-      if (row === null) {
-        break;
+    while (await coreStatement.fetchNextBatch()) {
+      let row: unknown[] | null = null;
+      while ((row = coreStatement.getNextRow()) !== null) {
+        remapRow(row);
+        rows.push(shapeRow(row, columnNames, rowMode));
       }
-      remapRow(row);
-      rows.push(shapeRow(row, columnNames, rowMode));
     }
 
     return rows;
@@ -50,18 +50,34 @@ export function createRowStream(
   const columns = coreStatement.getColumns()!;
   const columnNames = resolveColumnNames(columns, rowMode);
   const remapRow = createRowMapper(columns, connection);
+
+  // Decodes one row out of the resident batch, returning false once it is
+  // drained and the stream needs a refill.
+  const pushNextRow = (stream: Readable): boolean => {
+    const row = coreStatement.getNextRow();
+    if (row === null) {
+      return false;
+    }
+    remapRow(row);
+    stream.push(shapeRow(row, columnNames, rowMode));
+    return true;
+  };
+
   return new Readable({
     objectMode: true,
     read() {
+      if (pushNextRow(this)) {
+        return;
+      }
+
       coreStatement
-        .getNextRow()
-        .then((row) => {
-          if (row === null) {
+        .fetchNextBatch()
+        .then((hasRows) => {
+          if (hasRows) {
+            pushNextRow(this);
+          } else {
             this.push(null);
-            return;
           }
-          remapRow(row);
-          this.push(shapeRow(row, columnNames, rowMode));
         })
         .catch((err: Error) => {
           this.destroy(err);

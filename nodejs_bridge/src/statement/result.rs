@@ -5,20 +5,13 @@ use napi::tokio::sync::{Notify, OnceCell};
 use sf_core::apis::database_driver_v1::{ApiError, ResultSetDescriptor};
 use sf_core::handle_manager::Handle;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub(super) struct ResultData {
     pub(super) result_set_handle: Handle,
     pub(super) result_set_descriptor: ResultSetDescriptor,
-    /// The single owner of this result set's session-parameter snapshot --
-    /// `StreamState` doesn't hold its own copy; `get_next_row` clones this
-    /// `Arc` per call and passes it into `next_row` as an argument instead.
-    /// Held here, not on `StreamState`, so anything reachable from
-    /// `Statement`'s synchronous getters (which read straight from
-    /// `ResultData`, no lock) can see it without reaching into
-    /// `stream_state`'s mutex from outside the `spawn_blocking` decode path.
     pub(super) session_params: Arc<SessionParams>,
-    pub(super) stream_state: Arc<Mutex<StreamState>>,
+    pub(super) stream_state: Arc<StreamState>,
 }
 
 /// A write-once cell holding the execution outcome, readable synchronously once

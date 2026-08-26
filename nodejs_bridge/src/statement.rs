@@ -2,6 +2,7 @@ mod column;
 mod column_reader;
 mod column_reader_util;
 mod decfloat;
+mod js_cell;
 mod result;
 mod stream_state;
 mod time_format;
@@ -11,7 +12,6 @@ pub use column::Column;
 use crate::DRIVER;
 use crate::error::to_napi_err;
 use crate::session_params::SessionParams;
-use crate::sql_value::SqlValue;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use result::{ResultData, StatementResult};
@@ -19,7 +19,7 @@ use sf_core::apis::database_driver_v1::{ApiError, ExecuteQueryResult};
 use sf_core::handle_manager::Handle;
 use snafu::location;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use stream_state::StreamState;
 
 #[napi]
@@ -51,28 +51,35 @@ impl Statement {
         Ok(())
     }
 
-    // TODO:
-    // - Benchmark per-row vs per-batch returns across NAPI for large results.
-    //   Per-row keeps peak JS memory lower; per-batch cuts FFI crossings.
-    // - Investigate how .unwrap() usage affects Node and how to properly handle such errors.
-    // - Once we implement all data types, investigate whether we can use napi Either and have
-    //   automatically generated JS and TypeScript types instead of SqlValue trait and unknown cast.
-    #[napi(ts_return_type = "Promise<Array<unknown> | null>")]
-    pub async fn get_next_row(&self) -> Result<Option<Vec<SqlValue>>> {
+    /// Loads the next batch of rows. Returns `false` when the result set is
+    /// exhausted. Drain the loaded batch with
+    /// [`get_next_row`](Self::get_next_row) before calling this again.
+    #[napi]
+    pub async fn fetch_next_batch(&self) -> Result<bool> {
         let data = self.result.ready().await.map_err(to_napi_err)?;
         let stream_state = Arc::clone(&data.stream_state);
-        // Cheap refcount bump, not a re-fetch -- `ResultData::session_params`
-        // is set once in `result_data_from` and never mutated afterward, so
-        // every row of this statement sees the same value regardless of
-        // which storage location it's read from.
         let session_params = Arc::clone(&data.session_params);
 
-        // `next_row` may block; run on napi's blocking pool so the Node event
-        // loop stays responsive.
-        spawn_blocking(move || stream_state.lock().unwrap().next_row(&session_params))
+        // `fetch_next_batch` may block on a chunk download; run on napi's
+        // blocking pool so the Node event loop stays responsive.
+        spawn_blocking(move || stream_state.fetch_next_batch(&session_params))
             .await
+            // TODO: Investigate how .unwrap() usage affects Node and how to properly
+            // handle such errors.
             .unwrap()
             .map_err(to_napi_err)
+    }
+
+    /// Returns the next row of the current batch, or `null` once that batch
+    /// is drained. Call [`fetch_next_batch`](Self::fetch_next_batch) to load
+    /// another.
+    #[napi]
+    pub fn get_next_row<'env>(&self, env: &'env Env) -> Result<Option<Array<'env>>> {
+        match self.result.get() {
+            None => Ok(None),
+            Some(Ok(data)) => data.stream_state.next_row(env),
+            Some(Err(error)) => Err(to_napi_err(error)),
+        }
     }
 
     // TODO:
@@ -178,7 +185,7 @@ async fn result_data_from(
     Ok(ResultData {
         result_set_handle,
         result_set_descriptor,
-        stream_state: Arc::new(Mutex::new(StreamState::new(batch_reader))),
+        stream_state: Arc::new(StreamState::new(batch_reader)),
         session_params,
     })
 }

@@ -40,7 +40,18 @@ export declare class Connection {
 
 export declare class Statement {
   waitForCompletion(): Promise<void>
-  getNextRow(): Promise<Array<unknown> | null>
+  /**
+   * Loads the next batch of rows. Returns `false` when the result set is
+   * exhausted. Drain the loaded batch with
+   * [`get_next_row`](Self::get_next_row) before calling this again.
+   */
+  fetchNextBatch(): Promise<boolean>
+  /**
+   * Returns the next row of the current batch, or `null` once that batch
+   * is drained. Call [`fetch_next_batch`](Self::fetch_next_batch) to load
+   * another.
+   */
+  getNextRow(): unknown[] | null
   getQueryId(): string | null
   getNumRows(): number | null
   getColumns(): Array<Column> | null

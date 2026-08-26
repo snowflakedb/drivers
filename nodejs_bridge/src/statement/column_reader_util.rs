@@ -1,20 +1,21 @@
 //! Arrow-array decoding helpers shared across [`super::column_reader::ColumnReader`] arms.
 
+use super::js_cell::JsCell;
 use arrow::array::Array;
 use arrow::compute::cast;
 use arrow::datatypes::{DataType, Field};
 
-/// Decode a cell, mapping null to [`crate::sql_value::SqlValue::Null`] so each
-/// reader arm only needs to describe the non-null case.
-pub(super) fn read_cell<A: Array>(
-    array: &A,
+/// Returns [`JsCell::Null`] when the Arrow cell is null so each reader arm
+/// only needs to describe the non-null case.
+pub(super) fn read_cell<'a, A: Array>(
+    array: &'a A,
     row_index: usize,
-    decode: impl FnOnce() -> crate::sql_value::SqlValue,
-) -> crate::sql_value::SqlValue {
+    value: impl FnOnce() -> JsCell<'a>,
+) -> JsCell<'a> {
     if array.is_null(row_index) {
-        crate::sql_value::SqlValue::Null
+        JsCell::Null
     } else {
-        decode()
+        value()
     }
 }
 

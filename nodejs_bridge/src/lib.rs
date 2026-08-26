@@ -17,7 +17,6 @@
 mod connection;
 mod error;
 mod session_params;
-mod sql_value;
 mod statement;
 
 pub use connection::Connection;
