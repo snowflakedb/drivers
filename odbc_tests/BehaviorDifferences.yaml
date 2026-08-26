@@ -2529,7 +2529,7 @@ behavior_differences:
       odbc-api/driver_info/get_functions_tests.cpp.
 
   128:
-    name: "SQLColumns TIMESTAMP COLUMN_SIZE is 20+scale (not legacy fixed 35)"
+    name: "SQLColumns TIMESTAMP COLUMN_SIZE is 20+scale (not fixed 35)"
     status: unknown
     type: bugfix
     reviewed: false
@@ -2562,3 +2562,26 @@ behavior_differences:
       TIMESTAMP remains 16 (unchanged).
     description: |
       Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
+
+  130:
+    name: "SQLColumns VARIANT/OBJECT/ARRAY size follows VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT (not 128M)"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      SQLColumns COLUMN_SIZE and BUFFER_LENGTH for VARIANT / OBJECT / ARRAY are
+      hardcoded to 134217728 (128 MB, SQL_SF_TEXT_COLUMN_LEN), independent of
+      the session VARCHAR max.
+    new_driver_behavior: |
+      SQLColumns COLUMN_SIZE and BUFFER_LENGTH for VARIANT / OBJECT / ARRAY
+      follow the session VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT (the same max
+      unbounded TEXT reports). SHOW COLUMNS' 128 MB charLength is ignored so
+      the catalog size tracks the session parameter, not the historical TEXT
+      constant. The default is 16777216. Raising the session parameter raises
+      the catalog size. Query-result SQLColAttribute for these types is
+      unchanged.
+    description: |
+      For non-standard ODBC SQL types advertising the session VARCHAR
+      max is more accurate.
