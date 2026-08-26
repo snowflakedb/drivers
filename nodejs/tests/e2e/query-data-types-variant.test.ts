@@ -1,9 +1,10 @@
-import type { Connection } from 'snowflake-sdk-old';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import type { Connection } from '../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
+  getStatementColumn,
   getSnowflakeSDK,
   isRunningNewDriverWithBD,
 } from './utils/index.js';
@@ -34,8 +35,8 @@ describe('Query returning variant data types', () => {
       `,
     );
     const expectedValue = { key: 'value' };
-    const objectColumn = statement.getColumn(0);
-    const mapColumn = statement.getColumn(1);
+    const objectColumn = getStatementColumn(statement, 0);
+    const mapColumn = getStatementColumn(statement, 1);
     expect(objectColumn.getType()).toBe('object');
     expect(mapColumn.getType()).toBe('object');
     if (isRunningNewDriverWithBD('BD#4')) {
@@ -54,7 +55,7 @@ describe('Query returning variant data types', () => {
       connection,
       'SELECT ARRAY_CONSTRUCT(1, 2, 3) as ARRAY_COLUMN',
     );
-    const column = statement.getColumn(0);
+    const column = getStatementColumn(statement, 0);
     expect(column.getType()).toBe('array');
     if (isRunningNewDriverWithBD('BD#4')) {
       expect(column.isArray()).toBe(true);

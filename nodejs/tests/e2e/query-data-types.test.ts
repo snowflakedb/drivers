@@ -1,9 +1,10 @@
-import type { Connection } from 'snowflake-sdk-old';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Connection } from '../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
+  getStatementColumn,
   getSnowflakeSDK,
   isRunningNewDriverWithBD,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
@@ -38,7 +39,7 @@ describe('Query returning data types', () => {
       D: 'd',
     };
     for (const colName of Object.keys(expectedValues)) {
-      const column = statement.getColumn(colName);
+      const column = getStatementColumn(statement, colName);
       expect(column.getType()).toBe('text');
       expect(column.isString()).toBe(true);
       expect(rows![0][colName]).toBe(expectedValues[colName]);
@@ -54,8 +55,8 @@ describe('Query returning data types', () => {
     );
     const expectedValue = Buffer.from('ABCDEF', 'hex');
     const receivedValue = rows![0].BINARY_COLUMN as Buffer;
-    const binaryColumn = statement.getColumn(0);
-    const nullBinaryColumn = statement.getColumn(1);
+    const binaryColumn = getStatementColumn(statement, 0);
+    const nullBinaryColumn = getStatementColumn(statement, 1);
     expect(binaryColumn.getType()).toBe('binary');
     expect(binaryColumn.isBinary()).toBe(true);
     expect(nullBinaryColumn.getType()).toBe('binary');
@@ -72,7 +73,7 @@ describe('Query returning data types', () => {
 
   it('returns NULL as null', async () => {
     const { statement, rows } = await executeAsync(connection, 'SELECT NULL::TEXT as NULL_COLUMN');
-    const column = statement.getColumn(0);
+    const column = getStatementColumn(statement, 0);
     expect(column.getType()).toBe('text');
     expect(rows![0].NULL_COLUMN).toBe(null);
   });
@@ -82,8 +83,8 @@ describe('Query returning data types', () => {
       connection,
       'SELECT TRUE::BOOLEAN as TRUE_COLUMN, FALSE::BOOLEAN as FALSE_COLUMN',
     );
-    const trueColumn = statement.getColumn(0);
-    const falseColumn = statement.getColumn(1);
+    const trueColumn = getStatementColumn(statement, 0);
+    const falseColumn = getStatementColumn(statement, 1);
     expect(trueColumn.getType()).toBe('boolean');
     expect(trueColumn.isBoolean()).toBe(true);
     expect(falseColumn.getType()).toBe('boolean');
@@ -98,7 +99,7 @@ describe('Query returning data types', () => {
       connection,
       "SELECT '2026-01-01'::DATE as DATE_COLUMN",
     );
-    const column = statement.getColumn(0);
+    const column = getStatementColumn(statement, 0);
     const selectedValue = rows![0].DATE_COLUMN as Date;
     expect(column.getType()).toBe('date');
     expect(column.isDate()).toBe(true);
@@ -116,7 +117,7 @@ describe('Query returning data types', () => {
           '1999-12-31'::DATE AS DATE_1999_12_31`,
       );
       for (const columnName of ['DATE_2024_01_15', 'EPOCH_DATE', 'DATE_1999_12_31']) {
-        const column = statement.getColumn(columnName);
+        const column = getStatementColumn(statement, columnName);
         expect(column.getType()).toBe('date');
         expect(column.isDate()).toBe(true);
         expect(rows![0][columnName]).toBeInstanceOf(Date);
@@ -176,7 +177,7 @@ describe('Query returning data types', () => {
         connection,
         "SELECT '12:34:56.789789789'::TIME as TIME_COLUMN",
       );
-      const column = statement.getColumn(0);
+      const column = getStatementColumn(statement, 0);
       expect(column.getType()).toBe('time');
       expect(column.isTime()).toBe(true);
       expect(rows![0].TIME_COLUMN).toBe('12:34:56');
@@ -189,7 +190,7 @@ describe('Query returning data types', () => {
           connection,
           "SELECT '12:34:56.789789789'::TIME as TIME_COLUMN",
         );
-        const column = statement.getColumn(0);
+        const column = getStatementColumn(statement, 0);
         expect(column.getType()).toBe('time');
         expect(column.isTime()).toBe(true);
         expect(rows![0].TIME_COLUMN).toBe('12:34:56.789789789');
@@ -205,7 +206,7 @@ describe('Query returning data types', () => {
         connection,
         "SELECT to_timestamp_ltz('Thu, 21 Jan 2016 06:32:44 -0800') as LTZ_COLUMN",
       );
-      const column = statement.getColumn(0);
+      const column = getStatementColumn(statement, 0);
       const selectedValue = rows![0].LTZ_COLUMN as Date;
       expect(column.isTimestamp()).toBe(true);
       expect(column.getType()).toBe('timestamp_ltz');
@@ -218,7 +219,7 @@ describe('Query returning data types', () => {
         connection,
         "SELECT to_timestamp_tz('Thu, 21 Jan 2016 06:32:44 -0800') as TZ_COLUMN",
       );
-      const column = statement.getColumn(0);
+      const column = getStatementColumn(statement, 0);
       const selectedValue = rows![0].TZ_COLUMN as Date;
       expect(column.isTimestamp()).toBe(true);
       expect(column.getType()).toBe('timestamp_tz');
@@ -231,7 +232,7 @@ describe('Query returning data types', () => {
         connection,
         "SELECT to_timestamp_ntz('Thu, 21 Jan 2016 06:32:44 -0800') as NTZ_COLUMN",
       );
-      const column = statement.getColumn(0);
+      const column = getStatementColumn(statement, 0);
       const selectedValue = rows![0].NTZ_COLUMN as Date;
       expect(column.isTimestamp()).toBe(true);
       expect(column.getType()).toBe('timestamp_ntz');

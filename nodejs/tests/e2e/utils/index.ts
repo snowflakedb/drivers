@@ -1,24 +1,20 @@
+import type { RowStatement as OldRowStatement } from 'snowflake-sdk-old';
+import { randomUUID } from 'node:crypto';
+import newSnowflakeSDK from 'snowflake-sdk';
+import oldSnowflakeSDK from 'snowflake-sdk-old';
 import type {
   Connection,
   ConnectionOptions,
   FileAndStageBindStatement,
   RowStatement,
   StatementOption,
-} from 'snowflake-sdk-old';
-import { randomUUID } from 'node:crypto';
-import oldSnowflakeSDK from 'snowflake-sdk-old';
+} from '../../types/sdk-types.js';
 import getTestParameter from './getTestParameter.js';
 
 const IS_RUNNING_FOR_OLD_DRIVER = !!process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER;
 
 // A var to use in .skipIf() vitest conditionals while some features are not implemented in the new driver
 export const NOT_IMPLEMENTED_IN_NEW_DRIVER = !IS_RUNNING_FOR_OLD_DRIVER;
-
-// Dynamic `import()` so old-driver e2e never loads the new SDK or its native core.
-// TODO: drop the cast once the new driver's public types match the old SDK.
-const newSnowflakeSDK = IS_RUNNING_FOR_OLD_DRIVER
-  ? undefined
-  : ((await import('snowflake-sdk')) as unknown as typeof oldSnowflakeSDK);
 
 /**
  * Marks a documented behavior difference between the old and new Node.js
@@ -37,7 +33,7 @@ export function getSnowflakeSDK() {
   if (IS_RUNNING_FOR_OLD_DRIVER) {
     return oldSnowflakeSDK;
   } else {
-    return newSnowflakeSDK!;
+    return newSnowflakeSDK;
   }
 }
 
@@ -64,7 +60,7 @@ export const TEST_CONNECTION_OPTIONS: ConnectionOptions = getTestParameter('SNOW
     };
 
 export function createTestConnection(
-  snowflake: typeof oldSnowflakeSDK,
+  snowflake: ReturnType<typeof getSnowflakeSDK>,
   overrides: Partial<ConnectionOptions> = {},
 ): Connection {
   return snowflake.createConnection({
@@ -100,6 +96,15 @@ export function executeAsync(
       },
     });
   });
+}
+
+// TODO: remove once we drop old-driver e2e tests. Every test should then call
+// statement.getColumn(...) directly instead of this helper.
+export function getStatementColumn(statement: RowStatement, id: string | number) {
+  if (isRunningNewDriverWithBD('BD#13')) {
+    return statement.getColumn(id)!;
+  }
+  return (statement as OldRowStatement).getColumn(id);
 }
 
 export function sleepAsync(ms: number): Promise<void> {

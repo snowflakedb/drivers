@@ -26,9 +26,7 @@ import { collectRows } from './query-result/rows.js';
 import { RowStatement, FileAndStageBindStatement } from './query-result/RowStatement.js';
 
 export {
-  ErrorCode,
-  ocspModes,
-  RowStatement,
+  type RowStatement,
   type StatementCallback,
   type StreamOptions,
   type DataType,
@@ -155,6 +153,16 @@ export class Connection {
   }
 }
 
-// TODO: JSDoc needed
+// TODO:
+// - JSDoc needed
+// - Map to similar shape as old driver where we have core object that has bunch of methods and
+//   it is exported as default
 export const configure = (options: ConfigureOptions) => updateGlobalConfig(options);
 export const createConnection = (options: ConnectionOptions) => new Connection(options);
+
+export default {
+  configure,
+  createConnection,
+  ErrorCode,
+  ocspModes,
+};

@@ -1,5 +1,5 @@
-import type { Connection, Pool } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
+import type { Connection, Pool } from '../types/sdk-types.js';
 import {
   executeAsync,
   getSnowflakeSDK,
@@ -17,6 +17,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Pool', () => {
   let pool: Pool<Connection>;
 
   beforeAll(() => {
+    // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
     pool = snowflake.createPool(TEST_CONNECTION_OPTIONS, { max: 10, min: 0, testOnBorrow: true });
   });
 

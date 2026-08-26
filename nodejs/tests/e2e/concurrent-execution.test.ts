@@ -1,5 +1,5 @@
-import type { RowStatement } from 'snowflake-sdk-old';
 import { describe, it, expect } from 'vitest';
+import type { RowStatement } from '../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
