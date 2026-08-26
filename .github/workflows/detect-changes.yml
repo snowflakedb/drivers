@@ -73,6 +73,26 @@ on:
       run_odbc_packaging:
         description: "True if ODBC packaging should run"
         value: ${{ jobs.detect.outputs.run_odbc_packaging }}
+      # Invoke the driver workflow if any of its lanes should run. plan copies
+      # these on PR/merge_group so callee `if:` does not re-OR the lane flags.
+      python_wanted:
+        description: "True if any Python lane should run"
+        value: ${{ jobs.detect.outputs.python_wanted }}
+      jdbc_wanted:
+        description: "True if any JDBC lane should run"
+        value: ${{ jobs.detect.outputs.jdbc_wanted }}
+      odbc_wanted:
+        description: "True if any ODBC lane should run"
+        value: ${{ jobs.detect.outputs.odbc_wanted }}
+      rust_core_wanted:
+        description: "True if Rust Core tests should run"
+        value: ${{ jobs.detect.outputs.rust_core_wanted }}
+      nodejs_wanted:
+        description: "True if any Node.js lane should run"
+        value: ${{ jobs.detect.outputs.nodejs_wanted }}
+      dotnet_wanted:
+        description: "True if any .NET lane should run"
+        value: ${{ jobs.detect.outputs.dotnet_wanted }}
 
 jobs:
   detect:
@@ -102,6 +122,12 @@ jobs:
       run_odbc_reference: ${{ steps.computed.outputs.run_odbc_reference }}
       run_python_reference: ${{ steps.computed.outputs.run_python_reference }}
       run_odbc_packaging: ${{ steps.computed.outputs.run_odbc_packaging }}
+      python_wanted: ${{ steps.computed.outputs.python_wanted }}
+      jdbc_wanted: ${{ steps.computed.outputs.jdbc_wanted }}
+      odbc_wanted: ${{ steps.computed.outputs.odbc_wanted }}
+      rust_core_wanted: ${{ steps.computed.outputs.rust_core_wanted }}
+      nodejs_wanted: ${{ steps.computed.outputs.nodejs_wanted }}
+      dotnet_wanted: ${{ steps.computed.outputs.dotnet_wanted }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -433,6 +459,24 @@ jobs:
             done
           fi
 
+          # Last assignment of KEY= wins in GITHUB_OUTPUT (docs_only override).
+          last() { grep "^$1=" "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-; }
+          any_lane() {
+            local v
+            for v in "$@"; do
+              [[ "$(last "$v")" == true ]] && { echo true; return; }
+            done
+            echo false
+          }
+          {
+            echo "python_wanted=$(any_lane run_python run_python_packaging run_python_reference)"
+            echo "jdbc_wanted=$(any_lane run_jdbc run_jdbc_reference)"
+            echo "odbc_wanted=$(any_lane run_odbc run_odbc_reference)"
+            echo "rust_core_wanted=$(any_lane run_rust_core)"
+            echo "nodejs_wanted=$(any_lane run_nodejs run_nodejs_reference)"
+            echo "dotnet_wanted=$(any_lane run_dotnet run_dotnet_reference)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Output summary
         run: |
           echo "### Change Detection Summary" >> $GITHUB_STEP_SUMMARY
@@ -467,3 +511,13 @@ jobs:
           echo "| Node.js Reference | ${{ steps.computed.outputs.run_nodejs_reference }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dotnet | ${{ steps.computed.outputs.run_dotnet }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dotnet Reference | ${{ steps.computed.outputs.run_dotnet_reference }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Driver workflows to invoke" >> $GITHUB_STEP_SUMMARY
+          echo "| Driver | Wanted |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Python | ${{ steps.computed.outputs.python_wanted }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| JDBC | ${{ steps.computed.outputs.jdbc_wanted }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ODBC | ${{ steps.computed.outputs.odbc_wanted }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rust Core | ${{ steps.computed.outputs.rust_core_wanted }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js | ${{ steps.computed.outputs.nodejs_wanted }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dotnet | ${{ steps.computed.outputs.dotnet_wanted }} |" >> $GITHUB_STEP_SUMMARY

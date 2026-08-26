@@ -96,6 +96,12 @@ jobs:
       dotnet: ${{ steps.resolve.outputs.dotnet }}
       dotnet_reference: ${{ steps.resolve.outputs.dotnet_reference }}
       odbc_long_running: ${{ steps.resolve.outputs.odbc_long_running }}
+      python_wanted: ${{ steps.resolve.outputs.python_wanted }}
+      jdbc_wanted: ${{ steps.resolve.outputs.jdbc_wanted }}
+      odbc_wanted: ${{ steps.resolve.outputs.odbc_wanted }}
+      rust_core_wanted: ${{ steps.resolve.outputs.rust_core_wanted }}
+      nodejs_wanted: ${{ steps.resolve.outputs.nodejs_wanted }}
+      dotnet_wanted: ${{ steps.resolve.outputs.dotnet_wanted }}
     steps:
       - name: Resolve driver suites
         id: resolve
@@ -119,6 +125,12 @@ jobs:
           RUN_NODEJS_REFERENCE: ${{ needs.detect-changes.outputs.run_nodejs_reference }}
           RUN_DOTNET: ${{ needs.detect-changes.outputs.run_dotnet }}
           RUN_DOTNET_REFERENCE: ${{ needs.detect-changes.outputs.run_dotnet_reference }}
+          PYTHON_WANTED: ${{ needs.detect-changes.outputs.python_wanted }}
+          JDBC_WANTED: ${{ needs.detect-changes.outputs.jdbc_wanted }}
+          ODBC_WANTED: ${{ needs.detect-changes.outputs.odbc_wanted }}
+          RUST_CORE_WANTED: ${{ needs.detect-changes.outputs.rust_core_wanted }}
+          NODEJS_WANTED: ${{ needs.detect-changes.outputs.nodejs_wanted }}
+          DOTNET_WANTED: ${{ needs.detect-changes.outputs.dotnet_wanted }}
         run: |
           set -euo pipefail
 
@@ -129,17 +141,19 @@ jobs:
           node=false; node_ref=false
           net=false; net_ref=false
           odbc_long=false
+          py_w=false; jdbc_w=false; odbc_w=false
+          core_w=false; node_w=false; net_w=false
 
           # Turn on every lane of a driver. Used by whole-suite events
           # (push, dispatch) and by the per-driver nightly cron slots.
           enable() {
             case "$1" in
-              python)    py=true; py_pkg=true; py_ref=true ;;
-              jdbc)      jdbc=true; jdbc_ref=true ;;
-              odbc)      odbc=true; odbc_ref=true ;;
-              rust-core) core=true ;;
-              nodejs)    node=true; node_ref=true ;;
-              dotnet)    net=true; net_ref=true ;;
+              python)    py=true; py_pkg=true; py_ref=true; py_w=true ;;
+              jdbc)      jdbc=true; jdbc_ref=true; jdbc_w=true ;;
+              odbc)      odbc=true; odbc_ref=true; odbc_w=true ;;
+              rust-core) core=true; core_w=true ;;
+              nodejs)    node=true; node_ref=true; node_w=true ;;
+              dotnet)    net=true; net_ref=true; net_w=true ;;
               all)       enable python; enable jdbc; enable odbc
                          enable rust-core; enable nodejs; enable dotnet ;;
               *)         echo "::error::Unknown driver '$1'"; exit 1 ;;
@@ -165,6 +179,12 @@ jobs:
               echo "dotnet=$net"
               echo "dotnet_reference=$net_ref"
               echo "odbc_long_running=$odbc_long"
+              echo "python_wanted=$py_w"
+              echo "jdbc_wanted=$jdbc_w"
+              echo "odbc_wanted=$odbc_w"
+              echo "rust_core_wanted=$core_w"
+              echo "nodejs_wanted=$node_w"
+              echo "dotnet_wanted=$net_w"
             } | tee -a "$GITHUB_OUTPUT"
           }
 
@@ -196,12 +216,19 @@ jobs:
               node_ref=$(norm "$RUN_NODEJS_REFERENCE")
               net=$(norm "$RUN_DOTNET")
               net_ref=$(norm "$RUN_DOTNET_REFERENCE")
+              py_w=$(norm "$PYTHON_WANTED")
+              jdbc_w=$(norm "$JDBC_WANTED")
+              odbc_w=$(norm "$ODBC_WANTED")
+              core_w=$(norm "$RUST_CORE_WANTED")
+              node_w=$(norm "$NODEJS_WANTED")
+              net_w=$(norm "$DOTNET_WANTED")
               # Label-only re-run of ODBC's on-demand long-running lane. Do
               # not flip odbc=true: that would also run the default matrix,
               # which detect-changes already decided. Calling test-odbc.yml
               # with run_odbc=false still lets odbc_long_running fire.
               if [[ ",${PR_LABELS}," == *",run_long_running_tests,"* ]]; then
                 odbc_long=true
+                odbc_w=true
               fi
               echo "Change-gated $EVENT:"
               ;;
@@ -248,9 +275,7 @@ jobs:
     if: >-
       !cancelled()
       && needs.plan.result == 'success'
-      && (needs.plan.outputs.python == 'true'
-          || needs.plan.outputs.python_packaging == 'true'
-          || needs.plan.outputs.python_reference == 'true')
+      && needs.plan.outputs.python_wanted == 'true'
     uses: ./.github/workflows/test-python.yml
     secrets: inherit
     with:
@@ -263,8 +288,7 @@ jobs:
     if: >-
       !cancelled()
       && needs.plan.result == 'success'
-      && (needs.plan.outputs.jdbc == 'true'
-          || needs.plan.outputs.jdbc_reference == 'true')
+      && needs.plan.outputs.jdbc_wanted == 'true'
     uses: ./.github/workflows/test-jdbc.yml
     secrets: inherit
     with:
@@ -276,9 +300,7 @@ jobs:
     if: >-
       !cancelled()
       && needs.plan.result == 'success'
-      && (needs.plan.outputs.odbc == 'true'
-          || needs.plan.outputs.odbc_reference == 'true'
-          || needs.plan.outputs.odbc_long_running == 'true')
+      && needs.plan.outputs.odbc_wanted == 'true'
     uses: ./.github/workflows/test-odbc.yml
     secrets: inherit
     with:
@@ -290,7 +312,7 @@ jobs:
     if: >-
       !cancelled()
       && needs.plan.result == 'success'
-      && needs.plan.outputs.rust_core == 'true'
+      && needs.plan.outputs.rust_core_wanted == 'true'
     uses: ./.github/workflows/test-rust-core.yml
     secrets: inherit
     with:
@@ -301,8 +323,7 @@ jobs:
     if: >-
       !cancelled()
       && needs.plan.result == 'success'
-      && (needs.plan.outputs.nodejs == 'true'
-          || needs.plan.outputs.nodejs_reference == 'true')
+      && needs.plan.outputs.nodejs_wanted == 'true'
     uses: ./.github/workflows/test-nodejs.yml
     secrets: inherit
     with:
@@ -314,8 +335,7 @@ jobs:
     if: >-
       !cancelled()
       && needs.plan.result == 'success'
-      && (needs.plan.outputs.dotnet == 'true'
-          || needs.plan.outputs.dotnet_reference == 'true')
+      && needs.plan.outputs.dotnet_wanted == 'true'
     uses: ./.github/workflows/test-dotnet.yml
     secrets: inherit
     with:
@@ -339,12 +359,12 @@ jobs:
           RUST_CORE_RESULT: ${{ needs.rust-core.result }}
           NODEJS_RESULT: ${{ needs.nodejs.result }}
           DOTNET_RESULT: ${{ needs.dotnet.result }}
-          PYTHON_WANTED: ${{ needs.plan.outputs.python == 'true' || needs.plan.outputs.python_packaging == 'true' || needs.plan.outputs.python_reference == 'true' }}
-          JDBC_WANTED: ${{ needs.plan.outputs.jdbc == 'true' || needs.plan.outputs.jdbc_reference == 'true' }}
-          ODBC_WANTED: ${{ needs.plan.outputs.odbc == 'true' || needs.plan.outputs.odbc_reference == 'true' || needs.plan.outputs.odbc_long_running == 'true' }}
-          RUST_CORE_WANTED: ${{ needs.plan.outputs.rust_core }}
-          NODEJS_WANTED: ${{ needs.plan.outputs.nodejs == 'true' || needs.plan.outputs.nodejs_reference == 'true' }}
-          DOTNET_WANTED: ${{ needs.plan.outputs.dotnet == 'true' || needs.plan.outputs.dotnet_reference == 'true' }}
+          PYTHON_WANTED: ${{ needs.plan.outputs.python_wanted }}
+          JDBC_WANTED: ${{ needs.plan.outputs.jdbc_wanted }}
+          ODBC_WANTED: ${{ needs.plan.outputs.odbc_wanted }}
+          RUST_CORE_WANTED: ${{ needs.plan.outputs.rust_core_wanted }}
+          NODEJS_WANTED: ${{ needs.plan.outputs.nodejs_wanted }}
+          DOTNET_WANTED: ${{ needs.plan.outputs.dotnet_wanted }}
         run: |
           failed=0
           for entry in \
