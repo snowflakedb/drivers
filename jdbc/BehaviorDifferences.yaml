@@ -1006,3 +1006,20 @@ behavior_differences:
       the interactive flow and caches the token. Connections that arrive while it holds the lock
       wait and then reuse the cached token, so the user sees only one prompt.
       Locking engages only when `DISABLE_PARALLEL_USER_PROMPT=true` (the default).
+  56:
+    name: "GET-downloaded files are restricted to the owner by default on Unix"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      Downloaded stage files often contain sensitive query data. The universal driver protects them
+      by default so a file is not left readable by other users on a shared machine; this hardening
+      is intentional and accepted.
+    old_driver_behavior: |
+      On Unix, a GET download is readable by other users by default (owner-only permissions were
+      opt-in via a connection property).
+    new_driver_behavior: |
+      On Unix, a GET download is restricted to the owner by default. Callers who need the previous
+      broader access can opt out with the unsafe_file_write connection property.
