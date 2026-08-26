@@ -10,6 +10,7 @@ use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
 use super::stream_transfer::{DownloadStream, UploadStreamSession};
+use crate::config::param_registry::Wrapper;
 use crate::crl::worker::{CrlWorker, SharedCrlWorker};
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
@@ -34,6 +35,10 @@ pub enum PutGetResultsetFlavor {
 /// code can branch on them without hard-coding wrapper knowledge everywhere.
 #[derive(Debug, Clone)]
 pub struct WrapperPresets {
+    /// Which wrapper is talking to core. Used during the transitional period
+    /// where core still remaps wire aliases via
+    /// `ParamRegistry::resolve_for`.
+    pub configuration_flavor: Wrapper,
     pub put_get_resultset_flavor: PutGetResultsetFlavor,
     /// When true, PUT auto-detect mirrors legacy libsnowflakeclient
     /// behavior: (1) unsupported compression formats are silently
@@ -58,6 +63,7 @@ impl Default for WrapperPresets {
     /// wrapper but ODBC to collect-all by accident.
     fn default() -> Self {
         Self {
+            configuration_flavor: Wrapper::Python,
             put_get_resultset_flavor: PutGetResultsetFlavor::default(),
             legacy_odbc_compression_autodetect: false,
             put_get_fastfail_default: true,
@@ -78,6 +84,7 @@ impl WrapperPresets {
     /// Presets for the ODBC driver.
     pub fn odbc() -> Self {
         Self {
+            configuration_flavor: Wrapper::Odbc,
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
             legacy_odbc_compression_autodetect: true,
             put_get_fastfail_default: false,
@@ -88,6 +95,7 @@ impl WrapperPresets {
     /// Presets for the JDBC bridge.
     pub fn jdbc() -> Self {
         Self {
+            configuration_flavor: Wrapper::Jdbc,
             put_get_resultset_flavor: PutGetResultsetFlavor::Jdbc,
             legacy_empty_get_on_missing: true,
             ..Self::default()
