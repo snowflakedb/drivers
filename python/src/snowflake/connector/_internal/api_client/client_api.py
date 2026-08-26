@@ -9,6 +9,7 @@ from snowflake.connector._internal.error_kinds import (
     ERROR_KIND_AUTHENTICATION_ERROR,
     ERROR_KIND_LABELS,
     ERROR_KIND_LOGIN_ERROR,
+    ERROR_KIND_TIMEOUT,
     KIND_TO_ERRNO,
     KIND_TO_EXCEPTION,
     VENDOR_CODE_TO_EXCEPTION,
@@ -258,13 +259,12 @@ def _get_optional_str(msg: Any, field: str) -> str | None:
 
 
 def _derive_sqlstate(driver_exception: Any) -> str | None:
-    """Derive sqlstate from ErrorKind when the proto does not carry it.
-
-    Only login/auth errors have an obvious ANSI SQL state mapping today.
-    """
+    """Derive sqlstate from ErrorKind when the proto does not carry it."""
     kind = getattr(driver_exception, "kind", 0)
     if kind in (ERROR_KIND_LOGIN_ERROR, ERROR_KIND_AUTHENTICATION_ERROR):
         return "08001"  # SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED
+    if kind == ERROR_KIND_TIMEOUT:
+        return "HYT00"
     return None
 
 

@@ -33,7 +33,10 @@ from .protobuf_gen.database_driver_v1_pb2 import (
     ERROR_KIND_LOGIN_ERROR,
     ERROR_KIND_MISSING_PARAMETER,
     ERROR_KIND_NOT_IMPLEMENTED,
+    ERROR_KIND_QUERY_FAILED,
     ERROR_KIND_REMOTE_FILE_NOT_FOUND,
+    ERROR_KIND_STAGE_BINDING,
+    ERROR_KIND_TIMEOUT,
     ERROR_KIND_UNSUPPORTED_COMPRESSION,
 )
 
@@ -52,6 +55,9 @@ ERROR_KIND_LABELS: dict[int, str] = {
     ERROR_KIND_LOCAL_FILE_NOT_FOUND: "Local file not found",
     ERROR_KIND_REMOTE_FILE_NOT_FOUND: "Remote file not found",
     ERROR_KIND_UNSUPPORTED_COMPRESSION: "Unsupported compression type",
+    ERROR_KIND_QUERY_FAILED: "Query failed",
+    ERROR_KIND_TIMEOUT: "Timeout",
+    ERROR_KIND_STAGE_BINDING: "Stage binding",
 }
 
 KIND_TO_EXCEPTION: dict[int, type[Error]] = {
@@ -61,8 +67,7 @@ KIND_TO_EXCEPTION: dict[int, type[Error]] = {
     ERROR_KIND_IO: OperationalError,
     ERROR_KIND_CANCELLED: OperationalError,
     ERROR_KIND_GENERIC_ERROR: DatabaseError,
-    # INTERNAL_ERROR → ProgrammingError: the Rust core uses this for Snowflake
-    # query failures (syntax errors, etc.), not internal driver bugs.
+    # Leftover driver faults (locks, parse, spool). Query failures use QUERY_FAILED.
     ERROR_KIND_INTERNAL_ERROR: ProgrammingError,
     ERROR_KIND_MISSING_PARAMETER: ProgrammingError,
     ERROR_KIND_INVALID_PARAMETER_VALUE: ProgrammingError,
@@ -70,12 +75,16 @@ KIND_TO_EXCEPTION: dict[int, type[Error]] = {
     ERROR_KIND_LOCAL_FILE_NOT_FOUND: ProgrammingError,
     ERROR_KIND_REMOTE_FILE_NOT_FOUND: OperationalError,
     ERROR_KIND_UNSUPPORTED_COMPRESSION: ProgrammingError,
+    ERROR_KIND_QUERY_FAILED: ProgrammingError,
+    ERROR_KIND_TIMEOUT: OperationalError,
+    # CSV bind-upload to SYSTEM$BIND failed. Same class as other transfer I/O.
+    ERROR_KIND_STAGE_BINDING: OperationalError,
 }
 
 # Snowflake vendor_code → exception overrides.
 #
 # KIND_TO_EXCEPTION maps the proto ErrorKind (a broad category) to a default PEP 249 class.
-# Some Snowflake server errors share the same ErrorKind (e.g. ERROR_KIND_INTERNAL_ERROR)
+# Some Snowflake server errors share the same ErrorKind (e.g. ERROR_KIND_QUERY_FAILED)
 # but carry a vendor_code that warrants a more specific exception.
 # Entries here take precedence over KIND_TO_EXCEPTION when a vendor_code is present.
 VENDOR_CODE_TO_EXCEPTION: dict[int, type[Error]] = {

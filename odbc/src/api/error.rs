@@ -1096,6 +1096,7 @@ impl OdbcError {
                                 SqlState::InvalidConnectionStringAttribute
                             }
                         }
+                        k if k == ProtoErrorKind::Timeout as i32 => SqlState::TimeoutExpired,
                         _ => {
                             // No usable SQLSTATE on the wire and `sf_core`'s
                             // `snowflake_context` couldn't recover one
@@ -1441,6 +1442,24 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn timeout_kind_maps_to_hyt00_when_sql_state_unset() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                message: "Query timed out after 30s".to_string(),
+                kind: ProtoErrorKind::Timeout as i32,
+                error_trace: vec![],
+                sql_state: None,
+                vendor_code: None,
+                query_id: None,
+                parameter: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::TimeoutExpired);
     }
 
     #[test]
