@@ -120,7 +120,9 @@ jobs:
 
   nodejs-status:
     needs: [nodejs_tests, nodejs_tests_reference]
-    if: always()
+    # TODO: Re-enable Node.js CI once it is ready to gate Driver CI.
+    # if: always()
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Check status

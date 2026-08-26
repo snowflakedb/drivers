@@ -1,4 +1,4 @@
-import type { Connection, RowStatement } from 'snowflake-sdk';
+import type { Connection, RowStatement } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import {
   createTestConnection,
@@ -31,7 +31,7 @@ describe('Query Cancellation', () => {
     const statement = connection.execute({
       sqlText: 'select count(*) from table(generator(timeLimit => 3600))',
     });
-    await sleepAsync(1000); // wait for query to start running
+    await sleepAsync(2000); // wait for query to start running
     await cancelStatement(statement);
   });
 

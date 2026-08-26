@@ -4,9 +4,9 @@ import type {
   FileAndStageBindStatement,
   RowStatement,
   StatementOption,
-} from 'snowflake-sdk';
+} from 'snowflake-sdk-old';
 import { randomUUID } from 'node:crypto';
-import oldSnowflakeSDK from 'snowflake-sdk';
+import oldSnowflakeSDK from 'snowflake-sdk-old';
 // TODO:
 // Ensure tests run against the built package to catch any missing files in the build output.
 // Namespace import (not default): src/index.js only has named exports. A default import

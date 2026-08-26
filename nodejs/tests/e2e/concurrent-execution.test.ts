@@ -1,4 +1,4 @@
-import type { RowStatement } from 'snowflake-sdk';
+import type { RowStatement } from 'snowflake-sdk-old';
 import { describe, it, expect } from 'vitest';
 import {
   createTestConnection,

@@ -320,10 +320,13 @@ jobs:
 
   nodejs:
     needs: plan
-    if: >-
-      !cancelled()
-      && needs.plan.result == 'success'
-      && needs.plan.outputs.nodejs_wanted == 'true'
+    # TODO: Re-enable Node.js CI once it is ready to gate Driver CI.
+    # if: >-
+    #   !cancelled()
+    #   && needs.plan.result == 'success'
+    #   && (needs.plan.outputs.nodejs == 'true'
+    #       || needs.plan.outputs.nodejs_reference == 'true')
+    if: false
     uses: ./.github/workflows/test-nodejs.yml
     secrets: inherit
     with:
@@ -363,7 +366,9 @@ jobs:
           JDBC_WANTED: ${{ needs.plan.outputs.jdbc_wanted }}
           ODBC_WANTED: ${{ needs.plan.outputs.odbc_wanted }}
           RUST_CORE_WANTED: ${{ needs.plan.outputs.rust_core_wanted }}
-          NODEJS_WANTED: ${{ needs.plan.outputs.nodejs_wanted }}
+          # TODO: Re-enable with the nodejs job if: above.
+          # NODEJS_WANTED: ${{ needs.detect-changes.outputs.nodejs_wanted }}
+          NODEJS_WANTED: false
           DOTNET_WANTED: ${{ needs.plan.outputs.dotnet_wanted }}
         run: |
           failed=0

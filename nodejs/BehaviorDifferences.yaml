@@ -228,3 +228,22 @@ behavior_differences:
       relied on comparing against NaN, or on isNaN() being true for an overflow, will now see
       infinities instead -- hence is_breaking_change: true, though the old behavior was itself the
       bug being fixed.
+
+  10:
+    name: 'snowflake.STRING/BOOLEAN/NUMBER/DATE/OBJECT/ARRAY/MAP/JSON module constants are dropped'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The old driver exports module-level constants snowflake.STRING, .BOOLEAN, .NUMBER, .DATE,
+      .OBJECT, .ARRAY, .MAP, and .JSON. They are undocumented (absent from index.d.ts) and there is
+      no real use case for them: the values these constants hold do not match any of the values that
+      Column.getType() returns, so they cannot be used to test a column's type.
+    new_driver_behavior: |
+      The new driver does not export these constants at all.
+    status_rationale: |
+      These were a leftover legacy constant that nobody removed from the old driver. They are
+      undocumented and unusable (their values match no getType() result), so the new driver simply
+      does not carry them over.

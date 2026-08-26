@@ -1,4 +1,4 @@
-import type { Connection, Pool } from 'snowflake-sdk';
+import type { Connection, Pool } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import { executeAsync, getSnowflakeSDK, TEST_CONNECTION_OPTIONS } from './utils';
 

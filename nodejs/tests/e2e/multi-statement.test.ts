@@ -1,4 +1,4 @@
-import type { Connection } from 'snowflake-sdk';
+import type { Connection } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import {
   createTestConnection,
