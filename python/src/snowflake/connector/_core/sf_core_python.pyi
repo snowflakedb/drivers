@@ -60,3 +60,8 @@ def reset_perf_metrics() -> None:
     """
     ...
 
+def native_arrow_enabled() -> bool:
+    """Returns True if the ``native-arrow`` Cargo feature is compiled in.
+    """
+    ...
+

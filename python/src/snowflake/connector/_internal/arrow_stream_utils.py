@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from snowflake.connector._core import sf_core_python
+from snowflake.connector.errors import InternalError, NotSupportedError
+
+from .arrow import ArrowRowIterator
 from .arrow_context import ArrowConverterContext
-from .arrow_stream_iterator import ArrowStreamIterator, ArrowStreamTableIterator
+from .arrow_stream_iterator import ArrowStreamIterator as CythonArrowStreamIterator
+from .arrow_stream_iterator import ArrowStreamTableIterator
 from .extras import pyarrow
 from .type_codes import FIXED
 
@@ -31,7 +36,7 @@ def release_arrow_stream(stream_ptr: int | None) -> None:
     if not stream_ptr:
         return
     try:
-        _ = ArrowStreamIterator(stream_ptr, ArrowConverterContext())
+        _ = CythonArrowStreamIterator(stream_ptr, ArrowConverterContext())
     except Exception:
         pass
 
@@ -42,9 +47,38 @@ def create_row_iterator(
     context: ArrowConverterContext,
     use_dict_result: bool = False,
     use_numpy: bool = False,
-) -> ArrowStreamIterator:
-    """Build an :class:`ArrowStreamIterator` that yields one row at a time."""
-    return ArrowStreamIterator(
+) -> ArrowRowIterator:
+    """Build a sync row iterator that yields one row at a time.
+
+    When ``sf_core_python`` is built with the ``native-arrow`` feature, returns
+    the PyO3 ``ArrowStreamIterator`` directly. Otherwise uses the Cython
+    nanoarrow iterator.
+    """
+    if sf_core_python.native_arrow_enabled():
+        if use_numpy or use_dict_result:
+            release_arrow_stream(stream_ptr)
+            raise NotSupportedError(
+                msg=(
+                    "Native Arrow row path does not support use_numpy / use_dict_result. "
+                    "Disable SF_NATIVE_ARROW or drop use_numpy/use_dict_result."
+                )
+            )
+        # Class is only exported when built with ``native-arrow``; stub_gen
+        # emits ``#[pyfunction]``s only, so do not attribute-access it on the stub.
+        iterator_cls = getattr(sf_core_python, "ArrowStreamIterator", None)
+        if iterator_cls is None:
+            release_arrow_stream(stream_ptr)
+            raise InternalError(
+                msg=(
+                    "sf_core_python.ArrowStreamIterator is unavailable; "
+                    "rebuild with --features native-arrow / SF_NATIVE_ARROW=1"
+                )
+            )
+        return cast(
+            ArrowRowIterator,
+            iterator_cls(stream_ptr, session_timezone=context.timezone),
+        )
+    return CythonArrowStreamIterator(
         stream_ptr,
         context,
         use_dict_result=use_dict_result,

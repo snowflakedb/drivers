@@ -319,11 +319,7 @@ jobs:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
 
-  # Unit, integration, and e2e tests with universal connector.
-  # HatchEnv=test-native-arrow is a matrix cell (see ci/test_matrix/models/python.py):
-  # production wheels omit --features native-arrow, so later PRs rebuild
-  # python_bridge after wheel install. :cov for that cell is a placeholder
-  # until the fetch / Arrow subset lands with the converters.
+  # Native-arrow overlays python_bridge in install-wheel and runs its :cov suite.
   python_tests:
     needs: [build_wheels, load-python-matrix]
     if: inputs.run_python
@@ -418,9 +414,9 @@ jobs:
           mode: restore
           shared-key: sdist-test
 
-      # Native-arrow rebuilds python_bridge after installing the production
-      # wheel (Cargo feature is compile-time). Isolate the target dir from
-      # the sdist cache so the two cells cannot clobber each other.
+      # Native-arrow install-wheel overlays python_bridge (Cargo feature is
+      # compile-time). Isolate the target dir from the sdist cache so the two
+      # cells cannot clobber each other.
       - name: Set native-arrow cargo target dir
         if: matrix.hatch_env == 'test-native-arrow'
         shell: bash
@@ -524,10 +520,11 @@ jobs:
         env:
           SKIP_CORE_BUILD: "false"
 
-      # test-pandas cells only collect tests/e2e/pandas (see hatch env scripts).
-      # Keep that as a single e2e step; the split suites apply to the `test` env.
+      # test-pandas and test-native-arrow each collect a curated subset via
+      # hatch :cov (pandas e2e; native-arrow converters as they land). The
+      # unit/integ/e2e split applies only to the `test` env.
       - name: Run unit tests with coverage
-        if: matrix.hatch_env != 'test-pandas'
+        if: matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow'
         id: run_python_unit
         continue-on-error: true
         working-directory: python
@@ -554,7 +551,7 @@ jobs:
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Run integration tests with coverage
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
+        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow' }}
         id: run_python_integ
         continue-on-error: true
         working-directory: python
@@ -581,7 +578,7 @@ jobs:
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Run e2e tests with coverage
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
+        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow' }}
         id: run_python_e2e
         continue-on-error: true
         working-directory: python
@@ -608,7 +605,7 @@ jobs:
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Merge pytest JSON reports
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
+        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow' }}
         working-directory: python
         shell: bash
         run: |
@@ -628,9 +625,9 @@ jobs:
           print(f"Merged {len(tests)} test records into {out}")
           PY
 
-      - name: Run pandas e2e tests with coverage
-        if: matrix.hatch_env == 'test-pandas'
-        id: run_python_pandas
+      - name: Run curated hatch :cov suite
+        if: matrix.hatch_env == 'test-pandas' || matrix.hatch_env == 'test-native-arrow'
+        id: run_python_cov
         continue-on-error: true
         working-directory: python
         shell: bash
@@ -645,8 +642,8 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
-      - name: Rerun failed pandas e2e tests
-        if: steps.run_python_pandas.outcome == 'failure'
+      - name: Rerun failed curated hatch :cov tests
+        if: steps.run_python_cov.outcome == 'failure'
         working-directory: python
         shell: bash
         run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed

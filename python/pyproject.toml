@@ -147,6 +147,7 @@ timeout = 120
 markers = [
     "skip_reference(reason: str=''): skip when --connector=reference",
     "skip_universal(reason: str=''): skip when --connector=universal",
+    "skip_unless_native_arrow(reason: str=''): skip unless sf_core_python.native_arrow_enabled() (Cython/reference Arrow converter)",
     "slow: marks tests as slow (e.g., full sdist install with Rust compilation)",
     "skip_for_json_result_set(reason: str=''): skip when QUERY_RESULT_FORMAT=JSON (tests requiring Arrow precision)",
     "require_vpn: test requires VPN access (skipped outside Jenkins CI)",
@@ -325,10 +326,7 @@ flaky = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas -m fla
 # Runs @pytest.mark.requires_no_mfa tests (parameters_aws_local.json).
 no_mfa = "pytest tests/e2e/authentication/test_user_password.py -m requires_no_mfa -n 0 --no-cov {args}"
 
-# Like ``test`` but installs the pyarrow extra (needed by native-arrow unit tests).
-# python_tests runs this as a HatchEnv matrix cell. Later PRs rebuild
-# python_bridge with ``--features native-arrow`` after installing the
-# production wheel, then replace ``cov`` with the fetch / Arrow subset.
+# Native-arrow overlays python_bridge in install-wheel, then runs :cov.
 [tool.hatch.envs.test-native-arrow]
 template = "test"
 features = ["test", "dev", "pyarrow"]
@@ -337,9 +335,11 @@ features = ["test", "dev", "pyarrow"]
 python = ["3.13"]
 
 [tool.hatch.envs.test-native-arrow.scripts]
-# Named ``cov`` so the shared python_tests step (``:cov``) works. Placeholder
-# until the cell converters land a real pytest subset — without this, the
-# inherited ``test:cov`` would re-run the full Cython suite.
+# Production wheel, then cargo-test + native-arrow overlay in this env's Python.
+install-wheel = [
+  "uv pip install {env:WHEEL_PATH:dist/*.whl}",
+  "python hatch_native_arrow.py",
+]
 cov = "true {args}"
 
 # Pandas-specific CI test environment

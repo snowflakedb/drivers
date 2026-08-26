@@ -380,6 +380,10 @@ class BuildHook(BuildHookInterface):
         if os.environ.get("SF_PERF_METRICS", "").lower() in ("1", "true"):
             extra_cargo_args.extend(["--features", "sf_core/perf_timing"])
 
+        # Opt-in PyO3-based nanoarrow replacement.
+        if os.environ.get("SF_NATIVE_ARROW", "").lower() in ("1", "true"):
+            extra_cargo_args.extend(["--features", "native-arrow"])
+
         # Use a stable target dir when CORE_CARGO_TARGET_DIR is set (enables
         # incremental Rust compilation and CI caching). Otherwise fall back to a
         # temporary directory that is cleaned up after the build.

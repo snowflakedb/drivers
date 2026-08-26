@@ -3989,11 +3989,14 @@ dependencies = [
 name = "python_bridge"
 version = "0.1.0"
 dependencies = [
+ "arrow",
+ "error_trace",
  "futures",
  "proto_utils",
  "pyo3",
  "pyo3-async-runtimes",
  "sf_core",
+ "snafu 0.8.9",
  "tokio",
  "tokio-util",
  "tracing",

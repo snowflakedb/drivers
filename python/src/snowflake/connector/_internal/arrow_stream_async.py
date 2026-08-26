@@ -69,7 +69,8 @@ from .arrow_stream_utils import collect_arrow_table
 if TYPE_CHECKING:
     from pyarrow import Table
 
-    from .arrow_stream_iterator import ArrowStreamIterator, ArrowStreamTableIterator
+    from .arrow import ArrowRowIterator
+    from .arrow_stream_iterator import ArrowStreamTableIterator
     from .cursor.result_metadata import ResultMetadata
 
 
@@ -98,7 +99,10 @@ class AsyncArrowStreamIterator(AsyncIterator[Any]):
     (see module docstring for why).
     """
 
-    def __init__(self, iterator: ArrowStreamIterator | ArrowStreamTableIterator) -> None:
+    def __init__(
+        self,
+        iterator: ArrowRowIterator | ArrowStreamTableIterator,
+    ) -> None:
         self._iterator = iterator
 
     def __aiter__(self) -> AsyncArrowStreamIterator:
