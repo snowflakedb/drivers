@@ -48,10 +48,6 @@ export IS_SOURCE_OF_TRUTH_REPO="false"
 # Defaults to "DRIVER_MIRROR_TOKEN". Change if your repo uses a different secret name.
 export INTERNAL_TOKEN_NAME="DRIVER_MIRROR_TOKEN"
 
-# Name of the GitHub secret for snowflakedb (mirror) access.
-# Defaults to "DRIVER_MIRROR_TOKEN_SNOWFLAKEDB". Change if your repo uses a different secret name.
-export MIRROR_TOKEN_NAME="DRIVER_MIRROR_TOKEN_SNOWFLAKEDB"
-
 # Slack channel ID for mirror failure notifications.
 # Leave empty to omit the notify-on-failure job from mirror.yml.
 export SLACK_CHANNEL_ID="C092X1UAAMB"

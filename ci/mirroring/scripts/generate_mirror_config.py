@@ -32,8 +32,6 @@
 #                         it doesn't need to check itself for staleness.
 #   INTERNAL_TOKEN_NAME   Name of the GitHub secret for snowflake-eng access.
 #                         Defaults to "DRIVER_MIRROR_TOKEN".
-#   MIRROR_TOKEN_NAME     Name of the GitHub secret for snowflakedb access.
-#                         Defaults to "DRIVER_MIRROR_TOKEN_SNOWFLAKEDB".
 #   SLACK_CHANNEL_ID      Slack channel ID for failure notifications (e.g.,
 #                         "C092X1UAAMB"). If empty, the notify-on-failure job
 #                         is omitted from mirror.yml.
@@ -160,7 +158,6 @@ def main() -> None:
     main_branch = os.environ.get("MAIN_BRANCH", "main")
     is_source_of_truth = os.environ.get("IS_SOURCE_OF_TRUTH_REPO", "false") == "true"
     internal_token_name = os.environ.get("INTERNAL_TOKEN_NAME", "DRIVER_MIRROR_TOKEN")
-    mirror_token_name = os.environ.get("MIRROR_TOKEN_NAME", "DRIVER_MIRROR_TOKEN_SNOWFLAKEDB")
     slack_channel_id = os.environ.get("SLACK_CHANNEL_ID", "")
     slack_oncall_subteam_id = os.environ.get("SLACK_ONCALL_SUBTEAM_ID", "")
 
@@ -184,7 +181,6 @@ def main() -> None:
         "__COPYBARA_JAR_SHA256__": COPYBARA_JAR_SHA256,
         "__MAIN_BRANCH__": main_branch,
         "__INTERNAL_TOKEN_NAME__": internal_token_name,
-        "__MIRROR_TOKEN_NAME__": mirror_token_name,
     }
 
     # ─── File: ci/mirroring/Dockerfile.copybara ───────────────────────────
@@ -304,7 +300,7 @@ def main() -> None:
     print()
     print("Next steps:")
     print(f"  1. Review and commit the generated files")
-    print(f"  2. Provision secrets: {internal_token_name}, {mirror_token_name}")
+    print(f"  2. Provision secrets: {internal_token_name} (internal PAT), MIRRORING_APP_ID, MIRRORING_APP_PRIVATE_KEY (GitHub App credentials)")
     print("  3. Sync public and private repositories so their contents are the same. With the exception of repository specific values that should not be mirrored")
     print("  4. Run first outbound: workflow_dispatch mirror.yml with last_rev=<first-public-sha>")
     print("  5. Create test PR on the public repository to verify inbound mirroring")

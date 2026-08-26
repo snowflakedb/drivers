@@ -53,6 +53,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Create mirror token
+        uses: actions/create-github-app-token@v1
+        id: mirror-token
+        with:
+          app-id: ${{ secrets.MIRRORING_APP_ID }}
+          private-key: ${{ secrets.MIRRORING_APP_PRIVATE_KEY }}
+          owner: snowflakedb
+          repositories: drivers
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -73,7 +82,7 @@ jobs:
       - name: Configure git for Copybara
         env:
           DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
-          DRIVER_MIRROR_TOKEN_SNOWFLAKEDB: ${{ secrets.DRIVER_MIRROR_TOKEN_SNOWFLAKEDB }}
+          MIRROR_TOKEN: ${{ steps.mirror-token.outputs.token }}
         run: |
           set -euo pipefail
           git config --global user.name  "Mirror Bot"
@@ -81,7 +90,7 @@ jobs:
           # Two URL-scoped auth headers: origin fetches read from snowflakedb/
           # (the public mirror), destination push goes to snowflake-eng/ (internal).
           B64_ENG=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN}" | base64 -w0)
-          B64_SDB=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}" | base64 -w0)
+          B64_SDB=$(printf 'x-access-token:%s' "${MIRROR_TOKEN}" | base64 -w0)
           git config --global "http.https://github.com/snowflake-eng/.extraHeader" "Authorization: Basic ${B64_ENG}"
           git config --global "http.https://github.com/snowflakedb/.extraHeader"   "Authorization: Basic ${B64_SDB}"
 
@@ -90,7 +99,7 @@ jobs:
           # Copybara reads GITHUB_TOKEN to call the mirror's API for the
           # PR metadata (labels, title, body, author) — that's a read
           # against the mirror, so use the mirror token here.
-          GITHUB_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN_SNOWFLAKEDB }}
+          GITHUB_TOKEN: ${{ steps.mirror-token.outputs.token }}
           DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
           PR_NUMBER: ${{ github.event.inputs.pr_number }}
         run: |

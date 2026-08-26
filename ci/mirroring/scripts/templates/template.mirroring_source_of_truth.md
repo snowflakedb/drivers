@@ -41,7 +41,9 @@ config generator. To adopt mirroring in a different driver repository:
 
 4. Commit the generated files + `ci/mirroring/.generator-hash`.
 
-5. Provision secrets: `__INTERNAL_TOKEN_NAME__`, `__MIRROR_TOKEN_NAME__`.
+5. Provision secrets: `__INTERNAL_TOKEN_NAME__` (internal PAT),
+   `MIRRORING_APP_ID` and `MIRRORING_APP_PRIVATE_KEY`
+   (GitHub App credentials for `snowflakedb` org access).
 
 On subsequent runs, the sync script compares the upstream generator's
 SHA-256 hash against the stored `ci/mirroring/.generator-hash`. If the
@@ -92,12 +94,22 @@ Safety nets (independent of the denylist):
    under a directory named `NOMIRROR` (at any depth) and it is excluded
    without touching the config.
 
-### Tokens
+### Authentication
 
-Two GitHub credentials (compromise of one cannot reach the other org):
+Two credentials (compromise of one cannot reach the other org):
 
-- `__INTERNAL_TOKEN_NAME__` — `snowflake-eng` access.
-- `__MIRROR_TOKEN_NAME__` — `snowflakedb` access.
+- **Internal (snowflake-eng):** `__INTERNAL_TOKEN_NAME__` — a PAT with access
+  to the internal org. Configurable via `INTERNAL_TOKEN_NAME` in
+  `sync-mirror-config.sh`.
+- **Mirror (snowflakedb):** a GitHub App installation token created
+  at workflow runtime via `actions/create-github-app-token@v1`.
+
+Required repository secrets:
+
+- `__INTERNAL_TOKEN_NAME__` — PAT for `snowflake-eng` access.
+- `MIRRORING_APP_ID` — the numeric App ID of the GitHub App installed on
+  the `snowflakedb` organization.
+- `MIRRORING_APP_PRIVATE_KEY` — the PEM private key for that GitHub App.
 
 
 ## How to use it
@@ -128,19 +140,17 @@ on the next mirror run.
 Tracked here so the rollout is visible. None block routine use of the
 mirror.
 
-- **Mirror `.github/` once the bot has the `workflow` scope.** Today
-  `.github/**` is fully excluded because the classic-PAT mirror token
-  cannot push workflow files (GitHub rejects without the `workflow`
-  scope). Switch `__MIRROR_TOKEN_NAME__` to a GitHub App
-  installation token (preferred) or a fine-grained PAT with the
-  `workflow` scope, then narrow the `.github/**` entry in
-  `EXCLUDED_PATHS` to just `.github/workflows/mirror*.yml` and
-  regenerate the manifest. The first manifest diff will be large and
-  is the reviewable moment for exposing `.github/` publicly.
+- **Mirror `.github/` now that the bot uses a GitHub App token.**
+  `.github/**` is currently fully excluded. The GitHub App installation
+  token has the `workflow` scope, so it's now possible to narrow the
+  `.github/**` entry in `EXCLUDED_PATHS` to just
+  `.github/workflows/mirror*.yml` and regenerate the manifest. The first
+  manifest diff will be large and is the reviewable moment for exposing
+  `.github/` publicly.
 - **Validate the inbound flow end-to-end.** Walk one real PR
   (open on mirror → label → dispatch inbound → run internal CI →
   merge → confirm outbound replays it back → close the mirror PR).
-  Confirm `__MIRROR_TOKEN_NAME__` has read on the mirror
+  Confirm the GitHub App has read access on the mirror
   and `__INTERNAL_TOKEN_NAME__` has `contents:write` + PR-create rights
   on the internal repo. Decide on the final label name (currently
   `ok-to-import` per the design doc) and update `required_labels`
@@ -148,11 +158,10 @@ mirror.
 - **Ship `close-imported-pr.yml` to the mirror.** It is the
   mirror-side half of the inbound loop: runs on the mirror after the
   outbound push and auto-closes the original PR with a link to the
-  replayed commit. Pushing it requires the same `workflow` scope as
-  above; consider issuing a separate dedicated token
-  (`DRIVER_MIRROR_WORKFLOW_TOKEN`) for the higher-privilege workflow
-  pushes rather than broadening the daily mirror token. Until then,
-  deploy the file to the mirror manually.
+  replayed commit. Now that the GitHub App token has `workflow` scope,
+  the outbound mirror can push it automatically once `.github/**` is
+  unblocked (see above). Until then, deploy the file to the mirror
+  manually.
 - **Move pipelines to Buildkite.** Implement mirroring as a Buildkite
   plugin (`snowflake-eng/mirror-buildkite-plugin`) — consumer repos
   reference it with parameters in a 5-line `pipeline.yml` instead of

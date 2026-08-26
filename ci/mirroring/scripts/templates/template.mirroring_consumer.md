@@ -87,12 +87,22 @@ Safety nets (independent of the denylist):
    under a directory named `NOMIRROR` (at any depth) and it is excluded
    without touching the config.
 
-### Tokens
+### Authentication
 
-Two GitHub credentials (compromise of one cannot reach the other org):
+Two credentials (compromise of one cannot reach the other org):
 
-- `__INTERNAL_TOKEN_NAME__` — `snowflake-eng` access.
-- `__MIRROR_TOKEN_NAME__` — `snowflakedb` access.
+- **Internal (snowflake-eng):** `__INTERNAL_TOKEN_NAME__` — a PAT with access
+  to the internal org. Configurable via `INTERNAL_TOKEN_NAME` in
+  `sync-mirror-config.sh`.
+- **Mirror (snowflakedb):** a GitHub App installation token created
+  at workflow runtime via `actions/create-github-app-token@v1`.
+
+Required repository secrets:
+
+- `__INTERNAL_TOKEN_NAME__` — PAT for `snowflake-eng` access.
+- `MIRRORING_APP_ID` — the numeric App ID of the GitHub App installed on
+  the `snowflakedb` organization.
+- `MIRRORING_APP_PRIVATE_KEY` — the PEM private key for that GitHub App.
 
 
 ## How to use it
@@ -126,7 +136,8 @@ mirror.
 - **Validate the inbound flow end-to-end.** Walk one real PR
   (open on mirror → label → dispatch inbound → run internal CI →
   merge → confirm outbound replays it back → close the mirror PR).
-- **Ship `close-imported-pr.yml` to the mirror.** Deploy the file
-  manually (requires `workflow` scope token the daily mirror token
-  doesn't have).
+- **Ship `close-imported-pr.yml` to the mirror.** Now that the GitHub
+  App token has `workflow` scope, the outbound mirror can push it
+  automatically once `.github/**` is unblocked. Until then, deploy
+  the file to the mirror manually.
 - **Create the `ok-to-import` label on the mirror repo.**

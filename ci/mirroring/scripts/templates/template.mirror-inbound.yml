@@ -49,15 +49,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout config
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
+      - name: Create mirror token
+        uses: actions/create-github-app-token@v1
+        id: mirror-token
+        with:
+          app-id: ${{ secrets.MIRRORING_APP_ID }}
+          private-key: ${{ secrets.MIRRORING_APP_PRIVATE_KEY }}
+          owner: snowflakedb
+          repositories: __MIRROR_REPO_NAME__
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build Copybara image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ci/mirroring
           file: ci/mirroring/Dockerfile.copybara
@@ -73,7 +82,7 @@ jobs:
       - name: Configure git for Copybara
         env:
           __INTERNAL_TOKEN_NAME__: ${{ secrets.__INTERNAL_TOKEN_NAME__ }}
-          __MIRROR_TOKEN_NAME__: ${{ secrets.__MIRROR_TOKEN_NAME__ }}
+          MIRROR_TOKEN: ${{ steps.mirror-token.outputs.token }}
         run: |
           set -euo pipefail
           git config --global user.name  "Mirror Bot"
@@ -81,7 +90,7 @@ jobs:
           # Two URL-scoped auth headers: origin fetches read from snowflakedb/
           # (the public mirror), destination push goes to snowflake-eng/ (internal).
           B64_ENG=$(printf 'x-access-token:%s' "${__INTERNAL_TOKEN_NAME__}" | base64 -w0)
-          B64_SDB=$(printf 'x-access-token:%s' "${__MIRROR_TOKEN_NAME__}" | base64 -w0)
+          B64_SDB=$(printf 'x-access-token:%s' "${MIRROR_TOKEN}" | base64 -w0)
           git config --global "http.https://github.com/snowflake-eng/.extraHeader" "Authorization: Basic ${B64_ENG}"
           git config --global "http.https://github.com/snowflakedb/.extraHeader"   "Authorization: Basic ${B64_SDB}"
 
@@ -90,7 +99,7 @@ jobs:
           # Copybara reads GITHUB_TOKEN to call the mirror's API for the
           # PR metadata (labels, title, body, author) — that's a read
           # against the mirror, so use the mirror token here.
-          GITHUB_TOKEN: ${{ secrets.__MIRROR_TOKEN_NAME__ }}
+          GITHUB_TOKEN: ${{ steps.mirror-token.outputs.token }}
           __INTERNAL_TOKEN_NAME__: ${{ secrets.__INTERNAL_TOKEN_NAME__ }}
           PR_NUMBER: ${{ github.event.inputs.pr_number }}
         run: |
