@@ -116,7 +116,8 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Async Query Execution', () => {
       await sleepAsync(250);
     }
 
-    const status = await connection.getQueryStatus(queryId);
+    // TODO: we'll have BD for this
+    const status = (await connection.getQueryStatus(queryId)) as QueryStatus;
     expect(status).toBe('FAILED_WITH_ERROR');
     // Cast: upstream `isAnError` is typed as zero-arg; the runtime takes a status.
     // TODO: we'll have BD for this

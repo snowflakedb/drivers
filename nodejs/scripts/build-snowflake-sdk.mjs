@@ -3,9 +3,13 @@ import { readNapiConfig } from '@napi-rs/cli';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { BUILD_DIR, NODE_SDK_PACKAGE, NODE_SDK_PACKAGE_JSON_PATH, ROOT_DIR } from './common.mjs';
+import {
+  BUILD_SDK_PACKAGE_DIR,
+  NODE_SDK_PACKAGE,
+  NODE_SDK_PACKAGE_JSON_PATH,
+  ROOT_DIR,
+} from './common.mjs';
 
-const BUILD_SDK_PACKAGE_DIR = path.join(BUILD_DIR, NODE_SDK_PACKAGE.name);
 const TSCONFIG_NPM_PATH = path.join(ROOT_DIR, 'tsconfig.npm.json');
 
 // Compiles `src/` into `_build/snowflake-sdk/` as a publish-ready JS package.

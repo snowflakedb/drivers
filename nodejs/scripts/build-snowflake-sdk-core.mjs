@@ -2,10 +2,15 @@
 import { NapiCli } from '@napi-rs/cli';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { BUILD_DIR, NODE_SDK_PACKAGE, NODE_SDK_PACKAGE_JSON_PATH, ROOT_DIR } from './common.mjs';
+import {
+  BUILD_CORE_PACKAGE_DIR,
+  BUILD_DIR,
+  NODE_SDK_PACKAGE,
+  NODE_SDK_PACKAGE_JSON_PATH,
+  ROOT_DIR,
+} from './common.mjs';
 
 const NAPI_CONFIG = NODE_SDK_PACKAGE.napi;
-const BUILD_CORE_PACKAGE_DIR = path.join(BUILD_DIR, NAPI_CONFIG.packageName);
 const BUILD_PLACEHOLDER_PACKAGES_DIR = path.join(BUILD_DIR, 'napi-placeholder-packages');
 
 // Compiles the `nodejs_bridge` Rust crate directly into the linkable platform
