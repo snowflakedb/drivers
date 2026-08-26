@@ -6,7 +6,7 @@ import {
   executeAsync,
   getSnowflakeSDK,
   isRunningForOldDriver,
-} from './utils';
+} from './utils/index.js';
 
 describe('Connection', () => {
   const snowflake = getSnowflakeSDK();

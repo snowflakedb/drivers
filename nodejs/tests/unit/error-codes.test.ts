@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import ErrorCode from '../../src/constants/ErrorCode';
-import ErrorMessage from '../../src/constants/ErrorMessage';
+import ErrorCode from '../../src/constants/ErrorCode.js';
+import ErrorMessage from '../../src/constants/ErrorMessage.js';
 
 // TypeScript numeric enums include reverse mappings (e.g. `400001 -> "ERR_..."`).
 // Filter to entries whose key is the symbolic name (its value is a number).

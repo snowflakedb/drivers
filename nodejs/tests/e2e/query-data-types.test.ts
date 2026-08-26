@@ -6,7 +6,7 @@ import {
   executeAsync,
   getSnowflakeSDK,
   isRunningForOldDriver,
-} from './utils';
+} from './utils/index.js';
 
 function dateAtUtcMidnight(dateLiteral: string): Date {
   return new Date(`${dateLiteral}T00:00:00.000Z`);

@@ -7,19 +7,21 @@ import type {
 } from 'snowflake-sdk-old';
 import { randomUUID } from 'node:crypto';
 import oldSnowflakeSDK from 'snowflake-sdk-old';
-// TODO:
-// Ensure tests run against the built package to catch any missing files in the build output.
-// Namespace import (not default): src/index.js only has named exports. A default import
-// works under Vitest interop but fails under plain Node/tsx with
-// "does not provide an export named 'default'".
-import * as newSnowflakeSDK from '../../../src/index.js';
-import getTestParameter from './getTestParameter';
+import getTestParameter from './getTestParameter.js';
+
+const IS_RUNNING_FOR_OLD_DRIVER = !!process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER;
+
+// Dynamic `import()` so old-driver e2e never loads the new SDK or its native core.
+// TODO: drop the cast once the new driver's public types match the old SDK.
+const newSnowflakeSDK = IS_RUNNING_FOR_OLD_DRIVER
+  ? undefined
+  : ((await import('snowflake-sdk')) as unknown as typeof oldSnowflakeSDK);
 
 /**
  * @deprecated Do not use this function in tests. Use isRunningNewDriverWithBD instead.
  */
 export function isRunningForOldDriver() {
-  return !!process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER;
+  return IS_RUNNING_FOR_OLD_DRIVER;
 }
 
 /**
@@ -32,17 +34,14 @@ export function isRunningForOldDriver() {
  */
 export function isRunningNewDriverWithBD(bdRef: `BD#${number}`): boolean {
   void bdRef;
-  return !isRunningForOldDriver();
+  return !IS_RUNNING_FOR_OLD_DRIVER;
 }
 
 export function getSnowflakeSDK() {
-  if (isRunningForOldDriver()) {
+  if (IS_RUNNING_FOR_OLD_DRIVER) {
     return oldSnowflakeSDK;
   } else {
-    // TODO:
-    // temporary using `as SnowflakeSDK` to satisfy the type checker until
-    // new SDK is fully implemented
-    return newSnowflakeSDK as typeof oldSnowflakeSDK;
+    return newSnowflakeSDK!;
   }
 }
 

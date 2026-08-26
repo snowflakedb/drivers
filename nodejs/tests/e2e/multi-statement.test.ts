@@ -5,7 +5,7 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
-} from './utils';
+} from './utils/index.js';
 
 describe('Multi Statement', () => {
   const snowflake = getSnowflakeSDK();

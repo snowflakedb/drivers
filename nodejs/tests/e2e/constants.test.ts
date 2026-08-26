@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import ErrorCode from '../../src/constants/ErrorCode';
-import { getSnowflakeSDK } from './utils';
+import ErrorCode from '../../src/constants/ErrorCode.js';
+import { getSnowflakeSDK } from './utils/index.js';
 
 describe('SDK Constants', () => {
   const snowflake = getSnowflakeSDK();

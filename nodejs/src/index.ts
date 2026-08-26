@@ -8,8 +8,14 @@ import type {
   RowMode,
 } from './query-result/types.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
+import ErrorCode from './constants/ErrorCode.js';
+import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import SessionParameterName from './constants/SessionParameterName.js';
-import { CoreConnection, type CoreConnectionInstance, type CoreStatementInstance } from './core';
+import {
+  CoreConnection,
+  type CoreConnectionInstance,
+  type CoreStatementInstance,
+} from './core/index.js';
 import {
   updateGlobalConfig,
   type ConfigureOptions,
@@ -20,6 +26,8 @@ import { collectRows } from './query-result/rows.js';
 import { RowStatement, FileAndStageBindStatement } from './query-result/RowStatement.js';
 
 export {
+  ErrorCode,
+  ocspModes,
   RowStatement,
   type StatementCallback,
   type StreamOptions,

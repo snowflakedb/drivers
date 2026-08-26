@@ -7,7 +7,7 @@ import {
   executeAsync,
   getSnowflakeSDK,
   isRunningNewDriverWithBD,
-} from './utils';
+} from './utils/index.js';
 
 /**
  * Builds one `SELECT` with a column per case, so a table of value variations

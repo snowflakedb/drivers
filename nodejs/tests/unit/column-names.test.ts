@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   renameDuplicateColumnNames,
   resolveColumnNames,
-} from '../../src/query-result/column-names';
+} from '../../src/query-result/column-names.js';
 
 describe('renameDuplicateColumnNames', () => {
   const cases: Array<{ name: string; input: string[]; expected: string[] }> = [
