@@ -73,6 +73,7 @@ New features:
 
 Changes:
 
+- Changed query, cancel, and login timeouts to classify as SQLSTATE `HYT00` from the Timeout error kind when no server SQLSTATE is present. (snowflakedb/drivers#1380)
 - Renamed the default driver registration name to `Snowflake ODBC`; update DSN `Driver=` entries that reference `SnowflakeDSIIDriver` (custom names still configurable via `DRIVER_NAME=` / `SF_DRIVER_NAME`). (snowflakedb/drivers#1143)
 - Changed distributable ODBC package filenames to `snowflake-odbc-<version>.<arch>.<extension>` with unified architectures `aarch64` / `x86_64` / `x86_32` / `universal`. (snowflakedb/drivers#1181)
 - Changed `SQLGetInfo(SQL_DRIVER_VER)` to return the zero-padded `MM.mm.bbbb` format (e.g. `04.00.0000`) per the ODBC specification instead of the unpadded semver string (e.g. `3.16.0`). (snowflakedb/drivers#1074)

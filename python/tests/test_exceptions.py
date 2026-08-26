@@ -13,6 +13,9 @@ from snowflake.connector._internal.error_kinds import (
     ERROR_KIND_LOGIN_ERROR,
     ERROR_KIND_MISSING_PARAMETER,
     ERROR_KIND_NOT_IMPLEMENTED,
+    ERROR_KIND_QUERY_FAILED,
+    ERROR_KIND_STAGE_BINDING,
+    ERROR_KIND_TIMEOUT,
     KIND_TO_EXCEPTION,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -162,6 +165,15 @@ class TestErrorKindMapping:
 
     def test_invalid_parameter_value_maps_to_programming(self):
         assert KIND_TO_EXCEPTION[ERROR_KIND_INVALID_PARAMETER_VALUE] is ProgrammingError
+
+    def test_query_failed_maps_to_programming(self):
+        assert KIND_TO_EXCEPTION[ERROR_KIND_QUERY_FAILED] is ProgrammingError
+
+    def test_timeout_maps_to_operational(self):
+        assert KIND_TO_EXCEPTION[ERROR_KIND_TIMEOUT] is OperationalError
+
+    def test_stage_binding_maps_to_operational(self):
+        assert KIND_TO_EXCEPTION[ERROR_KIND_STAGE_BINDING] is OperationalError
 
 
 class TestConvertProtoError:
@@ -391,7 +403,7 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="NULL result in a non-nullable column",
-            kind=ERROR_KIND_INTERNAL_ERROR,
+            kind=ERROR_KIND_QUERY_FAILED,
             vendor_code=100072,
             sql_state="23000",
         )
@@ -401,6 +413,55 @@ class TestConvertProtoError:
         assert isinstance(result, IntegrityError)
         assert result.errno == 100072
         assert result.sqlstate == "23000"
+
+    def test_application_exception_timeout_maps_to_operational_with_hyt00(self):
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="Query timed out after 30s",
+            kind=ERROR_KIND_TIMEOUT,
+            sql_state="HYT00",
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert isinstance(result, OperationalError)
+        assert result.sqlstate == "HYT00"
+
+    def test_application_exception_timeout_derives_hyt00_when_sql_state_unset(self):
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="Query timed out after 30s",
+            kind=ERROR_KIND_TIMEOUT,
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert isinstance(result, OperationalError)
+        assert result.sqlstate == "HYT00"
+
+    def test_application_exception_query_failed_maps_to_programming(self):
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="SQL compilation error: syntax error line 1",
+            kind=ERROR_KIND_QUERY_FAILED,
+            vendor_code=1003,
+            sql_state="42000",
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert isinstance(result, ProgrammingError)
+        assert result.errno == 1003
+        assert result.sqlstate == "42000"
 
     def test_application_exception_report_not_included(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (

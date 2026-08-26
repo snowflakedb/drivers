@@ -25,6 +25,7 @@ use crate::file_manager::FileManagerError;
 use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
+use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::{AbortOutcome, SnowflakeErrorContext};
 use arrow::array::RecordBatchReader;
 use arrow::ffi::FFI_ArrowSchema;
@@ -708,6 +709,54 @@ impl From<&QueryResponseProcessingError> for ErrorKind {
     }
 }
 
+/// Classify a REST failure that escaped through `ApiError::Query`.
+///
+/// `execute_with_refresh` wraps every `RestError` in `QuerySnafu`, so this
+/// must discriminate the inner error: a GS body is a query failure, a
+/// timeout is a timeout, transport/retry is I/O — not all "QueryFailed".
+fn kind_from_query_rest_error(err: &RestError) -> ErrorKind {
+    match err {
+        RestError::QueryFailed { .. } => ErrorKind::QueryFailed,
+        RestError::AsyncQuery { source, .. } => match source {
+            SfError::SnowflakeBody { .. } => ErrorKind::QueryFailed,
+            SfError::DeadlineExceeded { .. } => ErrorKind::Timeout,
+            SfError::Cancelled { .. } => ErrorKind::Cancelled,
+            SfError::Transport { .. }
+            | SfError::HttpStatus { .. }
+            | SfError::RetryAttemptsExhausted { .. }
+            | SfError::RetryBudgetExceeded { .. }
+            | SfError::WarehouseResuming { .. } => ErrorKind::Io,
+            SfError::SessionExpired { .. } => ErrorKind::AuthenticationError,
+            SfError::AsyncPollResultNotFound { .. }
+            | SfError::MissingResultUrl { .. }
+            | SfError::MissingQueryId { .. }
+            | SfError::ResultUrlParse { .. }
+            | SfError::BodyParse { .. } => ErrorKind::InternalError,
+        },
+        RestError::OperationTimeout { .. } => ErrorKind::Timeout,
+        RestError::Communication { .. } | RestError::HttpRetry { .. } => ErrorKind::Io,
+        RestError::Authentication { .. }
+        | RestError::NativeOkta { .. }
+        | RestError::ExternalBrowser { .. }
+        | RestError::OAuthFlow { .. }
+        | RestError::WorkloadIdentityAttestation { .. }
+        | RestError::LoginError { .. }
+        | RestError::SessionRefresh { .. }
+        | RestError::SessionRefreshFailed { .. }
+        | RestError::TokenRequestHttp { .. }
+        | RestError::TokenRequestFailed { .. } => ErrorKind::AuthenticationError,
+        RestError::InvalidSnowflakeResponse { .. }
+        | RestError::RequestConstruction { .. }
+        | RestError::CrlValidation { .. }
+        | RestError::UrlJoin { .. }
+        | RestError::Heartbeat { .. }
+        | RestError::MissingResponseField { .. }
+        | RestError::Logout { .. }
+        | RestError::InvalidUrl { .. }
+        | RestError::PayloadEncode { .. } => ErrorKind::InternalError,
+    }
+}
+
 fn to_driver_exception(error: ApiError) -> DriverException {
     let snowflake_ctx: SnowflakeErrorContext = error.snowflake_context();
     let params_ctx: ConfigErrorContext = error.parameter_context();
@@ -727,6 +776,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
                 ..
             } => ErrorKind::AuthenticationError,
             RestError::LoginError { .. } => ErrorKind::LoginError,
+            RestError::OperationTimeout { .. } => ErrorKind::Timeout,
             _ => ErrorKind::AuthenticationError,
         },
         ApiError::TlsClientCreation { .. }
@@ -740,20 +790,12 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         }
 
         ApiError::GenericError { .. } | ApiError::HttpRequest { .. } => ErrorKind::GenericError,
-        // Stage-binding failures are surfaced as a transport-layer
-        // generic error for now (no dedicated proto ErrorKind yet);
-        // the wrapper-side fallback work will add a dedicated variant and
-        // map to it. Until then, `GenericError` is the right bucket — the
-        // error trace carries enough detail for diagnostics.
-        ApiError::StageBinding { .. } => ErrorKind::GenericError,
-        // TODO(SNOW-2872503): Add a dedicated proto ErrorKind for query timeout so
-        // language wrappers can classify from `kind` instead of `sql_state`.
-        ApiError::QueryTimeout { .. } => ErrorKind::GenericError,
-        ApiError::CancelTimeout { .. } => ErrorKind::GenericError,
+        ApiError::StageBinding { .. } => ErrorKind::StageBinding,
+        ApiError::QueryTimeout { .. } | ApiError::CancelTimeout { .. } => ErrorKind::Timeout,
         ApiError::Cancelled { .. } => ErrorKind::Cancelled,
 
-        ApiError::Query { .. }
-        | ApiError::Statement { .. }
+        ApiError::Query { source, .. } => kind_from_query_rest_error(source),
+        ApiError::Statement { .. }
         | ApiError::ConnectionLock { .. }
         | ApiError::StatementLocking { .. }
         | ApiError::DatabaseLocking { .. }
@@ -859,7 +901,6 @@ mod tests {
     use super::*;
     use crate::apis::database_driver_v1::error::ConfigError;
     use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
-    use crate::rest::snowflake::error::SfError;
     use snafu::Location;
 
     fn loc() -> Location {
@@ -1061,6 +1102,7 @@ mod tests {
         };
         let exc = to_driver_exception(err);
         assert_eq!(exc.message, "SQL compilation error: syntax error line 1");
+        assert_eq!(exc.kind, ErrorKind::QueryFailed as i32);
     }
 
     fn validation_error(issues: Vec<CoreValidationIssue>) -> ApiError {
@@ -1395,25 +1437,38 @@ mod tests {
         assert_eq!(exc.request_id.as_deref(), Some("req-123"));
         assert_eq!(exc.sql_state.as_deref(), Some("HYT00"));
         assert_eq!(exc.query_id, None);
-        assert_eq!(exc.kind, ErrorKind::GenericError as i32);
+        assert_eq!(exc.kind, ErrorKind::Timeout as i32);
+        assert_eq!(exc.vendor_code, None);
     }
 
     #[test]
-    fn cancel_timeout_carries_request_id_and_hyt00() {
+    fn cancel_timeout_maps_to_timeout_kind_and_hyt00() {
         let err = crate::apis::database_driver_v1::error::CancelTimeoutSnafu {
             timeout: std::time::Duration::from_secs(30),
-            request_id: "req-456".to_owned(),
+            request_id: "req-cancel".to_owned(),
         }
         .build();
         let exc = to_driver_exception(err);
-        assert_eq!(exc.request_id.as_deref(), Some("req-456"));
+        assert_eq!(exc.kind, ErrorKind::Timeout as i32);
         assert_eq!(exc.sql_state.as_deref(), Some("HYT00"));
-        assert_eq!(exc.query_id, None);
-        assert_eq!(exc.kind, ErrorKind::GenericError as i32);
+        assert_eq!(exc.request_id.as_deref(), Some("req-cancel"));
+        assert_eq!(exc.vendor_code, None);
     }
 
     #[test]
-    fn login_operation_timeout_carries_hyt00_without_request_id() {
+    fn stage_binding_maps_to_stage_binding_kind() {
+        let err = ApiError::StageBinding {
+            location: loc(),
+            source: Box::new(crate::stage_binding::StageBindingError::Disabled { location: loc() }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::StageBinding as i32);
+        assert_eq!(exc.sql_state, None);
+        assert_eq!(exc.vendor_code, None);
+    }
+
+    #[test]
+    fn login_operation_timeout_maps_to_timeout_kind_and_hyt00() {
         let err = ApiError::Login {
             location: loc(),
             source: Box::new(RestError::OperationTimeout {
@@ -1423,10 +1478,69 @@ mod tests {
             }),
         };
         let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::Timeout as i32);
         assert_eq!(exc.sql_state.as_deref(), Some("HYT00"));
         assert_eq!(exc.request_id, None);
         assert_eq!(exc.query_id, None);
         assert_eq!(exc.vendor_code, None);
+    }
+
+    #[test]
+    fn async_query_gs_body_maps_to_query_failed_kind() {
+        let exc = to_driver_exception(async_query(1003));
+        assert_eq!(exc.kind, ErrorKind::QueryFailed as i32);
+    }
+
+    #[test]
+    fn query_operation_timeout_maps_to_timeout_kind() {
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::OperationTimeout {
+                operation: "query".to_owned(),
+                budget: std::time::Duration::from_secs(1),
+                location: loc(),
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::Timeout as i32);
+        assert_eq!(exc.sql_state.as_deref(), Some("HYT00"));
+    }
+
+    #[test]
+    fn query_http_retry_maps_to_io_kind() {
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::HttpRetry {
+                context: "query",
+                source: crate::http::retry::HttpError::MaxAttempts {
+                    attempts: 3,
+                    last_status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                    location: loc(),
+                },
+                location: loc(),
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::Io as i32);
+    }
+
+    #[test]
+    fn async_query_deadline_maps_to_timeout_kind() {
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::AsyncQuery {
+                location: loc(),
+                request_id: None,
+                query_id: None,
+                source: SfError::DeadlineExceeded {
+                    configured: std::time::Duration::from_secs(1),
+                    elapsed: std::time::Duration::from_secs(1),
+                    location: loc(),
+                },
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::Timeout as i32);
     }
 
     #[test]
