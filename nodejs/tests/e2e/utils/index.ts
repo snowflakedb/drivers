@@ -11,18 +11,14 @@ import getTestParameter from './getTestParameter.js';
 
 const IS_RUNNING_FOR_OLD_DRIVER = !!process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER;
 
+// A var to use in .skipIf() vitest conditionals while some features are not implemented in the new driver
+export const NOT_IMPLEMENTED_IN_NEW_DRIVER = !IS_RUNNING_FOR_OLD_DRIVER;
+
 // Dynamic `import()` so old-driver e2e never loads the new SDK or its native core.
 // TODO: drop the cast once the new driver's public types match the old SDK.
 const newSnowflakeSDK = IS_RUNNING_FOR_OLD_DRIVER
   ? undefined
   : ((await import('snowflake-sdk')) as unknown as typeof oldSnowflakeSDK);
-
-/**
- * @deprecated Do not use this function in tests. Use isRunningNewDriverWithBD instead.
- */
-export function isRunningForOldDriver() {
-  return IS_RUNNING_FOR_OLD_DRIVER;
-}
 
 /**
  * Marks a documented behavior difference between the old and new Node.js

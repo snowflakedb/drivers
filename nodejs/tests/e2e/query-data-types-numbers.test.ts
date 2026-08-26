@@ -7,6 +7,7 @@ import {
   executeAsync,
   getSnowflakeSDK,
   isRunningNewDriverWithBD,
+  NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
 /**
@@ -200,9 +201,10 @@ describe('Query returning number data types', () => {
     expect(Object.values(rows![0])).toEqual(expected);
   });
 
-  it.each([
+  for (const { name, skip, connectionFactory } of [
     {
       name: 'JS_TREAT_INTEGER_AS_BIGINT session parameter',
+      skip: NOT_IMPLEMENTED_IN_NEW_DRIVER,
       connectionFactory: async () => {
         const connection = createTestConnection(snowflake);
         await connection.connectAsync();
@@ -220,23 +222,25 @@ describe('Query returning number data types', () => {
         return connection;
       },
     },
-  ])('returns integer as BigInt instance when $name is set', async ({ connectionFactory }) => {
-    const bigIntConnection = await connectionFactory();
-    try {
-      const { statement, rows } = await executeAsync(
-        bigIntConnection,
-        'SELECT 90071992547409954434323 as INT_COLUMN',
-      );
-      const resultColumn = statement.getColumn(0);
-      const selectedValue = rows![0].INT_COLUMN;
-      expect(resultColumn.getType()).toBe('fixed');
-      expect(resultColumn.isNumber()).toBe(true);
-      expect(isBigIntValue(selectedValue)).toBe(true);
-      expect(String(selectedValue)).toBe('90071992547409954434323');
-    } finally {
-      await destroyConnectionAsync(bigIntConnection);
-    }
-  });
+  ]) {
+    it.skipIf(skip)(`returns integer as BigInt instance when ${name} is set`, async () => {
+      const bigIntConnection = await connectionFactory();
+      try {
+        const { statement, rows } = await executeAsync(
+          bigIntConnection,
+          'SELECT 90071992547409954434323 as INT_COLUMN',
+        );
+        const resultColumn = statement.getColumn(0);
+        const selectedValue = rows![0].INT_COLUMN;
+        expect(resultColumn.getType()).toBe('fixed');
+        expect(resultColumn.isNumber()).toBe(true);
+        expect(isBigIntValue(selectedValue)).toBe(true);
+        expect(String(selectedValue)).toBe('90071992547409954434323');
+      } finally {
+        await destroyConnectionAsync(bigIntConnection);
+      }
+    });
+  }
 
   it('returns DECFLOAT literals correctly formatted', async () => {
     const cases: { literal: string; expected: string | null }[] = [

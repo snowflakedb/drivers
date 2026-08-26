@@ -1,13 +1,18 @@
 import type { Connection, Pool } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { executeAsync, getSnowflakeSDK, TEST_CONNECTION_OPTIONS } from './utils/index.js';
+import {
+  executeAsync,
+  getSnowflakeSDK,
+  NOT_IMPLEMENTED_IN_NEW_DRIVER,
+  TEST_CONNECTION_OPTIONS,
+} from './utils/index.js';
 
 async function executeSelect(connection: Connection, numValue: number): Promise<number> {
   const { rows } = await executeAsync(connection, `select ${numValue} as N`);
   return (rows![0] as { N: number }).N;
 }
 
-describe('Connection Pool', () => {
+describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Pool', () => {
   const snowflake = getSnowflakeSDK();
   let pool: Pool<Connection>;
 

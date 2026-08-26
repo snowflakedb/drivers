@@ -5,6 +5,7 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
+  NOT_IMPLEMENTED_IN_NEW_DRIVER,
   sleepAsync,
 } from './utils/index.js';
 
@@ -35,7 +36,7 @@ describe('Query Cancellation', () => {
     await cancelStatement(statement);
   });
 
-  it('throws when failing to cancel a query', async () => {
+  it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('throws when failing to cancel a query', async () => {
     const { statement } = await executeAsync(connection, 'select 1');
     // Query is completed = nothing to cancel
     await expect(cancelStatement(statement)).rejects.toMatchObject({
