@@ -13,7 +13,7 @@ import pytest
 
 from snowflake.connector.cursor import DictCursor
 
-from .compatibility import IS_UNIVERSAL_DRIVER
+from .compatibility import IS_UNIVERSAL_DRIVER, native_arrow_enabled
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .private_key_helper import get_test_private_key_path
 from .wiremock_client import WiremockClient
@@ -412,6 +412,13 @@ def pytest_runtest_setup(item):
     elif not IS_UNIVERSAL_DRIVER and item.get_closest_marker("skip_reference"):
         marker = item.get_closest_marker("skip_reference")
         reason = marker.kwargs.get("reason", "Skipping test for reference driver")
+        pytest.skip(reason)
+    marker = item.get_closest_marker("skip_unless_native_arrow")
+    if marker is not None and not native_arrow_enabled():
+        reason = marker.kwargs.get(
+            "reason",
+            "Requires the native-arrow row iterator (skipped on the Cython/reference converter)",
+        )
         pytest.skip(reason)
     marker = item.get_closest_marker("skip_for_json_result_set")
     if marker is not None:

@@ -19,6 +19,16 @@ def is_old_driver() -> bool:
     return not IS_UNIVERSAL_DRIVER
 
 
+def native_arrow_enabled() -> bool:
+    if not IS_UNIVERSAL_DRIVER:
+        return False
+    try:
+        from snowflake.connector._core import sf_core_python
+    except ImportError:
+        return False
+    return bool(sf_core_python.native_arrow_enabled())
+
+
 def NEW_DRIVER_ONLY(bc_id: str) -> bool:
     return is_new_driver()
 

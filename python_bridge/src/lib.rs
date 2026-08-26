@@ -1,3 +1,6 @@
+#[cfg(feature = "native-arrow")]
+mod arrow;
+
 use std::sync::OnceLock;
 
 use futures::FutureExt;
@@ -10,6 +13,9 @@ use sf_core::logging::{CallbackLayer, LogManager, LoggingConfig, NormalizedEvent
 use sf_core::perf_timing;
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::telemetry::snowflake_exporter::SessionRegistry;
+
+#[cfg(feature = "native-arrow")]
+use crate::arrow::ArrowStreamIterator;
 
 static BRIDGE: OnceLock<Bridge> = OnceLock::new();
 
@@ -244,6 +250,12 @@ fn reset_perf_metrics() {
     perf_timing::reset_perf_counters();
 }
 
+/// Returns True if the ``native-arrow`` Cargo feature is compiled in.
+#[pyfunction]
+fn native_arrow_enabled() -> bool {
+    cfg!(feature = "native-arrow")
+}
+
 #[pymodule]
 fn sf_core_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init, m)?)?;
@@ -253,5 +265,8 @@ fn sf_core_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(perf_enabled, m)?)?;
     m.add_function(wrap_pyfunction!(get_perf_data, m)?)?;
     m.add_function(wrap_pyfunction!(reset_perf_metrics, m)?)?;
+    m.add_function(wrap_pyfunction!(native_arrow_enabled, m)?)?;
+    #[cfg(feature = "native-arrow")]
+    m.add_class::<ArrowStreamIterator>()?;
     Ok(())
 }

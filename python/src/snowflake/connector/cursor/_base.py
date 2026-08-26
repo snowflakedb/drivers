@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Table
 
-    from .._internal.arrow_stream_iterator import ArrowStreamIterator
+    from .._internal.arrow import ArrowRowIterator
     from ..connection import Connection
 
 logger = get_logger(__name__)
@@ -79,7 +79,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     """
 
     _connection: Connection
-    _iterator: ArrowStreamIterator | None
+    _iterator: ArrowRowIterator | None
 
     def __init__(self, connection: Connection) -> None:
         """
@@ -636,7 +636,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # Iterator protocol
     # ------------------------------------------------------------------
 
-    def _create_row_iterator(self) -> ArrowStreamIterator:
+    def _create_row_iterator(self) -> ArrowRowIterator:
         stream_ptr = self._result_set.get_arrow_stream_ptr()
         return create_row_iterator(
             stream_ptr=stream_ptr,
