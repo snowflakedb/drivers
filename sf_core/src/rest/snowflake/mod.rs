@@ -1723,7 +1723,7 @@ pub async fn snowflake_query_with_client<'a>(
 
     // Async mode path (legacy, opt-in)
     if matches!(execution_mode, QueryExecutionMode::Async) {
-        let (response, _) = execute_async_with_fallback(
+        let response = execute_async_with_fallback(
             client,
             &query_parameters,
             session_token,
@@ -1736,16 +1736,15 @@ pub async fn snowflake_query_with_client<'a>(
     }
 
     // Sync mode (default): use requestId-based retry for connection failures
-    let (response, _) = execute_sync_with_retry(
+    execute_sync_query(
         client,
         &query_parameters,
         session_token,
         &query_input,
-        &retry_policy,
         request_id,
+        &retry_policy,
     )
-    .await?;
-    Ok(response)
+    .await
 }
 
 /// Execute query in async mode with fallback to sync for error 612.
@@ -1757,7 +1756,7 @@ async fn execute_async_with_fallback<'a>(
     query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
     request_id: uuid::Uuid,
-) -> Result<(query_response::Response, uuid::Uuid), RestError> {
+) -> Result<query_response::Response, RestError> {
     match snowflake_query_async_style(
         client,
         query_parameters,
@@ -1768,7 +1767,7 @@ async fn execute_async_with_fallback<'a>(
     )
     .await
     {
-        Ok((response, request_id)) => return Ok((response, request_id)),
+        Ok(response) => return Ok(response),
         Err(RestError::AsyncQuery {
             source:
                 SfError::AsyncPollResultNotFound {
@@ -1806,13 +1805,13 @@ async fn execute_async_with_fallback<'a>(
     }
 
     // Fallback to sync after 612
-    let (response, request_id) = execute_sync_with_retry(
+    let response = execute_sync_query(
         client,
         query_parameters,
         session_token,
         &query_input,
-        retry_policy,
         request_id,
+        retry_policy,
     )
     .await?;
 
@@ -1835,38 +1834,7 @@ async fn execute_async_with_fallback<'a>(
         );
     }
 
-    Ok((response, request_id))
-}
-
-/// Execute a sync query with HTTP-level retries for transient transport / 5xx
-/// failures.
-///
-/// Retry handling lives in [`execute_sync_query`], which wraps the actual
-/// `POST /queries/v1/query-request` call with [`execute_with_retry`]. The
-/// `requestId` is supplied by the caller (so the statement execute path can
-/// pre-register it for cross-thread cancel) and threaded through so that every
-/// HTTP-level replay reuses the same id; the second and subsequent attempts
-/// also carry `retry=true`, giving the server the hint it needs to dedupe
-/// against an already-running/completed query.
-async fn execute_sync_with_retry<'a>(
-    client: &reqwest::Client,
-    query_parameters: &QueryParameters,
-    session_token: &str,
-    query_input: &QueryInput<'a>,
-    retry_policy: &RetryPolicy,
-    request_id: uuid::Uuid,
-) -> Result<(query_response::Response, uuid::Uuid), RestError> {
-    let response = execute_sync_query(
-        client,
-        query_parameters,
-        session_token,
-        query_input,
-        request_id,
-        retry_policy,
-    )
-    .await?;
-
-    Ok((response, request_id))
+    Ok(response)
 }
 
 /// Map a Snowflake query response into a `Result`, converting
@@ -2030,8 +1998,8 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
     request_id: uuid::Uuid,
-) -> Result<(query_response::Response, uuid::Uuid), RestError> {
-    crate::rest::snowflake::async_exec::execute_blocking_with_async(
+) -> Result<query_response::Response, RestError> {
+    async_exec::execute_blocking_with_async(
         client,
         query_parameters,
         session_token.as_ref(),
@@ -2044,7 +2012,6 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
         request_id: Some(request_id),
         query_id: None,
     })
-    .map(|response| (response, request_id))
 }
 
 /// Fetch the result of a previously executed query by its Snowflake Query ID.
