@@ -4207,6 +4207,7 @@ dependencies = [
  "der",
  "der-parser",
  "dirs",
+ "dunce",
  "error_trace",
  "flate2",
  "fs2",

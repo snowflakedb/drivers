@@ -7,12 +7,15 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include <catch2/catch_test_macros.hpp>
 
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
@@ -120,6 +123,50 @@ class TempTestDir {
     }
     return ss.str();
   }
+};
+
+// Resolve the user's home directory: $HOME on Unix, %USERPROFILE% on Windows.
+// Returns an empty path when the variable is unset so the caller can SKIP.
+inline std::filesystem::path user_home_dir() {
+#ifdef _WIN32
+  const char* home = std::getenv("USERPROFILE");
+#else
+  const char* home = std::getenv("HOME");
+#endif
+  return (home != nullptr) ? std::filesystem::path(home) : std::filesystem::path();
+}
+
+// RAII wrapper for a uniquely-named subdirectory created directly under the
+// user's home directory. Tilde-expansion tests require source files to live
+// under home; this guard keeps tests hermetic. Mirrors TempTestDir, which
+// always roots under the system temp directory.
+class HomeTempDir {
+ public:
+  HomeTempDir(const std::filesystem::path& home, const std::string& prefix)
+      : name_(prefix + random_hex(4)), path_(home / name_) {
+    std::filesystem::create_directories(path_);
+  }
+
+  ~HomeTempDir() {
+    // A destructor must not throw, so use the non-throwing overload and check
+    // the result. Surface a cleanup failure via Catch2's WARN rather than bare
+    // std::cerr (test-diagnostic-output), without failing the test.
+    std::error_code ec;
+    std::filesystem::remove_all(path_, ec);
+    if (ec) {
+      WARN("HomeTempDir cleanup failed for " << path_.string() << ": " << ec.message());
+    }
+  }
+
+  HomeTempDir(const HomeTempDir&) = delete;
+  HomeTempDir& operator=(const HomeTempDir&) = delete;
+
+  [[nodiscard]] const std::filesystem::path& path() const { return path_; }
+  [[nodiscard]] const std::string& name() const { return name_; }
+
+ private:
+  std::string name_;
+  std::filesystem::path path_;
 };
 
 // Write a text file with given content and return the path

@@ -346,8 +346,15 @@ pub async fn upload_files(
     policy: &RetryPolicy,
     refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<Vec<UploadResult>, FileManagerError> {
-    let file_locations =
-        expand_filenames(&data.src_location_pattern).context(PathExpansionSnafu)?;
+    // `expand_filenames` globs the filesystem and canonicalizes every match
+    // (stat/readlink syscalls per path component), so it runs in
+    // `spawn_blocking` to keep the runtime thread free, matching every other
+    // blocking-I/O call in this file.
+    let pattern = data.src_location_pattern.clone();
+    let file_locations = tokio::task::spawn_blocking(move || expand_filenames(&pattern))
+        .await
+        .context(BlockingTaskSnafu)?
+        .context(PathExpansionSnafu)?;
 
     if file_locations.is_empty() {
         return NoFilesMatchedSnafu {

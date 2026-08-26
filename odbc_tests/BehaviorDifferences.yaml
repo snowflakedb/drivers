@@ -2585,3 +2585,49 @@ behavior_differences:
     description: |
       For non-standard ODBC SQL types advertising the session VARCHAR
       max is more accurate.
+
+  131:
+    name: "PUT resolves relative source paths to absolute canonical form before upload"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      Aligns the universal ODBC driver with legacy JDBC's `getCanonicalPath` behaviour. The legacy
+      ODBC driver (libsnowflakeclient) passed relative PUT source patterns straight to the
+      platform directory-listing routines without normalizing them, so a relative path worked only
+      because it was resolved against the process CWD at expansion time and stored un-normalized.
+      This change only makes the stored path stable and well-formed; it does not change which files
+      are uploaded in the common case.
+    old_driver_behavior: |
+      The legacy ODBC driver (libsnowflakeclient) does not normalize PUT source paths: relative
+      paths (e.g. `./data/*.csv`) are passed verbatim to `opendir`/`FindFirstFile`, matched against
+      the process CWD, and stored un-normalized. `..` segments and symlinks are not resolved, so the
+      stored path can change meaning if the process CWD changes between glob expansion and file
+      read.
+    new_driver_behavior: |
+      Each matched local source path is resolved to an absolute, canonical form via
+      `dunce::canonicalize` (equivalent to `std::fs::canonicalize` on Unix; strips the `\\?\`
+      verbatim prefix for ordinary local-disk paths on Windows — UNC paths and paths needing
+      long-path support keep the prefix). This resolves the process CWD, collapses `..`
+      segments, and follows symlinks — matching legacy JDBC's `file.getCanonicalPath()`. A
+      symlinked source uploads under the symlink target's basename (JDBC parity). Matches are
+      also deduplicated by canonical path, so a glob that matches both a symlink and its target
+      (or two symlinks to the same target) uploads once, not twice — matching legacy JDBC's
+      `HashSet<String>` dedup keyed on canonical path. A genuinely nonexistent literal source
+      path is unaffected by this change: `glob`'s directory-listing walk never enqueues it, so
+      it still surfaces as `NoFilesMatched` exactly as before. The new case that does hit
+      canonicalization is a **dangling symlink** matched by a glob (it passes the existence
+      check used to enqueue candidates but fails to resolve): that now produces a
+      canonicalization error at expansion time rather than an `is_file` check failure; the PUT
+      still fails, but the error message names the canonicalization failure explicitly.
+    description: |
+      Reference: JDBC `SnowflakeFileTransferAgent.expandFileNames` (stores
+      `file.getCanonicalPath()`, dedups matches via a `HashSet<String>` keyed on canonical
+      path). Also documented in python/BehaviorDifferences.yaml (BD#81): the Python surface
+      deviates from legacy Python's `os.path.abspath` only for symlinked sources, which now
+      upload under the target's basename rather than the symlink's own name. Applications that
+      passed relative paths continue to work; only symlink-heavy PUT workflows see the stage
+      object name change to the resolved target name, or (for a glob matching a symlink and its
+      target) one upload instead of two.

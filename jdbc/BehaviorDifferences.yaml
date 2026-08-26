@@ -1023,3 +1023,44 @@ behavior_differences:
     new_driver_behavior: |
       On Unix, a GET download is restricted to the owner by default. Callers who need the previous
       broader access can opt out with the unsafe_file_write connection property.
+
+  57:
+    name: "PUT resolves relative source paths to absolute canonical form before upload"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Legacy JDBC's `SnowflakeFileTransferAgent.expandFileNames` only calls `getCanonicalPath()`
+      in the glob-wildcard branch; a literal (non-glob) source path is CWD-resolved by string
+      concatenation and added to the result set verbatim, so `..` segments and symlinks are left
+      unresolved for literal paths. The universal driver canonicalizes every matched path,
+      literal or glob, via `dunce::canonicalize`. The two are indistinguishable for the common
+      case (no `..`, no symlink); for a literal symlinked source the stage object name changes
+      from the symlink's own basename to the resolved target's basename, which legacy JDBC does
+      not do. Impact is low because literal (non-glob) symlinked PUT sources are believed to be
+      rare, but this is a genuine behavior change, not the exact parity this entry previously
+      claimed.
+    old_driver_behavior: |
+      Legacy JDBC's `expandFileNames`: a source path containing no glob metacharacter (`*`, `?`,
+      `[...]`) is CWD-resolved by string concatenation and added to the result set unchanged —
+      `..` segments and symlinks are NOT resolved for this branch. Only a glob-matched path is
+      canonicalized via `file.getCanonicalPath()`. So a literal symlinked source (e.g. `link.csv`
+      pointing at `real.csv`) reports the stage object as `link.csv`, the symlink's own name —
+      not the resolved target.
+    new_driver_behavior: |
+      The universal driver's `ValidatedFilePath::new` calls `dunce::canonicalize` on every
+      matched path, whether or not the original pattern contained a glob metacharacter. A
+      literal symlinked source therefore reports the stage object as the *target's* basename
+      (`real.csv`), diverging from legacy JDBC's `link.csv` for this specific literal-symlink
+      case. Glob-matched symlinked sources — the branch legacy JDBC does canonicalize — are
+      unaffected: both drivers report the target's basename there.
+    description: |
+      Reference: legacy JDBC `SnowflakeFileTransferAgent.expandFileNames`
+      (github.com/snowflakedb/snowflake-jdbc): canonicalization happens only in the
+      wildcard-glob branch (`result.add(file.getCanonicalPath())`); the literal-path branch
+      (`result.add(path)`) is CWD-resolved but not canonicalized. Verified directly against the
+      legacy driver source — this entry previously claimed "exact parity", which only holds for
+      glob-matched sources. See also odbc_tests/BehaviorDifferences.yaml (BD#131) and
+      python/BehaviorDifferences.yaml (BD#81) for the per-surface notes.
