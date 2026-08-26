@@ -2,11 +2,11 @@
   "name": "snowflake-sdk",
   "version": "4.0.0-beta.0",
   "description": "Node.js driver for Snowflake",
+  "main": "./dist/index.js",
+  "typings": "./dist/index.d.ts",
   "engines": {
     "node": ">=22"
   },
-  "main": "./dist/index.js",
-  "typings": "./dist/index.d.ts",
   "repository": {
     "type": "git",
     "url": "https://github.com/snowflakedb/drivers"
@@ -27,7 +27,8 @@
     "test:unit": "vitest run --project unit",
     "test:e2e": "vitest run --project e2e",
     "test:e2e-old-driver": "vitest run --project e2e-old-driver",
-    "build:core": "node scripts/build-snowflake-sdk-core.mjs"
+    "build:core": "node scripts/build-snowflake-sdk-core.mjs",
+    "build:sdk": "node scripts/build-snowflake-sdk.mjs"
   },
   "napi": {
     "binaryName": "snowflake-sdk-core",

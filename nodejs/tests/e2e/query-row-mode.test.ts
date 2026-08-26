@@ -5,7 +5,7 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
-} from './utils';
+} from './utils/index.js';
 
 const SQL = `select 1 as id, 'name1' as name, 'name2' as name`;
 

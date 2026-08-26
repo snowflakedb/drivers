@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeConnectionOptions } from '../../src/connection-option-aliases';
+import { normalizeConnectionOptions } from '../../src/connection-option-aliases.js';
 
 describe('normalizeConnectionOptions', () => {
   it('maps legacy snowflake-sdk aliases onto canonical snake_case names', () => {

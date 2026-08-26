@@ -6,7 +6,7 @@ import {
   executeAsync,
   getSnowflakeSDK,
   sleepAsync,
-} from './utils';
+} from './utils/index.js';
 
 function cancelStatement(statement: RowStatement) {
   return new Promise<void>((resolve, reject) => {

@@ -7,7 +7,7 @@ import {
   sleepAsync,
   executeAsync,
   getSnowflakeSDK,
-} from './utils';
+} from './utils/index.js';
 
 const WAIT_SECONDS = 2;
 const ASYNC_WAIT_SQL = `CALL SYSTEM$WAIT(${WAIT_SECONDS}, 'SECONDS')`;

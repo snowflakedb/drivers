@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { GlobalConfig, updateGlobalConfig, resetGlobalConfig } from '../../src/global-config';
+import { GlobalConfig, updateGlobalConfig, resetGlobalConfig } from '../../src/global-config.js';
 
 describe('GlobalConfig', () => {
   afterEach(() => {

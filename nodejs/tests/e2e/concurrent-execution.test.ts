@@ -5,7 +5,7 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
-} from './utils';
+} from './utils/index.js';
 
 const selectRows = (rowCount: number) => `select true from table(generator(rowcount=>${rowCount}))`;
 

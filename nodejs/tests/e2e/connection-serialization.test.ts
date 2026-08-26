@@ -1,7 +1,7 @@
 import type { Connection } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { createTestConnection, destroyConnectionAsync, getSnowflakeSDK } from './utils';
-import getTestParameter from './utils/getTestParameter';
+import getTestParameter from './utils/getTestParameter.js';
+import { createTestConnection, destroyConnectionAsync, getSnowflakeSDK } from './utils/index.js';
 
 describe('Connection Serialization & Deserialization', () => {
   const snowflake = getSnowflakeSDK();

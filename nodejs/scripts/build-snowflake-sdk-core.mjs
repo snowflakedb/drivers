@@ -1,9 +1,12 @@
 /* oxlint-disable no-console */
 import { NapiCli } from '@napi-rs/cli';
-import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import * as url from 'node:url';
+import { BUILD_DIR, NODE_SDK_PACKAGE, NODE_SDK_PACKAGE_JSON_PATH, ROOT_DIR } from './common.mjs';
+
+const NAPI_CONFIG = NODE_SDK_PACKAGE.napi;
+const BUILD_CORE_PACKAGE_DIR = path.join(BUILD_DIR, NAPI_CONFIG.packageName);
+const BUILD_PLACEHOLDER_PACKAGES_DIR = path.join(BUILD_DIR, 'napi-placeholder-packages');
 
 // Compiles the `nodejs_bridge` Rust crate directly into the linkable platform
 // package at `_build/<napi.packageName>/` (i.e. `_build/snowflake-sdk-core/`),
@@ -20,20 +23,11 @@ import * as url from 'node:url';
 //
 // The build runs as the numbered steps marked below.
 
-// 1. Read the `napi` config (packageName/binaryName/targets) from the SDK's
-//    package.json and derive the output paths.
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
-const NODE_SDK_PACKAGE_JSON_PATH = path.join(ROOT_DIR, 'package.json');
-const { napi: NAPI_CONFIG } = JSON.parse(await fs.readFile(NODE_SDK_PACKAGE_JSON_PATH, 'utf8'));
-const BUILD_DIR = path.join(ROOT_DIR, '_build');
-const BUILD_PLACEHOLDER_PACKAGES_DIR = path.join(BUILD_DIR, 'napi-placeholder-packages');
-const BUILD_CORE_PACKAGE_DIR = path.join(BUILD_DIR, NAPI_CONFIG.packageName);
-
-// 2. Remove the package dir so stale artifacts can't survive across builds.
+// 1. Remove the package dir so stale artifacts can't survive across builds.
+console.log('Clearing build directory', BUILD_CORE_PACKAGE_DIR);
 await fs.rm(BUILD_CORE_PACKAGE_DIR, { recursive: true, force: true });
 
-// 3. Build the crate directly into the package dir:
+// 2. Build the crate directly into the package dir:
 //    - `platform: true` names the `.node` file per host target.
 //    - `noJsBinding: true` skips the generated JS loader shim, so the `.d.ts` is
 //      the only JS-facing artifact.
@@ -59,7 +53,7 @@ const { task } = await cli.build({
 });
 await task;
 
-// 4. Finalize the package from the produced artifacts:
+// 3. Finalize the package from the produced artifacts:
 //    - Read the platform triple back from the `.node` filename.
 //    - Move the generated `.d.ts` out of the package into the committed source
 //      tree as `src/core/binary-types.generated.ts`, renamed to `.ts` so `tsc`
@@ -89,14 +83,7 @@ await fs.copyFile(
   path.join(BUILD_CORE_PACKAGE_DIR, 'package.json'),
 );
 
-// 5. Link the platform package into ROOT_DIR's node_modules so the loader can
-//    resolve `snowflake-sdk-core-${platformTriple}` during local development.
-execFileSync('npm', ['link', BUILD_CORE_PACKAGE_DIR], {
-  cwd: ROOT_DIR,
-  stdio: 'inherit',
-});
-
-// 6. Log the build output
+// 4. Log the build output
 console.log(`build -> _build/${NAPI_CONFIG.packageName}/ (snowflake-sdk-core-${platformTriple})`);
 for (const file of await fs.readdir(BUILD_CORE_PACKAGE_DIR)) {
   console.log(`  ${file}`);

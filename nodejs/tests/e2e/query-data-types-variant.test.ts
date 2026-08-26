@@ -6,7 +6,7 @@ import {
   executeAsync,
   getSnowflakeSDK,
   isRunningNewDriverWithBD,
-} from './utils';
+} from './utils/index.js';
 
 describe('Query returning variant data types', () => {
   const snowflake = getSnowflakeSDK();

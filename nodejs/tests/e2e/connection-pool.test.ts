@@ -1,6 +1,6 @@
 import type { Connection, Pool } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { executeAsync, getSnowflakeSDK, TEST_CONNECTION_OPTIONS } from './utils';
+import { executeAsync, getSnowflakeSDK, TEST_CONNECTION_OPTIONS } from './utils/index.js';
 
 async function executeSelect(connection: Connection, numValue: number): Promise<number> {
   const { rows } = await executeAsync(connection, `select ${numValue} as N`);
