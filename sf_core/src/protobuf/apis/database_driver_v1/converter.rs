@@ -8,8 +8,7 @@ use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescr
 use crate::apis::database_driver_v1::ResultSetInfo as NativeResultSetInfo;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::{
-    ConfigError, InlineJsonEncodeSnafu, InvalidColumnMetadataSnafu, QueryResponseProcessingError,
-    RestError,
+    InlineJsonEncodeSnafu, InvalidColumnMetadataSnafu, QueryResponseProcessingError, RestError,
 };
 use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
@@ -21,18 +20,12 @@ use crate::chunks::{
     FetchChunkInput, convert_string_rowset_to_arrow_reader,
 };
 use crate::compression_types::CompressionTypeError;
+use crate::config::{ConfigErrorClass, ConfigErrorContext};
 use crate::file_manager::FileManagerError;
 use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
-use crate::rest::snowflake::AbortOutcome;
-use crate::rest::snowflake::CREDENTIAL_REJECTION_GS_CODES;
-use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
-use crate::rest::snowflake::SQLSTATE_AUTHORIZATION_FAILURE;
-use crate::rest::snowflake::SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED;
-use crate::rest::snowflake::error::SfError;
-use crate::rest::snowflake::master_token_terminal_detail;
-use crate::rest::snowflake::sql_state::sql_state_from_code;
+use crate::rest::snowflake::{AbortOutcome, SnowflakeErrorContext};
 use arrow::array::RecordBatchReader;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -668,251 +661,62 @@ pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> Vali
 // Error conversion (ApiError → DriverException)
 // ---------------------------------------------------------------------------
 
-fn classify_config(
-    source: &ConfigError,
-    parameter: &mut Option<String>,
-    parameter_value: &mut Option<String>,
-    validation_code: &mut Option<i32>,
-) -> ErrorKind {
-    match source {
-        ConfigError::InvalidParameterValue {
-            parameter: name,
-            value,
-            ..
-        } => {
-            *parameter = Some(name.clone());
-            *parameter_value = Some(value.clone());
-            ErrorKind::InvalidParameterValue
+impl From<ConfigErrorClass> for ErrorKind {
+    fn from(value: ConfigErrorClass) -> Self {
+        match value {
+            ConfigErrorClass::MissingParameter => ErrorKind::MissingParameter,
+            ConfigErrorClass::InvalidParameterValue => ErrorKind::InvalidParameterValue,
+            ConfigErrorClass::InternalError => ErrorKind::InternalError,
         }
-        ConfigError::MissingParameter {
-            parameter: name, ..
-        } => {
-            *parameter = Some(name.clone());
-            ErrorKind::MissingParameter
-        }
-        ConfigError::ConflictingParameters {
-            parameter: name,
-            value,
-            ..
-        } => {
-            *parameter = Some(name.clone());
-            *parameter_value = Some(value.clone());
-            ErrorKind::InvalidParameterValue
-        }
-        ConfigError::ConnectionNotFound { name, .. } => {
-            *parameter = Some(format!("connection: {name}"));
-            ErrorKind::MissingParameter
-        }
-        ConfigError::Validation { issues, .. } => {
-            classify_validation(issues, parameter, validation_code)
-        }
-        ConfigError::ConfigFileRead { .. }
-        | ConfigError::TomlParse { .. }
-        | ConfigError::IniParse { .. }
-        | ConfigError::IniAlreadyLoaded { .. }
-        | ConfigError::InsecurePermissions { .. }
-        | ConfigError::ConfigDirNotFound { .. } => ErrorKind::InternalError,
     }
 }
 
-fn classify_validation(
-    issues: &[CoreValidationIssue],
-    parameter: &mut Option<String>,
-    validation_code: &mut Option<i32>,
-) -> ErrorKind {
-    if let Some(issue) = issues
-        .iter()
-        .find(|issue| issue.code == CoreValidationCode::MissingRequired)
-    {
-        *parameter = Some(issue.parameter.clone());
-        return ErrorKind::MissingParameter;
-    }
-    // A WIF-conflict issue must win over blind `.first()` selection,
-    // or `_is_wif_conflict` on the Python side silently misses it
-    // whenever validate_settings also pushes an unrelated
-    // Error-severity issue earlier in the same call.
-    let wif_issue = issues
-        .iter()
-        .find(|issue| issue.code == CoreValidationCode::ConflictingWifParameters);
-    let (chosen_param, chosen_code) = match wif_issue {
-        Some(issue) => (Some(issue.parameter.clone()), Some(issue.code)),
-        None => (
-            issues.first().map(|issue| issue.parameter.clone()),
-            issues.first().map(|issue| issue.code),
-        ),
-    };
-    *parameter = chosen_param;
-    *validation_code = chosen_code.map(core_validation_code_to_proto);
-    ErrorKind::InvalidParameterValue
-}
-
-fn classify_query_response(source: &QueryResponseProcessingError) -> ErrorKind {
-    match source {
-        QueryResponseProcessingError::FileUpload { source, .. }
-        | QueryResponseProcessingError::FileDownload { source, .. } => match source {
-            FileManagerError::NoFilesMatched { .. } => ErrorKind::LocalFileNotFound,
-            FileManagerError::CompressionType {
-                source: CompressionTypeError::UnsupportedCompressionType { .. },
-                ..
-            } => ErrorKind::UnsupportedCompression,
-            // A too-large source file / stage object is an input
-            // error, not a driver fault — surface it as
-            // `InvalidArgument` rather than `InternalError`.
-            s if s.is_file_too_large() => ErrorKind::InvalidArgument,
-            // Everything else here (Io, UploadBatch, cloud
-            // transport errors, ...) is an environmental/transfer
-            // failure, not an internal driver bug — `Io` maps to
-            // `OperationalError` on the Python side, matching the
-            // reference connector's own classification for the
-            // same class of failure.
-            _ => ErrorKind::Io,
-        },
-        QueryResponseProcessingError::RemoteFileNotFound { .. } => ErrorKind::RemoteFileNotFound,
-        _ => ErrorKind::InternalError,
-    }
-}
-
-/// Extract the Snowflake server vendor code and SQL state from an ApiError, if available.
-///
-/// Populates vendor_code/sql_state for query errors (where the Snowflake server
-/// code is the user-facing error number), for login/authentication failures
-/// (including reauth-shaped ones — a session that must be renewed by opening a
-/// new connection is not a credential rejection), and for master-token expiry.
-/// The raw GS code (e.g. `390100` for bad credentials, `390114` for an expired
-/// master token) is surfaced as `vendor_code`, matching the legacy Python
-/// connector's behavior — a code of `-1` means the server omitted or sent a
-/// non-numeric code, in which case no vendor_code is surfaced and callers fall
-/// back to their default errno. Master-token expiry can also legitimately have
-/// no code at all (client-predicted expiry with no server round-trip); never
-/// fabricate one.
-///
-/// SQLSTATE resolution order (first hit wins):
-///   1. The `sqlState` the server included in its response (verbatim).
-///   2. For login failures, [`SQLSTATE_AUTHORIZATION_FAILURE`] ("28000") when
-///      the code is a known credential rejection
-///      ([`CREDENTIAL_REJECTION_GS_CODES`]); [`SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED`]
-///      ("08001") when the login failure is reauth-shaped; otherwise left
-///      unset so callers fall back to their own default -- legacy ODBC and
-///      Python disagree on that default (28000 vs 08001), so it isn't
-///      resolved centrally.
-///   3. For master-token expiry, always
-///      [`SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED`] — the master-token
-///      terminal codes never indicate a credential rejection.
-///   4. `sql_state_from_code` lookup against the numeric Snowflake error
-///      code, which covers paths (async-poll, query-monitoring) that drop
-///      `sqlState` on the wire but keep the error code. Scoped to query
-///      errors — login and master-token codes are deliberately not added to
-///      that table, since they're already resolved by steps 2 and 3.
-///
-/// We deliberately do NOT inspect the human-readable message text:
-/// classification belongs to the server, and substring matching on
-/// English error messages is locale-fragile and false-positive-prone.
-///
-/// Centralising this here means downstream consumers (ODBC, JDBC, ADBC) can
-/// rely on `sql_state` as the single source of truth for error
-/// classification.
-///
-/// NOTE: currently handles `QueryFailed`, `AsyncQuery`, `Login`, and
-/// `MasterTokenTerminal` variants. New query-related error variants should be
-/// added here as they are introduced.
-fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
-    let (code, sql_state) = match error {
-        ApiError::Query { source, .. } => match source.as_ref() {
-            RestError::QueryFailed {
-                code, sql_state, ..
-            } => (*code, sql_state.clone()),
-            RestError::AsyncQuery {
-                source: SfError::SnowflakeBody { code, .. },
-                ..
-            } => (Some(*code), None),
-            _ => (None, None),
-        },
-        ApiError::Login { source, .. } => match source.as_ref() {
-            RestError::LoginError {
-                code,
-                reauthentication_required,
-                ..
-            } if *code != GS_CODE_UNAVAILABLE => (
-                Some(*code),
-                if CREDENTIAL_REJECTION_GS_CODES.contains(code) {
-                    Some(SQLSTATE_AUTHORIZATION_FAILURE.to_string())
-                } else if *reauthentication_required {
-                    Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string())
-                } else {
-                    None
-                },
-            ),
-            _ => (None, None),
-        },
-        ApiError::MasterTokenTerminal {
-            master_token_gs_code,
-            ..
-        } => (
-            *master_token_gs_code,
-            Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string()),
-        ),
-        _ => (None, None),
-    };
-
-    let sql_state = sql_state.or_else(|| code.and_then(sql_state_from_code).map(|s| s.to_owned()));
-
-    (code, sql_state)
-}
-
-fn extract_query_id(error: &ApiError) -> Option<String> {
-    match error {
-        ApiError::Query { source, .. } => match source.as_ref() {
-            RestError::QueryFailed { query_id, .. } => query_id.clone(),
-            RestError::AsyncQuery { query_id, .. } => query_id.map(|id| id.to_string()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Extract the client-generated `requestId` used for the query submission.
-///
-/// Unlike [`extract_query_id`] (the server-assigned Snowflake Query ID), this
-/// is the UUID the driver sent as `?requestId=` on the submission request. It
-/// is useful for correlating a failure with server-side dedup/retry logs.
-///
-/// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
-/// New query-related error variants should be added here as they are
-/// introduced.
-fn extract_request_id(error: &ApiError) -> Option<String> {
-    match error {
-        ApiError::Query { source, .. } => match source.as_ref() {
-            RestError::QueryFailed { request_id, .. } => request_id.map(|id| id.to_string()),
-            RestError::AsyncQuery { request_id, .. } => request_id.map(|id| id.to_string()),
-            _ => None,
-        },
-        _ => None,
+impl From<&QueryResponseProcessingError> for ErrorKind {
+    fn from(value: &QueryResponseProcessingError) -> Self {
+        match value {
+            QueryResponseProcessingError::FileUpload { source, .. }
+            | QueryResponseProcessingError::FileDownload { source, .. } => match source {
+                FileManagerError::NoFilesMatched { .. } => ErrorKind::LocalFileNotFound,
+                FileManagerError::CompressionType {
+                    source: CompressionTypeError::UnsupportedCompressionType { .. },
+                    ..
+                } => ErrorKind::UnsupportedCompression,
+                // A too-large source file / stage object is an input
+                // error, not a driver fault — surface it as
+                // `InvalidArgument` rather than `InternalError`.
+                s if s.is_file_too_large() => ErrorKind::InvalidArgument,
+                // Everything else here (Io, UploadBatch, cloud
+                // transport errors, ...) is an environmental/transfer
+                // failure, not an internal driver bug — `Io` maps to
+                // `OperationalError` on the Python side, matching the
+                // reference connector's own classification for the
+                // same class of failure.
+                _ => ErrorKind::Io,
+            },
+            QueryResponseProcessingError::RemoteFileNotFound { .. } => {
+                ErrorKind::RemoteFileNotFound
+            }
+            // no wildcard - explicit empty arms
+            QueryResponseProcessingError::UploadResultsConversion { .. }
+            | QueryResponseProcessingError::DownloadResultsConversion { .. }
+            | QueryResponseProcessingError::BatchRead { .. }
+            | QueryResponseProcessingError::UnsupportedCommand { .. }
+            | QueryResponseProcessingError::FileTransferPreparation { .. } => {
+                ErrorKind::InternalError
+            }
+        }
     }
 }
 
 fn to_driver_exception(error: ApiError) -> DriverException {
-    let mut parameter = None;
-    let mut parameter_value = None;
-    let mut validation_code = None;
+    let snowflake_ctx: SnowflakeErrorContext = error.snowflake_context();
+    let params_ctx: ConfigErrorContext = error.parameter_context();
+    let kind: ErrorKind = match &error {
+        ApiError::Configuration { .. } => params_ctx.class.into(),
+        ApiError::QueryResponseProcess { source, .. } => source.as_ref().into(),
 
-    let kind = match &error {
-        ApiError::Configuration { source, .. } => classify_config(
-            source,
-            &mut parameter,
-            &mut parameter_value,
-            &mut validation_code,
-        ),
-        ApiError::QueryResponseProcess { source, .. } => classify_query_response(source),
-
-        ApiError::InvalidColumnMetadata { column, .. } => {
-            parameter = Some(format!("column: {column}"));
-            ErrorKind::InvalidArgument
-        }
-        ApiError::InvalidWifProvider { provider, .. } => {
-            parameter = Some("provider".to_string());
-            parameter_value = Some(provider.clone());
-            ErrorKind::InvalidParameterValue
-        }
+        ApiError::InvalidColumnMetadata { .. } => ErrorKind::InvalidArgument,
+        ApiError::InvalidWifProvider { .. } => ErrorKind::InvalidParameterValue,
         // Use InvalidParameterValue so Python callers see ProgrammingError,
         // matching the legacy connector's exception class for this function.
         ApiError::WorkloadIdentityAttestation { .. } => ErrorKind::InvalidParameterValue,
@@ -943,7 +747,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         // error trace carries enough detail for diagnostics.
         ApiError::StageBinding { .. } => ErrorKind::GenericError,
         // TODO(SNOW-2872503): Add a dedicated proto ErrorKind for query timeout so
-        // language wrappers can surface HYT00 / OperationalError correctly.
+        // language wrappers can classify from `kind` instead of `sql_state`.
         ApiError::QueryTimeout { .. } => ErrorKind::GenericError,
         ApiError::CancelTimeout { .. } => ErrorKind::GenericError,
         ApiError::Cancelled { .. } => ErrorKind::Cancelled,
@@ -969,9 +773,6 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         | ApiError::SpoolBufferWrite { .. } => ErrorKind::InternalError,
     };
 
-    let (vendor_code, sql_state) = extract_vendor_info(&error);
-    let query_id = extract_query_id(&error);
-    let request_id = extract_request_id(&error);
     let message = error.to_string();
     let root_cause = extract_root_cause(&error);
     let reauthentication_required = match &error {
@@ -1000,14 +801,16 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         message,
         kind: kind as i32,
         error_trace,
-        vendor_code,
-        sql_state,
+        vendor_code: snowflake_ctx.vendor_code,
+        sql_state: snowflake_ctx.sql_state,
         root_cause,
-        query_id,
-        request_id,
-        parameter,
-        parameter_value,
-        validation_code,
+        query_id: snowflake_ctx.query_id,
+        request_id: snowflake_ctx.request_id,
+        parameter: params_ctx.parameter,
+        parameter_value: params_ctx.parameter_value,
+        validation_code: params_ctx
+            .validation_code
+            .map(core_validation_code_to_proto),
         reauthentication_required,
     }
 }
@@ -1054,11 +857,18 @@ impl From<ApiError> for DriverException {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::apis::database_driver_v1::error::ConfigError;
+    use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
     use crate::rest::snowflake::error::SfError;
     use snafu::Location;
 
     fn loc() -> Location {
         Location::new("test", 0, 0)
+    }
+
+    fn vendor_pair(err: &ApiError) -> (Option<i32>, Option<String>) {
+        let ctx = err.snowflake_context();
+        (ctx.vendor_code, ctx.sql_state)
     }
 
     fn query_failed(code: Option<i32>, sql_state: Option<&str>) -> ApiError {
@@ -1113,10 +923,7 @@ mod tests {
     #[test]
     fn query_failed_passes_through_server_sql_state() {
         let err = query_failed(Some(1003), Some("42000"));
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(1003), Some("42000".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(1003), Some("42000".to_owned())));
     }
 
     #[test]
@@ -1124,43 +931,31 @@ mod tests {
         // If the server provides "22000", trust it even though our table maps
         // 100038 → "22003". The wire value is authoritative.
         let err = query_failed(Some(100038), Some("22000"));
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(100038), Some("22000".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(100038), Some("22000".to_owned())));
     }
 
     #[test]
     fn query_failed_falls_back_to_lookup_when_sql_state_missing() {
         let err = query_failed(Some(100038), None);
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(100038), Some("22003".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(100038), Some("22003".to_owned())));
 
         let err = query_failed(Some(100078), None);
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(100078), Some("22001".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(100078), Some("22001".to_owned())));
 
         let err = query_failed(Some(1003), None);
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(1003), Some("42000".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(1003), Some("42000".to_owned())));
     }
 
     #[test]
     fn unknown_code_with_no_sql_state_stays_none() {
         let err = query_failed(Some(999_999), None);
-        assert_eq!(extract_vendor_info(&err), (Some(999_999), None));
+        assert_eq!(vendor_pair(&err), (Some(999_999), None));
     }
 
     #[test]
     fn missing_code_and_sql_state_stays_none() {
         let err = query_failed(None, None);
-        assert_eq!(extract_vendor_info(&err), (None, None));
+        assert_eq!(vendor_pair(&err), (None, None));
     }
 
     #[test]
@@ -1168,31 +963,22 @@ mod tests {
         // Previously this path returned (Some(code), None) unconditionally —
         // the regression this fix is targeting.
         let err = async_query(1003);
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(1003), Some("42000".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(1003), Some("42000".to_owned())));
 
         let err = async_query(100038);
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(100038), Some("22003".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(100038), Some("22003".to_owned())));
     }
 
     #[test]
     fn async_query_unknown_code_keeps_sql_state_none() {
         let err = async_query(424_242);
-        assert_eq!(extract_vendor_info(&err), (Some(424_242), None));
+        assert_eq!(vendor_pair(&err), (Some(424_242), None));
     }
 
     #[test]
     fn login_credential_rejection_surfaces_code_and_authorization_sql_state() {
         let err = login_error(390100, false);
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(390100), Some("28000".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(390100), Some("28000".to_owned())));
     }
 
     #[test]
@@ -1200,7 +986,7 @@ mod tests {
         // Neither a credential rejection nor reauth-shaped: sql_state stays
         // unset so callers apply their own default.
         let err = login_error(390111, false);
-        assert_eq!(extract_vendor_info(&err), (Some(390111), None));
+        assert_eq!(vendor_pair(&err), (Some(390111), None));
     }
 
     #[test]
@@ -1209,7 +995,7 @@ mod tests {
         // non-numeric code; treat as "no vendor code" so callers fall back
         // to their default errno.
         let err = login_error(GS_CODE_UNAVAILABLE, false);
-        assert_eq!(extract_vendor_info(&err), (None, None));
+        assert_eq!(vendor_pair(&err), (None, None));
     }
 
     #[test]
@@ -1217,10 +1003,7 @@ mod tests {
         // MasterTokenTerminal codes (390113/390114/390115) never indicate a
         // credential rejection, so sql_state is unconditionally "08001".
         let err = master_token_terminal(Some(390114));
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(390114), Some("08001".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(390114), Some("08001".to_owned())));
     }
 
     #[test]
@@ -1229,7 +1012,7 @@ mod tests {
         // to surface, but the SQLSTATE classification doesn't depend on
         // having a code.
         let err = master_token_terminal(None);
-        assert_eq!(extract_vendor_info(&err), (None, Some("08001".to_owned())));
+        assert_eq!(vendor_pair(&err), (None, Some("08001".to_owned())));
     }
 
     #[test]
@@ -1237,10 +1020,7 @@ mod tests {
         // reauthentication_required=true resolves to "08001" regardless of
         // CREDENTIAL_REJECTION_GS_CODES membership.
         let err = login_error(390195, true);
-        assert_eq!(
-            extract_vendor_info(&err),
-            (Some(390195), Some("08001".to_owned()))
-        );
+        assert_eq!(vendor_pair(&err), (Some(390195), Some("08001".to_owned())));
     }
 
     #[test]
@@ -1546,8 +1326,14 @@ mod tests {
                 location: loc(),
             }),
         };
-        assert_eq!(extract_query_id(&err), Some("01abc-def-12345".to_owned()));
-        assert_eq!(extract_request_id(&err), Some(request_id.to_string()));
+        assert_eq!(
+            err.snowflake_context().query_id.as_deref(),
+            Some("01abc-def-12345")
+        );
+        assert_eq!(
+            err.snowflake_context().request_id,
+            Some(request_id.to_string())
+        );
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, Some("01abc-def-12345".to_owned()));
@@ -1573,8 +1359,11 @@ mod tests {
                 },
             }),
         };
-        assert_eq!(extract_query_id(&err), Some(query_id.to_string()));
-        assert_eq!(extract_request_id(&err), Some(request_id.to_string()));
+        assert_eq!(err.snowflake_context().query_id, Some(query_id.to_string()));
+        assert_eq!(
+            err.snowflake_context().request_id,
+            Some(request_id.to_string())
+        );
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, Some(query_id.to_string()));
@@ -1586,12 +1375,58 @@ mod tests {
         // When the server omits the query_id and no request_id was recorded,
         // both fields stay None on DriverException.
         let err = query_failed(Some(1003), Some("42000"));
-        assert_eq!(extract_query_id(&err), None);
-        assert_eq!(extract_request_id(&err), None);
+        let ctx = err.snowflake_context();
+        assert_eq!(ctx.query_id, None);
+        assert_eq!(ctx.request_id, None);
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, None);
         assert_eq!(exc.request_id, None);
+    }
+
+    #[test]
+    fn query_timeout_carries_request_id_and_hyt00() {
+        let err = crate::apis::database_driver_v1::error::QueryTimeoutSnafu {
+            budget: std::time::Duration::from_secs(1),
+            request_id: "req-123".to_owned(),
+        }
+        .build();
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.request_id.as_deref(), Some("req-123"));
+        assert_eq!(exc.sql_state.as_deref(), Some("HYT00"));
+        assert_eq!(exc.query_id, None);
+        assert_eq!(exc.kind, ErrorKind::GenericError as i32);
+    }
+
+    #[test]
+    fn cancel_timeout_carries_request_id_and_hyt00() {
+        let err = crate::apis::database_driver_v1::error::CancelTimeoutSnafu {
+            timeout: std::time::Duration::from_secs(30),
+            request_id: "req-456".to_owned(),
+        }
+        .build();
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.request_id.as_deref(), Some("req-456"));
+        assert_eq!(exc.sql_state.as_deref(), Some("HYT00"));
+        assert_eq!(exc.query_id, None);
+        assert_eq!(exc.kind, ErrorKind::GenericError as i32);
+    }
+
+    #[test]
+    fn login_operation_timeout_carries_hyt00_without_request_id() {
+        let err = ApiError::Login {
+            location: loc(),
+            source: Box::new(RestError::OperationTimeout {
+                operation: "login".to_owned(),
+                budget: std::time::Duration::from_secs(1),
+                location: loc(),
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.sql_state.as_deref(), Some("HYT00"));
+        assert_eq!(exc.request_id, None);
+        assert_eq!(exc.query_id, None);
+        assert_eq!(exc.vendor_code, None);
     }
 
     #[test]
@@ -1601,8 +1436,9 @@ mod tests {
             argument: "bad".to_owned(),
         }
         .build();
-        assert_eq!(extract_query_id(&err), None);
-        assert_eq!(extract_request_id(&err), None);
+        let ctx = err.snowflake_context();
+        assert_eq!(ctx.query_id, None);
+        assert_eq!(ctx.request_id, None);
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, None);

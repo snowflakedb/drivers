@@ -3,6 +3,8 @@ pub mod async_exec;
 mod auth;
 mod browser;
 pub mod error;
+mod error_context;
+pub(crate) use error_context::SnowflakeErrorContext;
 mod external_browser;
 pub mod heartbeat;
 pub mod logout;
@@ -155,6 +157,8 @@ pub const SQLSTATE_AUTHORIZATION_FAILURE: &str = "28000";
 /// 28) would misclassify it. Mirrors `SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED`
 /// in the legacy Python connector's `sqlstate.py`.
 pub const SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED: &str = "08001";
+/// ODBC/ANSI SQLSTATE for a driver-enforced query or cancel timeout (`HYT00`).
+pub const SQLSTATE_TIMEOUT_EXPIRED: &str = "HYT00";
 /// Sentinel for a login-failure `code` the server omitted or sent as a
 /// non-numeric value — not a real GS error code. Produced at the `code`
 /// extraction site feeding [`LoginSnafu`] below.
