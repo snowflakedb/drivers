@@ -1,10 +1,11 @@
-import type { Connection } from 'snowflake-sdk-old';
 import BigInteger from 'big-integer';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import type { Connection } from '../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
+  getStatementColumn,
   getSnowflakeSDK,
   isRunningNewDriverWithBD,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
@@ -230,7 +231,7 @@ describe('Query returning number data types', () => {
           bigIntConnection,
           'SELECT 90071992547409954434323 as INT_COLUMN',
         );
-        const resultColumn = statement.getColumn(0);
+        const resultColumn = getStatementColumn(statement, 0);
         const selectedValue = rows![0].INT_COLUMN;
         expect(resultColumn.getType()).toBe('fixed');
         expect(resultColumn.isNumber()).toBe(true);

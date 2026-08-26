@@ -290,3 +290,30 @@ behavior_differences:
       .toStringSf and .getFormat onto the object rather than subclassing Buffer or wrapping it. The
       extra methods were never part of the documented API, and Node already converts a Buffer to hex
       or base64, so there is no real use case for them. The new driver does not carry them over.
+
+  13:
+    name: 'RowStatement getColumn/getNumRows/getQueryId are typed as possibly undefined'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The old driver's TypeScript types declare getColumn(): Column, getNumRows(): number, and
+      getQueryId(): string — none include undefined. At runtime all three can still return
+      undefined: getColumn and getNumRows when no result is available yet, getQueryId when the
+      query id is not yet known (its JSDoc even says so). Callers who type-check against the old
+      .d.ts never see undefined, even though calling the functions can return it.
+    new_driver_behavior: |
+      The new driver types getColumn, getNumRows, and getQueryId as T | undefined. After a
+      successful query they still return defined values, same as the old driver; TypeScript now
+      requires handling undefined.
+    description: |
+      Status is unknown: investigate and decide among (1) keeping the honest T | undefined
+      signatures (a TypeScript-visible API change), (2) matching the old driver's types, which
+      hide a real undefined return, or (3) throwing when no result is available instead of
+      returning undefined, so the signatures can honestly be T. Runtime after a completed query
+      is the same on both drivers for (1) and (2); (3) would change pre-result calls from
+      undefined to an error (a runtime break for callers who currently check for undefined). The
+      new types come from mapping core FFI null to undefined. Tests that call getColumn() after
+      execute use getRowStatementColumn (BD#13).

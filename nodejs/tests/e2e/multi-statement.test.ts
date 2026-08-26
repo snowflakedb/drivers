@@ -1,5 +1,5 @@
-import type { Connection } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
+import type { Connection } from '../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,

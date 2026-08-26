@@ -1,5 +1,5 @@
-import type { Connection } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
+import type { Connection } from '../types/sdk-types.js';
 import getTestParameter from './utils/getTestParameter.js';
 import {
   createTestConnection,
@@ -24,6 +24,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deser
   it('serialization of a disconnected connection returns empty tokenInfo', () => {
     const disconnectedConnection = createTestConnection(snowflake);
     const serialized = disconnectedConnection.serialize();
+    // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
     expect(snowflake.serializeConnection(disconnectedConnection)).toEqual(serialized);
     expect(JSON.parse(serialized)).toEqual({
       services: { sf: { tokenInfo: {} } },
@@ -45,17 +46,20 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deser
 
   it('snowflake.serializeConnection() returns the same string as connection.serialize()', () => {
     const snowflake = getSnowflakeSDK();
+    // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
     expect(snowflake.serializeConnection(connection)).toBe(connection.serialize());
   });
 
   describe('snowflake.deserializeConnection()', () => {
     it('rehydrates into a usable connection', async () => {
       const snowflake = getSnowflakeSDK();
+      // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
       const connectionFromDeserialization = snowflake.deserializeConnection(
         {
           account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
           host: getTestParameter('SNOWFLAKE_TEST_HOST'),
         },
+        // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
         snowflake.serializeConnection(connection),
       );
 
@@ -68,6 +72,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deser
 
     it('rehydrates into a disconnected connection when tokens are missing', () => {
       const snowflake = getSnowflakeSDK();
+      // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
       const connectionFromDeserialization = snowflake.deserializeConnection(
         {
           account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),

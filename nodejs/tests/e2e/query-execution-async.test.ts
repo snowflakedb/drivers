@@ -1,6 +1,6 @@
-import type { Connection, QueryStatus, SnowflakeError } from 'snowflake-sdk-old';
 import { ErrorCode } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
+import type { Connection, QueryStatus, SnowflakeError } from '../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
@@ -32,6 +32,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Async Query Execution', () => {
   describe('getQueryStatus()', () => {
     it('returns RUNNING for pending async query', async () => {
       const { statement } = await executeAsync(connection, ASYNC_WAIT_SQL, { asyncExec: true });
+      // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
       const status = await connection.getQueryStatus(statement.getQueryId());
       expect(status).toBe('RUNNING');
       // Cast: upstream `getQueryStatus` is typed `Promise<string>`, but the
@@ -56,6 +57,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Async Query Execution', () => {
 
     beforeAll(async () => {
       const asyncQuery = await executeAsync(connection, ASYNC_WAIT_SQL, { asyncExec: true });
+      // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
       queryId = asyncQuery.statement.getQueryId();
     });
 
@@ -112,20 +114,24 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Async Query Execution', () => {
     // Cast: upstream `getQueryStatus` is typed `Promise<string>`, but the
     // server only returns `QueryStatus` literals and `isStillRunning` requires one.
     // TODO: we'll have BD for this
+    // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
     while (connection.isStillRunning((await connection.getQueryStatus(queryId)) as QueryStatus)) {
       await sleepAsync(250);
     }
 
     // TODO: we'll have BD for this
+    // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
     const status = (await connection.getQueryStatus(queryId)) as QueryStatus;
     expect(status).toBe('FAILED_WITH_ERROR');
     // Cast: upstream `isAnError` is typed as zero-arg; the runtime takes a status.
     // TODO: we'll have BD for this
     expect((connection.isAnError as (status: QueryStatus) => boolean)(status)).toBe(true);
 
+    // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
     await expect(connection.getQueryStatusThrowIfError(queryId)).rejects.toMatchObject({
       name: 'OperationFailedError',
     });
+    // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
     await expect(connection.getResultsFromQueryId({ queryId })).rejects.toMatchObject({
       name: 'OperationFailedError',
     });
