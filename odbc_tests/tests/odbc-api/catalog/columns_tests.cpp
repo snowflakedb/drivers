@@ -640,6 +640,59 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: BUFFER_LENGTH is 16 for TIM
   }
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: VARIANT/OBJECT/ARRAY size follows session max varchar",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
+                             SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const std::vector<std::string> semiStructured = {"VARIANTVAL", "OBJECTVAL", "ARRAYVAL"};
+  constexpr SQLINTEGER kLegacySemiStructuredSize = 134217728;
+
+  std::map<std::string, std::pair<SQLINTEGER, SQLINTEGER>> actual;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+    if (std::find(semiStructured.begin(), semiStructured.end(), columnName.text) == semiStructured.end()) {
+      continue;
+    }
+
+    SQLINTEGER colSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN colSizeInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 7, SQL_C_SLONG, &colSize, 0, &colSizeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(colSizeInd == sizeof(SQLINTEGER));
+
+    SQLINTEGER bufLen = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN bufLenInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &bufLen, 0, &bufLenInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(bufLenInd == sizeof(SQLINTEGER));
+    actual.emplace(columnName.text, std::make_pair(colSize, bufLen));
+  }
+
+  for (const auto& column : semiStructured) {
+    const auto it = actual.find(column);
+    REQUIRE(it != actual.end());
+    INFO("column " << column);
+    NEW_DRIVER_ONLY("BD#130") {
+      // Session VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT is 16 MB by default and
+      // 128 MB on accounts that raise it. Do not compare to TEXTVAL: unbounded
+      // TEXT's SHOW COLUMNS length is often still 16 MB.
+      CHECK((it->second.first == 16777216 || it->second.first == 134217728));
+      CHECK(it->second.second == it->second.first);
+      CHECK(it->second.first == actual.at("VARIANTVAL").first);
+    }
+    OLD_DRIVER_ONLY("BD#130") {
+      CHECK(it->second.first == kLegacySemiStructuredSize);
+      CHECK(it->second.second == kLegacySemiStructuredSize);
+    }
+  }
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: DATA_TYPE is non-NULL for all types (SQL_VARCHAR for unmapped)",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),

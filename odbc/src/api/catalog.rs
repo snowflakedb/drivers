@@ -3302,6 +3302,18 @@ struct FlatColumnRow {
     user_data_type: Option<i16>,
 }
 
+/// SHOW COLUMNS VARIANT/OBJECT/ARRAY blobs often include `charLength`
+/// 134217728 (Snowflake's historical TEXT max). SQLColumns must not advertise
+/// that constant: omit charLength so `SnowflakeFieldType::from_field` falls
+/// back to session `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`. Query-result
+/// ColAttribute still uses the GS field metadata as-is.
+fn catalog_char_length_for_sqlcolumns(logical_type: &str, char_length: Option<i64>) -> Option<i64> {
+    match logical_type {
+        "VARIANT" | "OBJECT" | "ARRAY" => None,
+        _ => char_length,
+    }
+}
+
 fn flat_row_from_descriptor(
     cat: String,
     schem: String,
@@ -3313,7 +3325,7 @@ fn flat_row_from_descriptor(
         &desc.logical_type,
         desc.precision,
         desc.scale,
-        desc.char_length,
+        catalog_char_length_for_sqlcolumns(&desc.logical_type, desc.char_length),
         desc.byte_length,
         desc.nullable,
     );
@@ -5388,6 +5400,21 @@ mod sqlcolumns_decode_tests {
         let d = decode_data_type_json(json, "B".to_string(), 1, None, None);
         assert_eq!(d.logical_type, "BINARY");
         assert_eq!(d.char_length, None);
+    }
+
+    #[test]
+    fn sqlcolumns_drops_show_columns_char_length_for_semi_structured() {
+        for lt in ["VARIANT", "OBJECT", "ARRAY"] {
+            assert_eq!(
+                catalog_char_length_for_sqlcolumns(lt, Some(134_217_728)),
+                None,
+                "{lt} SHOW COLUMNS 128 MB charLength must not feed SQLColumns"
+            );
+        }
+        assert_eq!(
+            catalog_char_length_for_sqlcolumns("TEXT", Some(255)),
+            Some(255)
+        );
     }
 
     #[test]
