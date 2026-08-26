@@ -247,3 +247,46 @@ behavior_differences:
       These were a leftover legacy constant that nobody removed from the old driver. They are
       undocumented and unusable (their values match no getType() result), so the new driver simply
       does not carry them over.
+
+  11:
+    name: 'connectAsync rejects on failure instead of delivering the error only via callback'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      connectAsync(callback) returns a Promise that still resolves on auth/connect failure; the
+      error is delivered only through the optional callback. Callers who await the promise without
+      a callback never see the error.
+    new_driver_behavior: |
+      connectAsync() takes no callback. On failure the returned Promise rejects (throws when
+      awaited), so the error is observed via try/catch or .catch().
+    description: |
+      The old driver's connectAsync mixed callback and Promise error channels: some failures were
+      passed to the callback while the Promise still resolved, and a TODO in the old driver parked
+      making it throw until a 3.x breaking change. The new driver takes the 3.x shape — no callback
+      parameter, Promise rejection on failure. .connect() is unaffected: it still routes success
+      and failure through its callback on both drivers.
+
+  12:
+    name: 'BINARY columns come back as a plain Buffer without toStringSf/getFormat'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      A BINARY column is returned as a Buffer that the old driver monkey-patches with own-property
+      .toStringSf() and .getFormat() methods. Those methods are undocumented (absent from
+      index.d.ts). .toStringSf() returns the value as uppercase hex or base64; .getFormat() returns
+      that format name. Because the extra methods live on the instance, a deep equality check
+      against a plain Buffer fails even when the bytes match.
+    new_driver_behavior: |
+      A BINARY column is returned as a plain Buffer with no extra methods. Callers convert with
+      Buffer.toString('hex') / Buffer.toString('base64').
+    description: |
+      The old driver monkey-patches each Buffer instance in convertRawBinary (column.js) by assigning
+      .toStringSf and .getFormat onto the object rather than subclassing Buffer or wrapping it. The
+      extra methods were never part of the documented API, and Node already converts a Buffer to hex
+      or base64, so there is no real use case for them. The new driver does not carry them over.

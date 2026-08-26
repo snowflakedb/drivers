@@ -5,7 +5,8 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
-  isRunningForOldDriver,
+  isRunningNewDriverWithBD,
+  NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
 function dateAtUtcMidnight(dateLiteral: string): Date {
@@ -60,12 +61,12 @@ describe('Query returning data types', () => {
     expect(nullBinaryColumn.getType()).toBe('binary');
     expect(nullBinaryColumn.isBinary()).toBe(true);
     expect(rows![0].NULL_BINARY_COLUMN).toBe(null);
-    // In old driver, returned Buffer has extra methods .toStringSf() and .getFormat())
-    // that cause .toEqual to fail in vitest. New driver omits these monkey patches (see BCR log).
-    if (isRunningForOldDriver()) {
-      expect(receivedValue.equals(expectedValue)).toBe(true);
-    } else {
+    // Old-driver Buffers carry extra .toStringSf() / .getFormat() methods that make
+    // vitest's .toEqual fail; the new driver returns a plain Buffer (BD#12).
+    if (isRunningNewDriverWithBD('BD#12')) {
       expect(receivedValue).toEqual(expectedValue);
+    } else {
+      expect(receivedValue.equals(expectedValue)).toBe(true);
     }
   });
 
@@ -198,7 +199,7 @@ describe('Query returning data types', () => {
     });
   });
 
-  describe('TIMESTAMP', () => {
+  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP', () => {
     it('returns TIMESTAMP_LTZ as Date with zone offset', async () => {
       const { statement, rows } = await executeAsync(
         connection,

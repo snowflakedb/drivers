@@ -5,6 +5,7 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
+  NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
 const selectRows = (rowCount: number) => `select true from table(generator(rowcount=>${rowCount}))`;
@@ -23,7 +24,7 @@ function streamRowCount(stmt: RowStatement): Promise<number> {
   });
 }
 
-describe('Concurrent Execution', () => {
+describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Concurrent Execution', () => {
   const snowflake = getSnowflakeSDK();
 
   it('runs many concurrent select queries on a single connection', async () => {

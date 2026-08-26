@@ -40,10 +40,6 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 - The `is*` methods (e.g. `isString()`) do not cover every data type value that can be returned by `.getType()`. For example, `decfloat` is not covered by any `is*` method. The new driver adds `isDecfloat()` to close this specific gap; old driver has no equivalent method.
 - The `isArray` and `isObject` methods are bugged and return false because server doesn't return `fieldsMetadata`
 
-### Statement Buffer Monkey Patching
-
-- Currently, when a query returns a BINARY column, the driver returns a Buffer object monkey-patched methods: `.toStringSf()` and `.getFormat()`. These methods are not part of the documented API. There is no use case for them, as node can convert Buffer to both hex and base64.
-
 ## Future Breaking Changes (BCRs)
 
 These are potential improvements to consider after the UD release:

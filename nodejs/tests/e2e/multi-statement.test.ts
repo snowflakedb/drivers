@@ -5,9 +5,10 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
+  NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
-describe('Multi Statement', () => {
+describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Multi Statement', () => {
   const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
