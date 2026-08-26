@@ -137,7 +137,8 @@ impl DatabaseDriverV1 {
         match self.statements.get_obj(handle) {
             Some(stmt_ptr) => {
                 let mut stmt = stmt_ptr.lock().await;
-                let (canonical, def) = canonicalize_setting_key(&key);
+                let (canonical, def) =
+                    canonicalize_setting_key(self.wrapper_presets.configuration_flavor, &key);
                 validate_statement_option_write(def)?;
                 stmt.settings.insert(canonical, value);
                 Ok(())
@@ -157,7 +158,8 @@ impl DatabaseDriverV1 {
         match self.statements.get_obj(handle) {
             Some(stmt_ptr) => {
                 let mut stmt = stmt_ptr.lock().await;
-                let (resolved, issues) = resolve_options(options);
+                let (resolved, issues) =
+                    resolve_options(self.wrapper_presets.configuration_flavor, options);
                 let error_messages: Vec<String> = issues
                     .iter()
                     .filter(|i| i.severity == ValidationSeverity::Error)

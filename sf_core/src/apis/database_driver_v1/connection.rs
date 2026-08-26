@@ -725,7 +725,8 @@ impl DatabaseDriverV1 {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr.lock().await;
                 let post = conn.is_post_connect();
-                let (canonical, def) = canonicalize_setting_key(&key);
+                let (canonical, def) =
+                    canonicalize_setting_key(self.wrapper_presets.configuration_flavor, &key);
                 validate_connection_seed_write(post, def)?;
                 conn.connection_seed.insert(canonical, value);
                 Ok(())
@@ -751,7 +752,8 @@ impl DatabaseDriverV1 {
                 // call cannot clear it. Only the wrapper can compute this (it
                 // alone sees the raw caller input before bookkeeping is added).
                 conn.no_connection_details |= no_connection_details;
-                let (resolved, issues) = resolve_options(options);
+                let (resolved, issues) =
+                    resolve_options(self.wrapper_presets.configuration_flavor, options);
                 let error_messages: Vec<String> = issues
                     .iter()
                     .filter(|i| i.severity == ValidationSeverity::Error)
@@ -843,7 +845,8 @@ impl DatabaseDriverV1 {
                     }
                     .fail();
                 }
-                let (canonical, def) = canonicalize_setting_key(&key);
+                let (canonical, def) =
+                    canonicalize_setting_key(self.wrapper_presets.configuration_flavor, &key);
                 validate_session_override_write(def)?;
                 conn.session_overrides.insert(canonical, value);
                 Ok(())
@@ -2189,7 +2192,8 @@ impl DatabaseDriverV1 {
                 }
                 drop(cache);
 
-                let (canonical, def) = canonicalize_setting_key(&key);
+                let (canonical, def) =
+                    canonicalize_setting_key(self.wrapper_presets.configuration_flavor, &key);
                 if let Some(d) = def
                     && d.is_session_scoped()
                 {

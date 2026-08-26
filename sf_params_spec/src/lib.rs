@@ -294,16 +294,63 @@ pub enum ParamScope {
     Statement,
 }
 
+/// Identity of a language/protocol wrapper that talks to core.
+///
+/// Used by [`Alias`] scoping and [`ParamRegistry::resolve_for`] so the same
+/// wire spelling can map to different canonicals depending on which wrapper
+/// sent it (e.g. ODBC `LOGIN_TIMEOUT` vs JDBC `LOGIN_TIMEOUT`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Wrapper {
+    Odbc,
+    Jdbc,
+    Python,
+    NodeJs,
+    DotNet,
+}
+
+/// An alternative accepted name for a parameter.
+///
+/// `wrapper: None` means the alias is accepted by every wrapper (global);
+/// `Some(w)` means it is only visible when resolving in the context of `w`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Alias {
+    pub name: &'static str,
+    pub wrapper: Option<Wrapper>,
+}
+
+impl Alias {
+    pub const fn global(name: &'static str) -> Self {
+        Self {
+            name,
+            wrapper: None,
+        }
+    }
+
+    pub const fn scoped(wrapper: Wrapper, name: &'static str) -> Self {
+        Self {
+            name,
+            wrapper: Some(wrapper),
+        }
+    }
+}
+
+/// Shorthand for a slice of global aliases: `aliases!["SERVER", "HOST"]`.
+#[macro_export]
+macro_rules! aliases {
+    ($($name:expr),* $(,)?) => {
+        &[$($crate::Alias::global($name)),*]
+    };
+}
+
 /// Defines a single supported configuration parameter.
 pub struct ParamDef {
     /// The canonical key name used internally (e.g. `"host"`).
     pub canonical_name: &'static str,
 
     /// Alternative names accepted from wrappers (case-insensitive lookup).
-    /// e.g. `&["SERVER", "HOST"]` all resolve to `"host"`.
-    // TODO(sfc-gh-boler): Separate allowed aliases per wrapper. Implement this once
-    //     wrapper identity available in core.
-    pub aliases: &'static [&'static str],
+    /// Global aliases apply to every wrapper; scoped ones only when resolving
+    /// via [`ParamRegistry::resolve_for`] for that wrapper.
+    pub aliases: &'static [Alias],
 
     /// Primary expected value type.
     pub value_type: ValueType,
@@ -364,7 +411,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Server ──────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::ACCOUNT.as_str(),
-        aliases: &["ACCOUNT"],
+        aliases: aliases!["ACCOUNT"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Always,
@@ -378,7 +425,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::HOST.as_str(),
-        aliases: &["SERVER", "HOST"],
+        aliases: aliases!["SERVER", "HOST"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -392,7 +439,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PORT.as_str(),
-        aliases: &["PORT"],
+        aliases: aliases!["PORT"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -406,7 +453,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PROTOCOL.as_str(),
-        aliases: &["PROTOCOL"],
+        aliases: aliases!["PROTOCOL"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -420,7 +467,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::SSL.as_str(),
-        aliases: &["SSL"],
+        aliases: aliases!["SSL"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -434,7 +481,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::SERVER_URL.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -448,7 +495,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.as_str(),
-        aliases: &["ALLOWUNDERSCORESINHOST"],
+        aliases: aliases!["ALLOWUNDERSCORESINHOST"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -463,7 +510,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Auth ────────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::USER.as_str(),
-        aliases: &["UID"],
+        aliases: aliases!["UID"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Always,
@@ -477,7 +524,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PASSWORD.as_str(),
-        aliases: &["PWD"],
+        aliases: aliases!["PWD"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::WhenAuthMethod("SNOWFLAKE_PASSWORD"),
@@ -491,7 +538,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::AUTHENTICATOR.as_str(),
-        aliases: &["AUTHENTICATOR"],
+        aliases: aliases!["AUTHENTICATOR"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -505,7 +552,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY.as_str(),
-        aliases: &["PRIV_KEY_BASE64", "PRIVATE_KEY_BASE64"],
+        aliases: aliases!["PRIV_KEY_BASE64", "PRIVATE_KEY_BASE64"],
         value_type: ValueType::String,
         additional_value_type: Some(ValueType::Bytes),
         required: Required::WhenAuthMethod("SNOWFLAKE_JWT"),
@@ -519,7 +566,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY_FILE.as_str(),
-        aliases: &["PRIV_KEY_FILE"],
+        aliases: aliases!["PRIV_KEY_FILE"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -533,7 +580,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY_PASSWORD.as_str(),
-        aliases: &[
+        aliases: aliases![
             "PRIV_KEY_FILE_PWD",
             "PRIV_KEY_PWD",
             "PRIVATE_KEY_PWD",
@@ -552,7 +599,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::TOKEN.as_str(),
-        aliases: &["TOKEN"],
+        aliases: aliases!["TOKEN"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::WhenAuthMethod("PROGRAMMATIC_ACCESS_TOKEN"),
@@ -566,7 +613,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::SESSION_TOKEN.as_str(),
-        aliases: &["SESSION_TOKEN"],
+        aliases: aliases!["SESSION_TOKEN"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -580,7 +627,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::MASTER_TOKEN.as_str(),
-        aliases: &["MASTER_TOKEN"],
+        aliases: aliases!["MASTER_TOKEN"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -594,7 +641,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::MASTER_VALIDITY_IN_SECONDS.as_str(),
-        aliases: &["MASTER_VALIDITY_IN_SECONDS"],
+        aliases: aliases!["MASTER_VALIDITY_IN_SECONDS"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -608,7 +655,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PASSCODE.as_str(),
-        aliases: &["PASSCODE"],
+        aliases: aliases!["PASSCODE"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -622,7 +669,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PASSCODE_IN_PASSWORD.as_str(),
-        aliases: &["PASSCODE_IN_PASSWORD"],
+        aliases: aliases!["PASSCODE_IN_PASSWORD"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -636,7 +683,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.as_str(),
-        aliases: &["clientStoreTemporaryCredential"],
+        aliases: aliases!["clientStoreTemporaryCredential"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -650,7 +697,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(),
-        aliases: &["DISABLE_PARALLEL_USER_PROMPT"],
+        aliases: aliases!["DISABLE_PARALLEL_USER_PROMPT"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -667,7 +714,9 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::AUTHENTICATION_TIMEOUT.as_str(),
-        aliases: &[],
+        // ODBC's LOGIN_TIMEOUT historically means authentication_timeout; other
+        // wrappers keep the global LOGIN_TIMEOUT → login_timeout mapping below.
+        aliases: &[Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -681,7 +730,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OKTA_USERNAME.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -695,7 +744,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::DISABLE_SAML_URL_CHECK.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -713,7 +762,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // connection.
     ParamDef {
         canonical_name: param_names::OAUTH_CLIENT_ID.as_str(),
-        aliases: &["OAUTH_CLIENT_ID", "oauthClientId"],
+        aliases: aliases!["OAUTH_CLIENT_ID", "oauthClientId"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -727,7 +776,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_CLIENT_SECRET.as_str(),
-        aliases: &["OAUTH_CLIENT_SECRET", "oauthClientSecret"],
+        aliases: aliases!["OAUTH_CLIENT_SECRET", "oauthClientSecret"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -741,7 +790,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_AUTHORIZATION_URL.as_str(),
-        aliases: &["OAUTH_AUTHORIZATION_URL", "oauthAuthorizationUrl"],
+        aliases: aliases!["OAUTH_AUTHORIZATION_URL", "oauthAuthorizationUrl"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -755,7 +804,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_TOKEN_REQUEST_URL.as_str(),
-        aliases: &[
+        aliases: aliases![
             "OAUTH_TOKEN_REQUEST_URL",
             "OAUTH_TOKEN_URL",
             "oauthTokenRequestUrl",
@@ -773,7 +822,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_REDIRECT_URI.as_str(),
-        aliases: &["OAUTH_REDIRECT_URI", "oauthRedirectUri"],
+        aliases: aliases!["OAUTH_REDIRECT_URI", "oauthRedirectUri"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -787,7 +836,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_SCOPE.as_str(),
-        aliases: &["OAUTH_SCOPE", "oauthScope"],
+        aliases: aliases!["OAUTH_SCOPE", "oauthScope"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -801,7 +850,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.as_str(),
-        aliases: &[
+        aliases: aliases![
             "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
             "oauthEnableSingleUseRefreshTokens",
         ],
@@ -818,7 +867,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_DISABLE_PKCE.as_str(),
-        aliases: &["OAUTH_DISABLE_PKCE"],
+        aliases: aliases!["OAUTH_DISABLE_PKCE"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -832,7 +881,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_ENABLE_DPOP.as_str(),
-        aliases: &["OAUTH_ENABLE_DPOP"],
+        aliases: aliases!["OAUTH_ENABLE_DPOP"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -846,7 +895,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_CREDENTIALS_IN_BODY.as_str(),
-        aliases: &["OAUTH_CREDENTIALS_IN_BODY"],
+        aliases: aliases!["OAUTH_CREDENTIALS_IN_BODY"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -860,7 +909,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_DISABLE_CONSOLE_LOGIN.as_str(),
-        aliases: &["OAUTH_DISABLE_CONSOLE_LOGIN"],
+        aliases: aliases!["OAUTH_DISABLE_CONSOLE_LOGIN"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -875,7 +924,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Session ─────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::DATABASE.as_str(),
-        aliases: &["DATABASE"],
+        aliases: aliases!["DATABASE"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -889,7 +938,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::SCHEMA.as_str(),
-        aliases: &["SCHEMA"],
+        aliases: aliases!["SCHEMA"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -903,7 +952,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::WAREHOUSE.as_str(),
-        aliases: &["WAREHOUSE"],
+        aliases: aliases!["WAREHOUSE"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -917,7 +966,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::ROLE.as_str(),
-        aliases: &["ROLE"],
+        aliases: aliases!["ROLE"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -946,7 +995,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── TLS ─────────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CUSTOM_ROOT_STORE_PATH.as_str(),
-        aliases: &["TLS_CUSTOM_ROOT_STORE_PATH"],
+        aliases: aliases!["TLS_CUSTOM_ROOT_STORE_PATH"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -960,7 +1009,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::VERIFY_HOSTNAME.as_str(),
-        aliases: &["TLS_VERIFY_HOSTNAME"],
+        aliases: aliases!["TLS_VERIFY_HOSTNAME"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -974,7 +1023,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::VERIFY_CERTIFICATES.as_str(),
-        aliases: &["TLS_VERIFY_CERTIFICATES"],
+        aliases: aliases!["TLS_VERIFY_CERTIFICATES"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -988,7 +1037,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::TLS_SKIP_VERIFY.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1003,7 +1052,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // TLS protocol-version window.
     ParamDef {
         canonical_name: param_names::MIN_TLS_VERSION.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1017,7 +1066,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::MAX_TLS_VERSION.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1032,7 +1081,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── CRL ─────────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CRL_CHECK_MODE.as_str(),
-        aliases: &["CRL_MODE", "CRL_ENABLED"],
+        aliases: aliases!["CRL_MODE", "CRL_ENABLED"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1046,7 +1095,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_ENABLE_DISK_CACHING.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1060,7 +1109,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_ENABLE_MEMORY_CACHING.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1074,7 +1123,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_CACHE_DIR.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1088,7 +1137,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_MAX_DOWNLOAD_SIZE.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1102,7 +1151,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_VALIDITY_TIME.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1116,7 +1165,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_ON_DISK_CACHE_REMOVAL_DELAY.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1130,7 +1179,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_CACHE_CLEANUP_INTERVAL.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1144,7 +1193,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_CACHE_START_CLEANUP.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1158,7 +1207,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_UNSAFE_SKIP_FILE_PERMISSIONS_CHECK.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1172,7 +1221,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_ALLOW_CERTIFICATES_WITHOUT_CRL_URL.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1186,7 +1235,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_HTTP_TIMEOUT.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1200,7 +1249,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CRL_CONNECTION_TIMEOUT.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1215,7 +1264,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Client ──────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CONNECTION_NAME.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1229,7 +1278,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::LOG_MAX_QUERY_LENGTH.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1243,7 +1292,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::LOG_QUERY_TEXT.as_str(),
-        aliases: &["LOG_QUERY_TEXT"],
+        aliases: aliases!["LOG_QUERY_TEXT"],
         value_type: ValueType::Bool,
         additional_value_type: Some(ValueType::String),
         required: Required::Never,
@@ -1257,7 +1306,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::LOG_QUERY_PARAMETERS.as_str(),
-        aliases: &["LOG_QUERY_PARAMETERS"],
+        aliases: aliases!["LOG_QUERY_PARAMETERS"],
         value_type: ValueType::Bool,
         additional_value_type: Some(ValueType::String),
         required: Required::Never,
@@ -1272,7 +1321,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Logout ────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::SERVER_SESSION_KEEP_ALIVE.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1286,7 +1335,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1300,7 +1349,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::LOGOUT_ERROR_STRATEGY.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1314,7 +1363,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::LOGOUT_TOTAL_TIMEOUT_SECONDS.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1328,7 +1377,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::LOGOUT_MAX_ATTEMPTS.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1342,7 +1391,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::LOGOUT_REQUEST_TIMEOUT_SECONDS.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1356,7 +1405,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::RETRY_MAX_ATTEMPTS.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1370,7 +1419,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::RETRY_EXTRA_STATUS_CODES.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1384,7 +1433,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PUT_GET_MAX_ATTEMPTS.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1399,7 +1448,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Retry backoff curve (shared by HTTP and PUT/GET pipelines) ──────
     ParamDef {
         canonical_name: param_names::RETRY_BACKOFF_BASE_MS.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1413,7 +1462,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::RETRY_BACKOFF_CAP_MS.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1427,7 +1476,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::RETRY_BACKOFF_FACTOR.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Double,
         additional_value_type: None,
         required: Required::Never,
@@ -1441,7 +1490,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::RETRY_BACKOFF_JITTER.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1456,7 +1505,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Timeout configuration ─────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::LOGIN_TIMEOUT.as_str(),
-        aliases: &["LOGIN_TIMEOUT"],
+        aliases: aliases!["LOGIN_TIMEOUT"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1470,7 +1519,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::QUERY_TIMEOUT.as_str(),
-        aliases: &["QUERY_TIMEOUT"],
+        aliases: aliases!["QUERY_TIMEOUT"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1484,7 +1533,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::REQUEST_TIMEOUT.as_str(),
-        aliases: &["REQUEST_TIMEOUT"],
+        aliases: aliases!["REQUEST_TIMEOUT"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1498,7 +1547,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::RETRY_TIMEOUT.as_str(),
-        aliases: &["RETRY_TIMEOUT"],
+        aliases: aliases!["RETRY_TIMEOUT"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1512,7 +1561,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CONNECT_TIMEOUT.as_str(),
-        aliases: &["CONNECT_TIMEOUT"],
+        aliases: aliases!["CONNECT_TIMEOUT"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1526,7 +1575,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1542,7 +1591,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::UNSAFE_FILE_WRITE.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1557,7 +1606,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CLIENT_APP_ID.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1571,7 +1620,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CLIENT_APP_VERSION.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1585,7 +1634,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::APPLICATION.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1600,7 +1649,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Statement ──────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::ASYNC_EXECUTION.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1614,7 +1663,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::MULTI_STATEMENT_COUNT.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1628,7 +1677,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::QUERY_TAG.as_str(),
-        aliases: &["QUERY_TAG"],
+        aliases: aliases!["QUERY_TAG"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1645,7 +1694,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::SKIP_UPLOAD_ON_CONTENT_MATCH.as_str(),
-        aliases: &[],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1659,7 +1708,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PUT_FASTFAIL.as_str(),
-        aliases: &["PUT_FASTFAIL"],
+        aliases: aliases!["PUT_FASTFAIL"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1680,7 +1729,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::GET_FASTFAIL.as_str(),
-        aliases: &["GET_FASTFAIL"],
+        aliases: aliases!["GET_FASTFAIL"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1700,7 +1749,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Prefetch ───────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CLIENT_PREFETCH_THREADS.as_str(),
-        aliases: &["CLIENT_PREFETCH_THREADS"],
+        aliases: aliases!["CLIENT_PREFETCH_THREADS"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1714,7 +1763,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CLIENT_MEMORY_LIMIT.as_str(),
-        aliases: &["CLIENT_MEMORY_LIMIT"],
+        aliases: aliases!["CLIENT_MEMORY_LIMIT"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1729,7 +1778,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Session keep-alive ─────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE.as_str(),
-        aliases: &["CLIENT_SESSION_KEEP_ALIVE"],
+        aliases: aliases!["CLIENT_SESSION_KEEP_ALIVE"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1743,7 +1792,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str(),
-        aliases: &["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"],
+        aliases: aliases!["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1767,7 +1816,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // Python wrapper's `_DEPRECATED_REWRITES`).
     ParamDef {
         canonical_name: param_names::USE_S3_REGIONAL_URL.as_str(),
-        aliases: &["ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1"],
+        aliases: aliases!["ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1781,7 +1830,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::VALIDATE_DEFAULT_PARAMETERS.as_str(),
-        aliases: &["VALIDATE_DEFAULT_PARAMETERS"],
+        aliases: aliases!["VALIDATE_DEFAULT_PARAMETERS"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1800,7 +1849,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         // with embedded creds), so it is registered as a distinct canonical
         // param `proxy` rather than aliased here. `build_proxy_config` parses
         // the URL and merges it with the fields below.
-        aliases: &["PROXY_HOST"],
+        aliases: aliases!["PROXY_HOST"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1814,7 +1863,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PROXY_PORT.as_str(),
-        aliases: &["PROXY_PORT"],
+        aliases: aliases!["PROXY_PORT"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1828,7 +1877,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PROXY_USER.as_str(),
-        aliases: &["PROXY_USER"],
+        aliases: aliases!["PROXY_USER"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1842,7 +1891,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PROXY_PASSWORD.as_str(),
-        aliases: &["PROXY_PASSWORD"],
+        aliases: aliases!["PROXY_PASSWORD"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1856,7 +1905,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::NO_PROXY.as_str(),
-        aliases: &["NO_PROXY", "NOPROXY"],
+        aliases: aliases!["NO_PROXY", "NOPROXY"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1871,7 +1920,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Workload Identity Federation (WIF) ────────────────────────────
     ParamDef {
         canonical_name: param_names::WORKLOAD_IDENTITY_PROVIDER.as_str(),
-        aliases: &["WORKLOAD_IDENTITY_PROVIDER"],
+        aliases: aliases!["WORKLOAD_IDENTITY_PROVIDER"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::WhenAuthMethod("WORKLOAD_IDENTITY"),
@@ -1885,7 +1934,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::WORKLOAD_IDENTITY_ENTRA_RESOURCE.as_str(),
-        aliases: &["WORKLOAD_IDENTITY_ENTRA_RESOURCE"],
+        aliases: aliases!["WORKLOAD_IDENTITY_ENTRA_RESOURCE"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1899,7 +1948,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::WORKLOAD_IDENTITY_IMPERSONATION_PATH.as_str(),
-        aliases: &["WORKLOAD_IDENTITY_IMPERSONATION_PATH"],
+        aliases: aliases!["WORKLOAD_IDENTITY_IMPERSONATION_PATH"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1914,7 +1963,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // Legacy ODBC PROXY URL form (parsed and merged with the fields above).
     ParamDef {
         canonical_name: param_names::PROXY.as_str(),
-        aliases: &["PROXY"],
+        aliases: aliases!["PROXY"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1928,7 +1977,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::USE_PROXY_ENV.as_str(),
-        aliases: &["USE_PROXY_ENV", "PROXYWITHENV"],
+        aliases: aliases!["USE_PROXY_ENV", "PROXYWITHENV"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1942,7 +1991,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::ALLOW_EMPTY_PROXY.as_str(),
-        aliases: &["ALLOW_EMPTY_PROXY", "ALLOWEMPTYPROXY"],
+        aliases: aliases!["ALLOW_EMPTY_PROXY", "ALLOWEMPTYPROXY"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1956,7 +2005,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::ENABLE_CONNECTION_DIAG.as_str(),
-        aliases: &["ENABLE_CONNECTION_DIAG"],
+        aliases: aliases!["ENABLE_CONNECTION_DIAG"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1975,7 +2024,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CONNECTION_DIAG_LOG_PATH.as_str(),
-        aliases: &["CONNECTION_DIAG_LOG_PATH"],
+        aliases: aliases!["CONNECTION_DIAG_LOG_PATH"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1989,7 +2038,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CONNECTION_DIAG_ALLOWLIST_PATH.as_str(),
-        aliases: &["CONNECTION_DIAG_ALLOWLIST_PATH"],
+        aliases: aliases!["CONNECTION_DIAG_ALLOWLIST_PATH"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -2004,6 +2053,22 @@ static PARAM_DEFS: &[ParamDef] = &[
 ];
 
 impl ParamDef {
+    /// Global (all-wrapper) alias names only. Used where wrapper context is absent.
+    pub fn global_alias_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.aliases
+            .iter()
+            .filter(|a| a.wrapper.is_none())
+            .map(|a| a.name)
+    }
+
+    /// Alias names visible to `wrapper`: globals plus that wrapper's scoped ones.
+    pub fn alias_names_for(&self, wrapper: Wrapper) -> impl Iterator<Item = &'static str> + '_ {
+        self.aliases
+            .iter()
+            .filter(move |a| a.wrapper.is_none() || a.wrapper == Some(wrapper))
+            .map(|a| a.name)
+    }
+
     /// Whether the resolved value may participate in login / new session creation.
     ///
     /// Statement-only parameters (no connection/session scope) are never consumed
@@ -2041,34 +2106,76 @@ impl ParamDef {
 /// The registry singleton. Built once at startup, immutable thereafter.
 pub struct ParamRegistry {
     params: &'static [ParamDef],
-    /// Case-insensitive map: lowercased alias/canonical name → index into `params`.
+    /// Case-insensitive map: lowercased canonical + global alias → index into `params`.
     alias_index: HashMap<String, usize>,
+    /// Case-insensitive map: (wrapper, lowercased scoped alias) → index into `params`.
+    wrapper_alias_index: HashMap<(Wrapper, String), usize>,
 }
 
 impl ParamRegistry {
     fn new(params: &'static [ParamDef]) -> Self {
         let mut alias_index = HashMap::new();
+        let mut wrapper_alias_index = HashMap::new();
         for (i, param) in params.iter().enumerate() {
             alias_index.insert(param.canonical_name.to_ascii_lowercase(), i);
             for alias in param.aliases {
-                alias_index.insert(alias.to_ascii_lowercase(), i);
+                let key = alias.name.to_ascii_lowercase();
+                match alias.wrapper {
+                    None => {
+                        alias_index.insert(key, i);
+                    }
+                    Some(wrapper) => {
+                        wrapper_alias_index.insert((wrapper, key), i);
+                    }
+                }
             }
         }
         Self {
             params,
             alias_index,
+            wrapper_alias_index,
         }
     }
 
-    /// Resolve an alias or canonical name to its `ParamDef`.
+    /// Resolve a global alias or canonical name to its `ParamDef`.
     ///
     /// Accepts any type that can be viewed as a string — `ParamKey`, `&str`,
     /// or `String` — so callers with a typed key can pass it directly without
-    /// calling `.as_str()`.  Lookup is case-insensitive.
+    /// calling `.as_str()`.  Lookup is case-insensitive. Scoped aliases are
+    /// not visible here; use [`Self::resolve_for`].
     pub fn resolve(&self, key: impl AsRef<str>) -> Option<&ParamDef> {
         self.alias_index
             .get(&key.as_ref().to_ascii_lowercase())
             .map(|&i| &self.params[i])
+    }
+
+    /// Wrapper-scoped alias wins; else fall back to global [`Self::resolve`].
+    /// Case-insensitive.
+    pub fn resolve_for(&self, wrapper: Wrapper, key: impl AsRef<str>) -> Option<&ParamDef> {
+        let k = key.as_ref().to_ascii_lowercase();
+        if let Some(&i) = self.wrapper_alias_index.get(&(wrapper, k)) {
+            return Some(&self.params[i]);
+        }
+        self.resolve(key)
+    }
+
+    /// Canonical name for a key under wrapper-scoped resolution.
+    pub fn canonical_name_for(
+        &self,
+        wrapper: Wrapper,
+        key: impl AsRef<str>,
+    ) -> Option<&'static str> {
+        self.resolve_for(wrapper, key).map(|d| d.canonical_name)
+    }
+
+    /// Canonical name for a globally-resolvable key (no wrapper context).
+    pub fn canonical_name(&self, key: impl AsRef<str>) -> Option<&'static str> {
+        self.resolve(key).map(|d| d.canonical_name)
+    }
+
+    /// Whether the parameter resolved by a global lookup is marked sensitive.
+    pub fn is_sensitive(&self, key: impl AsRef<str>) -> bool {
+        self.resolve(key).is_some_and(|d| d.sensitive)
     }
 
     /// Return all registered parameter definitions.
@@ -2076,7 +2183,7 @@ impl ParamRegistry {
         self.params
     }
 
-    /// Check if a key is known (canonical or alias).
+    /// Check if a key is known as a canonical name or global alias.
     pub fn is_known(&self, key: &str) -> bool {
         self.alias_index.contains_key(&key.to_ascii_lowercase())
     }
@@ -2336,8 +2443,10 @@ mod tests {
         let canonical_set: std::collections::HashSet<&str> =
             r.all_params().iter().map(|p| p.canonical_name).collect();
 
+        // Only global aliases: a scoped alias may intentionally share a spelling
+        // with another param's canonical / global alias (LOGIN_TIMEOUT).
         for param in r.all_params() {
-            for alias in param.aliases {
+            for alias in param.global_alias_names() {
                 let lower = alias.to_ascii_lowercase();
                 if canonical_set.contains(lower.as_str()) {
                     assert_eq!(
@@ -2515,5 +2624,85 @@ mod tests {
         assert!(!host.sensitive);
         // PROXY must NOT alias proxy_host: their formats differ (URL vs hostname).
         assert_eq!(r.resolve("PROXY").unwrap().canonical_name, "proxy");
+    }
+
+    #[test]
+    fn resolve_for_prefers_wrapper_scoped_alias() {
+        let r = registry();
+        let def = r
+            .resolve_for(Wrapper::Odbc, "LOGIN_TIMEOUT")
+            .expect("ODBC LOGIN_TIMEOUT should resolve");
+        assert_eq!(def.canonical_name, "authentication_timeout");
+        assert_eq!(
+            r.canonical_name_for(Wrapper::Odbc, "LOGIN_TIMEOUT"),
+            Some("authentication_timeout")
+        );
+    }
+
+    #[test]
+    fn resolve_for_falls_back_to_global() {
+        let r = registry();
+        for wrapper in [Wrapper::Jdbc, Wrapper::Python] {
+            let def = r
+                .resolve_for(wrapper, "LOGIN_TIMEOUT")
+                .unwrap_or_else(|| panic!("{wrapper:?} LOGIN_TIMEOUT should resolve"));
+            assert_eq!(
+                def.canonical_name, "login_timeout",
+                "{wrapper:?} LOGIN_TIMEOUT should map to login_timeout"
+            );
+        }
+        // Global resolve (no wrapper) still gets login_timeout.
+        assert_eq!(
+            r.resolve("LOGIN_TIMEOUT").map(|d| d.canonical_name),
+            Some("login_timeout")
+        );
+        // Unscoped aliases stay visible to every wrapper.
+        for wrapper in [Wrapper::Odbc, Wrapper::Jdbc, Wrapper::Python] {
+            assert_eq!(
+                r.resolve_for(wrapper, "SERVER").map(|d| d.canonical_name),
+                Some("host"),
+                "{wrapper:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrapper_scoped_alias_names_are_unique_per_wrapper() {
+        // Same-name → different-canonical within one registration class is an
+        // authoring error. Globals and (wrapper, name) scoped entries live in
+        // separate indexes, so LOGIN_TIMEOUT may be both a global → login_timeout
+        // and an Odbc-scoped → authentication_timeout.
+        let mut global: HashMap<String, &'static str> = HashMap::new();
+        let mut scoped: HashMap<(Wrapper, String), &'static str> = HashMap::new();
+        for param in registry().all_params() {
+            let canon = param.canonical_name;
+            let gkey = canon.to_ascii_lowercase();
+            if let Some(prev) = global.insert(gkey, canon) {
+                panic!("duplicate canonical registration: {canon:?} and {prev:?}");
+            }
+            for alias in param.aliases {
+                let key = alias.name.to_ascii_lowercase();
+                match alias.wrapper {
+                    None => {
+                        if let Some(prev) = global.insert(key, canon) {
+                            assert_eq!(
+                                prev, canon,
+                                "global alias {:?} maps to both {prev:?} and {canon:?}",
+                                alias.name
+                            );
+                        }
+                    }
+                    Some(wrapper) => {
+                        if let Some(prev) = scoped.insert((wrapper, key), canon) {
+                            assert_eq!(
+                                prev, canon,
+                                "scoped alias {:?} for {wrapper:?} maps to both {prev:?} and {canon:?}",
+                                alias.name
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::error::{ApiError, InvalidArgumentSnafu};
 use crate::config::ParamStore;
-use crate::config::param_registry::{self, ValueType, param_names};
+use crate::config::param_registry::{self, ValueType, Wrapper, param_names};
 use crate::config::settings::{Setting, Settings};
 
 pub use crate::config::connection_config::{ValidationCode, ValidationIssue, ValidationSeverity};
@@ -127,7 +127,11 @@ fn push_conflict_error(
 /// Returns `(resolved_options, issues)` where `resolved_options` contains
 /// canonical-name → value pairs for all valid entries, and `issues` contains
 /// any warnings or errors encountered.
+///
+/// `wrapper` selects which scoped aliases are visible (see
+/// [`param_registry::ParamRegistry::resolve_for`]).
 pub fn resolve_options(
+    wrapper: Wrapper,
     options: HashMap<String, Setting>,
 ) -> (HashMap<String, Setting>, Vec<ValidationIssue>) {
     let registry = param_registry::registry();
@@ -136,11 +140,15 @@ pub fn resolve_options(
     let mut canonical_sources: HashMap<String, String> = HashMap::new();
 
     for (key, value) in options {
-        match registry.resolve(&key) {
+        match registry.resolve_for(wrapper, &key) {
             Some(param_def) => {
                 let canonical_name = param_def.canonical_name.to_string();
                 if let Some(existing_key) = canonical_sources.get(&canonical_name) {
-                    if let Some(odbc_key) = odbc_key_for(&canonical_name) {
+                    // TODO: Move this to the ODBC-specific code.
+                    // UID/PWD/SERVER conflict-tiebreak is ODBC-specific.
+                    if wrapper == Wrapper::Odbc
+                        && let Some(odbc_key) = odbc_key_for(&canonical_name)
+                    {
                         let (winner, loser) = if existing_key.eq_ignore_ascii_case(odbc_key) {
                             (existing_key.clone(), key.clone())
                         } else if key.eq_ignore_ascii_case(odbc_key) {
@@ -302,10 +310,11 @@ fn is_allow_underscores(settings: &dyn Settings) -> bool {
 /// Calls [`resolve_options`] internally, rejects the batch if any errors are
 /// found, and returns only the warnings on success.
 pub fn resolve_and_apply_options(
+    wrapper: Wrapper,
     settings: &mut ParamStore,
     options: HashMap<String, Setting>,
 ) -> Result<Vec<ValidationIssue>, ApiError> {
-    let (resolved, issues) = resolve_options(options);
+    let (resolved, issues) = resolve_options(wrapper, options);
 
     let error_messages: Vec<String> = issues
         .iter()
@@ -331,10 +340,11 @@ pub fn resolve_and_apply_options(
 }
 
 pub(crate) fn canonicalize_setting_key(
+    wrapper: Wrapper,
     key: &str,
 ) -> (String, Option<&'static param_registry::ParamDef>) {
     let reg = param_registry::registry();
-    match reg.resolve(key) {
+    match reg.resolve_for(wrapper, key) {
         Some(d) => (d.canonical_name.to_string(), Some(d)),
         None => (key.to_string(), None),
     }
@@ -455,7 +465,7 @@ mod tests {
             Setting::String("value".to_string()),
         );
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, ValidationSeverity::Warning);
@@ -468,7 +478,7 @@ mod tests {
         let mut options = HashMap::new();
         options.insert("host".to_string(), Setting::Int(42));
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
@@ -484,7 +494,7 @@ mod tests {
         let mut options = HashMap::new();
         options.insert("retry_backoff_factor".to_string(), Setting::Int(2));
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -502,7 +512,7 @@ mod tests {
             Setting::String("myhost.example.com".to_string()),
         );
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -522,7 +532,7 @@ mod tests {
         );
         options.insert("user".to_string(), Setting::String("myuser".to_string()));
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -548,7 +558,7 @@ mod tests {
             Setting::String("value".to_string()),
         );
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         assert_eq!(issues.len(), 2);
         let type_errors: Vec<_> = issues
@@ -571,7 +581,7 @@ mod tests {
         let mut options = HashMap::new();
         options.insert("verify_hostname".to_string(), Setting::Bool(false));
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -586,7 +596,7 @@ mod tests {
         let mut options = HashMap::new();
         options.insert("port".to_string(), Setting::String("443".to_string()));
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -604,7 +614,7 @@ mod tests {
             Setting::String("true".to_string()),
         );
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -622,7 +632,7 @@ mod tests {
             Setting::String("FALSE".to_string()),
         );
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -637,7 +647,7 @@ mod tests {
         let mut options = HashMap::new();
         options.insert("port".to_string(), Setting::String("abc".to_string()));
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
@@ -653,7 +663,7 @@ mod tests {
             Setting::String("yes".to_string()),
         );
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
@@ -669,7 +679,7 @@ mod tests {
             Setting::String("base64-encoded-key".to_string()),
         );
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -690,7 +700,7 @@ mod tests {
             Setting::Bytes(vec![0x01, 0x02, 0x03]),
         );
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -708,7 +718,7 @@ mod tests {
         let mut options = HashMap::new();
         options.insert("private_key".to_string(), Setting::Int(7));
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
 
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
@@ -732,7 +742,7 @@ mod tests {
             Setting::String("attr-key".to_string()),
         );
 
-        let (_resolved, issues) = resolve_options(options);
+        let (_resolved, issues) = resolve_options(Wrapper::Python, options);
 
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
@@ -745,7 +755,7 @@ mod tests {
         options.insert("UID".to_string(), Setting::String("joe".to_string()));
         options.insert("USER".to_string(), Setting::String("jane".to_string()));
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Odbc, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -772,7 +782,7 @@ mod tests {
         options.insert("PWD".to_string(), Setting::String("s3cr3t".to_string()));
         options.insert("PASSWORD".to_string(), Setting::String("other".to_string()));
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Odbc, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -805,7 +815,7 @@ mod tests {
             Setting::String("attr.example.com".to_string()),
         );
 
-        let (resolved, issues) = resolve_options(options);
+        let (resolved, issues) = resolve_options(Wrapper::Odbc, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -824,6 +834,33 @@ mod tests {
             Some(&Setting::String("dsn.example.com".to_string())),
             "SERVER value should win"
         );
+    }
+
+    #[test]
+    fn login_timeout_resolves_by_configuration_flavor() {
+        let mut odbc_opts = HashMap::new();
+        odbc_opts.insert("LOGIN_TIMEOUT".to_string(), Setting::Int(30));
+        let (odbc_resolved, odbc_issues) = resolve_options(Wrapper::Odbc, odbc_opts);
+        assert!(
+            odbc_issues
+                .iter()
+                .all(|i| i.severity != ValidationSeverity::Error),
+            "{odbc_issues:?}"
+        );
+        assert!(odbc_resolved.contains_key("authentication_timeout"));
+        assert!(!odbc_resolved.contains_key("login_timeout"));
+
+        let mut jdbc_opts = HashMap::new();
+        jdbc_opts.insert("LOGIN_TIMEOUT".to_string(), Setting::Int(30));
+        let (jdbc_resolved, jdbc_issues) = resolve_options(Wrapper::Jdbc, jdbc_opts);
+        assert!(
+            jdbc_issues
+                .iter()
+                .all(|i| i.severity != ValidationSeverity::Error),
+            "{jdbc_issues:?}"
+        );
+        assert!(jdbc_resolved.contains_key("login_timeout"));
+        assert!(!jdbc_resolved.contains_key("authentication_timeout"));
     }
 
     #[test_case("abc_test", "host", "abc_test.us-east-1.snowflakecomputing.com", "abc-test.us-east-1.snowflakecomputing.com" ; "host")]

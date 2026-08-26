@@ -26,7 +26,11 @@ impl DatabaseDriverV1 {
         match self.databases.get_obj(db_handle) {
             Some(db_ptr) => {
                 let mut db = db_ptr.lock().await;
-                resolve_and_apply_options(&mut db.settings, options)
+                resolve_and_apply_options(
+                    self.wrapper_presets.configuration_flavor,
+                    &mut db.settings,
+                    options,
+                )
             }
             None => InvalidArgumentSnafu {
                 argument: "Database handle not found".to_string(),

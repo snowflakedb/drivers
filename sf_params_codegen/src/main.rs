@@ -18,7 +18,7 @@
 //! `snowflake.connector._internal.connection_config_mixin.ConnectionConfigMixin`
 //! that the generated class inherits from.
 
-use sf_params_spec::{DefaultValue, ParamDef, ParamScope, Required, ValueType, registry};
+use sf_params_spec::{DefaultValue, ParamDef, ParamScope, Required, ValueType, Wrapper, registry};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -271,7 +271,7 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
             alias_entries.push((canonical_lower.clone(), py_field.clone()));
         }
 
-        for alias in p.aliases {
+        for alias in p.alias_names_for(Wrapper::Python) {
             let alias_lower = alias.to_ascii_lowercase();
             // Skip aliases that already match the python field (identical name)
             // or the canonical's lowercase (already emitted above) to avoid
