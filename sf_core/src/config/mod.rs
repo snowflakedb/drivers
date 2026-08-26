@@ -1,6 +1,8 @@
 pub mod config_manager;
 pub mod configured_redirect_uri;
 pub mod connection_config;
+mod error_context;
+pub(crate) use error_context::{ConfigErrorClass, ConfigErrorContext};
 pub mod ini_loader;
 pub mod logging_config_loader;
 pub mod logout;

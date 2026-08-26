@@ -1042,7 +1042,7 @@ impl OdbcError {
                     // success/warning/no-data classes. The driver does not
                     // invent or override SQLSTATE classifications
                     // client-side — that responsibility belongs to the
-                    // server (and to `sf_core::extract_vendor_info`, which
+                    // server (and to `RestError::snowflake_context`, which
                     // fills in `sql_state` from the numeric error code on
                     // wire paths that drop it).
                     //
@@ -1098,7 +1098,7 @@ impl OdbcError {
                         }
                         _ => {
                             // No usable SQLSTATE on the wire and `sf_core`'s
-                            // `extract_vendor_info` couldn't recover one
+                            // `snowflake_context` couldn't recover one
                             // from the numeric error code either, so HY000
                             // is the honest default. Do NOT sniff the
                             // message text — classification belongs to the
@@ -1577,7 +1577,7 @@ mod tests {
 
     #[test]
     fn server_truncation_error_maps_to_22001() {
-        // `sf_core::extract_vendor_info` populates `sql_state` from
+        // `sf_core`'s `snowflake_context` populates `sql_state` from
         // Snowflake error code 100078 → "22001"; the ODBC layer trusts
         // that value without inspecting the human-readable message.
         let odbc_err = OdbcError::CoreError {
@@ -1879,7 +1879,7 @@ mod tests {
     /// ODBC's blanket `AuthError` arm doesn't branch on
     /// `reauthentication_required` -- both values map to the same SQLSTATE.
     /// In production a reauth-shaped error gets `sql_state = "08001"` from
-    /// `sf_core::extract_vendor_info`, forwarded by this match's earlier
+    /// `sf_core` `SnowflakeErrorContext`, forwarded by this match's earlier
     /// well-formed-sql_state check before reaching this arm; `sql_state:
     /// None` below exercises only the no-override fallback. `bool` has two
     /// values, so no wildcard arm is needed.

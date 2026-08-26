@@ -498,7 +498,11 @@ impl DatabaseDriverV1 {
                                         "failed to abort query after client-side timeout"
                                     );
                                 }
-                                return Err(QueryTimeoutSnafu { budget }.build());
+                                return Err(QueryTimeoutSnafu {
+                                    budget,
+                                    request_id: request_id.to_string(),
+                                }
+                                .build());
                             }
                         }
                     } else {
@@ -933,6 +937,7 @@ async fn abort_inflight_query(
             );
             Err(CancelTimeoutSnafu {
                 timeout: STATEMENT_CANCEL_TIMEOUT,
+                request_id,
             }
             .build())
         })

@@ -6,9 +6,13 @@ pub use crate::apis::database_driver_v1::query::QueryResponseProcessingError;
 pub use crate::apis::database_driver_v1::statement::StatementError;
 use crate::chunks::ChunkError;
 pub use crate::config::ConfigError;
+use crate::config::ConfigErrorContext;
 pub use crate::rest::snowflake::RestError;
 use crate::rest::snowflake::master_token_terminal_detail;
 pub use crate::rest::snowflake::workload_identity::AttestationError;
+use crate::rest::snowflake::{
+    SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED, SQLSTATE_TIMEOUT_EXPIRED, SnowflakeErrorContext,
+};
 use crate::tls::error::TlsError;
 use crate::token_cache::TokenCacheError;
 
@@ -207,12 +211,14 @@ pub enum ApiError {
     #[snafu(display("Query timed out after {budget:?}"))]
     QueryTimeout {
         budget: Duration,
+        request_id: String,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Query cancel timed out after {timeout:?}"))]
     CancelTimeout {
-        timeout: std::time::Duration,
+        timeout: Duration,
+        request_id: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -250,4 +256,111 @@ pub enum ApiError {
         #[snafu(source(from(AttestationError, Box::new)))]
         source: Box<AttestationError>,
     },
+}
+
+impl ApiError {
+    pub(crate) fn snowflake_context(&self) -> SnowflakeErrorContext {
+        match self {
+            ApiError::Query { source, .. } | ApiError::Login { source, .. } => {
+                source.snowflake_context()
+            }
+            ApiError::QueryTimeout { request_id, .. }
+            | ApiError::CancelTimeout { request_id, .. } => SnowflakeErrorContext {
+                vendor_code: None,
+                sql_state: Some(SQLSTATE_TIMEOUT_EXPIRED.to_string()),
+                query_id: None,
+                request_id: Some(request_id.clone()),
+            },
+            ApiError::MasterTokenTerminal {
+                master_token_gs_code,
+                ..
+            } => SnowflakeErrorContext {
+                vendor_code: *master_token_gs_code,
+                sql_state: Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string()),
+                query_id: None,
+                request_id: None,
+            },
+            // no wildcard - explicit empty arms
+            ApiError::GenericError { .. }
+            | ApiError::RuntimeCreation { .. }
+            | ApiError::Configuration { .. }
+            | ApiError::InvalidArgument { .. }
+            | ApiError::ConnectionLock { .. }
+            | ApiError::ConnectionNotInitialized { .. }
+            | ApiError::ConnectionClosed { .. }
+            | ApiError::TlsClientCreation { .. }
+            | ApiError::StatementLocking { .. }
+            | ApiError::DatabaseLocking { .. }
+            | ApiError::QueryResponseProcess { .. }
+            | ApiError::SessionRefresh { .. }
+            | ApiError::Statement { .. }
+            | ApiError::HttpRequest { .. }
+            | ApiError::TokenRequest { .. }
+            | ApiError::Logout { .. }
+            | ApiError::InvalidRefreshState { .. }
+            | ApiError::TokenCacheInitialization { .. }
+            | ApiError::ChunkFetch { .. }
+            | ApiError::ArrowParse { .. }
+            | ApiError::JsonChunkDecode { .. }
+            | ApiError::BlockingTaskJoin { .. }
+            | ApiError::InlineJsonEncode { .. }
+            | ApiError::InvalidColumnMetadata { .. }
+            | ApiError::Base64Decode { .. }
+            | ApiError::UnsupportedQueryResultFormat { .. }
+            | ApiError::StageBinding { .. }
+            | ApiError::Cancelled { .. }
+            | ApiError::SpoolBufferWrite { .. }
+            | ApiError::InvalidWifProvider { .. }
+            | ApiError::WorkloadIdentityAttestation { .. } => SnowflakeErrorContext::default(),
+        }
+    }
+
+    pub(crate) fn parameter_context(&self) -> ConfigErrorContext {
+        match self {
+            ApiError::Configuration { source, .. } => source.exception_context(),
+            ApiError::InvalidColumnMetadata { column, .. } => ConfigErrorContext {
+                parameter: Some(format!("column: {column}")),
+                ..ConfigErrorContext::default()
+            },
+            ApiError::InvalidWifProvider { provider, .. } => ConfigErrorContext {
+                parameter: Some("provider".to_string()),
+                parameter_value: Some(provider.clone()),
+                ..ConfigErrorContext::default()
+            },
+            // no wildcard - explicit empty arms
+            ApiError::GenericError { .. }
+            | ApiError::RuntimeCreation { .. }
+            | ApiError::InvalidArgument { .. }
+            | ApiError::Login { .. }
+            | ApiError::ConnectionLock { .. }
+            | ApiError::ConnectionNotInitialized { .. }
+            | ApiError::ConnectionClosed { .. }
+            | ApiError::TlsClientCreation { .. }
+            | ApiError::StatementLocking { .. }
+            | ApiError::DatabaseLocking { .. }
+            | ApiError::QueryResponseProcess { .. }
+            | ApiError::SessionRefresh { .. }
+            | ApiError::Statement { .. }
+            | ApiError::Query { .. }
+            | ApiError::HttpRequest { .. }
+            | ApiError::TokenRequest { .. }
+            | ApiError::MasterTokenTerminal { .. }
+            | ApiError::Logout { .. }
+            | ApiError::InvalidRefreshState { .. }
+            | ApiError::TokenCacheInitialization { .. }
+            | ApiError::ChunkFetch { .. }
+            | ApiError::ArrowParse { .. }
+            | ApiError::JsonChunkDecode { .. }
+            | ApiError::BlockingTaskJoin { .. }
+            | ApiError::InlineJsonEncode { .. }
+            | ApiError::Base64Decode { .. }
+            | ApiError::UnsupportedQueryResultFormat { .. }
+            | ApiError::StageBinding { .. }
+            | ApiError::QueryTimeout { .. }
+            | ApiError::CancelTimeout { .. }
+            | ApiError::Cancelled { .. }
+            | ApiError::SpoolBufferWrite { .. }
+            | ApiError::WorkloadIdentityAttestation { .. } => ConfigErrorContext::default(),
+        }
+    }
 }
