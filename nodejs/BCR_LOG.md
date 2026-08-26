@@ -30,11 +30,6 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 
 - In the old driver, this method, in some cases, returns errors via `callback(err)` and in other cases throws errors directly. This inconsistent behavior is a bug. In the new driver, async methods should not accept a callback, and all errors should be handled via rejected promises.
 
-### snowflake.STRING, BOOLEAN, NUMBER, DATE, OBJECT, ARRAY, MAP, JSON constants
-
-- These constants are exported by the old driver but are undocumented. There does not appear to be a real use case for them, as the values returned by `column.getType()` do not match these constants.
-- They were temporarily added to `snowflake-sdk-fixed` for compatibility, but should likely be removed.
-
 ### connection.heartbeat(callback) and .heartbeatAsync()
 
 - These methods are publicly exported but not documented. There is no practical use case for end users, as heartbeat is sent automatically by the driver.
@@ -58,3 +53,4 @@ These are potential improvements to consider after the UD release:
 - Reevaluate the `jsTreatIntegerAsBigInt` parameter; consider either always converting all fixed numeric values to `BigInt`, or using `BigInt` only when the value exceeds the safe integer range (using `Number.isSafeInteger()`), and review approaches for handling floating-point numbers in a similar, consistent manner.
 - Variant JSON/XML parsing is a mess: it is slow, does eval() and adds 6 dependencies (2MB). We should follow other drivers and let user decide how to parse variants. See "parses JSON with undefined, Infinity, NaN as JS types" test
 - `Column` has no `isFloat()` / `isReal()` method for the REAL Snowflake data type; `isNumber()` returns `true` for both FIXED and REAL, so a caller cannot distinguish them without `getType() === 'real'`. To be perfectly correct we should have a dedicated predicate for REAL, matching the pattern of every other `is*()` method.
+- Default `rowMode` is `'object'`, which keys each row by column name and silently overwrites duplicates (last value wins). `'object_with_renamed_duplicated_columns'` already exists as an opt-in that keeps every column by renaming the 2nd+ occurrence (`NAME_2`, `NAME_3`, …, skipping names already taken). Consider making that the default instead of `'object'`, so joins and other queries with repeated names do not drop values.

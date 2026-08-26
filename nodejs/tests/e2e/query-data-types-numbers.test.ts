@@ -1,5 +1,5 @@
+import type { Connection } from 'snowflake-sdk-old';
 import BigInteger from 'big-integer';
-import { Connection } from 'snowflake-sdk';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   createTestConnection,

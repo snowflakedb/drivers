@@ -1,4 +1,4 @@
-import { Connection } from 'snowflake-sdk';
+import type { Connection } from 'snowflake-sdk-old';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createTestConnection,
@@ -163,7 +163,7 @@ describe('Query returning data types', () => {
     it('handles NULL values for date', async () => {
       const { rows } = await executeAsync(
         connection,
-        `SELECT NULL::DATE, '2024-01-15'::DATE, NULL::DATE`,
+        `SELECT NULL::DATE, '2024-01-15'::DATE, NULL::DATE as null_column2`,
       );
       expect(Object.values(rows![0])).toEqual([null, dateAtUtcMidnight('2024-01-15'), null]);
     });

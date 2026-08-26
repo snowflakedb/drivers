@@ -1,5 +1,5 @@
-import type { Connection, SnowflakeError } from 'snowflake-sdk';
-import { ErrorCode } from 'snowflake-sdk';
+import type { Connection, QueryStatus, SnowflakeError } from 'snowflake-sdk-old';
+import { ErrorCode } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import {
   createTestConnection,
@@ -33,7 +33,10 @@ describe('Async Query Execution', () => {
       const { statement } = await executeAsync(connection, ASYNC_WAIT_SQL, { asyncExec: true });
       const status = await connection.getQueryStatus(statement.getQueryId());
       expect(status).toBe('RUNNING');
-      expect(connection.isStillRunning(status)).toBe(true);
+      // Cast: upstream `getQueryStatus` is typed `Promise<string>`, but the
+      // server only returns `QueryStatus` literals and `isStillRunning` requires one.
+      // TODO: we'll have BD for this
+      expect(connection.isStillRunning(status as QueryStatus)).toBe(true);
     });
 
     it('returns NO_QUERY_DATA for a non-existent query id', async () => {
@@ -105,13 +108,18 @@ describe('Async Query Execution', () => {
       asyncExec: true,
     });
     const queryId = failedQuery.statement.getQueryId();
-    while (connection.isStillRunning(await connection.getQueryStatus(queryId))) {
+    // Cast: upstream `getQueryStatus` is typed `Promise<string>`, but the
+    // server only returns `QueryStatus` literals and `isStillRunning` requires one.
+    // TODO: we'll have BD for this
+    while (connection.isStillRunning((await connection.getQueryStatus(queryId)) as QueryStatus)) {
       await sleepAsync(250);
     }
 
     const status = await connection.getQueryStatus(queryId);
     expect(status).toBe('FAILED_WITH_ERROR');
-    expect(connection.isAnError(status)).toBe(true);
+    // Cast: upstream `isAnError` is typed as zero-arg; the runtime takes a status.
+    // TODO: we'll have BD for this
+    expect((connection.isAnError as (status: QueryStatus) => boolean)(status)).toBe(true);
 
     await expect(connection.getQueryStatusThrowIfError(queryId)).rejects.toMatchObject({
       name: 'OperationFailedError',
