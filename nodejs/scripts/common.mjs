@@ -8,3 +8,5 @@ export const ROOT_DIR = path.resolve(__dirname, '..');
 export const NODE_SDK_PACKAGE_JSON_PATH = path.join(ROOT_DIR, 'package.json');
 export const NODE_SDK_PACKAGE = JSON.parse(await fs.readFile(NODE_SDK_PACKAGE_JSON_PATH, 'utf8'));
 export const BUILD_DIR = path.join(ROOT_DIR, '_build');
+export const BUILD_SDK_PACKAGE_DIR = path.join(BUILD_DIR, NODE_SDK_PACKAGE.name);
+export const BUILD_CORE_PACKAGE_DIR = path.join(BUILD_DIR, NODE_SDK_PACKAGE.napi.packageName);

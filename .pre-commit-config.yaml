@@ -115,8 +115,8 @@ repos:
         language: system
     -   id: nodejs-code-format
         name: Node.js code formatting & linting
-        description: Auto-format with oxfmt and lint with oxlint
-        entry: bash -c 'cd nodejs && npm run fmt:fix && npm run lint:check'
+        description: Validate and autoformat the code
+        entry: bash -c 'cd nodejs && npm run types:check && npm run fmt:fix && npm run lint:check'
         pass_filenames: false
         files: ^nodejs/
         language: system

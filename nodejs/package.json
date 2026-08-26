@@ -19,6 +19,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "types:check": "npm run build:sdk && npm run build:link-local && tsc --noEmit -p tsconfig.json",
     "lint:check": "oxlint . --max-warnings=0",
     "lint:fix": "oxlint --fix .",
     "fmt:check": "oxfmt --check .",
@@ -28,7 +29,8 @@
     "test:e2e": "vitest run --project e2e",
     "test:e2e-old-driver": "vitest run --project e2e-old-driver",
     "build:core": "node scripts/build-snowflake-sdk-core.mjs",
-    "build:sdk": "node scripts/build-snowflake-sdk.mjs"
+    "build:sdk": "node scripts/build-snowflake-sdk.mjs",
+    "build:link-local": "node scripts/build-link-local.mjs"
   },
   "napi": {
     "binaryName": "snowflake-sdk-core",

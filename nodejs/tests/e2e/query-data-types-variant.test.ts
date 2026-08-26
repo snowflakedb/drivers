@@ -98,7 +98,7 @@ describe('Query returning variant data types', () => {
   //  - As a result, we cannot and do not explicitly tear down or clear custom parsers after the tests.
   it('allows to customize JSON parsing', async () => {
     snowflake.configure({
-      jsonColumnVariantParser: (rawColumnValue) =>
+      jsonColumnVariantParser: (rawColumnValue: string) =>
         `custom=${JSON.stringify(JSON.parse(rawColumnValue))}`,
     });
     const { rows } = await executeAsync(connection, "SELECT parse_json('{a: 1}') as JSON_COLUMN");
@@ -107,7 +107,8 @@ describe('Query returning variant data types', () => {
 
   it('allows to customize XML parsing', async () => {
     snowflake.configure({
-      xmlColumnVariantParser: (rawColumnValue) => `custom=${rawColumnValue.replace(/\s+/g, '')}`,
+      xmlColumnVariantParser: (rawColumnValue: string) =>
+        `custom=${rawColumnValue.replace(/\s+/g, '')}`,
     });
     const { rows } = await executeAsync(
       connection,
