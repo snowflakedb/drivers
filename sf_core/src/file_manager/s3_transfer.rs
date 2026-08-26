@@ -2951,7 +2951,7 @@ mod tests {
             "f.dat",
             true,
             false,
-            &base_policy(),
+            &base_policy_with_attempts(1), // no retries: part count must be exactly 3
             always_multipart(),
             None,
         )

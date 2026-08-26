@@ -1104,3 +1104,56 @@ behavior_differences:
       primary use case (turning on driver-internal troubleshooting logs). No code fix planned.
       Worth a migration-guide callout for users who relied on custom `log.path`/rotation settings,
       but that's a docs follow-up, not a driver change.
+
+  81:
+    name: "PUT resolves relative source paths to absolute canonical form before upload"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: medium
+    status_rationale: |
+      Aligns the universal driver with legacy JDBC's `file.getCanonicalPath()`. The legacy Python
+      connector calls `os.path.expanduser` on every source path, then `os.path.abspath` only
+      `if not os.path.isabs(file_name)` — so a path that was already absolute skips lexical
+      normalization entirely and any `..` in it is left for the OS to resolve at file-access
+      time, while a relative path is lexically normalized (CWD-prefixed, `..` collapsed by
+      string manipulation, symlinks not followed). The universal driver's `dunce::canonicalize`
+      always performs full filesystem-aware resolution — CWD, `..`, and symlinks — regardless of
+      whether the input was already absolute. For the common case (no symlinked directory
+      component) the two agree. Impact is raised to medium (from an earlier `low`) because for a
+      *relative* source path with a symlinked directory component followed by `..`, legacy
+      Python's lexical `normpath` collapse can select a different file than the universal
+      driver's filesystem-aware resolution — not just a differently-named stage object.
+    old_driver_behavior: |
+      The legacy Python connector (`file_transfer_agent.py`, `_expand_filenames`) calls
+      `os.path.expanduser` on every source path first. It then calls `os.path.abspath` only when
+      `not os.path.isabs(file_name)`:
+      - Relative input: `abspath` prepends the process CWD and collapses `..` segments purely
+        lexically (`os.path.normpath`) — it does not consult the filesystem, so a symlinked
+        directory component is not resolved before the `..` is applied. `/tmp/symlinkdir/../b`
+        (relative to CWD) can lexically collapse to a path outside `symlinkdir`'s real target,
+        selecting a different file than filesystem-aware resolution would (or none at all).
+      - Already-absolute input: no lexical normalization is applied at all; the raw string
+        (including any `..`) is handed to `glob.glob`/the OS as-is, which resolves it using
+        normal filesystem semantics at access time — so for already-absolute paths, legacy
+        Python's *effective* file selection already matches filesystem-aware resolution.
+      - Symlinks are never followed by `abspath` itself; a symlinked source file
+        `link.csv -> real.csv` was therefore uploaded to the stage as `link.csv` (the symlink's
+        own name), since `os.path.basename` only looks at the final path segment.
+    new_driver_behavior: |
+      Each matched local source path is resolved via `dunce::canonicalize` (equivalent to
+      `std::fs::canonicalize` on Unix): CWD-relative made absolute, `..` collapsed, symlinks
+      followed at every path component — filesystem-aware, not lexical. For non-symlink inputs
+      (and for already-absolute symlink-free inputs) this matches legacy Python's effective
+      behavior. For a symlinked source `link.csv -> real.csv` the stage object name becomes
+      `real.csv` (the target's basename), matching legacy JDBC's `getCanonicalPath` behaviour.
+      For a *relative* path with a symlinked directory component followed by `..`, this can
+      resolve to a different real file than legacy Python's lexical collapse would have selected.
+    description: |
+      Reference: legacy Python `file_transfer_agent.py` `_expand_filenames` (`os.path.expanduser`
+      then conditionally `os.path.abspath`);
+      legacy JDBC `SnowflakeFileTransferAgent.expandFileNames` (`file.getCanonicalPath()`).
+      Applications that PUT symlinked source files and rely on the stage object name matching
+      the symlink's own basename will observe the name change to the target's basename.
+      Non-symlink workflows are unaffected.
