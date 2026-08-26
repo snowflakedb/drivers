@@ -40,6 +40,7 @@ import net.snowflake.client.internal.api.implementation.connection.InternalSnowf
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
+import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.DecoratedSnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.codegen.JdbcBoundary;
@@ -105,6 +106,26 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
       }
     }
     return prepareResult;
+  }
+
+  /**
+   * Live session value of {@code CLIENT_STAGE_ARRAY_BINDING_THRESHOLD} (server default 65280,
+   * updatable via {@code ALTER SESSION}). {@code 0} disables stage binding. Used by {@link
+   * PreparedBatch} to decide inline-JSON vs stage-CSV binding, mirroring legacy {@code
+   * SFStatement}'s {@code session.getArrayBindStageThreshold()} check.
+   */
+  int stageArrayBindingThreshold() {
+    return connection.getParameters().getInt(Parameter.CLIENT_STAGE_ARRAY_BINDING_THRESHOLD);
+  }
+
+  /**
+   * Whether the server's describe reports this statement as array-bind capable (INSERT-shaped).
+   * Triggers the cached prepare, matching legacy {@code executeBatch}, which reads {@code
+   * isArrayBindSupported()} off the describe. Guards stage binding to INSERTs until the non-INSERT
+   * per-row fallback lands (see the feature file's deferred scenarios).
+   */
+  boolean arrayBindSupported() {
+    return getPrepareResult().getArrayBindSupported();
   }
 
   @Override

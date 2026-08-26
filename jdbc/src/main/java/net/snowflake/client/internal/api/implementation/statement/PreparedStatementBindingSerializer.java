@@ -11,6 +11,7 @@ import java.nio.ByteOrder;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Function;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.log.SFLogger;
@@ -50,9 +51,7 @@ final class PreparedStatementBindingSerializer {
 
   /**
    * The {@link BinaryDataPtr} address is a raw {@code long}, not a Java reference to the underlying
-   * {@link ArrowBuf}. Callers must keep this object reachable until the synchronous {@code
-   * statementExecuteQuery} returns — the standard try-with-resources around the RPC suffices per
-   * JLS §12.6.1.
+   * {@link ArrowBuf}. Callers must keep this object reachable until the synchronous RPC returns.
    */
   static final class NativeBindings implements AutoCloseable {
     private final QueryBindings bindings;
@@ -83,15 +82,23 @@ final class PreparedStatementBindingSerializer {
 
   private PreparedStatementBindingSerializer() {}
 
+  /**
+   * No-op bindings for an empty batch; the wrapped {@code NativeBuffer} is private to this class.
+   */
+  static NativeBindings emptyBindings() {
+    return new NativeBindings(null, null);
+  }
+
   static NativeBindings serialize(Map<Integer, ParameterValue> parameterValues) {
     if (parameterValues.isEmpty()) {
       logger.debug("No parameter values bound, skipping bindings serialization.");
-      return new NativeBindings(null, null);
+      return emptyBindings();
     }
     logger.debug("Serializing prepared bindings: binds={}", parameterValues.size());
 
     byte[] jsonBytes = buildBindingsJson(parameterValues);
-    return allocateNativeBindings(jsonBytes);
+    return allocateNativeBindings(
+        jsonBytes, ptr -> QueryBindings.newBuilder().setJson(ptr).build());
   }
 
   private static byte[] buildBindingsJson(Map<Integer, ParameterValue> parameterValues) {
@@ -161,20 +168,21 @@ final class PreparedStatementBindingSerializer {
             + ")");
   }
 
-  private static NativeBindings allocateNativeBindings(byte[] jsonBytes) {
-    NativeBuffer nativeBuffer = NativeBuffer.fromBytes(jsonBytes);
+  static NativeBindings allocateNativeBindings(
+      byte[] payloadBytes, Function<BinaryDataPtr, QueryBindings> bindingsBuilder) {
+    NativeBuffer nativeBuffer = NativeBuffer.fromBytes(payloadBytes);
     boolean success = false;
     try {
       byte[] ptrBytes = nativeBuffer.pointerAsLittleEndianBytes();
-      BinaryDataPtr jsonPtr =
+      BinaryDataPtr payloadPtr =
           BinaryDataPtr.newBuilder()
               .setValue(ByteString.copyFrom(ptrBytes))
-              .setLength(jsonBytes.length)
+              .setLength(payloadBytes.length)
               .build();
-      QueryBindings queryBindings = QueryBindings.newBuilder().setJson(jsonPtr).build();
+      QueryBindings queryBindings = bindingsBuilder.apply(payloadPtr);
       logger.debug(
           "Prepared bindings serialized: payloadBytes={}, pointerBytes={}",
-          jsonBytes.length,
+          payloadBytes.length,
           ptrBytes.length);
       NativeBindings nativeBindings = new NativeBindings(queryBindings, nativeBuffer);
       success = true;

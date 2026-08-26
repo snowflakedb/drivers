@@ -1,7 +1,7 @@
-@odbc @python
+@odbc @python @jdbc
 Feature: Large (stage-based) parameter binding
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should stage-bind at the default threshold and reuse SYSTEM$BIND across consecutive bulk inserts
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists
@@ -12,7 +12,7 @@ Feature: Large (stage-based) parameter binding
     And Query "SELECT id, name FROM {table} ORDER BY id" is executed
     Then Result should contain the same values as the bound parameters from both bulk inserts
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should round-trip all bindable types via stage binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, n NUMBER, f FLOAT, flag BOOLEAN, txt VARCHAR) exists
@@ -21,7 +21,7 @@ Feature: Large (stage-based) parameter binding
     And Query "SELECT id, n, f, flag, txt FROM {table} ORDER BY id" is executed
     Then Result should contain the same values as the bound parameters
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should preserve CSV escaping hazards via stage binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, txt VARCHAR) exists
@@ -30,7 +30,7 @@ Feature: Large (stage-based) parameter binding
     And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 6 ORDER BY id" is executed
     Then Result should contain rows [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"]]
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should not stage-bind scalar or non-INSERT queries even when threshold is crossed
     Given Snowflake client is logged in
     And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 1
@@ -38,7 +38,7 @@ Feature: Large (stage-based) parameter binding
     Then the bind file on SYSTEM$BIND from the last execute should not contain the bound parameter values
     And the result should equal 42
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should use inline JSON when row count is below CLIENT_STAGE_ARRAY_BINDING_THRESHOLD
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists
@@ -48,7 +48,7 @@ Feature: Large (stage-based) parameter binding
     And Query "SELECT id, name FROM {table} WHERE id IN (0, 9) ORDER BY id" is executed
     Then Result should contain rows [[0, "json-0"], [9, "json-9"]]
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should use stage binding at exact threshold boundary
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists

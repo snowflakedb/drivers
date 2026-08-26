@@ -27,6 +27,7 @@ import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
@@ -57,6 +58,9 @@ public class SnowflakePreparedStatementImplTest {
     mockCoreApi = mock(CoreDriverApi.class);
     mockConnection = mock(InternalSnowflakeConnection.class);
     when(mockConnection.getHandle()).thenReturn(connHandle);
+    // Default parameters expose CLIENT_STAGE_ARRAY_BINDING_THRESHOLD=65280, so the small batches
+    // here stay well below it and the stage-bind decision short-circuits onto the JSON path.
+    when(mockConnection.getParameters()).thenReturn(ParametersRegistry.EMPTY);
     when(mockCoreApi.statementNew(any()))
         .thenReturn(StatementNewResponse.newBuilder().setStmtHandle(stmtHandle).build());
     when(mockCoreApi.statementRelease(any()))
