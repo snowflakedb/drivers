@@ -99,7 +99,9 @@ final class PreparedBatch {
    */
   private long serializeAndExecute(SnowflakePreparedStatementImpl stmt, String sql) {
     PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(snapshot());
+        useStageBinding(stmt)
+            ? PreparedStatementCsvBindings.serialize(snapshot(), rowCount)
+            : PreparedStatementBindingSerializer.serialize(snapshot());
     try {
       return stmt.executeLargeUpdateWithBindings(sql, nativeBindings);
     } finally {
@@ -109,6 +111,17 @@ final class PreparedBatch {
         logger.warn("Failed to close native binding buffer after RPC", closeEx);
       }
     }
+  }
+
+  /**
+   * Stage-bind decision, mirroring legacy {@code SFStatement}: {@code 0 < threshold && threshold <=
+   * cells}, where {@code cells = rows × columns}. {@code arrayBindSupported} keeps non-INSERT
+   * batches on the JSON path, standing in for legacy's per-row fallback.
+   */
+  private boolean useStageBinding(SnowflakePreparedStatementImpl stmt) {
+    int threshold = stmt.stageArrayBindingThreshold();
+    long cells = (long) rowCount * columns.size();
+    return threshold > 0 && cells >= threshold && stmt.arrayBindSupported();
   }
 
   private static long[] expandUpdateCounts(long aggregate, int batchSize) {
