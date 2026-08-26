@@ -9,9 +9,10 @@ use super::column_reader_util::{
     decimal_string, read_cell, scale_from_metadata, usize_from_metadata, widen,
 };
 use super::decfloat::{decfloat_field, format_decfloat, i128_from_big_endian_signed};
+use super::js_cell::JsCell;
 use super::time_format;
 use crate::session_params::SessionParams;
-use crate::sql_value::SqlValue;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Snowflake's maximum TIME fractional-second precision (`TIME(0)` ..
@@ -37,13 +38,15 @@ pub(crate) struct TimeMeta {
     format: Arc<str>,
 }
 
-/// Decodes one Arrow column into [`SqlValue`]s, one cell at a time.
+/// Decodes one Arrow column into [`JsCell`]s, one cell at a time.
 ///
 /// Use it in two steps:
 /// - [`for_field`](Self::for_field) inspects the column's `logicalType`,
-///   picks the matching decoder, and holds onto the array.
-/// - [`read`](Self::read) returns the [`SqlValue`] for a given row (or
-///   [`SqlValue::Null`]).
+///   picks the matching decoder, and holds onto the array. Runs on a worker
+///   thread, so anything proportional to the batch size belongs here.
+/// - [`read`](Self::read) returns the [`JsCell`] for a given row (or
+///   [`JsCell::Null`]). Runs on the Node.js main thread; the caller converts
+///   the cell through [`napi::bindgen_prelude::ToNapiValue`].
 pub(crate) enum ColumnReader {
     Boolean(BooleanArray),
     Binary(BinaryArray),
@@ -233,40 +236,45 @@ impl ColumnReader {
         }
     }
 
-    pub(crate) fn read(&self, row_index: usize) -> SqlValue {
+    pub(crate) fn read(&self, row_index: usize) -> JsCell<'_> {
         match self {
             Self::Boolean(array) => {
-                read_cell(array, row_index, || SqlValue::Bool(array.value(row_index)))
+                read_cell(array, row_index, || JsCell::Bool(array.value(row_index)))
             }
-            Self::Binary(array) => read_cell(array, row_index, || {
-                SqlValue::Binary(array.value(row_index).to_vec())
-            }),
+            Self::Binary(array) => {
+                read_cell(array, row_index, || JsCell::Buffer(array.value(row_index)))
+            }
             Self::FixedInt { array, scale } => read_cell(array, row_index, || {
-                SqlValue::String(decimal_string(array.value(row_index) as i128, *scale))
+                JsCell::Str(Cow::Owned(decimal_string(
+                    array.value(row_index) as i128,
+                    *scale,
+                )))
             }),
             Self::FixedDecimal { array, scale } => read_cell(array, row_index, || {
-                SqlValue::String(decimal_string(array.value(row_index), *scale))
+                JsCell::Str(Cow::Owned(decimal_string(array.value(row_index), *scale)))
             }),
             Self::Date(array) => read_cell(array, row_index, || {
-                SqlValue::Date(Date32Type::to_naive_date(array.value(row_index)))
+                JsCell::Date(
+                    Date32Type::to_naive_date(array.value(row_index)).and_time(NaiveTime::MIN),
+                )
             }),
             Self::TimeI32(array, meta) => read_cell(array, row_index, || {
-                SqlValue::String(decode_time(array.value(row_index) as i64, meta))
+                JsCell::Str(Cow::Owned(decode_time(array.value(row_index) as i64, meta)))
             }),
             Self::TimeI64(array, meta) => read_cell(array, row_index, || {
-                SqlValue::String(decode_time(array.value(row_index), meta))
+                JsCell::Str(Cow::Owned(decode_time(array.value(row_index), meta)))
             }),
             Self::Variant(array) => read_cell(array, row_index, || {
-                SqlValue::String(array.value(row_index).to_string())
+                JsCell::Str(Cow::Borrowed(array.value(row_index)))
             }),
             Self::Text(array) => read_cell(array, row_index, || {
-                SqlValue::String(array.value(row_index).to_string())
+                JsCell::Str(Cow::Borrowed(array.value(row_index)))
             }),
             Self::Real(array) => {
-                read_cell(array, row_index, || SqlValue::Float(array.value(row_index)))
+                read_cell(array, row_index, || JsCell::Number(array.value(row_index)))
             }
             Self::Decfloat(array) => read_cell(array, row_index, || {
-                SqlValue::String(array.value(row_index).to_string())
+                JsCell::Str(Cow::Borrowed(array.value(row_index)))
             }),
         }
     }
@@ -345,14 +353,24 @@ fn decode_time(raw: i64, meta: &TimeMeta) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Int32Array, Int64Array};
+    use arrow::array::{
+        BinaryArray, BooleanArray, Decimal128Array, Float32Array, Float64Array, Int8Array,
+        Int16Array, Int32Array, Int64Array, StringArray, StructArray,
+    };
+    use arrow::buffer::NullBuffer;
+    use arrow::datatypes::{DataType, Field};
+    use chrono::{NaiveDate, NaiveTime};
+    use std::borrow::Cow;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
-    fn time_field(scale: &str) -> Field {
+    fn field(logical: &str, data_type: DataType, extra: &[(&str, &str)]) -> Field {
         let mut metadata = HashMap::new();
-        metadata.insert("logicalType".to_string(), "TIME".to_string());
-        metadata.insert("scale".to_string(), scale.to_string());
-        Field::new("T", DataType::Int32, true).with_metadata(metadata)
+        metadata.insert("logicalType".to_string(), logical.to_string());
+        for (key, value) in extra {
+            metadata.insert((*key).to_string(), (*value).to_string());
+        }
+        Field::new("C", data_type, true).with_metadata(metadata)
     }
 
     fn session_params(time_format: &str) -> SessionParams {
@@ -361,11 +379,12 @@ mod tests {
         }
     }
 
-    fn as_string(value: SqlValue) -> String {
-        match value {
-            SqlValue::String(s) => s,
-            _ => panic!("expected SqlValue::String, got a different SqlValue variant"),
-        }
+    fn reader_with_format(field: &Field, column: &dyn Array, time_format: &str) -> ColumnReader {
+        ColumnReader::for_field(field, column, &session_params(time_format)).unwrap()
+    }
+
+    fn reader(field: &Field, column: &dyn Array) -> ColumnReader {
+        reader_with_format(field, column, "HH24:MI:SS")
     }
 
     // `ColumnReader` has no `Debug` impl (deliberately — see
@@ -378,26 +397,81 @@ mod tests {
         }
     }
 
-    #[test]
-    fn time_i32_decodes_valid_values_and_nulls() {
-        let field = time_field("3");
-        // 10:30:00.123 at scale 3: secs=37_800, frac=123.
-        let array = Int32Array::from(vec![Some(37_800_123), None]);
-        let reader =
-            ColumnReader::for_field(&field, &array, &session_params("HH24:MI:SS")).unwrap();
-        assert_eq!(as_string(reader.read(0)), "10:30:00");
-        assert!(matches!(reader.read(1), SqlValue::Null));
+    fn str_cell(s: &str) -> JsCell<'_> {
+        JsCell::Str(Cow::Borrowed(s))
     }
 
     #[test]
-    fn time_i64_decodes_valid_values_with_full_precision_format() {
-        let field = time_field("9");
-        // 10:30:00.123456789 at scale 9.
+    fn boolean_reads_true_false_and_null() {
+        let field = field("BOOLEAN", DataType::Boolean, &[]);
+        let array = BooleanArray::from(vec![Some(true), Some(false), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::Boolean(_)),
+            "BOOLEAN should route to the Boolean arm"
+        );
+        assert_eq!(reader.read(0), JsCell::Bool(true));
+        assert_eq!(reader.read(1), JsCell::Bool(false));
+        assert_eq!(reader.read(2), JsCell::Null);
+    }
+
+    #[test]
+    fn binary_reads_bytes_and_null() {
+        let field = field("BINARY", DataType::Binary, &[]);
+        let array = BinaryArray::from(vec![Some(b"\xab\xcd".as_slice()), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::Binary(_)),
+            "BINARY should route to the Binary arm"
+        );
+        assert_eq!(reader.read(0), JsCell::Buffer(&[0xab, 0xcd]));
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn date_reads_utc_midnight_and_null() {
+        let date = NaiveDate::from_ymd_opt(2016, 1, 21).unwrap();
+        let field = field("DATE", DataType::Date32, &[]);
+        let array =
+            PrimitiveArray::<Date32Type>::from(vec![Some(Date32Type::from_naive_date(date)), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::Date(_)),
+            "DATE should route to the Date arm"
+        );
+        assert_eq!(reader.read(0), JsCell::Date(date.and_time(NaiveTime::MIN)));
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    fn time_field(scale: &str) -> Field {
+        field("TIME", DataType::Int32, &[("scale", scale)])
+    }
+
+    #[test]
+    fn time_i32_reads_formatted_string_and_null() {
+        // 10:30:00.123 at scale 3: secs=37_800, frac=123.
+        let field = time_field("3");
+        let array = Int32Array::from(vec![Some(37_800_123), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::TimeI32(_, _)),
+            "Int32 TIME should route to the TimeI32 arm"
+        );
+        assert_eq!(reader.read(0), str_cell("10:30:00"));
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn time_i64_reads_full_precision_string() {
+        let field = field("TIME", DataType::Int64, &[("scale", "9")]);
         let raw: i64 = 37_800 * 1_000_000_000 + 123_456_789;
         let array = Int64Array::from(vec![Some(raw)]);
-        let reader =
-            ColumnReader::for_field(&field, &array, &session_params("HH24:MI:SS.FF9")).unwrap();
-        assert_eq!(as_string(reader.read(0)), "10:30:00.123456789");
+        let reader = reader_with_format(&field, &array, "HH24:MI:SS.FF9");
+        assert!(
+            matches!(reader, ColumnReader::TimeI64(_, _)),
+            "Int64 TIME should route to the TimeI64 arm"
+        );
+        assert_eq!(reader.read(0), str_cell("10:30:00.123456789"));
     }
 
     #[test]
@@ -497,11 +571,11 @@ mod tests {
     fn for_field_accepts_all_null_time_column_and_reads_null() {
         let field = time_field("3");
         let array = Int32Array::from(vec![None, None, None]);
-        let reader =
-            ColumnReader::for_field(&field, &array, &session_params("HH24:MI:SS")).unwrap();
+        let reader = reader(&field, &array);
         for row_index in 0..3 {
-            assert!(
-                matches!(reader.read(row_index), SqlValue::Null),
+            assert_eq!(
+                reader.read(row_index),
+                JsCell::Null,
                 "row {row_index} of an all-null TIME column should read as Null"
             );
         }
@@ -520,5 +594,165 @@ mod tests {
             err.contains("unsupported TIME physical type"),
             "error should name the unsupported type, got: {err}"
         );
+    }
+
+    #[test]
+    fn text_reads_string_and_null() {
+        let field = field("TEXT", DataType::Utf8, &[]);
+        let array = StringArray::from(vec![Some("hello"), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::Text(_)),
+            "TEXT should route to the Text arm"
+        );
+        assert_eq!(reader.read(0), str_cell("hello"));
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn variant_reads_json_text_and_null() {
+        let field = field("VARIANT", DataType::Utf8, &[]);
+        let array = StringArray::from(vec![Some("{\"a\":1}"), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::Variant(_)),
+            "VARIANT should route to the Variant arm"
+        );
+        assert_eq!(reader.read(0), str_cell("{\"a\":1}"));
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn object_and_array_logical_types_route_to_variant() {
+        let array = StringArray::from(vec![Some("{}")]);
+        assert!(
+            matches!(
+                reader(&field("OBJECT", DataType::Utf8, &[]), &array),
+                ColumnReader::Variant(_)
+            ),
+            "OBJECT should share the Variant arm"
+        );
+        assert!(
+            matches!(
+                reader(&field("ARRAY", DataType::Utf8, &[]), &array),
+                ColumnReader::Variant(_)
+            ),
+            "ARRAY should share the Variant arm"
+        );
+    }
+
+    #[test]
+    fn fixed_int_reads_decimal_strings_and_null() {
+        let field = field("FIXED", DataType::Int64, &[("scale", "0")]);
+        let array = Int64Array::from(vec![Some(42), Some(-1), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::FixedInt { .. }),
+            "Int64 FIXED should route to the FixedInt arm"
+        );
+        assert_eq!(reader.read(0), str_cell("42"));
+        assert_eq!(reader.read(1), str_cell("-1"));
+        assert_eq!(reader.read(2), JsCell::Null);
+    }
+
+    #[test]
+    fn fixed_int_reads_scaled_and_leading_zero_fraction() {
+        let scaled = field("FIXED", DataType::Int64, &[("scale", "2")]);
+        let array = Int64Array::from(vec![Some(123)]);
+        assert_eq!(reader(&scaled, &array).read(0), str_cell("1.23"));
+
+        let leading_zeros = field("FIXED", DataType::Int64, &[("scale", "5")]);
+        let array = Int64Array::from(vec![Some(12)]);
+        assert_eq!(reader(&leading_zeros, &array).read(0), str_cell("0.00012"));
+    }
+
+    #[test]
+    fn fixed_int8_widens_and_reads_string() {
+        let field = field("FIXED", DataType::Int8, &[("scale", "0")]);
+        let array = Int8Array::from(vec![Some(42i8)]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::FixedInt { .. }),
+            "Int8 FIXED should widen to the FixedInt arm"
+        );
+        assert_eq!(reader.read(0), str_cell("42"));
+    }
+
+    #[test]
+    fn fixed_decimal128_reads_scaled_string_and_null() {
+        let field = field("FIXED", DataType::Decimal128(38, 2), &[("scale", "2")]);
+        let array = Decimal128Array::from(vec![Some(12345i128), None])
+            .with_precision_and_scale(38, 2)
+            .unwrap();
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::FixedDecimal { .. }),
+            "Decimal128 FIXED should route to the FixedDecimal arm"
+        );
+        assert_eq!(reader.read(0), str_cell("123.45"));
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn real_reads_float_and_null() {
+        let field = field("REAL", DataType::Float64, &[]);
+        let array = Float64Array::from(vec![Some(1.5), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::Real(_)),
+            "Float64 REAL should route to the Real arm"
+        );
+        assert_eq!(reader.read(0), JsCell::Number(1.5));
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn real_float32_widens_and_reads_float() {
+        let field = field("REAL", DataType::Float32, &[]);
+        let array = Float32Array::from(vec![Some(1.5f32)]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::Real(_)),
+            "Float32 REAL should widen to the Real arm"
+        );
+        assert_eq!(reader.read(0), JsCell::Number(1.5));
+    }
+
+    fn decfloat_struct(
+        exponents: Vec<Option<i16>>,
+        significands: Vec<Option<&[u8]>>,
+    ) -> StructArray {
+        let nulls: Vec<bool> = exponents.iter().map(Option::is_some).collect();
+        let fields = vec![
+            Field::new("exponent", DataType::Int16, true),
+            Field::new("significand", DataType::Binary, true),
+        ];
+        StructArray::try_new(
+            fields.into(),
+            vec![
+                Arc::new(Int16Array::from(exponents)),
+                Arc::new(BinaryArray::from(significands)),
+            ],
+            Some(NullBuffer::from(nulls)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn decfloat_reads_formatted_string_and_null() {
+        // 123456 * 10^-3 → "123.456" at precision 38 (plain notation).
+        let array = decfloat_struct(vec![Some(-3), None], vec![Some(&[0x01, 0xe2, 0x40]), None]);
+        let field = field(
+            "DECFLOAT",
+            array.data_type().clone(),
+            &[("precision", "38")],
+        );
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::Decfloat(_)),
+            "DECFLOAT should route to the Decfloat arm"
+        );
+        assert_eq!(reader.read(0), str_cell("123.456"));
+        assert_eq!(reader.read(1), JsCell::Null);
     }
 }
