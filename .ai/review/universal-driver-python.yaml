@@ -145,7 +145,7 @@ rules:
     rule: |
       **OBJECTIVE**: Keep comments scarce and load-bearing. Comments rot; every line is a maintenance bill.
 
-      **REQUIREMENT**: Comments and docstrings should explain *why* — the non-obvious constraint, the historical reason, the subtle invariant. Do not narrate *what* the code already says, do not echo the function signature in a docstring, and do not preserve TODO/FIXME chatter without a ticket. Prefer one tight sentence over a paragraph. Multi-line block comments above trivial code are a smell.
+      **REQUIREMENT**: Comments and docstrings should explain *why* — the non-obvious constraint, the historical reason, the subtle invariant. Do not narrate *what* the code already says, do not echo the function signature in a docstring. Prefer one tight sentence over a paragraph. Multi-line block comments above trivial code are a smell. (TODO/FIXME ticket references are governed separately by `universal-driver-todo-tickets.yaml`.)
 
       Specifically reject:
       - Docstrings that restate the parameter list and return type when type hints already cover them, with no extra information. Public methods still need a docstring — but it should add information the signature does not (semantics, edge cases, side effects), not duplicate it.
