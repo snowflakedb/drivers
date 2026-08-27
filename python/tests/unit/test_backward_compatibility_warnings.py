@@ -9,8 +9,8 @@ These tests cover both:
   a real backward-compat exception emits the warning exactly once.
 
 The autouse ``_reset_backward_compat_dedup_set`` fixture below snapshots and
-restores the process-wide dedup set around every test in this module so
-order-dependent false negatives cannot slip in.
+restores both process-wide backward-compat sets around every test in this
+module so order-dependent false negatives cannot slip in.
 """
 
 from __future__ import annotations
@@ -34,24 +34,38 @@ from snowflake.connector._internal.decorators import backward_compatibility
 
 @pytest.fixture(autouse=True)
 def _reset_backward_compat_dedup_set():
-    """Snapshot and restore ``_BACKWARD_COMPAT_WARNED`` around each test.
+    """Snapshot and restore both process-wide backward-compat sets around each test.
 
-    The set enforces once-per-process dedup for backward-compat warnings;
-    without this fixture, the first test to observe a given warning would
-    permanently mark that ``(module, name)`` slot as warned for the rest of
-    the pytest session, silently hiding the warning from any later test
-    that expects to observe it.
+    ``_BACKWARD_COMPAT_WARNED`` enforces once-per-process dedup for
+    backward-compat warnings; without this fixture, the first test to observe a
+    given warning would permanently mark that ``(module, name)`` slot as warned
+    for the rest of the pytest session, silently hiding the warning from any
+    later test that expects to observe it.
 
-    Scoped to this module (rather than living in a shared ``conftest.py``)
-    because no other unit test file touches this internal state.
+    ``_MARKED_BACKWARD_COMPAT`` is restored for a different reason. Tests here
+    register *plain values* (e.g. ``backward_compatibility("LEGACY_VALUE")``),
+    and unlike the class objects the pre-existing tests register, strings hash
+    and compare by content rather than identity — see the note on that set in
+    ``backward_compatibility.py``. A leaked entry would therefore make any
+    later module global holding a byte-identical string look marked, which
+    ``TestNoInternalImportsOfBackwardCompatNames`` reads directly. Under
+    ``pytest-randomly`` that is an order-dependent false positive waiting to
+    happen, so neither set is allowed to outlive its test.
+
+    Defined here rather than in a shared ``conftest.py`` since only this
+    module and ``test_network_backcompat.py`` (which imports this fixture
+    directly) touch this internal state.
     """
-    snapshot = set(_BACKWARD_COMPAT_WARNED)
+    warned_snapshot = set(_BACKWARD_COMPAT_WARNED)
+    marked_snapshot = set(_MARKED_BACKWARD_COMPAT)
     _BACKWARD_COMPAT_WARNED.clear()
     try:
         yield
     finally:
         _BACKWARD_COMPAT_WARNED.clear()
-        _BACKWARD_COMPAT_WARNED.update(snapshot)
+        _BACKWARD_COMPAT_WARNED.update(warned_snapshot)
+        _MARKED_BACKWARD_COMPAT.clear()
+        _MARKED_BACKWARD_COMPAT.update(marked_snapshot)
 
 
 def _make_synthetic_module(name: str) -> types.ModuleType:
@@ -86,6 +100,30 @@ class TestGenericHelper:
         bc_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert len(bc_warnings) == 1
         assert "LegacyThing" in str(bc_warnings[0].message)
+        assert mod.__name__ in str(bc_warnings[0].message)
+
+    def test_constant_warns_once_on_first_access_and_returns_value(self):
+        """Plain values (e.g. module-level string constants) go through the
+        same stash + PEP 562 ``__getattr__`` path as classes."""
+        mod = _make_synthetic_module("snowflake.connector._test_bc_mod_const")
+
+        mod.LEGACY_CONST = backward_compatibility("LEGACY_VALUE")
+
+        assert "LEGACY_CONST" in vars(mod)
+        install_backward_compatibility_getattr(mod.__name__)
+        assert "LEGACY_CONST" not in vars(mod)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            first = mod.LEGACY_CONST
+            second = mod.LEGACY_CONST  # second access: deduped
+
+        assert first == "LEGACY_VALUE"
+        assert first is second
+
+        bc_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert len(bc_warnings) == 1
+        assert "LEGACY_CONST" in str(bc_warnings[0].message)
         assert mod.__name__ in str(bc_warnings[0].message)
 
     def test_name_is_removed_from_module_globals(self):

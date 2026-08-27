@@ -1161,6 +1161,88 @@ mod tests {
         settings
     }
 
+    /// The Python wrapper's `AuthenticatorType` source file, embedded at compile
+    /// time so the test below reads the values Python actually ships rather than a
+    /// copy of them. A move or rename breaks the build, which is the intent.
+    const PYTHON_AUTHENTICATOR_TYPE_SRC: &str =
+        include_str!("../../../python/src/snowflake/connector/_internal/authenticator_type.py");
+
+    /// Pull the enum member values out of the embedded Python source, i.e. the
+    /// `"SNOWFLAKE"` in `DEFAULT = "SNOWFLAKE"`.
+    fn python_authenticator_values() -> Vec<String> {
+        PYTHON_AUTHENTICATOR_TYPE_SRC
+            .lines()
+            .filter_map(|line| {
+                let (name, rest) = line.trim().split_once(" = \"")?;
+                let value = rest.strip_suffix('"')?;
+                // Enum members only: SCREAMING_SNAKE name, uppercase value. Keeps
+                // prose in the module docstring from being picked up.
+                let ident = |s: &str| {
+                    !s.is_empty() && s.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+                };
+                (ident(name) && ident(value)).then(|| value.to_string())
+            })
+            .collect()
+    }
+
+    /// Every authenticator spelling the Python wrapper exposes must be one this
+    /// parser recognises.
+    ///
+    /// Those constants (`snowflake.connector.network.*_AUTHENTICATOR`, and
+    /// `constants.AuthenticatorType` which they are built from) are *inputs*: a
+    /// caller reads one and hands it straight back as `authenticator=`. A value
+    /// Python advertises but this parser rejects is a broken round trip — the
+    /// wrapper offering an option the driver refuses.
+    ///
+    /// The Python list is hand-maintained; this test is what keeps it honest, by
+    /// reading the real file and running the real parser. It is deliberately
+    /// one-directional: the parser also accepts spellings Python does not expose
+    /// (`""` and `"SNOWFLAKE_PASSWORD"` for password auth, `https://` URLs for
+    /// native Okta SSO), and that is fine. Only the reverse is a bug.
+    ///
+    /// Tolerant of every error except the one meaning "I do not know this
+    /// authenticator": most of these flows need credentials this test does not
+    /// supply, so a missing-parameter error still proves the spelling was
+    /// recognised.
+    ///
+    /// Note `config::rest_parameters` has a parallel match over the same strings
+    /// for the non-`ParamStore` path, which this does not cover.
+    #[test]
+    fn recognises_every_authenticator_spelling_exposed_to_python() {
+        let values = python_authenticator_values();
+
+        // If the Python file's shape changes, fail loudly rather than silently
+        // verifying an empty list.
+        assert!(
+            values.len() >= 9,
+            "expected at least 9 authenticator values in authenticator_type.py, extracted {:?} \
+             — has the file's shape changed?",
+            values
+        );
+
+        for value in &values {
+            let settings = settings_from(&[
+                ("account", Setting::String("myaccount".into())),
+                ("user", Setting::String("myuser".into())),
+                ("authenticator", Setting::String(value.clone())),
+            ]);
+
+            match build_auth_config(&settings) {
+                Ok(_) => {}
+                Err(ConfigError::InvalidParameterValue {
+                    ref parameter,
+                    ref value,
+                    ..
+                }) if parameter == "authenticator" => panic!(
+                    "the connection-config parser does not recognise `{value}`, but the Python \
+                     wrapper exposes it as an authenticator constant. Either teach the parser \
+                     this spelling, or drop it from _internal/authenticator_type.py."
+                ),
+                Err(_) => {}
+            }
+        }
+    }
+
     // -- ConnectionConfig::build tests --
 
     #[test]
