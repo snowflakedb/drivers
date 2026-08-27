@@ -2,11 +2,15 @@
 Unit tests for ConnectionConfig.
 """
 
+import sys
+import types
+
 from unittest.mock import patch
 
 import pytest
 
 from snowflake.connector.connection_config import ConnectionConfig
+from snowflake.connector.constants import ENV_VAR_PARTNER
 from snowflake.connector.errors import ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
@@ -208,6 +212,10 @@ class TestFromKwargs:
 class TestFromConnectionArgs:
     """Test ConnectionConfig.from_connection_args factory method."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_application_detection(self, isolate_application_detection):
+        pass
+
     def test_basic_kwargs(self):
         config = ConnectionConfig.from_connection_args(user="u", account="a")
         assert config.user == "u"
@@ -261,6 +269,46 @@ class TestFromConnectionArgs:
     def test_application_dotted_name_accepted(self):
         config = ConnectionConfig.from_connection_args(user="u", application="SNOWCLI.STAGE.COPY")
         assert config.application == "SNOWCLI.STAGE.COPY"
+
+    def test_application_from_sf_partner_env(self, isolate_application_detection):
+        isolate_application_detection.setenv(ENV_VAR_PARTNER, "PartnerApp")
+        config = ConnectionConfig.from_connection_args(user="u")
+        assert config.application == "PartnerApp"
+
+    def test_bare_connect_detection_overrides_default_profile_application(self, isolate_application_detection):
+        # Deliberate UD vs legacy divergence (BehaviorDifferences.yaml #59):
+        # detection still writes ``application`` on a truly bare ``connect()``,
+        # so the Rust resolver prefers it over a saved default profile.
+        isolate_application_detection.setenv(ENV_VAR_PARTNER, "PartnerApp")
+        config = ConnectionConfig.from_connection_args()
+        assert config._no_connection_details is True
+        assert config.application == "PartnerApp"
+
+    def test_application_none_ignores_sf_partner(self, isolate_application_detection):
+        isolate_application_detection.setenv(ENV_VAR_PARTNER, "PartnerApp")
+        config = ConnectionConfig.from_connection_args(user="u", application=None)
+        assert config.application == "PythonConnector"
+
+    def test_explicit_application_wins_over_sf_partner(self, isolate_application_detection):
+        isolate_application_detection.setenv(ENV_VAR_PARTNER, "PartnerApp")
+        config = ConnectionConfig.from_connection_args(user="u", application="MyApp")
+        assert config.application == "MyApp"
+
+    def test_application_from_streamlit_module(self, isolate_application_detection):
+        isolate_application_detection.setitem(sys.modules, "streamlit", types.ModuleType("streamlit"))
+        config = ConnectionConfig.from_connection_args(user="u")
+        assert config.application == "streamlit"
+
+    def test_application_from_jupyter_modules(self, isolate_application_detection):
+        for name in ("ipykernel", "jupyter_core", "jupyter_client"):
+            isolate_application_detection.setitem(sys.modules, name, types.ModuleType(name))
+        config = ConnectionConfig.from_connection_args(user="u")
+        assert config.application == "jupyter_notebook"
+
+    def test_application_from_snowbooks_module(self, isolate_application_detection):
+        isolate_application_detection.setitem(sys.modules, "snowbooks", types.ModuleType("snowbooks"))
+        config = ConnectionConfig.from_connection_args(user="u")
+        assert config.application == "snowflake_notebook"
 
     def test_client_app_id_defaults_to_driver_name(self):
         """CLIENT_APP_ID should stay as the driver name regardless of the
