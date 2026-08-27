@@ -55,6 +55,12 @@ pub struct WrapperPresets {
     /// result set (legacy snowflake-jdbc). When false, it errors with
     /// `RemoteFileNotFound` (Python, ODBC, and core).
     pub legacy_empty_get_on_missing: bool,
+    /// When true, the client `enablePutGet` property and the server
+    /// `JDBC_ENABLE_PUT_GET` session parameter can disable PUT/GET (rejected
+    /// before dispatch with "File transfers have been disabled."). Both flags
+    /// are JDBC-specific; legacy Python and other drivers honor neither, so this
+    /// stays false for them and the disable gate never fires.
+    pub honor_put_get_disable: bool,
 }
 
 impl Default for WrapperPresets {
@@ -68,6 +74,7 @@ impl Default for WrapperPresets {
             legacy_odbc_compression_autodetect: false,
             put_get_fastfail_default: true,
             legacy_empty_get_on_missing: false,
+            honor_put_get_disable: false,
         }
     }
 }
@@ -89,6 +96,7 @@ impl WrapperPresets {
             legacy_odbc_compression_autodetect: true,
             put_get_fastfail_default: false,
             legacy_empty_get_on_missing: false,
+            honor_put_get_disable: false,
         }
     }
 
@@ -98,6 +106,7 @@ impl WrapperPresets {
             configuration_flavor: Wrapper::Jdbc,
             put_get_resultset_flavor: PutGetResultsetFlavor::Jdbc,
             legacy_empty_get_on_missing: true,
+            honor_put_get_disable: true,
             ..Self::default()
         }
     }
@@ -366,5 +375,15 @@ mod tests {
     fn driver_state_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<DatabaseDriverV1>();
+    }
+
+    #[test]
+    fn only_jdbc_honors_put_get_disable() {
+        // The `enablePutGet` client property and `JDBC_ENABLE_PUT_GET` server
+        // param are JDBC-specific; only the JDBC preset opts the shared gate in.
+        assert!(WrapperPresets::jdbc().honor_put_get_disable);
+        assert!(!WrapperPresets::python().honor_put_get_disable);
+        assert!(!WrapperPresets::odbc().honor_put_get_disable);
+        assert!(!WrapperPresets::default().honor_put_get_disable);
     }
 }

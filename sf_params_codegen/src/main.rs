@@ -188,10 +188,12 @@ fn is_statement_only(scopes: &[ParamScope]) -> bool {
     !scopes.contains(&ParamScope::Connection) && !scopes.contains(&ParamScope::Session)
 }
 
-/// ODBC-only params (legacy PUT_FASTFAIL/GET_FASTFAIL) excluded from the
-/// generated Python `ConnectionConfig` — Python never exposed them, though
-/// they stay in `PARAM_DEFS` for ODBC's connection-string pipeline.
-const PYTHON_EXCLUDED_PARAMS: &[&str] = &["put_fastfail", "get_fastfail"];
+/// Wrapper-specific params excluded from the generated Python
+/// `ConnectionConfig` — they stay in `PARAM_DEFS` for the wrappers that own
+/// them but Python never exposed them:
+///   - `put_fastfail` / `get_fastfail` — ODBC connection-string pipeline
+///   - `enable_put_get` — JDBC-only (legacy `enablePutGet` client property)
+const PYTHON_EXCLUDED_PARAMS: &[&str] = &["put_fastfail", "get_fastfail", "enable_put_get"];
 
 /// Whether `canonical` is intentionally excluded from the generated Python
 /// `ConnectionConfig` (see [`PYTHON_EXCLUDED_PARAMS`]).

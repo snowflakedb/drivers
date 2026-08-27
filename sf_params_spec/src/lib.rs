@@ -176,6 +176,12 @@ pub mod param_names {
     pub const RETRY_EXTRA_STATUS_CODES: ParamKey = ParamKey("retry_extra_status_codes");
     // PUT/GET file transfer configuration
     pub const PUT_GET_MAX_ATTEMPTS: ParamKey = ParamKey("put_get_max_attempts");
+    /// JDBC-only. When `false`, client-side PUT/GET (file transfers) are
+    /// rejected before dispatch with "File transfers have been disabled."
+    /// Default `true`. Mirrors legacy snowflake-jdbc's `enablePutGet` client
+    /// property and is only honored by wrappers that opt in via
+    /// `WrapperPresets::honor_put_get_disable` (JDBC).
+    pub const ENABLE_PUT_GET: ParamKey = ParamKey("enable_put_get");
     /// When `true`, skip file permission checks on `config.toml` and
     /// `connections.toml` during connection setup (SNOW-3548119). Use this
     /// in environments where file permissions cannot be controlled (shared CI
@@ -690,6 +696,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(DefaultValue::Bool(false)),
         sensitive: false,
         description: "Enable MFA token caching for USERNAME_PASSWORD_MFA authentication",
+        deprecated_by: None,
+        scopes: &[ParamScope::Connection],
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::ENABLE_PUT_GET.as_str(),
+        aliases: aliases!["enablePutGet"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(DefaultValue::Bool(true)),
+        sensitive: false,
+        description: "JDBC-only. When false, client-side PUT/GET file transfers are disabled",
         deprecated_by: None,
         scopes: &[ParamScope::Connection],
         used_at_connect: true,
@@ -2255,6 +2275,7 @@ mod tests {
                 "clientStoreTemporaryCredential",
                 "client_store_temporary_credential",
             ),
+            ("enablePutGet", "enable_put_get"),
             ("TLS_CUSTOM_ROOT_STORE_PATH", "custom_root_store_path"),
             ("TLS_VERIFY_HOSTNAME", "verify_hostname"),
             ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
