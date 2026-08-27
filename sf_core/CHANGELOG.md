@@ -12,6 +12,7 @@ New features:
 - Added async-first RPCs: an RPC marked `async_first` in the proto generates a `Future`-returning client method, and JDBC's `ConnectionInit` now uses it via new `nativeSubmitMessage`/`nativeAwaitMessage`/`nativeCancel` JNI entries. (snowflakedb/drivers#TBD)
 - Added impersonation-chain support to the standalone `create_attestation` RPC, so callers can acquire a Workload Identity Federation attestation for an assumed AWS role, delegated GCP service account, or impersonated Azure service principal without an active connection. (snowflakedb/drivers#1027)
 - `StatementExecuteQuery` is now `async_first`: cancelling a running query aborts it on the server via `POST /queries/v1/abort-request` instead of only dropping the in-flight request locally, so the query stops consuming credits. The abort is bounded and is awaited before cancellation is reported, so a returned cancellation implies the abort was issued. (snowflakedb/drivers#TBD)
+- `StatementPrepare` is now `async_first` as well, so cancelling a prepare aborts its `describe_only` query on the server instead of only dropping the request locally — previously a cancelled prepare left the described query running. (snowflakedb/drivers#1463)
 
 Bug fixes:
 
