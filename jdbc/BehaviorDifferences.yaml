@@ -1023,7 +1023,6 @@ behavior_differences:
     new_driver_behavior: |
       On Unix, a GET download is restricted to the owner by default. Callers who need the previous
       broader access can opt out with the unsafe_file_write connection property.
-
   57:
     name: "PUT resolves relative source paths to absolute canonical form before upload"
     status: allowed
@@ -1064,3 +1063,18 @@ behavior_differences:
       legacy driver source — this entry previously claimed "exact parity", which only holds for
       glob-matched sources. See also odbc_tests/BehaviorDifferences.yaml (BD#131) and
       python/BehaviorDifferences.yaml (BD#81) for the per-surface notes.
+  58:
+    name: "getUpdateCount() after a result-set-producing executeQuery (PUT/GET/REMOVE/SELECT/...)"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      getUpdateCount() returns the update count left by the PREVIOUS statement, because legacy
+      executeQuery never resets it. E.g. after CREATE TABLE then PUT it returns 0; after COPY
+      then GET it returns 2 — a stale, sequence-dependent value, not a property of the PUT/GET.
+    new_driver_behavior: |
+      getUpdateCount() returns -1 (the JDBC-spec value for "current result is a ResultSet") after
+      any statement that produces a result set, including PUT/GET/REMOVE. We accept this rather
+      than replicate legacy's stale-value quirk.
