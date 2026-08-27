@@ -177,6 +177,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "packaging-wheel"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -290,6 +291,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "packaging-sdist"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -438,6 +440,13 @@ jobs:
           mode: restore
           shared-key: native-arrow-bridge
           target-dir: ${{ github.workspace }}/core-target-native-arrow
+
+      - name: Shrink MSVC debug info
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_DEV_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_TEST_DEBUG=line-tables-only" >> "$GITHUB_ENV"
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
@@ -706,6 +715,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: sdist-test
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -717,6 +727,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: native-arrow-bridge
           target-dir: ${{ github.workspace }}/core-target-native-arrow
           registry-cache-hit: ${{ steps.rust-cache-native-arrow.outputs.registry-cache-hit }}

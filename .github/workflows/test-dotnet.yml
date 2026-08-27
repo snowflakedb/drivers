@@ -87,6 +87,13 @@ jobs:
           mode: restore
           shared-key: "proto-generator"
 
+      - name: Shrink MSVC debug info
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_DEV_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_TEST_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+
       - name: Regenerate proto files
         run: dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/
         working-directory: dotnet
@@ -97,6 +104,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "proto-generator"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -131,6 +139,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "sf-core"
           registry-cache-hit: ${{ steps.sf-core-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.sf-core-cache.outputs.target-cache-hit }}
@@ -184,6 +193,13 @@ jobs:
           mode: restore
           shared-key: "proto-generator"
 
+      - name: Shrink MSVC debug info
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_DEV_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_TEST_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+
       - name: Regenerate proto files
         run: dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/
         working-directory: dotnet
@@ -194,6 +210,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "proto-generator"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -257,6 +274,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "proto-generator"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -324,6 +342,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "proto-generator"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -358,6 +377,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "sf-core"
           registry-cache-hit: ${{ steps.sf-core-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.sf-core-cache.outputs.target-cache-hit }}
