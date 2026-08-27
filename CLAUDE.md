@@ -33,3 +33,4 @@ reads the canonical file fresh at invocation — so pointer files are safe.
 @./.claude/rules/apply-review-rulesets.md
 @./.claude/rules/pr-creation-draft-default.md
 @./.claude/rules/old-driver-reference-coverage-trim.md
+@./.claude/rules/rust-comments.md
