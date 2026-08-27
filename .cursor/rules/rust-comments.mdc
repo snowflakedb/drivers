@@ -1,0 +1,98 @@
+---
+description: Rust comment discipline — no comments unless asked; SAFETY on unsafe only; module docs only when the file is not self-explanatory.
+alwaysApply: true
+exception: "alwaysApply rule — the full body must exist in both engines; a generated pointer would place it in tool-call history where compaction can drop it mid-session. Canonical source is .claude/rules/<name>.md, kept in sync by the ai-rules-sync hook."
+# DERIVED FROM .claude/rules/rust-comments.md (canonical source).
+# Full content is required here — alwaysApply rules are injected into the agent system
+# prompt at session start. A pointer file would load the body via tool call, placing it
+# in conversation history where context compaction can silently drop it mid-session.
+# Edit the .claude/ file first, then copy its full contents below. The pre-commit hook
+# (ai-rules-sync) or scripts/check-ai-rules-sync.sh will catch any drift.
+---
+
+# Rust comments
+
+This rule applies to **Rust** only (`*.rs`).
+
+Do not add comments unless the user asks for them.
+
+Exception: `unsafe` blocks and `unsafe` FFI may have a `SAFETY` note that states
+the invariant the block relies on. Do not use `// SAFETY:` for anything else
+(including `.unwrap()` / `.expect()` — those are handled by the no-unwrap review
+rule).
+
+Do not narrate the next line, retell the type/function name, or leave TODO/FIXME.
+
+Do not comment what a standard-library, core, or well-known crate function
+already does (`std`, `core`, `chrono`, `rand`, and the like). Callers can read
+the name and the docs; restating `year()`, `nanosecond()`, or `gen_range` is
+noise.
+
+Module-level docs (`//!` at the top of a file) are allowed when the module is
+hard to take in from names alone — for example it wraps or copies something
+external, omits a large surface, or has a non-obvious split of responsibility.
+Keep that in the module header. Do not repeat it on every type, function, or
+call site.
+
+## Do
+
+`unsafe` — `SAFETY` names the contract:
+
+```rust
+// SAFETY: `ptr` is non-null and this function takes ownership of the C object.
+unsafe { take_owned(ptr) }
+```
+
+Module header when the file is not self-explanatory:
+
+```rust
+//! Decode-only reader for this wire format.
+//! Bind and write paths are omitted. Language-specific materialization
+//! stays in the caller.
+```
+
+Ordinary logic — no comments; names and types carry the contract:
+
+```rust
+fn materialize(value: NaiveDateTime) -> DateTimeParts {
+    DateTimeParts {
+        year: value.year(),
+        microsecond: value.nanosecond() / 1000,
+    }
+}
+```
+
+## Do not
+
+Narrating the next line:
+
+```rust
+// Get the scale from the field type.
+let scale = match *field_type { … };
+```
+
+Explaining a library call:
+
+```rust
+// chrono: year() is the calendar year; nanosecond() is the subsecond field.
+let year = value.year();
+let microsecond = value.nanosecond() / 1000;
+```
+
+`SAFETY` on safe code, or `unsafe` without `SAFETY`.
+
+A doc comment that only restates the name (`/// Converts a timestamp.`).
+
+A `//!` on every small, obvious module (`//! Boolean converter.`).
+
+<!-- sync-target: .cursor/rules/rust-comments.mdc carries an identical body
+     (the full content of this file) plus Cursor-specific frontmatter.
+     WHY both files need full content instead of a pointer:
+       alwaysApply rules are injected into the agent system prompt at session start.
+       A pointer file loads the body via tool call, putting it in conversation history
+       where context compaction can silently drop it mid-session. Full content in both
+       files keeps the rule in context for the lifetime of any session.
+     TO UPDATE: edit this file, copy its complete contents into the body of
+       .cursor/rules/rust-comments.mdc (below the closing ---
+       of the Cursor frontmatter), then run: bash scripts/check-ai-rules-sync.sh
+     The pre-commit hook (ai-rules-sync) catches drift automatically. -->
