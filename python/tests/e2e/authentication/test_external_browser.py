@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import pytest
 
 from .auth_helpers import (
+    RECOMMENDED_AUTHENTICATION_TIMEOUT_SECONDS,
     connect_with_browser_automation,
     verify_simple_query_execution,
 )
@@ -36,6 +37,7 @@ class BrowserCredentials:
             "user": self.user,
             "authenticator": "EXTERNALBROWSER",
             "role": "PUBLIC",
+            "authentication_timeout": RECOMMENDED_AUTHENTICATION_TIMEOUT_SECONDS,
         }
         params.update(overrides)
         return params

@@ -115,6 +115,7 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
         TestParameters.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_CLIENT_SECRET");
     private final String REDICTED_URI =
         TestParameters.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_REDIRECT_URI");
+    private final String MFA_SEED = TestParameters.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_MFA_SEED");
 
     @Test
     void oauthShouldAuthenticateUsingAuthorizationCodeFlow() throws Exception {
@@ -139,7 +140,7 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
         // token short-circuits the leg)
         try (Connection conn =
             connectWithBrowserAutomation(
-                () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD)) {
+                () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD, MFA_SEED)) {
           // Then Login is successful and a simple query can be executed
           assertSimpleQuerySucceeds(conn);
         }
@@ -169,7 +170,7 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
       try {
         try (Connection first =
             connectWithBrowserAutomation(
-                () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD)) {
+                () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD, MFA_SEED)) {
           assertSimpleQuerySucceeds(first);
         }
 
@@ -202,7 +203,11 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
         Executable connect =
             () ->
                 connectWithBrowserAutomation(
-                    () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD);
+                    () -> connect(props),
+                    "internalOauthSnowflakeSuccess",
+                    USER,
+                    PASSWORD,
+                    MFA_SEED);
 
         // Then Connection fails with an authentication / login error
         SQLException exception = assertThrows(SQLException.class, connect);

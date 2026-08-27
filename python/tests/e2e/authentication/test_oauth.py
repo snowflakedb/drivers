@@ -12,6 +12,7 @@ from snowflake.connector.errors import DatabaseError
 from ...compatibility import NEW_DRIVER_ONLY
 from ...config import get_test_parameters
 from .auth_helpers import (
+    RECOMMENDED_AUTHENTICATION_TIMEOUT_SECONDS,
     connect_with_browser_automation,
     retrieve_oauth_access_token,
     verify_login_error,
@@ -139,8 +140,9 @@ def authorization_code_params():
     redirect_uri = params.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_REDIRECT_URI")
     user = params.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_USER")
     password = params.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_PASSWORD")
+    totp_seed = params.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_MFA_SEED")
 
-    if not all([client_id, client_secret, redirect_uri, user, password]):
+    if not all([client_id, client_secret, redirect_uri, user, password, totp_seed]):
         pytest.fail("OAuth parameters not configured.")
 
     return {
@@ -149,6 +151,7 @@ def authorization_code_params():
         "client_id": client_id,
         "client_secret": client_secret,
         "redirect_uri": redirect_uri,
+        "totp_seed": totp_seed,
     }
 
 
@@ -169,6 +172,7 @@ class TestOAuthAuthorizationCode:
             "oauth_client_id": authorization_code_params["client_id"],
             "oauth_client_secret": authorization_code_params["client_secret"],
             "oauth_redirect_uri": authorization_code_params["redirect_uri"],
+            "authentication_timeout": RECOMMENDED_AUTHENTICATION_TIMEOUT_SECONDS,
         }
 
         # When Trying to Connect (this will spawn the local-loopback HTTP listener and
@@ -179,6 +183,7 @@ class TestOAuthAuthorizationCode:
             scenario="internalOauthSnowflakeSuccess",
             login=authorization_code_params["user"],
             password=authorization_code_params["password"],
+            totp_seed=authorization_code_params["totp_seed"],
         )
 
         # Then Login is successful and a simple query can be executed
@@ -197,6 +202,7 @@ class TestOAuthAuthorizationCode:
             "oauth_client_secret": authorization_code_params["client_secret"],
             "oauth_redirect_uri": authorization_code_params["redirect_uri"],
             "client_store_temporary_credential": True,
+            "authentication_timeout": RECOMMENDED_AUTHENTICATION_TIMEOUT_SECONDS,
         }
 
         first = connect_with_browser_automation(
@@ -204,6 +210,7 @@ class TestOAuthAuthorizationCode:
             scenario="internalOauthSnowflakeSuccess",
             login=authorization_code_params["user"],
             password=authorization_code_params["password"],
+            totp_seed=authorization_code_params["totp_seed"],
         )
         with first:
             verify_simple_query_execution(first)
@@ -228,6 +235,7 @@ class TestOAuthAuthorizationCode:
             "oauth_client_id": authorization_code_params["client_id"],
             "oauth_client_secret": "invalid_client_secret_12345",
             "oauth_redirect_uri": authorization_code_params["redirect_uri"],
+            "authentication_timeout": RECOMMENDED_AUTHENTICATION_TIMEOUT_SECONDS,
         }
 
         # When Trying to Connect
@@ -237,6 +245,7 @@ class TestOAuthAuthorizationCode:
                 scenario="internalOauthSnowflakeSuccess",
                 login=authorization_code_params["user"],
                 password=authorization_code_params["password"],
+                totp_seed=authorization_code_params["totp_seed"],
             )
 
         # Then Connection fails with an authentication / login error
