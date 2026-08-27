@@ -5,6 +5,7 @@ use std::sync::Arc;
 use url::Url;
 
 use super::private_key::{has_private_key_params, read_private_key};
+use super::token::{read_optional_bearer_token, read_required_bearer_token};
 use crate::config::InvalidParameterValueSnafu;
 use crate::config::configured_redirect_uri::ConfiguredRedirectUri;
 use crate::config::param_registry::param_names;
@@ -532,10 +533,7 @@ impl WorkloadIdentityConfig {
                     .collect()
             })
             .unwrap_or_default();
-        let oidc_token = settings
-            .get_string("token")
-            .filter(|s| !s.is_empty())
-            .map(SensitiveString::from);
+        let oidc_token = read_optional_bearer_token(settings)?;
         Ok(Self {
             provider,
             entra_resource,
@@ -887,9 +885,7 @@ impl LoginMethod {
                 // encodes the principal (`ALTER USER … ADD PROGRAMMATIC
                 // ACCESS TOKEN`). Empty ⇒ omit `LOGIN_NAME` on the wire.
                 username: non_empty_string(settings, "user").unwrap_or_default(),
-                token: non_empty_string(settings, "token")
-                    .context(MissingParameterSnafu { parameter: "token" })?
-                    .into(),
+                token: read_required_bearer_token(settings)?,
             }),
             _ if auth_upper.starts_with("HTTPS://") => {
                 // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
@@ -933,9 +929,7 @@ impl LoginMethod {
                 // pre-acquired access token's claims identify the
                 // principal. Empty ⇒ omit `LOGIN_NAME` on the wire.
                 username: non_empty_string(settings, "user").unwrap_or_default(),
-                token: non_empty_string(settings, "token")
-                    .context(MissingParameterSnafu { parameter: "token" })?
-                    .into(),
+                token: read_required_bearer_token(settings)?,
             }),
             "OAUTH_AUTHORIZATION_CODE" => Ok(Self::OAuthAuthorizationCode(Box::new(
                 // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for
@@ -1196,6 +1190,37 @@ mod tests {
                 assert_eq!(token.reveal(), "test_token");
             }
             _ => panic!("Expected Pat login method for lowercase 'programmatic_access_token'"),
+        }
+    }
+
+    #[test]
+    fn test_pat_token_file_path_is_used() {
+        use std::io::Write;
+
+        let mut token_file = tempfile::NamedTempFile::new().expect("temp token file");
+        token_file
+            .write_all(b"file-pat-token\n")
+            .expect("write token");
+        token_file.flush().expect("flush token");
+
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("test_user".to_string())),
+            (
+                "token_file_path",
+                Setting::String(token_file.path().to_str().unwrap().to_string()),
+            ),
+            (
+                "authenticator",
+                Setting::String("PROGRAMMATIC_ACCESS_TOKEN".to_string()),
+            ),
+        ]);
+
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::Pat { username, token } => {
+                assert_eq!(username, "test_user");
+                assert_eq!(token.reveal(), "file-pat-token");
+            }
+            other => panic!("Expected Pat login method, got {other:?}"),
         }
     }
 

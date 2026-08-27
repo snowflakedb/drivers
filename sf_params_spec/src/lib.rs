@@ -95,6 +95,7 @@ pub mod param_names {
     pub const PRIVATE_KEY_FILE: ParamKey = ParamKey("private_key_file");
     pub const PRIVATE_KEY_PASSWORD: ParamKey = ParamKey("private_key_password");
     pub const TOKEN: ParamKey = ParamKey("token");
+    pub const TOKEN_FILE_PATH: ParamKey = ParamKey("token_file_path");
     pub const PASSCODE: ParamKey = ParamKey("passcode");
     pub const PASSCODE_IN_PASSWORD: ParamKey = ParamKey("passcodeInPassword");
     pub const CLIENT_STORE_TEMPORARY_CREDENTIAL: ParamKey =
@@ -611,7 +612,21 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::WhenAuthMethod("PROGRAMMATIC_ACCESS_TOKEN"),
         default: None,
         sensitive: true,
-        description: "Pre-acquired bearer token (PAT or legacy OAUTH)",
+        description: "Pre-acquired bearer token (PAT, legacy OAUTH, or OIDC WIF). Alternative to token_file_path",
+        deprecated_by: None,
+        scopes: &[ParamScope::Connection],
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::TOKEN_FILE_PATH.as_str(),
+        aliases: aliases!["TOKEN_FILE_PATH", "tokenFilePath"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Path to a file containing a pre-acquired bearer token (PAT, legacy OAUTH, or OIDC WIF). If both token and token_file_path are set, the file contents are used",
         deprecated_by: None,
         scopes: &[ParamScope::Connection],
         used_at_connect: true,
@@ -2244,6 +2259,8 @@ mod tests {
             ("PRIVATE_KEY_PWD", "private_key_password"),
             ("PRIVATE_KEY_FILE_PWD", "private_key_password"),
             ("TOKEN", "token"),
+            ("TOKEN_FILE_PATH", "token_file_path"),
+            ("tokenFilePath", "token_file_path"),
             ("PASSCODE", "passcode"),
             ("PASSCODE_IN_PASSWORD", "passcodeInPassword"),
             // OAuth: both SCREAMING_SNAKE (universal-driver canonical) and

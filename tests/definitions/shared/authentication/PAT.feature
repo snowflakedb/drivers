@@ -19,6 +19,12 @@ Feature: Personal Access Token Authentication
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
+  @core_e2e @python_e2e @odbc_e2e
+  Scenario: should authenticate using PAT token from token_file_path
+    Given Authentication is set to Programmatic Access Token and a valid PAT token is stored in a file
+    When Trying to Connect
+    Then Login is successful and simple query can be executed
+
   @core_e2e @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should fail PAT authentication when invalid token provided
     Given Authentication is set to Programmatic Access Token and invalid PAT token is provided

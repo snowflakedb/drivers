@@ -60,6 +60,11 @@ class TestFromKwargs:
         config = ConnectionConfig.from_kwargs(PWD="secret")
         assert config.password == "secret"
 
+    def test_token_file_path_is_a_known_field(self):
+        config = ConnectionConfig.from_kwargs(token_file_path="/tmp/pat.token")
+        assert config.token_file_path == "/tmp/pat.token"
+        assert "token_file_path" not in config._extra
+
     def test_unknown_keys_go_to_extra(self):
         config = ConnectionConfig.from_kwargs(user="u", custom_param="value")
         assert config.user == "u"

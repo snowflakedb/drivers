@@ -3,9 +3,12 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <random>
 #include <sstream>
+#include <system_error>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_all.hpp>
@@ -51,6 +54,43 @@ std::string get_pat_as_token_connection_string(const std::string& pat_secret) {
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
   ss << "AUTHENTICATOR=PROGRAMMATIC_ACCESS_TOKEN;";
   ss << "TOKEN=" << pat_secret << ";";
+  return ss.str();
+}
+
+static std::filesystem::path write_pat_token_file(const std::string& token) {
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<uint32_t> dis;
+  auto path = std::filesystem::temp_directory_path() / ("ud_odbc_pat_" + std::to_string(dis(gen)) + ".token");
+  std::ofstream out(path);
+  out << token;
+  out.close();
+#ifndef _WIN32
+  std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+#endif
+  return path;
+}
+
+struct TokenFileGuard {
+  std::filesystem::path path;
+  ~TokenFileGuard() {
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    if (ec) {
+      std::cerr << "token file cleanup failed: " << ec.message() << std::endl;
+    }
+  }
+};
+
+static std::string get_pat_from_token_file_connection_string(const std::string& token_file_path) {
+  auto params = get_test_parameters("testconnection");
+  std::stringstream ss;
+  configure_driver_string(ss);
+  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
+  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
+  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
+  ss << "AUTHENTICATOR=PROGRAMMATIC_ACCESS_TOKEN;";
+  ss << "TOKEN_FILE_PATH=" << token_file_path << ";";
   return ss.str();
 }
 
@@ -103,6 +143,29 @@ TEST_CASE("should authenticate using PAT as token", "[pat]") {
   // Build the connection string before allocating the environment handle so the driver alias and
   // ODBCSYSINI/ODBCINI installed by configure_driver_string() are visible to the driver manager.
   std::string connection_string = get_pat_as_token_connection_string(pat_secret);
+
+  auto env = setup_pat_environment();
+  auto dbc = get_pat_connection_handle(env);
+
+  // When Trying to Connect
+  attempt_pat_connection(dbc, connection_string);
+
+  // Then Login is successful and simple query can be executed
+  verify_pat_simple_query_execution(dbc);
+
+  SQLRETURN disconnect_ret = SQLDisconnect(dbc.getHandle());
+  REQUIRE((disconnect_ret == SQL_SUCCESS || disconnect_ret == SQL_SUCCESS_WITH_INFO));
+}
+
+TEST_CASE("should authenticate using PAT token from token_file_path", "[pat]") {
+  SKIP_OLD_DRIVER("", "old driver does not support TOKEN_FILE_PATH");
+  // Given Authentication is set to Programmatic Access Token and a valid PAT token is stored in a
+  // file
+  auto params = get_test_parameters("testconnection");
+  std::string pat_secret = params.at("SNOWFLAKE_TEST_PAT").get<std::string>();
+  auto token_file = write_pat_token_file(pat_secret);
+  TokenFileGuard token_file_guard{token_file};
+  std::string connection_string = get_pat_from_token_file_connection_string(token_file.string());
 
   auto env = setup_pat_environment();
   auto dbc = get_pat_connection_handle(env);
