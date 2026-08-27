@@ -107,10 +107,11 @@ pub struct ClientInfo {
     pub runtime_version: Option<String>,
     /// Wrapper compiler info (e.g. "Clang 13.0.0 ..."). Only set by language wrappers.
     pub compiler: Option<String>,
-    /// Release type for pre-release builds (e.g. `"rc1"`, `"rc2"`).
+    /// Release type for pre-release builds (e.g. `"rc1"`, `"dev0"`).
     /// Taken from `client_release_type` when set (wrapper override); otherwise
-    /// derived from the version suffix after the first `-`. `None` on GA builds;
-    /// sent as `CLIENT_ENVIRONMENT.RELEASE_TYPE` when set.
+    /// derived from the version suffix (Cargo/semver `-rc1` or PEP 440
+    /// `.dev0` / `rc1`). `None` on GA builds; sent as
+    /// `CLIENT_ENVIRONMENT.RELEASE_TYPE` when set.
     pub release_type: Option<String>,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
@@ -169,16 +170,26 @@ impl ClientInfo {
 }
 
 /// Derive `CLIENT_ENVIRONMENT.RELEASE_TYPE` from a package version.
-/// Everything after the first `-` is the release type (e.g. `4.0.0-rc1` →
-/// `Some("rc1")`, `4.0.0-rc1-dev` → `Some("rc1-dev")`,
-/// `4.0.0-rc1+abc123` → `Some("rc1+abc123")`). GA versions without a
-/// pre-release suffix return `None`.
 pub(crate) fn release_type_from_version(version: &str) -> Option<String> {
-    let release_type = version.split_once('-').map(|(_, suffix)| suffix.trim())?;
-    if release_type.is_empty() {
+    let version = version.trim();
+    if version.is_empty() {
+        return None;
+    }
+
+    let version = version
+        .split_once('!')
+        .map(|(_, rest)| rest)
+        .unwrap_or(version);
+
+    let suffix_start = version
+        .char_indices()
+        .find_map(|(i, c)| (!c.is_ascii_digit() && c != '.').then_some(i))
+        .unwrap_or(version.len());
+    let suffix = version[suffix_start..].trim_start_matches(['.', '-']);
+    if suffix.is_empty() || suffix.starts_with('+') {
         None
     } else {
-        Some(release_type.to_owned())
+        Some(suffix.to_owned())
     }
 }
 
@@ -1360,6 +1371,23 @@ mod tests {
     }
 
     #[test]
+    fn test_client_info_derives_release_type_from_pep440_version() {
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            (
+                "client_app_version",
+                Setting::String("5.0.0.dev0".to_string()),
+            ),
+        ]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.version, "5.0.0.dev0");
+        assert_eq!(info.release_type.as_deref(), Some("dev0"));
+    }
+
+    #[test]
     fn test_client_info_derives_hyphenated_and_metadata_release_type() {
         let hyphenated = create_test_settings(vec![(
             "client_app_version",
@@ -1406,6 +1434,7 @@ mod tests {
     fn test_release_type_from_version() {
         assert_eq!(release_type_from_version("4.0.0"), None);
         assert_eq!(release_type_from_version("4.0.0-"), None);
+        assert_eq!(release_type_from_version("5.0.0+abc"), None);
         assert_eq!(
             release_type_from_version("4.0.0-rc1"),
             Some("rc1".to_owned())
@@ -1417,6 +1446,27 @@ mod tests {
         assert_eq!(
             release_type_from_version("4.0.0-rc1+abc123"),
             Some("rc1+abc123".to_owned())
+        );
+        assert_eq!(
+            release_type_from_version("5.0.0.dev0"),
+            Some("dev0".to_owned())
+        );
+        assert_eq!(
+            release_type_from_version("5.0.0.post1"),
+            Some("post1".to_owned())
+        );
+        assert_eq!(
+            release_type_from_version("5.0.0rc1"),
+            Some("rc1".to_owned())
+        );
+        assert_eq!(release_type_from_version("5.0.0b1"), Some("b1".to_owned()));
+        assert_eq!(
+            release_type_from_version("5.0.0a10"),
+            Some("a10".to_owned())
+        );
+        assert_eq!(
+            release_type_from_version("1!5.0.0.dev0"),
+            Some("dev0".to_owned())
         );
     }
 

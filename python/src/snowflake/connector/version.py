@@ -1,5 +1,5 @@
 # PEP 440 compliant version string (used by hatch for packaging)
-__version__ = "5.0.0rc1"
+__version__ = "5.0.0.dev0"
 
 
 def _release_components(version: str) -> tuple[int, ...]:
