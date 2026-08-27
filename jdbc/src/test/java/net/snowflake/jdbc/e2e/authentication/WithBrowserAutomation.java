@@ -34,6 +34,17 @@ interface WithBrowserAutomation extends WithNodeScripts {
   default Connection connectWithBrowserAutomation(
       ConnectSupplier connectFn, String scenario, String login, String password)
       throws SQLException {
+    return connectWithBrowserAutomation(connectFn, scenario, login, password, null);
+  }
+
+  /**
+   * Same as {@link #connectWithBrowserAutomation(ConnectSupplier, String, String, String)}, but
+   * forwards {@code totpSeed} to the browser leg so it can fill Snowflake's authenticator-app MFA
+   * verification step, if presented. Pass {@code null} for accounts that don't require MFA.
+   */
+  default Connection connectWithBrowserAutomation(
+      ConnectSupplier connectFn, String scenario, String login, String password, String totpSeed)
+      throws SQLException {
     AtomicReference<Connection> connection = new AtomicReference<>();
     AtomicReference<SQLException> connectError = new AtomicReference<>();
 
@@ -54,7 +65,12 @@ interface WithBrowserAutomation extends WithNodeScripts {
                 throw new IllegalStateException(
                     "Chromium did not start on port " + CHROMIUM_DEBUG_PORT + " within timeout");
               }
-              WithNodeScripts.runNode(PROVIDE_CREDENTIALS_SCRIPT, 60, scenario, login, password);
+              if (totpSeed != null) {
+                WithNodeScripts.runNode(
+                    PROVIDE_CREDENTIALS_SCRIPT, 90, scenario, login, password, totpSeed);
+              } else {
+                WithNodeScripts.runNode(PROVIDE_CREDENTIALS_SCRIPT, 60, scenario, login, password);
+              }
             });
 
     Throwable browserError = awaitQuietly(browser, 120);

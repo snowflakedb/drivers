@@ -1,5 +1,6 @@
 const assert = require('assert');
 const { chromium } = require('playwright');
+const TotpGenerator = require('./totpGenerator.js');
 
 const timeoutInMillis = 15000;
 
@@ -122,6 +123,49 @@ const getExternalBrowserOktaResponse = async (page) => {
     return await page.waitForSelector('text=Your identity was confirmed', { timeout: 10000 });
 };
 
+// Fill Snowflake's authenticator-app MFA verification step, if presented. No-op if the
+// field never appears, so this stays safe to call for accounts that don't require MFA.
+const fillMfaCodeIfPresented = async (page, totpSeed) => {
+    if (!totpSeed) {
+        return;
+    }
+    const mfaCodeInput = 'input[autocomplete="one-time-code"]';
+    try {
+        await page.waitForSelector(mfaCodeInput, { timeout: 5000 });
+    } catch (err) {
+        return;
+    }
+    const totp = new TotpGenerator(totpSeed);
+    // Python/ODBC/JDBC all share this one TOTP seed and run as parallel Jenkins stages, so
+    // two stages can submit the same 30s-window code - Snowflake's anti-replay check then
+    // rejects whichever arrives second, for a reason that has nothing to do with this
+    // attempt's own correctness. Retry with a fresh window's code rather than fail outright.
+    const maxAttempts = 2;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        // Generating right at a 30s window boundary risks the code expiring before Snowflake
+        // evaluates it (fill + click + redirect latency). Wait for a fresh window first so the
+        // code stays valid for the rest of its ~30s, instead of racing the boundary.
+        const remaining = totp.getTimeRemaining();
+        if (remaining < 8) {
+            await new Promise((resolve) => setTimeout(resolve, (remaining + 1) * 1000));
+        }
+        const { current } = await totp.generateTotp();
+        await page.fill(mfaCodeInput, current);
+        await page.click('button:has-text("Continue")');
+        try {
+            // Success navigates away, detaching this input. A rejected code leaves it
+            // attached (e.g. still showing an "invalid code" message) - retry in that case.
+            await page.waitForSelector(mfaCodeInput, { state: 'detached', timeout: 8000 });
+            return;
+        } catch (err) {
+            // Still on the MFA screen. Wait out the rest of this window so the next attempt
+            // generates from a window nobody else could have already submitted.
+            await new Promise((resolve) => setTimeout(resolve, (totp.getTimeRemaining() + 1) * 1000));
+        }
+    }
+    throw new Error(`MFA verification failed after ${maxAttempts} attempts`);
+};
+
 const checkOauthResponse = async (page) => {
     const jdbcConfirmationMessage = 'text=Authorization completed successfully';
     const odbcConfirmationMessage = 'text=Access to Snowflake has been granted to the ODBC driver.';
@@ -191,7 +235,7 @@ const successfulExternalOauthOktaConnection = async (login, password) => {
 
 };
 
-const successfulInternalOauthSnowflakeConnection = async (login, password) => {
+const successfulInternalOauthSnowflakeConnection = async (login, password, totpSeed) => {
     const loginElementInput = 'input[autocomplete="username"]';
     const credentialsElementInput = 'input[autocomplete="current-password"]';
 
@@ -203,6 +247,7 @@ const successfulInternalOauthSnowflakeConnection = async (login, password) => {
 
     const errMsg = await submitAndCheckSnowflakeErrorMessage(page);
     await assert.equal(errMsg, '', errMsg);
+    await fillMfaCodeIfPresented(page, totpSeed);
     await checkOauthResponse(page);
 
     await closeBrowser(page);
@@ -220,7 +265,7 @@ async function main() {
     } else if (args[0] === 'externalOauthOktaSuccess') {
         await successfulExternalOauthOktaConnection(args[1], args[2]);
     } else if (args[0] === 'internalOauthSnowflakeSuccess') {
-        await successfulInternalOauthSnowflakeConnection(args[1], args[2]);
+        await successfulInternalOauthSnowflakeConnection(args[1], args[2], args[3]);
     }
     process.exit(0);
 }

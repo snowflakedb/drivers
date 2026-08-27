@@ -190,6 +190,7 @@ TEST_CASE("oauth should authenticate using authorization code flow", "[oauth_e2e
       get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_CLIENT_SECRET");
   const std::string redirect_uri =
       get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_REDIRECT_URI");
+  const std::string totp_seed = get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_MFA_SEED");
 
   // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id / secret. `oauth_authorization_url`
   // and `oauth_token_request_url` are forwarded from parameters when present (otherwise the driver falls back to the
@@ -211,7 +212,7 @@ TEST_CASE("oauth should authenticate using authorization code flow", "[oauth_e2e
   // When Trying to Connect (this will spawn the local-loopback HTTP listener and `xdg-open`/`open`/`ShellExecute` the
   // IdP login URL unless a previously cached access token short-circuits the leg)
   SQLRETURN ret = oauth_auth::connect_with_browser_automation(dbc, connection_string, "internalOauthSnowflakeSuccess",
-                                                              user, password);
+                                                              user, password, totp_seed);
   oauth_auth::clean_browser_processes();
 
   // Then Login is successful and a simple query can be executed
@@ -233,6 +234,7 @@ TEST_CASE("oauth should reuse cached access token without browser interaction", 
       get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_CLIENT_SECRET");
   const std::string redirect_uri =
       get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_REDIRECT_URI");
+  const std::string totp_seed = get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_MFA_SEED");
 
   // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with client_store_temporary_credential=true
   //       and a token has been cached from a previous browser authentication
@@ -249,8 +251,8 @@ TEST_CASE("oauth should reuse cached access token without browser interaction", 
   oauth_auth::clean_browser_processes();
   {
     auto first = env.createConnectionHandle();
-    SQLRETURN ret = oauth_auth::connect_with_browser_automation(first, connection_string,
-                                                                "internalOauthSnowflakeSuccess", user, password);
+    SQLRETURN ret = oauth_auth::connect_with_browser_automation(
+        first, connection_string, "internalOauthSnowflakeSuccess", user, password, totp_seed);
     oauth_auth::clean_browser_processes();
     REQUIRE_ODBC(ret, first);
     verify_oauth_simple_query_execution(first);
@@ -282,6 +284,7 @@ TEST_CASE("oauth should fail authorization code flow with bad client secret", "[
   const std::string client_id = get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_CLIENT_ID");
   const std::string redirect_uri =
       get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_REDIRECT_URI");
+  const std::string totp_seed = get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_MFA_SEED");
 
   // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a
   //       valid client id but a deliberately invalid client secret.
@@ -303,7 +306,7 @@ TEST_CASE("oauth should fail authorization code flow with bad client secret", "[
 
   // When Trying to Connect
   SQLRETURN ret = oauth_auth::connect_with_browser_automation(dbc, connection_string, "internalOauthSnowflakeSuccess",
-                                                              user, password);
+                                                              user, password, totp_seed);
   oauth_auth::clean_browser_processes();
 
   // Then Connection fails with an authentication / login error

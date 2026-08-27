@@ -95,10 +95,15 @@ inline void clean_browser_processes() {
 // Run the Node.js browser automation script that fills the IdP credentials.
 // Single-quote each arg so a credential containing $, backtick, or backslash
 // reaches the script verbatim instead of being expanded by /bin/sh -c.
+// `totp_seed`, if non-empty, is forwarded so the script can fill Snowflake's
+// authenticator-app MFA verification step, if presented.
 inline void provide_browser_credentials(const std::string& scenario, const std::string& login,
-                                        const std::string& password) {
+                                        const std::string& password, const std::string& totp_seed = "") {
   std::string cmd = "node " + std::string(PROVIDE_CREDENTIALS_SCRIPT) + " " + shell_single_quote(scenario) + " " +
                     shell_single_quote(login) + " " + shell_single_quote(password);
+  if (!totp_seed.empty()) {
+    cmd += " " + shell_single_quote(totp_seed);
+  }
   int rc = std::system(cmd.c_str());
   if (rc != 0) {
     throw std::runtime_error("provideBrowserCredentials.js failed (rc=" + std::to_string(rc) + ")");
@@ -148,7 +153,7 @@ inline bool wait_for_chromium(int timeout_ms = 60000, int poll_interval_ms = 100
 // failure themselves.
 inline SQLRETURN connect_with_browser_automation(ConnectionHandleWrapper& dbc, const std::string& connection_string,
                                                  const std::string& scenario, const std::string& login,
-                                                 const std::string& password) {
+                                                 const std::string& password, const std::string& totp_seed = "") {
   std::promise<SQLRETURN> connect_rc_promise;
   std::future<SQLRETURN> connect_rc_future = connect_rc_promise.get_future();
 
@@ -159,12 +164,12 @@ inline SQLRETURN connect_with_browser_automation(ConnectionHandleWrapper& dbc, c
   });
 
   std::exception_ptr browser_error;
-  std::thread browser_thread([&scenario, &login, &password, &browser_error]() {
+  std::thread browser_thread([&scenario, &login, &password, &totp_seed, &browser_error]() {
     try {
       if (!wait_for_chromium()) {
         throw std::runtime_error("Chromium did not start on port 9222 within timeout");
       }
-      provide_browser_credentials(scenario, login, password);
+      provide_browser_credentials(scenario, login, password, totp_seed);
     } catch (...) {
       browser_error = std::current_exception();
     }

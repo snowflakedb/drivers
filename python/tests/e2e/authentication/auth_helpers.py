@@ -21,6 +21,21 @@ CLEAN_BROWSER_SCRIPT = "/externalbrowser/cleanBrowserProcesses.js"
 TOTP_GENERATOR_SCRIPT = "/externalbrowser/totpGenerator.js"
 CHROMIUM_DEBUG_PORT = 9222
 
+# How long connect_with_browser_automation() waits for the connect leg before giving up.
+_CONNECT_JOIN_TIMEOUT_SECONDS = 90
+
+# Tests that drive an interactive OAuth/browser connect through
+# connect_with_browser_automation() should pass this as `authentication_timeout` in their
+# connect_params. It must stay below _CONNECT_JOIN_TIMEOUT_SECONDS: the driver's own
+# `authentication_timeout` (120s by default - see connection_config.py) bounds how long the
+# connect leg keeps its OAuth loopback listener open waiting for the IdP redirect. If that
+# default outlives our join timeout, a failed browser leg (e.g. rejected credentials) leaves
+# the connect leg's daemon thread alive - and its OS-level loopback port bound - well past
+# the point where this test has already failed and returned control to pytest. The next
+# browser-OAuth test in the same worker then fails to bind that same port
+# ("Address already in use"), for a reason that has nothing to do with its own test body.
+RECOMMENDED_AUTHENTICATION_TIMEOUT_SECONDS = 75
+
 
 def verify_simple_query_execution(connection):
     """Verify that a simple query can be executed successfully."""
@@ -190,11 +205,18 @@ def connect_with_totp_retry(
     ) from last_error
 
 
-def provide_browser_credentials(scenario: str, login: str, password: str):
-    """Run the Node.js browser automation script that fills IdP credentials."""
+def provide_browser_credentials(scenario: str, login: str, password: str, totp_seed: str | None = None):
+    """Run the Node.js browser automation script that fills IdP credentials.
+
+    ``totp_seed`` is forwarded so the script can fill Snowflake's authenticator-app
+    MFA verification step, if presented; omit it for accounts that don't require MFA.
+    """
+    cmd = ["node", PROVIDE_CREDENTIALS_SCRIPT, scenario, login, password]
+    if totp_seed:
+        cmd.append(totp_seed)
     result = subprocess.run(
-        ["node", PROVIDE_CREDENTIALS_SCRIPT, scenario, login, password],
-        timeout=60,
+        cmd,
+        timeout=90,
         text=True,
     )
     if result.returncode != 0:
@@ -222,12 +244,14 @@ def connect_with_browser_automation(
     scenario: str,
     login: str,
     password: str,
+    totp_seed: str | None = None,
 ):
     """Run connect_fn and browser automation concurrently.
 
     The connect leg is authoritative: returns the connection on success, or
     re-raises the driver's exception unchanged so negative tests can assert on it.
     A browser-leg failure is only surfaced when the connect leg has no result.
+    ``totp_seed`` is forwarded to the browser leg for accounts that require MFA.
     """
     connect_result = {}
     browser_error_holder = []
@@ -242,7 +266,7 @@ def connect_with_browser_automation(
         try:
             if not _wait_for_chromium():
                 raise RuntimeError(f"Chromium did not start on port {CHROMIUM_DEBUG_PORT} within timeout")
-            provide_browser_credentials(scenario, login, password)
+            provide_browser_credentials(scenario, login, password, totp_seed)
         except Exception as e:
             browser_error_holder.append(e)
 
@@ -254,11 +278,11 @@ def connect_with_browser_automation(
     t_connect.start()
     t_browser.start()
 
-    t_browser.join(timeout=60)
-    t_connect.join(timeout=90)
+    t_browser.join(timeout=90)
+    t_connect.join(timeout=_CONNECT_JOIN_TIMEOUT_SECONDS)
 
     if t_connect.is_alive():
-        raise TimeoutError("Connect thread did not finish within 90s")
+        raise TimeoutError(f"Connect thread did not finish within {_CONNECT_JOIN_TIMEOUT_SECONDS}s")
 
     if "error" in connect_result:
         raise connect_result["error"]
@@ -267,7 +291,7 @@ def connect_with_browser_automation(
 
     # Connect leg produced nothing: the browser leg (or its absence) explains why.
     if t_browser.is_alive():
-        raise TimeoutError("Browser automation thread did not finish within 60s")
+        raise TimeoutError("Browser automation thread did not finish within 90s")
     if browser_error_holder:
         raise RuntimeError(f"Browser automation failed: {browser_error_holder}")
     raise AssertionError("Connection was not established")

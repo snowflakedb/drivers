@@ -113,6 +113,12 @@ async function main() {
     const code = await totpGen.generateTotp();
     return code;
 }
-main();
+// Only run the CLI entry point when invoked directly (`node totpGenerator.js`); requiring
+// this file as a module (e.g. from provideBrowserCredentials.js) must not construct a
+// TotpGenerator with no seed, which throws and crashes the whole process as an unhandled
+// rejection under Node 20's default --unhandled-rejections=throw.
+if (require.main === module) {
+    main();
+}
 
 module.exports = TotpGenerator;
