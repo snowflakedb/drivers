@@ -145,6 +145,12 @@ def backward_compatibility(obj: T) -> T:
       descriptor access, apply ``@backward_compatibility`` to the *raw
       function* (i.e. *below* ``@property`` / ``@prop.setter``) so the
       call-time wrapper is installed before the descriptor is built on top.
+
+    * **Plain value** (e.g. a module-level string constant) — registered
+      only; the value is returned unchanged. Like classes, it warns on first
+      attribute access once paired with
+      :func:`~snowflake.connector._internal.backward_compatibility.install_backward_compatibility_getattr`,
+      since there is no "call" to intercept.
     """
     return apply_backward_compatibility(obj)
 

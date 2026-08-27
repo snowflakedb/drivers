@@ -48,8 +48,11 @@ _BACKWARD_COMPAT_WARNED: set[tuple[str, str]] = set()
 # attribute: (a) descriptors such as ``property`` reject arbitrary attribute
 # assignment, so the marker approach silently failed for them, and (b) the
 # decorator stays non-invasive — the decorated object is never mutated.
-# Entries are held by identity under the default hash (classes, functions,
-# and stdlib descriptors are all hashable that way).
+# Classes, functions, and stdlib descriptors are held by identity under the
+# default hash. Plain values (e.g. module-level string constants) hash and
+# compare by *value* instead, so two unrelated constants with the same value
+# would collide here; harmless today (no such collision exists), but a
+# byte-for-byte identical string added elsewhere would be swept in too.
 _MARKED_BACKWARD_COMPAT: set[Any] = set()
 
 _DEPRECATION_WARNING_MSG_SUFFIX = (
@@ -62,10 +65,11 @@ def apply_backward_compatibility(obj: T) -> T:
     """Implement the ``@backward_compatibility`` decorator.
 
     Plain functions are wrapped so the first *external* call emits a warning.
-    Classes and descriptors (property, staticmethod, classmethod, etc.) are
-    passed through untouched; for classes the module-level ``__getattr__``
-    installed by :func:`install_backward_compatibility_getattr` turns
-    registry membership into a warn-on-first-access behavior.
+    Classes, descriptors (property, staticmethod, classmethod, etc.), and
+    plain values (e.g. module-level string constants) are passed through
+    unchanged; for those, the module-level ``__getattr__`` installed by
+    :func:`install_backward_compatibility_getattr` turns registry membership
+    into a warn-on-first-access behavior.
 
     The returned object is recorded in :data:`_MARKED_BACKWARD_COMPAT` so
     :func:`install_backward_compatibility_getattr` can later identify which
@@ -82,13 +86,14 @@ def apply_backward_compatibility(obj: T) -> T:
 
 def install_backward_compatibility_getattr(module_name: str) -> None:
     """Install a module-level ``__getattr__`` that warns on first access of
-    each ``@backward_compatibility``-decorated top-level **class**.
+    each ``@backward_compatibility``-decorated top-level **class or
+    module-level constant**.
 
     Must be called at the *bottom* of the target module, after all decorated
-    classes have been defined. The tagged classes are removed from the
-    module's globals and stashed privately so PEP 562 ``__getattr__`` is
-    invoked on access — which is what lets us distinguish "someone imported
-    this name" from mere module import.
+    names have been defined. The tagged names are removed from the module's
+    globals and stashed privately so PEP 562 ``__getattr__`` is invoked on
+    access — which is what lets us distinguish "someone imported this name"
+    from mere module import.
 
     Top-level functions decorated with ``@backward_compatibility`` are NOT
     moved here; they already emit a warning on first external call via the
@@ -100,14 +105,23 @@ def install_backward_compatibility_getattr(module_name: str) -> None:
     for name, value in list(vars(module).items()):
         if name.startswith("_"):
             continue
-        # module-level __getattr__ only intercepts classes; functions self-warn
-        # via the call wrapper installed by ``apply_backward_compatibility``.
-        if not inspect.isclass(value):
+        # Functions self-warn via the call-time wrapper installed by
+        # ``apply_backward_compatibility``; never stash them here.
+        if inspect.isfunction(value):
             continue
-        if not _is_marked_backward_compat(value):
+        # ``value`` may be an unhashable module global (e.g. a dict/list),
+        # which can never be a registry member. Probe defensively so the
+        # membership test can't raise TypeError on those globals.
+        try:
+            marked = _is_marked_backward_compat(value)
+        except TypeError:
             continue
-        # only stash classes that were defined in this module, not re-exports.
-        if getattr(value, "__module__", None) != module_name:
+        if not marked:
+            continue
+        # Classes: only stash those DEFINED in this module, not re-exports.
+        # Non-class marked values (module-level constants) carry no meaningful
+        # ``__module__``, so this re-export guard is scoped to classes.
+        if inspect.isclass(value) and getattr(value, "__module__", None) != module_name:
             continue
         stash[name] = value
         delattr(module, name)
