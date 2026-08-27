@@ -81,7 +81,7 @@ reviewers:
   rafal-kowalski_snow:
   ruslan-savenok_snow:
   piotr-bulawa_snow:
-  michal-cepiga_snow:
+  michal-lorenc-cepiga_snow:
   michal-hofman_snow:
   jakub-szczerbinski_snow:
   devansh-das_snow:
@@ -97,7 +97,7 @@ rules:
   all:
     - bartosz-oler_snow
   dotnet:
-    - michal-cepiga_snow
+    - michal-lorenc-cepiga_snow
     - piotr-bulawa_snow
     - michal-hofman_snow
     - dawid-heyman_snow
@@ -119,7 +119,7 @@ rules:
     # TODO: the commented users will be restored once we're close to PuPr release
     #- rafal-kowalski_snow
     #- piotr-bulawa_snow
-    #- michal-cepiga_snow
+    #- michal-lorenc-cepiga_snow
   odbc:
     - michal-hofman_snow
     - jakub-szczerbinski_snow
