@@ -66,10 +66,6 @@ impl SnowflakeTestClient {
         };
 
         test_client.set_options_from_parameters();
-        // Identify as PythonConnector so the server enables feature gates
-        // (multistatement, large LOB, etc.) that require a recognized client.
-        test_client.set_connection_option("client_app_id", "PythonConnector");
-        test_client.set_connection_option("client_app_version", "5.0.0");
         test_client
     }
 
@@ -162,10 +158,6 @@ impl SnowflakeTestClient {
         };
 
         test_client.set_options_from_parameters();
-        // Identify as PythonConnector so the server enables feature gates
-        // (multistatement, large LOB, etc.) that require a recognized client.
-        test_client.set_connection_option("client_app_id", "PythonConnector");
-        test_client.set_connection_option("client_app_version", "5.0.0");
         test_client
     }
 
