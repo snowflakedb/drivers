@@ -443,6 +443,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: sf-core-release
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -454,6 +455,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: sf-core-release-${{ matrix.artifact_id }}
           registry-cache-hit: ${{ steps.rust-cache-linux.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache-linux.outputs.target-cache-hit }}
@@ -646,6 +648,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: sf-core-release
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}

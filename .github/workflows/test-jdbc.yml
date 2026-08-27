@@ -181,6 +181,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "jdbc"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -261,6 +262,13 @@ jobs:
             ${{ runner.os }}-gradle-jdbc-
             ${{ runner.os }}-gradle-
 
+      - name: Shrink MSVC debug info
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_DEV_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_TEST_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+
       - name: Build Rust components
         # Windows runners have no system OpenSSL (openssl-sys can't find one and
         # the build fails), so build it from source. Mirrors the odbc/python
@@ -306,6 +314,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "jdbc"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -407,6 +416,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "jdbc"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -611,6 +621,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: "jdbc"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}

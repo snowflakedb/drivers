@@ -155,6 +155,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: jdbc-bridge-release-${{ matrix.name }}
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -232,6 +233,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: jdbc-assemble-proto
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -298,6 +300,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: jdbc-assemble-thin-proto
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}

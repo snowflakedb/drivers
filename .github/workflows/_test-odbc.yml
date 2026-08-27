@@ -85,6 +85,13 @@ jobs:
         if: matrix.cargo_target
         run: rustup target add ${{ matrix.cargo_target }}
 
+      - name: Shrink MSVC debug info
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_DEV_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_TEST_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+
       - name: Build ODBC driver (Linux)
         if: runner.os == 'Linux'
         run: cargo build --locked --package odbc
@@ -128,6 +135,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
+          slim-mode: aggressive
           shared-key: ${{ matrix.cache_key }}
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
