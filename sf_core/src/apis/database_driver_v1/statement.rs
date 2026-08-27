@@ -486,23 +486,35 @@ impl DatabaseDriverV1 {
                                 // `Cancelled`; ODBC maps them to different SQLSTATEs),
                                 // and so it also works on the sync paths that have no
                                 // ctx.
-                                if let Err(error) = abort_inflight_query(
-                                    &conn_arc,
-                                    request_id.to_string(),
-                                    query.clone(),
-                                )
-                                .await
-                                {
-                                    tracing::warn!(
-                                        %error,
-                                        "failed to abort query after client-side timeout"
-                                    );
-                                }
-                                return Err(QueryTimeoutSnafu {
-                                    budget,
-                                    request_id: request_id.to_string(),
-                                }
-                                .build());
+                                // Fire-and-forget the abort to avoid blocking the timeout error
+                                // return on slow/hung abort requests. Spawn it rather than awaiting
+                                // inline so the test can observe a timeout at the configured
+                                // threshold rather than timeout + abort latency.
+                                let conn_arc_clone = conn_arc.clone();
+                                let request_id_clone = request_id.to_string();
+                                let query_clone = query.clone();
+                                tokio::spawn(async move {
+                                    match abort_inflight_query(
+                                        &conn_arc_clone,
+                                        request_id_clone,
+                                        query_clone,
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            tracing::debug!(
+                                                "successfully aborted query after timeout"
+                                            );
+                                        }
+                                        Err(error) => {
+                                            tracing::warn!(
+                                                %error,
+                                                "failed to abort query after client-side timeout"
+                                            );
+                                        }
+                                    }
+                                });
+                                return Err(QueryTimeoutSnafu { budget, request_id }.build());
                             }
                         }
                     } else {
