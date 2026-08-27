@@ -1031,9 +1031,10 @@ pub struct WrapperIdentity {
     /// `None` means compiler info is not applicable for this language.
     pub language_compiler: Option<String>,
     /// Optional override for `CLIENT_ENVIRONMENT.RELEASE_TYPE`. When `None`,
-    /// core derives the value from `driver_version`'s suffix after the first `-`.
-    /// Set explicitly only when the wrapper needs a value different from that
-    /// suffix. `None` on GA builds when the version has no suffix.
+    /// core derives the value from `driver_version` (Cargo/semver `-rc1` or
+    /// PEP 440 `.dev0` / `rc1`). Set explicitly only when the wrapper needs a
+    /// value different from that suffix. `None` on GA builds when the version
+    /// has no suffix.
     pub release_type: Option<String>,
 }
 
