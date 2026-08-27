@@ -1887,7 +1887,14 @@ mod tests {
     }
 
     fn rows_affected_of(data: &Data) -> Option<i64> {
-        result_set::calculate_rows_affected(data, data.statement_type_id)
+        // Default (Python) flavor: exercises the non-COPY paths shared by every
+        // wrapper. COPY's JDBC-specific rows_loaded summation is covered by the
+        // flavor-keyed tests in result_set.rs.
+        result_set::calculate_rows_affected(
+            data,
+            data.statement_type_id,
+            &super::super::global_state::PutGetResultsetFlavor::default(),
+        )
     }
 
     #[test]

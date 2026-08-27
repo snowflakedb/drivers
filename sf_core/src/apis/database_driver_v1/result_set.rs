@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::connection::{Connection, RefreshContext};
 use super::error::*;
-use super::global_state::{DatabaseDriverV1, WrapperPresets};
+use super::global_state::{DatabaseDriverV1, PutGetResultsetFlavor, WrapperPresets};
 use super::query::build_reader_from_rowset_data;
 use crate::chunks::{ChunkDownloadData, ChunkFormatKind, PrefetchConfig};
 use crate::handle_manager::Handle;
@@ -185,12 +185,48 @@ fn effective_statement_type_id(data: &Data) -> Option<i64> {
 /// - `NoResult` (DDL / TCL / unknown): `None`. Snowflake returns `total: 1` as a
 ///   generic success marker for these; surfacing it as `rows_affected = 1` is
 ///   misleading, so we report "not applicable" instead.
-pub(super) fn calculate_rows_affected(data: &Data, statement_type_id: Option<i64>) -> Option<i64> {
-    match QueryType::from_raw(statement_type_id).result_kind() {
+///
+/// COPY is wrapper-specific: JDBC sums `rows_loaded` (matching snowflake-jdbc),
+/// while ODBC/Python report the status-row count in `data.total`.
+pub(super) fn calculate_rows_affected(
+    data: &Data,
+    statement_type_id: Option<i64>,
+    flavor: &PutGetResultsetFlavor,
+) -> Option<i64> {
+    let query_type = QueryType::from_raw(statement_type_id);
+    if query_type == QueryType::COPY && *flavor == PutGetResultsetFlavor::Jdbc {
+        return Some(sum_copy_rows_loaded(data));
+    }
+    match query_type.result_kind() {
         ResultKind::UpdateCount => Some(sum_dml_affected_rows(data)),
         ResultKind::Cursor => data.total,
         ResultKind::NoResult => None,
     }
+}
+
+/// Sum the `rows_loaded` column of a COPY status rowset (one row per file).
+/// Returns 0 when the rowset is not inline JSON (Arrow / remote chunks), which
+/// is not materialised here; the common single-file COPY is inline.
+fn sum_copy_rows_loaded(data: &Data) -> i64 {
+    let (Some(rowset), Some(row_types)) = (&data.rowset, &data.row_type) else {
+        return 0;
+    };
+    let Some(col_idx) = row_types
+        .iter()
+        .position(|col| col.name.eq_ignore_ascii_case("rows_loaded"))
+    else {
+        return 0;
+    };
+
+    let mut rows_loaded = 0i64;
+    for row in rowset {
+        if let Some(Some(value)) = row.get(col_idx)
+            && let Ok(count) = value.parse::<i64>()
+        {
+            rows_loaded += count;
+        }
+    }
+    rows_loaded
 }
 
 /// Sum the integer cells of the DML affected-row columns in the first rowset row.
@@ -224,7 +260,11 @@ pub(super) fn response_to_descriptor(
 ) -> ResultSetDescriptor {
     let query_id = data.query_id.clone().unwrap_or_default();
     let statement_type_id = effective_statement_type_id(data);
-    let rows_affected = calculate_rows_affected(data, statement_type_id);
+    let rows_affected = calculate_rows_affected(
+        data,
+        statement_type_id,
+        &wrapper_presets.put_get_resultset_flavor,
+    );
     let columns = data
         .row_type
         .as_ref()
@@ -739,6 +779,56 @@ mod tests {
         let data: Data = serde_json::from_str(JSON_ROWSET).expect("fixture must deserialize");
         let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
         assert_eq!(descriptor.row_count, None);
+    }
+
+    /// COPY status rowset: two files loading 2 and 3 rows; `total` is the file
+    /// count (2). statementTypeId 13824 == 0x3600 (`QueryType::COPY`).
+    const COPY_STATUS_ROWSET: &str = r#"{
+        "statementTypeId": 13824,
+        "total": 2,
+        "rowset": [
+            ["a.csv", "LOADED", "2", "2", "0"],
+            ["b.csv", "LOADED", "3", "3", "0"]
+        ],
+        "rowtype": [
+            {"name": "file", "type": "TEXT", "nullable": false},
+            {"name": "status", "type": "TEXT", "nullable": false},
+            {"name": "rows_parsed", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+            {"name": "rows_loaded", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+            {"name": "error_count", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10}
+        ]
+    }"#;
+
+    #[test]
+    fn response_to_descriptor_copy_jdbc_sums_rows_loaded() {
+        let data: Data =
+            serde_json::from_str(COPY_STATUS_ROWSET).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::jdbc());
+        assert_eq!(descriptor.rows_affected, Some(5));
+    }
+
+    #[test]
+    fn response_to_descriptor_copy_odbc_uses_file_count() {
+        let data: Data =
+            serde_json::from_str(COPY_STATUS_ROWSET).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::odbc());
+        assert_eq!(descriptor.rows_affected, Some(2));
+    }
+
+    #[test]
+    fn response_to_descriptor_copy_python_uses_file_count() {
+        let data: Data =
+            serde_json::from_str(COPY_STATUS_ROWSET).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::python());
+        assert_eq!(descriptor.rows_affected, Some(2));
+    }
+
+    #[test]
+    fn response_to_descriptor_copy_jdbc_without_inline_rowset_is_zero() {
+        let data: Data = serde_json::from_str(r#"{ "statementTypeId": 13824, "total": 2 }"#)
+            .expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::jdbc());
+        assert_eq!(descriptor.rows_affected, Some(0));
     }
 
     #[test]
