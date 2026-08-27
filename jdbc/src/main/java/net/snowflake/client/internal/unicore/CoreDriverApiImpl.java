@@ -352,7 +352,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   public StatementPrepareResponse statementPrepare(StatementHandle stmtHandle) {
     StatementPrepareRequest request =
         StatementPrepareRequest.newBuilder().setStmtHandle(stmtHandle).build();
-    return invoke(() -> client.statementPrepare(request));
+    return await(client.statementPrepare(request));
   }
 
   public StatementSetOptionsResponse statementSetOptions(

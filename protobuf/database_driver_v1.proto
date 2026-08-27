@@ -1107,7 +1107,9 @@ service DatabaseDriver {
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);
   rpc StatementSetSqlQuery(StatementSetSqlQueryRequest) returns (StatementSetSqlQueryResponse);
   rpc StatementSetSubstraitPlan(StatementSetSubstraitPlanRequest) returns (StatementSetSubstraitPlanResponse);
-  rpc StatementPrepare(StatementPrepareRequest) returns (StatementPrepareResponse);
+  rpc StatementPrepare(StatementPrepareRequest) returns (StatementPrepareResponse) {
+    option (async_first) = true;
+  }
   rpc StatementSetOptions(StatementSetOptionsRequest) returns (StatementSetOptionsResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (ExecuteQueryResponse) {

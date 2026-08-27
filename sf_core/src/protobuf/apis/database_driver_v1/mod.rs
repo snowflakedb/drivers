@@ -943,15 +943,16 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_prepare", skip(self, input))]
+    #[instrument(name = "DatabaseDriverV1::statement_prepare", skip(self, ctx, input))]
     async fn statement_prepare(
         &self,
+        ctx: Option<&OperationCtx>,
         input: StatementPrepareRequest,
     ) -> Result<StatementPrepareResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
         let result = self
             .driver
-            .statement_prepare(stmt_handle.into())
+            .statement_prepare(ctx, stmt_handle.into())
             .await
             .to_protobuf()?;
         let result_ptr = reader_to_arrow_stream_ptr(result.stream);

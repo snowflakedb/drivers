@@ -222,9 +222,15 @@ pub struct PrepareResult {
 }
 
 impl DatabaseDriverV1 {
-    pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
+    /// Describe a statement without producing rows (`describe_only`), returning
+    /// the column and bind metadata.
+    pub async fn statement_prepare(
+        &self,
+        ctx: Option<&OperationCtx>,
+        stmt_handle: Handle,
+    ) -> Result<PrepareResult, ApiError> {
         let session_id = self.session_id_for_stmt(stmt_handle).await;
-        async {
+        let prepare = Box::pin(async {
             // Multi-statement query prepare is not supported. `request_id` is
             // always `Some` here — `execute_query_internal` mints one on every
             // path — so binding `Some` keeps `PrepareResult.request_id`
@@ -233,10 +239,7 @@ impl DatabaseDriverV1 {
                 info: rs_info,
                 request_id: Some(request_id),
             } = self
-                // `StatementPrepare` is not `async_first`, so there is no ctx to
-                // observe and nothing to register an abort against.
-                // TODO SNOW-3927048: make it cancellable, even without aborting request
-                .execute_query_internal(None, stmt_handle, None, Some(true), None)
+                .execute_query_internal(ctx, stmt_handle, None, Some(true), None)
                 .await?
             else {
                 return InvalidArgumentSnafu {
@@ -269,9 +272,10 @@ impl DatabaseDriverV1 {
                 binds: rs_info.descriptor.binds,
                 request_id,
             })
-        }
-        .instrument(crate::snowflake_op_span!("statement_prepare", session_id))
-        .await
+        });
+        run_opt(ctx, "statement_prepare", prepare)
+            .instrument(crate::snowflake_op_span!("statement_prepare", session_id))
+            .await
     }
 }
 

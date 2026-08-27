@@ -21,13 +21,13 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConfigSetting, ConnectionInitRequest, ConnectionInitResponse, ConnectionNewRequest,
     ConnectionNewResponse, ConnectionSetOptionsRequest, ConnectionSetOptionsResponse,
     DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest, DatabaseNewResponse,
-    DriverException, ErrorKind, StatementExecuteQueryRequest, StatementNewRequest,
-    StatementNewResponse, StatementSetSqlQueryRequest, StatementSetSqlQueryResponse,
-    config_setting,
+    DriverException, ErrorKind, StatementExecuteQueryRequest, StatementHandle, StatementNewRequest,
+    StatementNewResponse, StatementPrepareRequest, StatementSetSqlQueryRequest,
+    StatementSetSqlQueryResponse, config_setting,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::mpsc::{SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -379,6 +379,141 @@ async fn connected(transport: &RustTransport, addr: SocketAddr) -> ConnectionIni
     }
 }
 
+/// Drive the whole setup a submitted-query test needs — connect, open a
+/// statement, and set [`SLOW_QUERY`] on it — returning the statement handle.
+///
+/// Shared by every test that cancels a query so they cannot drift in how the
+/// statement was set up, which is what would let one of them silently stop
+/// exercising a submitted query.
+async fn statement_with_slow_query(transport: &RustTransport, addr: SocketAddr) -> StatementHandle {
+    let init = connected(transport, addr).await;
+    let conn = init.conn_handle.expect("conn handle");
+    let _: ConnectionInitResponse = call(transport, "connection_init", init).await;
+
+    let stmt = call::<_, StatementNewResponse>(
+        transport,
+        "statement_new",
+        StatementNewRequest {
+            conn_handle: Some(conn),
+        },
+    )
+    .await
+    .stmt_handle
+    .expect("stmt handle");
+    let _: StatementSetSqlQueryResponse = call(
+        transport,
+        "statement_set_sql_query",
+        StatementSetSqlQueryRequest {
+            stmt_handle: Some(stmt),
+            query: SLOW_QUERY.to_string(),
+        },
+    )
+    .await;
+    stmt
+}
+
+/// A fresh [`HangingQuery`] mock state, plus the receiver the canceller thread
+/// waits on to learn that the query-request has reached the server.
+fn hanging_query_state() -> (Arc<HangingQuery>, Receiver<()>) {
+    let (tx, query_received) = sync_channel(1);
+    (
+        Arc::new(HangingQuery {
+            query_received: Mutex::new(tx),
+            query_request_id: Mutex::new(None),
+            abort_bodies: Mutex::new(Vec::new()),
+            connections: Mutex::new(Vec::new()),
+        }),
+        query_received,
+    )
+}
+
+/// Dispatch `method` under a fresh operation handle, cancelling it from a plain
+/// OS thread as soon as the mock reports that the query-request is on the wire.
+///
+/// The `method` stays at the call site so each test still names the RPC it
+/// covers. Panics if the mock never saw a query-request: without that check a
+/// test could pass having cancelled an operation that never submitted anything,
+/// which is the precise false pass this file exists to rule out.
+async fn cancel_once_the_query_is_on_the_wire(
+    transport: &Arc<RustTransport>,
+    query_received: Receiver<()>,
+    method: &str,
+    request: Vec<u8>,
+) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
+    let (operation, _token) = transport.register();
+
+    let canceller = std::thread::spawn({
+        let transport = transport.clone();
+        move || {
+            let saw_query = query_received.recv_timeout(BOUND).is_ok();
+            transport.cancel(operation);
+            saw_query
+        }
+    });
+
+    let result = tokio::time::timeout(
+        BOUND,
+        transport.handle_message_cancellable("DatabaseDriver", method, request, operation),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("cancelling must unblock {method} well inside the bound"));
+
+    let saw_query = canceller.join().expect("canceller thread panicked");
+    assert!(
+        saw_query,
+        "the mock never received a query-request, so this did not test cancelling an in-flight {method}"
+    );
+    result
+}
+
+/// Assert that `result` is the cancelled application error, decoding the
+/// `DriverException` so the assertion is on `kind` rather than on a message
+/// substring.
+fn assert_cancelled(result: Result<Vec<u8>, ProtoError<Vec<u8>>>) {
+    match result {
+        Err(ProtoError::Application(bytes)) => {
+            let ex = DriverException::decode(&bytes[..]).expect("decodes as DriverException");
+            assert_eq!(
+                ex.kind,
+                ErrorKind::Cancelled as i32,
+                "a cancelled operation must report ERROR_KIND_CANCELLED, got {ex:?}"
+            );
+        }
+        other => panic!("expected a cancelled application error, got {other:?}"),
+    }
+}
+
+/// Assert that cancellation emitted exactly one abort-request, and that it
+/// targeted the `requestId` the mock actually saw on the query-request.
+///
+/// Matching against the observed `requestId` (rather than any well-formed UUID)
+/// is what makes this an abort *of the cancelled query* instead of an abort of
+/// something. The count pins at-most-one-abort-per-cancelled-query.
+fn assert_aborted_the_submitted_query(state: &HangingQuery) {
+    let query_request_id = state
+        .query_request_id
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("query-request should have been received");
+    let abort_bodies = state.abort_bodies.lock().unwrap();
+    assert_eq!(
+        abort_bodies.len(),
+        1,
+        "cancelling must emit exactly one abort-request; got {abort_bodies:?}"
+    );
+    assert!(
+        abort_bodies[0].contains(&format!(r#""requestId":"{query_request_id}""#)),
+        "abort body must target the cancelled query's requestId {query_request_id}; body: {}",
+        abort_bodies[0]
+    );
+    assert!(
+        abort_bodies[0].contains(&format!(r#""sqlText":"{SLOW_QUERY}""#)),
+        "abort body must echo the cancelled query's sqlText; body: {}",
+        abort_bodies[0]
+    );
+}
+
 /// Dispatch `connection_init` under `operation`, as the C API and JDBC bridges do.
 async fn init_cancellable(
     transport: &RustTransport,
@@ -436,17 +571,7 @@ async fn cancelling_a_handle_from_another_thread_unblocks_an_in_flight_login() {
         "the mock never received a request, so this did not test cancelling in-flight network work"
     );
 
-    match result {
-        Err(ProtoError::Application(bytes)) => {
-            let ex = DriverException::decode(&bytes[..]).expect("decodes as DriverException");
-            assert_eq!(
-                ex.kind,
-                ErrorKind::Cancelled as i32,
-                "a cancelled operation must report ERROR_KIND_CANCELLED, got {ex:?}"
-            );
-        }
-        other => panic!("expected a cancelled application error, got {other:?}"),
-    }
+    assert_cancelled(result);
 }
 
 /// The crux of query cancellation: cancelling the operation handle for an
@@ -460,112 +585,61 @@ async fn cancelling_a_handle_from_another_thread_unblocks_an_in_flight_login() {
 /// and is awaited before the caller is told the operation was cancelled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancelling_an_in_flight_query_aborts_it_server_side() {
-    let (tx, query_received) = sync_channel(1);
-    let state = Arc::new(HangingQuery {
-        query_received: Mutex::new(tx),
-        query_request_id: Mutex::new(None),
-        abort_bodies: Mutex::new(Vec::new()),
-        connections: Mutex::new(Vec::new()),
-    });
+    let (state, query_received) = hanging_query_state();
     let (addr, _server) = spawn_hanging_query(state.clone()).await;
 
     let transport = Arc::new(RustTransport::new());
-    let init = connected(&transport, addr).await;
-    let conn = init.conn_handle.expect("conn handle");
-    let _: ConnectionInitResponse = call(&transport, "connection_init", init).await;
+    let stmt = statement_with_slow_query(&transport, addr).await;
 
-    let stmt = call::<_, StatementNewResponse>(
+    let result = cancel_once_the_query_is_on_the_wire(
         &transport,
-        "statement_new",
-        StatementNewRequest {
-            conn_handle: Some(conn),
-        },
-    )
-    .await
-    .stmt_handle
-    .expect("stmt handle");
-    let _: StatementSetSqlQueryResponse = call(
-        &transport,
-        "statement_set_sql_query",
-        StatementSetSqlQueryRequest {
+        query_received,
+        "statement_execute_query",
+        StatementExecuteQueryRequest {
             stmt_handle: Some(stmt),
-            query: SLOW_QUERY.to_string(),
-        },
+            bindings: None,
+            timeout_seconds: None,
+        }
+        .encode_to_vec(),
     )
     .await;
 
-    let (operation, _token) = transport.register();
-
-    // Cancel from a plain OS thread once the query is genuinely on the wire, so
-    // the in-flight identity has been published and there is something to abort.
-    let canceller = std::thread::spawn({
-        let transport = transport.clone();
-        move || {
-            let saw_query = query_received.recv_timeout(BOUND).is_ok();
-            transport.cancel(operation);
-            saw_query
-        }
-    });
-
-    let result = tokio::time::timeout(
-        BOUND,
-        transport.handle_message_cancellable(
-            "DatabaseDriver",
-            "statement_execute_query",
-            StatementExecuteQueryRequest {
-                stmt_handle: Some(stmt),
-                bindings: None,
-                timeout_seconds: None,
-            }
-            .encode_to_vec(),
-            operation,
-        ),
-    )
-    .await
-    .expect("cancelling must unblock the query well inside the bound");
-
-    let saw_query = canceller.join().expect("canceller thread panicked");
-    assert!(
-        saw_query,
-        "the mock never received a query-request, so this did not test cancelling an in-flight query"
-    );
-
-    match result {
-        Err(ProtoError::Application(bytes)) => {
-            let ex = DriverException::decode(&bytes[..]).expect("decodes as DriverException");
-            assert_eq!(
-                ex.kind,
-                ErrorKind::Cancelled as i32,
-                "a cancelled query must report ERROR_KIND_CANCELLED, got {ex:?}"
-            );
-        }
-        other => panic!("expected a cancelled application error, got {other:?}"),
-    }
-
-    // No sleep before these assertions: `OperationCtx::run` awaits the registered
+    assert_cancelled(result);
+    // No sleep before this assertion: `OperationCtx::run` awaits the registered
     // cleanup, so the abort has already completed by the time the call returned.
-    let query_request_id = state
-        .query_request_id
-        .lock()
-        .unwrap()
-        .clone()
-        .expect("query-request should have been received");
-    let abort_bodies = state.abort_bodies.lock().unwrap();
-    assert_eq!(
-        abort_bodies.len(),
-        1,
-        "cancelling must emit exactly one abort-request; got {abort_bodies:?}"
-    );
-    assert!(
-        abort_bodies[0].contains(&format!(r#""requestId":"{query_request_id}""#)),
-        "abort body must target the cancelled query's requestId {query_request_id}; body: {}",
-        abort_bodies[0]
-    );
-    assert!(
-        abort_bodies[0].contains(&format!(r#""sqlText":"{SLOW_QUERY}""#)),
-        "abort body must echo the cancelled query's sqlText; body: {}",
-        abort_bodies[0]
-    );
+    assert_aborted_the_submitted_query(&state);
+}
+
+/// The same guarantee for `statement_prepare`, which submits a `describe_only`
+/// query-request and so can park on the network exactly as an execute does.
+///
+/// Worth its own test rather than trusting the execute coverage: `statement_prepare`
+/// reaches the wire through its own entry point, and it was the last query-submitting
+/// RPC left unmarked — it passed `None` for the ctx, so a cancel could only drop the
+/// local future and the described query kept running server-side. This pins that the
+/// marker is wired all the way through: ctx observed at the prepare boundary *and*
+/// handed down so the abort is registered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_prepare_aborts_it_server_side() {
+    let (state, query_received) = hanging_query_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let stmt = statement_with_slow_query(&transport, addr).await;
+
+    let result = cancel_once_the_query_is_on_the_wire(
+        &transport,
+        query_received,
+        "statement_prepare",
+        StatementPrepareRequest {
+            stmt_handle: Some(stmt),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled(result);
+    assert_aborted_the_submitted_query(&state);
 }
 
 /// A query that completes normally must not emit an abort-request. Guards the
@@ -573,40 +647,12 @@ async fn cancelling_an_in_flight_query_aborts_it_server_side() {
 /// aborted would cancel healthy work.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_query_that_completes_emits_no_abort_request() {
-    let (tx, _query_received) = sync_channel(1);
-    let state = Arc::new(HangingQuery {
-        query_received: Mutex::new(tx),
-        query_request_id: Mutex::new(None),
-        abort_bodies: Mutex::new(Vec::new()),
-        connections: Mutex::new(Vec::new()),
-    });
+    let (state, _query_received) = hanging_query_state();
     // `hang: false` → the query-request is answered immediately.
     let (addr, _server) = spawn_answering_query(state.clone()).await;
 
     let transport = Arc::new(RustTransport::new());
-    let init = connected(&transport, addr).await;
-    let conn = init.conn_handle.expect("conn handle");
-    let _: ConnectionInitResponse = call(&transport, "connection_init", init).await;
-
-    let stmt = call::<_, StatementNewResponse>(
-        &transport,
-        "statement_new",
-        StatementNewRequest {
-            conn_handle: Some(conn),
-        },
-    )
-    .await
-    .stmt_handle
-    .expect("stmt handle");
-    let _: StatementSetSqlQueryResponse = call(
-        &transport,
-        "statement_set_sql_query",
-        StatementSetSqlQueryRequest {
-            stmt_handle: Some(stmt),
-            query: SLOW_QUERY.to_string(),
-        },
-    )
-    .await;
+    let stmt = statement_with_slow_query(&transport, addr).await;
 
     let (operation, _token) = transport.register();
     let _ = tokio::time::timeout(
