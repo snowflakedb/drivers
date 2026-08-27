@@ -2227,6 +2227,7 @@ enum OdbcFunction {
     // ---- Handle management ------------------------------------------------
     AllocHandle = 1001,
     FreeConnect = 14,
+    FreeEnv = 15,
     FreeHandle = 1006,
     FreeStmt = 16,
 
@@ -2319,6 +2320,7 @@ impl TryFrom<u16> for OdbcFunction {
         match v {
             1001 => Ok(Self::AllocHandle),
             14   => Ok(Self::FreeConnect),
+            15   => Ok(Self::FreeEnv),
             1006 => Ok(Self::FreeHandle),
             16   => Ok(Self::FreeStmt),
             55   => Ok(Self::BrowseConnect),
@@ -2400,6 +2402,7 @@ impl OdbcFunction {
     const ALL: &[Self] = &[
         Self::AllocHandle,
         Self::FreeConnect,
+        Self::FreeEnv,
         Self::FreeHandle,
         Self::FreeStmt,
         Self::BrowseConnect,
@@ -3376,6 +3379,14 @@ mod tests {
         assert!(
             OdbcFunction::FreeConnect.is_supported(),
             "SQLFreeConnect is exported in c_api.rs; SQLGetFunctions must report it supported"
+        );
+    }
+
+    #[test]
+    fn free_env_is_reported_supported() {
+        assert!(
+            OdbcFunction::FreeEnv.is_supported(),
+            "SQLFreeEnv is exported in c_api.rs; SQLGetFunctions must report it supported"
         );
     }
 

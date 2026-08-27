@@ -5,6 +5,7 @@
 New features:
 
 - Implemented `SQLFreeConnect` (ODBC 2.x) as a thin wrapper around `SQLFreeHandle(SQL_HANDLE_DBC, …)` for direct-link and ODBC 2.x applications that bypass the Driver Manager. (snowflakedb/drivers#1186)
+- Implemented `SQLFreeEnv` (ODBC 2.x) as a thin wrapper around `SQLFreeHandle(SQL_HANDLE_ENV, …)` for direct-link and ODBC 2.x applications that bypass the Driver Manager. (snowflakedb/drivers#1187)
 
 Bug fixes:
 

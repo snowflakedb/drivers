@@ -85,6 +85,20 @@ pub unsafe extern "system" fn SQLFreeConnect(connection_handle: sql::Handle) -> 
     result.to_sql_code()
 }
 
+/// ODBC 2.x environment-handle free. Equivalent to
+/// `SQLFreeHandle(SQL_HANDLE_ENV, environment_handle)`.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLFreeEnv(environment_handle: sql::Handle) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Env, environment_handle, "SQLFreeEnv");
+    let result = api::handle_allocation::sql_free_handle(sql::HandleType::Env, environment_handle);
+    record_err!(sql::HandleType::Env, environment_handle, result);
+    result.to_sql_code()
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]

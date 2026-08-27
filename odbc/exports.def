@@ -26,6 +26,7 @@ EXPORTS
     SQLFetch
     SQLFetchScroll
     SQLFreeConnect
+    SQLFreeEnv
     SQLFreeHandle
     SQLFreeStmt
     SQLGetConnectAttrW
