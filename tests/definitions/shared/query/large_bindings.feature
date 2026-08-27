@@ -58,6 +58,24 @@ Feature: Large (stage-based) parameter binding
     And Query "SELECT id, name FROM {table} WHERE id IN (0, 9) ORDER BY id" is executed
     Then Result should contain rows [[0, "stage-0"], [9, "stage-9"]]
 
+  @jdbc_e2e
+  Scenario: should keep an all-NULL row on the inline JSON path when stage binding is disabled
+    Given Snowflake client is logged in
+    And A temporary table with columns (id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER) exists
+    And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 0
+    When a batch of one row with every column set to SQL NULL is inserted using multirow binding
+    Then no new bind file should have been uploaded to SYSTEM$BIND
+    And every column of the round-tripped row reads back as SQL NULL
+
+  @jdbc_e2e
+  Scenario: should stage-bind an all-NULL row when the bound cell count meets the threshold
+    Given Snowflake client is logged in
+    And A temporary table with columns (id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER) exists
+    And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 6
+    When a batch of one row with every column set to SQL NULL is inserted using multirow binding
+    Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as the bound parameters
+    And every column of the round-tripped row reads back as SQL NULL
+
   @odbc_e2e
   Scenario: should skip SQL_PARAM_IGNORE sets during array execution
     Given Snowflake client is logged in
