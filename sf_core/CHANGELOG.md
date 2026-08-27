@@ -4,7 +4,9 @@
 
 New features:
 
+- Added a `token_file_path` connection parameter that loads a PAT, legacy OAuth, or OIDC bearer token from a file (including from `connections.toml`), matching the legacy Python connector. If both `token` and `token_file_path` are set, the file contents are used. (snowflakedb/drivers#1445)
 - Added a `secondary_roles` connection parameter that lets a client control secondary-role activation at login (e.g. `ALL` or `NONE`) without relying on the user's `DEFAULT_SECONDARY_ROLES` setting, ported from legacy snowflake-connector-python. Also restores parity with legacy ODBC's `SecondaryRoles` connection attribute, and is newly available (with no legacy equivalent) for JDBC. (snowflakedb/drivers#954)
+
 - Added server-side query cancel: capture the in-flight `requestId`/`sqlText` on the statement at submit time and add a `statement_cancel` driver API (plus `StatementCancel` RPC) that aborts the running query via `POST /queries/v1/abort-request`, so a cross-thread `SQLCancel` can stop a query on the server. (snowflakedb/drivers#628)
 - Added a shared operation-cancellation registry and `RustTransport::handle_message_cancellable`, letting a bridge cancel an in-flight RPC by handle from any thread and surface cancellation as `DriverException` with `ERROR_KIND_CANCELLED`; the async C API now cancels through this registry. (snowflakedb/drivers#TBD)
 - Added async-first RPCs: an RPC marked `async_first` in the proto generates a `Future`-returning client method, and JDBC's `ConnectionInit` now uses it via new `nativeSubmitMessage`/`nativeAwaitMessage`/`nativeCancel` JNI entries. (snowflakedb/drivers#TBD)

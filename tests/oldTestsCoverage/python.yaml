@@ -509,7 +509,9 @@ tests:
   - test_name: test_stats_reset_on_select
     ud_tests: []
   - test_name: test_token_file_path
-    ud_tests: []
+    ud_tests:
+      - python/tests/integ/authentication/test_token_file_path.py::TestTokenFilePath::test_pat_accepts_token_file_path_instead_of_token
+      - python/tests/e2e/authentication/test_pat.py::TestPATAuthentication::test_should_authenticate_using_pat_token_from_token_file_path
   - test_name: test_truncate_stats
     ud_tests: []
   - test_name: test_unsafe_skip_file_permissions_check_skips_config_permissions_check
@@ -1622,7 +1624,9 @@ tests:
   - test_name: test_stats_reset_on_select
     ud_tests: []
   - test_name: test_token_file_path
-    ud_tests: []
+    ud_tests:
+      - python/tests/integ/authentication/test_token_file_path.py::TestTokenFilePath::test_pat_accepts_token_file_path_instead_of_token
+      - python/tests/e2e/authentication/test_pat.py::TestPATAuthentication::test_should_authenticate_using_pat_token_from_token_file_path
   - test_name: test_truncate_stats
     ud_tests: []
   - test_name: test_unsafe_skip_file_permissions_check_skips_config_permissions_check

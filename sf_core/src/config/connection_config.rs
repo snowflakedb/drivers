@@ -6,6 +6,7 @@ use snafu::OptionExt;
 use url::Url;
 
 use super::private_key::{has_private_key_params, read_private_key};
+use super::token::{has_bearer_token, read_optional_bearer_token, read_required_bearer_token};
 use crate::config::ParamStore;
 use crate::config::param_names::*;
 use crate::config::rest_parameters::{
@@ -303,11 +304,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
         "PROGRAMMATIC_ACCESS_TOKEN" => Ok(AuthConfig::Pat {
             // SNOW-3647715: `user` optional — PAT encodes the principal.
             user: non_empty_string(settings, USER).unwrap_or_default(),
-            token: settings
-                .get_sensitive_string(TOKEN)
-                .context(MissingParameterSnafu {
-                    parameter: String::from(TOKEN),
-                })?,
+            token: read_required_bearer_token(settings)?,
         }),
         // ─── OAuth: legacy pre-acquired access token ─────────────────────
         // `AUTHENTICATOR=OAUTH` + raw `token=`. Forwarded unchanged to
@@ -317,11 +314,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             // SNOW-3647715: `user` optional — the token's claims identify
             // the Snowflake principal.
             user: non_empty_string(settings, USER).unwrap_or_default(),
-            token: settings
-                .get_sensitive_string(TOKEN)
-                .context(MissingParameterSnafu {
-                    parameter: String::from(TOKEN),
-                })?,
+            token: read_required_bearer_token(settings)?,
         }),
         // ─── OAuth: Authorization Code (with PKCE) ───────────────────────
         // Snowflake-as-IdP defaults (LOCAL_APPLICATION substitution +
@@ -397,9 +390,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                         .collect()
                 })
                 .unwrap_or_default();
-            let oidc_token = settings
-                .get_sensitive_string(TOKEN)
-                .filter(|s| !s.reveal().is_empty());
+            let oidc_token = read_optional_bearer_token(settings)?;
             Ok(AuthConfig::WorkloadIdentity(WorkloadIdentityConfig {
                 provider,
                 entra_resource,
@@ -765,11 +756,13 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             }
         }
         "PROGRAMMATIC_ACCESS_TOKEN" => {
-            if settings.get_string(TOKEN).is_none_or(|s| s.is_empty()) {
+            if !has_bearer_token(settings) {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     parameter: TOKEN.into(),
-                    message: "Missing required parameter 'token' for PAT authentication".into(),
+                    message: "Missing required parameter 'token' (or 'token_file_path') for PAT \
+                              authentication"
+                        .into(),
                     code: ValidationCode::MissingRequired,
                 });
             }
@@ -777,12 +770,15 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         "OAUTH" => {
             // Legacy OAuth forwards a pre-acquired access token
             // verbatim; the only required payload-side parameter is
-            // `token`. user/account are already validated above.
-            if settings.get_string(TOKEN).is_none_or(|s| s.is_empty()) {
+            // `token` or `token_file_path`. user/account are already
+            // validated above.
+            if !has_bearer_token(settings) {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     parameter: TOKEN.into(),
-                    message: "Missing required parameter 'token' for OAuth authentication".into(),
+                    message: "Missing required parameter 'token' (or 'token_file_path') for OAuth \
+                              authentication"
+                        .into(),
                     code: ValidationCode::MissingRequired,
                 });
             }
@@ -898,13 +894,13 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             // OIDC provider requires token
             if let Some(provider_str) = settings.get_string(WORKLOAD_IDENTITY_PROVIDER)
                 && WifProvider::parse_str(&provider_str) == Some(WifProvider::Oidc)
-                && settings.get_string(TOKEN).is_none_or(|s| s.is_empty())
+                && !has_bearer_token(settings)
             {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     parameter: TOKEN.into(),
-                    message: "Missing required parameter 'token' for OIDC workload \
-                                      identity authentication"
+                    message: "Missing required parameter 'token' (or 'token_file_path') for OIDC \
+                              workload identity authentication"
                         .into(),
                     code: ValidationCode::MissingRequired,
                 });
@@ -1682,6 +1678,70 @@ mod tests {
             }
             _ => panic!("Expected Pat auth"),
         }
+    }
+
+    #[test]
+    fn build_pat_auth_from_token_file_path() {
+        use std::io::Write;
+
+        let mut token_file = tempfile::NamedTempFile::new().expect("temp token file");
+        token_file
+            .write_all(b"file-pat-token\n")
+            .expect("write token");
+        token_file.flush().expect("flush token");
+
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            (
+                "token_file_path",
+                Setting::String(token_file.path().to_str().unwrap().into()),
+            ),
+            (
+                "authenticator",
+                Setting::String("PROGRAMMATIC_ACCESS_TOKEN".into()),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Pat { user, token } => {
+                assert_eq!(user, "u");
+                assert_eq!(token.reveal(), "file-pat-token");
+            }
+            other => panic!("Expected Pat auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_pat_token_file_path_satisfies_token_requirement() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            (
+                "token_file_path",
+                Setting::String("/path/to/pat.token".into()),
+            ),
+            (
+                "authenticator",
+                Setting::String("PROGRAMMATIC_ACCESS_TOKEN".into()),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| issue.code == ValidationCode::MissingRequired),
+            "token_file_path should satisfy the PAT token requirement, got: {issues:?}"
+        );
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| issue.code == ValidationCode::UnknownParameter
+                    && issue.parameter == "token_file_path"),
+            "token_file_path should be a known parameter, got: {issues:?}"
+        );
     }
 
     #[test]

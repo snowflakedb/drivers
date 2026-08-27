@@ -320,7 +320,15 @@ class ConnectionConfig(ConnectionConfigMixin):
     """
 
     token: str | None = None
-    """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
+    """Pre-acquired bearer token (PAT, legacy OAUTH, or OIDC WIF). Alternative to token_file_path.
+
+    Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN
+    """
+
+    token_file_path: str | None = None
+    """Path to a file containing a pre-acquired bearer token (PAT, legacy OAUTH, or OIDC WIF). If both token and
+    token_file_path are set, the file contents are used
+    """
 
     unsafe_file_write: bool | None = False
     """When true, GET downloads use the process umask permissions instead of owner-only (0600). Unix-only; ignored on
@@ -425,6 +433,7 @@ class ConnectionConfig(ConnectionConfigMixin):
         "tls_custom_root_store_path": "custom_root_store_path",
         "tls_verify_certificates": "verify_certificates",
         "tls_verify_hostname": "verify_hostname",
+        "tokenfilepath": "token_file_path",
         "uid": "user",
     }
     """Lowercased alias -> Python field name."""

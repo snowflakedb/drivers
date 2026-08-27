@@ -36,6 +36,22 @@ class TestPATAuthentication:
         with connection:
             verify_simple_query_execution(connection)
 
+    def test_should_authenticate_using_pat_token_from_token_file_path(self, connection_factory, pat_token, tmp_path):
+        # Given Authentication is set to Programmatic Access Token and a valid PAT token is stored in a file
+        token_file = tmp_path / "pat.token"
+        token_file.write_text(pat_token)
+        token_file.chmod(0o600)
+
+        # When Trying to Connect
+        connection = connection_factory(
+            authenticator="PROGRAMMATIC_ACCESS_TOKEN",
+            token_file_path=str(token_file),
+        )
+
+        # Then Login is successful and simple query can be executed
+        with connection:
+            verify_simple_query_execution(connection)
+
     def test_should_authenticate_using_pat_as_token_without_user(self, connection_factory, pat_token):
         # Given Authentication is set to Programmatic Access Token and valid PAT token is provided
         authenticator = "PROGRAMMATIC_ACCESS_TOKEN"
