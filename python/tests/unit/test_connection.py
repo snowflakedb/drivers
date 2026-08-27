@@ -35,7 +35,7 @@ pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires univer
 
 
 @pytest.fixture
-def connection(mock_db_api):
+def connection(mock_db_api, isolate_application_detection):
     """Create a Connection with core_driver patched via mock_db_api fixture."""
     conn = Connection(user="test_user", account="test_account")
     yield conn

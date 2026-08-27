@@ -15,7 +15,9 @@ def _get_login_request_data(wiremock) -> dict:
     return json.loads(login_requests[0]["body"])["data"]
 
 
-def test_login_request_contains_correct_client_identity(int_test_connection_factory, wiremock):
+def test_login_request_contains_correct_client_identity(
+    int_test_connection_factory, wiremock, isolate_application_detection
+):
     """Verify the Python wrapper sends correct client identity in the login request.
 
     Uses Wiremock to intercept the POST to /session/v1/login-request and validates
@@ -82,7 +84,9 @@ def test_custom_application_only_affects_client_environment_application(int_test
         connection.close()
 
 
-def test_internal_application_name_overrides_client_app_id(int_test_connection_factory, wiremock):
+def test_internal_application_name_overrides_client_app_id(
+    int_test_connection_factory, wiremock, isolate_application_detection
+):
     """``internal_application_name`` (used by SnowSQL / Snow CLI) overrides
     CLIENT_APP_ID. CLIENT_ENVIRONMENT.APPLICATION stays at the default."""
     wiremock.add_mapping("auth/login_success_jwt.json")

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import warnings
 
 from collections.abc import Callable, Iterable
@@ -23,6 +24,7 @@ from typing import Any, ClassVar, TypeVar
 
 from snowflake.connector._internal._private_key_helper import normalize_private_key
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ConfigSetting
+from snowflake.connector.constants import ENV_VAR_PARTNER
 from snowflake.connector.errors import ProgrammingError
 from snowflake.connector.version import __version__ as _DRIVER_VERSION
 
@@ -212,6 +214,24 @@ class ConnectionConfigMixin:
     _APPLICATION_RE: ClassVar[re.Pattern[str]] = re.compile(r"^[\w\d_]+")
     """Regex for validating application names."""
 
+    @staticmethod
+    def _detect_application() -> str | None:
+        """Infer ``application`` the way snowflake-connector-python does.
+
+        Priority: ``SF_PARTNER`` env var, then imported-module sniffing
+        (streamlit, Jupyter notebook, Snowflake notebooks). Returns ``None``
+        when nothing matches so the caller can fall back to PythonConnector.
+        """
+        if ENV_VAR_PARTNER in os.environ:
+            return os.environ[ENV_VAR_PARTNER]
+        if "streamlit" in sys.modules:
+            return "streamlit"
+        if all(jpmod in sys.modules for jpmod in ("ipykernel", "jupyter_core", "jupyter_client")):
+            return "jupyter_notebook"
+        if "snowbooks" in sys.modules:
+            return "snowflake_notebook"
+        return None
+
     # -- Generated-class hooks (populated by the concrete subclass) -----------
     # These ClassVars are re-declared on the generated ``ConnectionConfig`` so
     # that :meth:`from_kwargs` / :meth:`to_options` / :meth:`redacted_options`
@@ -388,10 +408,11 @@ class ConnectionConfigMixin:
 
         * ``private_key`` - normalises RSAPrivateKey / bytes / str via
           :func:`normalize_private_key`.
-        * ``application`` - validates against ``_APPLICATION_RE`` and defaults
-          to ``_APPLICATION_NAME``. The value is forwarded to the Rust core as
-          ``application`` and lands in CLIENT_ENVIRONMENT.APPLICATION on the
-          wire. ``client_app_id`` (CLIENT_APP_ID) is the driver name by default
+        * ``application`` - validates against ``_APPLICATION_RE``. When omitted,
+          auto-detected from ``SF_PARTNER`` or imported modules (streamlit,
+          Jupyter, snowbooks), else ``_APPLICATION_NAME``. Forwarded to the
+          Rust core as ``application`` (CLIENT_ENVIRONMENT.APPLICATION).
+          ``client_app_id`` (CLIENT_APP_ID) stays the driver name by default
           so server-side feature gating tied to the client type keeps working;
           tools that re-host the driver (SnowSQL, Snow CLI) can override it via
           ``internal_application_name``.
@@ -417,6 +438,10 @@ class ConnectionConfigMixin:
         # default-profile fallback in sf_core.  Computed from the raw caller
         # input below; an explicit ``config`` object is never a bare connect.
         no_connection_details = False
+        # Legacy ``SnowflakeConnection.__init__`` only sniffs when
+        # ``"application" not in kwargs``. Keep that so ``application=None``
+        # still means "use PythonConnector", not "run partner detection".
+        application_explicit = False
         if config is None:
             if connection_name is not None:
                 kwargs["connection_name"] = connection_name
@@ -429,6 +454,7 @@ class ConnectionConfigMixin:
             # directly.
             internal_app_name = kwargs.pop("internal_application_name", None)
             internal_app_version = kwargs.pop("internal_application_version", None)
+            application_explicit = any(k.lower() == "application" for k in kwargs)
 
             # Capture emptiness AFTER stripping wrapper-internal levers —
             # matching the old driver version ``is_kwargs_empty = not kwargs``
@@ -450,6 +476,14 @@ class ConnectionConfigMixin:
             config.private_key = normalize_private_key(config.private_key)  # type: ignore[attr-defined]
 
         application = config.application  # type: ignore[attr-defined]
+        if application is None and not application_explicit:
+            # Match the legacy connector: only sniff when the caller omitted
+            # ``application``. An explicit empty string still falls through to
+            # the PythonConnector default below.
+            detected = cls._detect_application()
+            if detected:
+                application = detected
+                config.application = detected  # type: ignore[attr-defined]
         if application is None or (isinstance(application, str) and not application):
             config.application = cls._APPLICATION_NAME  # type: ignore[attr-defined]
         elif isinstance(application, str):

@@ -27,6 +27,10 @@ class QueryStatus(Enum):
 # backward compatibility constant
 UTF8 = "utf-8"
 
+# Partner programs set this so CLIENT_ENVIRONMENT.APPLICATION is populated
+# without passing ``application=`` to connect(). Mirrors snowflake-connector-python.
+ENV_VAR_PARTNER = "SF_PARTNER"
+
 
 class StatementParameterName:
     """Known statement-level parameter names.

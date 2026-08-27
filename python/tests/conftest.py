@@ -5,12 +5,14 @@ pytest configuration and fixtures for PEP 249 tests.
 from __future__ import annotations
 
 import os
+import sys
 
 from typing import Any
 from urllib.parse import urlparse
 
 import pytest
 
+from snowflake.connector.constants import ENV_VAR_PARTNER
 from snowflake.connector.cursor import DictCursor
 
 from .compatibility import IS_UNIVERSAL_DRIVER, native_arrow_enabled
@@ -21,6 +23,17 @@ from .wiremock_client import WiremockClient
 
 # Type alias for a single row returned from cursor
 Row = tuple[Any, ...]
+
+_PARTNER_MODULES = ("streamlit", "ipykernel", "jupyter_core", "jupyter_client", "snowbooks")
+
+
+@pytest.fixture
+def isolate_application_detection(monkeypatch):
+    """Clear partner env/modules so application detection starts from a blank slate."""
+    monkeypatch.delenv(ENV_VAR_PARTNER, raising=False)
+    for name in _PARTNER_MODULES:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    return monkeypatch
 
 
 def pytest_configure(config):

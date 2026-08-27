@@ -1083,6 +1083,31 @@ behavior_differences:
       `"decorrelated"` jitter (vs. legacy's `"full"`); the 2x growth factor and 16s cap are
       unchanged.
 
+  59:
+    name: "Application auto-detection overrides the default connection profile on bare connect()"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `SnowflakeConnection.__init__` runs `_detect_application()` before merging the default
+      connection profile. For a truly bare `connect()` (no kwargs, no `connection_name`),
+      `_get_default_connection_params()` wholesale-replaces `kwargs`, discarding whatever
+      `SF_PARTNER` / imported-module detection wrote. Detection is therefore ignored whenever
+      the caller relies on the default TOML profile with zero args — including Streamlit and
+      Jupyter sessions that only have a saved profile.
+    new_driver_behavior: |
+      Detection still runs when `application=` is omitted and writes `config.application`
+      before the Rust resolver merges the default profile. Explicit params (including
+      `application`) outrank the TOML default, so a bare `connect()` with `SF_PARTNER` set
+      or `streamlit` / Jupyter / `snowbooks` imported uses the detected name instead of a
+      saved profile's `application`. An explicit `application=` still wins over detection.
+    description: |
+      Deliberate fix for the Streamlit/Jupyter-with-saved-profile scenario this detection
+      targets. Legacy dropped the detected value when loading the default profile; UD keeps
+      it so `CLIENT_ENVIRONMENT.APPLICATION` reflects the partner environment.
+
   80:
     name: "Easy-logging YAML config-file feature removed; replaced by SNOWFLAKE_TROUBLESHOOTING_ENABLED env var"
     status: allowed
