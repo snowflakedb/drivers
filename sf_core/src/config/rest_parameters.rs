@@ -127,7 +127,7 @@ impl ClientInfo {
         let client_app_id = settings
             .get_string("client_app_id")
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string());
+            .unwrap_or_else(|| "UNIVERSAL_DRIVER".to_string());
         let application = settings
             .get_string("application")
             .filter(|s| !s.trim().is_empty())
@@ -1308,8 +1308,8 @@ mod tests {
             Setting::String("test.snowflakecomputing.com".to_string()),
         )]);
         let info = ClientInfo::from_settings(&settings).unwrap();
-        assert_eq!(info.client_app_id, env!("CARGO_PKG_NAME"));
-        assert_eq!(info.application, env!("CARGO_PKG_NAME"));
+        assert_eq!(info.client_app_id, "UNIVERSAL_DRIVER");
+        assert_eq!(info.application, "UNIVERSAL_DRIVER");
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
         assert!(info.runtime_name.is_none());
         assert!(info.runtime_version.is_none());
