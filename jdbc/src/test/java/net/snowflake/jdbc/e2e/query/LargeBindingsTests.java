@@ -322,6 +322,107 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @Test
+  public void shouldKeepAnAllNullRowOnTheInlineJsonPathWhenStageBindingIsDisabled()
+      throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And A temporary table with columns (id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD
+    // NUMBER, colE INTEGER) exists
+    String tableName = createAllNullableColumnsTable(connection);
+
+    // And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 0
+    execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = 0");
+
+    // When a batch of one row with every column set to SQL NULL is inserted using multirow binding
+    long beforeInsert = countSystemBindFiles(connection);
+    insertAllNullRow(connection, tableName);
+
+    // Then no new bind file should have been uploaded to SYSTEM$BIND
+    if (DriverCompatibility.isNewDriver()) {
+      assertEquals(
+          beforeInsert,
+          countSystemBindFiles(connection),
+          "A disabled threshold (0) must keep the all-NULL batch on the inline JSON path");
+    }
+
+    // And every column of the round-tripped row reads back as SQL NULL
+    assertRowIsAllNull(connection, tableName);
+  }
+
+  @Test
+  public void shouldStageBindAnAllNullRowWhenTheBoundCellCountMeetsTheThreshold() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And A temporary table with columns (id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD
+    // NUMBER, colE INTEGER) exists
+    String tableName = createAllNullableColumnsTable(connection);
+
+    // And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 6
+    execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = 6");
+
+    // When a batch of one row with every column set to SQL NULL is inserted using multirow binding
+    long beforeInsert = countSystemBindFiles(connection);
+    insertAllNullRow(connection, tableName);
+
+    // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as
+    // the bound parameters
+    if (DriverCompatibility.isNewDriver()) {
+      assertTrue(
+          countSystemBindFiles(connection) > beforeInsert,
+          "6 bound cells == the threshold of 6 must stage-bind the all-NULL row to SYSTEM$BIND");
+    }
+
+    // And every column of the round-tripped row reads back as SQL NULL
+    assertRowIsAllNull(connection, tableName);
+  }
+
+  private String createAllNullableColumnsTable(Connection connection) throws Exception {
+    return createTempTable(
+        connection,
+        "ud_large_bindings_null_",
+        "id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER");
+  }
+
+  private void insertAllNullRow(Connection connection, String tableName) throws Exception {
+    String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?, ?, ?, ?, ?)";
+    try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+      preparedStatement.setNull(1, Types.INTEGER);
+      preparedStatement.setNull(2, Types.DOUBLE);
+      preparedStatement.setNull(3, Types.FLOAT);
+      preparedStatement.setNull(4, Types.VARCHAR);
+      preparedStatement.setNull(5, Types.NUMERIC);
+      preparedStatement.setNull(6, Types.INTEGER);
+      preparedStatement.addBatch();
+      int[] counts = preparedStatement.executeBatch();
+      assertEquals(1, counts.length, "Expected exactly one batched row");
+      assertEquals(1, counts[0], "Expected one row inserted");
+    }
+  }
+
+  private void assertRowIsAllNull(Connection connection, String tableName) throws Exception {
+    try (Statement statement = connection.createStatement();
+        ResultSet resultSet =
+            statement.executeQuery("SELECT id, colA, colB, colC, colD, colE FROM " + tableName)) {
+      assertTrue(resultSet.next(), "Expected the inserted all-NULL row");
+      resultSet.getInt(1);
+      assertTrue(resultSet.wasNull(), "id should read back as SQL NULL");
+      resultSet.getDouble(2);
+      assertTrue(resultSet.wasNull(), "colA should read back as SQL NULL");
+      resultSet.getFloat(3);
+      assertTrue(resultSet.wasNull(), "colB should read back as SQL NULL");
+      resultSet.getString(4);
+      assertTrue(resultSet.wasNull(), "colC should read back as SQL NULL");
+      resultSet.getLong(5);
+      assertTrue(resultSet.wasNull(), "colD should read back as SQL NULL");
+      resultSet.getInt(6);
+      assertTrue(resultSet.wasNull(), "colE should read back as SQL NULL");
+      assertFalse(resultSet.next(), "Expected exactly one row");
+    }
+  }
+
   private void insertNamedRows(
       Connection connection, String tableName, int idStart, int count, String namePrefix)
       throws Exception {
