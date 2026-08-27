@@ -788,8 +788,9 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::InvalidArgument { .. } | ApiError::ConnectionClosed { .. } => {
             ErrorKind::InvalidArgument
         }
-
-        ApiError::GenericError { .. } | ApiError::HttpRequest { .. } => ErrorKind::GenericError,
+        ApiError::GenericError { .. }
+        | ApiError::HttpRequest { .. }
+        | ApiError::FileTransfersDisabled { .. } => ErrorKind::GenericError,
         ApiError::StageBinding { .. } => ErrorKind::StageBinding,
         ApiError::QueryTimeout { .. } | ApiError::CancelTimeout { .. } => ErrorKind::Timeout,
         ApiError::Cancelled { .. } => ErrorKind::Cancelled,

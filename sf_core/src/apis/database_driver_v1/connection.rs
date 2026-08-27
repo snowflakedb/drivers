@@ -55,6 +55,10 @@ enum SessionStateRefresh {
     Skip,
 }
 
+/// Server session-parameter key for the JDBC PUT/GET disable switch. Read by
+/// [`Connection::enable_put_get`]; upstream uppercases session-parameter names.
+const JDBC_ENABLE_PUT_GET_SERVER_KEY: &str = "JDBC_ENABLE_PUT_GET";
+
 impl DatabaseDriverV1 {
     /// Set autocommit on the given connection.
     ///
@@ -1174,6 +1178,35 @@ impl Connection {
         self.connection_seed
             .get_bool(param_names::UNSAFE_FILE_WRITE)
             .unwrap_or(false)
+    }
+
+    /// Effective PUT/GET enablement. Legacy parity: PUT/GET is disabled if
+    /// EITHER the client `enablePutGet` property or the server
+    /// `JDBC_ENABLE_PUT_GET` session parameter is `false`; both default `true`.
+    /// When disabled, the statement path rejects PUT/GET before dispatch with
+    /// "File transfers have been disabled."
+    ///
+    /// Both flags are JDBC-specific — the caller only consults this on wrappers
+    /// that opt in via `WrapperPresets::honor_put_get_disable` (JDBC only), so
+    /// this accessor just reads the flags and does not itself scope by driver.
+    pub(crate) async fn enable_put_get(&self) -> bool {
+        let client_enabled = self
+            .connection_seed
+            .get_bool(param_names::ENABLE_PUT_GET)
+            .unwrap_or(true);
+
+        let server_enabled = self
+            .session_parameters
+            .read()
+            .await
+            .get(JDBC_ENABLE_PUT_GET_SERVER_KEY)
+            .map(|v| {
+                let v = v.trim();
+                v.is_empty() || v.eq_ignore_ascii_case("true") || v == "1"
+            })
+            .unwrap_or(true);
+
+        client_enabled && server_enabled
     }
 
     /// Resolves a two-tier boolean override: session override first, else the
@@ -2705,6 +2738,59 @@ mod tests {
     fn get_connection_seed_string_returns_none_for_non_string_type() {
         let conn = make_connection_with_settings(vec![("port", Setting::Int(443))]);
         assert_eq!(get_connection_seed_string(&conn, param_names::PORT), None);
+    }
+
+    // `enable_put_get()` reads the two flags only; the JDBC-only scoping lives in
+    // the statement gate via `WrapperPresets::honor_put_get_disable` (asserted in
+    // global_state's preset tests), so these cases need no wrapper identity.
+    #[tokio::test]
+    async fn enable_put_get_defaults_to_true_when_unset() {
+        let conn = Connection::new();
+        assert!(conn.enable_put_get().await);
+    }
+
+    #[tokio::test]
+    async fn enable_put_get_false_when_client_property_disables() {
+        let conn = make_connection_with_settings(vec![(
+            param_names::ENABLE_PUT_GET.as_str(),
+            Setting::Bool(false),
+        )]);
+        assert!(!conn.enable_put_get().await);
+    }
+
+    #[tokio::test]
+    async fn enable_put_get_false_when_server_session_param_disables() {
+        // Server `JDBC_ENABLE_PUT_GET=false` disables even with the client seed absent/true.
+        let conn = Connection::new();
+        conn.session_parameters
+            .try_write()
+            .unwrap()
+            .insert("JDBC_ENABLE_PUT_GET".into(), "false".into());
+        assert!(!conn.enable_put_get().await);
+    }
+
+    #[tokio::test]
+    async fn enable_put_get_true_when_server_session_param_blank() {
+        // A blank `JDBC_ENABLE_PUT_GET` is treated as unset, not as `false`.
+        let conn = Connection::new();
+        conn.session_parameters
+            .try_write()
+            .unwrap()
+            .insert("JDBC_ENABLE_PUT_GET".into(), "".into());
+        assert!(conn.enable_put_get().await);
+    }
+
+    #[tokio::test]
+    async fn enable_put_get_true_when_both_flags_enabled() {
+        let conn = make_connection_with_settings(vec![(
+            param_names::ENABLE_PUT_GET.as_str(),
+            Setting::Bool(true),
+        )]);
+        conn.session_parameters
+            .try_write()
+            .unwrap()
+            .insert("JDBC_ENABLE_PUT_GET".into(), "true".into());
+        assert!(conn.enable_put_get().await);
     }
 
     #[test]

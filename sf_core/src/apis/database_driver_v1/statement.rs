@@ -339,6 +339,25 @@ impl DatabaseDriverV1 {
             .context(StageBindingSnafu)
     }
 
+    /// PUT/GET disable gate (legacy `enablePutGet` + `JDBC_ENABLE_PUT_GET`
+    /// parity): reject file transfers before any server dispatch when the client
+    /// property or the server session parameter has disabled them. Both flags are
+    /// JDBC-specific, so only wrappers that opt in via `honor_put_get_disable`
+    /// (JDBC) consult them.
+    async fn ensure_file_transfer_allowed(
+        &self,
+        query: &str,
+        conn: &Arc<Mutex<Connection>>,
+    ) -> Result<(), ApiError> {
+        if self.wrapper_presets.honor_put_get_disable && is_file_transfer(query) {
+            let conn = conn.lock().await;
+            if !conn.enable_put_get().await {
+                return FileTransfersDisabledSnafu.fail();
+            }
+        }
+        Ok(())
+    }
+
     async fn execute_query_internal<'a>(
         &self,
         ctx: Option<&OperationCtx>,
@@ -357,6 +376,10 @@ impl DatabaseDriverV1 {
         let stmt = stmt_ptr.lock().await;
 
         let query = extract_query(&stmt)?;
+
+        self.ensure_file_transfer_allowed(&query, &stmt.conn)
+            .await?;
+
         let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
 
         let execution_mode = stmt.execution_mode(Some(&query));
@@ -670,6 +693,10 @@ impl DatabaseDriverV1 {
         let mut stmt = stmt_ptr.lock().await;
 
         let query = extract_query(&stmt)?;
+
+        self.ensure_file_transfer_allowed(&query, &stmt.conn)
+            .await?;
+
         let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
         let mut query_parameter_map = build_query_parameters(&stmt.settings);
         let conn_arc = stmt.conn.clone();

@@ -24,6 +24,11 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("File transfers have been disabled."))]
+    FileTransfersDisabled {
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to create runtime"))]
     RuntimeCreation {
         #[snafu(implicit)]
@@ -282,6 +287,7 @@ impl ApiError {
             },
             // no wildcard - explicit empty arms
             ApiError::GenericError { .. }
+            | ApiError::FileTransfersDisabled { .. }
             | ApiError::RuntimeCreation { .. }
             | ApiError::Configuration { .. }
             | ApiError::InvalidArgument { .. }
@@ -329,6 +335,7 @@ impl ApiError {
             },
             // no wildcard - explicit empty arms
             ApiError::GenericError { .. }
+            | ApiError::FileTransfersDisabled { .. }
             | ApiError::RuntimeCreation { .. }
             | ApiError::InvalidArgument { .. }
             | ApiError::Login { .. }
