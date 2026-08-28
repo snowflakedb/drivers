@@ -889,7 +889,10 @@ impl From<ApiError> for DriverException {
 mod tests {
     use super::*;
     use crate::apis::database_driver_v1::error::ConfigError;
-    use crate::rest::snowflake::{GS_CODE_UNAVAILABLE, QueryIds};
+    use crate::rest::snowflake::{
+        GS_CODE_UNAVAILABLE, MASTER_TOKEN_EXPIRED, QueryIds, SESSION_TOKEN_EXPIRED,
+        SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED,
+    };
     use snafu::Location;
 
     fn loc() -> Location {
@@ -1453,13 +1456,18 @@ mod tests {
     }
 
     #[test]
-    fn session_expired_response_maps_to_authentication_kind() {
+    fn session_expired_response_maps_to_authentication_kind_with_390112() {
         let err = ApiError::Query {
             location: loc(),
             source: Box::new(RestError::SessionExpired { location: loc() }),
         };
         let exc = to_driver_exception(err);
         assert_eq!(exc.kind, ErrorKind::AuthenticationError as i32);
+        assert_eq!(exc.vendor_code, Some(SESSION_TOKEN_EXPIRED));
+        assert_eq!(
+            exc.sql_state.as_deref(),
+            Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED)
+        );
     }
 
     #[test]
@@ -1475,6 +1483,63 @@ mod tests {
         assert_eq!(exc.kind, ErrorKind::AuthenticationError as i32);
         assert_eq!(exc.vendor_code, Some(390114));
         assert_eq!(exc.sql_state.as_deref(), Some("08001"));
+    }
+
+    #[test]
+    fn session_refresh_failed_passes_vendor_code_through_session_refresh() {
+        let err = ApiError::SessionRefresh {
+            location: loc(),
+            source: Box::new(RestError::SessionRefreshFailed {
+                message: "expired".to_owned(),
+                code: 390111,
+                location: loc(),
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::AuthenticationError as i32);
+        assert_eq!(exc.vendor_code, Some(390111));
+        assert_eq!(
+            exc.sql_state.as_deref(),
+            Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED)
+        );
+    }
+
+    #[test]
+    fn token_request_failed_passes_vendor_code_through_token_request() {
+        let err = ApiError::TokenRequest {
+            location: loc(),
+            source: Box::new(RestError::TokenRequestFailed {
+                operation: "RENEW".to_owned(),
+                message: "expired".to_owned(),
+                code: 390111,
+                location: loc(),
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::AuthenticationError as i32);
+        assert_eq!(exc.vendor_code, Some(390111));
+        assert_eq!(
+            exc.sql_state.as_deref(),
+            Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED)
+        );
+    }
+
+    #[test]
+    fn session_refresh_master_token_terminal_keeps_code() {
+        let err = ApiError::SessionRefresh {
+            location: loc(),
+            source: Box::new(RestError::MasterTokenTerminal {
+                code: MASTER_TOKEN_EXPIRED,
+                location: loc(),
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::AuthenticationError as i32);
+        assert_eq!(exc.vendor_code, Some(MASTER_TOKEN_EXPIRED));
+        assert_eq!(
+            exc.sql_state.as_deref(),
+            Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED)
+        );
     }
 
     #[test]

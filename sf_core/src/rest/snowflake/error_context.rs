@@ -5,7 +5,7 @@
 
 use super::sql_state::sql_state_from_code;
 use super::{
-    CREDENTIAL_REJECTION_GS_CODES, GS_CODE_UNAVAILABLE, QueryIds, RestError,
+    CREDENTIAL_REJECTION_GS_CODES, GS_CODE_UNAVAILABLE, QueryIds, RestError, SESSION_TOKEN_EXPIRED,
     SQLSTATE_AUTHORIZATION_FAILURE, SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED,
     SQLSTATE_TIMEOUT_EXPIRED,
 };
@@ -19,6 +19,14 @@ pub(crate) struct SnowflakeErrorContext {
 }
 
 impl SnowflakeErrorContext {
+    pub(crate) fn gs_connection_not_established(vendor_code: i32) -> Self {
+        Self {
+            vendor_code: Some(vendor_code),
+            sql_state: Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string()),
+            ..Default::default()
+        }
+    }
+
     fn with_sql_state_fallback(mut self) -> Self {
         if self.sql_state.is_none() {
             self.sql_state = self
@@ -48,7 +56,14 @@ impl RestError {
     ///      login failure is reauth-shaped; otherwise left unset so callers
     ///      fall back to their own default — legacy ODBC and Python disagree
     ///      on that default (28000 vs 08001), so it isn't resolved centrally.
-    ///   3. `sql_state_from_code` lookup against the numeric Snowflake error
+    ///   3. Token-expiry and session-refresh GS failures:
+    ///      [`SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED`] ("08001") via
+    ///      [`SnowflakeErrorContext::gs_connection_not_established`]. Covers session expired
+    ///      (`390112`), session-refresh / token-request failures with a GS
+    ///      code (Python `_renew_session` always sets `08001`), and
+    ///      master-token terminal. Without this, ODBC's
+    ///      `ErrorKind::AuthenticationError` fallback would report `28000`.
+    ///   4. `sql_state_from_code` lookup against the numeric Snowflake error
     ///      code, which covers paths (async-poll, query-monitoring) that drop
     ///      `sqlState` on the wire but keep the error code. Login and
     ///      master-token codes are deliberately not in that table.
@@ -91,17 +106,25 @@ impl RestError {
                     }
                 }
             }
+            RestError::SessionExpired { .. } => {
+                SnowflakeErrorContext::gs_connection_not_established(SESSION_TOKEN_EXPIRED)
+            }
+            RestError::SessionRefreshFailed { code, .. }
+            | RestError::TokenRequestFailed { code, .. } => {
+                if *code == GS_CODE_UNAVAILABLE {
+                    SnowflakeErrorContext::default()
+                } else {
+                    SnowflakeErrorContext::gs_connection_not_established(*code)
+                }
+            }
             RestError::OperationTimeout { ids, .. } => SnowflakeErrorContext {
                 sql_state: Some(SQLSTATE_TIMEOUT_EXPIRED.to_string()),
                 ..Default::default()
             }
             .with_ids(ids),
-            RestError::MasterTokenTerminal { code, .. } => SnowflakeErrorContext {
-                vendor_code: Some(*code),
-                sql_state: Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string()),
-                query_id: None,
-                request_id: None,
-            },
+            RestError::MasterTokenTerminal { code, .. } => {
+                SnowflakeErrorContext::gs_connection_not_established(*code)
+            }
             RestError::HttpRetry { ids, .. }
             | RestError::AsyncPollResultNotFound { ids, .. }
             | RestError::MissingResultUrl { ids, .. }
@@ -115,15 +138,12 @@ impl RestError {
             | RestError::OAuthFlow { .. }
             | RestError::WorkloadIdentityAttestation { .. }
             | RestError::InvalidSnowflakeResponse { .. }
-            | RestError::SessionExpired { .. }
             | RestError::Communication { .. }
             | RestError::RequestConstruction { .. }
             | RestError::CrlValidation { .. }
             | RestError::UrlJoin { .. }
             | RestError::SessionRefresh { .. }
-            | RestError::SessionRefreshFailed { .. }
             | RestError::TokenRequestHttp { .. }
-            | RestError::TokenRequestFailed { .. }
             | RestError::Heartbeat { .. }
             | RestError::MissingResponseField { .. }
             | RestError::Logout { .. }
@@ -223,11 +243,57 @@ mod tests {
     }
 
     #[test]
-    fn session_refresh_failed_does_not_surface_vendor_code() {
-        // Intentionally not wired through yet — see snowflake_context docs.
+    fn session_expired_surfaces_390112_and_08001() {
+        let err = RestError::SessionExpired { location: loc() };
+        assert_eq!(
+            err.snowflake_context(),
+            SnowflakeErrorContext::gs_connection_not_established(SESSION_TOKEN_EXPIRED)
+        );
+    }
+
+    #[test]
+    fn session_refresh_failed_passes_through_vendor_code() {
         let err = RestError::SessionRefreshFailed {
             message: "expired".to_owned(),
             code: 390111,
+            location: loc(),
+        };
+        assert_eq!(
+            err.snowflake_context(),
+            SnowflakeErrorContext::gs_connection_not_established(390111)
+        );
+    }
+
+    #[test]
+    fn token_request_failed_passes_through_vendor_code() {
+        let err = RestError::TokenRequestFailed {
+            operation: "RENEW".to_owned(),
+            message: "expired".to_owned(),
+            code: 390111,
+            location: loc(),
+        };
+        assert_eq!(
+            err.snowflake_context(),
+            SnowflakeErrorContext::gs_connection_not_established(390111)
+        );
+    }
+
+    #[test]
+    fn token_request_failed_unavailable_code_stays_empty() {
+        let err = RestError::TokenRequestFailed {
+            operation: "RENEW".to_owned(),
+            message: "expired".to_owned(),
+            code: GS_CODE_UNAVAILABLE,
+            location: loc(),
+        };
+        assert_eq!(err.snowflake_context(), SnowflakeErrorContext::default());
+    }
+
+    #[test]
+    fn session_refresh_failed_unavailable_code_stays_empty() {
+        let err = RestError::SessionRefreshFailed {
+            message: "expired".to_owned(),
+            code: GS_CODE_UNAVAILABLE,
             location: loc(),
         };
         assert_eq!(err.snowflake_context(), SnowflakeErrorContext::default());
@@ -335,11 +401,10 @@ mod tests {
             code: 390114,
             location: loc(),
         };
-        let ctx = err.snowflake_context();
-        assert_eq!(ctx.vendor_code, Some(390114));
-        assert_eq!(ctx.sql_state.as_deref(), Some("08001"));
-        assert_eq!(ctx.query_id, None);
-        assert_eq!(ctx.request_id, None);
+        assert_eq!(
+            err.snowflake_context(),
+            SnowflakeErrorContext::gs_connection_not_established(390114)
+        );
     }
 
     #[test]

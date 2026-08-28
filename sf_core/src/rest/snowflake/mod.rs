@@ -148,11 +148,11 @@ pub const CREDENTIAL_REJECTION_GS_CODES: [i32; 9] = [
 /// in the legacy Python connector's `sqlstate.py`.
 pub const SQLSTATE_AUTHORIZATION_FAILURE: &str = "28000";
 /// ANSI SQLSTATE for "connection exception: connection does not exist" —
-/// used for terminal, non-renewable authentication states (master-token
-/// expiry, reauth-shaped login failures) that are not a credential
-/// rejection. The session can never be renewed, but the credentials
-/// themselves were not rejected, so `SQLSTATE_AUTHORIZATION_FAILURE` (class
-/// 28) would misclassify it. Mirrors `SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED`
+/// used for session-token expiry (`390112`) and for terminal, non-renewable
+/// authentication states (master-token expiry, reauth-shaped login failures)
+/// that are not a credential rejection. The credentials themselves were not
+/// rejected, so `SQLSTATE_AUTHORIZATION_FAILURE` (class 28) would
+/// misclassify it. Mirrors `SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED`
 /// in the legacy Python connector's `sqlstate.py`.
 pub const SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED: &str = "08001";
 /// ODBC/ANSI SQLSTATE for a driver-enforced query or cancel timeout (`HYT00`).
