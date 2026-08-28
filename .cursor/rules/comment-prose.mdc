@@ -1,0 +1,81 @@
+---
+description: Comment discipline — no comment for what the code already says; when one is warranted, describe the code as it is in the present tense, not instructions, provenance, or notes to a reviewer.
+alwaysApply: true
+# DERIVED FROM .claude/rules/comment-prose.md (canonical source).
+# Full content is required here — alwaysApply rules are injected into the agent system
+# prompt at session start. A pointer file would load the body via tool call, placing it
+# in conversation history where context compaction can silently drop it mid-session.
+# Edit the .claude/ file first, then copy its full contents below. The pre-commit hook
+# (ai-rules-sync) or scripts/check-ai-rules-sync.sh will catch any drift.
+---
+
+# Comment Prose
+
+Do not add a comment for anything the code already tells the reader. When a
+comment is warranted, write it as a description of the code as it is,
+addressed to the next maintainer — never as instructions, recommendations,
+or notes to a reviewer.
+
+Apply this when writing or editing comments, doc comments, and test prose
+that will remain in the tree after the change merges.
+
+## Tense and time
+
+Use the indicative present. State what the code does and what constrains it.
+Avoid the imperative: "fail closed when the header is unsigned" leaves the
+reader unsure whether the code already does that; "this errors when the
+header is unsigned" does not.
+
+Never leave a statement that can't be placed in time. Tenseless assertions
+are the worst offenders — "splitting this enum is the real fix" could
+describe the code in front of you, code elsewhere, or a wish. If you are
+describing a possible future state, mark it as one and say why it is not
+the current state.
+
+## What stays out of the file
+
+Keep design opinions about work you did not do out of the file. If it is
+tracked, write `TODO(TICKET-123)`. If it is not tracked, it belongs in the
+pull request discussion, not in a comment that outlives it.
+
+Do not write provenance. Never name the test that measured a fact, the
+ticket that prompted the change, or the argument that convinced a reviewer.
+State the constraint and drop where it came from.
+
+Do not narrate. If a comment restates what the next line plainly does,
+delete it.
+
+## Ambiguity and systems you do not control
+
+When a comment or a test covers more than one possible state, say which
+one actually occurs. That is usually the most useful sentence available
+and the one most often omitted.
+
+Mark facts about systems you do not control as observations that may
+drift: "the service signs only `host` today", not "the service signs only
+`host`".
+
+Counterfactuals and conditionals are fine when that is genuinely what you
+mean — "the probe would be wasted because the endpoint cannot be swapped"
+is correct. Do not flatten those into false present-tense claims while
+applying the rules above.
+
+## Keep / delete
+
+Before keeping any comment, check that it tells the reader something the
+code does not, and that it would still be accurate a year after the change
+merged. If it only makes sense to someone reading the diff, delete it.
+Prefer deleting to rewriting: a comment that restates the code does not
+become useful by being put in the present tense.
+
+<!-- sync-target: .cursor/rules/comment-prose.mdc carries an identical body
+     (the full content of this file) plus Cursor-specific frontmatter.
+     WHY both files need full content instead of a pointer:
+       alwaysApply rules are injected into the agent system prompt at session start.
+       A pointer file loads the body via tool call, putting it in conversation history
+       where context compaction can silently drop it mid-session. Full content in both
+       files keeps the rule in context for the lifetime of any session.
+     TO UPDATE: edit this file, copy its complete contents into the body of
+       .cursor/rules/comment-prose.mdc (below the closing ---
+       of the Cursor frontmatter), then run: bash scripts/check-ai-rules-sync.sh
+     The pre-commit hook (ai-rules-sync) catches drift automatically. -->
