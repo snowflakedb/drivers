@@ -3,8 +3,10 @@ use super::encryption::Encryptor;
 use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
     ByteSource, CloudCredentials, EncryptedFileMetadata, LocationType, MaterialDescription,
-    PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
+    PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher, TransferCtx,
+    UploadStatus,
 };
+use crate::apis::operation_ctx::{CleanupScope, with_abort_on_unwind};
 use crate::config::retry::RetryPolicy;
 use crate::refresh::{Refresher, execute_with_refresh};
 use bytes::Bytes;
@@ -97,7 +99,7 @@ pub(super) async fn upload_to_s3_or_skip(
     skip_upload_on_content_match: bool,
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<UploadStatus, UploadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -163,6 +165,7 @@ pub(super) async fn upload_to_s3_or_skip(
                     &s3_key,
                     body_len,
                     multipart.concurrency,
+                    tx.cleanup,
                 )
                 .await?;
             } else {
@@ -173,7 +176,7 @@ pub(super) async fn upload_to_s3_or_skip(
     };
 
     run_s3_with_sts_refresh(
-        refresher,
+        tx.refresher,
         &stage_info.creds,
         |e| upload_file_error::StageInfoRefreshSnafu.into_error(e),
         // Refresher declined to rotate (or there was none). Surface the
@@ -607,6 +610,11 @@ async fn put_object(
 /// fails is logged but never masks the original error. Encryption metadata is
 /// attached to `CreateMultipartUpload` only — the S3 API rejects per-object
 /// metadata on `UploadPart`, matching the Python/JDBC/ODBC connectors.
+///
+/// Cancellation is covered by the same abort: a cancelled upload is dropped rather
+/// than returning `Err`, so `with_abort_on_unwind` registers the abort for that path
+/// as well as running it on `Err`. One closure covers both, so a failure path added
+/// here cannot leave the upload un-aborted.
 async fn s3_multipart_upload(
     prepared: PreparedUpload,
     s3_client: &S3Client,
@@ -614,6 +622,7 @@ async fn s3_multipart_upload(
     s3_key: &str,
     body_len: u64,
     concurrency: usize,
+    cleanup: Option<&CleanupScope>,
 ) -> Result<(), S3AttemptError<UploadFileError>> {
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::S3)
         .context(upload_file_error::FileTooLargeSnafu)
@@ -633,28 +642,38 @@ async fn s3_multipart_upload(
     let parts_rx =
         multipart::spawn_part_reader(source, encryptor, chunk_size as usize, concurrency);
 
-    let outcome = upload_parts_and_complete(
-        s3_client,
-        stage_info,
-        s3_key,
-        &upload_id,
-        parts_rx,
-        concurrency,
-    )
-    .await;
+    // Built here, not before `CreateMultipartUpload`: until it returns there is no
+    // `upload_id` to abort. When the failure is an expired token this abort uses the
+    // same expired client and fails itself (logged, not fatal); the STS-refresh retry
+    // then re-creates the upload with fresh creds, and a bucket lifecycle rule reaps
+    // the parts from the abandoned attempt.
+    let abort = {
+        let (client, info, key, id) = (
+            s3_client.clone(),
+            stage_info.clone(),
+            s3_key.to_string(),
+            upload_id.clone(),
+        );
+        move || {
+            let (client, info, key, id) = (client.clone(), info.clone(), key.clone(), id.clone());
+            async move { s3_abort_multipart_upload(&client, &info, &key, &id).await }
+        }
+    };
 
-    // Abort on every observable failure so parts don't orphan. When the
-    // failure is an expired token, this abort call uses the same expired
-    // client and will itself fail (logged, not fatal); the STS-refresh
-    // retry then re-creates the upload with fresh creds, and a bucket
-    // lifecycle rule reaps the orphaned parts from the aborted attempt.
-    //
-    // TODO: if cancellation is ever added to the driver, this abort also
-    // needs to fire on drop (e.g. via a Drop-based AbortGuard).
-    if outcome.is_err() {
-        s3_abort_multipart_upload(s3_client, stage_info, s3_key, &upload_id).await;
-    }
-    outcome
+    with_abort_on_unwind(
+        cleanup,
+        abort,
+        // Boxed to keep this large future off the frame — see clippy.toml.
+        Box::pin(upload_parts_and_complete(
+            s3_client,
+            stage_info,
+            s3_key,
+            &upload_id,
+            parts_rx,
+            concurrency,
+        )),
+    )
+    .await
 }
 
 /// Issues `CreateMultipartUpload` with the file metadata (digest + CSE
@@ -2264,7 +2283,7 @@ mod tests {
             false,
             &base_policy(),
             MultipartParams::default(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2357,7 +2376,7 @@ mod tests {
                 false,
                 &base_policy(),
                 MultipartParams::default(),
-                None,
+                TransferCtx::default(),
             ),
         )
         .await
@@ -2463,7 +2482,7 @@ mod tests {
             false,
             &base_policy(),
             MultipartParams::default(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("encrypted S3 upload should succeed against the mock");
@@ -2530,7 +2549,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             &base_policy(),
             MultipartParams::default(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2563,7 +2582,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             &base_policy(),
             MultipartParams::default(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2590,7 +2609,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2618,7 +2637,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2640,7 +2659,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2664,7 +2683,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2698,7 +2717,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             MultipartParams::default(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2749,7 +2768,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             &base_policy(),
             always_multipart(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2953,7 +2972,7 @@ mod tests {
             false,
             &base_policy_with_attempts(1), // no retries: part count must be exactly 3
             always_multipart(),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("multipart upload should succeed against the mock");
@@ -3015,7 +3034,7 @@ mod tests {
             false,
             &base_policy_with_attempts(1), // single attempt: fail fast, no SDK retry storm
             always_multipart(),
-            None,
+            TransferCtx::default(),
         )
         .await;
 
@@ -3024,6 +3043,91 @@ mod tests {
             aborts.load(MpOrdering::SeqCst),
             1,
             "the multipart upload must be aborted exactly once on failure"
+        );
+    }
+
+    /// Cancellation must abort the upload too — see this function's abort discipline.
+    /// The failure test above cannot cover it: a cancelled future is dropped, so the
+    /// inline abort never runs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s3_multipart_upload_aborts_when_the_operation_is_cancelled() {
+        use std::sync::Arc;
+        use tokio::sync::Notify;
+
+        let mock = MockServer::start().await;
+        let aborts = Arc::new(AtomicUsize::new(0));
+        // Lets the cancel land while a part is genuinely in flight.
+        let part_started = Arc::new(Notify::new());
+
+        Mock::given(method("POST"))
+            .and(query_param("uploads", ""))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(CREATE_MP_XML, "application/xml"))
+            .mount(&mock)
+            .await;
+
+        let started = part_started.clone();
+        Mock::given(method("PUT"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(move |_: &Request| {
+                started.notify_one();
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"part-etag\"")
+                    .set_delay(Duration::from_secs(30))
+            })
+            .mount(&mock)
+            .await;
+
+        let aborts_c = aborts.clone();
+        Mock::given(method("DELETE"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(move |_: &Request| {
+                aborts_c.fetch_add(1, MpOrdering::SeqCst);
+                ResponseTemplate::new(204)
+            })
+            .mount(&mock)
+            .await;
+
+        let stage = mp_stage(mock.uri());
+        let policy = base_policy();
+        let trigger = {
+            let part_started = part_started.clone();
+            async move { part_started.notified().await }
+        };
+
+        let outcome = crate::apis::operation_ctx::cancelled_by(trigger, |scope| {
+            // Boxed to keep this large future off the frame — see clippy.toml.
+            Box::pin(async move {
+                let prepared = PreparedUpload {
+                    source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                    7u8;
+                    20 << 20
+                ])),
+                    digest: "0".repeat(64),
+                    cse: None,
+                };
+                upload_to_s3_or_skip(
+                    prepared,
+                    &stage,
+                    "f.dat",
+                    true,
+                    false,
+                    &policy,
+                    always_multipart(),
+                    TransferCtx::new(None, Some(&scope)),
+                )
+                .await
+            })
+        })
+        .await;
+
+        assert!(
+            outcome.is_none(),
+            "the stalled upload must be cancelled, not completed"
+        );
+        assert_eq!(
+            aborts.load(MpOrdering::SeqCst),
+            1,
+            "cancellation must abort the multipart upload exactly once"
         );
     }
 
@@ -3061,7 +3165,10 @@ mod tests {
             always_multipart(),
             None,
             false,
-            cloud_http::CloudSpillTarget::Temp(spill.path()),
+            cloud_http::CloudSpillTarget::Temp {
+                dir: spill.path(),
+                cleanup: None,
+            },
         )
         .await
         .expect("ranged download should succeed against the mock");

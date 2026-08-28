@@ -4,7 +4,7 @@ use sf_core::file_manager::internal::azure_test_retry_policy;
 use sf_core::file_manager::{
     AzureDownloadError, AzureUploadError, CloudCredentials, DownloadData, DownloadResult,
     FileManagerError, LocationType, SourceCompressionParam, StageInfo, StageInfoRefresher,
-    UploadData, UploadResult, download_files, upload_files,
+    TransferCtx, UploadData, UploadResult, download_files, upload_files,
 };
 use sf_core::sensitive::SensitiveString;
 use std::path::PathBuf;
@@ -192,7 +192,7 @@ where
     let result = upload_files(
         &data,
         &azure_test_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        Some(&refresher as &dyn StageInfoRefresher),
+        TransferCtx::with_refresher(&refresher),
     )
     .await;
     let logs = captured(log_buf);
@@ -326,7 +326,7 @@ where
     let result = download_files(
         data,
         &azure_test_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        Some(&refresher as &dyn StageInfoRefresher),
+        TransferCtx::with_refresher(&refresher),
     )
     .await;
     let logs = captured(log_buf);
@@ -607,7 +607,7 @@ async fn should_recover_both_concurrent_puts_via_the_shared_refreshed_sas() {
         upload_files(
             &data_a,
             &azure_test_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&r_a as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&r_a),
         )
         .await
     };
@@ -615,7 +615,7 @@ async fn should_recover_both_concurrent_puts_via_the_shared_refreshed_sas() {
         upload_files(
             &data_b,
             &azure_test_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&r_b as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&r_b),
         )
         .await
     };

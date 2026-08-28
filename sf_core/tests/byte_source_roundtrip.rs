@@ -6,6 +6,7 @@ use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::file_manager::MultipartParams;
+use sf_core::file_manager::TransferCtx;
 use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, EncryptedFileMetadata, EncryptionMaterial, LocationType,
     SingleDownloadData, StageInfo,
@@ -254,7 +255,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
         data,
         &RetryPolicy::put_get(&ParamStore::new()),
         0,
-        None,
+        TransferCtx::default(),
     )
     .await;
 
@@ -465,9 +466,10 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 MultipartParams::default(),
                 None,
                 false,
-                sf_core::file_manager::internal::CloudSpillTarget::Temp(
-                    std::env::temp_dir().as_path(),
-                ),
+                sf_core::file_manager::internal::CloudSpillTarget::Temp {
+                    dir: std::env::temp_dir().as_path(),
+                    cleanup: None,
+                },
             )
             .await
             .expect("GCS streaming download must succeed")
@@ -504,9 +506,10 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                     ..RetryPolicy::default()
                 },
                 false,
-                sf_core::file_manager::internal::CloudSpillTarget::Temp(
-                    std::env::temp_dir().as_path(),
-                ),
+                sf_core::file_manager::internal::CloudSpillTarget::Temp {
+                    dir: std::env::temp_dir().as_path(),
+                    cleanup: None,
+                },
                 None,
             )
             .await
@@ -663,7 +666,10 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
             MultipartParams::default(),
             None,
             false,
-            sf_core::file_manager::internal::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
+            sf_core::file_manager::internal::CloudSpillTarget::Temp {
+                dir: std::env::temp_dir().as_path(),
+                cleanup: None,
+            },
         ),
     )
     .await

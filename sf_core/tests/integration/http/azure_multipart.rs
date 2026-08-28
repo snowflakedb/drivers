@@ -30,7 +30,7 @@ use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, LocationType, SingleDownloadData, SingleUploadData, StageInfo,
 };
 use sf_core::file_manager::{
-    MultipartParams, SourceCompressionParam, download_single_file, upload_single_file,
+    MultipartParams, SourceCompressionParam, TransferCtx, download_single_file, upload_single_file,
 };
 use sf_core::sensitive::SensitiveString;
 use wiremock::matchers::any;
@@ -186,9 +186,13 @@ async fn should_upload_and_download_via_azure_multipart_roundtrip() {
         skip_upload_on_content_match: false,
         multipart,
     };
-    let upload_result = upload_single_file(upload, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect("upload should succeed");
+    let upload_result = upload_single_file(
+        upload,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        TransferCtx::default(),
+    )
+    .await
+    .expect("upload should succeed");
     assert_eq!(upload_result.status, "UPLOADED");
 
     assert_eq!(
@@ -272,9 +276,14 @@ async fn should_upload_and_download_via_azure_multipart_roundtrip() {
         multipart,
         unsafe_file_write: false,
     };
-    download_single_file(download, &RetryPolicy::put_get(&ParamStore::new()), 0, None)
-        .await
-        .expect("download should succeed");
+    download_single_file(
+        download,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        0,
+        TransferCtx::default(),
+    )
+    .await
+    .expect("download should succeed");
 
     assert!(
         state.head_calls.load(Ordering::Relaxed) >= 1,

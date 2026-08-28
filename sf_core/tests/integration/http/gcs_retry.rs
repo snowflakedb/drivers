@@ -12,7 +12,7 @@ use sf_core::file_manager::types::ByteSource;
 use sf_core::file_manager::{
     CloudCredentials, DownloadData, GcsDownloadError, GcsUploadError, LocationType,
     MultipartParams, PreparedUpload, RefreshFuture, StageInfo, StageInfoCache, StageInfoRefresher,
-    StageInfoSnapshot, download_files,
+    StageInfoSnapshot, TransferCtx, download_files,
 };
 use sf_core::sensitive::SensitiveString;
 use std::io::Write;
@@ -830,9 +830,13 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         get_fastfail: true,
     };
 
-    let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect("multi-file presigned GET should succeed");
+    let results = download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        TransferCtx::default(),
+    )
+    .await
+    .expect("multi-file presigned GET should succeed");
 
     assert_eq!(results.len(), 2);
     let dir = std::path::Path::new(&local_location);
@@ -867,9 +871,13 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         get_fastfail: true,
     };
 
-    let err = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect_err("download must fail when neither URL nor token is available");
+    let err = download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        TransferCtx::default(),
+    )
+    .await
+    .expect_err("download must fail when neither URL nor token is available");
     // Walk the error chain (snafu wraps the leaf `MissingGcsCredentials`
     // through `GcsDownloadError` → `FileManagerError`).
     let chain: Vec<String> =
@@ -1346,7 +1354,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
         false,
         MultipartParams::default(),
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        refresher_opt,
+        TransferCtx::new(refresher_opt, None),
     )
     .await;
 
@@ -1436,7 +1444,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         false,
         MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        refresher_opt,
+        TransferCtx::new(refresher_opt, None),
     )
     .await;
 
@@ -1517,7 +1525,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         false,
         MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        refresher_opt,
+        TransferCtx::new(refresher_opt, None),
     )
     .await;
 
@@ -1592,7 +1600,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         false,
         MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        refresher_opt,
+        TransferCtx::new(refresher_opt, None),
     )
     .await
     .expect_err("two consecutive 400s on PUT must fail fast");
@@ -1813,7 +1821,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
     let results = download_files(
         data,
         &RetryPolicy::put_get(&ParamStore::new()),
-        refresher_opt,
+        TransferCtx::new(refresher_opt, None),
     )
     .await
     .expect("batch download should succeed after per-file URL refresh");
@@ -1907,7 +1915,7 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         false,
         MultipartParams::default(),
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        None,
+        TransferCtx::default(),
     )
     .await;
 
@@ -1984,9 +1992,13 @@ async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
         get_fastfail: true,
     };
 
-    let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect("git stage download should succeed even without sfc-digest");
+    let results = download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        TransferCtx::default(),
+    )
+    .await
+    .expect("git stage download should succeed even without sfc-digest");
 
     assert_eq!(results.len(), 1);
     let written = std::fs::read(std::path::Path::new(&local_location).join("git-file.txt"))

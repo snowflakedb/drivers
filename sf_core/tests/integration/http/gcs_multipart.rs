@@ -31,7 +31,7 @@ use sf_core::file_manager::types::{
 };
 use sf_core::file_manager::{
     MultipartParams, RefreshFuture, SourceCompressionParam, StageInfoCache, StageInfoRefresher,
-    StageInfoSnapshot, download_single_file, upload_single_file,
+    StageInfoSnapshot, TransferCtx, download_single_file, upload_single_file,
 };
 use sf_core::sensitive::SensitiveString;
 use wiremock::matchers::any;
@@ -253,9 +253,13 @@ async fn should_upload_and_download_via_gcs_multipart_roundtrip() {
         skip_upload_on_content_match: false,
         multipart,
     };
-    let upload_result = upload_single_file(upload, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect("upload should succeed");
+    let upload_result = upload_single_file(
+        upload,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        TransferCtx::default(),
+    )
+    .await
+    .expect("upload should succeed");
     assert_eq!(upload_result.status, "UPLOADED");
 
     assert_eq!(
@@ -313,9 +317,14 @@ async fn should_upload_and_download_via_gcs_multipart_roundtrip() {
         multipart,
         unsafe_file_write: false,
     };
-    download_single_file(download, &RetryPolicy::put_get(&ParamStore::new()), 0, None)
-        .await
-        .expect("download should succeed");
+    download_single_file(
+        download,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        0,
+        TransferCtx::default(),
+    )
+    .await
+    .expect("download should succeed");
 
     assert!(
         state.head_calls.load(Ordering::Relaxed) >= 1,
@@ -380,7 +389,7 @@ async fn should_retry_gcs_resumable_initiation_on_transient_5xx() {
     let upload_result = upload_single_file(
         upload,
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        None,
+        TransferCtx::default(),
     )
     .await
     .expect("upload should succeed after the initiate POST retries past the transient 503");
@@ -505,7 +514,7 @@ async fn should_reinitiate_gcs_resumable_session_after_401_mid_chunk() {
     let upload_result = upload_single_file(
         upload,
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        refresher_opt,
+        TransferCtx::new(refresher_opt, None),
     )
     .await
     .expect("401 mid-chunk should trigger a full re-initiate via token refresh and then succeed");

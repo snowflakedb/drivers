@@ -714,8 +714,13 @@ struct AzureMultipartCtx<'a> {
 /// (coalesced) and retries just that request; `ctx.url` is unsigned and signed
 /// per attempt from the current creds.
 ///
-/// No abort step: Azure garbage-collects uncommitted blocks (~7 days) and never
-/// charges for or exposes them, so a failed upload just leaves the blob uncommitted.
+/// No abort step, on either the failure or the cancellation path — unlike S3 and
+/// GCS, which register one. Azure offers no primitive to abandon an in-progress
+/// block-blob upload, and needs none: `Put Block` writes to temporary storage, the
+/// blocks never appear in the committed blob, and they are garbage-collected a week
+/// after the last `Put Block`. The absence is deliberate;
+/// `azure_multipart_upload_registers_no_abort_on_cancel` pins it.
+/// <https://learn.microsoft.com/en-us/rest/api/storageservices/put-block>
 async fn azure_multipart_upload(
     ctx: AzureMultipartCtx<'_>,
     prepared: PreparedUpload,
@@ -2433,7 +2438,10 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
-            cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
+            cloud_http::CloudSpillTarget::Temp {
+                dir: std::env::temp_dir().as_path(),
+                cleanup: None,
+            },
             Some(&fake as &dyn StageInfoRefresher),
         )
         .await
@@ -2493,7 +2501,10 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
-            cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
+            cloud_http::CloudSpillTarget::Temp {
+                dir: std::env::temp_dir().as_path(),
+                cleanup: None,
+            },
             None,
         )
         .await;
@@ -3218,6 +3229,90 @@ mod tests {
         );
     }
 
+    /// Cancelling mid-upload must issue no cleanup request at all — see
+    /// `azure_multipart_upload` for why Azure needs none. Pinned so that absence
+    /// stays deliberate: beside the S3 and GCS aborts it otherwise reads as an
+    /// oversight a "consistency" change should fix.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_multipart_upload_registers_no_abort_on_cancel() {
+        use std::sync::Arc;
+        use tokio::sync::Notify;
+
+        let mock = MockServer::start().await;
+        // Lets the cancel land while a block is genuinely in flight.
+        let block_started = Arc::new(Notify::new());
+
+        let started = block_started.clone();
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(move |_: &Request| {
+                started.notify_one();
+                ResponseTemplate::new(201).set_delay(Duration::from_secs(30))
+            })
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+        let policy = test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        let trigger = {
+            let block_started = block_started.clone();
+            async move { block_started.notified().await }
+        };
+
+        let outcome = crate::apis::operation_ctx::cancelled_by(trigger, |_scope| {
+            // Boxed to keep this large future off the frame — see clippy.toml.
+            Box::pin(async move {
+                let prepared = PreparedUpload {
+                    source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                    3u8;
+                    9 << 20
+                ])),
+                    digest: "0".repeat(64),
+                    cse: None,
+                };
+                upload_to_azure_or_skip(
+                    prepared,
+                    &stage,
+                    "file.dat",
+                    true,
+                    false,
+                    always_multipart(),
+                    &policy,
+                    // The refresher — this function takes no cleanup scope, because
+                    // Azure has no abort to register. The ctx is still real
+                    // (`cancelled_by` owns it), so the cancel itself is live.
+                    None,
+                )
+                .await
+            })
+        })
+        .await;
+
+        assert!(
+            outcome.is_none(),
+            "the stalled upload must be cancelled, not completed"
+        );
+
+        // No commit, and above all no DELETE or abort-shaped request.
+        let received = mock.received_requests().await.unwrap();
+        assert!(
+            received
+                .iter()
+                .all(|r| r.method != wiremock::http::Method::DELETE),
+            "Azure must not issue any DELETE on cancellation"
+        );
+        assert!(
+            !received.iter().any(|r| r
+                .url
+                .query_pairs()
+                .any(|(k, v)| k == "comp" && v == "blocklist")),
+            "a cancelled upload must never commit the block list"
+        );
+    }
+
     /// Block-level coalescing (R4 / Gherkin S6 / S10) proven against the REAL
     /// single-flight coordinator: N concurrent blocks all start with an expired
     /// SAS, all 403, and must collapse into exactly ONE GS re-issue — not N.
@@ -3787,7 +3882,10 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
-            cloud_http::CloudSpillTarget::Temp(spill.path()),
+            cloud_http::CloudSpillTarget::Temp {
+                dir: spill.path(),
+                cleanup: None,
+            },
             None,
         )
         .await
@@ -3853,7 +3951,10 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
-            cloud_http::CloudSpillTarget::Temp(spill.path()),
+            cloud_http::CloudSpillTarget::Temp {
+                dir: spill.path(),
+                cleanup: None,
+            },
             Some(&fake as &dyn StageInfoRefresher),
         )
         .await

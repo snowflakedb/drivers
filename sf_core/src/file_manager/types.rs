@@ -1,4 +1,5 @@
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
+use crate::apis::operation_ctx::CleanupScope;
 use crate::compression_types::CompressionType;
 use crate::sensitive::SensitiveString;
 use crate::tls::config::TlsConfig;
@@ -783,6 +784,50 @@ pub trait StageInfoRefresher: Send + Sync {
     /// layer. After either refresh method succeeds, callers read the new
     /// value from here.
     fn cache(&self) -> &StageInfoCache;
+}
+
+/// Per-transfer capabilities threaded down the PUT/GET spine: how to refresh
+/// expiring stage credentials, and where to register cancellation cleanup.
+///
+/// Bundled for the reason [`StageTransport`] is (see its doc comment) — loose
+/// optional parameters on this chain get forgotten at a call site.
+///
+/// Only functions needing *both* capabilities take the bundle; one needing a single
+/// capability takes that one, so its signature says what it can do. Hence the two
+/// asymmetric shapes further down: a helper that only refreshes credentials takes
+/// `Option<&dyn StageInfoRefresher>` and receives [`Self::refresher`], while
+/// `s3_multipart_upload` / `gcs_resumable_upload` take `Option<&CleanupScope>` and
+/// receive [`Self::cleanup`] — they sit *inside* the credential-refresh retry loop,
+/// so refreshing is already handled above them and a refresher would be dead
+/// weight they could wrongly use.
+#[derive(Clone, Copy, Default)]
+pub struct TransferCtx<'a> {
+    /// Refreshes expiring stage credentials / presigned URLs mid-transfer.
+    /// `None` disables refresh: the transfer uses the single pre-fetched snapshot
+    /// and does not retry the recoverable credential errors.
+    pub refresher: Option<&'a dyn StageInfoRefresher>,
+    /// Where cancellation cleanup is registered. `None` means nothing can cancel
+    /// this transfer — an internal caller, a test, or an RPC not marked
+    /// `async_first` — so nothing is registered.
+    pub cleanup: Option<&'a CleanupScope>,
+}
+
+impl<'a> TransferCtx<'a> {
+    /// Credential refresh only — for a transfer that cannot be cancelled.
+    pub fn with_refresher(refresher: &'a dyn StageInfoRefresher) -> Self {
+        Self {
+            refresher: Some(refresher),
+            cleanup: None,
+        }
+    }
+
+    /// Both capabilities, from the optional handles the callers hold.
+    pub fn new(
+        refresher: Option<&'a dyn StageInfoRefresher>,
+        cleanup: Option<&'a CleanupScope>,
+    ) -> Self {
+        Self { refresher, cleanup }
+    }
 }
 
 #[derive(Debug, Clone, Snafu, error_trace::ErrorTrace)]

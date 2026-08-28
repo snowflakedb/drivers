@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use snafu::{Location, ResultExt, Snafu};
 use uuid::Uuid;
 
+use crate::apis::operation_ctx::CleanupScope;
 use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::RetryPolicy;
 use crate::file_manager;
@@ -121,6 +122,10 @@ pub struct StageBindingContext<'a> {
     /// Driver-owned CRL worker for the storage TLS client, threaded through so
     /// the bind-stage upload honours CRL like the file-path PUT/GET does.
     pub crl_worker: crate::crl::worker::SharedCrlWorker,
+    /// Where the upload registers cancellation cleanup. Matters only for a CSV
+    /// payload at or above the multipart threshold, which has an abort to register;
+    /// a single PUT is discarded by the cloud when the connection is torn down.
+    pub cleanup: Option<&'a CleanupScope>,
 }
 
 #[derive(Clone)]
@@ -246,9 +251,14 @@ async fn upload_blob(
     // connection's narrowed one (see
     // adr/tls_version_enforcement_implementation_notes.md, "Known gaps"); only
     // the proxy settings are threaded here.
-    upload_in_memory_file(csv_bytes.to_vec(), single, ctx.put_get_policy, None)
-        .await
-        .context(UploadSnafu)?;
+    upload_in_memory_file(
+        csv_bytes.to_vec(),
+        single,
+        ctx.put_get_policy,
+        file_manager::TransferCtx::new(None, ctx.cleanup),
+    )
+    .await
+    .context(UploadSnafu)?;
     Ok(())
 }
 

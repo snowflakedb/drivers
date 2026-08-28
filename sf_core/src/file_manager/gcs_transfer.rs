@@ -3,8 +3,10 @@ use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
     LocationType, MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError,
-    StageInfoRefresher, UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    StageInfoRefresher, TransferCtx, UploadStatus, build_encryption_metadata_json,
+    percent_encode_path,
 };
+use crate::apis::operation_ctx::{CleanupScope, with_abort_on_unwind};
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::log_foreign_error;
@@ -66,11 +68,12 @@ pub async fn upload_to_gcs_or_skip(
     skip_upload_on_content_match: bool,
     multipart: MultipartParams,
     policy: &RetryPolicy,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let using_presigned_url = stage_info.presigned_url.is_some();
+    let refresher = tx.refresher;
     let has_refresher = refresher.is_some();
 
     // With a refresher, 400 is removed from the wire-level retry list — we
@@ -144,9 +147,17 @@ pub async fn upload_to_gcs_or_skip(
                 if let Some(tok) = token
                     && multipart.should_chunk(body_len)
                 {
-                    gcs_resumable_upload(&client, &url, tok, prepared, body_len, &wire_policy)
-                        .await
-                        .map_err(map_gcs_request_error_for_attempt)?;
+                    gcs_resumable_upload(
+                        &client,
+                        &url,
+                        tok,
+                        prepared,
+                        body_len,
+                        &wire_policy,
+                        tx.cleanup,
+                    )
+                    .await
+                    .map_err(map_gcs_request_error_for_attempt)?;
                 } else {
                     upload_to_gcs(&client, &url, token, prepared, &wire_policy)
                         .await
@@ -692,8 +703,18 @@ async fn upload_to_gcs(
 /// then the (optionally encrypting) source is cut into `chunk_size` chunks and
 /// `PUT` to that session URL **sequentially** with `Content-Range` headers. The
 /// final chunk's `200/201` ends the session; intermediate chunks return `308`
-/// ("Resume Incomplete"). On any terminal error a best-effort `DELETE` releases
-/// the half-staged session (GCS also GCs incomplete sessions on its own).
+/// ("Resume Incomplete"). A best-effort `DELETE` releases the half-staged session
+/// whenever the upload does not complete — on `Err` and on cancellation alike, via
+/// `with_abort_on_unwind`.
+///
+/// That `DELETE` is hygiene against an *undocumented* cost, not a known one: unlike
+/// an S3 multipart upload, whose parts AWS documents as billable until aborted,
+/// Google documents neither that staged resumable chunks are billed nor that they
+/// are free — only that the session expires after a week and that an incomplete
+/// upload never becomes a bucket object. (GCS *does* bill parts of an incomplete
+/// XML-API multipart upload, but that is a different mechanism from the resumable
+/// protocol used here.)
+/// <https://cloud.google.com/storage/docs/resumable-uploads>
 ///
 /// Used only on the access-token path for files at/above the multipart
 /// threshold; the presigned-URL path and smaller files take the single
@@ -707,6 +728,7 @@ async fn gcs_resumable_upload(
     prepared: PreparedUpload,
     body_len: u64,
     policy: &RetryPolicy,
+    cleanup: Option<&CleanupScope>,
 ) -> Result<(), GcsRequestError> {
     let chunk_size =
         multipart::compute_part_size(body_len, &MultipartConfig::GCS).map_err(|e| {
@@ -747,11 +769,24 @@ async fn gcs_resumable_upload(
     )
     .await?;
 
+    // Built after `gcs_resumable_initiate`: until it returns there is no session to
+    // delete. When the failure is a token expiry this delete uses the same expired
+    // token and fails itself (logged, not fatal); GCS then expires the abandoned
+    // session on its own after a week.
+    let abort = {
+        let (client, url, token) = (client.clone(), session_url.clone(), token.to_string());
+        move || {
+            let (client, url, token) = (client.clone(), url.clone(), token.clone());
+            async move { gcs_resumable_delete(&client, &url, &token).await }
+        }
+    };
+
     // Stream chunks into the session sequentially (a resumable session commits
     // chunks in order). Each chunk body is a materialized `Bytes`, so a
     // transient PUT failure is retried in place. On any terminal failure,
     // best-effort DELETE the session so it doesn't linger as a half-staged blob.
-    let result = async {
+    // Boxed to keep this large future off the frame — see clippy.toml.
+    with_abort_on_unwind(cleanup, abort, Box::pin(async {
         let mut rx = multipart::spawn_part_reader(source, encryptor, chunk_size as usize, 1);
         let mut offset: u64 = 0;
         let mut committed = false;
@@ -789,34 +824,10 @@ async fn gcs_resumable_upload(
                 detail: format!("resumable upload ended after {offset} of {body_len} bytes"),
             });
         }
+        tracing::debug!("GCS resumable upload committed ({body_len} bytes)");
         Ok(())
-    }
-    .await;
-
-    // Abort on every observable failure so partial chunks don't orphan. When
-    // the failure is a token expiry, this delete call uses the same expired
-    // token and will itself fail (logged, not fatal); GCS then expires the
-    // abandoned resumable session URI on its own (~1 week), and an incomplete
-    // resumable upload never surfaces as a bucket object.
-    // <https://cloud.google.com/storage/docs/resumable-uploads>
-    //
-    // NB: this only fires on Err. If a caller ever drops this future
-    // (cancellation), no Err is produced and the session lingers until GCS GCs
-    // it. Today no caller cancels PUT mid-flight (the whole operation runs
-    // under a single block_on with no cancel token), so this path is currently
-    // unreachable. When cancellation is introduced, add a Drop-based guard so
-    // the DELETE fires on drop too.
-    // TODO(SNOW-3704984)
-    match result {
-        Ok(()) => {
-            tracing::debug!("GCS resumable upload committed ({body_len} bytes)");
-            Ok(())
-        }
-        Err(e) => {
-            gcs_resumable_delete(client, &session_url, token).await;
-            Err(e)
-        }
-    }
+    }))
+    .await
 }
 
 /// Initiates a GCS XML-API resumable session against the bucket-path object URL
@@ -3064,7 +3075,7 @@ mod tests {
             false,
             always_multipart(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("resumable upload should succeed against the mock");
@@ -3143,7 +3154,7 @@ mod tests {
             false,
             always_multipart(),
             &test_policy(false, 1),
-            None,
+            TransferCtx::default(),
         )
         .await;
         assert!(
@@ -3151,6 +3162,83 @@ mod tests {
             "a 500 on the chunk PUT must fail the upload"
         );
         // The `.expect(1)` on the DELETE mock verifies cleanup fired on drop.
+    }
+
+    /// Cancellation must delete the session too — see `gcs_resumable_upload`. The
+    /// failure test above cannot cover it: a cancelled future is dropped, so the
+    /// inline DELETE never runs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_resumable_upload_deletes_session_when_the_operation_is_cancelled() {
+        use tokio::sync::Notify;
+
+        let server = MockServer::start().await;
+        let session_path = "/resumable-session/cancelled";
+        // Lets the cancel land while a chunk is genuinely in flight.
+        let chunk_started = Arc::new(Notify::new());
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(201).insert_header(
+                "location",
+                format!("{}{session_path}", server.uri()).as_str(),
+            ))
+            .mount(&server)
+            .await;
+
+        let started = chunk_started.clone();
+        Mock::given(method("PUT"))
+            .and(path(session_path))
+            .respond_with(move |_req: &Request| {
+                started.notify_one();
+                ResponseTemplate::new(308).set_delay(Duration::from_secs(30))
+            })
+            .mount(&server)
+            .await;
+
+        Mock::given(method("DELETE"))
+            .and(path(session_path))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let policy = test_policy(false, 1);
+        let trigger = {
+            let chunk_started = chunk_started.clone();
+            async move { chunk_started.notified().await }
+        };
+
+        let outcome = crate::apis::operation_ctx::cancelled_by(trigger, |scope| {
+            // Boxed to keep this large future off the frame — see clippy.toml.
+            Box::pin(async move {
+                let prepared = PreparedUpload {
+                    source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                    1u8;
+                    9 << 20
+                ])),
+                    digest: "0".repeat(64),
+                    cse: None,
+                };
+                upload_to_gcs_or_skip(
+                    prepared,
+                    &stage,
+                    "file.csv",
+                    true,
+                    false,
+                    always_multipart(),
+                    &policy,
+                    TransferCtx::new(None, Some(&scope)),
+                )
+                .await
+            })
+        })
+        .await;
+
+        assert!(
+            outcome.is_none(),
+            "the stalled upload must be cancelled, not completed"
+        );
+        // The `.expect(1)` on the DELETE mock verifies the session was released.
     }
 
     /// Above the threshold on the access-token path, the download HEADs for size
@@ -3186,7 +3274,10 @@ mod tests {
             always_multipart(),
             None,
             false,
-            cloud_http::CloudSpillTarget::Temp(spill.path()),
+            cloud_http::CloudSpillTarget::Temp {
+                dir: spill.path(),
+                cleanup: None,
+            },
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -3319,7 +3410,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3352,7 +3443,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3380,7 +3471,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3407,7 +3498,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3434,7 +3525,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3457,7 +3548,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3490,7 +3581,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3521,7 +3612,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3559,7 +3650,7 @@ mod tests {
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3600,7 +3691,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();
@@ -3637,7 +3728,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .unwrap();

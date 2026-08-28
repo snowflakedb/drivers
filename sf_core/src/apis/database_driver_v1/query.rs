@@ -1,6 +1,7 @@
 use super::ColumnMetadata;
 use super::connection::{Connection, RefreshContext};
 use super::global_state::{PutGetResultsetFlavor, WrapperPresets};
+use crate::apis::operation_ctx::OperationCtx;
 use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{boxed_arrow_reader, create_schema};
 use crate::chunks::{
@@ -65,8 +66,12 @@ pub struct StageInfoRefreshContext {
 /// When `stage_info_refresh_context` is `Some`, recoverable stage-info-expiry
 /// errors re-issue the original PUT/GET SQL for a fresh `StageInfoSnapshot` and
 /// retry the operation; non-PUT/GET callers pass `None`.
+///
+/// `ctx` is what the transfer registers its cancellation cleanup against; `None`
+/// makes it uncancellable.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn perform_put_get_transfer(
+    ctx: Option<&OperationCtx>,
     command: &str,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
@@ -91,6 +96,8 @@ pub(super) async fn perform_put_get_transfer(
     let refresher_handle = refresher
         .as_ref()
         .map(|r| r as &dyn file_manager::StageInfoRefresher);
+    let transfer_ctx =
+        file_manager::TransferCtx::new(refresher_handle, ctx.map(OperationCtx::cleanup_scope));
     // Bundled once and threaded into whichever converter the running arm
     // calls below — see `file_manager::StageTransport`.
     let transport = file_manager::StageTransport {
@@ -111,7 +118,7 @@ pub(super) async fn perform_put_get_transfer(
                     &transport,
                 )
                 .context(FileTransferPreparationSnafu)?;
-            let upload_results = upload_files(&file_upload_data, retry_policy, refresher_handle)
+            let upload_results = upload_files(&file_upload_data, retry_policy, transfer_ctx)
                 .await
                 .context(FileUploadSnafu)?;
             Ok(RowsetData::Upload(upload_results))
@@ -125,7 +132,7 @@ pub(super) async fn perform_put_get_transfer(
         ) {
             Ok(file_download_data) => {
                 let download_results =
-                    download_files(file_download_data, retry_policy, refresher_handle)
+                    download_files(file_download_data, retry_policy, transfer_ctx)
                         .await
                         .context(FileDownloadSnafu)?;
                 Ok(RowsetData::Download(download_results))
@@ -227,7 +234,26 @@ pub(super) async fn build_and_upload_stream(
         multipart: upload_data.multipart,
     };
 
-    let result = upload_prepared_source(payload, single, put_get_policy, refresher_handle)
+    // No cleanup scope, and no cancellation coverage on this path at all — stated
+    // plainly because the shape invites the opposite assumption.
+    //
+    // None of the `ConnectionUploadStream*` RPCs are marked `async_first`, so no
+    // operation token reaches this layer and there is nothing to register against.
+    // `connection_upload_stream_abort` is not a substitute: it only deletes local
+    // handle state (and unlinks the spool file), issues no cloud-side abort, and
+    // structurally cannot — `connection_upload_stream_finish` deletes the handle
+    // before the upload starts, so by the time a multipart upload is in flight there
+    // is no handle left for it to act on.
+    //
+    // So a cancelled *streaming* PUT can still orphan the S3/GCS debris that the
+    // file-path PUT now aborts. Deliberately out of scope here; closing it means
+    // marking those RPCs `async_first` and threading `ctx` through them.
+    // TODO: needs a tracking ticket before this PR merges — see the PR discussion.
+    let transfer_ctx = match refresher_handle {
+        Some(refresher) => file_manager::TransferCtx::with_refresher(refresher),
+        None => file_manager::TransferCtx::default(),
+    };
+    let result = upload_prepared_source(payload, single, put_get_policy, transfer_ctx)
         .await
         .context(FileUploadSnafu)?;
 
