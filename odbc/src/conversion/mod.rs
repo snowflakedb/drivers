@@ -602,11 +602,28 @@ impl SnowflakeFieldType {
                     column_size,
                 }))
             }
-            lt => IncompatibleFieldMetadataSnafu {
-                logical_type: lt.to_string(),
+            // Missing logicalType is corrupt metadata.
+            "" => IncompatibleFieldMetadataSnafu {
+                logical_type: String::new(),
                 data_type: field.data_type().clone(),
             }
             .fail(),
+            // Snowflake logical types that are not first-class ODBC types are
+            // treated as VARCHAR.
+            _ => {
+                let len = match get_field_metadata(field, "charLength") {
+                    Ok(len) => len,
+                    Err(ConversionError::MissingFieldMetadata { .. }) => {
+                        u32::try_from(numeric_settings.max_varchar_size)
+                            .unwrap_or(SF_DEFAULT_VARCHAR_MAX_LEN as u32)
+                    }
+                    Err(e) => return Err(e),
+                };
+                Ok(Self::Varchar(varchar::SnowflakeVarchar {
+                    len,
+                    is_semi_structured: false,
+                }))
+            }
         }
     }
 
@@ -966,6 +983,63 @@ mod concise_sql_type_override_tests {
         assert_eq!(
             sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
             sql::SqlDataType::VARCHAR
+        );
+    }
+}
+
+#[cfg(test)]
+mod unknown_logical_type_tests {
+    use super::{NumericSettings, sql_type_from_field};
+    use crate::conversion::error::ConversionError;
+    use arrow::datatypes::{DataType, Field};
+    use odbc_sys as sql;
+    use std::collections::HashMap;
+
+    fn field_with_logical_type(logical_type: &str, extra: &[(&str, &str)]) -> Field {
+        let md: HashMap<String, String> = extra
+            .iter()
+            .copied()
+            .chain(std::iter::once(("logicalType", logical_type)))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Field::new("col", DataType::Utf8, true).with_metadata(md)
+    }
+
+    #[test]
+    fn geography_maps_to_sql_varchar() {
+        let field = field_with_logical_type("GEOGRAPHY", &[]);
+        assert_eq!(
+            sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
+            sql::SqlDataType::VARCHAR
+        );
+    }
+
+    #[test]
+    fn invented_logical_type_maps_to_sql_varchar() {
+        let field = field_with_logical_type("INTERVAL", &[]);
+        assert_eq!(
+            sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
+            sql::SqlDataType::VARCHAR
+        );
+    }
+
+    #[test]
+    fn empty_logical_type_still_errors() {
+        let field = Field::new("col", DataType::Utf8, true);
+        let err = sql_type_from_field(&field, &NumericSettings::default()).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::IncompatibleFieldMetadata { .. }),
+            "expected IncompatibleFieldMetadata for missing logicalType, got: {err}"
+        );
+    }
+
+    #[test]
+    fn unparseable_char_length_on_unknown_type_still_errors() {
+        let field = field_with_logical_type("GEOGRAPHY", &[("charLength", "not_a_number")]);
+        let err = sql_type_from_field(&field, &NumericSettings::default()).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::FieldMetadataParsing { ref key, .. } if key == "charLength"),
+            "expected FieldMetadataParsing for charLength, got: {err}"
         );
     }
 }

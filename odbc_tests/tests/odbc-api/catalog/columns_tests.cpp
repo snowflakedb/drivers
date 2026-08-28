@@ -700,6 +700,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: DATA_TYPE is non-NULL for a
   REQUIRE(ret == SQL_SUCCESS);
 
   int rowCount = 0;
+  bool sawGeoval = false;
   while (true) {
     ret = SQLFetch(stmt_handle());
     if (ret == SQL_NO_DATA) break;
@@ -714,10 +715,54 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: DATA_TYPE is non-NULL for a
 
     INFO("column " << columnName.text);
     REQUIRE(dataTypeInd == sizeof(SQLSMALLINT));
+    // GEOGRAPHY is not a first-class ODBC type; DATA_TYPE is SQL_VARCHAR.
+    if (columnName.text == "GEOVAL") {
+      CHECK(dataType == SQL_VARCHAR);
+      sawGeoval = true;
+    }
     rowCount++;
   }
 
   REQUIRE(rowCount > 0);
+  REQUIRE(sawGeoval);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: COLUMN_SIZE and BUFFER_LENGTH are non-NULL for unmapped types",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
+                             SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  bool sawGeoval = false;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+    if (columnName.text != "GEOVAL") continue;
+
+    SQLINTEGER colSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN colSizeInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 7, SQL_C_SLONG, &colSize, 0, &colSizeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    SQLINTEGER bufLen = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN bufLenInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &bufLen, 0, &bufLenInd);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    INFO("column " << columnName.text);
+    // GEOGRAPHY has no ODBC type of its own and is reported as SQL_VARCHAR, so
+    // the varchar metrics derived from it must carry values rather than NULL.
+    REQUIRE(colSizeInd == sizeof(SQLINTEGER));
+    REQUIRE(bufLenInd == sizeof(SQLINTEGER));
+    CHECK(colSize > 0);
+    CHECK(bufLen > 0);
+    sawGeoval = true;
+  }
+
+  REQUIRE(sawGeoval);
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: ORDINAL_POSITION is sequential starting from 1",
