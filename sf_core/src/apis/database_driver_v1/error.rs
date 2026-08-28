@@ -266,9 +266,10 @@ pub enum ApiError {
 impl ApiError {
     pub(crate) fn snowflake_context(&self) -> SnowflakeErrorContext {
         match self {
-            ApiError::Query { source, .. } | ApiError::Login { source, .. } => {
-                source.snowflake_context()
-            }
+            ApiError::Query { source, .. }
+            | ApiError::Login { source, .. }
+            | ApiError::SessionRefresh { source, .. }
+            | ApiError::TokenRequest { source, .. } => source.snowflake_context(),
             ApiError::QueryTimeout { request_id, .. }
             | ApiError::CancelTimeout { request_id, .. } => SnowflakeErrorContext {
                 vendor_code: None,
@@ -298,10 +299,8 @@ impl ApiError {
             | ApiError::StatementLocking { .. }
             | ApiError::DatabaseLocking { .. }
             | ApiError::QueryResponseProcess { .. }
-            | ApiError::SessionRefresh { .. }
             | ApiError::Statement { .. }
             | ApiError::HttpRequest { .. }
-            | ApiError::TokenRequest { .. }
             | ApiError::Logout { .. }
             | ApiError::InvalidRefreshState { .. }
             | ApiError::TokenCacheInitialization { .. }
