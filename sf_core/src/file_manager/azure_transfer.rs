@@ -49,6 +49,23 @@ fn parse_azure_error_code(body: &str) -> Option<String> {
     Some(body[start..start + rel_end].trim().to_string())
 }
 
+/// Whether an Azure conditional create correctly lost to an existing blob.
+///
+/// Azure documents 412 `ConditionNotMet` for failed write conditions, while
+/// the blob error table and SDKs also surface 409 `BlobAlreadyExists`.
+/// Unknown 409 codes remain errors because they can represent leases,
+/// immutability, or other conflicts unrelated to our create-only precondition.
+fn is_blob_exists_precondition_error(status_code: u16, body: &str) -> bool {
+    let code = parse_azure_error_code(body);
+    match status_code {
+        412 => code
+            .as_deref()
+            .is_none_or(|code| matches!(code, "ConditionNotMet" | "BlobAlreadyExists")),
+        409 => code.as_deref() == Some("BlobAlreadyExists"),
+        _ => false,
+    }
+}
+
 /// Returns a copy of `stage_info` with `creds` replaced.
 fn with_creds(stage_info: &StageInfo, creds: CloudCredentials) -> StageInfo {
     let mut info = stage_info.clone();
@@ -247,6 +264,25 @@ fn azure_403_fastfail_policy(base: &RetryPolicy) -> RetryPolicy {
     policy
 }
 
+/// Applies Azure's atomic create-only precondition when overwrites are
+/// forbidden. Both object publication requests (`Put Blob` and
+/// `Put Block List`) must pass through this helper so committed-object
+/// publication cannot fall back to the HEAD/PUT race.
+///
+/// This does not isolate uncommitted blocks: deterministic block IDs let
+/// concurrent multipart writers replace each other's staged blocks before
+/// either commit. That pre-existing residual race is tracked by SNOW-4024287.
+fn apply_create_precondition(
+    request: reqwest::RequestBuilder,
+    overwrite: bool,
+) -> reqwest::RequestBuilder {
+    if overwrite {
+        request
+    } else {
+        request.header(reqwest::header::IF_NONE_MATCH, "*")
+    }
+}
+
 /// Runs ONE Azure PUT attempt with in-line retry for non-403 transients.
 /// 403 fast-fails as `AzureAttemptError::SasExpired`.
 async fn azure_put_attempt(
@@ -255,6 +291,7 @@ async fn azure_put_attempt(
     sas_token: &str,
     prepared: PreparedUpload,
     base: &RetryPolicy,
+    overwrite: bool,
 ) -> Result<(), AzureAttemptError<AzureUploadError>> {
     let source = prepared.source.byte_source();
     let digest = prepared.digest;
@@ -308,12 +345,15 @@ async fn azure_put_attempt(
                 .context(azure_upload_error::SourceIoSnafu)?;
 
             // TODO(SNOW-3701467): add an in-transit integrity checksum to match the S3 PUT path.
-            let mut req = client
-                .put(&full_url)
-                .header("x-ms-blob-type", "BlockBlob")
-                .header(AZURE_META_SFC_DIGEST, &digest)
-                .header(reqwest::header::CONTENT_LENGTH, content_length)
-                .body(body);
+            let mut req = apply_create_precondition(
+                client
+                    .put(&full_url)
+                    .header("x-ms-blob-type", "BlockBlob")
+                    .header(AZURE_META_SFC_DIGEST, &digest)
+                    .header(reqwest::header::CONTENT_LENGTH, content_length)
+                    .body(body),
+                overwrite,
+            );
 
             if let Some(ref enc_str) = encryption_data_str {
                 req = req.header(AZURE_META_ENCRYPTIONDATA, enc_str);
@@ -583,7 +623,7 @@ pub(super) async fn upload_to_azure_or_skip(
                 return Ok(status);
             }
 
-            if body_len >= multipart.threshold.bytes() {
+            let upload = if body_len >= multipart.threshold.bytes() {
                 // Multipart self-heals an expired SAS per-block and per-commit,
                 // so its 403s never bubble up as `SasExpired` — a block 403 no
                 // longer restarts the whole file. Errors are terminal (`Other`).
@@ -593,14 +633,40 @@ pub(super) async fn upload_to_azure_or_skip(
                     policy: &attempt_policy,
                     refresher,
                     initial_creds: &stage_info.creds,
+                    overwrite,
                 };
                 azure_multipart_upload(block_ctx, prepared, body_len, multipart.concurrency)
                     .await
-                    .map_err(AzureAttemptError::Other)?;
+                    .map_err(AzureAttemptError::Other)
             } else {
-                azure_put_attempt(&client, &url, sas_token.reveal(), prepared, &base).await?;
+                azure_put_attempt(
+                    &client,
+                    &url,
+                    sas_token.reveal(),
+                    prepared,
+                    &base,
+                    overwrite,
+                )
+                .await
+            };
+
+            match upload {
+                Ok(()) => Ok(UploadStatus::Uploaded),
+                Err(AzureAttemptError::Other(AzureUploadError::AzureHttp {
+                    status_code,
+                    body,
+                    ..
+                })) if !overwrite && is_blob_exists_precondition_error(status_code, &body) => {
+                    let code = parse_azure_error_code(&body);
+                    tracing::info!(
+                        status = status_code,
+                        code = code.as_deref().unwrap_or("unknown"),
+                        "Azure conditional upload for {key} found an existing blob; treating as Skipped"
+                    );
+                    Ok(UploadStatus::Skipped)
+                }
+                Err(e) => Err(e),
             }
-            Ok(UploadStatus::Uploaded)
         }
     };
 
@@ -707,6 +773,7 @@ struct AzureMultipartCtx<'a> {
     policy: &'a RetryPolicy,
     refresher: Option<&'a dyn StageInfoRefresher>,
     initial_creds: &'a CloudCredentials,
+    overwrite: bool,
 }
 
 /// Uploads `prepared` as an Azure block blob: `Put Block` ×N then `Put Block List`.
@@ -795,6 +862,11 @@ async fn azure_multipart_upload(
 /// Fixed-width, base64 block id for a 1-based part number. Azure requires every
 /// block id in an upload to be the same length; eight digits covers the 50 000
 /// block ceiling with room to spare.
+///
+/// TODO(SNOW-4024287): include a fixed-width per-upload nonce. IDs derived
+/// only from part number collide across concurrent writers to the same blob,
+/// allowing one writer's staged blocks to replace another's before conditional
+/// commit.
 fn azure_block_id(number: i32) -> String {
     BASE64_ENGINE.encode(format!("block{number:08}"))
 }
@@ -921,10 +993,13 @@ async fn azure_put_block_list_with_refresh(
                 azure_put_block_list(
                     &client,
                     &full_url,
-                    &block_numbers,
-                    &digest,
-                    encryption_data_str.as_deref(),
-                    mat_desc_str.as_deref(),
+                    AzureBlockListCommit {
+                        block_numbers: &block_numbers,
+                        digest: &digest,
+                        encryption_data: encryption_data_str.as_deref(),
+                        material_description: mat_desc_str.as_deref(),
+                        overwrite: ctx.overwrite,
+                    },
                     &policy,
                 )
                 .await
@@ -935,30 +1010,64 @@ async fn azure_put_block_list_with_refresh(
     .await
 }
 
+/// Inputs that define the atomic `Put Block List` publication request.
+///
+/// Azure does not expose staged blocks until this commit succeeds, so the
+/// overwrite policy belongs here alongside the ordered block IDs and object
+/// metadata.
+struct AzureBlockListCommit<'a> {
+    block_numbers: &'a [i32],
+    digest: &'a str,
+    encryption_data: Option<&'a str>,
+    material_description: Option<&'a str>,
+    overwrite: bool,
+}
+
+impl AzureBlockListCommit<'_> {
+    /// Serializes the ordered block IDs as Azure's `Put Block List` XML body,
+    /// naming every block as `<Latest>` so an uncommitted block wins over any
+    /// committed block sharing its id. That preference is also what lets two
+    /// concurrent writers commit a mixed blob today (SNOW-4024287): with block
+    /// ids derived from the part number alone, "latest" can mean the other
+    /// writer's block.
+    fn body(&self) -> String {
+        let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<BlockList>");
+        for &number in self.block_numbers {
+            xml.push_str("<Latest>");
+            xml.push_str(&azure_block_id(number));
+            xml.push_str("</Latest>");
+        }
+        xml.push_str("</BlockList>");
+        xml
+    }
+}
+
 /// Commits the staged blocks with `Put Block List`, attaching the digest and
 /// (for CSE) encryption metadata headers.
 async fn azure_put_block_list(
     client: &reqwest::Client,
     full_url: &str,
-    block_numbers: &[i32],
-    digest: &str,
-    encryption_data_str: Option<&str>,
-    mat_desc_str: Option<&str>,
+    commit: AzureBlockListCommit<'_>,
     policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError> {
-    let body = build_block_list_xml(block_numbers);
+    let body = commit.body();
     let client = client.clone();
     let url_owned = full_url.to_string();
-    let digest = digest.to_string();
-    let encryption_data_str = encryption_data_str.map(str::to_string);
-    let mat_desc_str = mat_desc_str.map(str::to_string);
+    let digest = commit.digest.to_string();
+    let encryption_data_str = commit.encryption_data.map(str::to_string);
+    let mat_desc_str = commit.material_description.map(str::to_string);
+    let overwrite = commit.overwrite;
     azure_upload_with_retry(
         async move || {
-            let mut req = client
-                .put(&url_owned)
-                .query(&[("comp", "blocklist")])
-                .header(AZURE_META_SFC_DIGEST, &digest)
-                .body(body.clone());
+            let mut req = apply_create_precondition(
+                client
+                    .put(&url_owned)
+                    .query(&[("comp", "blocklist")])
+                    .header(AZURE_META_SFC_DIGEST, &digest)
+                    .body(body.clone()),
+                overwrite,
+            );
+
             if let Some(enc) = &encryption_data_str {
                 req = req.header(AZURE_META_ENCRYPTIONDATA, enc);
             }
@@ -972,19 +1081,6 @@ async fn azure_put_block_list(
         policy,
     )
     .await
-}
-
-/// Builds the `Put Block List` request body naming every block (in order) as
-/// `<Latest>` (i.e. prefer an uncommitted block over any same-id committed one).
-fn build_block_list_xml(block_numbers: &[i32]) -> String {
-    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<BlockList>");
-    for &number in block_numbers {
-        xml.push_str("<Latest>");
-        xml.push_str(&azure_block_id(number));
-        xml.push_str("</Latest>");
-    }
-    xml.push_str("</BlockList>");
-    xml
 }
 
 /// Serializes the CSE encryption-data and material-description metadata header
@@ -2170,6 +2266,32 @@ mod tests {
         assert!(!is_expired_sas_error(401));
     }
 
+    #[test]
+    fn blob_exists_precondition_accepts_documented_azure_shapes() {
+        assert!(is_blob_exists_precondition_error(412, ""));
+        assert!(is_blob_exists_precondition_error(
+            412,
+            "<Error><Code>ConditionNotMet</Code></Error>"
+        ));
+        assert!(is_blob_exists_precondition_error(
+            409,
+            "<Error><Code>BlobAlreadyExists</Code></Error>"
+        ));
+    }
+
+    #[test]
+    fn blob_exists_precondition_rejects_unrelated_conflicts() {
+        assert!(!is_blob_exists_precondition_error(409, ""));
+        assert!(!is_blob_exists_precondition_error(
+            409,
+            "<Error><Code>LeaseIdMissing</Code></Error>"
+        ));
+        assert!(!is_blob_exists_precondition_error(
+            412,
+            "<Error><Code>LeaseConditionNotMet</Code></Error>"
+        ));
+    }
+
     #[tokio::test]
     async fn azure_sas_refresher_refresh_returns_false_when_cache_unchanged() {
         // No arm_rotation: the fake returns the current (unchanged) cached_at
@@ -2555,6 +2677,76 @@ mod tests {
         assert_eq!(status, UploadStatus::Skipped);
     }
 
+    /// The HEAD result is only an optimization: if a concurrent writer creates
+    /// the blob after HEAD returns 404, `If-None-Match: *` makes the PUT fail
+    /// atomically and the upload path preserves the public `Skipped` outcome.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn conditional_single_put_maps_toctou_412_to_skipped() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .and(header("If-None-Match", "*"))
+            .respond_with(ResponseTemplate::new(412))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            None,
+        )
+        .await
+        .expect("a failed conditional create is a normal skip outcome");
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn conditional_single_put_maps_blob_already_exists_409_to_skipped() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .and(header("If-None-Match", "*"))
+            .respond_with(
+                ResponseTemplate::new(409)
+                    .set_body_string("<Error><Code>BlobAlreadyExists</Code></Error>"),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            None,
+        )
+        .await
+        .expect("BlobAlreadyExists is a normal conditional-create skip");
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
     /// Scenario 2: HEAD elision — `overwrite=true && skip_match=false`
     /// proves UD doesn't waste a round-trip on the path Python wastes on.
     /// `Mock::given(method("HEAD")).expect(0)` is the load-bearing
@@ -2588,6 +2780,19 @@ mod tests {
         .await
         .expect("upload should succeed against the mock");
         assert_eq!(status, UploadStatus::Uploaded);
+
+        let requests = mock
+            .received_requests()
+            .await
+            .expect("wiremock should retain received requests");
+        let put = requests
+            .iter()
+            .find(|request| request.headers.contains_key("x-ms-blob-type"))
+            .expect("the upload should issue one PUT");
+        assert!(
+            !put.headers.contains_key(reqwest::header::IF_NONE_MATCH),
+            "overwrite=true must not attach If-None-Match"
+        );
     }
 
     /// Scenario 3: content-match branch — when the remote `sfcdigest`
@@ -3227,6 +3432,57 @@ mod tests {
             commit.headers.get(AZURE_META_SFC_DIGEST).is_some(),
             "digest metadata must ride on the block-list commit"
         );
+        assert!(
+            !commit.headers.contains_key(reqwest::header::IF_NONE_MATCH),
+            "overwrite=true must leave the block-list commit unconditional"
+        );
+    }
+
+    /// The conditional-create guard belongs on `Put Block List`, the atomic
+    /// visibility point for a block blob. A concurrent create after HEAD must
+    /// reject the commit and preserve the existing blob.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_block_blob_commit_maps_toctou_412_to_skipped() {
+        let mock = MockServer::start().await;
+
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "blocklist"))
+            .and(header("If-None-Match", "*"))
+            .respond_with(ResponseTemplate::new(412))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            PreparedUpload {
+                source: ByteSource::Bytes(Bytes::from_static(b"x")).into(),
+                digest: "local-digest".to_string(),
+                cse: None,
+            },
+            &stage,
+            "file.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            None,
+        )
+        .await
+        .expect("a failed conditional block-list commit is a normal skip outcome");
+
+        assert_eq!(status, UploadStatus::Skipped);
     }
 
     /// Cancelling mid-upload must issue no cleanup request at all — see
