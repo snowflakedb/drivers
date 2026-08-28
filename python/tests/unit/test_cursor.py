@@ -2889,6 +2889,49 @@ class TestAsyncExecuteNumStatements:
         assert StatementParameterName.MULTI_STATEMENT_COUNT not in captured, "second call must NOT inherit the count"
 
 
+class TestBareDescRewrite:
+    @pytest.fixture(params=[SnowflakeCursor, AsyncSnowflakeCursor])
+    def cursor(self, request):
+        connection = MagicMock()
+        connection.paramstyle = ParamStyle.PYFORMAT
+        return request.param(connection)
+
+    @pytest.mark.parametrize(
+        ("operation", "expected"),
+        [
+            ("desc customers", "describe table customers"),
+            ("DESCRIBE customers;", "describe table customers"),
+            ("DeSc customer_1 \n", "describe table customer_1"),
+        ],
+    )
+    def test_rewrites_with_deprecation_warning(self, cursor, operation, expected):
+        with pytest.warns(
+            DeprecationWarning,
+            match=r"will be removed in a future release; use 'DESC TABLE <table>' instead",
+        ):
+            query, binding_params = cursor._prepare_query(operation, None)
+
+        assert query == expected
+        assert binding_params is None
+
+    @pytest.mark.filterwarnings("error::DeprecationWarning")
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            "desc table customers",
+            "desc schema.customers",
+            'desc "customers"',
+            " desc customers",
+            "desc customers extra",
+        ],
+    )
+    def test_does_not_rewrite_other_describe_statements(self, cursor, operation):
+        query, binding_params = cursor._prepare_query(operation, None)
+
+        assert query == operation
+        assert binding_params is None
+
+
 class TestStageBindingDecision:
     """Unit tests for cursor-side stage binding threshold decision."""
 
