@@ -326,6 +326,76 @@ describe('Query returning data types', () => {
         expect(Object.values(rows![0])).toEqual(['14:45:30.123']);
       });
     });
+
+    describe('HH12:MI:SS AM format', () => {
+      beforeAll(async () => {
+        await executeAsync(connection, "ALTER SESSION SET TIME_OUTPUT_FORMAT = 'HH12:MI:SS AM'");
+      });
+
+      afterAll(async () => {
+        await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      });
+
+      it('renders AM/PM from the clock, not the token letters', async () => {
+        const { rows } = await executeAsync(
+          connection,
+          `SELECT '08:15:30'::TIME, '14:45:30'::TIME`,
+        );
+        expect(Object.values(rows![0])).toEqual(['08:15:30 AM', '02:45:30 PM']);
+      });
+    });
+
+    describe('YYYY-MM-DD HH24:MI:SS format', () => {
+      beforeAll(async () => {
+        await executeAsync(
+          connection,
+          "ALTER SESSION SET TIME_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS'",
+        );
+      });
+
+      afterAll(async () => {
+        await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      });
+
+      it('renders epoch calendar tokens, not the token letters', async () => {
+        const { rows } = await executeAsync(connection, "SELECT '14:45:30'::TIME");
+        expect(Object.values(rows![0])).toEqual(['1970-01-01 14:45:30']);
+      });
+    });
+
+    describe('HH24:MI:SS TZHTZM format', () => {
+      beforeAll(async () => {
+        await executeAsync(
+          connection,
+          "ALTER SESSION SET TIME_OUTPUT_FORMAT = 'HH24:MI:SS TZHTZM'",
+        );
+      });
+
+      afterAll(async () => {
+        await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      });
+
+      it('renders UTC offset tokens, not the token letters', async () => {
+        const { rows } = await executeAsync(connection, "SELECT '14:45:30'::TIME");
+        expect(Object.values(rows![0])).toEqual(['14:45:30 +0000']);
+      });
+    });
+
+    describe('MMMM DD, YYYY format', () => {
+      beforeAll(async () => {
+        await executeAsync(connection, "ALTER SESSION SET TIME_OUTPUT_FORMAT = 'MMMM DD, YYYY'");
+      });
+
+      afterAll(async () => {
+        await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      });
+
+      // BCR_LOG: TIME has no month; this copies the old converter accident.
+      it('renders MMMM as January at Unix epoch', async () => {
+        const { rows } = await executeAsync(connection, "SELECT '14:45:30'::TIME");
+        expect(Object.values(rows![0])).toEqual(['January 01, 1970']);
+      });
+    });
   });
 
   describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP', () => {

@@ -6,7 +6,9 @@ use chrono::{NaiveTime, Timelike};
 /// - `HH24` — 24-hour, zero-padded.
 /// - `HH12` — 12-hour, zero-padded, with real wraparound (`chrono`'s
 ///   [`Timelike::hour12`] already gives `0`/`12` -> `12`, `13` -> `1`, etc).
-///   No meridian (`AM`/`PM`) token is supported.
+/// - `AM` / `PM` — the meridian for the rendered hour (`AM` before noon,
+///   `PM` otherwise). Both tokens emit the actual meridian, matching the
+///   legacy driver's moment `A` mapping.
 /// - Bare `HH` — an alias for `HH24`, checked only after `HH24`/`HH12` both
 ///   fail so the longer tokens win. Undocumented on Snowflake's public
 ///   format-token page, but JDBC and the Python connector both alias it
@@ -20,10 +22,15 @@ use chrono::{NaiveTime, Timelike};
 ///   drops an immediately-preceding literal `.` — the legacy driver leaves
 ///   a dangling `.` in this case; that's a documented quirk, not a
 ///   contract, and isn't reproduced here.
-///
-/// `TZH`/`TZM`/timezone tokens are not recognized — TIME is timezone-
-/// agnostic by design, so any such token (or any other unrecognized
-/// character) passes through the output unchanged.
+/// - Date tokens (`YYYY` / `YY` / `MM` / `MMMM` / `MON` / `DD` / `DY`) — TIME
+///   has no calendar date; these currently emit Unix epoch (`1970-01-01`,
+///   Thursday / `Thu` / `January` / `Jan`) to match the old driver. `MMMM`
+///   is a converter accident (no month on TIME) — see BCR_LOG.md. Matched
+///   before `MON` so it does not render `JanM`.
+/// - Timezone tokens (`TZHTZM` / `TZH:TZM` / `TZH` / `TZM`) — TIME is
+///   timezone-agnostic, so these render UTC (`+0000` / `+00:00` / `+00` /
+///   `00`), matching the legacy driver's UTC default rather than passing
+///   the token text through.
 pub(crate) fn render(time: NaiveTime, scale: u32, format: &str) -> String {
     let chars: Vec<char> = format.chars().collect();
 
@@ -64,6 +71,29 @@ fn match_token(rest: &[char], time: NaiveTime, scale: u32) -> Option<(usize, Str
     if starts_with(rest, "HH") {
         return Some((2, format!("{:02}", time.hour())));
     }
+    if starts_with(rest, "TZHTZM") {
+        return Some((6, "+0000".to_string()));
+    }
+    if starts_with(rest, "TZH:TZM") {
+        return Some((7, "+00:00".to_string()));
+    }
+    if starts_with(rest, "YYYY") {
+        return Some((4, "1970".to_string()));
+    }
+    // Converter accident (BCR_LOG.md): TIME has no month. Keep before MON
+    // or MMMM becomes JanM.
+    if starts_with(rest, "MMMM") {
+        return Some((4, "January".to_string()));
+    }
+    if starts_with(rest, "MON") {
+        return Some((3, "Jan".to_string()));
+    }
+    if starts_with(rest, "TZH") {
+        return Some((3, "+00".to_string()));
+    }
+    if starts_with(rest, "TZM") {
+        return Some((3, "00".to_string()));
+    }
     if rest.len() >= 3 && rest[0] == 'F' && rest[1] == 'F' && rest[2].is_ascii_digit() {
         let requested = rest[2].to_digit(10).expect("guarded by is_ascii_digit");
         return Some((3, render_fraction(time, scale, requested)));
@@ -77,6 +107,22 @@ fn match_token(rest: &[char], time: NaiveTime, scale: u32) -> Option<(usize, Str
     if starts_with(rest, "FF") {
         // Bare FF: render every real digit the column's scale carries.
         return Some((2, render_fraction(time, scale, scale)));
+    }
+    if starts_with(rest, "YY") {
+        return Some((2, "70".to_string()));
+    }
+    if starts_with(rest, "MM") {
+        return Some((2, "01".to_string()));
+    }
+    if starts_with(rest, "DD") {
+        return Some((2, "01".to_string()));
+    }
+    if starts_with(rest, "DY") {
+        return Some((2, "Thu".to_string()));
+    }
+    if starts_with(rest, "AM") || starts_with(rest, "PM") {
+        let (is_pm, _) = time.hour12();
+        return Some((2, if is_pm { "PM" } else { "AM" }.to_string()));
     }
     None
 }
@@ -167,6 +213,31 @@ mod tests {
     }
 
     #[test]
+    fn converter_composite_formats_from_legacy_datetime_format_converter() {
+        let t = time(12, 34, 56, 789_789_789);
+        assert_eq!(
+            render(t, 9, "YYYY-MM-DD HH24:MI:SS.FF TZH:TZM"),
+            "1970-01-01 12:34:56.789789789 +00:00"
+        );
+        assert_eq!(
+            render(t, 9, "YY-MM-DD HH12:MI:SS,FF5AM TZHTZM"),
+            "70-01-01 12:34:56,78978PM +0000"
+        );
+        assert_eq!(
+            render(t, 9, "MMMM DD, YYYY DY HH24:MI:SS.FF9 TZH:TZM"),
+            "January 01, 1970 Thu 12:34:56.789789789 +00:00"
+        );
+        assert_eq!(
+            render(t, 9, "MON DD, YYYY HH12:MI:SS,FF9PM TZH:TZM"),
+            "Jan 01, 1970 12:34:56,789789789PM +00:00"
+        );
+        assert_eq!(
+            render(t, 9, "HH24:MI:SS.FF3 HH12:MI:SS,FF9 TZH"),
+            "12:34:56.789 12:34:56,789789789 +00"
+        );
+    }
+
+    #[test]
     fn ff9_against_scale_zero_column_drops_digits_and_the_dot() {
         // The column itself is scale 0 (e.g. `TIME(0)`) — nothing was ever
         // stored below whole seconds, so requesting FF9 must not invent
@@ -205,13 +276,51 @@ mod tests {
     }
 
     #[test]
-    fn unrecognized_tokens_pass_through_unchanged() {
-        // TIME is timezone-agnostic — a TZH:TZM token in the format string
-        // (copied from a TIMESTAMP_TZ session setting, say) is not
-        // substituted, by design.
+    fn am_pm_renders_the_actual_meridian() {
         assert_eq!(
-            render(time(12, 34, 56, 0), 0, "HH24:MI:SS TZH:TZM"),
-            "12:34:56 TZH:TZM"
+            render(time(8, 15, 30, 0), 0, "HH12:MI:SS AM"),
+            "08:15:30 AM"
+        );
+        assert_eq!(
+            render(time(14, 45, 30, 0), 0, "HH12:MI:SS AM"),
+            "02:45:30 PM"
+        );
+        assert_eq!(
+            render(time(14, 45, 30, 0), 0, "HH12:MI:SS PM"),
+            "02:45:30 PM"
+        );
+    }
+
+    #[test]
+    fn date_tokens_render_unix_epoch_calendar() {
+        assert_eq!(
+            render(time(14, 45, 30, 0), 0, "YYYY-MM-DD HH24:MI:SS"),
+            "1970-01-01 14:45:30"
+        );
+        assert_eq!(render(time(14, 45, 30, 0), 0, "DY MON YY"), "Thu Jan 70");
+    }
+
+    #[test]
+    fn timezone_tokens_render_utc() {
+        assert_eq!(
+            render(time(14, 45, 30, 0), 0, "HH24:MI:SS TZHTZM"),
+            "14:45:30 +0000"
+        );
+        assert_eq!(
+            render(time(14, 45, 30, 0), 0, "HH24:MI:SS TZH:TZM"),
+            "14:45:30 +00:00"
+        );
+        assert_eq!(
+            render(time(14, 45, 30, 0), 0, "HH24:MI:SS TZH TZM"),
+            "14:45:30 +00 00"
+        );
+    }
+
+    #[test]
+    fn unrecognized_tokens_pass_through_unchanged() {
+        assert_eq!(
+            render(time(12, 34, 56, 0), 0, "HH24:MI:SS QQ"),
+            "12:34:56 QQ"
         );
     }
 }

@@ -40,6 +40,10 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 - The `is*` methods (e.g. `isString()`) do not cover every data type value that can be returned by `.getType()`. For example, `decfloat` is not covered by any `is*` method. The new driver adds `isDecfloat()` to close this specific gap; old driver has no equivalent method.
 - The `isArray` and `isObject` methods are bugged and return false because server doesn't return `fieldsMetadata`
 
+### TIME has no month — `MMMM` → `January` is a converter accident
+
+TIME is a clock (`14:45:30`), not a date. The old format converter has no `MMMM` tag; it maps `MM` twice, so `MMMM` becomes moment `MMMM` (full month). Formatting TIME then prints `January` because the old driver uses Unix epoch as a fake calendar. The new TIME renderer currently copies that. Investigate whether date tokens on TIME (especially `MMMM`) should keep emitting epoch or stop pretending TIME has a month.
+
 ## Future Breaking Changes (BCRs)
 
 These are potential improvements to consider after the UD release:
