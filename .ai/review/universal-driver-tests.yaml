@@ -336,21 +336,24 @@ rules:
 
   - id: ud-layered-coverage-gap-analysis
     rule: |
-      **OBJECTIVE** (alternative to `ud-document-missing-test-coverage-gaps`): Identify intentional e2e gaps with awareness of lower test layers.
+      **OBJECTIVE** (alternative to `ud-document-missing-test-coverage-gaps`): Identify genuine e2e coverage gaps that are not already covered at a lower test layer. Do not produce documentation-only comments.
 
-      **REQUIREMENT**: For each feature file, compare scenario coverage against:
+      **REQUIREMENT**: For each feature file, compare each missing scenario independently against:
       1. Unit tests in the driver module (`*Test.java`, `*_test.rs`, `test_*.py`)
       2. Integration tests in the same feature area
 
-      Flag only gaps where NO lower layer covers the specific error path or edge case. When unit tests cover the path:
-      - Use Low priority: "Unit test `{file}::{method}` covers this error path; add e2e scenario only if cross-driver or real-server validation is needed."
-      - Do not skip entirely if the feature file lacks a `# TODO:` documenting intentional e2e deferral.
+      **UNIT-LAYER SUPPRESSION — do NOT flag when a lower layer already covers that gap**: suppress a missing scenario only when a unit or integration test exercises the *same operation* and *same failure mode*. Match per missing scenario; naming one covering test does not suppress other missing scenarios in the same feature.
+      Cite the covering test (file, method, parameterized case, or helper) and state in one clause what it asserts. Do not invent a citation. If you cannot find a covering test in scope, treat the path as uncovered.
+      Never suppress because tests merely exist in the same module, class, or feature area, or because a unit test covers a *different* error path of the same feature.
+      Stay silent on the covered scenario — even at Low. Do not suggest a `# TODO:` documenting the deferral. Never mention unit-covered paths in a comment that lists remaining gaps.
 
-      **CONSOLIDATION**: One comment per feature file listing all uncovered gaps in a single `# TODO:` block suggestion.
+      Flag ONLY scenarios whose same operation and same failure mode have no lower-layer coverage. Recommend adding those scenarios (or pending stubs). Never suggest a `# TODO:` whose purpose is to document that unit tests already cover a path.
 
-      **PRIORITY**: High for uncovered error paths with no lower-layer coverage; Low when unit tests exist.
+      **CONSOLIDATION**: One comment per feature file per PR, listing only scenarios that remain uncovered after the per-gap check.
 
-      ❌ **BAD** (happy-path only, no lower-layer coverage, no TODO — High priority):
+      **PRIORITY**: High for uncovered error paths with no lower-layer coverage.
+
+      ❌ **BAD** (happy-path only, no lower-layer coverage — flag the missing scenarios, not a documentation TODO):
       ```gherkin
       Feature: PUT/GET file operations
 
@@ -360,7 +363,7 @@ rules:
           Then Upload should succeed
       ```
 
-      ❌ **BAD** (e2e gap flagged at High when unit tests already cover error paths — use Low or skip):
+      ✅ **ALSO FINE — do NOT flag** (same path: unit test asserts the exact missing failure):
       ```gherkin
       Feature: auto commit behavior
 
@@ -370,27 +373,32 @@ rules:
           Then Auto commit should be on
       ```
       ```java
-      // SnowflakeConnectionImplTest.java already covers:
+      // SnowflakeConnectionImplTest#shouldThrowOnSetAutoCommitAfterClose
+      // covers "setAutoCommit on a closed connection" only — stay silent for that
+      // scenario. Do not treat this citation as coverage of disable / RPC failure.
       @Test
-      void shouldThrowWhenSetAutoCommitOnClosedConnection() {
+      void shouldThrowOnSetAutoCommitAfterClose() throws Exception {
+          connection.close();
           assertThrows(SQLException.class, () -> connection.setAutoCommit(true));
       }
       ```
 
-      ✅ **GOOD** (document intentional e2e deferral when unit tests cover error paths):
+      ❌ **STILL FLAG** (different path: a unit test for one error does not cover sibling operations):
       ```gherkin
-      Feature: auto commit behavior
+      Feature: PUT/GET file operations
 
-        Scenario: should enable auto commit
+        Scenario: should upload file to stage
           Given Snowflake client is logged in
-          When Auto commit is enabled
-          Then Auto commit should be on
-
-        # TODO: Add e2e scenarios only if cross-driver validation needed:
-        # - setAutoCommit on closed connection (covered by SnowflakeConnectionImplTest)
+          When File "data.csv" is uploaded to stage "@mystage"
+          Then Upload should succeed
+      ```
+      ```java
+      // FileTransferTest::rejectsUnknownStage covers invalid-stage PUT only.
+      // GET download has no unit or e2e coverage — flag GET, not a TODO about
+      // the unit test, and not overwrite/invalid-stage if those are already cited.
       ```
 
-      ✅ **GOOD** (genuine gap with no lower-layer coverage — flag once with consolidated TODO):
+      ✅ **GOOD** (remaining gap handled by adding the missing scenario; no leftover GET hole):
       ```gherkin
       Feature: PUT/GET file operations
 
@@ -399,7 +407,8 @@ rules:
           When File "data.csv" is uploaded to stage "@mystage"
           Then Upload should succeed
 
-        # TODO: Add scenarios for:
-        # - Upload with invalid stage name (error path)
-        # - Download file from stage (GET operation)
+        Scenario: should download file from stage
+          Given Snowflake client is logged in
+          When File "data.csv" is downloaded from stage "@mystage"
+          Then Download should succeed
       ```
