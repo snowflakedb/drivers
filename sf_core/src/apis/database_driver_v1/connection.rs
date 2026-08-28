@@ -37,7 +37,7 @@ use crate::config::settings::Settings;
 use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    self, QueryInput, QueryOptions, RestError, SessionTokens, SnowflakeResponseError, heartbeat,
+    self, QueryInput, QueryOptions, RestError, SessionTokens, heartbeat,
     snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
@@ -1553,13 +1553,11 @@ impl RefreshContext {
 
             // First token was issued - check if it failed with SessionExpired
             RefreshState::FirstToken(failed_token) => match last_error {
-                // Server returned GS code 390114 — master token is gone; mark expired
-                // immediately so the connection's `is_master_token_expired` flag is visible to
-                // external observers before the error propagates.
-                Some(RestError::InvalidSnowflakeResponse {
-                    source: SnowflakeResponseError::MasterTokenTerminal { code, .. },
-                    ..
-                }) => {
+                // Server returned GS 390113/390114/390115 — master token can
+                // never be renewed; mark expired immediately so the connection's
+                // `is_master_token_expired` flag is visible to external observers
+                // before the error propagates.
+                Some(RestError::MasterTokenTerminal { code, .. }) => {
                     tracing::error!(
                         code,
                         "Server reported master token can never be renewed, full re-authentication required"
@@ -1570,10 +1568,7 @@ impl RefreshContext {
                     }
                     .fail()
                 }
-                Some(RestError::InvalidSnowflakeResponse {
-                    source: SnowflakeResponseError::SessionExpired { .. },
-                    ..
-                }) => {
+                Some(RestError::SessionExpired { .. }) => {
                     tracing::info!("Session expired, attempting refresh");
                     let failed_token = failed_token.clone();
                     self.state = RefreshState::Refreshed;
@@ -1619,13 +1614,7 @@ impl RefreshContext {
                             // the master token can never be renewed: mark the
                             // connection expired before propagating, mirroring the
                             // query-response path.
-                            if matches!(
-                                &refresh_err,
-                                RestError::InvalidSnowflakeResponse {
-                                    source: SnowflakeResponseError::MasterTokenTerminal { .. },
-                                    ..
-                                },
-                            ) {
+                            if matches!(&refresh_err, RestError::MasterTokenTerminal { .. }) {
                                 tracing::error!(
                                     "Server reported master token can never be renewed during refresh, full re-authentication required"
                                 );
@@ -1703,35 +1692,24 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
     }
 
     /// Whether `err` warrants a session refresh. Note the deliberate
-    /// side-effect: for a non-renewable master-token-expiry (GS 390114) this
-    /// sets `is_master_token_expired` here (before declining to refresh),
-    /// because `refresh()` is never reached for that error.
+    /// side-effect: for a non-renewable master-token terminal
+    /// (GS 390113/390114/390115) this sets `is_master_token_expired` here
+    /// (before declining to refresh), because `refresh()` is never reached
+    /// for that error.
     fn should_refresh(&self, err: &ApiError) -> bool {
         let ApiError::Query { source, .. } = err else {
             return false;
         };
         // GS 390113/390114/390115: master token can never be renewed — mark
         // connection as expired and do NOT attempt a refresh.
-        if matches!(
-            source.as_ref(),
-            RestError::InvalidSnowflakeResponse {
-                source: SnowflakeResponseError::MasterTokenTerminal { .. },
-                ..
-            },
-        ) {
+        if matches!(source.as_ref(), RestError::MasterTokenTerminal { .. }) {
             tracing::error!(
                 "Server reported master token can never be renewed, full re-authentication required"
             );
             self.is_master_token_expired.store(true, Ordering::SeqCst);
             return false;
         }
-        matches!(
-            source.as_ref(),
-            RestError::InvalidSnowflakeResponse {
-                source: SnowflakeResponseError::SessionExpired { .. },
-                ..
-            },
-        )
+        matches!(source.as_ref(), RestError::SessionExpired { .. })
     }
 
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, ApiError>> {
@@ -1798,17 +1776,10 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
                 Err(refresh_err) => {
                     // The refresh endpoint can itself return GS 390113/390114/
                     // 390115 (master token can never be renewed).
-                    // refresh_session surfaces that as
-                    // InvalidSnowflakeResponse { MasterTokenTerminal }; mark
-                    // the connection expired before propagating, mirroring
+                    // refresh_session surfaces that as RestError::MasterTokenTerminal;
+                    // mark the connection expired before propagating, mirroring
                     // should_refresh() on the query path.
-                    if matches!(
-                        &refresh_err,
-                        RestError::InvalidSnowflakeResponse {
-                            source: SnowflakeResponseError::MasterTokenTerminal { .. },
-                            ..
-                        },
-                    ) {
+                    if matches!(&refresh_err, RestError::MasterTokenTerminal { .. }) {
                         tracing::error!(
                             "Server reported master token can never be renewed during refresh, full re-authentication required"
                         );
@@ -2479,12 +2450,7 @@ impl DatabaseDriverV1 {
                 .await
                 {
                     Ok(()) => return Ok(true),
-                    Err(
-                        e @ RestError::InvalidSnowflakeResponse {
-                            source: SnowflakeResponseError::SessionExpired { .. },
-                            ..
-                        },
-                    ) => {
+                    Err(e @ RestError::SessionExpired { .. }) => {
                         last_error = Some(e);
                     }
                     Err(_) => return Ok(false),

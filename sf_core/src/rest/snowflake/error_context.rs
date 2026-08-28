@@ -104,6 +104,12 @@ impl RestError {
                 query_id: None,
                 request_id: None,
             },
+            RestError::MasterTokenTerminal { code, .. } => SnowflakeErrorContext {
+                vendor_code: Some(*code),
+                sql_state: Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string()),
+                query_id: None,
+                request_id: None,
+            },
             // no wildcard - explicit empty arms
             RestError::Authentication { .. }
             | RestError::NativeOkta { .. }
@@ -111,6 +117,7 @@ impl RestError {
             | RestError::OAuthFlow { .. }
             | RestError::WorkloadIdentityAttestation { .. }
             | RestError::InvalidSnowflakeResponse { .. }
+            | RestError::SessionExpired { .. }
             | RestError::Communication { .. }
             | RestError::RequestConstruction { .. }
             | RestError::CrlValidation { .. }
@@ -264,5 +271,18 @@ mod tests {
                 request_id: None,
             }
         );
+    }
+
+    #[test]
+    fn master_token_terminal_gets_connection_sql_state() {
+        let err = RestError::MasterTokenTerminal {
+            code: 390114,
+            location: loc(),
+        };
+        let ctx = err.snowflake_context();
+        assert_eq!(ctx.vendor_code, Some(390114));
+        assert_eq!(ctx.sql_state.as_deref(), Some("08001"));
+        assert_eq!(ctx.query_id, None);
+        assert_eq!(ctx.request_id, None);
     }
 }

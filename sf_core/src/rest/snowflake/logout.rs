@@ -10,7 +10,7 @@ use crate::http::retry::{HttpContext, execute_with_retry};
 use crate::rest::snowflake::error::map_http_error;
 use crate::rest::snowflake::{
     AsyncQuerySnafu, LogoutSnafu, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
-    SnowflakeResponseError, UrlJoinSnafu, user_agent,
+    SessionExpiredSnafu, SnowflakeResponseError, UrlJoinSnafu, user_agent,
 };
 use crate::sensitive::SensitiveString;
 use reqwest::{Method, header};
@@ -33,7 +33,7 @@ struct LogoutResponse {
 /// # Error handling
 ///
 /// - SESSION_GONE (390111) → `Ok(())` (session already terminated, true success)
-/// - SESSION_TOKEN_EXPIRED (390112) → `Err(InvalidSnowflakeResponse { SessionExpired })`
+/// - SESSION_TOKEN_EXPIRED (390112) → `Err(RestError::SessionExpired)`
 ///   (signals `RefreshContext` to refresh master token and retry)
 /// - Other Snowflake codes → `Err(RestError::Logout { code, message })`
 /// - Non-2xx with non-JSON body → `Err(RestError::InvalidSnowflakeResponse { ResponseStatus })`
@@ -180,12 +180,7 @@ fn handle_logout_response(response: LogoutResponse) -> Result<(), RestError> {
             code = SESSION_TOKEN_EXPIRED,
             "Session token expired (390112) - signaling token refresh"
         );
-        return Err(RestError::InvalidSnowflakeResponse {
-            source: SnowflakeResponseError::SessionExpired {
-                location: snafu::Location::default(),
-            },
-            location: snafu::Location::default(),
-        });
+        return SessionExpiredSnafu.fail();
     }
 
     // Other Snowflake errors
@@ -235,17 +230,10 @@ mod tests {
             code: Some("390112".to_string()),
         };
         let err = handle_logout_response(response).unwrap_err();
-        // Should be SessionExpired wrapped in InvalidSnowflakeResponse
+        // Should be RestError::SessionExpired so RefreshContext can retry
         assert!(
-            matches!(
-                err,
-                RestError::InvalidSnowflakeResponse {
-                    source: SnowflakeResponseError::SessionExpired { .. },
-                    ..
-                }
-            ),
-            "Expected SessionExpired, got: {:?}",
-            err
+            matches!(err, RestError::SessionExpired { .. }),
+            "Expected SessionExpired, got: {err:?}"
         );
     }
 

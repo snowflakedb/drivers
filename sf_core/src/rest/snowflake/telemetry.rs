@@ -9,9 +9,8 @@ use url::Url;
 
 use crate::config::rest_parameters::QueryParameters;
 use crate::rest::snowflake::{
-    CommunicationSnafu, InvalidSnowflakeResponseSnafu, PayloadEncodeSnafu,
-    RequestConstructionSnafu, RestError, UrlJoinSnafu, apply_json_content_type,
-    apply_query_headers, read_response_json,
+    CommunicationSnafu, PayloadEncodeSnafu, RequestConstructionSnafu, RestError, UrlJoinSnafu,
+    apply_json_content_type, apply_query_headers, read_response_json,
 };
 
 const TELEMETRY_SEND_PATH: &str = "/telemetry/send";
@@ -78,9 +77,7 @@ pub async fn send_telemetry(
         context: "Failed to execute telemetry request",
     })?;
 
-    let parsed: TelemetryResponse = read_response_json::<serde_json::Value>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    let parsed: TelemetryResponse = read_response_json::<serde_json::Value>(response).await?;
 
     if !parsed.success {
         tracing::warn!(

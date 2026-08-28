@@ -102,7 +102,10 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
                     let client = reqwest::Client::new();
                     let resp = client
                         .post(format!("http://{}/queries/v1/query-request", query_addr))
-                        .header("Authorization", format!("Snowflake Token=\"{}\"", token.reveal()))
+                        .header(
+                            "Authorization",
+                            format!("Snowflake Token=\"{}\"", token.reveal()),
+                        )
                         .send()
                         .await
                         .map_err(|e| sf_core::rest::snowflake::RestError::Communication {
@@ -112,17 +115,15 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
                         })?;
 
                     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-                        return Err(sf_core::rest::snowflake::RestError::InvalidSnowflakeResponse {
-                            source: sf_core::rest::snowflake::SnowflakeResponseError::SessionExpired {
-                                location: snafu::Location::default(),
-                            },
+                        return Err(sf_core::rest::snowflake::RestError::SessionExpired {
                             location: snafu::Location::default(),
                         });
                     }
 
                     Ok(format!("request {} succeeded", i))
                 }
-            }).await
+            })
+            .await
         }));
     }
 

@@ -3,7 +3,7 @@
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::rest::snowflake::{
     MASTER_TOKEN_EXPIRED, MASTER_TOKEN_INVALID, MASTER_TOKEN_NOT_FOUND, RestError, SessionTokens,
-    SnowflakeResponseError, refresh_session,
+    refresh_session,
 };
 use sf_core::sensitive::SensitiveString;
 use std::net::SocketAddr;
@@ -141,13 +141,10 @@ async fn should_map_master_token_terminal_gs_codes_on_refresh() {
         // Then the error is MasterTokenTerminal carrying the real GS code
         let err = result.expect_err("master-token-terminal refresh must fail");
         match err {
-            RestError::InvalidSnowflakeResponse {
-                source: SnowflakeResponseError::MasterTokenTerminal { code: got, .. },
-                ..
-            } => assert_eq!(got, code, "must preserve the real GS code"),
-            other => panic!(
-                "expected InvalidSnowflakeResponse{{MasterTokenTerminal}} for GS {code}, got {other:?}"
-            ),
+            RestError::MasterTokenTerminal { code: got, .. } => {
+                assert_eq!(got, code, "must preserve the real GS code")
+            }
+            other => panic!("expected MasterTokenTerminal for GS {code}, got {other:?}"),
         }
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         server.await.unwrap();
