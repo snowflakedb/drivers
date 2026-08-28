@@ -517,6 +517,7 @@ impl DatabaseDriverV1 {
                         Err(_) => Err(crate::rest::snowflake::OperationTimeoutSnafu {
                             operation: "login".to_string(),
                             budget,
+                            ids: crate::rest::snowflake::QueryIds::default(),
                         }
                         .build()),
                     }

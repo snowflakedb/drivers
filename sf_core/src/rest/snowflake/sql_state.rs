@@ -8,9 +8,6 @@
 //! However, a few code paths receive only the numeric error code and never an
 //! `sqlState` string — for example:
 //!
-//! - The async polling path constructs `RestError::QueryFailed { sql_state:
-//!   None, .. }` from `SfError::SnowflakeBody { code, .. }` (see
-//!   `apis::database_driver_v1::error::map_async_query_error`).
 //! - The query-monitoring response (`snowflake_query_status`) emits
 //!   `error_code` without a SQLSTATE.
 //!
@@ -35,8 +32,7 @@ pub fn sql_state_from_code(code: i32) -> Option<&'static str> {
     match code {
         // SQL compilation error — syntax, unresolved identifier, type mismatch.
         // Matches the server's own `sqlState` for this code, included here as
-        // a safety net for paths (async poll, monitoring) where the server
-        // omits the field.
+        // a safety net for paths (monitoring) where the server omits the field.
         1003 => Some("42000"),
         // Numeric value out of representable range for the target column type.
         // e.g. "Number out of representable range: type FIXED[SB2](3,0), value 99999".

@@ -2,7 +2,6 @@
 pub mod async_exec;
 mod auth;
 mod browser;
-pub mod error;
 mod error_context;
 pub(crate) use error_context::SnowflakeErrorContext;
 mod external_browser;
@@ -41,7 +40,6 @@ use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
     AuthResponse, authenticator,
 };
-use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::external_browser::{
     DefaultBrowserOpener, external_browser_authenticate,
 };
@@ -982,6 +980,7 @@ async fn send_login_request(
         .await
         .context(HttpRetrySnafu {
             context: "login request",
+            ids: QueryIds::default(),
         })?;
 
     read_response_json::<auth::AuthResponseMain>(response).await
@@ -1770,29 +1769,18 @@ async fn execute_async_with_fallback<'a>(
     .await
     {
         Ok(response) => return Ok(response),
-        Err(RestError::AsyncQuery {
-            source:
-                SfError::AsyncPollResultNotFound {
-                    is_first_poll: true,
-                    ..
-                },
+        Err(RestError::AsyncPollResultNotFound {
+            is_first_poll: true,
             ..
         }) => {
             // Error 612 "Result not found" on first poll - fall through to sync retry.
         }
         Err(
-            e @ RestError::AsyncQuery {
-                source:
-                    SfError::AsyncPollResultNotFound {
-                        is_first_poll: false,
-                        ..
-                    },
+            e @ RestError::AsyncPollResultNotFound {
+                is_first_poll: false,
                 ..
             },
         ) => {
-            let RestError::AsyncQuery { request_id, .. } = &e else {
-                unreachable!()
-            };
             // guarded with: query_log_text, query_log_parameters
             let (sql, bindings) = query_log_fields(query_parameters, &query_input);
             tracing::error!(
@@ -1839,30 +1827,32 @@ async fn execute_async_with_fallback<'a>(
     Ok(response)
 }
 
-/// Map a Snowflake query response into a `Result`, converting
-/// `response.success == false` into `RestError::QueryFailed` with
-/// the server's message, error code, SQL state, query ID, and the
-/// client-generated `request_id` used for the submission (when known).
-fn into_query_result(
+/// Build [`RestError::QueryFailed`] from a Snowflake query-response envelope.
+pub(super) fn query_failed_from_response(
     response: query_response::Response,
-    request_id: Option<Uuid>,
+    ids: &QueryIds,
+) -> RestError {
+    let message = response
+        .message
+        .unwrap_or_else(|| "Unknown error".to_owned());
+    let code = response.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+    QueryFailedSnafu {
+        message,
+        code,
+        sql_state: response.data.sql_state,
+        ids: ids.clone(),
+    }
+    .build()
+}
+
+/// Map a Snowflake query response into a `Result`, converting
+/// `response.success == false` into `RestError::QueryFailed`.
+pub(super) fn into_query_result(
+    response: query_response::Response,
+    ids: &QueryIds,
 ) -> Result<query_response::Response, RestError> {
     if !response.success {
-        let message = response
-            .message
-            .unwrap_or_else(|| "Unknown error".to_owned());
-        let code = response.code.as_deref().and_then(|c| c.parse::<i32>().ok());
-        let sql_state = response.data.sql_state.clone();
-        let query_id = response.data.query_id.clone();
-
-        return QueryFailedSnafu {
-            message,
-            code,
-            sql_state,
-            query_id,
-            request_id,
-        }
-        .fail();
+        return Err(query_failed_from_response(response, ids));
     }
     Ok(response)
 }
@@ -1949,6 +1939,10 @@ async fn execute_sync_query<'a>(
         .await
         .context(HttpRetrySnafu {
             context: "query request",
+            ids: QueryIds {
+                request_id: Some(request_id),
+                query_id: None,
+            },
         })?;
 
     let query_response = read_response_json::<query_response::Data>(response).await?;
@@ -1961,6 +1955,10 @@ async fn execute_sync_query<'a>(
         "Sync query response received"
     );
 
+    let ids = QueryIds {
+        request_id: Some(request_id),
+        query_id: query_response.data.query_id.clone(),
+    };
     let query_response = if async_exec::should_poll_for_completion(&query_response) {
         tracing::debug!(request_id = %request_id, "detached query - polling for completion");
         async_exec::poll_detached_query(
@@ -1969,21 +1967,14 @@ async fn execute_sync_query<'a>(
             session_token,
             &query_response,
             retry_policy,
+            &ids,
         )
-        .await
-        .context(AsyncQuerySnafu {
-            request_id: Some(request_id),
-            query_id: query_response
-                .data
-                .query_id
-                .as_deref()
-                .and_then(|s| Uuid::parse_str(s).ok()),
-        })?
+        .await?
     } else {
         query_response
     };
 
-    into_query_result(query_response, Some(request_id))
+    into_query_result(query_response, &ids)
 }
 
 /// New blocking facade that uses the async engine under the hood.
@@ -2008,10 +1999,6 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
         retry_policy,
     )
     .await
-    .context(AsyncQuerySnafu {
-        request_id: Some(request_id),
-        query_id: None,
-    })
 }
 
 /// Fetch the result of a previously executed query by its Snowflake Query ID.
@@ -2033,21 +2020,21 @@ pub async fn snowflake_get_query_result(
         "{}/queries/{}/result",
         query_parameters.server_url, query_id
     );
-    let uuid = Uuid::parse_str(query_id).expect("Failed to parse query_id");
+    let ids = QueryIds {
+        request_id: None,
+        query_id: Some(query_id.to_owned()),
+    };
     let query_response = async_exec::poll_query_status(
         client,
         &query_parameters.client_info,
         session_token,
         &result_url,
         retry_policy,
+        &ids,
     )
-    .await
-    .context(AsyncQuerySnafu {
-        request_id: None,
-        query_id: Some(uuid),
-    })?;
+    .await?;
 
-    into_query_result(query_response, None)
+    into_query_result(query_response, &ids)
 }
 
 /// Result of a query status check via the monitoring endpoint.
@@ -2105,10 +2092,15 @@ pub async fn get_query_status(
     };
 
     let ctx = HttpContext::new(Method::GET, MONITORING_QUERIES_PATH);
+    let ids = QueryIds {
+        request_id: None,
+        query_id: Some(query_id.to_owned()),
+    };
     let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
         .await
-        .context(HttpRetrySnafu {
+        .with_context(|_| HttpRetrySnafu {
             context: "query status",
+            ids: ids.clone(),
         })?;
 
     let body: QueryStatusResponse =
@@ -2121,8 +2113,7 @@ pub async fn get_query_status(
             message,
             code,
             sql_state: None::<String>,
-            query_id: Some(query_id.to_owned()),
-            request_id: None,
+            ids,
         }
         .fail();
     }
@@ -2494,6 +2485,12 @@ pub(crate) fn apply_json_content_type(builder: reqwest::RequestBuilder) -> reqwe
     builder.header(header::CONTENT_TYPE, json_header_value())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct QueryIds {
+    pub request_id: Option<Uuid>,
+    pub query_id: Option<String>,
+}
+
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum RestError {
     #[snafu(display("{operation} timed out after {budget:?}"))]
@@ -2501,6 +2498,8 @@ pub enum RestError {
     OperationTimeout {
         operation: String,
         budget: std::time::Duration,
+        /// Empty on login timeout; filled on the statement-poll path.
+        ids: QueryIds,
         #[snafu(implicit)]
         location: Location,
     },
@@ -2585,14 +2584,6 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Async Snowflake query failed"))]
-    AsyncQuery {
-        source: SfError,
-        request_id: Option<Uuid>,
-        query_id: Option<Uuid>,
-        #[snafu(implicit)]
-        location: Location,
-    },
     #[snafu(display("Failed to build Snowflake URL for {path}: {source}"))]
     UrlJoin {
         path: &'static str,
@@ -2648,16 +2639,37 @@ pub enum RestError {
         code: Option<i32>,
         /// ANSI SQL state code (e.g. "42000" for syntax error).
         sql_state: Option<String>,
-        /// Snowflake Query ID associated with the failed query.
-        query_id: Option<String>,
-        /// Client-generated `requestId` sent on the query submission request.
-        request_id: Option<Uuid>,
+        ids: QueryIds,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    /// Error 612 from async polling — triggers automatic retry with sync
+    /// mode only on the first poll. If we've already made progress, don't retry.
+    #[snafu(display("Async poll returned error 612 (result not found)"))]
+    AsyncPollResultNotFound {
+        /// True if this was the first poll attempt (safe to retry with sync).
+        is_first_poll: bool,
+        ids: QueryIds,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Async query response missing getResultUrl; cannot poll for completion"))]
+    MissingResultUrl {
+        ids: QueryIds,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Async query did not report a queryId"))]
+    MissingQueryId {
+        ids: QueryIds,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("HTTP request failed after retries: {context}"))]
     HttpRetry {
         context: &'static str,
+        /// Empty on login and logout; filled on query/poll HTTP failures.
+        ids: QueryIds,
         source: crate::http::retry::HttpError,
         #[snafu(implicit)]
         location: Location,
@@ -3028,7 +3040,7 @@ mod tests {
                 }
             }));
 
-            match into_query_result(resp, None) {
+            match into_query_result(resp, &QueryIds::default()) {
                 Ok(r) => assert!(r.success),
                 Err(e) => panic!("expected Ok, got {:?}", e),
             }
@@ -3043,26 +3055,30 @@ mod tests {
                 "data": {
                     "rowset": null,
                     "rowsetBase64": null,
-                    "sqlState": "42000",
-                    "queryId": "01abc-def-12345"
+                    "sqlState": "42000"
                 }
             }));
 
             let request_id = Uuid::new_v4();
-            match into_query_result(resp, Some(request_id)) {
+            match into_query_result(
+                resp,
+                &QueryIds {
+                    request_id: Some(request_id),
+                    query_id: Some("01abc-def-12345".to_owned()),
+                },
+            ) {
                 Err(RestError::QueryFailed {
                     message,
                     code,
                     sql_state,
-                    query_id,
-                    request_id: rid,
+                    ids,
                     ..
                 }) => {
                     assert_eq!(message, "SQL compilation error");
                     assert_eq!(code, Some(1003));
                     assert_eq!(sql_state, Some("42000".to_owned()));
-                    assert_eq!(query_id, Some("01abc-def-12345".to_owned()));
-                    assert_eq!(rid, Some(request_id));
+                    assert_eq!(ids.query_id, Some("01abc-def-12345".to_owned()));
+                    assert_eq!(ids.request_id, Some(request_id));
                 }
                 Err(other) => panic!("expected QueryFailed, got {:?}", other),
                 Ok(_) => panic!("expected Err, got Ok"),
@@ -3079,20 +3095,19 @@ mod tests {
                 }
             }));
 
-            match into_query_result(resp, None) {
+            match into_query_result(resp, &QueryIds::default()) {
                 Err(RestError::QueryFailed {
                     message,
                     code,
                     sql_state,
-                    query_id,
-                    request_id,
+                    ids,
                     ..
                 }) => {
                     assert_eq!(message, "Unknown error");
                     assert_eq!(code, None);
                     assert_eq!(sql_state, None);
-                    assert_eq!(query_id, None);
-                    assert_eq!(request_id, None);
+                    assert_eq!(ids.query_id, None);
+                    assert_eq!(ids.request_id, None);
                 }
                 Err(other) => panic!("expected QueryFailed, got {:?}", other),
                 Ok(_) => panic!("expected Err, got Ok"),

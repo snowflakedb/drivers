@@ -1375,6 +1375,7 @@ fn build_full_columns_schema_list_array(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rest::snowflake::QueryIds;
     use arrow::ipc::reader::StreamReader;
 
     // --- Schema contract ---
@@ -1519,8 +1520,7 @@ mod tests {
             message: "permission denied".to_string(),
             code: Some(3001),
             sql_state: Some("42501".to_string()),
-            query_id: None,
-            request_id: None,
+            ids: QueryIds::default(),
             location: snafu::Location::new("test", 1, 1),
         });
         assert!(map_execute_show_error(err, "SHOW TABLES", false).is_err());
@@ -1533,8 +1533,7 @@ mod tests {
             message: "does not exist".to_string(),
             code: Some(2003),
             sql_state: Some("42S02".to_string()),
-            query_id: None,
-            request_id: None,
+            ids: QueryIds::default(),
             location: snafu::Location::new("test", 1, 1),
         });
         assert!(
