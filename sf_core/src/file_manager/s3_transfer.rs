@@ -27,7 +27,7 @@ use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::retry::RetryConfig as AwsRetryConfig;
 use aws_sdk_s3::config::timeout::TimeoutConfig as AwsTimeoutConfig;
-use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_s3::types::BucketAccelerateStatus;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
@@ -58,6 +58,155 @@ const INTERNAL_STAGE_BUCKET_PREFIX: &str = "sfc-";
 /// (`max_elapsed` in `s3_retry_policy`) must exceed this so at least one
 /// full attempt can complete.
 const REQUEST_TIMEOUT_SECS: u64 = 300;
+/// Conditional conflicts replay an entire object write, so keep this budget
+/// separate from (and much smaller than) the SDK's per-request attempt count.
+/// Counts total write attempts, so the default permits one replay.
+const MAX_CONDITIONAL_CONFLICT_ATTEMPTS: u32 = 2;
+
+/// Which S3 protocol publishes the prepared object.
+#[derive(Clone, Copy)]
+enum S3WriteProtocol {
+    PutObject,
+    Multipart { body_len: u64, concurrency: usize },
+}
+
+/// One conditional S3 object write, including the inputs that must be replayed
+/// together after `ConditionalRequestConflict`.
+///
+/// Retry layering is deliberate:
+/// - the AWS SDK retries transient failures within each individual request;
+/// - [`execute_with_conflict_retry`](Self::execute_with_conflict_retry) replays
+///   the object write after ambiguous HTTP 409 conflicts (and therefore
+///   restarts the full multipart lifecycle);
+/// - [`run_s3_with_sts_refresh`] remains outside this operation and recreates
+///   the client/probe/write attempt after an expired credential, which restarts
+///   the conflict count with a fresh [`S3ConflictRetryBudget`]. The shared
+///   transfer deadline, not the attempt count, is what bounds that product.
+struct S3ConditionalWrite<'a> {
+    prepared: &'a PreparedUpload,
+    client: &'a S3Client,
+    stage_info: &'a StageInfo,
+    key: &'a str,
+    overwrite: bool,
+    cleanup: Option<&'a CleanupScope>,
+    protocol: S3WriteProtocol,
+}
+
+/// Attempt/backoff state for replaying ambiguous S3 conditional conflicts.
+///
+/// The deadline starts at the beginning of the overall transfer, not when the
+/// first 409 arrives, so this layer consumes the same `max_elapsed` budget as
+/// the HEAD and initial write. That sharing is what makes the replay cost-aware
+/// without a size-specific cap: an upload large enough to have already spent
+/// the budget cannot start a replay, while a small object that conflicts early
+/// still gets one. The arithmetic is intentionally isolated for eventual
+/// consolidation under SNOW-3780594.
+struct S3ConflictRetryBudget<'a> {
+    policy: &'a RetryPolicy,
+    transfer_started: Instant,
+    attempts: u32,
+    next_delay_ms: f64,
+}
+
+impl<'a> S3ConflictRetryBudget<'a> {
+    fn new(policy: &'a RetryPolicy, transfer_started: Instant) -> Self {
+        Self {
+            policy,
+            transfer_started,
+            attempts: 0,
+            next_delay_ms: policy.backoff.base.as_millis() as f64,
+        }
+    }
+
+    /// Charges the just-finished attempt to the budget and returns how long to
+    /// wait before replaying it, or `None` once the attempt count or the
+    /// transfer deadline is exhausted. Call once per observed conflict.
+    fn delay_before_retry(&mut self) -> Option<Duration> {
+        self.attempts += 1;
+        if self.attempts >= MAX_CONDITIONAL_CONFLICT_ATTEMPTS {
+            return None;
+        }
+
+        let delay = Duration::from_millis(self.next_delay_ms as u64);
+        if let Some(total_budget) = self.policy.max_elapsed {
+            let remaining = total_budget.checked_sub(self.transfer_started.elapsed())?;
+            if delay >= remaining {
+                return None;
+            }
+        }
+
+        self.next_delay_ms = cloud_http::next_delay_ms(self.next_delay_ms, &self.policy.backoff);
+        Some(delay)
+    }
+}
+
+impl S3ConditionalWrite<'_> {
+    async fn execute_once(&self) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
+        match self.protocol {
+            S3WriteProtocol::PutObject => {
+                put_object(
+                    self.prepared.clone(),
+                    self.client,
+                    self.stage_info,
+                    self.key,
+                    self.overwrite,
+                )
+                .await
+            }
+            S3WriteProtocol::Multipart {
+                body_len,
+                concurrency,
+            } => {
+                s3_multipart_upload(
+                    S3MultipartCtx {
+                        client: self.client,
+                        stage_info: self.stage_info,
+                        key: self.key,
+                        overwrite: self.overwrite,
+                        cleanup: self.cleanup,
+                    },
+                    self.prepared.clone(),
+                    body_len,
+                    concurrency,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Replays the object write within the configured PUT/GET retry budget
+    /// when AWS returns `ConditionalRequestConflict`.
+    async fn execute_with_conflict_retry(
+        &self,
+        policy: &RetryPolicy,
+        transfer_started: Instant,
+    ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
+        let mut budget = S3ConflictRetryBudget::new(policy, transfer_started);
+
+        loop {
+            match self.execute_once().await {
+                Err(S3AttemptError::ConditionalConflict(error)) => {
+                    let Some(delay) = budget.delay_before_retry() else {
+                        // TODO(SNOW-4027883): HEAD the key before giving up and
+                        // report Skipped when an object is present. Losing a create
+                        // race honours overwrite=false, so it shouldn't surface as
+                        // an opaque upload failure.
+                        return Err(S3AttemptError::Other(error));
+                    };
+
+                    tracing::warn!(
+                        multipart = matches!(self.protocol, S3WriteProtocol::Multipart { .. }),
+                        attempt = budget.attempts,
+                        key = ?self.key,
+                        "S3 conditional request conflict; retrying the write"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                other => return other,
+            }
+        }
+    }
+}
 
 /// Uploads a file to S3, skipping when a HEAD probe says either "the object
 /// exists and overwrite is off" or "the object's content matches the local
@@ -101,6 +250,7 @@ pub(super) async fn upload_to_s3_or_skip(
     multipart: MultipartParams,
     tx: TransferCtx<'_>,
 ) -> Result<UploadStatus, UploadFileError> {
+    let transfer_started = Instant::now();
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
 
@@ -157,21 +307,25 @@ pub(super) async fn upload_to_s3_or_skip(
                 return Ok(status);
             }
 
-            if use_multipart {
-                s3_multipart_upload(
-                    prepared,
-                    &s3_client,
-                    &stage_info,
-                    &s3_key,
+            let protocol = if use_multipart {
+                S3WriteProtocol::Multipart {
                     body_len,
-                    multipart.concurrency,
-                    tx.cleanup,
-                )
-                .await?;
+                    concurrency: multipart.concurrency,
+                }
             } else {
-                put_object(prepared, &s3_client, &stage_info, &s3_key).await?;
+                S3WriteProtocol::PutObject
+            };
+            S3ConditionalWrite {
+                prepared: &prepared,
+                client: &s3_client,
+                stage_info: &stage_info,
+                key: &s3_key,
+                overwrite,
+                cleanup: tx.cleanup,
+                protocol,
             }
-            Ok(UploadStatus::Uploaded)
+            .execute_with_conflict_retry(&policy, transfer_started)
+            .await
         }
     };
 
@@ -188,14 +342,14 @@ pub(super) async fn upload_to_s3_or_skip(
     .await
 }
 
-/// Internal error type for one attempt of an S3 operation. The `StsExpired`
-/// arm is the recoverable signal `should_refresh` matches on; everything
-/// else lives in `Other`. This stays internal — `UploadFileError` /
-/// `DownloadFileError` have no `StsExpiredToken` variant, so callers cannot
-/// observe a refresh-internal state.
+/// Internal error type for one attempt of an S3 operation. `StsExpired`
+/// triggers credential refresh; `ConditionalConflict` retries the conditional
+/// write (restarting multipart from CreateMultipartUpload); everything else
+/// lives in `Other`. These control-flow signals remain internal.
 #[derive(Debug)]
 enum S3AttemptError<E> {
     StsExpired(aws_sdk_s3::Error),
+    ConditionalConflict(E),
     Other(E),
 }
 
@@ -291,7 +445,7 @@ where
         None => attempt(initial_creds.clone()).await,
     };
     outcome.map_err(|e| match e {
-        S3AttemptError::Other(err) => err,
+        S3AttemptError::ConditionalConflict(err) | S3AttemptError::Other(err) => err,
         S3AttemptError::StsExpired(aws_err) => map_sts_err(aws_err),
     })
 }
@@ -440,8 +594,49 @@ async fn probe_remote_object(
 /// Other codes (InvalidToken, AccessDenied, 403, 5xx, throttling) return false
 /// so they stay on the normal error path. Matches the Python / ODBC detector.
 fn is_expired_token_error(err: &aws_sdk_s3::Error) -> bool {
-    use aws_sdk_s3::error::ProvideErrorMetadata;
     err.code() == Some("ExpiredToken")
+}
+
+/// Provider error codes that mean an atomic conditional write lost a race.
+///
+/// AWS S3 uses `PreconditionFailed` (HTTP 412) when the object exists. Some
+/// S3-compatible endpoints report the same object-exists outcome as
+/// `ObjectAlreadyExists` (HTTP 409).
+///
+/// Those statuses are context, not the test: classification must stay on the
+/// error code, because `CompleteMultipartUpload` can report a failure inside an
+/// HTTP 200 response body. The SDK turns that into a service error, so the code
+/// is present, but a status-based check would read it as a successful commit.
+///
+/// `ConditionalRequestConflict` is intentionally not included: AWS documents
+/// that outcome as requiring a retry (or a complete multipart restart), and it
+/// does not prove that an object remains at the key.
+fn is_object_exists_precondition_error(err: &aws_sdk_s3::Error) -> bool {
+    matches!(
+        err.code(),
+        Some("PreconditionFailed" | "ObjectAlreadyExists")
+    )
+}
+
+/// Whether AWS requires replaying the conditional write because another
+/// operation conflicted without proving that the target currently exists.
+///
+/// `NoSuchUpload` deliberately remains a normal error: an external actor
+/// deleting our private upload ID is unlikely, while automatically restarting
+/// would hide a local upload-ID lifecycle bug or reuse-after-abort.
+///
+/// Matches on the error code for the same reason as
+/// [`is_object_exists_precondition_error`].
+fn is_conditional_request_conflict(err: &aws_sdk_s3::Error) -> bool {
+    err.code() == Some("ConditionalRequestConflict")
+}
+
+/// S3 conditional-create header value for the requested overwrite policy.
+///
+/// Both `PutObject` and `CompleteMultipartUpload` use this helper so the two
+/// object-publication paths cannot drift.
+fn if_none_match_for_write(overwrite: bool) -> Option<String> {
+    (!overwrite).then(|| "*".to_string())
 }
 
 pin_project_lite::pin_project! {
@@ -517,7 +712,8 @@ async fn put_object(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-) -> Result<(), S3AttemptError<UploadFileError>> {
+    overwrite: bool,
+) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
     // CSE params (cloud metadata + encryptor) are both present or both absent.
     let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
 
@@ -555,7 +751,8 @@ async fn put_object(
         .body(body)
         .set_content_length(content_length)
         .content_type(CONTENT_TYPE_OCTET_STREAM)
-        .metadata(S3_META_SFC_DIGEST, &prepared.digest);
+        .metadata(S3_META_SFC_DIGEST, &prepared.digest)
+        .set_if_none_match(if_none_match_for_write(overwrite));
 
     if let Some(ref enc_meta) = encryption_metadata {
         let mat_desc = serde_json::to_string(&enc_meta.material_desc)
@@ -583,13 +780,24 @@ async fn put_object(
     {
         Ok(res) => {
             tracing::debug!("S3 upload result: {:?}", res);
-            Ok(())
+            Ok(UploadStatus::Uploaded)
         }
         Err(sdk_err) => {
             let aws_err = aws_sdk_s3::Error::from(sdk_err);
             if is_expired_token_error(&aws_err) {
                 tracing::warn!("S3 upload failed with ExpiredToken");
                 Err(S3AttemptError::StsExpired(aws_err))
+            } else if !overwrite && is_object_exists_precondition_error(&aws_err) {
+                tracing::info!(
+                    code = aws_err.code(),
+                    key = ?s3_key,
+                    "S3 conditional PutObject lost a create race; treating as Skipped"
+                );
+                Ok(UploadStatus::Skipped)
+            } else if !overwrite && is_conditional_request_conflict(&aws_err) {
+                Err(S3AttemptError::ConditionalConflict(
+                    upload_file_error::S3UploadSnafu.into_error(aws_err),
+                ))
             } else {
                 Err(S3AttemptError::Other(
                     upload_file_error::S3UploadSnafu.into_error(aws_err),
@@ -597,6 +805,19 @@ async fn put_object(
             }
         }
     }
+}
+
+/// Shared context for every part + complete request in one multipart upload
+/// (client, stage, key, conditional-create flag, and cancellation cleanup).
+/// All borrows → `Copy`, so concurrent part futures share one coordinator;
+/// bundled to avoid `too_many_arguments`.
+#[derive(Clone, Copy)]
+struct S3MultipartCtx<'a> {
+    client: &'a S3Client,
+    stage_info: &'a StageInfo,
+    key: &'a str,
+    overwrite: bool,
+    cleanup: Option<&'a CleanupScope>,
 }
 
 /// Uploads `prepared` to S3 with the multipart protocol:
@@ -616,14 +837,19 @@ async fn put_object(
 /// as well as running it on `Err`. One closure covers both, so a failure path added
 /// here cannot leave the upload un-aborted.
 async fn s3_multipart_upload(
+    ctx: S3MultipartCtx<'_>,
     prepared: PreparedUpload,
-    s3_client: &S3Client,
-    stage_info: &StageInfo,
-    s3_key: &str,
     body_len: u64,
     concurrency: usize,
-    cleanup: Option<&CleanupScope>,
-) -> Result<(), S3AttemptError<UploadFileError>> {
+) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
+    let S3MultipartCtx {
+        client: s3_client,
+        stage_info,
+        key: s3_key,
+        overwrite,
+        cleanup,
+    } = ctx;
+
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::S3)
         .context(upload_file_error::FileTooLargeSnafu)
         .map_err(S3AttemptError::Other)?;
@@ -647,7 +873,7 @@ async fn s3_multipart_upload(
     // same expired client and fails itself (logged, not fatal); the STS-refresh retry
     // then re-creates the upload with fresh creds, and a bucket lifecycle rule reaps
     // the parts from the abandoned attempt.
-    let abort = {
+    let abort = std::sync::Arc::new({
         let (client, info, key, id) = (
             s3_client.clone(),
             stage_info.clone(),
@@ -658,11 +884,12 @@ async fn s3_multipart_upload(
             let (client, info, key, id) = (client.clone(), info.clone(), key.clone(), id.clone());
             async move { s3_abort_multipart_upload(&client, &info, &key, &id).await }
         }
-    };
+    });
 
-    with_abort_on_unwind(
+    let abort_on_unwind = std::sync::Arc::clone(&abort);
+    let outcome = with_abort_on_unwind(
         cleanup,
-        abort,
+        move || (*abort_on_unwind)(),
         // Boxed to keep this large future off the frame — see clippy.toml.
         Box::pin(upload_parts_and_complete(
             s3_client,
@@ -671,9 +898,18 @@ async fn s3_multipart_upload(
             &upload_id,
             parts_rx,
             concurrency,
+            overwrite,
         )),
     )
-    .await
+    .await;
+
+    // `with_abort_on_unwind` covers cancellation and errors. A conditional
+    // create that loses the publication race returns `Ok(Skipped)`, so abort
+    // its staged parts explicitly as well.
+    if matches!(outcome, Ok(UploadStatus::Skipped)) {
+        (*abort)().await;
+    }
+    outcome
 }
 
 /// Issues `CreateMultipartUpload` with the file metadata (digest + CSE
@@ -748,7 +984,8 @@ async fn upload_parts_and_complete(
     upload_id: &str,
     parts_rx: tokio::sync::mpsc::Receiver<std::io::Result<multipart::UploadPart>>,
     concurrency: usize,
-) -> Result<(), S3AttemptError<UploadFileError>> {
+    overwrite: bool,
+) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
     let mut completed: Vec<CompletedPart> = ReceiverStream::new(parts_rx)
         .map(|part| async move {
             let part = part.map_err(|e| {
@@ -792,25 +1029,44 @@ async fn upload_parts_and_complete(
         upload_id = ?upload_id,
         "S3 CompleteMultipartUpload"
     );
-    match s3_client
+    let request = s3_client
         .complete_multipart_upload()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
         .upload_id(upload_id)
         .multipart_upload(completed_upload)
-        .send()
-        .await
-    {
+        .set_if_none_match(if_none_match_for_write(overwrite));
+
+    match request.send().await {
         Ok(res) => {
             tracing::debug!("S3 CompleteMultipartUpload succeeded: {:?}", res);
-            Ok(())
+            Ok(UploadStatus::Uploaded)
         }
-        Err(sdk_err) => Err(map_s3_error(aws_sdk_s3::Error::from(sdk_err), |aws_err| {
-            upload_file_error::S3MultipartCompleteSnafu {
-                detail: aws_err.to_string(),
+        Err(sdk_err) => {
+            let aws_err = aws_sdk_s3::Error::from(sdk_err);
+            if !overwrite && is_object_exists_precondition_error(&aws_err) {
+                tracing::info!(
+                    code = aws_err.code(),
+                    key = ?s3_key,
+                    "S3 conditional CompleteMultipartUpload lost a create race; treating as Skipped"
+                );
+                Ok(UploadStatus::Skipped)
+            } else if !overwrite && is_conditional_request_conflict(&aws_err) {
+                Err(S3AttemptError::ConditionalConflict(
+                    upload_file_error::S3MultipartCompleteSnafu {
+                        detail: aws_err.to_string(),
+                    }
+                    .build(),
+                ))
+            } else {
+                Err(map_s3_error(aws_err, |aws_err| {
+                    upload_file_error::S3MultipartCompleteSnafu {
+                        detail: aws_err.to_string(),
+                    }
+                    .build()
+                }))
             }
-            .build()
-        })),
+        }
     }
 }
 
@@ -1800,6 +2056,13 @@ mod tests {
         p
     }
 
+    fn zero_backoff_policy_with_attempts(n: u32) -> RetryPolicy {
+        let mut p = base_policy_with_attempts(n);
+        p.backoff.base = Duration::ZERO;
+        p.backoff.cap = Duration::ZERO;
+        p
+    }
+
     #[test]
     fn s3_retry_policy_max_attempts() {
         let policy = s3_retry_policy(&base_policy_with_attempts(25));
@@ -1956,6 +2219,28 @@ mod tests {
     #[test]
     fn expired_token_code_is_detected() {
         assert!(is_expired_token_error(&s3_error_with_code("ExpiredToken")));
+    }
+
+    #[test]
+    fn object_exists_precondition_codes_are_detected_exactly() {
+        for code in ["PreconditionFailed", "ObjectAlreadyExists"] {
+            assert!(
+                is_object_exists_precondition_error(&s3_error_with_code(code)),
+                "{code} must map to the normal conditional-create skip outcome"
+            );
+        }
+        for code in [
+            "ConditionalRequestConflict",
+            "AccessDenied",
+            "Conflict",
+            "AlreadyExists",
+            "SlowDown",
+        ] {
+            assert!(
+                !is_object_exists_precondition_error(&s3_error_with_code(code)),
+                "{code} must remain an upload error"
+            );
+        }
     }
 
     #[test]
@@ -2244,7 +2529,7 @@ mod tests {
     // The SigV4 payload hash is set inside aws-sigv4 and only appears on the
     // wire, so wiremock at the HTTP layer is the only place it's observable.
 
-    use wiremock::matchers::{header, method};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn assert_put_sends_unsigned_payload(prepared: PreparedUpload) {
@@ -2520,7 +2805,6 @@ mod tests {
         head_response: ResponseTemplate,
         expected_puts: u64,
     ) {
-        use wiremock::matchers::path;
         Mock::given(method("HEAD"))
             .and(path("/test-bucket/prefix/f.dat"))
             .respond_with(head_response)
@@ -2556,6 +2840,187 @@ mod tests {
         assert_eq!(status, UploadStatus::Skipped);
     }
 
+    /// If a concurrent writer creates the object after HEAD returns 404, the
+    /// conditional `PutObject` must preserve it and report the same public
+    /// `Skipped` outcome as the HEAD short-circuit.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn conditional_put_object_maps_toctou_412_to_skipped() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .and(header("If-None-Match", "*"))
+            .respond_with(ResponseTemplate::new(412).set_body_raw(
+                "<Error><Code>PreconditionFailed</Code><Message>exists</Message></Error>",
+                "application/xml",
+            ))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &base_policy(),
+            MultipartParams::default(),
+            TransferCtx::default(),
+        )
+        .await
+        .expect("a conditional PutObject conflict is a normal skip");
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn conditional_put_object_retries_409_then_succeeds() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_response = calls.clone();
+        Mock::given(method("PUT"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .and(header("If-None-Match", "*"))
+            .respond_with(move |_: &Request| {
+                if calls_for_response.fetch_add(1, MpOrdering::SeqCst) == 0 {
+                    ResponseTemplate::new(409).set_body_raw(
+                        "<Error><Code>ConditionalRequestConflict</Code></Error>",
+                        "application/xml",
+                    )
+                } else {
+                    ResponseTemplate::new(200)
+                }
+            })
+            .expect(2)
+            .mount(&mock)
+            .await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &zero_backoff_policy_with_attempts(2),
+            MultipartParams::default(),
+            TransferCtx::default(),
+        )
+        .await
+        .expect("a transient conditional conflict should retry successfully");
+
+        assert_eq!(status, UploadStatus::Uploaded);
+        assert_eq!(calls.load(MpOrdering::SeqCst), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn conditional_put_object_retries_409_then_maps_412_to_skipped() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_response = calls.clone();
+        Mock::given(method("PUT"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .and(header("If-None-Match", "*"))
+            .respond_with(move |_: &Request| {
+                let (status, code) = if calls_for_response.fetch_add(1, MpOrdering::SeqCst) == 0 {
+                    (409, "ConditionalRequestConflict")
+                } else {
+                    (412, "PreconditionFailed")
+                };
+                ResponseTemplate::new(status).set_body_raw(
+                    format!("<Error><Code>{code}</Code></Error>"),
+                    "application/xml",
+                )
+            })
+            .expect(2)
+            .mount(&mock)
+            .await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &zero_backoff_policy_with_attempts(2),
+            MultipartParams::default(),
+            TransferCtx::default(),
+        )
+        .await
+        .expect("a retry that discovers an existing object should skip");
+
+        assert_eq!(status, UploadStatus::Skipped);
+        assert_eq!(calls.load(MpOrdering::SeqCst), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn conditional_conflict_retries_use_dedicated_attempt_cap() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_response = calls.clone();
+        Mock::given(method("PUT"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .and(header("If-None-Match", "*"))
+            .respond_with(move |_: &Request| {
+                calls_for_response.fetch_add(1, MpOrdering::SeqCst);
+                ResponseTemplate::new(409).set_body_raw(
+                    "<Error><Code>ConditionalRequestConflict</Code></Error>",
+                    "application/xml",
+                )
+            })
+            .expect(MAX_CONDITIONAL_CONFLICT_ATTEMPTS as u64)
+            .mount(&mock)
+            .await;
+
+        let result = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &zero_backoff_policy_with_attempts(99),
+            MultipartParams::default(),
+            TransferCtx::default(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(UploadFileError::S3Upload { .. })),
+            "exhausted conditional conflicts must surface the typed upload error, got {result:?}"
+        );
+        assert_eq!(
+            calls.load(MpOrdering::SeqCst),
+            MAX_CONDITIONAL_CONFLICT_ATTEMPTS as usize,
+            "transport max_attempts must not expand whole-write conflict replays"
+        );
+    }
+
     /// Scenario 2: HEAD elision — `overwrite=true && skip_match=false`
     /// proves the driver doesn't waste a round-trip on a HEAD that can't
     /// change the outcome. `Mock::given(method("HEAD")).expect(0)` is the
@@ -2587,6 +3052,19 @@ mod tests {
         .await
         .expect("upload should succeed against the mock");
         assert_eq!(status, UploadStatus::Uploaded);
+
+        let requests = mock
+            .received_requests()
+            .await
+            .expect("wiremock should retain received requests");
+        let put = requests
+            .iter()
+            .find(|request| request.method.as_str() == "PUT")
+            .expect("the upload should issue one PUT");
+        assert!(
+            !put.headers.contains_key(reqwest::header::IF_NONE_MATCH),
+            "overwrite=true must not attach If-None-Match"
+        );
     }
 
     /// Scenario 3: content-match branch — when the remote `sfc-digest`
@@ -2882,6 +3360,7 @@ mod tests {
 
     // --- Multipart upload / ranged download (wiremock) ---
 
+    use std::sync::Arc;
     use std::sync::atomic::Ordering as MpOrdering;
     use wiremock::Request;
 
@@ -2924,8 +3403,6 @@ mod tests {
     /// complete sequence end to end.
     #[tokio::test(flavor = "multi_thread")]
     async fn s3_multipart_upload_runs_create_parts_complete() {
-        use std::sync::Arc;
-
         let mock = MockServer::start().await;
         let parts = Arc::new(AtomicUsize::new(0));
 
@@ -2982,6 +3459,156 @@ mod tests {
             3,
             "20 MiB / 8 MiB chunk must upload exactly 3 parts"
         );
+        let requests = mock
+            .received_requests()
+            .await
+            .expect("wiremock should retain multipart requests");
+        let completion = requests
+            .iter()
+            .find(|request| {
+                request.method.as_str() == "POST"
+                    && request
+                        .url
+                        .query_pairs()
+                        .any(|(key, value)| key == "uploadId" && value == "test-upload-id")
+            })
+            .expect("multipart upload should issue CompleteMultipartUpload");
+        assert!(
+            !completion
+                .headers
+                .contains_key(reqwest::header::IF_NONE_MATCH),
+            "overwrite=true must leave CompleteMultipartUpload unconditional"
+        );
+    }
+
+    /// `CompleteMultipartUpload` is the atomic visibility point for multipart
+    /// uploads. A 412 there must abort the uncommitted upload and preserve the
+    /// existing object without surfacing an error.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s3_multipart_complete_maps_toctou_412_to_skipped_and_aborts() {
+        let mock = MockServer::start().await;
+
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(query_param("uploads", ""))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(CREATE_MP_XML, "application/xml"))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(ResponseTemplate::new(200).insert_header("ETag", "\"etag-1\""))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .and(header("If-None-Match", "*"))
+            .respond_with(ResponseTemplate::new(412).set_body_raw(
+                "<Error><Code>PreconditionFailed</Code><Message>exists</Message></Error>",
+                "application/xml",
+            ))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let status = upload_to_s3_or_skip(
+            PreparedUpload {
+                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(b"x")),
+                digest: "local-digest".to_string(),
+                cse: None,
+            },
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &base_policy_with_attempts(1),
+            always_multipart(),
+            TransferCtx::default(),
+        )
+        .await
+        .expect("a conditional multipart completion conflict is a normal skip");
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// A 409 at CompleteMultipartUpload requires restarting from
+    /// CreateMultipartUpload. The failed upload is aborted before the retry.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s3_multipart_complete_409_aborts_and_restarts_the_upload() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(query_param("uploads", ""))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(CREATE_MP_XML, "application/xml"))
+            .expect(2)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(ResponseTemplate::new(200).insert_header("ETag", "\"etag-1\""))
+            .expect(2)
+            .mount(&mock)
+            .await;
+
+        let completion_calls = Arc::new(AtomicUsize::new(0));
+        let completion_calls_for_response = completion_calls.clone();
+        Mock::given(method("POST"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .and(header("If-None-Match", "*"))
+            .respond_with(move |_: &Request| {
+                if completion_calls_for_response.fetch_add(1, MpOrdering::SeqCst) == 0 {
+                    ResponseTemplate::new(409).set_body_raw(
+                        "<Error><Code>ConditionalRequestConflict</Code></Error>",
+                        "application/xml",
+                    )
+                } else {
+                    ResponseTemplate::new(200).set_body_raw(COMPLETE_MP_XML, "application/xml")
+                }
+            })
+            .expect(2)
+            .mount(&mock)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let status = upload_to_s3_or_skip(
+            PreparedUpload {
+                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(b"x")),
+                digest: "local-digest".to_string(),
+                cse: None,
+            },
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &zero_backoff_policy_with_attempts(2),
+            always_multipart(),
+            TransferCtx::default(),
+        )
+        .await
+        .expect("multipart conflict should abort and restart successfully");
+
+        assert_eq!(status, UploadStatus::Uploaded);
+        assert_eq!(completion_calls.load(MpOrdering::SeqCst), 2);
     }
 
     /// When a part upload fails, the whole multipart upload must be aborted
@@ -2989,8 +3616,6 @@ mod tests {
     /// libsnowflakeclient `// TODO abort` orphan-cost gap.
     #[tokio::test(flavor = "multi_thread")]
     async fn s3_multipart_upload_aborts_on_part_failure() {
-        use std::sync::Arc;
-
         let mock = MockServer::start().await;
         let aborts = Arc::new(AtomicUsize::new(0));
 

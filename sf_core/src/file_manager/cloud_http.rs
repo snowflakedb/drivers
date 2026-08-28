@@ -666,8 +666,12 @@ pub(super) trait UploadRetryAdapter {
 /// are non-retryable and surface via `adapter.on_build_err`.
 ///
 // TODO(SNOW-3780594): this duplicates the budget/backoff/timeout logic in
-// `http::retry::execute_with_retry`; consolidate onto the shared retry loop
-// once it supports the per-attempt request rebuild this path needs.
+// `http::retry::execute_with_retry`; S3 conditional-conflict replay now has a
+// second policy-driven consumer in `S3ConflictRetryBudget`. Consolidation must
+// share one per-transfer deadline across request retries and whole-write
+// replays rather than letting each retry layer arm a fresh `max_elapsed`.
+// Move both onto the shared retry loop once it supports the per-attempt request
+// rebuild these paths need.
 pub(super) async fn upload_with_retry<F, M>(
     policy: &RetryPolicy,
     adapter: &M,
