@@ -93,6 +93,13 @@ Subcommands
     remaining requested reviewer has opted out of reminder pings
     drop out of the digest entirely.
 
+    Slack caps each Block Kit section at
+    :data:`SLACK_MRKDWN_TEXT_LIMIT` characters. When the bullet list
+    would exceed that, the digest is split into sequential
+    ``chat.postMessage`` payloads (``00.json``, ``01.json``, …) under
+    ``$SLACK_PAYLOAD_DIR``, each carrying a ``(i/n)`` heading so the
+    channel can tell they belong together.
+
     Scheduled posts (``GH_EVENT_NAME=schedule``) are suppressed during
     Warsaw quiet hours (``QUIET_HOURS_START``..``QUIET_HOURS_END``,
     i.e. 17:00–07:59 ``Europe/Warsaw``) because nobody on the team
@@ -119,10 +126,17 @@ Required environment variables
     the generated Slack payload's ``channel`` field.
 
 ``SLACK_PAYLOAD_FILE``
-    Path where the generated ``chat.postMessage`` JSON payload should be
-    written. The Slack action reads it via ``payload-file-path``. If the
-    script decides there is nothing to post, the file is not created and
-    the step output ``skip=true`` is set.
+    Path where a single generated ``chat.postMessage`` JSON payload
+    should be written (assign mode). The Slack action reads it via
+    ``payload-file-path``. If the script decides there is nothing to
+    post, the file is not created and the step output ``skip=true``
+    is set.
+
+``SLACK_PAYLOAD_DIR``
+    Directory where remind mode writes one JSON payload per Slack
+    message (``00.json``, ``01.json``, …). Falls back to
+    ``$SLACK_PAYLOAD_FILE``'s sibling ``slack_payloads/`` directory
+    when unset. Nothing is written when ``skip=true``.
 
 ``SLACK_BOT_TOKEN`` (optional but recommended)
     Slack bot token (``xoxb-...``) with the ``users:read.email`` scope.
@@ -228,6 +242,11 @@ ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED", "COMMENTED"}
 # by this threshold — we'd rather surface them than silently swallow
 # them.
 MIN_WAITING_HOURS = 2.0
+
+# Slack Block Kit ``section`` ``text.text`` must be < 3001 characters or
+# ``chat.postMessage`` returns ``invalid_blocks`` and the digest never
+# lands. Keep packed bodies at this exact cap (inclusive).
+SLACK_MRKDWN_TEXT_LIMIT = 3000
 
 # Scheduled reminder posts are suppressed outside of Warsaw working hours.
 # The team is in Europe/Warsaw; nobody reads pings between 17:00 and the
@@ -1418,8 +1437,9 @@ def cmd_assign(args: argparse.Namespace) -> int:
     reviewer_display = names.name(reviewer)
     change_stats = _format_pr_change_stats(pr)
     stats_suffix = f" `{change_stats}`" if change_stats else ""
+    safe_title = _escape_slack_mrkdwn(title)
     fallback = (
-        f"New PR ready for review: #{pr_number} — {title}{stats_suffix} "
+        f"New PR ready for review: #{pr_number} — {safe_title}{stats_suffix} "
         f"(by @{author}, reviewer {reviewer_display})"
     )
     blocks: list[dict] = [
@@ -1435,7 +1455,8 @@ def cmd_assign(args: argparse.Namespace) -> int:
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"<{html_url}|#{pr_number} — {title}>{stats_suffix}"
+                    f"{_slack_pr_link(html_url, pr_number, title)}"
+                    f"{stats_suffix}"
                 ),
             },
         },
@@ -1784,62 +1805,195 @@ def _decorate_reviewer(names: ReviewerDisplay, login: str) -> str:
     (so a `:palm_tree:` user shows up as ``<@U…> :palm_tree:``); falls
     back to ``:zzz:`` when the OOO heuristic matched on status_text but
     no emoji was set. Non-OOO reviewers render unchanged.
+
+    Plain-text labels (commit names, ``@handle`` fallbacks) are
+    mrkdwn-escaped. Real ``<@U…>`` mentions are left intact so Slack
+    still notifies. Status emoji is only rendered when it matches the
+    known OOO allowlist — anything else becomes ``:zzz:``.
     """
     label = names.name(login)
+    if not _SLACK_USER_MENTION_RE.fullmatch(label):
+        label = _escape_slack_mrkdwn(label)
     if not names.is_ooo(login):
         return label
-    emoji = names.ooo_emoji(login) or ":zzz:"
+    emoji = (names.ooo_emoji(login) or ":zzz:").lower()
+    if emoji not in _OOO_STATUS_EMOJIS:
+        emoji = ":zzz:"
     return f"{label} {emoji}"
 
 
-def _build_reminder_blocks(
-    awaiting: list[dict], names: ReviewerDisplay
-) -> list[dict]:
-    """Return a Block Kit payload listing every PR awaiting a reviewer.
+_SLACK_USER_MENTION_RE = re.compile(r"^<@[A-Z0-9]+>$")
 
-    Compact layout: one heading section plus one bulleted section
-    where each line is ``• <url|title> — reviewer(s) — waiting``. Keeps
-    the digest short even when many PRs are stale; per-PR author is
-    dropped on purpose — the linked PR carries the rest of the context
-    for anyone who clicks through.
+
+def _escape_slack_mrkdwn(text: str) -> str:
+    """Escape Slack mrkdwn metacharacters in untrusted text.
+
+    Slack treats ``&``, ``<``, and ``>`` specially (links, mentions,
+    broadcasts such as ``<!channel>``). Ampersand is replaced first so
+    we do not double-escape the entities. ``|`` splits ``<url|label>``
+    links, so it is replaced with a solidus rather than left raw.
     """
-    lines: list[str] = []
-    for pr in awaiting:
-        people = pr["requested"]
-        people_str = (
-            ", ".join(_decorate_reviewer(names, u) for u in people)
-            if people
-            else "_no reviewer_"
-        )
-        waiting = _format_waiting_compact(pr)
-        parts = [f"<{pr['url']}|#{pr['number']} — {pr['title']}>", people_str]
-        if waiting:
-            parts.append(waiting)
-        lines.append("• " + " — ".join(parts))
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("|", "/")
+    )
 
-    return [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": (
-                    f":alarm_clock: *{len(awaiting)} PR(s) waiting on a reviewer*"
-                ),
-            },
-        },
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "\n".join(lines)},
-        },
+
+def _slack_pr_link(url: str, number: int, title: str) -> str:
+    """Build a Slack mrkdwn link whose href and label cannot inject markup."""
+    href = _escape_slack_mrkdwn(str(url))
+    label = f"#{number} — {_escape_slack_mrkdwn(str(title))}"
+    return f"<{href}|{label}>"
+
+
+def _format_reminder_line(pr: dict, names: ReviewerDisplay) -> str:
+    """One digest bullet: ``• <url|#n — title> — reviewer(s) — waiting``."""
+    people = pr["requested"]
+    people_str = (
+        ", ".join(_decorate_reviewer(names, u) for u in people)
+        if people
+        else "_no reviewer_"
+    )
+    waiting = _format_waiting_compact(pr)
+    parts = [
+        _slack_pr_link(pr["url"], pr["number"], pr["title"]),
+        people_str,
     ]
+    if waiting:
+        parts.append(waiting)
+    return "• " + " — ".join(parts)
+
+
+def _truncate_mrkdwn(text: str, limit: int = SLACK_MRKDWN_TEXT_LIMIT) -> str:
+    """Fit *text* into a Slack section body, appending an ellipsis if cut."""
+    if len(text) <= limit:
+        return text
+    if limit <= 1:
+        return text[:limit]
+    return text[: limit - 1] + "…"
+
+
+def _chunk_text_lines(
+    lines: list[str], limit: int = SLACK_MRKDWN_TEXT_LIMIT
+) -> list[list[str]]:
+    """Pack *lines* into groups whose joined text is at most *limit* chars.
+
+    Each line is truncated to *limit* first so a single enormous title
+    cannot produce an unsplittable chunk. Newlines between lines count
+    toward the limit.
+    """
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    size = 0
+    for raw in lines:
+        line = _truncate_mrkdwn(raw, limit)
+        extra = len(line) + (1 if current else 0)
+        if current and size + extra > limit:
+            chunks.append(current)
+            current = [line]
+            size = len(line)
+            continue
+        current.append(line)
+        size += extra
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _reminder_heading(total: int, part: int, parts: int) -> str:
+    heading = f":alarm_clock: *{total} PR(s) waiting on a reviewer*"
+    if parts > 1:
+        heading += f" ({part}/{parts})"
+    return heading
+
+
+def _reminder_messages(
+    awaiting: list[dict], names: ReviewerDisplay
+) -> list[tuple[str, list[dict]]]:
+    """Split *awaiting* into Slack messages that fit Block Kit limits.
+
+    Returns ``[(fallback_text, blocks), ...]`` in waiting-time order.
+    """
+    lines = [_format_reminder_line(pr, names) for pr in awaiting]
+    chunks = _chunk_text_lines(lines)
+    total = len(awaiting)
+    parts = len(chunks) or 1
+    messages: list[tuple[str, list[dict]]] = []
+    for i, chunk in enumerate(chunks, start=1):
+        heading = _reminder_heading(total, i, parts)
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": heading},
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "\n".join(chunk)},
+            },
+        ]
+        fallback = _reminder_fallback_text(awaiting)
+        if parts > 1:
+            fallback = f"{fallback} ({i}/{parts})"
+        messages.append((fallback, blocks))
+    return messages
+
+
+def write_reminder_payloads(
+    directory: Path,
+    channel: str,
+    awaiting: list[dict],
+    names: ReviewerDisplay,
+) -> list[str]:
+    """Write one ``chat.postMessage`` JSON file per digest chunk.
+
+    Returns the written filenames (``00.json``, …) in post order so the
+    workflow matrix can feed them to slack-github-action.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    for old in directory.glob("*.json"):
+        old.unlink()
+    messages = _reminder_messages(awaiting, names)
+    written: list[str] = []
+    for i, (text, blocks) in enumerate(messages):
+        name = f"{i:02d}.json"
+        write_slack_payload(directory / name, channel, text, blocks=blocks)
+        written.append(name)
+    return written
+
+
+def _remind_payload_dir() -> Path | None:
+    raw_dir = os.environ.get("SLACK_PAYLOAD_DIR", "").strip()
+    if raw_dir:
+        return Path(raw_dir)
+    raw_file = os.environ.get("SLACK_PAYLOAD_FILE", "").strip()
+    if raw_file:
+        return Path(raw_file).parent / "slack_payloads"
+    return None
+
+
+def _skip_remind(reason: str) -> int:
+    """Mark the remind job as a no-op post and return success.
+
+    Always writes ``payloads`` as ``[]`` so ``fromJson`` in the
+    ``remind-post`` matrix never sees an empty string if GitHub
+    evaluates the strategy before the job-level ``if``.
+    """
+    log.info("%s", reason)
+    set_gh_output("skip", "true")
+    set_gh_output("payloads", "[]")
+    return 0
 
 
 def cmd_remind(args: argparse.Namespace) -> int:
     repo = os.environ["GH_REPO"]
-    channel, payload_file = _slack_runtime()
-    if not (channel and payload_file):
+    channel = os.environ.get("SLACK_CHANNEL", "").strip() or None
+    payload_dir = _remind_payload_dir()
+    if not (channel and payload_dir):
         log.error(
-            "SLACK_CHANNEL and SLACK_PAYLOAD_FILE are required for remind mode"
+            "SLACK_CHANNEL and SLACK_PAYLOAD_DIR (or SLACK_PAYLOAD_FILE) "
+            "are required for remind mode"
         )
         return 2
 
@@ -1852,14 +2006,11 @@ def cmd_remind(args: argparse.Namespace) -> int:
     # always poke the bot.
     event_name = os.environ.get("GH_EVENT_NAME", "").strip()
     if event_name == "schedule" and _is_warsaw_quiet_hours():
-        log.info(
-            "Current Warsaw time is in the quiet window (%d:00–%d:00); "
-            "skipping scheduled reminder.",
-            QUIET_HOURS_START,
-            QUIET_HOURS_END,
+        return _skip_remind(
+            "Current Warsaw time is in the quiet window "
+            f"({QUIET_HOURS_START}:00–{QUIET_HOURS_END}:00); "
+            "skipping scheduled reminder."
         )
-        set_gh_output("skip", "true")
-        return 0
 
     # Load the reviewer rules early so the OOO-swap pass below can
     # consult them. Missing/empty file disables swapping (we still
@@ -1900,9 +2051,7 @@ def cmd_remind(args: argparse.Namespace) -> int:
             pr_by_number[entry["number"]] = pr
 
     if not awaiting:
-        log.info("No PRs need a reminder; not writing Slack payload.")
-        set_gh_output("skip", "true")
-        return 0
+        return _skip_remind("No PRs need a reminder; not writing Slack payload.")
 
     awaiting.sort(
         key=lambda p: (p.get("waiting_hours") is None, -(p.get("waiting_hours") or 0.0))
@@ -1926,12 +2075,10 @@ def cmd_remind(args: argparse.Namespace) -> int:
         # to remind. Drop those.
         awaiting = [e for e in awaiting if e.get("requested")]
         if not awaiting:
-            log.info(
-                "All PRs were covered after the OOO-swap pass (nothing actionable "
-                "left for humans); not writing Slack payload."
+            return _skip_remind(
+                "All PRs were covered after the OOO-swap pass (nothing "
+                "actionable left for humans); not writing Slack payload."
             )
-            set_gh_output("skip", "true")
-            return 0
 
     # Honour per-reviewer ``remind: false`` opt-outs: hide those users
     # from each entry's displayed reviewer list. PRs whose only
@@ -1957,22 +2104,22 @@ def cmd_remind(args: argparse.Namespace) -> int:
             entry["requested"] = visible
         awaiting = [e for e in awaiting if e.get("requested")]
         if not awaiting:
-            log.info(
+            return _skip_remind(
                 "Every PR's remaining reviewers have opted out of digest "
                 "pings; not writing Slack payload."
             )
-            set_gh_output("skip", "true")
-            return 0
 
-    fallback = _reminder_fallback_text(awaiting)
-    blocks = _build_reminder_blocks(awaiting, names)
-    write_slack_payload(payload_file, channel, fallback, blocks=blocks)
+    payload_files = write_reminder_payloads(
+        payload_dir, channel, awaiting, names
+    )
     log.info(
-        "Wrote reminder digest for %d PR(s) to %s",
+        "Wrote reminder digest for %d PR(s) as %d Slack message(s) under %s",
         len(awaiting),
-        payload_file,
+        len(payload_files),
+        payload_dir,
     )
     set_gh_output("skip", "false")
+    set_gh_output("payloads", json.dumps(payload_files))
     return 0
 
 
