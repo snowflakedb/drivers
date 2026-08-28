@@ -489,8 +489,10 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
                 return crate::api::error::InvalidDuringDaeSnafu.fail();
             }
             if inner.state.as_ref().is_async_executing() {
-                if let Some(ref t) = *guard.cancel_token.lock() {
-                    t.cancel();
+                if let Some(operation) = *guard.operation.lock()
+                    && let Ok(g) = global()
+                {
+                    g.client().cancel_operation(operation);
                 }
                 match inner.state.take() {
                     crate::api::StatementState::AsyncExecDirect { join_handle } => {

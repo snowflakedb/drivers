@@ -15,15 +15,15 @@
 //! unbounded wait would hang the suite rather than fail it.
 
 use prost::Message as _;
-use proto_utils::{ProtoError, Transport};
+use proto_utils::{CancellableTransport, ProtoError, Transport};
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::generated::database_driver_v1::{
-    ConfigSetting, ConnectionInitRequest, ConnectionInitResponse, ConnectionNewRequest,
-    ConnectionNewResponse, ConnectionSetOptionsRequest, ConnectionSetOptionsResponse,
-    DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest, DatabaseNewResponse,
-    DriverException, ErrorKind, StatementExecuteQueryRequest, StatementHandle, StatementNewRequest,
-    StatementNewResponse, StatementPrepareRequest, StatementSetSqlQueryRequest,
-    StatementSetSqlQueryResponse, config_setting,
+    CancellationAbortOutcome, ConfigSetting, ConnectionInitRequest, ConnectionInitResponse,
+    ConnectionNewRequest, ConnectionNewResponse, ConnectionSetOptionsRequest,
+    ConnectionSetOptionsResponse, DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest,
+    DatabaseNewResponse, DriverException, ErrorKind, StatementExecuteQueryRequest, StatementHandle,
+    StatementNewRequest, StatementNewResponse, StatementPrepareRequest,
+    StatementSetSqlQueryRequest, StatementSetSqlQueryResponse, config_setting,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -121,8 +121,8 @@ const CATCH_ALL_OK: &str = r#"{"success":true,"data":{}}"#;
 /// have been submitted, which requires a completed login.
 struct HangingQuery {
     /// Signalled once the query-request has been read off the wire, so the
-    /// canceller knows the query is genuinely in flight and its `requestId` has
-    /// been published into the statement's in-flight slot.
+    /// canceller knows the query is genuinely in flight and there is therefore
+    /// something for an abort-request to stop.
     query_received: Mutex<SyncSender<()>>,
     /// The `requestId` query parameter the execute used, so the abort can be
     /// matched against it.
@@ -466,10 +466,9 @@ async fn cancel_once_the_query_is_on_the_wire(
     result
 }
 
-/// Assert that `result` is the cancelled application error, decoding the
-/// `DriverException` so the assertion is on `kind` rather than on a message
-/// substring.
-fn assert_cancelled(result: Result<Vec<u8>, ProtoError<Vec<u8>>>) {
+/// Decode `result` as the cancelled application error, asserting on `kind`
+/// rather than on a message substring.
+fn decode_cancelled(result: Result<Vec<u8>, ProtoError<Vec<u8>>>) -> DriverException {
     match result {
         Err(ProtoError::Application(bytes)) => {
             let ex = DriverException::decode(&bytes[..]).expect("decodes as DriverException");
@@ -478,9 +477,30 @@ fn assert_cancelled(result: Result<Vec<u8>, ProtoError<Vec<u8>>>) {
                 ErrorKind::Cancelled as i32,
                 "a cancelled operation must report ERROR_KIND_CANCELLED, got {ex:?}"
             );
+            ex
         }
         other => panic!("expected a cancelled application error, got {other:?}"),
     }
+}
+
+/// Assert that `result` is the cancelled application error.
+fn assert_cancelled(result: Result<Vec<u8>, ProtoError<Vec<u8>>>) {
+    decode_cancelled(result);
+}
+
+/// Assert that `result` is the cancelled application error *and* that it carries
+/// `expected` as the acknowledgement of the abort fired on cancellation.
+/// `expected: None` asserts that no abort was issued.
+fn assert_cancelled_with_abort(
+    result: Result<Vec<u8>, ProtoError<Vec<u8>>>,
+    expected: Option<CancellationAbortOutcome>,
+) {
+    let ex = decode_cancelled(result);
+    assert_eq!(
+        ex.cancellation_abort_outcome,
+        expected.map(|e| e as i32),
+        "expected cancellation_abort_outcome {expected:?}, got {ex:?}"
+    );
 }
 
 /// Assert that cancellation emitted exactly one abort-request, and that it
@@ -604,9 +624,11 @@ async fn cancelling_an_in_flight_query_aborts_it_server_side() {
     )
     .await;
 
-    assert_cancelled(result);
-    // No sleep before this assertion: `OperationCtx::run` awaits the registered
-    // cleanup, so the abort has already completed by the time the call returned.
+    // `ABORTED` rather than just "cancelled": the acknowledgement is only
+    // trustworthy if it reflects what the server actually said, and no sleep is
+    // needed before reading it because `OperationCtx::run` awaits the registered
+    // cleanup before reporting.
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
     assert_aborted_the_submitted_query(&state);
 }
 
@@ -638,8 +660,52 @@ async fn cancelling_an_in_flight_prepare_aborts_it_server_side() {
     )
     .await;
 
-    assert_cancelled(result);
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
     assert_aborted_the_submitted_query(&state);
+}
+
+/// A handle cancelled *before* dispatch leaves the acknowledgement unset, rather
+/// than reporting one of the real abort outcomes.
+///
+/// This is the discrimination the acknowledgement exists to make: "cancelled, and
+/// the server confirmed it stopped the query" must not look the same as
+/// "cancelled before anything was submitted, so nothing was aborted". A caller
+/// that cannot tell those apart learns nothing from the field.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_before_dispatch_reports_no_abort_was_issued() {
+    let (state, _query_received) = hanging_query_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let stmt = statement_with_slow_query(&transport, addr).await;
+
+    let (operation, _token) = transport.register();
+    // Cancelled before dispatch, so the operation body is never polled and no
+    // abort cleanup is ever armed.
+    transport.cancel(operation);
+
+    let result = tokio::time::timeout(
+        BOUND,
+        transport.handle_message_cancellable(
+            "DatabaseDriver",
+            "statement_execute_query",
+            StatementExecuteQueryRequest {
+                stmt_handle: Some(stmt),
+                bindings: None,
+                timeout_seconds: None,
+            }
+            .encode_to_vec(),
+            operation,
+        ),
+    )
+    .await
+    .expect("a pre-cancelled handle must resolve immediately");
+
+    assert_cancelled_with_abort(result, None);
+    assert!(
+        state.abort_bodies.lock().unwrap().is_empty(),
+        "a query that was never submitted must not be aborted"
+    );
 }
 
 /// A query that completes normally must not emit an abort-request. Guards the

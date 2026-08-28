@@ -331,6 +331,52 @@ impl<T: Transport> {service_name}Client<T> {{
         }
 
         content += "}\n";
+
+        // Cancellable counterparts, in their own impl block so the extra bound
+        // lands only on these methods: a client over a plain `Transport` keeps
+        // working and simply has no cancellable calls. Generated for
+        // `async_first` methods only — the marker already means "slow enough to
+        // be worth cancelling", and an RPC that cannot block has nothing to
+        // cancel.
+        let cancellable: Vec<&crate::protobuf::MethodDescriptorProto> = service
+            .method
+            .iter()
+            .filter(|m| Self::is_async_first(m))
+            .collect();
+        if !cancellable.is_empty() {
+            content += &format!(
+                r#"
+impl<T: CancellableTransport> {service_name}Client<T> {{
+	/// Mint an operation handle to dispatch a cancellable call under. See
+	/// [`CancellableTransport::register_operation`].
+	pub fn register_operation(&self) -> u64 {{
+		self.transport.register_operation()
+	}}
+
+	/// Cancel an operation by handle, from any thread. See
+	/// [`CancellableTransport::cancel_operation`].
+	pub fn cancel_operation(&self, operation: u64) {{
+		self.transport.cancel_operation(operation)
+	}}
+
+	/// Release a handle that was minted but never dispatched. See
+	/// [`CancellableTransport::deregister_operation`].
+	pub fn deregister_operation(&self, operation: u64) {{
+		self.transport.deregister_operation(operation)
+	}}
+"#
+            );
+            for method in cancellable {
+                content += &self.generate_client_method_cancellable(
+                    method,
+                    &service_error,
+                    package,
+                    &service_name,
+                );
+            }
+            content += "}\n";
+        }
+
         content
     }
 
@@ -342,6 +388,29 @@ impl<T: Transport> {service_name}Client<T> {{
         package: &str,
         service_name: &str,
     ) -> String {
+        let (name, input_type, return_type, decode_tail) =
+            self.client_method_shape(method, service_error, package);
+
+        format!(
+            r#"
+    pub async fn {name}(&self, input: {input_type}) -> {return_type} {{
+        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
+{decode_tail}    }}
+"#
+        )
+    }
+
+    /// The pieces every client method for `method` shares, whatever it dispatches
+    /// through: `(name, input type, return type, response-decoding tail)`.
+    ///
+    /// Split out so the plain and cancellable variants cannot drift in how they
+    /// decode a response or which error type they unwrap.
+    fn client_method_shape(
+        &self,
+        method: &crate::protobuf::MethodDescriptorProto,
+        service_error: &Option<String>,
+        package: &str,
+    ) -> (String, String, String, String) {
         let method_error = method
             .options
             .as_ref()
@@ -409,10 +478,31 @@ impl<T: Transport> {service_name}Client<T> {{
             ),
         };
 
+        (name, input_type, return_type, decode_tail)
+    }
+
+    /// Generate the cancellable counterpart of a client method: the same call and
+    /// the same response decoding, dispatched under a caller-supplied operation
+    /// handle.
+    ///
+    /// Shares [`Self::client_method_shape`] with the plain variant so the decode
+    /// logic exists once — a new field or error type changes both together.
+    fn generate_client_method_cancellable(
+        &self,
+        method: &crate::protobuf::MethodDescriptorProto,
+        service_error: &Option<String>,
+        package: &str,
+        service_name: &str,
+    ) -> String {
+        let (name, input_type, return_type, decode_tail) =
+            self.client_method_shape(method, service_error, package);
+
         format!(
             r#"
-    pub async fn {name}(&self, input: {input_type}) -> {return_type} {{
-        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
+    /// Cancellable {name}: dispatched under `operation`, so a concurrent
+    /// `cancel_operation(operation)` from any thread reaches the running call.
+    pub async fn {name}_cancellable(&self, operation: u64, input: {input_type}) -> {return_type} {{
+        let result = self.transport.handle_message_cancellable("{service_name}", "{name}", input.encode_to_vec(), operation).await;
 {decode_tail}    }}
 "#
         )

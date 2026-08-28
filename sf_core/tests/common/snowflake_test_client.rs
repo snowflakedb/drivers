@@ -365,20 +365,6 @@ impl SnowflakeTestClient {
             .unwrap()
     }
 
-    /// Cancel the query in flight on a statement (cross-thread `SQLCancel`).
-    /// Returns the raw `StatementCancelResponse` so tests can assert
-    /// `success` and inspect any error.
-    #[allow(clippy::result_large_err)]
-    pub fn statement_cancel_blocking(
-        &self,
-        stmt: &StatementHandle,
-    ) -> Result<StatementCancelResponse, Box<ProtoError<DriverException>>> {
-        self.client
-            .statement_cancel_blocking(StatementCancelRequest {
-                stmt_handle: Some(*stmt),
-            })
-    }
-
     /// Execute the statement's query, returning the raw protobuf result so
     /// tests can inspect the `DriverException` (e.g. `vendor_code`) on failure.
     #[allow(clippy::result_large_err)]
@@ -392,6 +378,38 @@ impl SnowflakeTestClient {
                 bindings: None,
                 timeout_seconds: None,
             })
+    }
+
+    /// Mint an operation handle so a query can be dispatched cancellably and
+    /// cancelled from another thread. See [`Self::cancel_operation`].
+    pub fn register_operation(&self) -> u64 {
+        self.client.register_operation()
+    }
+
+    /// Cancel the operation registered for `operation`, from any thread. This is
+    /// the cross-thread `SQLCancel` shape: no runtime needed, returns immediately,
+    /// and the abort's outcome comes back on the *executing* thread's error.
+    pub fn cancel_operation(&self, operation: u64) {
+        self.client.cancel_operation(operation);
+    }
+
+    /// Execute under `operation`, returning the raw protobuf result so tests can
+    /// inspect the `DriverException` — including the `cancellation_abort_outcome`
+    /// that reports what a cancellation's abort-request achieved.
+    #[allow(clippy::result_large_err)]
+    pub fn execute_statement_query_cancellable_raw(
+        &self,
+        stmt: &StatementHandle,
+        operation: u64,
+    ) -> Result<ExecuteQueryResponse, Box<ProtoError<DriverException>>> {
+        self.client.statement_execute_query_cancellable_blocking(
+            operation,
+            StatementExecuteQueryRequest {
+                stmt_handle: Some(*stmt),
+                bindings: None,
+                timeout_seconds: None,
+            },
+        )
     }
 
     pub fn release_statement(&self, stmt: &StatementHandle) {

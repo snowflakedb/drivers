@@ -8,7 +8,8 @@ use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescr
 use crate::apis::database_driver_v1::ResultSetInfo as NativeResultSetInfo;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::{
-    InlineJsonEncodeSnafu, InvalidColumnMetadataSnafu, QueryResponseProcessingError, RestError,
+    CancellationAbortResult, InlineJsonEncodeSnafu, InvalidColumnMetadataSnafu,
+    QueryResponseProcessingError, RestError,
 };
 use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
@@ -818,6 +819,12 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         _ => false,
     };
 
+    // Left unset unless a cancellation actually issued an abort.
+    let cancellation_abort_outcome = match &error {
+        ApiError::Cancelled { abort, .. } => abort.map(|a| cancel_abort_to_proto(a) as i32),
+        _ => None,
+    };
+
     let error_trace = error
         .error_trace()
         .into_iter()
@@ -843,6 +850,15 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             .validation_code
             .map(core_validation_code_to_proto),
         reauthentication_required,
+        cancellation_abort_outcome,
+    }
+}
+
+fn cancel_abort_to_proto(abort: CancellationAbortResult) -> CancellationAbortOutcome {
+    match abort {
+        CancellationAbortResult::Aborted => CancellationAbortOutcome::Aborted,
+        CancellationAbortResult::NotRunning => CancellationAbortOutcome::NotRunning,
+        CancellationAbortResult::NotConfirmed => CancellationAbortOutcome::NotConfirmed,
     }
 }
 

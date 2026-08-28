@@ -62,6 +62,31 @@ message ErrorTraceEntry {
   string message = 4;
 }
 
+// What the abort-request the driver fired *because its operation was cancelled*
+// achieved. Only meaningful on a DriverException whose kind is
+// ERROR_KIND_CANCELLED; it is the answer to "did my cancel actually stop the
+// query on the server", delivered to the caller whose query was cancelled.
+//
+// Deliberately not AbortQueryOutcome: that enum answers an explicit abort RPC
+// and reserves failures for the RPC error, whereas here the abort is a side
+// effect of cancellation and its failure has nowhere else to surface.
+enum CancellationAbortOutcome {
+  // Required proto3 zero value; never sent. "No abort was issued" — because the
+  // error is not a cancellation, or the operation was cancelled before its query
+  // reached the server — is carried by the field being absent, so that state has
+  // exactly one encoding.
+  CANCELLATION_ABORT_OUTCOME_UNSPECIFIED = 0;
+  // The server acknowledged the abort. Means the abort request was *processed*,
+  // NOT a guarantee the query had stopped by the time this was reported.
+  CANCELLATION_ABORT_OUTCOME_ABORTED = 1;
+  // The server reported the query was not running, so there was nothing to
+  // abort (it had already finished, or never started).
+  CANCELLATION_ABORT_OUTCOME_NOT_RUNNING = 2;
+  // The abort was issued but its result is unknown: the request failed, or it
+  // had not finished by the time the cancelled caller was released.
+  CANCELLATION_ABORT_OUTCOME_NOT_CONFIRMED = 3;
+}
+
 // Driver exception
 message DriverException {
   string message = 1;
@@ -93,6 +118,9 @@ message DriverException {
   // any, travels on vendor_code — the same channel every other error type
   // uses — not duplicated here.
   bool reauthentication_required = 12;
+  // What the abort-request fired on cancellation achieved. Set only when kind is
+  // ERROR_KIND_CANCELLED *and* an abort was actually issued; unset otherwise.
+  optional CancellationAbortOutcome cancellation_abort_outcome = 13;
 }
 
 // Column metadata for description
@@ -676,20 +704,6 @@ message StatementReleaseResponse {
 // Cancel the query currently in flight on a statement (cross-thread SQLCancel).
 // Keyed on the statement's own client-generated requestId, captured by the core
 // at submit time — the caller passes only the handle.
-message StatementCancelRequest {
-  StatementHandle stmt_handle = 1;
-}
-
-message StatementCancelResponse {
-  // Whether a query was in flight and its abort was acknowledged
-  // (ABORTED), or there was nothing to cancel (NOT_RUNNING). ABORTED means
-  // the abort request was accepted (processed), NOT a guarantee the query
-  // stopped — that is observed on the executing thread. Genuine failures
-  // (invalid handle, transport, cancel timeout) are reported as an RPC error,
-  // not through this enum.
-  AbortQueryOutcome outcome = 1;
-}
-
 message StatementSetSqlQueryRequest {
   StatementHandle stmt_handle = 1;
   string query = 2;
@@ -1118,8 +1132,6 @@ service DatabaseDriver {
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
   rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);
-  // Cancel the query in flight on a statement by its requestId (cross-thread SQLCancel)
-  rpc StatementCancel(StatementCancelRequest) returns (StatementCancelResponse);
 
   // ResultSet operations
   rpc ResultSetGetStream(ResultSetGetStreamRequest) returns (ResultSetGetStreamResponse);

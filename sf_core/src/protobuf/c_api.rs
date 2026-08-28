@@ -5,7 +5,7 @@ use crate::apis::database_driver_v1::{DriverProviders, WrapperPresets};
 use crate::logging::LogManager;
 use crate::protobuf::apis::RustTransport;
 use futures::FutureExt;
-use proto_utils::{ProtoError, Transport};
+use proto_utils::{CancellableTransport, ProtoError, Transport};
 
 /// C callback type - fn ptr invoked when an async proto API call completes.
 ///

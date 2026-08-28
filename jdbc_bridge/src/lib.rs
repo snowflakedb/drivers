@@ -23,7 +23,7 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::{jint, jlong, jobject};
-use proto_utils::{ProtoError, Transport};
+use proto_utils::{CancellableTransport, ProtoError, Transport};
 use sf_core::logging::LogManager;
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::apis::database_driver_v1::{DriverProviders, WrapperPresets};

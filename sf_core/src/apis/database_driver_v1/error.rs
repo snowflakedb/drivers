@@ -16,6 +16,22 @@ use crate::rest::snowflake::{
 use crate::tls::error::TlsError;
 use crate::token_cache::TokenCacheError;
 
+/// What the abort-request a cancelled operation fires on its own behalf achieved.
+///
+/// "No abort was issued" is `Option::None`, not a variant here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancellationAbortResult {
+    /// The server acknowledged the abort. The request was *processed* — not a
+    /// guarantee the query had stopped by the time this was recorded.
+    Aborted,
+    /// The server reported the query was not running, so there was nothing to
+    /// abort.
+    NotRunning,
+    /// The abort was issued but its result is unknown: it failed, or it had not
+    /// finished when the cancelled caller was released (see `CLEANUP_WAIT`).
+    NotConfirmed,
+}
+
 #[derive(Debug, Snafu, ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub enum ApiError {
@@ -236,6 +252,13 @@ pub enum ApiError {
     #[snafu(display("Operation was cancelled"))]
     #[snafu(visibility(pub))]
     Cancelled {
+        /// What the abort-request fired on cancellation achieved. `None` when no
+        /// abort was issued — the operation submitted no query, or was cancelled
+        /// before its query reached the server.
+        ///
+        /// Attached by the operation that owns the abort (`statement::AbortReport`),
+        /// not by whoever raises the error.
+        abort: Option<CancellationAbortResult>,
         #[snafu(implicit)]
         location: Location,
     },
