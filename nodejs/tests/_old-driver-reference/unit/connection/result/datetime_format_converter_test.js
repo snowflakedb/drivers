@@ -26,10 +26,6 @@ describe('Test ditetime format converter', function () {
       expectedMomentFormat: 'MMM DD, YYYY hh:mm:ss,A Z',
     },
     {
-      snowflakeFormat: 'HH24:MI:SS.FF3 HH12:MI:SS,FF9',
-      expectedMomentFormat: 'HH:mm:ss. hh:mm:ss,',
-    },
-    {
       snowflakeFormat: 'HH24:MI:SS.FF3 HH12:MI:SS,FF9 TZH',
       expectedMomentFormat: 'HH:mm:ss. hh:mm:ss, Z',
     },

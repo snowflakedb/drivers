@@ -317,3 +317,53 @@ behavior_differences:
       undefined to an error (a runtime break for callers who currently check for undefined). The
       new types come from mapping core FFI null to undefined. Tests that call getColumn() after
       execute use getRowStatementColumn (BD#13).
+
+  14:
+    name: "TIME column NULL returns real null, not the legacy driver's 'NULL' string"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      The legacy driver stringifies a NULL TIME cell to the literal 'NULL' by default
+      (isRepresentNullAsStringNull=true, a process-global config knob), while every other
+      type — including the legacy driver's own DATE — returns real null.
+    new_driver_behavior: |
+      The universal driver returns real null for every type uniformly.
+    description: |
+      A TIME-only anomaly in the legacy driver, not a contract. The universal driver returns
+      real null. Verified live against both drivers.
+
+  15:
+    name: "Bare FF against a scale-0 TIME column no longer leaves a dangling '.'"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The legacy driver's format engine emits a trailing literal '.' with no digits after it
+      when a bare FF token is requested against a scale-0 TIME column
+      (e.g. 'HH24:MI:SS.FF' -> '12:34:56.').
+    new_driver_behavior: |
+      The universal driver drops the digit-less fractional suffix entirely in this case.
+    description: |
+      A documented legacy formatting quirk, not a contract. Verified live against both drivers.
+
+  16:
+    name: "FFn against TIME renders only the column's real scale digits, not always n zero-padded digits"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The legacy driver's FFn (digit-suffixed) token ignores the column's declared scale — it
+      always renders exactly n digits, zero-padding past whatever precision the column actually
+      stored (e.g. a TIME(0) column under 'HH24:MI:SS.FF9' renders '.000000000', a TIME(3)
+      column renders '.123000000').
+    new_driver_behavior: |
+      The universal driver renders only min(n, scale) real digits and nothing invented.
+    description: |
+      The new driver consults the column's real scale. Verified live against both drivers.

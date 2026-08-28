@@ -198,6 +198,134 @@ describe('Query returning data types', () => {
         await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
       }
     });
+
+    it('selects time literals', async () => {
+      const { rows } = await executeAsync(
+        connection,
+        `SELECT '00:00:00'::TIME, '10:30:00'::TIME, '14:45:30'::TIME, '23:59:59'::TIME`,
+      );
+      expect(Object.values(rows![0])).toEqual(['00:00:00', '10:30:00', '14:45:30', '23:59:59']);
+    });
+
+    it('handles NULL values for time', async () => {
+      const { rows } = await executeAsync(connection, `SELECT NULL::TIME, '10:30:00'::TIME`);
+      if (isRunningNewDriverWithBD('BD#14')) {
+        expect(Object.values(rows![0])).toEqual([null, '10:30:00']);
+      } else {
+        expect(Object.values(rows![0])).toEqual(['NULL', '10:30:00']);
+      }
+    });
+
+    // TODO: pass TIME_OUTPUT_FORMAT as statement params once execute()
+    // forwards them into SessionParams — avoids an ALTER SESSION round trip
+    // and keeps the format local to the query (connection-safe under concurrency).
+    describe('HH24:MI:SS.FF9 format', () => {
+      beforeAll(async () => {
+        await executeAsync(connection, "ALTER SESSION SET TIME_OUTPUT_FORMAT = 'HH24:MI:SS.FF9'");
+      });
+
+      afterAll(async () => {
+        await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      });
+
+      it('preserves nanosecond precision for time', async () => {
+        const { rows } = await executeAsync(connection, "SELECT '10:30:00.123456789'::TIME");
+        expect(Object.values(rows![0])).toEqual(['10:30:00.123456789']);
+      });
+
+      it.each([
+        { scale: 0, expected: '10:30:00', oldDriverExpected: '10:30:00.000000000' },
+        { scale: 3, expected: '10:30:00.123', oldDriverExpected: '10:30:00.123000000' },
+        { scale: 6, expected: '10:30:00.123456', oldDriverExpected: '10:30:00.123456000' },
+      ])(
+        'handles time precision at scale $scale',
+        async ({ scale, expected, oldDriverExpected }) => {
+          const { rows } = await executeAsync(
+            connection,
+            `SELECT '10:30:00.123456789'::TIME(${scale})`,
+          );
+          if (isRunningNewDriverWithBD('BD#16')) {
+            expect(Object.values(rows![0])).toEqual([expected]);
+          } else {
+            expect(Object.values(rows![0])).toEqual([oldDriverExpected]);
+          }
+        },
+      );
+    });
+
+    describe('HH12:MI:SS.FF9 format', () => {
+      beforeAll(async () => {
+        await executeAsync(connection, "ALTER SESSION SET TIME_OUTPUT_FORMAT = 'HH12:MI:SS.FF9'");
+      });
+
+      afterAll(async () => {
+        await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      });
+
+      it('wraps HH12 to a 12-hour clock, not alias it to HH24', async () => {
+        const { rows } = await executeAsync(
+          connection,
+          `SELECT '08:15:30.789789789'::TIME, '14:45:30.789789789'::TIME`,
+        );
+        expect(Object.values(rows![0])).toEqual(['08:15:30.789789789', '02:45:30.789789789']);
+      });
+    });
+
+    describe('HH24:MI:SS.FF6 format', () => {
+      beforeAll(async () => {
+        await executeAsync(connection, "ALTER SESSION SET TIME_OUTPUT_FORMAT = 'HH24:MI:SS.FF6'");
+      });
+
+      afterAll(async () => {
+        await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      });
+
+      it('selects microseconds when TIME_OUTPUT_FORMAT includes FF', async () => {
+        const { rows } = await executeAsync(
+          connection,
+          `SELECT '10:30:00'::TIME, '10:30:00.123456'::TIME, '23:59:59.999999'::TIME`,
+        );
+        expect(Object.values(rows![0])).toEqual([
+          '10:30:00.000000',
+          '10:30:00.123456',
+          '23:59:59.999999',
+        ]);
+      });
+    });
+
+    describe('HH24:MI:SS.FF format, scale-0 column', () => {
+      beforeAll(async () => {
+        await executeAsync(connection, "ALTER SESSION SET TIME_OUTPUT_FORMAT = 'HH24:MI:SS.FF'");
+      });
+
+      afterAll(async () => {
+        await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      });
+
+      it('drops a dangling "." for FF against a scale-0 column, unlike the legacy driver', async () => {
+        const { rows } = await executeAsync(connection, "SELECT '10:30:00'::TIME(0)");
+        if (isRunningNewDriverWithBD('BD#15')) {
+          expect(Object.values(rows![0])).toEqual(['10:30:00']);
+        } else {
+          expect(Object.values(rows![0])).toEqual(['10:30:00.']);
+        }
+      });
+    });
+
+    describe('HH:MI:SS.FF3 format', () => {
+      beforeAll(async () => {
+        await executeAsync(connection, "ALTER SESSION SET TIME_OUTPUT_FORMAT = 'HH:MI:SS.FF3'");
+      });
+
+      afterAll(async () => {
+        await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      });
+
+      it('renders bare HH the same as HH24', async () => {
+        const { rows } = await executeAsync(connection, "SELECT '14:45:30.123'::TIME");
+        expect(Object.values(rows![0])).toEqual(['14:45:30.123']);
+      });
+    });
   });
 
   describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP', () => {
