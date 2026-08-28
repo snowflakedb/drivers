@@ -429,11 +429,9 @@ impl ConnectionConfig {
             return ValidationSnafu { issues: errors }.fail();
         }
 
-        let account = settings
-            .get_string(ACCOUNT)
-            .context(MissingParameterSnafu {
-                parameter: String::from(ACCOUNT),
-            })?;
+        let account = non_empty_string(settings, ACCOUNT).context(MissingParameterSnafu {
+            parameter: String::from(ACCOUNT),
+        })?;
         let server_url = derive_server_url(settings)?;
         let auth = build_auth_config(settings)?;
         let tls = build_tls_config(settings)?;
@@ -643,7 +641,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
     // wrong-typed values can surface as InvalidType.
 
     // --- MissingRequired: account ---
-    if settings.get_string(ACCOUNT).is_none() {
+    if non_empty_string(settings, ACCOUNT).is_none() {
         issues.push(ValidationIssue {
             severity: ValidationSeverity::Error,
             parameter: ACCOUNT.into(),
@@ -1280,6 +1278,28 @@ mod tests {
                         .any(|i| i.parameter == "account"
                             && i.code == ValidationCode::MissingRequired),
                     "Expected MissingRequired for 'account', got: {issues:?}"
+                );
+            }
+            other => panic!("Expected Validation, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn build_empty_account_fails() {
+        let settings = settings_from(&[
+            ("account", Setting::String(String::new())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let err = ConnectionConfig::build(&settings).unwrap_err();
+        match err {
+            ConfigError::Validation { ref issues, .. } => {
+                assert!(
+                    issues.iter().any(|i| i.parameter == "account"
+                        && i.code == ValidationCode::MissingRequired
+                        && i.message == "Missing required parameter 'account'"),
+                    "Expected MissingRequired for empty 'account', got: {issues:?}"
                 );
             }
             other => panic!("Expected Validation, got: {other}"),
@@ -2142,6 +2162,25 @@ mod tests {
             .filter(|i| i.parameter == "account" && i.code == ValidationCode::MissingRequired)
             .collect();
         assert!(!account_issues.is_empty());
+    }
+
+    #[test]
+    fn validate_empty_account_reports_issue() {
+        let settings = settings_from(&[
+            ("account", Setting::String(String::new())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        let account_issues: Vec<_> = issues
+            .iter()
+            .filter(|i| i.parameter == "account" && i.code == ValidationCode::MissingRequired)
+            .collect();
+        assert_eq!(account_issues.len(), 1, "got: {issues:?}");
+        assert_eq!(
+            account_issues[0].message,
+            "Missing required parameter 'account'"
+        );
     }
 
     // SNOW-3663586: account identifiers carrying characters outside
