@@ -17,6 +17,8 @@ That hold is the `security-signoff` gate, implemented by
    in `.github/workflows/security-label.yml`.
 2. On PR and review events, `.github/workflows/security-signoff.yml`
    evaluates the PR and publishes a `security-signoff` **commit status**.
+   Draft PRs are skipped — the gate starts when the author marks the PR
+   ready (`ready_for_review`).
 3. The status is **success** when the label is absent, or when a security
    partner other than the author has an `APPROVED` review **on the PR's
    current head commit**. Otherwise it is **failure**. On failure the action
@@ -43,6 +45,16 @@ repo-wide "dismiss stale reviews".
 `.github/security-partners.yml` is always read from the PR's
 **base** branch, never the head, so a pull request cannot edit the list that
 governs its own sign-off.
+
+### Draft PRs are skipped
+
+Neither the keyword net nor the gate runs while a PR is still a draft.
+Requesting a partner and posting a sticky comment on a work-in-progress
+change is churn — the PR is not ready for disclosure review. Drafts cannot
+merge, so leaving the `security-signoff` status unreported is harmless
+(unlike the merge-queue case below, where a missing status jams the queue).
+The workflows listen for `ready_for_review` so the first evaluation happens
+when the author marks the PR ready.
 
 
 ## How the label gets applied
