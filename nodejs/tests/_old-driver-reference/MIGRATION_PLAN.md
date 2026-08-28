@@ -199,7 +199,14 @@ called out explicitly.
   after beta against the final error taxonomy.
 - [`unit/connection/result/`](./unit/connection/result/) — park until after the beta release,
   then check whether the new driver's result-handling coverage has gaps that these tests
-  highlight.
+  highlight. TIME-related files, against the TIME e2e in `query-data-types.test.ts`:
+  - [`datetime_format_converter_test.js`](./unit/connection/result/datetime_format_converter_test.js) —
+    keep remaining cases. Mixed `HH24`+`HH12` with comma-`FF9` is
+    `mixed_hh24_and_hh12_with_comma_ff_separator` in `time_format.rs`.
+  - [`sf_timestamp_test.js`](./unit/connection/result/sf_timestamp_test.js) — `Time: basic`
+    dropped; faithful equivalent is `time_basic_format_matrix_from_legacy_sf_timestamp`
+    in `time_format.rs` (same four scale/nanos/format triples, including bare `FF` at
+    scale 3). Timestamp blocks stay parked until TIMESTAMP output formats land.
 
 ### Configuration / global config
 

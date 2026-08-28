@@ -138,6 +138,35 @@ mod tests {
     }
 
     #[test]
+    fn time_basic_format_matrix_from_legacy_sf_timestamp() {
+        assert_eq!(render(time(12, 34, 56, 0), 3, "HH24:MI:SS"), "12:34:56");
+        assert_eq!(
+            render(time(12, 34, 56, 789_000_000), 3, "HH24:MI:SS.FF"),
+            "12:34:56.789"
+        );
+        assert_eq!(
+            render(time(12, 34, 56, 789_789_789), 9, "HH24:MI:SS.FF3"),
+            "12:34:56.789"
+        );
+        assert_eq!(
+            render(time(12, 34, 56, 789_789_789), 9, "HH24:MI:SS.FF9"),
+            "12:34:56.789789789"
+        );
+    }
+
+    #[test]
+    fn mixed_hh24_and_hh12_with_comma_ff_separator() {
+        assert_eq!(
+            render(
+                time(14, 45, 30, 789_789_789),
+                9,
+                "HH24:MI:SS.FF3 HH12:MI:SS,FF9"
+            ),
+            "14:45:30.789 02:45:30,789789789"
+        );
+    }
+
+    #[test]
     fn ff9_against_scale_zero_column_drops_digits_and_the_dot() {
         // The column itself is scale 0 (e.g. `TIME(0)`) — nothing was ever
         // stored below whole seconds, so requesting FF9 must not invent
@@ -158,10 +187,9 @@ mod tests {
 
     #[test]
     fn hh12_wraps_to_twelve_hour_clock_not_aliased_to_hh24() {
-        // Noon: HH12 and HH24 coincide (both "12") — not a distinguishing
-        // case on its own. These two do distinguish real 12-hour wraparound.
         assert_eq!(render(time(8, 15, 30, 0), 0, "HH12:MI:SS"), "08:15:30");
         assert_eq!(render(time(14, 45, 30, 0), 0, "HH12:MI:SS"), "02:45:30");
+        assert_eq!(render(time(0, 0, 0, 0), 0, "HH12:MI:SS"), "12:00:00");
     }
 
     #[test]
