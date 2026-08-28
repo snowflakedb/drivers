@@ -182,7 +182,8 @@ For each unmapped or ambiguous old test, perform a **full body analysis** — no
 Use GitHub MCP (`github_get_file`) to fetch the old test file. For each test function, extract:
 
 - **Setup/preconditions**: what state is established before the action (connections, configs, fixtures)
-- **Action under test**: the specific API call or operation being exercised
+- **Action under test**: the specific operation being exercised (e.g. "upload a file to a stage", "authenticate with wrong credentials")
+- **Entry point**: the exact client-side API sequence used to invoke that operation — name the specific call(s), not just the operation. Examples: `SQLExecDirect` vs `SQLPrepare`+`SQLExecute` (ODBC); `Statement` vs `PreparedStatement` vs `CallableStatement`, single `execute*` vs `executeBatch` (JDBC); `cursor.execute` vs `cursor.executemany`, sync vs async connection (Python). When the old test's own name identifies an entry point (e.g. "PUT GET Statement" driven via `SQLPrepare`, "ExecDirect And No SqlPrepare"), that entry point **is** the behavior under test, not incidental plumbing — see Step 3e.
 - **Assertions**: every `REQUIRE`, `ASSERT`, `assertEqual`, `assert`, `CHECK` — the complete list of verified outcomes
 - **Edge cases covered**: error paths, boundary values, timeouts, retries
 - **Teardown/cleanup**: any postcondition verification
@@ -193,6 +194,7 @@ Create a structured list of what the test actually verifies:
 
 ```
 Test: "should throw error for wrong okta credentials"
+Entry point: REST login call via native Okta authenticator (connection-time, not statement-driven)
 Assertions:
   1. Connection attempt raises AuthenticationError (not generic error)
   2. Error message contains "incorrect username or password"
@@ -289,10 +291,11 @@ This test directly covers "empty username raises error" — it's a unit/integrat
 
 #### 3b. Build a comparison matrix
 
-For each candidate UD test, check coverage of each assertion from the old test:
+Before comparing assertions, record entry-point equivalence first (Step 3e) — a candidate whose entry point differs from the old test's can still be listed, but is never accepted as `mapped` on assertion match alone. Record it as its own line, then check coverage of each assertion from the old test:
 
 ```
 Old test: "should throw error for wrong okta credentials"
+  Entry point (REST login via native Okta authenticator) → candidate uses the same call path? YES
   Assertion 1 (AuthenticationError type)    → ✓ covered by test_fail_with_bad_credentials
   Assertion 2 (error message content)       → ✓ covered by test_fail_with_bad_credentials
   Assertion 3 (SQLSTATE 28000)              → ✗ NOT covered — UD test checks error type only
@@ -300,16 +303,19 @@ Old test: "should throw error for wrong okta credentials"
   Assertion 5 (retry recovery)              → ✗ NOT covered — no UD test exercises this
 ```
 
+**Worked counterexample where the entry point differs (real case, ODBC):** the old driver's "PUT GET Statement" test (`StatementCatchLatestTest.cpp`) drives PUT/LIST/GET exclusively via `SQLPrepare`+`SQLExecute`. The candidate UD tests in `put_get_basic_operations.cpp` cover every rowset/file-content assertion the old test makes — but only via `SQLExecDirect` (`Connection::execute`/`execute_fetch` never call `SQLPrepare`). Assertion-by-assertion, this looks like `status: mapped`. It is not: the new driver's `SQLPrepare` path unconditionally sends `describe_only=true` with no PUT/GET carve-out, so the prepare route the old test specifically exercised fails outright (`SQLPrepare` itself errors; `SQLExecute` is never reached), while the direct route the candidate exercises works fine. Matching by assertions alone missed a real, undocumented regression because it never checked whether the candidate reached those assertions through the same client-side call sequence.
+
 #### 3c. Determine mapping completeness
 
 - **Full coverage**: all old assertions are present in mapped UD test(s) → `status: mapped`
 - **Partial coverage**: some assertions missing → `status: partial` with `gaps` list enumerating each uncovered assertion
 - **Scope expansion**: UD test covers MORE than old test → valid mapping (`status: mapped`), note the expansion in `notes`
 - **Scope reduction**: UD test covers LESS (even if name is similar) → `status: partial`, document what's missing in `gaps`
+- **Entry-point mismatch**: candidate covers every assertion but reaches them through a different client-side API sequence than the old test exercised → `status: partial` with a `gaps` entry naming the missing entry point, unless Step 3e's equivalence check affirmatively confirms the two entry points behave identically in the UD. Never resolve this silently to `mapped`.
 
-**Critical rule**: Two tests with similar names may have different assertion scopes. Never accept a mapping based on name similarity alone. Always verify assertion-by-assertion.
+**Critical rule**: Two tests with similar names may have different assertion scopes — or the same assertion scope reached through a different entry point. Never accept a mapping based on name similarity or matching outcomes alone. Always verify assertion-by-assertion AND entry-point-by-entry-point (Step 3e).
 
-Accept `status: mapped` only when the mapped UD test(s) collectively cover ALL assertions from the old test. If coverage is partial, use `status: partial` with a structured `gaps` list — this makes gaps queryable and trackable, not buried in free-text.
+Accept `status: mapped` only when the mapped UD test(s) collectively cover ALL assertions from the old test **through an equivalent entry point**. If coverage is partial, use `status: partial` with a structured `gaps` list — this makes gaps queryable and trackable, not buried in free-text.
 
 #### 3d. Cross-check gaps against the BehaviorDifferences file (mandatory for every gap)
 
@@ -346,6 +352,28 @@ For every gap identified in Step 3b, **read the relevant BehaviorDifferences fil
 - Read the BD file for every mapping session — do not rely on memory of its contents.
 - If a gap belongs to outcome 2, propose the new BehaviorDifferences entry as part of your output (use the next available integer ID). Do not write it to the file without user confirmation.
 - Do not conflate "gap" with "behavior difference": a gap means no UD test covers the assertion; a behavior difference means the UD intentionally behaves differently. Both can coexist on the same old-test entry.
+
+#### 3e. Verify entry-point equivalence — do not inherit it from the old driver
+
+An old test's defining characteristic is sometimes not its assertions but the specific client-side API sequence it uses to reach them. Two entry points that were behaviorally interchangeable in the old driver's architecture are **not** guaranteed to remain interchangeable in the UD — the UD is a different implementation, and equivalence must be checked there, not assumed from the old driver's behavior.
+
+**Per-driver entry points to treat as distinct, not interchangeable, unless proven otherwise:**
+
+| Driver | Entry points that can diverge |
+|---|---|
+| ODBC | `SQLExecDirect`/`SQLExecDirectW` vs `SQLPrepare`+`SQLExecute`; sync vs async (`SQL_ATTR_ASYNC_ENABLE`) |
+| JDBC | `Statement` vs `PreparedStatement` vs `CallableStatement`; single `execute*` vs `executeBatch` |
+| Python | `cursor.execute` vs `cursor.executemany`; sync connection vs async connection |
+| Node.js | callback API vs Promise API vs streaming (`connection.execute` with `streamResult`) |
+
+**Procedure:**
+1. From Step 2a, note the old test's entry point.
+2. For each candidate UD test found in Step 3a, note which entry point it actually invokes — read the test body; do not infer it from the file name or directory.
+3. If the entry points match, proceed to the assertion comparison (3b) as normal.
+4. If they differ, check UD source (not the old driver's source) for whether the two entry points are provably equivalent for this behavior — e.g. both routes funnel through the same internal function before diverging only in a part irrelevant to this test. A grep-and-read of the UD implementation is required; "they're both just calling execute" is not sufficient without confirming they share the code path relevant to the assertions being checked.
+5. If equivalence cannot be shown, the differing entry point is itself a gap — record it in `gaps` per Step 3c's "entry-point mismatch" category, and flag it as a candidate for a new same-entry-point test (see Out of Scope).
+
+**Real example that motivated this step (ODBC):** the old test "PUT GET Statement" drives PUT/LIST/GET via `SQLPrepare`+`SQLExecute`. The only UD tests found for PUT/GET (`put_get_basic_operations.cpp`) drive every operation via `SQLExecDirect` only. All rowset/file-content assertions matched, so a prior mapping pass recorded `status: mapped`. It missed that the new driver's `SQLPrepare` path (`odbc/src/api/statement.rs::prepare_impl`) unconditionally sends `describe_only=true` with no PUT/GET carve-out — so the prepare route the old test exercised fails before `SQLExecute` is ever reached, while the direct route the UD tests use works. The gap had zero UD coverage and no `BehaviorDifferences.yaml` entry; it was a real, undocumented regression hiding behind a "mapped" status.
 
 ---
 
@@ -423,6 +451,7 @@ Orphaned UD tests (no old-test mapping): 7
 - YAML diffs are shown before file edits; the developer confirms before the Edit tool runs.
 - Intent statement cites a Jira ticket or commit SHA, not inference alone, wherever possible.
 - **Assertion-level analysis is mandatory**: every mapping must be backed by reading the full test body of BOTH the old test and the candidate UD test. Name similarity is never sufficient.
+- **Entry-point verification is mandatory**: for every candidate, confirm which client-side API sequence it invokes and compare it to the old test's entry point (Step 3e) before accepting `status: mapped`. Matching final assertions through a different entry point is a gap, not a mapping.
 - **Gaps must be structured**: if any assertion from the old test is not covered, use `status: partial` with a `gaps` list (not free-text notes). Each gap entry describes one uncovered assertion.
 - **`gaps` field is required when `status: partial`** and forbidden when `status: mapped`.
 - **Search checklist must be complete**: all 11 rows must show "YES" before proposing a mapping.
@@ -433,6 +462,7 @@ Orphaned UD tests (no old-test mapping): 7
 - Do not set `status: mapped` without confirming ALL assertions from the old test are covered.
 - Do not silently merge YAML — always diff first.
 - Do not treat "similar scope" as "same scope" — if the old test checks 5 things and the UD test checks 3, that's a coverage gap even if the test names match.
+- **Do not accept `status: mapped` on assertion match alone when entry points differ** — a UD test that reaches the same final assertions through a different client-side API sequence (e.g. `SQLExecDirect` instead of `SQLPrepare`+`SQLExecute`) has not proven the old test's behavior still works. Verify entry-point equivalence in UD source first (Step 3e).
 - **Do not search only `tests/definitions/`** — feature files describe scenarios in Gherkin but NOT the actual assertions. You MUST search `sf_core/tests/`, `odbc_tests/tests/`, `python/tests/` for the implementation code that contains the real assertions.
 - **Do not skip unit tests** — unit tests across all languages may directly cover old test assertions and are valid mappings: `sf_core/src/**/` (Rust inline `#[cfg(test)]`), `python/tests/unit/` (Python), `odbc_tests/tests/odbc-api/` + `odbc_tests/tests/basic_tests/` + `odbc_tests/tests/bindings_tests/` (C++), `nodejs/tests/unit/` (TypeScript), `jdbc/src/test/java/` (Java).
 - **Do not declare row 3 "no match" without showing discovery evidence.** Bad output: `sf_core/src/ | YES | no match` — with no grep output shown. A "no match" is only credible when the response includes which keywords were searched, which files were found, and that none contained relevant `#[test]` functions. Example of correct "no match" output: "Searched `sf_core/src/` for keywords ['password', 'authenticator', 'connection']: found 6 files, 3 had `#[test]` functions, none matched the DSN-timeout behavior being mapped."
