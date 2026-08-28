@@ -12,10 +12,14 @@
 # .github/reviewers.yml also encodes per-reviewer opt-out flags
 # (`assign`, `remind`); see that file for details.
 #
-# All GitHub I/O goes through the `gh` CLI (with GITHUB_TOKEN) and all
-# Slack writes go through slackapi/slack-github-action. The Python
-# script in scripts/pr_review_bot.py only orchestrates and formats
-# messages.
+# All GitHub I/O goes through the `gh` CLI (with GITHUB_TOKEN). Slack
+# writes go through slackapi/slack-github-action with `errors: true` so
+# API failures fail the job. Remind may emit several messages (Slack
+# caps each Block Kit section at 3000 characters); those payloads are
+# uploaded as an artifact and posted in order by a matrix job so the
+# bot token is passed via `with.token` rather than process arguments.
+# The Python script in scripts/pr_review_bot.py only orchestrates and
+# formats messages.
 #
 # Required repository configuration:
 #   secrets.SLACK_BOT_TOKEN
@@ -127,6 +131,9 @@ jobs:
         if: steps.build.outputs.skip != 'true'
         uses: slackapi/slack-github-action@v4
         with:
+          # Default is false: Slack API errors are logged and the job
+          # still succeeds. A failed assignment ping should fail the run.
+          errors: true
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload-file-path: ${{ runner.temp }}/slack_payload.json
@@ -137,6 +144,9 @@ jobs:
       github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'remind')
     runs-on: ubuntu-slim
+    outputs:
+      skip: ${{ steps.build.outputs.skip }}
+      payloads: ${{ steps.build.outputs.payloads }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -166,13 +176,45 @@ jobs:
           # Used for users.lookupByEmail to mint <@U...> mentions; see
           # the assign-reviewer job for details.
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_PAYLOAD_FILE: ${{ runner.temp }}/slack_payload.json
+          SLACK_PAYLOAD_DIR: ${{ runner.temp }}/slack_payloads
         run: python scripts/pr_review_bot.py remind
 
-      - name: Post reminder digest to Slack
+      - name: Upload Slack payloads
         if: steps.build.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: slack-payloads
+          path: ${{ runner.temp }}/slack_payloads/
+          if-no-files-found: error
+          retention-days: 1
+
+  # skip=true (nothing to send, or Warsaw quiet hours) skips this job
+  # and the workflow stays green. errors: true so a Slack API rejection
+  # fails the run instead of logging invalid_blocks and reporting success.
+  # max-parallel: 1 keeps (1/n), (2/n), … in order.
+  remind-post:
+    name: Post reminder digest to Slack
+    needs: remind-reviewers
+    if: |
+      needs.remind-reviewers.outputs.skip != 'true'
+      && needs.remind-reviewers.outputs.payloads != '[]'
+    runs-on: ubuntu-slim
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        payload: ${{ fromJson(needs.remind-reviewers.outputs.payloads || '[]') }}
+    steps:
+      - name: Download Slack payloads
+        uses: actions/download-artifact@v4
+        with:
+          name: slack-payloads
+          path: slack_payloads
+
+      - name: Post reminder digest chunk
         uses: slackapi/slack-github-action@v4
         with:
+          errors: true
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
-          payload-file-path: ${{ runner.temp }}/slack_payload.json
+          payload-file-path: slack_payloads/${{ matrix.payload }}
