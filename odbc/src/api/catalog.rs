@@ -1902,8 +1902,7 @@ fn field_from_sql_type_string(type_str: &str, numeric_settings: &NumericSettings
         "OBJECT" => rehydrate_field("OBJECT", None, None, Some(default_varchar), None, true),
         "ARRAY" => rehydrate_field("ARRAY", None, None, Some(default_varchar), None, true),
         "VECTOR" => rehydrate_field("VECTOR", None, None, Some(default_varchar), None, true),
-        // GEOGRAPHY/GEOMETRY and anything unrecognized fall back to a character
-        // type, matching the reference driver's treatment of unmapped types.
+        // Unrecognized types fall back to a character type.
         _ => rehydrate_field("TEXT", None, None, Some(default_varchar), None, true),
     }
 }
@@ -3081,10 +3080,11 @@ struct ColumnDescriptor {
 /// 2. **Parse failure** — on any JSON parse error (malformed blob, schema
 ///    change, exotic type not yet in the struct) the function returns
 ///    `logical_type = "UNKNOWN"` and `nullable = true` rather than propagating
-///    an error. This lets the wrapper fall back gracefully for exotic types
-///    (INTERVAL, VECTOR, GEOGRAPHY, GEOMETRY) whose `data_type` blobs may not
-///    match the fields captured here; the column maps to NULL in the ODBC
-///    output rather than poisoning the whole result set.
+///    an error. This lets the wrapper fall back gracefully for exotic /
+///    unsupported types (INTERVAL, VECTOR, and other unrecognized logical
+///    types) whose `data_type` blobs may not match the fields captured here;
+///    `sql_type_from_field` then reports `SQL_VARCHAR` rather than poisoning
+///    the whole result set.
 ///
 /// 3. **Precision/scale narrowing** — the JSON blob carries i64 values; we
 ///    narrow to i32 for the descriptor. Snowflake's precision is at most 38
@@ -3182,9 +3182,7 @@ fn rehydrate_field(
 /// This is deliberately **separate** from `SnowflakeFieldType::type_name`
 /// (the `SQLColAttribute(SQL_DESC_TYPE_NAME)` path on query columns), which
 /// returns SDK-style labels (`BIT`, `TYPE_DATE`, `TYPE_TIMESTAMP`, …) and must
-/// not change. The reference driver depends on the external names here; routing
-/// SQLColumns through the ColAttribute helper collapsed semi-structured types
-/// to `VARCHAR` and turned `GEOGRAPHY` into `NULL`. See SNOW-3899531.
+/// not change.
 fn catalog_type_name_from_logical_type(logical_type: &str) -> String {
     match logical_type {
         "TEXT" => "VARCHAR",
@@ -3198,10 +3196,9 @@ fn catalog_type_name_from_logical_type(logical_type: &str) -> String {
         "VARIANT" => "VARIANT",
         "ARRAY" => "ARRAY",
         "OBJECT" => "STRUCT",
-        "GEOGRAPHY" => "GEOGRAPHY",
-        "GEOMETRY" => "GEOMETRY",
-        // Absent logical type → safe VARCHAR fallback; any other exotic/unknown
-        // type → its uppercased logical name (matching OLD's else branch).
+        // Absent logical type → safe VARCHAR fallback; any other exotic /
+        // unsupported type → its uppercased logical name (matching OLD's else
+        // branch).
         "" => "VARCHAR",
         other => return other.to_ascii_uppercase(),
     }
@@ -4969,8 +4966,8 @@ mod procedure_columns_tests {
             );
         }
 
-        // Semi-structured types must not collapse to VARCHAR, and GEOGRAPHY
-        // must not be NULL — the two regressions this fix targets.
+        // Semi-structured types must not collapse to VARCHAR. Unsupported
+        // logical types keep their uppercased name (not NULL / VARCHAR).
         assert_ne!(catalog_type_name_from_logical_type("OBJECT"), "VARCHAR");
         assert_ne!(catalog_type_name_from_logical_type("VARIANT"), "VARCHAR");
 
