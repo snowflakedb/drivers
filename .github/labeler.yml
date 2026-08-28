@@ -76,3 +76,22 @@ documentation:
           - "**/*.md"
           - LICENSE
           - .github/CODEOWNERS
+
+# Core TLS, CRL, HTTP, result-chunk download, and stage file transfer.
+# Distinct from the catch-all `sf_core` label so the review bot can
+# route this slice without assigning on every core PR.
+transport:
+  - changed-files:
+      - any-glob-to-any-file:
+          - sf_core/src/tls/**
+          - sf_core/src/crl/**
+          - sf_core/src/http/**
+          - sf_core/src/chunks/**
+          - sf_core/src/file_manager/**
+          - sf_core/src/bin/tls_client.rs
+          - sf_core/src/bin/collect_chunk_data.rs
+          - sf_core/tests/e2e/tls/**
+          - sf_core/tests/integration/http/**
+          - sf_core/tests/http_retry_tests.rs
+          - sf_core/tests/common/tls_proxy.rs
+          - tests/definitions/shared/tls/**

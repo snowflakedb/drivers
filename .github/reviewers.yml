@@ -40,7 +40,7 @@
 #
 # Selection algorithm:
 #
-#   1. The bot reads the PR's labels (e.g. `python`, `odbc`).
+#   1. The bot reads the PR's labels (e.g. `python`, `odbc`, `transport`).
 #   2. Every rule whose label is on the PR contributes its reviewers
 #      to the candidate pool (union across matched rules — a PR
 #      labeled both `python` and `odbc` pools the experts of each).
@@ -131,3 +131,7 @@ rules:
     - filip-pawlowski_snow
     - patryk-czajka_snow
     - tomasz-urbaszek_snow
+  # Auto-applied by .github/labeler.yml for core TLS, CRL, HTTP,
+  # result chunks, and file-manager (stage PUT/GET) changes.
+  transport:
+    - bartosz-oler_snow
