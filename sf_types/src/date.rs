@@ -1,8 +1,10 @@
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Date32Type;
 use chrono::NaiveDate;
+use snafu::OptionExt;
 
-use crate::error::ReadArrowError;
+use crate::civil::civil_from_unix_days;
+use crate::error::{InvalidArrowValueSnafu, ReadArrowError};
 use crate::traits::{ReadArrowType, SnowflakeType};
 
 /// Snowflake DATE.
@@ -31,7 +33,19 @@ impl ReadArrowType<PrimitiveArray<Date32Type>> for SnowflakeDate {
                 location: snafu::location!(),
             });
         }
-        Ok(Date32Type::to_naive_date(array.value(row_idx)))
+        // Materialize through the shared calendar primitive rather than a
+        // second, independent day→date conversion: the ODBC bulk-CHAR hot path
+        // reads the same broken-down fields straight from `civil_from_unix_days`
+        // without building a `NaiveDate`, so keeping this on the same kernel
+        // means there is exactly one implementation of the calendar math.
+        let days = array.value(row_idx);
+        let (year, month, day) = civil_from_unix_days(days);
+        NaiveDate::from_ymd_opt(year, month, day).with_context(|| InvalidArrowValueSnafu {
+            reason: format!(
+                "DATE day offset {days} maps to {year:04}-{month:02}-{day:02}, \
+                 outside the representable calendar range"
+            ),
+        })
     }
 }
 
@@ -72,6 +86,19 @@ mod tests {
         let err = SnowflakeDate.read_arrow_type(&array, 0).unwrap_err();
         assert!(
             matches!(err, ReadArrowError::NullValue { .. }),
+            "got {err:?}"
+        );
+    }
+
+    /// A day offset whose year falls outside chrono's representable range is
+    /// surfaced as a decode error rather than panicking. The server never sends
+    /// such a value for DATE, but the reader must stay total.
+    #[test]
+    fn should_report_out_of_range_day_offset_as_invalid_value() {
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(i32::MAX)]);
+        let err = SnowflakeDate.read_arrow_type(&array, 0).unwrap_err();
+        assert!(
+            matches!(err, ReadArrowError::InvalidArrowValue { .. }),
             "got {err:?}"
         );
     }

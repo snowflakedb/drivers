@@ -8,12 +8,21 @@
 //! decode step instead of each maintaining their own.
 //!
 //! DATE is the first type moved here; more will follow the same shape.
+//!
+//! A reader has two layers worth naming. The *materializer*
+//! ([`ReadArrowType::read_arrow_type`]) produces a checked chrono value and is
+//! what most front ends want. Below it sit pure integer *primitives* (see
+//! [`civil`]) that a front end with a materialization-free hot path can call
+//! directly. Sharing the primitive — not just the materializer — keeps the
+//! calendar/clock math in one place across every driver.
 
+mod civil;
 mod date;
 mod error;
 mod nullable;
 mod traits;
 
+pub use civil::civil_from_unix_days;
 pub use date::SnowflakeDate;
 pub use error::{InvalidArrowValueSnafu, NullValueSnafu, ReadArrowError};
 pub use nullable::Nullable;
