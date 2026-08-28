@@ -1,4 +1,4 @@
-use arrow::array::{Array, PrimitiveArray};
+use arrow::array::PrimitiveArray;
 use arrow::datatypes::Date32Type;
 use chrono::{Datelike, NaiveDate, NaiveTime};
 use odbc_sys as sql;
@@ -43,7 +43,12 @@ fn format_date_ascii<'a>(date: &NaiveDate, buf: &'a mut [u8; 32]) -> &'a str {
     unsafe { std::str::from_utf8_unchecked(&buf[..p]) }
 }
 
-pub(crate) struct SnowflakeDate;
+/// The DATE reader now lives in the front-end-agnostic `sf_types` crate so
+/// ODBC, the Node.js bridge, and Python share one Arrow `Date32` → `NaiveDate`
+/// decode. This crate keeps only the ODBC-specific pieces: the SQL
+/// `0001..9999` calendar-range check ([`SnowflakeType::validate_value`]) and
+/// the C-buffer / wire writers below.
+pub(crate) use sf_types::SnowflakeDate;
 
 const UNIX_EPOCH: NaiveDate = match NaiveDate::from_ymd_opt(1970, 1, 1) {
     Some(d) => d,
@@ -70,14 +75,13 @@ impl ReadArrowType<PrimitiveArray<Date32Type>> for SnowflakeDate {
         array: &'a PrimitiveArray<Date32Type>,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        if array.is_null(row_idx) {
-            return Err(ReadArrowError::NullValue {
-                location: snafu::location!(),
-            });
-        }
-        let days_since_epoch = array.value(row_idx);
-        let date = UNIX_EPOCH + chrono::Duration::days(days_since_epoch as i64);
-        Ok(date)
+        // Delegate the Arrow decode to the shared reader; `?` translates its
+        // error into this crate's `ReadArrowError` via the `From` impl in
+        // `error.rs`, so the conversion machinery around it (and its
+        // `NullValue`-driven null handling) is unchanged.
+        Ok(sf_types::ReadArrowType::read_arrow_type(
+            self, array, row_idx,
+        )?)
     }
 }
 

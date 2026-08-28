@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 sf_core = { path = "../sf_core" }
+sf_types = { path = "../sf_types" }
 napi = { version = "3", default-features = false, features = ["napi9", "async", "chrono_date"] }
 napi-derive = "3"
 arrow = { version = ">=54.0.0, <59" }
