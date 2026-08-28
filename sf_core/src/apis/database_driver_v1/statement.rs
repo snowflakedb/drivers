@@ -307,8 +307,12 @@ impl DatabaseDriverV1 {
         .await
     }
 
+    /// Uploads a large-bind CSV payload to the bind stage, returning its stage
+    /// path. `ctx` matters only for a payload large enough to take the multipart
+    /// path, which has an abort to register.
     async fn upload_csv_bindings_to_stage(
         &self,
+        ctx: Option<&OperationCtx>,
         conn_arc: &Arc<Mutex<super::connection::Connection>>,
         http_client: &reqwest::Client,
         query_parameters: &QueryParameters,
@@ -336,6 +340,7 @@ impl DatabaseDriverV1 {
             put_get_policy: &put_get_policy,
             use_s3_regional_url_session_param,
             crl_worker: self.crl_worker.clone(),
+            cleanup: ctx.map(OperationCtx::cleanup_scope),
         };
         let request_id = uuid::Uuid::new_v4();
         crate::stage_binding::upload_csv_bindings(&stage_ctx, &flags, request_id, csv_bytes)
@@ -406,6 +411,7 @@ impl DatabaseDriverV1 {
         let bind_stage_path = if let Some(bytes) = csv_bytes {
             let path = self
                 .upload_csv_bindings_to_stage(
+                    ctx,
                     &conn_arc,
                     &http_client,
                     &query_parameters,
@@ -594,6 +600,7 @@ impl DatabaseDriverV1 {
         }
         let rowset_data = self
             .extract_rowset_data(
+                ctx,
                 &conn_arc,
                 data,
                 Some((query, query_parameters)),
@@ -613,8 +620,15 @@ impl DatabaseDriverV1 {
     /// originating SQL (the sync execute path always can; the async
     /// result-fetch path only when the response carries `sqlText`) and `None`
     /// otherwise, which disables stage-info refresh for that transfer.
+    ///
+    /// `ctx` is forwarded to the PUT/GET transfer so a cancel aborts the in-flight
+    /// cloud transfer rather than only dropping it locally.
+    // One arg over the 7-arg clippy threshold, since `ctx` joined the three
+    // statement-level PUT/GET overrides; mirrors `upload_to_gcs_or_skip`.
+    #[allow(clippy::too_many_arguments)]
     async fn extract_rowset_data(
         &self,
+        ctx: Option<&OperationCtx>,
         conn: &Arc<Mutex<Connection>>,
         data: query_response::Data,
         refresh_sql: Option<(String, QueryParameters)>,
@@ -660,6 +674,7 @@ impl DatabaseDriverV1 {
                     )
                 };
                 perform_put_get_transfer(
+                    ctx,
                     command,
                     &data,
                     &self.wrapper_presets,
@@ -709,7 +724,10 @@ impl DatabaseDriverV1 {
 
         let bind_stage_path = if let Some(bytes) = csv_bytes {
             let path = self
+                // No ctx: `StatementExecuteAsync` is not marked `async_first`, so
+                // no operation token reaches this RPC.
                 .upload_csv_bindings_to_stage(
+                    None,
                     &conn_arc,
                     &http_client,
                     &query_parameters,
@@ -821,7 +839,7 @@ impl DatabaseDriverV1 {
             // defensively false. No `Statement` here for a per-statement override, so
             // pass `None` — `extract_rowset_data` falls back to connection/session, then wrapper preset.
             let rowset_data = self
-                .extract_rowset_data(&conn_ptr, data, refresh_sql, false, None, None)
+                .extract_rowset_data(None, &conn_ptr, data, refresh_sql, false, None, None)
                 .await?;
             let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
             Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, None))

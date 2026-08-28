@@ -8,6 +8,7 @@
 
 use super::encryption::Encryptor;
 use super::types::{ByteSource, EncryptedFileMetadata};
+use crate::apis::operation_ctx::{CleanupScope, with_cleanup_scope_opt};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::log_foreign_error;
 use bytes::Bytes;
@@ -248,10 +249,11 @@ pub struct CloudStreamingDownload {
     /// producer abort handle) or a spilled tempfile (parallel ranged GETs,
     /// already complete — nothing left to abort). On the SSE / non-decrypting
     /// path a `Spilled` body is renamed into place rather than copied; see
-    /// `download_single_file`. Only the zero-disk `download_stream_*` RPC path
-    /// (`file_manager::open_cloud_download_stream`) uses the `Streamed` abort
-    /// handle, to cancel a stalled producer; the buffered `download_single_file`
-    /// path ignores it.
+    /// `download_single_file`. Both consumers use the `Streamed` abort handle to stop
+    /// a producer that is no longer wanted: the zero-disk `download_stream_*` RPC path
+    /// (`file_manager::open_cloud_download_stream`) when a stalled stream is closed,
+    /// and the buffered `download_single_file` path via `ProducerAbortGuard` when the
+    /// transfer is cancelled.
     pub body: CloudDownloadBody,
 }
 
@@ -337,15 +339,43 @@ pub enum CloudSpilledBody {
 /// the per-cloud `*_range_download`. `Copy` so it can be handed to each retry.
 #[derive(Clone, Copy)]
 pub enum CloudSpillTarget<'a> {
-    /// Non-encrypted download: assemble directly into this `<dst>.part` file.
+    /// Non-encrypted download: assemble directly into this `<dst>.part` file. Its
+    /// removal on cancellation is registered by `download_single_file`, which owns
+    /// the path.
     Part(&'a Path),
-    /// Encrypted / git-stage download: assemble ciphertext into a temp in this
-    /// directory (kept on the destination's filesystem so the later finalize is
-    /// a same-FS rename, not a cross-device copy).
-    Temp(&'a Path),
+    /// Encrypted / git-stage download: assemble ciphertext into a temp in `dir`
+    /// (kept on the destination's filesystem so the later finalize is a same-FS
+    /// rename, not a cross-device copy).
+    Temp {
+        dir: &'a Path,
+        /// Where [`assemble_ranged_download`] registers removal of the temp it
+        /// mints. Carried here rather than as another parameter because `target`
+        /// already threads from `download_single_file` — which holds the scope —
+        /// down to the assembly, which is the only place the temp's path exists.
+        ///
+        /// `NamedTempFile`'s own `Drop` unlinks it, but that is a single
+        /// best-effort `remove_file` whose error is discarded: on Windows it fails
+        /// while a detached positioned-write task still holds the handle, and the
+        /// random name means repeated cancels accumulate debris beside the user's
+        /// downloads rather than overwriting one `.part`.
+        cleanup: Option<&'a CleanupScope>,
+    },
 }
 
 impl CloudDownloadBody {
+    /// Handle for the task draining this body off the network, when there is one.
+    ///
+    /// Cloned so a caller can keep it past [`Self::into_reader`], which drops the
+    /// original. Aborting it is how a cancelled download stops pulling bytes — see
+    /// `ProducerAbortGuard`. `None` for a `Spilled` body, whose ranged GETs have
+    /// already finished.
+    pub(super) fn producer_abort(&self) -> Option<tokio::task::AbortHandle> {
+        match self {
+            CloudDownloadBody::Streamed { producer_abort, .. } => Some(producer_abort.clone()),
+            CloudDownloadBody::Spilled(_) => None,
+        }
+    }
+
     /// A uniform blocking `Read` over the body: the network stream directly, or
     /// a reader over the spilled file (a [`SpilledReader`](super::multipart::SpilledReader)
     /// that keeps a `Temp` alive for the read's duration, or a plain file for a
@@ -414,7 +444,7 @@ where
 
     let owned_target = match target {
         CloudSpillTarget::Part(p) => (true, p.to_path_buf()),
-        CloudSpillTarget::Temp(d) => (false, d.to_path_buf()),
+        CloudSpillTarget::Temp { dir, .. } => (false, dir.to_path_buf()),
     };
     // Setup returns io::Error (NOT E) so mk_temp_err need not be Send/'static.
     let (assembly, file): (Assembly, Arc<std::fs::File>) = tokio::task::spawn_blocking(move || {
@@ -434,6 +464,31 @@ where
     .map_err(|e| mk_temp_err(format!("join error in tempfile setup: {e}")))?
     .map_err(|e| mk_temp_err(e.to_string()))?;
 
+    // The temp only exists now that setup has run, so this is the earliest the
+    // removal can be registered. `Part` needs nothing: `download_single_file`
+    // already registered its `.part`.
+    let temp_to_remove = match (&assembly, target) {
+        (
+            Assembly::Temp(named),
+            CloudSpillTarget::Temp {
+                cleanup: Some(_), ..
+            },
+        ) => Some(named.path().to_path_buf()),
+        _ => None,
+    };
+    let temp_cleanup_scope = match target {
+        CloudSpillTarget::Temp { cleanup, .. } => temp_to_remove.as_ref().and(cleanup),
+        CloudSpillTarget::Part(_) => None,
+    };
+    let remove_temp_on_cancel = {
+        let temp_to_remove = temp_to_remove.clone();
+        async move {
+            if let Some(path) = temp_to_remove {
+                super::remove_partial_after_cancel(path).await;
+            }
+        }
+    };
+
     let ranges = super::multipart::plan_ranges(content_length, chunk_size);
     let get_range = &get_range;
     let mk_temp_err = &mk_temp_err;
@@ -443,7 +498,7 @@ where
     // write_at spawn_blocking tasks release their cloned handles before return,
     // so the assembly file can be unlinked even on Windows. First error surfaced
     // after the drain.
-    let results: Vec<Result<(), E>> = futures::stream::iter(ranges)
+    let fetch_ranges = futures::stream::iter(ranges)
         .map(|range| async move {
             let bytes = get_range(range).await?;
             // 206-vs-200 guard: an endpoint that ignores Range and returns the
@@ -467,8 +522,14 @@ where
             .map_err(|e| mk_temp_err(e.to_string()))
         })
         .buffer_unordered(concurrency)
-        .collect()
-        .await;
+        .collect();
+    // Boxed to keep this large future off the frame — see clippy.toml.
+    let results: Vec<Result<(), E>> = with_cleanup_scope_opt(
+        temp_cleanup_scope,
+        remove_temp_on_cancel,
+        Box::pin(fetch_ranges),
+    )
+    .await;
 
     // Release our handle so only `assembly` (Temp) or none (Part) holds the file.
     drop(file);

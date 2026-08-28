@@ -178,6 +178,7 @@ pub use s3_transfer::{DownloadFileError, UploadFileError};
 pub(crate) use spool::{SPOOL_MEM_THRESHOLD, SpooledBuffer};
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
+use crate::apis::operation_ctx::with_cleanup_scope_opt;
 use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::retry::RetryPolicy;
@@ -341,10 +342,16 @@ pub(crate) fn prepared_upload_with_digest(digest: &str) -> PreparedUpload {
 /// already covers it. 512 is O(1) regardless of file size.
 const COMPRESSION_DETECT_PREFIX_LEN: usize = 512;
 
+/// Uploads every file matching `data.src_location_pattern`, sequentially.
+///
+/// On cancellation the loop stops, so later files never begin; the in-flight one
+/// is aborted by the cleanup registered further down; files already uploaded stay
+/// on the stage, complete and valid but unreported — the caller sees only
+/// `ApiError::Cancelled`, never partial result rows.
 pub async fn upload_files(
     data: &UploadData,
     policy: &RetryPolicy,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<Vec<UploadResult>, FileManagerError> {
     // `expand_filenames` globs the filesystem and canonicalizes every match
     // (stat/readlink syscalls per path component), so it runs in
@@ -374,7 +381,7 @@ pub async fn upload_files(
     // refresh is intentionally not coalesced (each file may carry its own
     // presigned URL).
     for file_location in file_locations {
-        let stage_info = current_stage_info(&data.stage_info, refresher);
+        let stage_info = current_stage_info(&data.stage_info, tx.refresher);
         let path = PathBuf::from(&file_location.path);
         // Retained for the aggregate-failure report: `filename` moves into
         // `SingleUploadData` below, but a failed transfer still needs a name
@@ -394,7 +401,7 @@ pub async fn upload_files(
             multipart: data.multipart,
         };
 
-        match upload_single_file(single_upload_data, policy, refresher).await {
+        match upload_single_file(single_upload_data, policy, tx).await {
             Ok(result) => results.push(result),
             // Fail-fast aborts at the first error; collect-all (the default)
             // attempts every file and reports all failures together (ODBC parity,
@@ -447,11 +454,11 @@ fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageInfoRefreshe
 pub async fn upload_single_file(
     data: SingleUploadData,
     policy: &RetryPolicy,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<UploadResult, FileManagerError> {
     // `preprocess_file_before_upload` reads a `ByteSource::Path` itself
     // (streaming), so `upload_single_file` no longer pre-reads the file.
-    upload_prepared_source(data.source.clone(), data, policy, refresher).await
+    upload_prepared_source(data.source.clone(), data, policy, tx).await
 }
 
 /// Uploads an in-memory byte buffer to the stage location described by
@@ -468,9 +475,9 @@ pub async fn upload_in_memory_file(
     buffer: Vec<u8>,
     data: SingleUploadData,
     policy: &RetryPolicy,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<UploadResult, FileManagerError> {
-    upload_prepared_source(ByteSource::Bytes(buffer.into()), data, policy, refresher).await
+    upload_prepared_source(ByteSource::Bytes(buffer.into()), data, policy, tx).await
 }
 
 /// Shared core of the upload path used by `upload_single_file` (file
@@ -483,7 +490,7 @@ pub(crate) async fn upload_prepared_source(
     source: ByteSource,
     data: SingleUploadData,
     policy: &RetryPolicy,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<UploadResult, FileManagerError> {
     // `preprocess_file_before_upload` reads the source file from disk and
     // AES-encrypts it (blocking I/O + CPU-bound); run it off the async executor
@@ -511,7 +518,7 @@ pub(crate) async fn upload_prepared_source(
             data.skip_upload_on_content_match,
             policy,
             data.multipart,
-            refresher,
+            tx,
         )
         .await
         .context(S3UploadSnafu)?,
@@ -525,7 +532,7 @@ pub(crate) async fn upload_prepared_source(
             // Build the policy here, where `using_presigned_url` is known, and
             // pass it by reference so the test seam can inject zero backoff.
             &gcs_retry_policy(data.stage_info.presigned_url.is_some(), policy),
-            refresher,
+            tx,
         )
         .await
         .context(GcsUploadSnafu)?,
@@ -537,7 +544,9 @@ pub(crate) async fn upload_prepared_source(
             data.skip_upload_on_content_match,
             data.multipart,
             policy,
-            refresher,
+            // Refresher only: Azure has no abort to register (see
+            // `azure_multipart_upload`).
+            tx.refresher,
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -796,10 +805,17 @@ fn auto_detect_source_compression(
     }
 }
 
+/// Downloads every file listed in `data.src_locations`, sequentially.
+///
+/// On cancellation the loop stops, so later files never begin; the in-flight one
+/// is stopped and its `.part` removed by the cleanup registered in
+/// [`download_single_file`]; files already downloaded stay on disk, whole because
+/// each was published by an atomic rename. The caller sees only
+/// `ApiError::Cancelled`, never partial result rows.
 pub async fn download_files(
     mut data: DownloadData,
     policy: &RetryPolicy,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
 
@@ -819,7 +835,7 @@ pub async fn download_files(
         .zip(data.presigned_urls.drain(..))
         .enumerate();
     for (index, ((file_location, encryption_material), presigned_url)) in download_iter {
-        let stage_info = current_stage_info(&data.stage_info, refresher);
+        let stage_info = current_stage_info(&data.stage_info, tx.refresher);
         // Retained for the collect-all ERROR row: `file_location` moves into
         // `SingleDownloadData` below, but a failed transfer still needs a
         // `file` column to report.
@@ -835,7 +851,7 @@ pub async fn download_files(
             unsafe_file_write: data.unsafe_file_write,
         };
 
-        match download_single_file(single_download_data, policy, index, refresher).await {
+        match download_single_file(single_download_data, policy, index, tx).await {
             Ok(result) => results.push(result),
             // Fail-fast (`get_fastfail`) aborts the batch on the first error;
             // collect-all records an ERROR row and continues (ODBC parity,
@@ -990,10 +1006,10 @@ fn prepare_download_output_paths(
 /// (ranged) download is renamed into place, an in-memory (small) one is copied
 /// straight to the destination.
 pub async fn download_single_file(
-    mut data: SingleDownloadData,
+    data: SingleDownloadData,
     policy: &RetryPolicy,
     per_file_index: usize,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<DownloadResult, FileManagerError> {
     // Blocking FS syscalls (create_dir_all/canonicalize); keep off the async executor.
     let (output_path, partial_path) = {
@@ -1006,6 +1022,40 @@ pub async fn download_single_file(
         .context(BlockingTaskSnafu)??
     };
 
+    // Armed before the first byte is requested, because `<dst>.part` can exist as
+    // early as the ranged assembly's pre-allocation. Cancellation only — a *failed*
+    // download still cleans up through its own error paths, unchanged.
+    let remove_partial_on_cancel = {
+        let partial = partial_path.clone();
+        async move { remove_partial_after_cancel(partial).await }
+    };
+
+    with_cleanup_scope_opt(
+        tx.cleanup,
+        remove_partial_on_cancel,
+        // Boxed to keep this large future off the frame — see clippy.toml.
+        Box::pin(download_single_file_to(
+            data,
+            policy,
+            per_file_index,
+            tx,
+            output_path,
+            partial_path,
+        )),
+    )
+    .await
+}
+
+/// Body of [`download_single_file`], with the destination paths already resolved
+/// so the caller can arm cleanup for `partial_path` before any transfer begins.
+async fn download_single_file_to(
+    mut data: SingleDownloadData,
+    policy: &RetryPolicy,
+    per_file_index: usize,
+    tx: TransferCtx<'_>,
+    output_path: PathBuf,
+    partial_path: PathBuf,
+) -> Result<DownloadResult, FileManagerError> {
     // CSE downloads decrypt the ciphertext through a blocking `Read`; SSE
     // downloads skip decryption and write the raw bytes. S3 buffers small blobs
     // in memory and spills large ranged downloads to a tempfile (renamed into
@@ -1045,7 +1095,10 @@ pub async fn download_single_file(
             // has `encryption_material`, so its ciphertext goes to a temp in
             // `spill_dir` and is decrypted into `.part` below.
             let spill_target = if enc_material.is_some() {
-                CloudSpillTarget::Temp(&spill_dir)
+                CloudSpillTarget::Temp {
+                    dir: &spill_dir,
+                    cleanup: tx.cleanup,
+                }
             } else {
                 CloudSpillTarget::Part(&partial_path)
             };
@@ -1059,7 +1112,7 @@ pub async fn download_single_file(
                 data.src_location.as_str(),
                 policy,
                 data.multipart,
-                refresher,
+                tx.refresher,
                 unsafe_file_write,
                 spill_target,
             )
@@ -1195,7 +1248,10 @@ pub async fn download_single_file(
             // `encryption_material`, so its ciphertext goes to a temp in
             // `spill_dir` and is decrypted into `.part` below. Mirrors the S3 arm.
             let spill_target = if enc_material.is_some() {
-                CloudSpillTarget::Temp(&spill_dir)
+                CloudSpillTarget::Temp {
+                    dir: &spill_dir,
+                    cleanup: tx.cleanup,
+                }
             } else {
                 CloudSpillTarget::Part(&partial_path)
             };
@@ -1212,7 +1268,7 @@ pub async fn download_single_file(
                 ),
                 per_file_index,
                 data.multipart,
-                refresher,
+                tx.refresher,
                 unsafe_file_write,
                 spill_target,
             )
@@ -1222,6 +1278,8 @@ pub async fn download_single_file(
             let cloud_byte_count_hint = dl.cloud_byte_count;
             let cloud_bytes_read = dl.cloud_bytes_read;
             let cse_info = dl.cse_info;
+            // Taken before `body` is moved into the blocking task, which consumes it.
+            let producer_guard = ProducerAbortGuard::arm(dl.body.producer_abort());
             let body = dl.body;
             let partial_path2 = partial_path.clone();
             // Blocking finalize (decrypt / copy, no rename) in a spawn_blocking task
@@ -1243,6 +1301,7 @@ pub async fn download_single_file(
             })
             .await
             .context(BlockingTaskSnafu)??;
+            producer_guard.disarm();
 
             // Atomic publish — runs after .await so a dropped future cannot publish.
             match spilled_temp {
@@ -1300,7 +1359,10 @@ pub async fn download_single_file(
             // `encryption_material`, so its ciphertext goes to a temp in
             // `spill_dir` and is decrypted into `.part` below. Mirrors the S3 arm.
             let spill_target = if enc_material.is_some() {
-                CloudSpillTarget::Temp(&spill_dir)
+                CloudSpillTarget::Temp {
+                    dir: &spill_dir,
+                    cleanup: tx.cleanup,
+                }
             } else {
                 CloudSpillTarget::Part(&partial_path)
             };
@@ -1311,7 +1373,7 @@ pub async fn download_single_file(
                 policy,
                 unsafe_file_write,
                 spill_target,
-                refresher,
+                tx.refresher,
             )
             .await
             .context(AzureDownloadSnafu)?;
@@ -1319,6 +1381,8 @@ pub async fn download_single_file(
             let cloud_byte_count_hint = dl.cloud_byte_count;
             let cloud_bytes_read = dl.cloud_bytes_read;
             let cse_info = dl.cse_info;
+            // Taken before `body` is consumed — see the GCS arm.
+            let producer_guard = ProducerAbortGuard::arm(dl.body.producer_abort());
             let body = dl.body;
             let partial_path2 = partial_path.clone();
             // Write to `<dst>.part` but do NOT rename inside spawn_blocking;
@@ -1335,6 +1399,7 @@ pub async fn download_single_file(
             })
             .await
             .context(BlockingTaskSnafu)??;
+            producer_guard.disarm();
 
             // Atomic publish — runs after .await so a dropped future cannot publish.
             match spilled_temp {
@@ -1775,6 +1840,131 @@ fn warn_remove_partial(partial_path: &Path) {
             partial_path.display(),
             rm_err
         );
+    }
+}
+
+/// Aborts the task draining a download body off the network unless disarmed.
+///
+/// A `spawn_blocking` writer cannot be cancelled, so a dropped download future
+/// would otherwise leave the producer pulling the rest of the file and the writer
+/// committing it to `<dst>.part`. Aborting the producer closes the channel, which
+/// stops both: the writer's next read ends the transfer instead of waiting for more
+/// bytes.
+///
+/// How the writer *ends* differs by path, and only one of them cleans up after
+/// itself. On a CSE object, `decrypt_ciphertext_to_writer` fails its digest check on
+/// the truncated body, so [`write_or_cleanup`] removes `.part` — dropping the file
+/// handle first, which is what makes that removal work on Windows. On a plain SSE
+/// object the closed channel reads as a clean EOF ([`cloud_http::StreamReader`]
+/// returns `Ok(0)`), `std::io::copy` returns `Ok`, and nothing is removed. So on SSE
+/// this guard stops the fetch but leaves `.part` behind for
+/// [`remove_partial_after_cancel`] to deal with.
+///
+/// `Drop`-based rather than registered as cleanup: the abort is synchronous, so
+/// there is nothing to await, and a guard fires even when the caller had no
+/// operation ctx — an internal caller, or a wrapper racing its own token above the
+/// core.
+struct ProducerAbortGuard(Option<tokio::task::AbortHandle>);
+
+impl ProducerAbortGuard {
+    /// `None` for a body with no producer — a spilled ranged download, or S3's
+    /// in-memory GET — which makes the guard inert.
+    fn arm(producer: Option<tokio::task::AbortHandle>) -> Self {
+        Self(producer)
+    }
+
+    /// The body has been fully written, so the producer is finished and must not
+    /// be aborted.
+    fn disarm(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for ProducerAbortGuard {
+    fn drop(&mut self) {
+        if let Some(producer) = self.0.take() {
+            // Not necessarily a cancellation: the guard is also still armed when the
+            // writer returns `Err` (a disk-full or permission failure propagates
+            // before the disarm). Aborting is right either way — nobody is left to
+            // consume the bytes — so the message stays neutral about the cause.
+            tracing::debug!("aborting download byte-stream producer (transfer did not complete)");
+            producer.abort();
+        }
+    }
+}
+
+/// Removes a staging file left behind by a **cancelled** download, polling until it
+/// is gone or the window expires.
+///
+/// Polls rather than removing once, because "not there" is ambiguous and both
+/// readings need covering:
+///
+/// * **Not created yet.** The writers create the file on a detached
+///   `spawn_blocking` task — `create_output_file` inside `write_cloud_download`, and
+///   the setup task in `assemble_ranged_download`, which also pre-allocates it to
+///   the full content length. Cancellation can reach this cleanup before that task
+///   is scheduled, so returning on the first `NotFound` would let the file be
+///   created afterwards with nothing left to remove it. For the ranged path that
+///   orphans a full-size file.
+/// * **Already gone.** A cancelled *CSE* download's writer removes its own `.part`
+///   via [`write_or_cleanup`]; a plain SSE one does not (see
+///   [`ProducerAbortGuard`]), so this is the only thing that removes it there.
+///
+/// Retrying also covers Windows, which refuses to unlink a file a detached
+/// positioned-write task still holds open; Unix unlinks regardless. Residual risk on
+/// Windows only: a writer that holds the handle past the whole window leaves the file
+/// behind. That is stale debris, never a published partial file — the rename that
+/// publishes a download runs only if the transfer future reaches it.
+///
+/// Bounded well inside `OperationCtx`'s cleanup wait, so a cancelled caller never
+/// blocks noticeably on it.
+async fn remove_partial_after_cancel(partial_path: PathBuf) {
+    /// Long enough to outlast blocking-pool scheduling of the writer task and a
+    /// short positioned-write on Windows, while staying far inside the
+    /// operation-level cleanup budget. Note the cost of polling: a cancelled
+    /// download whose staging file never appeared pays the whole window before this
+    /// gives up, and `OperationCtx::run` waits for it — so keep the product small.
+    const ATTEMPTS: u32 = 8;
+    const BACKOFF: std::time::Duration = std::time::Duration::from_millis(25);
+
+    for attempt in 1..=ATTEMPTS {
+        let path = partial_path.clone();
+        let removed = tokio::task::spawn_blocking(move || std::fs::remove_file(&path)).await;
+
+        match removed {
+            // Removed it — done.
+            Ok(Ok(())) => return,
+            Ok(Err(error)) if attempt < ATTEMPTS => {
+                tracing::debug!(
+                    path = %partial_path.display(),
+                    attempt,
+                    %error,
+                    "staging file not removable yet (absent or locked); retrying"
+                );
+                tokio::time::sleep(BACKOFF).await;
+            }
+            // Never appeared within the window: the writer never got far enough to
+            // create it, so there is nothing to clean up.
+            Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                tracing::debug!(
+                    path = %partial_path.display(),
+                    "no staging file to remove after cancellation"
+                );
+                return;
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    path = %partial_path.display(),
+                    %error,
+                    "failed to remove staging file after cancellation"
+                );
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "staging-file removal task failed");
+                return;
+            }
+        }
     }
 }
 
@@ -2392,7 +2582,7 @@ mod tests {
             &crate::config::param_store::ParamStore::new(),
         );
 
-        let result = upload_files(&data, &policy, None).await;
+        let result = upload_files(&data, &policy, TransferCtx::default()).await;
 
         let err = result.expect_err(
             "fail-fast must propagate the first per-file error so upload_files aborts the batch",
@@ -2411,7 +2601,7 @@ mod tests {
             &crate::config::param_store::ParamStore::new(),
         );
 
-        let result = upload_files(&data, &policy, None).await;
+        let result = upload_files(&data, &policy, TransferCtx::default()).await;
 
         match result {
             Err(FileManagerError::UploadBatch {
@@ -3446,7 +3636,7 @@ mod tests {
 
         let refresher: Option<&dyn StageInfoRefresher> = None;
         let policy = RetryPolicy::put_get(&crate::config::param_store::ParamStore::new());
-        upload_single_file(data, &policy, refresher)
+        upload_single_file(data, &policy, TransferCtx::new(refresher, None))
             .await
             .expect("upload_single_file should succeed against the mock")
     }
@@ -3588,7 +3778,7 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let result = upload_single_file(data, &policy, refresher)
+        let result = upload_single_file(data, &policy, TransferCtx::new(refresher, None))
             .await
             .expect("S3 upload should succeed against the mock");
         assert_eq!(result.status, "SKIPPED");
@@ -3620,7 +3810,7 @@ mod tests {
 
         let refresher: Option<&dyn StageInfoRefresher> = None;
         let policy = RetryPolicy::put_get(&crate::config::param_store::ParamStore::new());
-        let result = upload_single_file(data, &policy, refresher)
+        let result = upload_single_file(data, &policy, TransferCtx::new(refresher, None))
             .await
             .expect("S3 upload should succeed against the mock");
         assert_eq!(result.status, "UPLOADED");
@@ -3663,7 +3853,7 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let result = upload_single_file(data, &policy, refresher)
+        let result = upload_single_file(data, &policy, TransferCtx::new(refresher, None))
             .await
             .expect("GCS upload should succeed against the mock");
         assert_eq!(result.status, "SKIPPED");
@@ -3700,9 +3890,49 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let result = upload_single_file(data, &policy, refresher)
+        let result = upload_single_file(data, &policy, TransferCtx::new(refresher, None))
             .await
             .expect("GCS upload should succeed against the mock");
         assert_eq!(result.status, "UPLOADED");
+    }
+
+    /// The cleanup must not give up the first time the staging file is absent.
+    ///
+    /// Both download writers create it on a *detached* blocking task, so a cancel can
+    /// reach this cleanup before that task is scheduled. Treating the first `NotFound`
+    /// as "already removed" orphaned the file created a moment later — and for a ranged
+    /// download that file has already been pre-allocated to the object's full length.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remove_partial_after_cancel_removes_a_staging_file_that_appears_late() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let partial = dir.path().join("late-arrival.part");
+
+        // Appears well after the first poll, standing in for a writer task that had
+        // not yet been scheduled when the cancel landed.
+        let late = partial.clone();
+        let writer = tokio::task::spawn_blocking(move || {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            std::fs::write(&late, b"partially written bytes").expect("create staging file");
+        });
+
+        remove_partial_after_cancel(partial.clone()).await;
+        writer.await.expect("writer task panicked");
+
+        assert!(
+            !partial.exists(),
+            "a staging file created after the cleanup started must still be removed"
+        );
+    }
+
+    /// The absent-forever case must settle quietly rather than warn: a cancel that
+    /// lands before any byte was written has nothing to clean up.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remove_partial_after_cancel_is_quiet_when_no_staging_file_is_ever_created() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let absent = dir.path().join("never-created.part");
+
+        remove_partial_after_cancel(absent.clone()).await;
+
+        assert!(!absent.exists(), "nothing should be created by the cleanup");
     }
 }

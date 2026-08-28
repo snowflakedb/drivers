@@ -32,7 +32,7 @@ use sf_core::file_manager::types::{
 };
 use sf_core::file_manager::{
     AzureDownloadError, FileManagerError, GcsDownloadError, MultipartParams,
-    SourceCompressionParam, UploadFileError, download_from_azure, download_from_gcs,
+    SourceCompressionParam, TransferCtx, UploadFileError, download_from_azure, download_from_gcs,
     upload_single_file,
 };
 use sf_core::sensitive::SensitiveString;
@@ -387,7 +387,12 @@ async fn should_route_s3_upload_through_proxy() {
         proxy_via(connect_proxy.port(), None),
     );
 
-    let result = upload_single_file(s3_single_upload(stage), &s3_policy(3), None).await;
+    let result = upload_single_file(
+        s3_single_upload(stage),
+        &s3_policy(3),
+        TransferCtx::default(),
+    )
+    .await;
 
     let upload = result.expect("s3 upload via proxy should succeed");
     assert_eq!(upload.status, "UPLOADED");
@@ -406,9 +411,13 @@ async fn should_fail_s3_upload_when_proxy_port_dead() {
     let port = dead_loopback_port();
     let stage = s3_stage(TlsConfig::default(), proxy_via(port, None));
 
-    let err = upload_single_file(s3_single_upload(stage), &s3_policy(1), None)
-        .await
-        .expect_err("dead proxy must fail the upload");
+    let err = upload_single_file(
+        s3_single_upload(stage),
+        &s3_policy(1),
+        TransferCtx::default(),
+    )
+    .await
+    .expect_err("dead proxy must fail the upload");
 
     assert_s3_connector_failure(err);
 }
@@ -421,9 +430,13 @@ async fn should_bypass_proxy_for_s3_no_proxy_host() {
         proxy_via(connect_proxy.port(), Some(S3_HOST)),
     );
 
-    let err = upload_single_file(s3_single_upload(stage), &s3_policy(1), None)
-        .await
-        .expect_err("bypassed proxy + unresolvable host must fail");
+    let err = upload_single_file(
+        s3_single_upload(stage),
+        &s3_policy(1),
+        TransferCtx::default(),
+    )
+    .await
+    .expect_err("bypassed proxy + unresolvable host must fail");
 
     assert_s3_connector_failure(err);
     assert!(

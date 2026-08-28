@@ -28,6 +28,11 @@
 //! is dropped — and because it is not a race, it does not violate the invariant
 //! above. [`OperationCtx::run`] then waits (briefly, bounded) for those tasks
 //! before reporting cancellation.
+//!
+//! A layer too deep to hold the ctx takes a [`CleanupScope`] instead — the token
+//! plus the registry, minus the ability to cancel or complete the operation. The
+//! file-transfer stack uses this: a PUT registers its multipart abort from inside
+//! the per-cloud upload, which is where the upload id to abort first exists.
 
 use crate::apis::database_driver_v1::ApiError;
 use tokio_util::sync::CancellationToken;
@@ -49,26 +54,25 @@ const CLEANUP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 ///
 /// Deliberately **not** `Clone`: [`Drop`] cancels the token, so a stray clone
 /// going out of scope would cancel a live operation. Pass `&OperationCtx` down
-/// the stack instead.
+/// the stack instead — or, for a layer that only needs to register cleanup and
+/// must not be able to cancel or complete the operation, the [`CleanupScope`]
+/// from [`Self::cleanup_scope`].
 #[derive(Debug)]
 pub struct OperationCtx {
-    /// Cancelled by `cancel(handle)` from any thread, or on drop.
-    token: CancellationToken,
+    /// Held as one field so [`CleanupScope`] owns the arm/disarm logic and this
+    /// type carries no second copy of it.
+    scope: CleanupScope,
     /// Operation handle for log/telemetry correlation. `0` means the ctx has no
     /// entry in the transport's registry (an in-process owner minted it).
     id: u64,
-    /// Cleanup tasks registered by [`Self::with_cleanup`]. Tracked so [`Self::run`]
-    /// can wait for them; spawned so they outlive a dropped operation future.
-    cleanup: TaskTracker,
 }
 
 impl OperationCtx {
     /// Wrap the token registered for `id` so the operation can observe it.
     pub fn from_registered(id: u64, token: CancellationToken) -> Self {
         Self {
-            token,
+            scope: CleanupScope::new(token),
             id,
-            cleanup: TaskTracker::new(),
         }
     }
 
@@ -81,16 +85,15 @@ impl OperationCtx {
     /// which is the sentinel hazard `Option<&OperationCtx>` exists to avoid.
     pub fn with_own_token() -> Self {
         Self {
-            token: CancellationToken::new(),
+            scope: CleanupScope::new(CancellationToken::new()),
             id: 0,
-            cleanup: TaskTracker::new(),
         }
     }
 
     /// Request cancellation, from any thread. Safe to call more than once and
     /// after the operation has finished.
     pub fn cancel(&self) {
-        self.token.cancel();
+        self.scope.token.cancel();
     }
 
     /// The operation handle, or `0` for a ctx with no registry entry.
@@ -102,7 +105,13 @@ impl OperationCtx {
     /// and for the polling/`select!` shapes [`Self::run`] does not cover
     /// (`ctx.token().is_cancelled()`, `ctx.token().cancelled().await`).
     pub fn token(&self) -> &CancellationToken {
-        &self.token
+        &self.scope.token
+    }
+
+    /// This operation's cleanup registry, for a layer that must be able to
+    /// register cleanup but not to cancel or complete the operation.
+    pub fn cleanup_scope(&self) -> &CleanupScope {
+        &self.scope
     }
 
     /// Run `fut` as this operation, returning `ApiError::Cancelled` (converted
@@ -125,7 +134,7 @@ impl OperationCtx {
         F: Future<Output = Result<T, E>>,
         E: From<ApiError>,
     {
-        let outcome = self.token.run_until_cancelled(fut).await;
+        let outcome = self.scope.token.run_until_cancelled(fut).await;
         // Before reporting: give anything registered via `with_cleanup` a chance
         // to finish. On the success path every guard has already suppressed its
         // task, so this returns immediately and only buys leak-freedom.
@@ -136,13 +145,79 @@ impl OperationCtx {
         })
     }
 
-    /// Register `cleanup` to run if this operation is cancelled, returning a
+    /// Run `work`, having registered `cleanup` to run if this operation is
+    /// cancelled before `work` finishes. Delegates to
+    /// [`CleanupScope::with_cleanup`] — see it for the semantics.
+    pub async fn with_cleanup<T, C, F>(&self, cleanup: C, work: F) -> T
+    where
+        C: Future<Output = ()> + Send + 'static,
+        F: Future<Output = T>,
+    {
+        self.scope.with_cleanup(cleanup, work).await
+    }
+
+    /// Close the cleanup tracker and wait, bounded by [`CLEANUP_WAIT`], for any
+    /// registered cleanup to finish. Exceeding the bound leaves the task running
+    /// detached rather than abandoning the work.
+    async fn await_cleanup(&self, method: &str) {
+        let tracker = &self.scope.cleanup;
+        tracker.close();
+        if tracker.is_empty() {
+            return;
+        }
+        if tokio::time::timeout(CLEANUP_WAIT, tracker.wait())
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                operation_id = self.id,
+                method,
+                wait_secs = CLEANUP_WAIT.as_secs(),
+                "cancellation cleanup did not finish in time; continuing detached"
+            );
+        }
+    }
+}
+
+/// One operation's cancellation signal plus its cleanup registry.
+///
+/// Unlike [`OperationCtx`], this is `Clone` and dropping it cancels nothing — it
+/// is a handle to the registry, not the owner of the operation. That is what makes
+/// it safe to thread into a lower layer, and being `'static` keeps a lifetime out
+/// of that layer's types.
+///
+/// A clone must not outlive the [`OperationCtx`] it came from. Registering against
+/// a scope whose ctx has already reported would arm a cleanup on a closed tracker
+/// and an already-cancelled token: it would fire immediately, alongside the work it
+/// was meant to guard, with nothing waiting for it. Every caller today borrows the
+/// scope for the duration of one operation (`TransferCtx<'a>`), which the borrow
+/// checker enforces — do not stash a clone anywhere longer-lived.
+#[derive(Clone, Debug)]
+pub struct CleanupScope {
+    /// Cancelled by `cancel(handle)` from any thread, or when the owning
+    /// [`OperationCtx`] is dropped. This is what wakes a registered cleanup.
+    token: CancellationToken,
+    /// Cleanup tasks registered by [`Self::with_cleanup`]. Tracked so
+    /// [`OperationCtx::run`] can wait for them; spawned so they outlive a
+    /// dropped operation future.
+    cleanup: TaskTracker,
+}
+
+impl CleanupScope {
+    fn new(token: CancellationToken) -> Self {
+        Self {
+            token,
+            cleanup: TaskTracker::new(),
+        }
+    }
+
+    /// Register `cleanup` to run if the operation is cancelled, returning a
     /// guard that suppresses it once the guarded work is no longer in flight.
     ///
     /// `cleanup` runs on a spawned task, so — unlike a `select!` arm — it still
-    /// runs when the operation future is dropped by [`Self::run`]'s race. That
-    /// is the whole point: the abort of a server-side query must survive the
-    /// local future that submitted it.
+    /// runs when the operation future is dropped by [`OperationCtx::run`]'s
+    /// race. That is the whole point: the abort of a server-side query, or of a
+    /// cloud multipart upload, must survive the local future that started it.
     ///
     /// Private on purpose: the only way to register cleanup is
     /// [`Self::with_cleanup`], which owns both arming and disarming. Handing out
@@ -166,24 +241,19 @@ impl OperationCtx {
         CleanupGuard { done }
     }
 
-    /// Run `work`, having registered `cleanup` to run if this operation is
+    /// Run `work`, having registered `cleanup` to run if the operation is
     /// cancelled before `work` finishes.
-    ///
-    /// `cleanup` runs on a spawned task, so — unlike a `select!` arm — it still
-    /// runs when the operation future is dropped by [`Self::run`]'s race. That is
-    /// the whole point: the abort of a server-side query must survive the local
-    /// future that submitted it.
     ///
     /// Completion is decided by *reaching the disarm below*, not by inspecting the
     /// token. That distinction is load-bearing: a token check mis-handles the
     /// success-with-cancel race, where `work` completes and a cancel lands before
-    /// the guard drops — the token is cancelled, yet the query finished and must
-    /// not be aborted. Here, `work` returning at all (`Ok` or `Err`) disarms;
+    /// the guard drops — the token is cancelled, yet the work finished and must
+    /// not be undone. Here, `work` returning at all (`Ok` or `Err`) disarms;
     /// only being dropped mid-`await` leaves the cleanup armed.
     ///
-    /// `cleanup` must not be cancellable by this operation's token: it is woken
+    /// `cleanup` must not be cancellable by the operation's token: it is woken
     /// *by* that token, so anything deriving a child token from it (or reusing
-    /// this ctx) would abort itself instantly.
+    /// this scope) would abort itself instantly.
     pub async fn with_cleanup<T, C, F>(&self, cleanup: C, work: F) -> T
     where
         C: Future<Output = ()> + Send + 'static,
@@ -194,33 +264,12 @@ impl OperationCtx {
         guard.disarm();
         out
     }
-
-    /// Close the cleanup tracker and wait, bounded by [`CLEANUP_WAIT`], for any
-    /// registered cleanup to finish. Exceeding the bound leaves the task running
-    /// detached rather than abandoning the work.
-    async fn await_cleanup(&self, method: &str) {
-        self.cleanup.close();
-        if self.cleanup.is_empty() {
-            return;
-        }
-        if tokio::time::timeout(CLEANUP_WAIT, self.cleanup.wait())
-            .await
-            .is_err()
-        {
-            tracing::warn!(
-                operation_id = self.id,
-                method,
-                wait_secs = CLEANUP_WAIT.as_secs(),
-                "cancellation cleanup did not finish in time; continuing detached"
-            );
-        }
-    }
 }
 
 /// Keeps a cleanup registration armed until [`Self::disarm`] is reached.
 ///
 /// Private, and only ever created and consumed inside
-/// [`OperationCtx::with_cleanup`] — so "armed but never disarmed" means exactly
+/// [`CleanupScope::with_cleanup`] — so "armed but never disarmed" means exactly
 /// "the guarded work did not finish", with no call site able to get it wrong.
 struct CleanupGuard {
     /// Cancelled to tell the cleanup task the work is no longer in flight.
@@ -271,10 +320,89 @@ where
     C: Future<Output = ()> + Send + 'static,
     F: Future<Output = T>,
 {
-    match ctx {
-        Some(ctx) => ctx.with_cleanup(cleanup, work).await,
+    with_cleanup_scope_opt(ctx.map(OperationCtx::cleanup_scope), cleanup, work).await
+}
+
+/// [`CleanupScope`] sibling of [`with_cleanup_opt`], for a layer that receives
+/// the scope rather than the whole ctx (the file-transfer stack). `None` means
+/// nothing can cancel this call, so `work` simply runs and `cleanup` is dropped
+/// unused.
+pub async fn with_cleanup_scope_opt<T, C, F>(scope: Option<&CleanupScope>, cleanup: C, work: F) -> T
+where
+    C: Future<Output = ()> + Send + 'static,
+    F: Future<Output = T>,
+{
+    match scope {
+        Some(scope) => scope.with_cleanup(cleanup, work).await,
         None => work.await,
     }
+}
+
+/// Run `work`, undoing it with `abort` if it does not complete successfully —
+/// whether it returns `Err` or is dropped by cancellation.
+///
+/// Those are two different mechanisms: cancellation is only observable through a
+/// registered cleanup (the future is dropped, so it can never run its own unwind),
+/// while an `Err` return has to be handled inline because the operation's token
+/// never fired. Taking one `abort` closure for both is what stops them drifting —
+/// a third failure path added inside `work` cannot forget to undo it.
+///
+/// `abort` is called at most once: [`CleanupScope::with_cleanup`] disarms the
+/// registration as soon as `work` returns, so the registered copy runs only on a
+/// cancellation-drop and the inline copy only on `Err`.
+pub async fn with_abort_on_unwind<T, E, C, Fut, F>(
+    scope: Option<&CleanupScope>,
+    abort: C,
+    work: F,
+) -> Result<T, E>
+where
+    C: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+    F: Future<Output = Result<T, E>>,
+{
+    let abort = std::sync::Arc::new(abort);
+    let on_cancel = {
+        let abort = abort.clone();
+        async move { (*abort)().await }
+    };
+    let outcome = with_cleanup_scope_opt(scope, on_cancel, work).await;
+    if outcome.is_err() {
+        (*abort)().await;
+    }
+    outcome
+}
+
+/// Runs a cancellable operation and cancels it as soon as `trigger` resolves,
+/// for tests that need to observe what cancellation cleans up.
+///
+/// `build` receives the operation's [`CleanupScope`] so the work under test
+/// registers cleanup exactly as it does in production. Returns `Some(output)` if
+/// the work finished first, `None` if it was cancelled.
+///
+/// A `None` return implies **every registered cleanup has already finished**,
+/// because [`OperationCtx::run`] awaits the tracker before reporting — which is
+/// what lets a caller assert on cleanup effects with no sleep and no polling.
+#[cfg(any(test, feature = "test-utils"))]
+pub async fn cancelled_by<T, F>(
+    trigger: impl Future<Output = ()> + Send + 'static,
+    build: impl FnOnce(CleanupScope) -> F,
+) -> Option<T>
+where
+    F: Future<Output = T>,
+{
+    let ctx = OperationCtx::with_own_token();
+    let work = build(ctx.cleanup_scope().clone());
+
+    let token = ctx.token().clone();
+    tokio::spawn(async move {
+        trigger.await;
+        token.cancel();
+    });
+
+    let outcome: Result<Option<T>, ApiError> = ctx
+        .run("cancelled_by", async { Ok(Some(work.await)) })
+        .await;
+    outcome.unwrap_or(None)
 }
 
 impl Drop for OperationCtx {
@@ -286,7 +414,7 @@ impl Drop for OperationCtx {
     /// outlives the operation future, so if the operation goes away for a reason
     /// other than an explicit cancel, only this tells the task to stop waiting.
     fn drop(&mut self) {
-        self.token.cancel();
+        self.scope.token.cancel();
     }
 }
 

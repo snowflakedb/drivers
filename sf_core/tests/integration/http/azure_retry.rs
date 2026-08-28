@@ -10,7 +10,7 @@ use sf_core::file_manager::internal::{
 };
 use sf_core::file_manager::{
     AzureDownloadError, CloudCredentials, DownloadData, EncryptionMaterial, LocationType,
-    MultipartParams, StageInfo, StageInfoRefresher, download_files,
+    MultipartParams, StageInfo, StageInfoRefresher, TransferCtx, download_files,
 };
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
@@ -532,9 +532,13 @@ async fn azure_git_stage_download_succeeds_without_sfcdigest() {
         get_fastfail: true,
     };
 
-    let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect("git stage download should succeed even without sfcdigest");
+    let results = download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        TransferCtx::default(),
+    )
+    .await
+    .expect("git stage download should succeed even without sfcdigest");
 
     assert_eq!(results.len(), 1);
     let written = std::fs::read(std::path::Path::new(&local_location).join("file.txt"))
