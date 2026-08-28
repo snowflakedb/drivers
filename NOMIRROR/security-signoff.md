@@ -205,13 +205,16 @@ exclude them automatically: GitHub only reads workflows from
 path. Listing them together keeps every file belonging to the gate in one
 reviewable place in the denylist.
 
-Neither of the mirror's automatic safety nets would have caught that action
-reference on its own. The outbound `verify_match` guard matches only the
-literal `snowflake-eng/drivers`, and
+The mirror's automatic safety nets would not have caught that action
+reference when these workflows were added. The outbound `verify_match` guard
+matched only the repository's own `snowflake-eng/drivers` reference at the
+time, and
 `.ai/review/universal-driver-mirror-privacy.yaml` lists `.github` and `ci`
 under `excluded_folders`, so the ArcticOwl reviewer never inspects workflow
-or Copybara files. Both exclusions above are therefore load-bearing rather
-than belt-and-braces.
+or Copybara files. The guard has since been broadened to any
+`snowflake-eng/` reference, so it is now a real backstop — but the
+exclusions above remain the primary mechanism, because a guard hit fails the
+whole sync rather than quietly omitting one file.
 
 
 ## Files involved
@@ -258,6 +261,3 @@ publishes a verdict that nothing enforces.
   noisier) and `keyword-patterns` for repo-specific additions; both extend the
   shared net and neither can remove an entry from it. A path-based net is the
   other option, with the `sync-labels` caveat in "How the label gets applied".
-- **Close the mirror-guard gap** described above, by broadening the
-  outbound `verify_match` from `snowflake-eng/drivers` to any
-  `snowflake-eng/` reference.
