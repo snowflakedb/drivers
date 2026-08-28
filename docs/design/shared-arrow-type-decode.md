@@ -103,8 +103,14 @@ different consumers.
 | **2 — primitive** | pure numeric decode: bytes → integer parts | `civil_from_unix_days(days) → (y,m,d)`, `split_time_raw(raw, scale) → (secs, nanos)` | Front ends with a fused, materialization-free fast path (ODBC's CHAR kernel) |
 
 Level 1 sits on top of Level 2 (or should): the materializer is "the primitive
-plus validation plus a convenient chrono value." **PR #1438 shares Level 1
-only**; the Level-2 primitives currently live in ODBC (`int_fmt`, `time.rs`).
+plus validation plus a convenient chrono value." **PR #1438 shares Level 1**;
+its **stacked follow-up shares Level 2 for DATE** — it lifts
+`civil_from_unix_days` (the `Date32` days → `(y, m, d)` kernel, Howard Hinnant's
+`civil_from_days` shifted to the Unix epoch) into `sf_types::civil` and rebuilds
+`SnowflakeDate::read_arrow_type` on top of it, so the materializer and the ODBC
+hot path share one implementation of the calendar math rather than two. The
+TIME primitive (`split_time_raw`) still lives in ODBC and follows the same shape
+when TIME is done.
 
 Observation worth keeping: almost no FFI boundary's *final* product is a chrono
 value — each wants integer parts, an epoch scalar, or a string. So the Level-2
@@ -165,6 +171,17 @@ Lifting only `read_arrow_type` while leaving the primitive in ODBC would create
 **three** copies of the split math (core's materializer, ODBC's primitive, JS's
 decode). The primitive is the load-bearing thing to share.
 
+This is exactly what the DATE follow-up does: `civil_from_unix_days` now lives in
+`sf_types::civil` as a `pub fn`, `SnowflakeDate::read_arrow_type` materializes
+*through* it (parts → `NaiveDate::from_ymd_opt`, erroring rather than panicking
+on the pathological out-of-chrono-range day offsets the server never sends), and
+an exhaustive test proves the kernel is byte-identical to
+`epoch + Duration::days` across the whole SQL `0001..9999` range. When the perf
+stack rebases, its ODBC-local `int_fmt::civil_from_unix_days` is deleted in
+favour of `use sf_types::civil_from_unix_days` — the `CharKernel` hot path then
+reuses the same kernel, at zero runtime cost (the call inlines under
+`lto = "thin"` + `codegen-units = 1`).
+
 ### Guardrails — how sharing *would* tank performance
 
 The refactor is free only if the shared layer avoids all of:
@@ -201,7 +218,7 @@ Current reality:
 
 | Front end | Level 1 (`read_arrow_type`) | Level 2 (primitive) | Notes |
 | --------- | --------------------------- | ------------------- | ----- |
-| **ODBC** | struct / binary / timestamp targets, single-cell `SQLGetData`, cold CHAR fallback | hot bulk `SQL_C_CHAR` path | Only front end with a fused fast path today |
+| **ODBC** | struct / binary / timestamp targets, single-cell `SQLGetData`, cold CHAR fallback | hot bulk `SQL_C_CHAR` path (DATE kernel now `sf_types::civil_from_unix_days`) | Only front end with a fused fast path today |
 | **Node.js** | yes (whole workload) | no | Bottleneck is the napi/V8 boundary, not decode |
 | **Python** | **no** | **no** | `python_bridge` is a transport/logging shim over `sf_core` — no per-cell date/time decode exists yet |
 
@@ -243,8 +260,12 @@ drivers.
 ## Status
 
 - DATE: Level 1 shared (`sf_types::SnowflakeDate`, PR #1438, draft). Level-2
-  primitive (`civil_from_unix_days`) still ODBC-local.
+  primitive (`sf_types::civil_from_unix_days`) shared in the stacked follow-up
+  #1468; `read_arrow_type` now sits on it. The ODBC perf stack drops its local
+  copy on rebase.
 - TIME: analyzed here; not implemented. Blocked on the sequencing decision above.
+  Follows DATE's shape — share `split_time_raw` (Level 2) plus the
+  `SnowflakeTime { scale }` materializer (Level 1).
 - Open question: does Python grow a native-object decode path (Level-2 consumer)
   or hand Arrow to pyarrow wholesale (neither)? This determines how much the
   Level-2 investment pays back beyond ODBC.
