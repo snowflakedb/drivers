@@ -34,8 +34,8 @@ export MIRROR_REPO_NAME=""
 export MAIN_BRANCH="main"
 
 # Additional paths to exclude from the mirror (comma-separated).
-# The default set (NOMIRROR/, _internal/, .ai/, .cursor/, .claude/, ci/mirroring/,
-# mirror workflows, CODEOWNERS) is always included.
+# The default set (NOMIRROR/, _internal/, .ai/, .cursor/, .claude/, .security/,
+# ci/mirroring/, mirror workflows, CODEOWNERS) is always included.
 # Leave empty if no extra exclusions are needed.
 export EXTRA_EXCLUDED_PATHS=""
 

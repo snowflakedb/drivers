@@ -66,10 +66,15 @@ NOMIRROR_PATHS = [
 # See NOMIRROR/security-signoff.md.
 # Internal bug-regression tracking: Jira ticket catalogs, analysis status
 # annotations, and the generated HTML report.
+# Security-context bundle (.security/**): architecture, trust boundaries,
+# threat model, and invariant status with citations into this code.
+# Publishing it would hand an external reader a curated map of attack
+# surface and exactly which controls it relies on.
 EXCLUDED_PATHS = NOMIRROR_PATHS + [
     ".ai/**",
     ".cursor/**",
     ".claude/**",
+    ".security/**",
     "scripts/mirror/**",
     "ci/mirroring/**",
     ".github/workflows/mirror.yml",

@@ -74,6 +74,9 @@ OUTBOUND_EXCLUDED_PATHS = [
     ".ai/**",
     ".cursor/**",
     ".claude/**",
+    # Security-context bundle: architecture, trust boundaries, threat model,
+    # and invariant status. Internal review tooling — not for the public mirror.
+    ".security/**",
     "scripts/mirror/**",
     "ci/mirroring/**",
     ".github/workflows/mirror.yml",

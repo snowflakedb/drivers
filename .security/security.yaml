@@ -1,0 +1,53 @@
+apiVersion: snowflake.com/security/v1alpha1
+kind: SecurityContext
+metadata:
+  name: drivers
+  annotations:
+    owner: "snow-drivers-warsaw@snowflake.com"
+spec:
+  jira_area: Developer Platform
+  jira_component: Universal Driver
+  product_owner: "maciej.oczko@snowflake.com"
+  documents:
+    - path: architecture.md
+      kind: context
+      description: "Internet-facing surfaces, module map, FFI boundary, and query/stage data flow"
+    - path: trust-boundaries.md
+      kind: context
+      description: "What supplies input and what validates it, and the mechanisms trusted internally (TLS, config/token-cache permissions, OAuth, WIF, browser launch, CRL, proxy)"
+    - path: threat-model.md
+      kind: threat-model
+      description: "The system, its systems-and-trust-boundaries table, invariant status, and fail-open/fail-closed reachability"
+    - path: data-and-secrets.md
+      kind: context
+      description: "What sensitive data this driver holds, and how secrets and credentials reach it at runtime"
+    - path: deployment.md
+      kind: context
+      description: "Whether build and deployment environments differ in security-relevant ways"
+  related_repositories:
+    - repo: snowflake-eng/revocation-validation
+      paths: ["."]
+      relationship: dependency
+      description: >
+        Private companion repo holding the revocation-validation test framework.
+        Cloned by one script with two callers: GitHub Actions (git-askpass env vars)
+        and Jenkins (ci/Jenkinsfile.vpn-tests, via the jenkins-snowflakedb-github-app
+        credential).
+    - repo: snowflake-eng/snowflake
+      paths: ["RegressionTests/scripts"]
+      relationship: dependency
+      ref: sut-stable
+      description: >
+        Sparse-checked-out at RegressionTests/scripts for uSUT regression-test
+        tooling (ci/Jenkinsfile.usut-tests, credential jenkins-snowflake-github-app-3-emu).
+    - repo: snowflake-eng/snowflake
+      paths:
+        - GlobalServices/modules/dbsec/
+        - GlobalServices/src/main/java/com/snowflake/security/wif/
+        - docs/dev-platform-kb/projects/universal-driver/
+      relationship: dependency
+      description: >
+        Houses the server-side (dbsec) counterpart to this repo's client-side WIF
+        and OAuth code, and this driver's own upstream architecture docs. Recorded
+        here as a structural relationship only — no document in this bundle cites
+        this repository's internals.
