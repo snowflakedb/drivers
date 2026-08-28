@@ -3,11 +3,11 @@
 //! Adding a variant is a compile error until it is classified,
 //! as there is no wildcard that silently drops those fields.
 
-use super::error::SfError;
 use super::sql_state::sql_state_from_code;
 use super::{
-    CREDENTIAL_REJECTION_GS_CODES, GS_CODE_UNAVAILABLE, RestError, SQLSTATE_AUTHORIZATION_FAILURE,
-    SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED, SQLSTATE_TIMEOUT_EXPIRED,
+    CREDENTIAL_REJECTION_GS_CODES, GS_CODE_UNAVAILABLE, QueryIds, RestError,
+    SQLSTATE_AUTHORIZATION_FAILURE, SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED,
+    SQLSTATE_TIMEOUT_EXPIRED,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -26,6 +26,12 @@ impl SnowflakeErrorContext {
                 .and_then(sql_state_from_code)
                 .map(str::to_owned);
         }
+        self
+    }
+
+    fn with_ids(mut self, ids: &QueryIds) -> Self {
+        self.query_id = ids.query_id.clone();
+        self.request_id = ids.request_id.map(|id| id.to_string());
         self
     }
 }
@@ -55,26 +61,14 @@ impl RestError {
             RestError::QueryFailed {
                 code,
                 sql_state,
-                query_id,
-                request_id,
+                ids,
                 ..
             } => SnowflakeErrorContext {
                 vendor_code: *code,
                 sql_state: sql_state.clone(),
-                query_id: query_id.clone(),
-                request_id: request_id.map(|id| id.to_string()),
-            },
-            RestError::AsyncQuery {
-                source,
-                request_id,
-                query_id,
-                ..
-            } => SnowflakeErrorContext {
-                vendor_code: gs_code(source),
-                sql_state: None,
-                query_id: query_id.map(|id| id.to_string()),
-                request_id: request_id.map(|id| id.to_string()),
-            },
+                ..Default::default()
+            }
+            .with_ids(ids),
             RestError::LoginError {
                 code,
                 reauthentication_required,
@@ -93,23 +87,27 @@ impl RestError {
                     SnowflakeErrorContext {
                         vendor_code: Some(*code),
                         sql_state,
-                        query_id: None,
-                        request_id: None,
+                        ..Default::default()
                     }
                 }
             }
-            RestError::OperationTimeout { .. } => SnowflakeErrorContext {
-                vendor_code: None,
+            RestError::OperationTimeout { ids, .. } => SnowflakeErrorContext {
                 sql_state: Some(SQLSTATE_TIMEOUT_EXPIRED.to_string()),
-                query_id: None,
-                request_id: None,
-            },
+                ..Default::default()
+            }
+            .with_ids(ids),
             RestError::MasterTokenTerminal { code, .. } => SnowflakeErrorContext {
                 vendor_code: Some(*code),
                 sql_state: Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string()),
                 query_id: None,
                 request_id: None,
             },
+            RestError::HttpRetry { ids, .. }
+            | RestError::AsyncPollResultNotFound { ids, .. }
+            | RestError::MissingResultUrl { ids, .. }
+            | RestError::MissingQueryId { ids, .. } => {
+                SnowflakeErrorContext::default().with_ids(ids)
+            }
             // no wildcard - explicit empty arms
             RestError::Authentication { .. }
             | RestError::NativeOkta { .. }
@@ -128,32 +126,11 @@ impl RestError {
             | RestError::TokenRequestFailed { .. }
             | RestError::Heartbeat { .. }
             | RestError::MissingResponseField { .. }
-            | RestError::HttpRetry { .. }
             | RestError::Logout { .. }
             | RestError::InvalidUrl { .. }
             | RestError::PayloadEncode { .. } => SnowflakeErrorContext::default(),
         };
         ctx.with_sql_state_fallback()
-    }
-}
-
-fn gs_code(err: &SfError) -> Option<i32> {
-    match err {
-        SfError::SnowflakeBody { code, .. } => Some(*code),
-        // no wildcard - explicit empty arms
-        SfError::Transport { .. }
-        | SfError::HttpStatus { .. }
-        | SfError::AsyncPollResultNotFound { .. }
-        | SfError::SessionExpired { .. }
-        | SfError::WarehouseResuming { .. }
-        | SfError::DeadlineExceeded { .. }
-        | SfError::RetryAttemptsExhausted { .. }
-        | SfError::RetryBudgetExceeded { .. }
-        | SfError::MissingResultUrl { .. }
-        | SfError::MissingQueryId { .. }
-        | SfError::ResultUrlParse { .. }
-        | SfError::Cancelled { .. }
-        | SfError::BodyParse { .. } => None,
     }
 }
 
@@ -173,8 +150,10 @@ mod tests {
             message: "boom".to_owned(),
             code: Some(1003),
             sql_state: Some("42000".to_owned()),
-            query_id: Some("01abc".to_owned()),
-            request_id: Some(request_id),
+            ids: QueryIds {
+                request_id: Some(request_id),
+                query_id: Some("01abc".to_owned()),
+            },
             location: loc(),
         };
         assert_eq!(
@@ -194,8 +173,7 @@ mod tests {
             message: "boom".to_owned(),
             code: Some(100038),
             sql_state: None,
-            query_id: None,
-            request_id: None,
+            ids: QueryIds::default(),
             location: loc(),
         };
         let ctx = err.snowflake_context();
@@ -256,10 +234,88 @@ mod tests {
     }
 
     #[test]
-    fn operation_timeout_gets_hyt00_without_request_id() {
+    fn query_http_retry_passes_through_request_id() {
+        let request_id = uuid::Uuid::new_v4();
+        let err = RestError::HttpRetry {
+            context: "query request",
+            ids: QueryIds {
+                request_id: Some(request_id),
+                query_id: None,
+            },
+            source: crate::http::retry::HttpError::MaxAttempts {
+                attempts: 3,
+                last_status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                location: loc(),
+            },
+            location: loc(),
+        };
+        assert_eq!(
+            err.snowflake_context(),
+            SnowflakeErrorContext {
+                vendor_code: None,
+                sql_state: None,
+                query_id: None,
+                request_id: Some(request_id.to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn login_http_retry_has_no_ids() {
+        let err = RestError::HttpRetry {
+            context: "login request",
+            ids: QueryIds::default(),
+            source: crate::http::retry::HttpError::MaxAttempts {
+                attempts: 3,
+                last_status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                location: loc(),
+            },
+            location: loc(),
+        };
+        assert_eq!(err.snowflake_context(), SnowflakeErrorContext::default());
+    }
+
+    #[test]
+    fn poll_protocol_errors_pass_through_ids() {
+        let request_id = uuid::Uuid::new_v4();
+        let ids = QueryIds {
+            request_id: Some(request_id),
+            query_id: Some("01abc".to_owned()),
+        };
+        for err in [
+            RestError::AsyncPollResultNotFound {
+                is_first_poll: true,
+                ids: ids.clone(),
+                location: loc(),
+            },
+            RestError::MissingResultUrl {
+                ids: ids.clone(),
+                location: loc(),
+            },
+            RestError::MissingQueryId {
+                ids: ids.clone(),
+                location: loc(),
+            },
+        ] {
+            assert_eq!(
+                err.snowflake_context(),
+                SnowflakeErrorContext {
+                    vendor_code: None,
+                    sql_state: None,
+                    query_id: Some("01abc".to_owned()),
+                    request_id: Some(request_id.to_string()),
+                },
+                "ids dropped on {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn login_operation_timeout_gets_hyt00_without_ids() {
         let err = RestError::OperationTimeout {
             operation: "login".to_owned(),
             budget: std::time::Duration::from_secs(1),
+            ids: QueryIds::default(),
             location: loc(),
         };
         assert_eq!(
@@ -284,5 +340,28 @@ mod tests {
         assert_eq!(ctx.sql_state.as_deref(), Some("08001"));
         assert_eq!(ctx.query_id, None);
         assert_eq!(ctx.request_id, None);
+    }
+
+    #[test]
+    fn poll_operation_timeout_passes_through_ids() {
+        let request_id = uuid::Uuid::new_v4();
+        let err = RestError::OperationTimeout {
+            operation: "statement poll".to_owned(),
+            budget: std::time::Duration::from_secs(1),
+            ids: QueryIds {
+                request_id: Some(request_id),
+                query_id: Some("01abc".to_owned()),
+            },
+            location: loc(),
+        };
+        assert_eq!(
+            err.snowflake_context(),
+            SnowflakeErrorContext {
+                vendor_code: None,
+                sql_state: Some(SQLSTATE_TIMEOUT_EXPIRED.to_string()),
+                query_id: Some("01abc".to_owned()),
+                request_id: Some(request_id.to_string()),
+            }
+        );
     }
 }

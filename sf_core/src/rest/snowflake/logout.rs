@@ -7,9 +7,8 @@
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, execute_with_retry};
-use crate::rest::snowflake::error::map_http_error;
 use crate::rest::snowflake::{
-    AsyncQuerySnafu, LogoutSnafu, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
+    HttpRetrySnafu, LogoutSnafu, QueryIds, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
     SessionExpiredSnafu, SnowflakeResponseError, UrlJoinSnafu, user_agent,
 };
 use crate::sensitive::SensitiveString;
@@ -37,7 +36,7 @@ struct LogoutResponse {
 ///   (signals `RefreshContext` to refresh master token and retry)
 /// - Other Snowflake codes → `Err(RestError::Logout { code, message })`
 /// - Non-2xx with non-JSON body → `Err(RestError::InvalidSnowflakeResponse { ResponseStatus })`
-/// - HTTP transport/retry errors → `Err(RestError::AsyncQuery { SfError })` (mapped from HttpError)
+/// - HTTP transport/retry errors → `Err(RestError::HttpRetry)`
 #[tracing::instrument(skip(client, session_token))]
 pub async fn logout_session(
     client: &reqwest::Client,
@@ -95,10 +94,9 @@ pub async fn logout_session(
         Ok(resp)
     })
     .await
-    .map_err(map_http_error)
-    .context(AsyncQuerySnafu {
-        request_id: Some(request_id),
-        query_id: None,
+    .context(HttpRetrySnafu {
+        context: "logout",
+        ids: QueryIds::default(),
     })?;
 
     // Read response body as text first (avoids crash on non-JSON responses)

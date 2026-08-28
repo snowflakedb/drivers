@@ -1,12 +1,15 @@
 use crate::config::rest_parameters::{ClientInfo, QueryParameters};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::http::retry::{HttpContext, execute_with_retry};
-use crate::rest::snowflake::error::{SfError, current_location, map_http_error};
 use crate::rest::snowflake::{
-    QUERY_REQUEST_PATH, QueryInput, apply_json_content_type, apply_query_headers, query_log_fields,
-    query_request, query_response,
+    AsyncPollResultNotFoundSnafu, HttpRetrySnafu, InvalidUrlSnafu, MissingQueryIdSnafu,
+    MissingResultUrlSnafu, OperationTimeoutSnafu, QUERY_REQUEST_PATH, QueryIds, QueryInput,
+    RestError, UrlJoinSnafu, apply_json_content_type, apply_query_headers, into_query_result,
+    query_failed_from_response, query_log_fields, query_request, query_response,
+    read_response_json,
 };
-use reqwest::{Method, StatusCode};
+use reqwest::Method;
+use snafu::{OptionExt, ResultExt};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 use url::Url;
@@ -95,15 +98,11 @@ impl AsyncExecutionMetrics {
     }
 }
 
-fn join_server_path(server_url: &str, path: &str) -> Result<String, SfError> {
+fn join_server_path(server_url: &str, path: &'static str) -> Result<String, RestError> {
     Url::parse(server_url)
         .and_then(|base| base.join(path))
         .map(|joined| joined.to_string())
-        .map_err(|source| SfError::ResultUrlParse {
-            url: format!("{server_url}{path}"),
-            source,
-            location: current_location(),
-        })
+        .context(UrlJoinSnafu { path })
 }
 
 pub struct SubmitOk {
@@ -144,18 +143,8 @@ fn build_submit_request(
 async fn parse_submit_response(
     server_url: &str,
     response: reqwest::Response,
-) -> Result<SubmitOk, SfError> {
-    let status = response.status();
-    if !status.is_success() {
-        return Err(http_status_error(status));
-    }
-
-    let body_bytes = response
-        .bytes()
-        .await
-        .map_err(|source| transport_error(source))?;
-    let parsed: query_response::Response =
-        serde_json::from_slice(&body_bytes).map_err(|source| body_parse_error(source))?;
+) -> Result<SubmitOk, RestError> {
+    let parsed = read_response_json::<query_response::Data>(response).await?;
     let query_id = parsed.data.query_id.clone();
     let get_result_url = extract_result_url_from_response(server_url, &parsed)?;
     debug!(
@@ -193,7 +182,7 @@ pub async fn submit_statement_async<'a>(
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
-) -> Result<SubmitOk, SfError> {
+) -> Result<SubmitOk, RestError> {
     let server_url = &params.server_url;
     let client_info = &params.client_info;
     let endpoint = join_server_path(server_url, QUERY_REQUEST_PATH)?;
@@ -220,7 +209,13 @@ pub async fn submit_statement_async<'a>(
     let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
     let response = execute_with_retry(submit_request, &ctx, policy, |r| async move { Ok(r) })
         .await
-        .map_err(map_http_error)?;
+        .context(HttpRetrySnafu {
+            context: "async submit",
+            ids: QueryIds {
+                request_id: Some(request_id),
+                query_id: None,
+            },
+        })?;
 
     parse_submit_response(server_url, response).await
 }
@@ -231,24 +226,19 @@ pub(super) async fn poll_query_status(
     session_token: &str,
     get_result_url: &str,
     policy: &RetryPolicy,
-) -> Result<query_response::Response, SfError> {
+    ids: &QueryIds,
+) -> Result<query_response::Response, RestError> {
     let result_url = get_result_url.to_string();
     let poll_request =
         move || apply_query_headers(client.get(result_url.clone()), client_info, session_token);
     let ctx = HttpContext::new(Method::GET, get_result_url.to_string());
     let response = execute_with_retry(poll_request, &ctx, policy, |r| async move { Ok(r) })
         .await
-        .map_err(map_http_error)?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(http_status_error(status));
-    }
-    let body_bytes = response
-        .bytes()
-        .await
-        .map_err(|source| transport_error(source))?;
-    let parsed: query_response::Response =
-        serde_json::from_slice(&body_bytes).map_err(|source| body_parse_error(source))?;
+        .with_context(|_| HttpRetrySnafu {
+            context: "async poll",
+            ids: ids.clone(),
+        })?;
+    let parsed = read_response_json::<query_response::Data>(response).await?;
     debug!(
         success = parsed.success,
         rowset_present = parsed.data.rowset.is_some(),
@@ -273,7 +263,7 @@ pub(super) async fn execute_blocking_with_async<'a>(
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
-) -> Result<query_response::Response, SfError> {
+) -> Result<query_response::Response, RestError> {
     // query logging guarded with: log_query_text, log_query_parameters
     let (sql, bindings) = query_log_fields(params, query_input);
     info!(
@@ -302,12 +292,15 @@ pub(super) async fn execute_blocking_with_async<'a>(
         mut response,
     } = submitted;
 
+    let ids = QueryIds {
+        request_id: Some(request_id),
+        query_id: query_id.clone(),
+    };
+
     if should_poll_for_completion(&response) {
         let result_url = get_result_url
             .as_deref()
-            .ok_or_else(|| SfError::MissingResultUrl {
-                location: current_location(),
-            })?;
+            .with_context(|| MissingResultUrlSnafu { ids: ids.clone() })?;
 
         response = poll_for_result(
             client,
@@ -315,58 +308,29 @@ pub(super) async fn execute_blocking_with_async<'a>(
             session_token,
             result_url,
             policy,
+            &ids,
             &mut metrics,
         )
-        .await?
+        .await?;
     };
+
+    let response = into_query_result(response, &ids)?;
 
     response
         .data
         .query_id
         .clone()
         .or(query_id)
-        .ok_or_else(|| SfError::MissingQueryId {
-            location: current_location(),
-        })?;
+        .context(MissingQueryIdSnafu { ids })?;
 
     metrics.emit("async execution timings");
     Ok(response)
 }
 
-#[track_caller]
-fn transport_error(source: reqwest::Error) -> SfError {
-    SfError::Transport {
-        source,
-        location: current_location(),
-    }
-}
-
-#[track_caller]
-fn body_parse_error(source: serde_json::Error) -> SfError {
-    SfError::BodyParse {
-        source,
-        location: current_location(),
-    }
-}
-
-#[track_caller]
-fn http_status_error(status: StatusCode) -> SfError {
-    // Return SessionExpired so caller can refresh and retry
-    if status == StatusCode::UNAUTHORIZED {
-        return SfError::SessionExpired {
-            location: current_location(),
-        };
-    }
-    SfError::HttpStatus {
-        status,
-        location: current_location(),
-    }
-}
-
 fn extract_result_url_from_response(
     server_url: &str,
     response: &query_response::Response,
-) -> Result<Option<String>, SfError> {
+) -> Result<Option<String>, RestError> {
     response
         .data
         .get_result_url
@@ -375,23 +339,17 @@ fn extract_result_url_from_response(
         .transpose()
 }
 
-fn normalize_get_result_url(base: &str, url: &str) -> Result<String, SfError> {
+fn normalize_get_result_url(base: &str, url: &str) -> Result<String, RestError> {
     if url.starts_with("http://") || url.starts_with("https://") {
         return Ok(url.to_string());
     }
-    let base_url = Url::parse(base).map_err(|source| SfError::ResultUrlParse {
-        url: base.to_string(),
-        source,
-        location: current_location(),
-    })?;
-    let joined = base_url
-        .join(url)
-        .map_err(|source| SfError::ResultUrlParse {
-            url: url.to_string(),
-            source,
-            location: current_location(),
-        })?;
-    Ok(joined.to_string())
+    Url::parse(base)
+        .and_then(|base_url| base_url.join(url))
+        .ok()
+        .map(|joined| joined.to_string())
+        .context(InvalidUrlSnafu {
+            url: format!("{base}{url}"),
+        })
 }
 
 pub(super) fn should_poll_for_completion(resp: &query_response::Response) -> bool {
@@ -418,10 +376,11 @@ async fn inline_poll_for_completion(
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
-) -> Result<Option<query_response::Response>, SfError> {
+    ids: &QueryIds,
+) -> Result<Option<query_response::Response>, RestError> {
     let response =
-        poll_query_status(client, client_info, session_token, result_url, policy).await?;
-    handle_poll_response(response, true) // First poll
+        poll_query_status(client, client_info, session_token, result_url, policy, ids).await?;
+    handle_poll_response(response, true, ids) // First poll
 }
 
 /// Poll Snowflake for completion, starting with a burst of short delays
@@ -438,22 +397,23 @@ async fn wait_for_completion(
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
-) -> Result<(query_response::Response, usize), SfError> {
+    ids: &QueryIds,
+) -> Result<(query_response::Response, usize), RestError> {
     let start = Instant::now();
     let mut attempt: usize = 0;
     let mut sleep_ms = policy.backoff.base.as_millis() as f64;
     let mut polls: usize = 0;
 
     loop {
-        if let Some(deadline) = STATEMENT_POLL_DEADLINE {
-            let elapsed = start.elapsed();
-            if elapsed >= deadline {
-                return Err(SfError::DeadlineExceeded {
-                    configured: deadline,
-                    elapsed,
-                    location: current_location(),
-                });
+        if let Some(deadline) = STATEMENT_POLL_DEADLINE
+            && start.elapsed() >= deadline
+        {
+            return OperationTimeoutSnafu {
+                operation: "statement poll",
+                budget: deadline,
+                ids: ids.clone(),
             }
+            .fail();
         }
 
         let delay = if attempt < INLINE_SHORT_POLL_DELAYS.len() {
@@ -465,24 +425,24 @@ async fn wait_for_completion(
         attempt += 1;
 
         if !delay.is_zero() {
-            if let Some(deadline) = STATEMENT_POLL_DEADLINE {
-                let would_wake = start.elapsed() + delay;
-                if would_wake >= deadline {
-                    return Err(SfError::DeadlineExceeded {
-                        configured: deadline,
-                        elapsed: start.elapsed(),
-                        location: current_location(),
-                    });
+            if let Some(deadline) = STATEMENT_POLL_DEADLINE
+                && start.elapsed() + delay >= deadline
+            {
+                return OperationTimeoutSnafu {
+                    operation: "statement poll",
+                    budget: deadline,
+                    ids: ids.clone(),
                 }
+                .fail();
             }
             tokio::time::sleep(delay).await;
         }
 
         let response =
-            poll_query_status(client, client_info, session_token, result_url, policy).await?;
+            poll_query_status(client, client_info, session_token, result_url, policy, ids).await?;
         polls += 1;
 
-        if let Some(done) = handle_poll_response(response, false)? {
+        if let Some(done) = handle_poll_response(response, false, ids)? {
             return Ok((done, polls));
         }
     }
@@ -499,11 +459,13 @@ async fn poll_for_result(
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
+    ids: &QueryIds,
     metrics: &mut AsyncExecutionMetrics,
-) -> Result<query_response::Response, SfError> {
+) -> Result<query_response::Response, RestError> {
     let inline_start = Instant::now();
     let inline_result =
-        inline_poll_for_completion(client, client_info, session_token, result_url, policy).await?;
+        inline_poll_for_completion(client, client_info, session_token, result_url, policy, ids)
+            .await?;
 
     match inline_result {
         Some(response) => {
@@ -514,7 +476,8 @@ async fn poll_for_result(
             metrics.record_inline(inline_start.elapsed(), false);
             let wait_start = Instant::now();
             let (response, polls) =
-                wait_for_completion(client, client_info, session_token, result_url, policy).await?;
+                wait_for_completion(client, client_info, session_token, result_url, policy, ids)
+                    .await?;
             metrics.record_wait(wait_start.elapsed(), polls);
             Ok(response)
         }
@@ -530,11 +493,10 @@ pub(super) async fn poll_detached_query(
     session_token: &str,
     response: &query_response::Response,
     policy: &RetryPolicy,
-) -> Result<query_response::Response, SfError> {
+    ids: &QueryIds,
+) -> Result<query_response::Response, RestError> {
     let result_url = extract_result_url_from_response(&query_parameters.server_url, response)?
-        .ok_or_else(|| SfError::MissingResultUrl {
-            location: current_location(),
-        })?;
+        .with_context(|| MissingResultUrlSnafu { ids: ids.clone() })?;
 
     let mut metrics = AsyncExecutionMetrics::default();
     let result = poll_for_result(
@@ -543,6 +505,7 @@ pub(super) async fn poll_detached_query(
         session_token,
         &result_url,
         policy,
+        ids,
         &mut metrics,
     )
     .await;
@@ -554,31 +517,24 @@ pub(super) async fn poll_detached_query(
 /// trying to poll for file transfer (PUT/GET) results in async mode.
 const SNOWFLAKE_ERROR_RESULT_NOT_FOUND: i32 = 612;
 
-fn snowflake_failure(resp: &query_response::Response, is_first_poll: bool) -> SfError {
-    let code = resp
-        .code
-        .as_deref()
-        .and_then(|c| c.parse::<i32>().ok())
-        .unwrap_or(-1);
+fn snowflake_failure(
+    resp: query_response::Response,
+    is_first_poll: bool,
+    ids: &QueryIds,
+) -> RestError {
+    let code = resp.code.as_deref().and_then(|c| c.parse::<i32>().ok());
 
     // Error 612 "Result not found" occurs when polling for PUT/GET results.
     // File transfer commands don't support async mode.
-    if code == SNOWFLAKE_ERROR_RESULT_NOT_FOUND {
-        return SfError::AsyncPollResultNotFound {
+    if code == Some(SNOWFLAKE_ERROR_RESULT_NOT_FOUND) {
+        return AsyncPollResultNotFoundSnafu {
             is_first_poll,
-            location: current_location(),
-        };
+            ids: ids.clone(),
+        }
+        .build();
     }
 
-    let message = resp
-        .message
-        .clone()
-        .unwrap_or_else(|| "Snowflake reported failure".to_string());
-    SfError::SnowflakeBody {
-        code,
-        message,
-        location: current_location(),
-    }
+    query_failed_from_response(resp, ids)
 }
 
 fn next_poll_delay_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
@@ -610,7 +566,8 @@ fn should_continue_after_failure(resp: &query_response::Response) -> bool {
 fn handle_poll_response(
     resp: query_response::Response,
     is_first_poll: bool,
-) -> Result<Option<query_response::Response>, SfError> {
+    ids: &QueryIds,
+) -> Result<Option<query_response::Response>, RestError> {
     if resp.success {
         if should_continue_after_success(&resp) {
             return Ok(None);
@@ -622,7 +579,7 @@ fn handle_poll_response(
         return Ok(None);
     }
 
-    Err(snowflake_failure(&resp, is_first_poll))
+    Err(snowflake_failure(resp, is_first_poll, ids))
 }
 
 #[cfg(test)]
@@ -632,6 +589,18 @@ mod tests {
 
     fn response_from_json(value: serde_json::Value) -> query_response::Response {
         serde_json::from_value(value).expect("valid response JSON")
+    }
+
+    fn result_not_found_612() -> serde_json::Value {
+        json!({
+            "success": false,
+            "code": "612",
+            "message": "Result not found",
+            "data": {
+                "rowset": null,
+                "rowsetBase64": null
+            }
+        })
     }
 
     fn response_with_result_url(url: &str) -> serde_json::Value {
@@ -759,26 +728,18 @@ mod tests {
         assert_eq!(url, "https://other.test/result");
     }
 
-    // ── http_status_error ──────────────────────────────────────────
-
     #[test]
-    fn http_401_returns_session_expired() {
-        let err = http_status_error(StatusCode::UNAUTHORIZED);
-        assert!(
-            matches!(err, SfError::SessionExpired { .. }),
-            "expected SessionExpired, got {:?}",
-            err
-        );
-    }
-
-    #[test]
-    fn http_503_returns_http_status() {
-        let err = http_status_error(StatusCode::SERVICE_UNAVAILABLE);
+    fn extract_result_url_invalid_base_is_invalid_url() {
+        let resp = response_from_json(response_with_result_url("/queries/abc/result"));
+        let err = extract_result_url_from_response("not a url", &resp).unwrap_err();
         match err {
-            SfError::HttpStatus { status, .. } => {
-                assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            RestError::InvalidUrl { url, .. } => {
+                assert!(
+                    url.contains("not a url") && url.contains("/queries/abc/result"),
+                    "expected the join inputs on InvalidUrl, got {url}"
+                );
             }
-            other => panic!("expected HttpStatus, got {:?}", other),
+            other => panic!("expected InvalidUrl, got {other:?}"),
         }
     }
 
@@ -787,41 +748,60 @@ mod tests {
     #[test]
     fn error_612_returns_async_poll_result_not_found() {
         // Error 612 "Result not found" is returned when polling for PUT/GET results
-        let resp = response_from_json(json!({
-            "success": false,
-            "code": "612",
-            "message": "Result not found",
-            "data": {
-                "rowset": null,
-                "rowsetBase64": null
-            }
-        }));
-
-        let err = snowflake_failure(&resp, true);
+        let err = snowflake_failure(
+            response_from_json(result_not_found_612()),
+            true,
+            &QueryIds::default(),
+        );
         assert!(
             matches!(
                 err,
-                SfError::AsyncPollResultNotFound {
+                RestError::AsyncPollResultNotFound {
                     is_first_poll: true,
                     ..
                 }
             ),
-            "expected AsyncPollResultNotFound with is_first_poll=true, got {:?}",
-            err
+            "expected AsyncPollResultNotFound with is_first_poll=true, got {err:?}"
         );
 
-        let err = snowflake_failure(&resp, false);
+        let err = snowflake_failure(
+            response_from_json(result_not_found_612()),
+            false,
+            &QueryIds::default(),
+        );
         assert!(
             matches!(
                 err,
-                SfError::AsyncPollResultNotFound {
+                RestError::AsyncPollResultNotFound {
                     is_first_poll: false,
                     ..
                 }
             ),
-            "expected AsyncPollResultNotFound with is_first_poll=false, got {:?}",
-            err
+            "expected AsyncPollResultNotFound with is_first_poll=false, got {err:?}"
         );
+    }
+
+    #[test]
+    fn error_612_keeps_submit_ids() {
+        let request_id = uuid::Uuid::new_v4();
+        match snowflake_failure(
+            response_from_json(result_not_found_612()),
+            true,
+            &QueryIds {
+                request_id: Some(request_id),
+                query_id: Some("from-submit".to_owned()),
+            },
+        ) {
+            RestError::AsyncPollResultNotFound {
+                is_first_poll: true,
+                ids,
+                ..
+            } => {
+                assert_eq!(ids.query_id.as_deref(), Some("from-submit"));
+                assert_eq!(ids.request_id, Some(request_id));
+            }
+            other => panic!("expected AsyncPollResultNotFound with submit ids, got {other:?}"),
+        }
     }
 
     // ── handle_poll_response ───────────────────────────────────────
@@ -832,14 +812,14 @@ mod tests {
             "success": true,
             "data": { "rowset": [["1"]], "rowsetBase64": null }
         }));
-        let result = handle_poll_response(resp, true).unwrap();
+        let result = handle_poll_response(resp, true, &QueryIds::default()).unwrap();
         assert!(result.is_some());
     }
 
     #[test]
     fn handle_poll_success_with_result_url_but_no_data_continues() {
         let resp = response_from_json(response_with_result_url("https://example.test"));
-        let result = handle_poll_response(resp, true).unwrap();
+        let result = handle_poll_response(resp, true, &QueryIds::default()).unwrap();
         assert!(result.is_none());
     }
 
@@ -853,22 +833,79 @@ mod tests {
                 "rowsetBase64": null,
             }
         }));
-        let result = handle_poll_response(resp, false).unwrap();
+        let result = handle_poll_response(resp, false, &QueryIds::default()).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn handle_poll_failure_without_result_url_returns_error() {
+        let request_id = uuid::Uuid::new_v4();
         let resp = response_from_json(json!({
             "success": false,
             "code": "1003",
             "message": "Syntax error",
-            "data": { "rowset": null, "rowsetBase64": null }
+            "data": {
+                "rowset": null,
+                "rowsetBase64": null,
+                "sqlState": "42000"
+            }
         }));
-        match handle_poll_response(resp, false) {
-            Err(SfError::SnowflakeBody { code: 1003, .. }) => {}
-            Err(other) => panic!("expected SnowflakeBody(1003), got {other:?}"),
+        match handle_poll_response(
+            resp,
+            false,
+            &QueryIds {
+                request_id: Some(request_id),
+                query_id: Some("01abc-def-12345".to_owned()),
+            },
+        ) {
+            Err(RestError::QueryFailed {
+                code: Some(1003),
+                sql_state,
+                ids,
+                ..
+            }) => {
+                assert_eq!(sql_state.as_deref(), Some("42000"));
+                assert_eq!(ids.query_id.as_deref(), Some("01abc-def-12345"));
+                assert_eq!(ids.request_id, Some(request_id));
+            }
+            Err(other) => panic!("expected QueryFailed(1003), got {other:?}"),
             Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[test]
+    fn snowflake_failure_preserves_sql_state_and_query_id() {
+        let resp = response_from_json(json!({
+            "success": false,
+            "code": "100072",
+            "message": "NULL result in a non-nullable column",
+            "data": {
+                "rowset": null,
+                "rowsetBase64": null,
+                "sqlState": "22000"
+            }
+        }));
+        match snowflake_failure(
+            resp,
+            false,
+            &QueryIds {
+                request_id: None,
+                query_id: Some("01abc-def-12345".to_owned()),
+            },
+        ) {
+            RestError::QueryFailed {
+                code,
+                message,
+                sql_state,
+                ids,
+                ..
+            } => {
+                assert_eq!(code, Some(100072));
+                assert_eq!(message, "NULL result in a non-nullable column");
+                assert_eq!(sql_state.as_deref(), Some("22000"));
+                assert_eq!(ids.query_id.as_deref(), Some("01abc-def-12345"));
+            }
+            other => panic!("expected QueryFailed, got {other:?}"),
         }
     }
 }

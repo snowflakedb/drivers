@@ -14,9 +14,9 @@ use serde_json::json;
 use sf_core::config::logout::{ErrorStrategy, LogoutConfig};
 use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::{BackoffConfig, Jitter, RetryPolicy};
+use sf_core::http::retry::HttpError;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::RestError;
-use sf_core::rest::snowflake::error::SfError;
 use sf_core::rest::snowflake::logout::logout_session;
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
@@ -1250,13 +1250,12 @@ async fn should_fail_when_logout_response_exceeds_deadline() {
     assert!(
         matches!(
             err,
-            RestError::AsyncQuery {
-                source: SfError::DeadlineExceeded { .. },
+            RestError::HttpRetry {
+                source: HttpError::DeadlineExceeded { .. },
                 ..
             }
         ),
-        "Expected DeadlineExceeded, got: {:?}",
-        err
+        "Expected DeadlineExceeded, got: {err:?}"
     );
 
     //And The whole budget was spent before giving up

@@ -104,17 +104,20 @@ with up to `N × retry_max_attempts` requests. `requestId` + `retry=true` preven
 double-execution but does not reduce request *volume*. Rate-limit or pool
 connections at the application layer.
 
-### SfError taxonomy (`sf_core/src/rest/snowflake/error.rs`)
+### RestError taxonomy (`sf_core/src/rest/snowflake/mod.rs`)
+
+Query and session HTTP failures share one error type. Variants that matter
+when diagnosing a failed statement:
 
 | Variant | Meaning | Retryable? |
 |---|---|---|
-| `Transport` | Network-layer failure (TCP, TLS) | Yes — transient |
-| `HttpStatus` | Non-2xx | Depends on status (5xx yes) |
-| `SnowflakeBody` | Server error in the response body | Depends on the Snowflake error code |
+| `HttpRetry` / `Communication` | Retryable HTTP exhausted, or a single-attempt transport failure | Already retried — no |
+| `QueryFailed` | Server error in the query-response body (GS code + SQLSTATE) | Depends on the Snowflake error code |
 | `SessionExpired` | 390xxx session-token expiry | Yes — refresh then one retry ([authentication.md](authentication.md#session-expiry--renewal)) |
-| `RetryAttemptsExhausted` / `RetryBudgetExceeded` | Retries used up | No |
+| `AsyncPollResultNotFound` | GS `612` on async poll (PUT/GET has no async result) | First poll: driver retries as sync. Later: no |
+| `OperationTimeout` | Login or statement-poll deadline | No |
 
-`SnowflakeBody` carries a Snowflake error code: `390xxx` auth/session; `000612`
+`QueryFailed` carries a Snowflake error code: `390xxx` auth/session; `612`
 async-poll-not-found (handled automatically, below); `002xxx` SQL compilation
 (**not** retryable — more attempts won't help).
 

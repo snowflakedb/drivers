@@ -77,7 +77,7 @@ nothing matches, use the [deep-dive index](index.md) or
 | error 612, `AsyncPollResultNotFound` | [query-execution.md](core/query-execution.md) → "Symptom: error 612" |
 | multi-statement returns wrong / missing child-result count | [query-execution.md](core/query-execution.md) → "Symptom: multi-statement returns the wrong number" |
 | intermittent 503s; retries / backoff behavior | [query-execution.md](core/query-execution.md) → "Retries & 503s" |
-| `SfError` classification / taxonomy | [query-execution.md](core/query-execution.md) → "SfError taxonomy" |
+| `RestError` classification / taxonomy | [query-execution.md](core/query-execution.md) → "RestError taxonomy" |
 | bind-stage upload fails before the query runs | [query-execution.md](core/query-execution.md) → "Symptom: bind-stage upload fails" |
 | OOM / out-of-memory on a large result set | [query-execution.md](core/query-execution.md) → "Symptom: OOM on a large result set" |
 | slow / low-throughput large result set (not memory-bound) | [query-execution.md](core/query-execution.md) → "Symptom: slow (not memory-bound)" |

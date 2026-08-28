@@ -767,12 +767,7 @@ impl DatabaseDriverV1 {
                 {
                     Ok(submit_result) => break Ok(submit_result),
                     Err(e) => {
-                        last_error = Some(RestError::AsyncQuery {
-                            source: e,
-                            request_id: Some(request_id),
-                            query_id: None,
-                            location: snafu::Location::new(file!(), line!(), 0),
-                        });
+                        last_error = Some(e);
                     }
                 }
             }

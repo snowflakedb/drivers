@@ -25,7 +25,6 @@ use crate::file_manager::FileManagerError;
 use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
-use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::{AbortOutcome, SnowflakeErrorContext};
 use arrow::array::RecordBatchReader;
 use arrow::ffi::FFI_ArrowSchema;
@@ -717,22 +716,6 @@ impl From<&QueryResponseProcessingError> for ErrorKind {
 fn kind_from_query_rest_error(err: &RestError) -> ErrorKind {
     match err {
         RestError::QueryFailed { .. } => ErrorKind::QueryFailed,
-        RestError::AsyncQuery { source, .. } => match source {
-            SfError::SnowflakeBody { .. } => ErrorKind::QueryFailed,
-            SfError::DeadlineExceeded { .. } => ErrorKind::Timeout,
-            SfError::Cancelled { .. } => ErrorKind::Cancelled,
-            SfError::Transport { .. }
-            | SfError::HttpStatus { .. }
-            | SfError::RetryAttemptsExhausted { .. }
-            | SfError::RetryBudgetExceeded { .. }
-            | SfError::WarehouseResuming { .. } => ErrorKind::Io,
-            SfError::SessionExpired { .. } => ErrorKind::AuthenticationError,
-            SfError::AsyncPollResultNotFound { .. }
-            | SfError::MissingResultUrl { .. }
-            | SfError::MissingQueryId { .. }
-            | SfError::ResultUrlParse { .. }
-            | SfError::BodyParse { .. } => ErrorKind::InternalError,
-        },
         RestError::OperationTimeout { .. } => ErrorKind::Timeout,
         RestError::Communication { .. } | RestError::HttpRetry { .. } => ErrorKind::Io,
         RestError::Authentication { .. }
@@ -755,7 +738,10 @@ fn kind_from_query_rest_error(err: &RestError) -> ErrorKind {
         | RestError::MissingResponseField { .. }
         | RestError::Logout { .. }
         | RestError::InvalidUrl { .. }
-        | RestError::PayloadEncode { .. } => ErrorKind::InternalError,
+        | RestError::PayloadEncode { .. }
+        | RestError::AsyncPollResultNotFound { .. }
+        | RestError::MissingResultUrl { .. }
+        | RestError::MissingQueryId { .. } => ErrorKind::InternalError,
     }
 }
 
@@ -903,7 +889,7 @@ impl From<ApiError> for DriverException {
 mod tests {
     use super::*;
     use crate::apis::database_driver_v1::error::ConfigError;
-    use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
+    use crate::rest::snowflake::{GS_CODE_UNAVAILABLE, QueryIds};
     use snafu::Location;
 
     fn loc() -> Location {
@@ -922,25 +908,8 @@ mod tests {
                 message: "test".to_owned(),
                 code,
                 sql_state: sql_state.map(|s| s.to_owned()),
-                query_id: None,
-                request_id: None,
+                ids: QueryIds::default(),
                 location: loc(),
-            }),
-        }
-    }
-
-    fn async_query(code: i32) -> ApiError {
-        ApiError::Query {
-            location: loc(),
-            source: Box::new(RestError::AsyncQuery {
-                location: loc(),
-                request_id: Some(uuid::Uuid::new_v4()), // test only code
-                query_id: None,
-                source: SfError::SnowflakeBody {
-                    code,
-                    message: "test".to_owned(),
-                    location: loc(),
-                },
             }),
         }
     }
@@ -1003,23 +972,6 @@ mod tests {
     }
 
     #[test]
-    fn async_query_path_now_supplies_sql_state() {
-        // Previously this path returned (Some(code), None) unconditionally —
-        // the regression this fix is targeting.
-        let err = async_query(1003);
-        assert_eq!(vendor_pair(&err), (Some(1003), Some("42000".to_owned())));
-
-        let err = async_query(100038);
-        assert_eq!(vendor_pair(&err), (Some(100038), Some("22003".to_owned())));
-    }
-
-    #[test]
-    fn async_query_unknown_code_keeps_sql_state_none() {
-        let err = async_query(424_242);
-        assert_eq!(vendor_pair(&err), (Some(424_242), None));
-    }
-
-    #[test]
     fn login_credential_rejection_surfaces_code_and_authorization_sql_state() {
         let err = login_error(390100, false);
         assert_eq!(vendor_pair(&err), (Some(390100), Some("28000".to_owned())));
@@ -1077,8 +1029,7 @@ mod tests {
                 message: "SQL compilation error: Object 'FOO' does not exist.".to_owned(),
                 code: Some(2003),
                 sql_state: Some("42S02".to_owned()),
-                query_id: None,
-                request_id: None,
+                ids: QueryIds::default(),
                 location: loc(),
             }),
         };
@@ -1098,8 +1049,7 @@ mod tests {
                 message: "SQL compilation error: syntax error line 1".to_owned(),
                 code: Some(1003),
                 sql_state: Some("42000".to_owned()),
-                query_id: None,
-                request_id: None,
+                ids: QueryIds::default(),
                 location: loc(),
             }),
         };
@@ -1366,8 +1316,10 @@ mod tests {
                 message: "SQL compilation error".to_owned(),
                 code: Some(1003),
                 sql_state: Some("42000".to_owned()),
-                query_id: Some("01abc-def-12345".to_owned()),
-                request_id: Some(request_id),
+                ids: QueryIds {
+                    request_id: Some(request_id),
+                    query_id: Some("01abc-def-12345".to_owned()),
+                },
                 location: loc(),
             }),
         };
@@ -1382,36 +1334,6 @@ mod tests {
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, Some("01abc-def-12345".to_owned()));
-        assert_eq!(exc.request_id, Some(request_id.to_string()));
-    }
-
-    #[test]
-    fn async_query_populates_query_id_and_request_id() {
-        // The async-poll failure path carries UUID query_id/request_id which are
-        // stringified onto DriverException.
-        let request_id = uuid::Uuid::new_v4();
-        let query_id = uuid::Uuid::new_v4();
-        let err = ApiError::Query {
-            location: loc(),
-            source: Box::new(RestError::AsyncQuery {
-                location: loc(),
-                request_id: Some(request_id),
-                query_id: Some(query_id),
-                source: SfError::SnowflakeBody {
-                    code: 1003,
-                    message: "boom".to_owned(),
-                    location: loc(),
-                },
-            }),
-        };
-        assert_eq!(err.snowflake_context().query_id, Some(query_id.to_string()));
-        assert_eq!(
-            err.snowflake_context().request_id,
-            Some(request_id.to_string())
-        );
-
-        let exc = to_driver_exception(err);
-        assert_eq!(exc.query_id, Some(query_id.to_string()));
         assert_eq!(exc.request_id, Some(request_id.to_string()));
     }
 
@@ -1477,6 +1399,7 @@ mod tests {
             source: Box::new(RestError::OperationTimeout {
                 operation: "login".to_owned(),
                 budget: std::time::Duration::from_secs(1),
+                ids: QueryIds::default(),
                 location: loc(),
             }),
         };
@@ -1489,8 +1412,8 @@ mod tests {
     }
 
     #[test]
-    fn async_query_gs_body_maps_to_query_failed_kind() {
-        let exc = to_driver_exception(async_query(1003));
+    fn query_failed_maps_to_query_failed_kind() {
+        let exc = to_driver_exception(query_failed(Some(1003), None));
         assert_eq!(exc.kind, ErrorKind::QueryFailed as i32);
     }
 
@@ -1501,6 +1424,7 @@ mod tests {
             source: Box::new(RestError::OperationTimeout {
                 operation: "query".to_owned(),
                 budget: std::time::Duration::from_secs(1),
+                ids: QueryIds::default(),
                 location: loc(),
             }),
         };
@@ -1515,6 +1439,7 @@ mod tests {
             location: loc(),
             source: Box::new(RestError::HttpRetry {
                 context: "query",
+                ids: QueryIds::default(),
                 source: crate::http::retry::HttpError::MaxAttempts {
                     attempts: 3,
                     last_status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
@@ -1553,27 +1478,30 @@ mod tests {
     }
 
     #[test]
-    fn async_query_deadline_maps_to_timeout_kind() {
+    fn query_poll_deadline_maps_to_timeout_kind_and_keeps_ids() {
+        let request_id = uuid::Uuid::new_v4();
         let err = ApiError::Query {
             location: loc(),
-            source: Box::new(RestError::AsyncQuery {
-                location: loc(),
-                request_id: None,
-                query_id: None,
-                source: SfError::DeadlineExceeded {
-                    configured: std::time::Duration::from_secs(1),
-                    elapsed: std::time::Duration::from_secs(1),
-                    location: loc(),
+            source: Box::new(RestError::OperationTimeout {
+                operation: "statement poll".to_owned(),
+                budget: std::time::Duration::from_secs(1),
+                ids: QueryIds {
+                    request_id: Some(request_id),
+                    query_id: Some("01abc-def-12345".to_owned()),
                 },
+                location: loc(),
             }),
         };
         let exc = to_driver_exception(err);
         assert_eq!(exc.kind, ErrorKind::Timeout as i32);
+        assert_eq!(exc.sql_state.as_deref(), Some("HYT00"));
+        assert_eq!(exc.request_id, Some(request_id.to_string()));
+        assert_eq!(exc.query_id.as_deref(), Some("01abc-def-12345"));
     }
 
     #[test]
     fn non_query_error_leaves_ids_unset() {
-        // Non-query errors (e.g. invalid argument) never carry query correlation ids.
+        // Non-query errors (e.g. invalid argument) never carry query ids.
         let err = crate::apis::database_driver_v1::error::InvalidArgumentSnafu {
             argument: "bad".to_owned(),
         }
