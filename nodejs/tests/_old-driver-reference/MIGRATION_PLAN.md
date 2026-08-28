@@ -201,8 +201,12 @@ called out explicitly.
   then check whether the new driver's result-handling coverage has gaps that these tests
   highlight. TIME-related files, against the TIME e2e in `query-data-types.test.ts`:
   - [`datetime_format_converter_test.js`](./unit/connection/result/datetime_format_converter_test.js) —
-    keep remaining cases. Mixed `HH24`+`HH12` with comma-`FF9` is
-    `mixed_hh24_and_hh12_with_comma_ff_separator` in `time_format.rs`.
+    dropped. Mixed `HH24`+`HH12` is
+    `mixed_hh24_and_hh12_with_comma_ff_separator` in `time_format.rs`; the remaining
+    composites (`YYYY-MM-DD`/`TZH:TZM`, concatenated `AM`/`PM`, `MMMM`/`MON`/`DY`,
+    `TZH`) are `converter_composite_formats_from_legacy_datetime_format_converter`
+    in `time_format.rs`. `MMMM` → January is a converter accident (BCR_LOG.md),
+    not a TIME month. Timestamp-only moment mapping is not a TIME contract.
   - [`sf_timestamp_test.js`](./unit/connection/result/sf_timestamp_test.js) — `Time: basic`
     dropped; faithful equivalent is `time_basic_format_matrix_from_legacy_sf_timestamp`
     in `time_format.rs` (same four scale/nanos/format triples, including bare `FF` at
