@@ -197,6 +197,10 @@ class ConnectionConfigMixin:
 
     _UNSUPPORTED_PARAMS: ClassVar[dict[str, str]] = {
         "client_fetch_use_mp": ("not supported; universal core uses a thread pool for chunk fetch."),
+        "disable_request_pooling": (
+            "not supported; there is no request-session pool to disable "
+            "(HTTP keep-alive is managed by the core HTTP client)."
+        ),
         "oauth_enable_refresh_tokens": (
             "not supported; the universal core always uses the refresh token "
             "returned by the IdP. Use client_store_temporary_credential to gate caching."

@@ -399,9 +399,13 @@ tests:
   - test_name: test_disable_query_context_cache
     ud_tests: []
   - test_name: test_disable_request_pooling
-    ud_tests: []
+    ud_tests:
+      - python/tests/unit/test_connection.py::TestDisableRequestPoolingRemoved
+      - python/tests/unit/test_connection.py::TestConnectionSetOptions::test_disable_request_pooling_is_dropped_with_warning
+      - python/tests/unit/test_connection_config.py::TestFromKwargs::test_disable_request_pooling_is_dropped_with_warning
   - test_name: test_disable_request_pooling_setter
-    ud_tests: []
+    ud_tests:
+      - python/tests/unit/test_connection.py::TestDisableRequestPoolingRemoved
   - test_name: test_disable_telemetry
     ud_tests: []
   - test_name: test_dml_stats_operations
@@ -1504,9 +1508,13 @@ tests:
   - test_name: test_disable_query_context_cache
     ud_tests: []
   - test_name: test_disable_request_pooling
-    ud_tests: []
+    ud_tests:
+      - python/tests/unit/test_connection.py::TestDisableRequestPoolingRemoved
+      - python/tests/unit/test_connection.py::TestConnectionSetOptions::test_disable_request_pooling_is_dropped_with_warning
+      - python/tests/unit/test_connection_config.py::TestFromKwargs::test_disable_request_pooling_is_dropped_with_warning
   - test_name: test_disable_request_pooling_setter
-    ud_tests: []
+    ud_tests:
+      - python/tests/unit/test_connection.py::TestDisableRequestPoolingRemoved
   - test_name: test_disable_telemetry
     ud_tests: []
   - test_name: test_dml_stats_operations
