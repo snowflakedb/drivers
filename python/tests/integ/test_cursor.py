@@ -1789,6 +1789,14 @@ class TestCursorDatabaseQueries:
         # Result format may vary between connectors, just check it's not None
         assert result is not None
 
+    def test_bare_desc_returns_table_description(self, function_connection):
+        with function_connection.cursor() as cursor:
+            cursor.execute("CREATE TEMP TABLE desc_rewrite (a INTEGER)")
+            rows = cursor.execute("desc desc_rewrite").fetchall()
+
+            assert len(rows) == 1
+            assert rows[0][0] == "A"
+
     @pytest.mark.parametrize("data_size", [1000, 10000])
     def test_large_result(self, cursor, data_size):
         """Test large result."""

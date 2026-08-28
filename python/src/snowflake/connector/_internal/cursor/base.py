@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc
 import ctypes
 import re
+import warnings
 
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
     """Zero-I/O cursor members shared by sync and async base cursor classes."""
 
+    _BARE_DESC_SQL_RE = re.compile(r"desc(?:ribe)?\s+([\w_]+)\s*;?\s*$", re.IGNORECASE)
     _INSERT_SQL_RE = re.compile(r"^insert\s+into", re.IGNORECASE)
     _COMMENT_SQL_RE = re.compile(r"/\*.*\*/")
 
@@ -313,6 +315,16 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         Raises:
             ProgrammingError: If dict parameters used with server-side binding
         """
+        match = self._BARE_DESC_SQL_RE.match(operation)
+        if match:
+            warnings.warn(
+                "Bare 'DESC <table>' and 'DESCRIBE <table>' statements are deprecated "
+                "and will be removed in a future release; use 'DESC TABLE <table>' instead.",
+                DeprecationWarning,
+                stacklevel=4,
+            )
+            operation = f"describe table {match.group(1)}"
+
         if parameters is None:
             return operation, None
 
