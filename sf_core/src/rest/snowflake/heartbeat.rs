@@ -5,8 +5,7 @@ use url::Url;
 
 use crate::config::rest_parameters::ClientInfo;
 use crate::rest::snowflake::{
-    HeartbeatSnafu, InvalidSnowflakeResponseSnafu, RestError, UrlJoinSnafu, apply_query_headers,
-    read_response_json,
+    HeartbeatSnafu, RestError, UrlJoinSnafu, apply_query_headers, read_response_json,
 };
 
 const HEARTBEAT_PATH: &str = "/session/heartbeat";
@@ -16,8 +15,7 @@ type HeartbeatResponse = crate::rest::snowflake::SnowflakeResponse<serde_json::V
 
 /// Send a heartbeat POST to keep the session alive using the default timeout.
 ///
-/// Returns `Ok(())` on success, `RestError::InvalidSnowflakeResponse` with
-/// `SnowflakeResponseError::SessionExpired` on HTTP 401, or
+/// Returns `Ok(())` on success, `RestError::SessionExpired` on HTTP 401, or
 /// `RestError::Heartbeat` when the server explicitly reports failure.
 pub async fn send_heartbeat(
     client: &reqwest::Client,
@@ -58,9 +56,7 @@ pub async fn send_heartbeat_with_timeout(
                 context: "Failed to execute heartbeat request",
             })?;
 
-    let parsed: HeartbeatResponse = read_response_json::<serde_json::Value>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    let parsed: HeartbeatResponse = read_response_json::<serde_json::Value>(response).await?;
 
     if !parsed.success {
         let message = parsed
@@ -165,13 +161,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(
-                &err,
-                RestError::InvalidSnowflakeResponse {
-                    source: crate::rest::snowflake::SnowflakeResponseError::SessionExpired { .. },
-                    ..
-                }
-            ),
+            matches!(&err, RestError::SessionExpired { .. }),
             "Expected SessionExpired, got: {err:?}"
         );
     }

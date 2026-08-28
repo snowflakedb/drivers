@@ -984,9 +984,7 @@ async fn send_login_request(
             context: "login request",
         })?;
 
-    read_response_json::<auth::AuthResponseMain>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)
+    read_response_json::<auth::AuthResponseMain>(response).await
 }
 
 /// Drift C.5: per-request DPoP signing context for `send_login_request`.
@@ -1544,9 +1542,7 @@ pub async fn refresh_session(
         // real code, so callers can mark the connection expired, mirroring
         // the query-response path in read_response_json.
         if MASTER_TOKEN_TERMINAL_CODES.contains(&code) {
-            return MasterTokenTerminalSnafu { code }
-                .fail()
-                .context(InvalidSnowflakeResponseSnafu);
+            return MasterTokenTerminalSnafu { code }.fail();
         }
         return SessionRefreshFailedSnafu { message, code }.fail();
     }
@@ -1955,9 +1951,7 @@ async fn execute_sync_query<'a>(
             context: "query request",
         })?;
 
-    let query_response = read_response_json::<query_response::Data>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    let query_response = read_response_json::<query_response::Data>(response).await?;
 
     let elapsed_ms = send_start.elapsed().as_secs_f64() * 1000.0;
     tracing::debug!(
@@ -2117,9 +2111,8 @@ pub async fn get_query_status(
             context: "query status",
         })?;
 
-    let body: QueryStatusResponse = read_response_json::<Option<QueryStatusResponseData>>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    let body: QueryStatusResponse =
+        read_response_json::<Option<QueryStatusResponseData>>(response).await?;
 
     if !body.success {
         let message = body.message.unwrap_or_else(|| "Unknown error".to_owned());
@@ -2284,9 +2277,7 @@ pub async fn snowflake_abort_query(
         context: "Failed to execute abort query request",
     })?;
 
-    let abort_response: query_response::AbortQueryResponse = read_response_json(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    let abort_response: query_response::AbortQueryResponse = read_response_json(response).await?;
 
     Ok(if abort_response.success {
         AbortOutcome::Aborted
@@ -2365,9 +2356,7 @@ pub async fn snowflake_cancel_query(
 
     tracing::info!(status = response.status().as_u16(), "HTTP response");
 
-    let cancel_response: query_response::AbortQueryResponse = read_response_json(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    let cancel_response: query_response::AbortQueryResponse = read_response_json(response).await?;
 
     // `success: false` here is a business-logic decline (the query was not
     // running), not a failure — session-token expiry (390112) has already been
@@ -2384,9 +2373,9 @@ pub async fn snowflake_cancel_query(
 /// Every REST endpoint parsed by [`read_response_json`] returns this shape; the
 /// generic `T` is the endpoint-specific payload. Keeping the envelope uniform
 /// lets `read_response_json` inspect `success` + `code` centrally and map
-/// body-level `390112` (session-token expired) to `SessionExpired` for the
-/// single-flight `RefreshContext` refresh path — without each caller having
-/// to re-implement that check.
+/// body-level `390112` (session-token expired) to [`RestError::SessionExpired`]
+/// for the single-flight `RefreshContext` refresh path — without each caller
+/// having to re-implement that check.
 #[derive(Debug, serde::Deserialize)]
 #[serde(bound(deserialize = "T: serde::de::Deserialize<'de> + Default"))]
 pub struct SnowflakeResponse<T> {
@@ -2413,7 +2402,7 @@ where
 
 pub(crate) async fn read_response_json<T>(
     response: reqwest::Response,
-) -> Result<SnowflakeResponse<T>, SnowflakeResponseError>
+) -> Result<SnowflakeResponse<T>, RestError>
 where
     T: serde::de::DeserializeOwned + Default,
 {
@@ -2432,14 +2421,18 @@ where
             status: response_status,
             message,
         }
-        .fail();
+        .fail()
+        .context(InvalidSnowflakeResponseSnafu);
     }
 
-    let response_text = response_text.context(ResponseTextSnafu)?;
+    let response_text = response_text
+        .context(ResponseTextSnafu)
+        .context(InvalidSnowflakeResponseSnafu)?;
 
     tracing::debug!(response_len = response_text.len(), "Received HTTP response");
-    let parsed: SnowflakeResponse<T> =
-        serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
+    let parsed: SnowflakeResponse<T> = serde_json::from_str(&response_text)
+        .context(ResponseFormatSnafu)
+        .context(InvalidSnowflakeResponseSnafu)?;
 
     // 2xx with `success:false, code:"390112"` means the session token expired.
     // Surface it as SessionExpired so the RefreshContext can refresh and retry,
@@ -2544,6 +2537,20 @@ pub enum RestError {
     #[snafu(display("Invalid Snowflake response"))]
     InvalidSnowflakeResponse {
         source: SnowflakeResponseError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Session expired - reauthentication required"))]
+    SessionExpired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("{}", master_token_terminal_detail(Some(*code))))]
+    MasterTokenTerminal {
+        /// The real GS code (390113/390114/390115) that triggered this. Always
+        /// present here — this variant is only constructed at the server
+        /// round-trip detection sites.
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },
@@ -2675,6 +2682,7 @@ pub enum RestError {
         location: Location,
     },
 }
+
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum SnowflakeResponseError {
     #[snafu(display("Failed to parse Snowflake response {source}"))]
@@ -2696,26 +2704,12 @@ pub enum SnowflakeResponseError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Session expired - reauthentication required"))]
-    SessionExpired {
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("{}", master_token_terminal_detail(Some(*code))))]
-    MasterTokenTerminal {
-        /// The real GS code (390113/390114/390115) that triggered this. Always
-        /// present here — this variant is only constructed at the two
-        /// server-round-trip detection sites above.
-        code: i32,
-        #[snafu(implicit)]
-        location: Location,
-    },
 }
 
 /// Single wording source for "master token can never be renewed", shared by
-/// [`SnowflakeResponseError::MasterTokenTerminal`]'s `Display`, the `ApiError`
-/// layer's equivalent variant, and the proto `AuthenticationError.detail`
-/// text. `client_api.py`'s `_append_detail` dedupes by exact substring, so any
+/// [`RestError::MasterTokenTerminal`]'s `Display`, the `ApiError` layer's
+/// equivalent variant, and the proto `AuthenticationError.detail` text.
+/// `client_api.py`'s `_append_detail` dedupes by exact substring, so any
 /// paraphrase between these sites prints the GS code multiple times in the
 /// user-visible message. `code` is `None` only for a client-side-predicted
 /// expiry with no server round-trip — never fabricate a code for that case.
@@ -3592,7 +3586,7 @@ mod tests {
 
         /// `success:false` with body code `390112` (session token expired) still
         /// routes through the existing `SessionExpired` mapping in
-        /// `read_response_json`, surfaced here as `InvalidSnowflakeResponse`.
+        /// `read_response_json`, surfaced here as `RestError::SessionExpired`.
         #[tokio::test]
         async fn session_expired_code_returns_err() {
             let server = MockServer::start().await;
@@ -3616,8 +3610,8 @@ mod tests {
             .await;
 
             assert!(
-                matches!(result, Err(RestError::InvalidSnowflakeResponse { .. })),
-                "expected InvalidSnowflakeResponse(SessionExpired), got {result:?}"
+                matches!(result, Err(RestError::SessionExpired { .. })),
+                "expected SessionExpired, got {result:?}"
             );
         }
     }
@@ -3752,8 +3746,8 @@ mod tests {
             .await;
 
             assert!(
-                matches!(result, Err(RestError::InvalidSnowflakeResponse { .. })),
-                "expected InvalidSnowflakeResponse(SessionExpired), got {result:?}"
+                matches!(result, Err(RestError::SessionExpired { .. })),
+                "expected SessionExpired, got {result:?}"
             );
         }
     }
@@ -4093,7 +4087,7 @@ mod tests {
 
         let result = read_response_json::<serde_json::Value>(response).await;
         assert!(
-            matches!(result, Err(SnowflakeResponseError::SessionExpired { .. })),
+            matches!(result, Err(RestError::SessionExpired { .. })),
             "expected SessionExpired, got {result:?}"
         );
     }
@@ -4130,7 +4124,7 @@ mod tests {
 
             let result = read_response_json::<serde_json::Value>(response).await;
             match result {
-                Err(SnowflakeResponseError::MasterTokenTerminal { code: got, .. }) => {
+                Err(RestError::MasterTokenTerminal { code: got, .. }) => {
                     assert_eq!(
                         got, code,
                         "must preserve the real GS code, not fabricate one"
@@ -4168,11 +4162,14 @@ mod tests {
         let err = read_response_json::<serde_json::Value>(response)
             .await
             .expect_err("non-2xx should fail");
-        let display = err.to_string();
+        let inner = std::error::Error::source(&err)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
         assert!(
-            display.contains("403") && display.contains(&format!("body length {}.", body.len())),
-            "expected status and body length in display, got: {display}"
+            inner.contains("403") && inner.contains(&format!("body length {}.", body.len())),
+            "expected status and body length in inner display, outer={err}, inner={inner}"
         );
+        let display = format!("{err}; {inner}");
         assert!(
             !display.contains(secret_token),
             "raw body must not appear in error display, got: {display}"
