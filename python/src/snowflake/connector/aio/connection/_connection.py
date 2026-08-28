@@ -339,7 +339,12 @@ class Connection(ConnectionMixin[CursorInstance]):
         **kwargs: Any,
     ) -> Iterable[CursorInstance]:
         stream = StringIO(sql_text)
-        stream_generator = self.execute_stream(stream, remove_comments=remove_comments, cursor_class=cursor_class)
+        stream_generator = self.execute_stream(
+            stream,
+            remove_comments=remove_comments,
+            cursor_class=cursor_class,
+            **kwargs,
+        )
         if return_cursors:
             return [cursor async for cursor in stream_generator]
         async for _ in stream_generator:
@@ -358,7 +363,7 @@ class Connection(ConnectionMixin[CursorInstance]):
             if not sql:
                 continue
             cur = self.cursor(cursor_class=cursor_class)
-            await cur.execute(sql, _is_put_get=is_put_or_get)
+            await cur.execute(sql, _is_put_get=is_put_or_get, **kwargs)
             yield cur
 
     # ------------------------------------------------------------------

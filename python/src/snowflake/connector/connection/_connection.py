@@ -471,7 +471,12 @@ class Connection(ConnectionMixin[CursorInstance]):
     ) -> Iterable[CursorInstance]:
         """Execute a SQL text including multiple statements. This is a non-standard convenience method."""
         stream = StringIO(sql_text)
-        stream_generator = self.execute_stream(stream, remove_comments=remove_comments, cursor_class=cursor_class)
+        stream_generator = self.execute_stream(
+            stream,
+            remove_comments=remove_comments,
+            cursor_class=cursor_class,
+            **kwargs,
+        )
         if return_cursors:
             return list(stream_generator)
         for _ in stream_generator:
@@ -491,7 +496,7 @@ class Connection(ConnectionMixin[CursorInstance]):
             if not sql:
                 continue
             cur = self.cursor(cursor_class=cursor_class)
-            cur.execute(sql, _is_put_get=is_put_or_get)
+            cur.execute(sql, _is_put_get=is_put_or_get, **kwargs)
             yield cur
 
     # ------------------------------------------------------------------
