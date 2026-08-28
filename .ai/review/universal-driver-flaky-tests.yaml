@@ -539,18 +539,27 @@ rules:
     rule: |
       **OBJECTIVE**: Prevent test suite instability from leaked connections, file handles, or threads that exhaust finite resources for subsequent tests.
 
-      **REQUIREMENT**: Any resource acquired within a test — connections, cursors, file handles, thread pools, sockets, temporary files — MUST be released whether the test passes or fails. Unreleased resources accumulate across the test suite and cause random failures (connection pool exhausted, "too many open files", port conflicts) that appear unrelated to the leaking test. Use RAII / context managers for guaranteed cleanup:
+      **REQUIREMENT**: Live I/O acquired within a test — connections, statements, cursors, and result sets from **any** driver wrapper against a server, plus real file handles, sockets, thread pools, and temp files — MUST be released whether the test passes or fails. Unreleased live resources accumulate and cause random failures (connection pool exhausted, "too many open files", port conflicts). Use RAII / context managers for those resources (the same idea in every wrapper, including ones added later):
       - Python: `with conn:`, `with conn.cursor() as cur:`, `contextlib.closing(...)`.
       - Java: `try-with-resources`.
       - Rust: RAII (drop at end of scope); for async resources use `drop(resource)` explicitly before the assertion that would fail, or put them in a `scopeguard::defer!`.
       - C++: RAII wrappers (see `cleanup-safety` rule); never rely on test body reaching its end.
-      - Node.js: open resources in `beforeEach` and close them in `afterEach`; or use `try/finally` within the test body. Call `connection.end()` / `cursor.close()` unconditionally.
+      - Node.js / others: open in `beforeEach` (or equivalent) and close in `afterEach`; or `try/finally` in the test body. Call the wrapper's close/end API unconditionally.
+
+      This MUST does not apply to test doubles or in-memory buffers with no file/socket/session (`mock(InputStream.class)`, `ByteArrayInputStream`). Reserve a High finding for resources that can starve later tests.
+
+      Apply filters in this order: (1) mock / in-memory buffer → stay silent; (2) CODEBASE-CONSISTENCY AWARENESS for directory-wide raw-handle convention; (3) otherwise flag a live resource that is never released. Existence-check then close does not override (2) for a new live leak out of step with neighbors.
+
+      **MOCK-CONTEXT / NO-REAL-I/O SUPPRESSION**: stay silent only when construction is a mocking library or an in-memory buffer with no syscalls — `mock()` / `@Mock`, `ByteArrayInputStream`, MagicMock/`patch`/`mocker`, jest/sinon, mockall, gmock. Ignore variable names (`mockConn`). A fixture named `mock_connection` counts only if it *returns* a double.
+      If the type is production code (`SnowflakeConnectionImpl`, `downloadStream`, `FileInputStream`, `Files.newInputStream`), do **not** suppress — even when a collaborator is mocked. Production types can still touch files or threads. If unsure, do not suppress. An unclosed production stream whose only collaborator is a mock is at most Low; still recommend try-with-resources. Do not suppress `WireMockServer` / `wiremock::MockServer` (real port) or `spy` of a live handle.
+
+      **EXISTENCE-CHECK THEN CLOSE**: stay silent only when the assertion is acquisition/existence (`assert x is not None`, `assertNotNull(x)`) so failure means there is no handle, and `.close()` is the next statement. Do not treat `is_valid()`, row checks, or query results as existence checks — those still need `with` / try-with-resources / `finally`. Do not treat `try`/`finally` or `with` as "closed after assertions."
 
       **CODEBASE-CONSISTENCY AWARENESS — prefer context over a per-file finding**: raw-handle patterns (e.g. ODBC `SQLHENV`/`SQLHDBC` allocated with bare `SQLAllocHandle` and freed manually) are sometimes the established convention across an entire directory of replay/integration tests. When the same acquire/free pattern already appears in more than ~3 other files in the same directory, a lone per-file comment adds little — the file is consistent with its neighbors and singling it out is low-value noise. In that case, either stay silent or post at most one directory-level note framed as a refactor suggestion, e.g. "This matches the existing raw-handle pattern used across this directory; consider migrating all replay tests to a RAII/scope-guard helper in a single follow-up rather than file-by-file." Reserve a standard per-file finding for a genuinely *new* leak the surrounding files do not already exhibit (a resource this file acquires and fails to release, out of step with the local convention).
 
       **JDBC/Java patterns to flag**:
-      - `Connection`, `Statement`, or `ResultSet` acquired outside `try-with-resources` with no `@AfterEach` close.
-      - Multistatement tests that call `getMoreResults()` but leave intermediate `ResultSet`s open — can block the shared connection for subsequent tests.
+      - Live `Connection`, `Statement`, or `ResultSet` acquired from a real data source / driver outside `try-with-resources` with no `@AfterEach` close.
+      - Multistatement tests that call `getMoreResults()` but leave intermediate **server-backed** `ResultSet`s open — can block the shared connection for subsequent tests.
 
       ❌ **BAD (Python):**
       ```python
@@ -615,6 +624,44 @@ rules:
       try (ResultSet rs2 = statement.getResultSet()) {
           assertTrue(rs2.next());
       }
+      ```
+
+      ✅ **GOOD (Python):**
+      ```python
+      conn = int_test_connection_factory()
+      assert conn is not None
+      conn.close()
+      ```
+
+      ❌ **BAD (Java):**
+      ```java
+      mockCoreApi = mock(CoreDriverApi.class);
+      connection = new SnowflakeConnectionImpl(/* ... */, mockCoreApi);
+      InputStream result = connection.downloadStream("@my_stage", "data.csv.gz");
+      assertArrayEquals(expected, IoTestUtils.readAllBytes(result));
+      // production type — Low if only the collaborator is mocked; still use try-with-resources
+      ```
+
+      ❌ **BAD (Python):**
+      ```python
+      conn = create_connection()
+      assert conn.is_valid()
+      conn.close()  # skipped if is_valid() fails — live handle leaks
+      ```
+
+      ❌ **BAD (Java):**
+      ```java
+      InputStream in = new FileInputStream(tmp);
+      assertEquals(-1, in.read());
+      // real file descriptor never closed
+      ```
+
+      ❌ **BAD (Java):**
+      ```java
+      Connection mockConn = dataSource.getConnection();
+      Statement stmt = mockConn.createStatement();
+      assertTrue(stmt.execute("SELECT 1"));
+      // never closed — live connection; the name is irrelevant
       ```
 
   - id: ud-no-retry-hiding-real-failure

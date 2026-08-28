@@ -18,7 +18,7 @@ Read `.ai/review/universal-driver-flaky-tests.yaml` to obtain flaky-test rule ID
 **Step 3 — Categorised quality review.**
 For each file, evaluate all of the following categories and collect findings:
 
-- **Resource management** — JDBC objects (`Connection`, `Statement`, `ResultSet`) must be closed in `try-with-resources`. Manual `close()` in `finally` or bare resource opens without cleanup are findings.
+- **Resource management** — Live JDBC `Connection` / `Statement` / `ResultSet` must use try-with-resources (or `@AfterEach`). Out of scope: `mock(...)` / `ByteArrayInputStream`, and `assertNotNull(x); x.close()`. See `ud-no-resource-leak-in-tests`.
 - **Test structure** — Verify JUnit 5 annotations (`@Test`, `@BeforeEach`, `@AfterEach`, `@ParameterizedTest`). Distinguish e2e tests (require a live Snowflake endpoint) from unit/WireMock tests. Check Given-When-Then arrangement and `should`-prefixed method names.
 - **JDBC call and exception validation** — `assertThrows` must capture `SQLException`; verify that `getSQLState()` and `getErrorCode()` are asserted, not just the message string.
 - **Assertions** — No bare `assertTrue(x != null)`; use `assertNotNull`. No magic literals without named constants or explanatory comments.
@@ -75,7 +75,7 @@ After all per-file sections, append:
 
 ## Checklist
 
-- [ ] All JDBC resources wrapped in try-with-resources
+- [ ] Live JDBC resources in try-with-resources (mocks and `assertNotNull(x); x.close()` exempt)
 - [ ] All `Thread.sleep` calls removed or justified
 - [ ] `@SkipNewDriver`/`@SkipOldDriver` entries present in BehaviorDifferences.yaml
 - [ ] WireMock uses dynamic ports and resets in @AfterEach
@@ -87,7 +87,7 @@ After all per-file sections, append:
 
 **Pass criteria**
 
-- `try-with-resources` used for every JDBC resource. ✓ `try (ResultSet rs = stmt.executeQuery()) { … }`
+- `try-with-resources` for every live JDBC resource. ✓ `try (ResultSet rs = stmt.executeQuery()) { … }`. Exempt: `mock(...)` / `ByteArrayInputStream`, and `assertNotNull(x); x.close()`.
 - `assertThrows(SQLException.class, …)` used with subsequent `getSQLState()` assertion.
 - WireMock port is dynamic: `WireMockServer(wireMockConfig().dynamicPort())`.
 - `@SkipNewDriver` / `@SkipOldDriver` has a matching entry in `jdbc/BehaviorDifferences.yaml`.
@@ -96,7 +96,7 @@ After all per-file sections, append:
 **Fail examples**
 
 ```java
-// ❌ Resource leak
+// ❌ Resource leak (live connection / statement / result set, never closed)
 Statement stmt = conn.createStatement();
 ResultSet rs = stmt.executeQuery(SQL);
 
@@ -121,6 +121,7 @@ Severity escalation rule: any finding that can cause a test to pass on one run a
 - **Multistatement tests are especially prone to hardcoded object names.** The Snowflake multistatement API requires a named warehouse; a hardcoded warehouse name ties the test to a specific account configuration.
 - **WireMock `resetAll()` vs `resetMappings()`** — `resetMappings()` does not clear request journal; use `resetAll()` or the finding stands.
 - **`@ParameterizedTest` source methods** — check that the source (`@MethodSource`, `@CsvSource`) provides edge-case inputs (null, empty string, zero) not just happy-path values.
+- **`ud-no-resource-leak-in-tests`** — stay silent on `mock(...)` / `ByteArrayInputStream` and `assertNotNull(x); x.close()`. Live connections still need try-with-resources. Production types (`downloadStream`, `FileInputStream`) are not mocks even if a collaborator is mocked (Low at most).
 
 ## Out of Scope
 
