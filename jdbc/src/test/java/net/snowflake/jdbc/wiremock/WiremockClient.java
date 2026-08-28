@@ -51,6 +51,11 @@ public final class WiremockClient implements AutoCloseable {
   private static final String TLS_BASE_DISABLED = "SSLv3, TLSv1, TLSv1.1";
   private static final Duration DEFAULT_HEALTH_TIMEOUT = Duration.ofSeconds(30);
   private static final Duration DEFAULT_HEALTH_POLL_INTERVAL = Duration.ofMillis(250);
+  // Idempotent admin calls occasionally see a transient read timeout when the WireMock
+  // subprocess briefly stalls (GC pause, CPU starvation on a loaded CI runner). A couple of
+  // retries absorb that without masking a genuinely dead process, which fails every attempt.
+  private static final int ADMIN_MAX_ATTEMPTS = 3;
+  private static final Duration ADMIN_RETRY_BACKOFF = Duration.ofMillis(200);
 
   private final Path workspaceRoot;
   private final Path wiremockDir;
@@ -222,7 +227,7 @@ public final class WiremockClient implements AutoCloseable {
   }
 
   public void reset() {
-    Response resp = httpClient().post(adminUrl("/__admin/reset"), null);
+    Response resp = postAdminIdempotent("/__admin/reset", null);
     if (!resp.ok()) {
       throw new RuntimeException("Failed to reset WireMock: " + resp.status() + " " + resp.body());
     }
@@ -277,7 +282,7 @@ public final class WiremockClient implements AutoCloseable {
 
   public List<JsonNode> getRequests(String urlPathPattern) {
     ObjectNode body = objectNode().put("urlPathPattern", urlPathPattern);
-    Response resp = httpClient().post(adminUrl("/__admin/requests/find"), body.toString());
+    Response resp = postAdminIdempotent("/__admin/requests/find", body.toString());
     if (!resp.ok()) {
       throw new RuntimeException("Failed to query requests: " + resp.status() + " " + resp.body());
     }
@@ -294,7 +299,7 @@ public final class WiremockClient implements AutoCloseable {
 
   public void verifyRequestCount(int expectedCount, String urlPathPattern) {
     ObjectNode body = objectNode().put("method", "ANY").put("urlPathPattern", urlPathPattern);
-    Response resp = httpClient().post(adminUrl("/__admin/requests/count"), body.toString());
+    Response resp = postAdminIdempotent("/__admin/requests/count", body.toString());
     if (!resp.ok()) {
       throw new RuntimeException(
           "Failed to query request count: " + resp.status() + " " + resp.body());
@@ -324,6 +329,44 @@ public final class WiremockClient implements AutoCloseable {
 
   private String adminUrl(String path) {
     return "http://localhost:" + httpPort + path;
+  }
+
+  /**
+   * POST to an <em>idempotent</em> admin endpoint (reset, request-journal queries) with a bounded
+   * retry. {@link HttpTestClient} wraps a read timeout as an {@link RuntimeException}; when the
+   * subprocess is only briefly stalled that is transient and safe to replay. A dead subprocess is
+   * not transient — fail immediately with its exit code rather than exhausting retries on a corpse.
+   * Do not route state-mutating calls (mapping registration) through this: replaying a POST whose
+   * response was lost could double-apply it.
+   */
+  private Response postAdminIdempotent(String path, String body) {
+    String description = "POST " + path;
+    RuntimeException lastError = null;
+    for (int attempt = 1; attempt <= ADMIN_MAX_ATTEMPTS; attempt++) {
+      try {
+        return httpClient().post(adminUrl(path), body);
+      } catch (RuntimeException e) {
+        if (process != null && !process.isAlive()) {
+          throw new RuntimeException(
+              description + " failed: WireMock process exited with code " + process.exitValue(), e);
+        }
+        lastError = e;
+        if (attempt < ADMIN_MAX_ATTEMPTS) {
+          sleepBackoff(ADMIN_RETRY_BACKOFF);
+        }
+      }
+    }
+    throw new RuntimeException(
+        description + " failed after " + ADMIN_MAX_ATTEMPTS + " attempts", lastError);
+  }
+
+  private static void sleepBackoff(Duration backoff) {
+    try {
+      Thread.sleep(backoff.toMillis());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new RuntimeException("Interrupted during WireMock admin retry backoff", e);
+    }
   }
 
   private void registerSingleMapping(String mappingJson) {
