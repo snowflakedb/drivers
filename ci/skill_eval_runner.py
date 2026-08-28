@@ -2,8 +2,8 @@
 """Skill eval CI runner for universal-driver.
 
 Runs routing-accuracy evals via claude -p with Cortex env vars.
-Uses DB_USER / DB_PASS injected by the Buildkite agent (snowhouse_app_jenkins_credentials)
-for Snowhouse auth — no Vault setup required.
+Uses DB_USER + DB_PASS or DB_PRIVATE_KEY / SNOWHOUSE_PRIVATE_KEY injected by the
+Buildkite/WLE agent (ETDP-8162 key-pair migration) for Snowhouse auth — no Vault.
 
 Usage:
     python3 ci/skill_eval_runner.py           # eval changed skills only
@@ -522,18 +522,10 @@ def _make_ssl_context():
     return ctx
 
 
-def fetch_session_token(user, password):
-    # type: (str, str) -> str
-    """Exchange DB_USER / DB_PASS for a Snowhouse session token."""
-    body = json.dumps({
-        "data": {
-            "CLIENT_APP_ID": "SkillEvalCI",
-            "CLIENT_APP_VERSION": "1.0",
-            "LOGIN_NAME": user,
-            "PASSWORD": password,
-            "ACCOUNT_NAME": "snowhouse",
-        }
-    }).encode()
+def _snowhouse_login(data):
+    # type: (Dict[str, Any]) -> str
+    """POST to Snowhouse login-request and return session token."""
+    body = json.dumps({"data": data}).encode()
     req = Request(LOGIN_URL, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urlopen(req, timeout=30, context=_make_ssl_context()) as resp:
@@ -546,6 +538,79 @@ def fetch_session_token(user, password):
     if not token:
         raise RuntimeError("Login response contained empty token")
     return token
+
+
+def fetch_session_token(user, password):
+    # type: (str, str) -> str
+    """Exchange DB_USER / DB_PASS for a Snowhouse session token."""
+    return _snowhouse_login({
+        "CLIENT_APP_ID": "SkillEvalCI",
+        "CLIENT_APP_VERSION": "1.0",
+        "LOGIN_NAME": user,
+        "PASSWORD": password,
+        "ACCOUNT_NAME": "snowhouse",
+    })
+
+
+def _b64url(data):
+    # type: (bytes) -> str
+    import base64
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def fetch_session_token_keypair(user, private_key_pem):
+    # type: (str, str) -> str
+    """Exchange DB_USER + RSA private key PEM for a Snowhouse session token (JWT)."""
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.backends import default_backend
+        import base64
+        import hashlib
+        import time as _time
+    except ImportError as e:
+        raise RuntimeError(
+            "cryptography package required for Snowhouse key-pair auth: {0}".format(e)
+        ) from e
+
+    pem_bytes = private_key_pem.encode("utf-8") if isinstance(private_key_pem, str) else private_key_pem
+    key = serialization.load_pem_private_key(pem_bytes, password=None, backend=default_backend())
+    pub_der = key.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    # Snowflake fingerprint is standard base64 (not url-safe) of SHA256(DER public key)
+    fp = base64.b64encode(hashlib.sha256(pub_der).digest()).decode("ascii")
+    account = "SNOWHOUSE"
+    user_u = user.upper()
+    now = int(_time.time())
+    header = json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode()
+    claims = json.dumps({
+        "iss": "{0}.{1}.SHA256:{2}".format(account, user_u, fp),
+        "sub": "{0}.{1}".format(account, user_u),
+        "iat": now,
+        "exp": now + 60,
+    }, separators=(",", ":")).encode()
+    signing_input = "{0}.{1}".format(_b64url(header), _b64url(claims))
+    signature = key.sign(signing_input.encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+    jwt_token = "{0}.{1}".format(signing_input, _b64url(signature))
+    return _snowhouse_login({
+        "CLIENT_APP_ID": "SkillEvalCI",
+        "CLIENT_APP_VERSION": "1.0",
+        "LOGIN_NAME": user,
+        "AUTHENTICATOR": "SNOWFLAKE_JWT",
+        "TOKEN": jwt_token,
+        "ACCOUNT_NAME": "snowhouse",
+    })
+
+
+def _first_env(*keys):
+    # type: (*str) -> str
+    for k in keys:
+        v = os.environ.get(k, "")
+        if v:
+            return v
+    return ""
 
 
 def build_claude_env(token):
@@ -676,15 +741,23 @@ def main():
         logger.error("[skill-eval] claude CLI not found after install, skipping evals")
         return 0
 
-    # 4. Auth via DB_USER / DB_PASS (injected by snowhouse_app_jenkins_credentials on every worker)
-    db_user = os.environ.get("DB_USER", "")
+    # 4. Auth via DB_USER + key-pair (preferred) or DB_PASS (ETDP-8162)
+    db_user = os.environ.get("DB_USER", "") or os.environ.get("APP_JENKINS_USER", "")
     db_pass = os.environ.get("DB_PASS", "")
-    if not db_user or not db_pass:
-        logger.error("[skill-eval] DB_USER / DB_PASS not set — are these workers provisioned with snowhouse_app_jenkins_credentials?")
+    db_private_key = _first_env("DB_PRIVATE_KEY", "SNOWHOUSE_PRIVATE_KEY", "APP_JENKINS_PRIVATE_KEY")
+    if not db_user or (not db_pass and not db_private_key):
+        logger.error(
+            "[skill-eval] DB_USER and DB_PASS/DB_PRIVATE_KEY not set — are workers provisioned for Snowhouse auth?"
+        )
         return 1
 
     try:
-        token = fetch_session_token(db_user, db_pass)
+        if db_private_key:
+            logger.info("[skill-eval] Snowhouse auth via key-pair (user=%s)", db_user)
+            token = fetch_session_token_keypair(db_user, db_private_key)
+        else:
+            logger.info("[skill-eval] Snowhouse auth via password (user=%s)", db_user)
+            token = fetch_session_token(db_user, db_pass)
     except RuntimeError as e:
         logger.error("[skill-eval] Snowhouse auth failed: %s", e)
         return 1
