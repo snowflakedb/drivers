@@ -1,0 +1,82 @@
+name: gosnowflake vanity redirect smoke
+
+# Proves go.snowflake.com/gosnowflake resolves through the vanity redirector
+# and that `go get` can fetch + compile the module into a fresh consumer.
+
+on:
+  pull_request:
+    paths:
+      - 'gosnowflake/**'
+      - '.github/workflows/test-gosnowflake-redirect.yml'
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+    paths:
+      - 'gosnowflake/**'
+      - '.github/workflows/test-gosnowflake-redirect.yml'
+  schedule:
+    # Shortly after mirror.yml (07:00 / 12:00 UTC).
+    - cron: '0 8,13 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # `go get` reads the go-import tag from customer machines that hold no
+  # Snowflake credentials, so the vanity must point at the PUBLIC mirror
+  # (mirror.yml MIRROR_DESTINATION_URL) — never at snowflake-eng.
+  GOSNOWFLAKE_VCS_REPO: github.com/snowflakedb/drivers
+  GOSNOWFLAKE_MODULE: go.snowflake.com/drivers/gosnowflake
+
+jobs:
+  redirect-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          # Fresh module cache every run — avoid stale vanity resolutions.
+          cache: false
+
+      - name: Smoke vanity redirect + go get
+        run: |
+          set -euo pipefail
+
+          # Always @latest. The vanity resolves to the public mirror, where our
+          # commits are copybara-rewritten, so a PR-head SHA never exists there.
+          # This job therefore covers the redirector plus the last MIRRORED
+          # module state — not the PR's own changes.
+
+          # repo-root must be a cloneable repo root (.../drivers). git cannot
+          # clone a subdirectory (.../drivers/gosnowflake), so reject those.
+          meta="$(curl -fsSL "https://${GOSNOWFLAKE_MODULE}?go-get=1")"
+          printf '%s\n' "$meta"
+          if ! grep -F "go-import" <<<"$meta" | grep -Fq "${GOSNOWFLAKE_VCS_REPO}"; then
+            echo "::error::go-import must contain: git https://${GOSNOWFLAKE_VCS_REPO}"
+            exit 1
+          fi
+          # Escape '.' so 'github.com' is not a regex wildcard.
+          vcs_re="${GOSNOWFLAKE_VCS_REPO//./\\.}"
+          if grep -F "go-import" <<<"$meta" | grep -Eq "${vcs_re}/[^\"[:space:]]+"; then
+            echo "::error::go-import points below ${GOSNOWFLAKE_VCS_REPO}; use the repo root URL only"
+            exit 1
+          fi
+
+          tmp="$(mktemp -d)"
+          cd "$tmp"
+          go mod init example.com/gosnowflake-redirect-smoke
+          go get "${GOSNOWFLAKE_MODULE}@latest"
+          go list -m -f '{{.Path}} {{.Version}}' "${GOSNOWFLAKE_MODULE}"
+
+          printf '%s\n' \
+            'package main' \
+            "import _ \"${GOSNOWFLAKE_MODULE}\"" \
+            'func main() {}' > main.go
+          go build -o /dev/null .

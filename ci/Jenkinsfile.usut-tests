@@ -246,7 +246,7 @@ def provisionUsut() {
           --filter=blob:none \
           --no-checkout \
           --branch sut-stable \
-          https://${GITHUB_USER_EMU}:${GITHUB_TOKEN_EMU}@github.com/snowflake-eng/snowflake.git \
+          https://${GITHUB_USER_EMU}:${GITHUB_TOKEN_EMU}@github.com/snowflakedb/snowflake.git \
           snowflake-monorepo
         cd snowflake-monorepo
         git sparse-checkout init --cone
