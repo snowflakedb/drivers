@@ -12,6 +12,7 @@ use super::decfloat::{decfloat_field, format_decfloat, i128_from_big_endian_sign
 use super::js_cell::JsCell;
 use super::time_format;
 use crate::session_params::SessionParams;
+use sf_types::ReadArrowType;
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -254,9 +255,18 @@ impl ColumnReader {
                 JsCell::Str(Cow::Owned(decimal_string(array.value(row_index), *scale)))
             }),
             Self::Date(array) => read_cell(array, row_index, || {
-                JsCell::Date(
-                    Date32Type::to_naive_date(array.value(row_index)).and_time(NaiveTime::MIN),
-                )
+                // The Arrow `Date32` → `NaiveDate` decode is shared with the
+                // ODBC and Python front ends via `sf_types`; only the
+                // JS-specific mapping to a midnight `NaiveDateTime` (what napi
+                // renders as a JavaScript `Date`) stays here. `read_cell`
+                // already excluded NULL, and a non-null `Date32` cell always
+                // decodes, so the reader cannot error on this path.
+                let date = sf_types::SnowflakeDate
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!("non-null Date32 cell always decodes to a NaiveDate")
+                    });
+                JsCell::Date(date.and_time(NaiveTime::MIN))
             }),
             Self::TimeI32(array, meta) => read_cell(array, row_index, || {
                 JsCell::Str(Cow::Owned(decode_time(array.value(row_index) as i64, meta)))

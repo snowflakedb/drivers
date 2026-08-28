@@ -3243,6 +3243,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "sf_core",
+ "sf_types",
  "snafu 0.8.9",
  "tracing",
  "tracing-subscriber",
@@ -3582,6 +3583,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sf_core",
+ "sf_types",
  "snafu 0.8.9",
  "strum",
  "strum_macros",
@@ -5116,6 +5118,16 @@ dependencies = [
 [[package]]
 name = "sf_params_spec"
 version = "0.0.0"
+
+[[package]]
+name = "sf_types"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "chrono",
+ "error_trace",
+ "snafu 0.8.9",
+]
 
 [[package]]
 name = "sha1"

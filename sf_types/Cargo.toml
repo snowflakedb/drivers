@@ -1,0 +1,11 @@
+[package]
+name = "sf_types"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+arrow = { version = ">=54.0.0, <59" }
+chrono = "0.4.43"
+snafu = "0.8.7"
+error_trace = { path = "../error_trace" }

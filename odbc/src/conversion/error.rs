@@ -29,6 +29,25 @@ pub enum ReadArrowError {
     },
 }
 
+/// Translate the shared `sf_types` reader error into this crate's parallel
+/// [`ReadArrowError`]. The conversion is variant-to-variant rather than
+/// nesting the shared error as a `source`, so the null handling in the
+/// conversion machinery keeps matching on this crate's own `NullValue`
+/// variant. The shared reader's decode `location` is carried through
+/// unchanged.
+impl From<sf_types::ReadArrowError> for ReadArrowError {
+    fn from(err: sf_types::ReadArrowError) -> Self {
+        match err {
+            sf_types::ReadArrowError::NullValue { location } => {
+                ReadArrowError::NullValue { location }
+            }
+            sf_types::ReadArrowError::InvalidArrowValue { reason, location } => {
+                ReadArrowError::InvalidArrowValue { reason, location }
+            }
+        }
+    }
+}
+
 #[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum WriteOdbcError {
