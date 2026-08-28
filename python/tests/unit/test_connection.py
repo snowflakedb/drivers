@@ -476,6 +476,13 @@ class TestConnectionSetOptions:
         assert setting == ConfigSetting(bool_value=True)
         assert setting.WhichOneof("value") == "bool_value"
 
+    def test_disable_request_pooling_is_dropped_with_warning(self, mock_db_api, isolate_application_detection):
+        with pytest.warns(DeprecationWarning, match="disable_request_pooling"):
+            Connection(user="u", account="a", disable_request_pooling=True)
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert "disable_request_pooling" not in request.options
+
     def test_float_options_use_double_value(self, mock_db_api):
         """Float kwargs should be sent as ConfigSetting(double_value=...)."""
         from snowflake.connector.connection import Connection
@@ -1180,6 +1187,17 @@ class TestInternalApplicationName:
 
         request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert request.options["client_app_version"] == ConfigSetting(string_value=__version__)
+
+
+class TestDisableRequestPoolingRemoved:
+    """BD#88: Connection.disable_request_pooling is not part of the public API."""
+
+    def test_property_is_absent_from_connection_class(self):
+        assert not hasattr(Connection, "disable_request_pooling")
+
+    def test_read_raises_attribute_error(self, connection):
+        with pytest.raises(AttributeError):
+            _ = connection.disable_request_pooling
 
 
 class TestLogMaxQueryLength:

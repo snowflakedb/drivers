@@ -117,6 +117,12 @@ class TestFromKwargs:
         assert config.user == "u"
         assert "client_fetch_use_mp" not in config._extra
 
+    def test_disable_request_pooling_is_dropped_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="disable_request_pooling"):
+            config = ConnectionConfig.from_kwargs(user="u", disable_request_pooling=True)
+        assert config.user == "u"
+        assert "disable_request_pooling" not in config._extra
+
     def test_enable_crl_cache_is_dropped_with_warning(self):
         with pytest.warns(DeprecationWarning, match="enable_crl_cache"):
             config = ConnectionConfig.from_kwargs(user="u", enable_crl_cache=False)

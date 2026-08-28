@@ -1182,3 +1182,25 @@ behavior_differences:
       Applications that PUT symlinked source files and rely on the stage object name matching
       the symlink's own basename will observe the name change to the target's basename.
       Non-symlink workflows are unaffected.
+
+  88:
+    name: "disable_request_pooling property removed; connect() kwarg is a no-op"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `connect(disable_request_pooling=True)` is accepted (default `False`).
+      `Connection.disable_request_pooling` is a get/set property that toggles
+      whether HTTP sessions are reused across REST calls.
+    new_driver_behavior: |
+      `Connection.disable_request_pooling` does not exist; reading it raises
+      `AttributeError`. Passing `disable_request_pooling` to `connect()` is
+      accepted for source compatibility but has no effect and emits a
+      `DeprecationWarning`.
+    description: |
+      The old flag controlled reuse of Python `requests.Session` objects. The
+      new driver has no equivalent request-session pool; HTTP keep-alive on the
+      core HTTP client is internal and not user-configurable. Mapping the flag
+      onto keep-alive would invent a different feature under a legacy name.

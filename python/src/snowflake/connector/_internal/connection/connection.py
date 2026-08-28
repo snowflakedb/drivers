@@ -443,17 +443,6 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
 
     @property
     @api_telemetry
-    def disable_request_pooling(self) -> bool:
-        """Whether HTTP connection pooling is disabled."""
-        raise NotImplementedError("disable_request_pooling is not yet implemented")
-
-    @disable_request_pooling.setter
-    @api_telemetry
-    def disable_request_pooling(self, value: bool) -> None:
-        raise NotImplementedError("disable_request_pooling is not yet implemented")
-
-    @property
-    @api_telemetry
     def use_openssl_only(self) -> bool:
         """Deprecated. Whether to restrict TLS to OpenSSL only (always ``True``)."""
         raise NotImplementedError("use_openssl_only is not yet implemented")
