@@ -1,0 +1,206 @@
+id: universal-driver-telemetry
+friendly_name: "Universal Driver Telemetry Guidelines (wrapper public APIs)"
+status: enabled
+# Category: Observability.
+# Cross-wrapper API telemetry: every wrapper public entry records the same
+# event family as Python `@api_telemetry` (`api_call` via
+# `telemetry_send_api_usage` → `sf_core::telemetry::record_api_call`), and
+# wrapper-caught errors use the companion `exception` event
+# (`telemetry_send_wrapper_error` → `record_exception`).
+#
+# Do not re-flag (owned by sibling rulesets):
+#   - Python Connection/Cursor `@api_telemetry` placement:
+#     `ud-py-public-connection-cursor-api-telemetry`
+#     (`universal-driver-python.yaml`)
+#   - Server opt-in (`CLIENT_TELEMETRY_ENABLED` + registry):
+#     `ud-risk-telemetry-requires-server-opt-in` (`universal-driver-risks.yaml`)
+#   - Payload contents (no SQL/bindings/results/secrets in attributes):
+#     `ud-risk-telemetry-payload-metadata-only` (`universal-driver-risks.yaml`)
+#   - Log entry/exit on public APIs (INFO/DEBUG logs, not telemetry events):
+#     `ud-log-public-api-entry-and-exit` (`universal-driver-logging.yaml`)
+allowed_folders:
+  - "sf_core/src"
+  - "odbc/src"
+  - "jdbc_bridge/src"
+  - "jdbc/src/main/java"
+  - "jdbc/decorator-processor"
+  - "python/src"
+  - "nodejs/src"
+excluded_folders:
+  - "sf_core/src/bin"
+  - "python/src/snowflake/connector/_internal/protobuf_gen"
+  - "python/src/snowflake/connector/_internal/nanoarrow_cpp"
+  - "nodejs/node_modules"
+  - "nodejs/dist"
+allowed_file_extensions:
+  - ".rs"
+  - ".py"
+  - ".java"
+  - ".ts"
+  - ".js"
+rules:
+  - id: ud-tel-wrapper-public-api-records-api-call
+    rule: |
+      **OBJECTIVE**: Every wrapper public entry the host application calls must record the shared `api_call` event so usage is comparable across Python, JDBC, Node.js, and ODBC. This is telemetry, not logging — do not treat INFO entry/exit logs as a substitute (`ud-log-public-api-entry-and-exit`).
+
+      **REQUIREMENT**: A newly added or newly public wrapper method equivalent to connect / execute / fetch / close (and language-specific siblings: `connectAsync`, `executeQuery`, `SQLExecDirect`, `destroy`/`SQLDisconnect`, `createStatement`, …) MUST emit the existing API-usage family:
+      1. Call the language seam that forwards to `telemetry_send_api_usage` (Python `@api_telemetry` / `TelemetryClient.send_api_usage`, JDBC `Telemetry.recordApiUsage`, ODBC `record_api_usage` / `record_api!`). Do not invent a parallel exporter, HTTP `/telemetry/send` client, or OpenTelemetry exporter in the wrapper.
+      2. Use a stable wire name `<Type>.<method>` (e.g. `SnowflakeCursor.execute`, `Statement.execute`, `SQLExecDirect`, `Connection.execute`) — not a free-form sentence and not argument values.
+      3. Record only the **outermost** public call. Nested public helpers on the same stack must not emit a second `api_call` (Python `_TRACKING` / JDBC `IN_CALL` ThreadLocal / equivalent).
+      4. Argument capture, if any, is **names only** (Python `passed_arguments`); ODBC records an empty list today. Never pass SQL text, bindings, or result payloads here — payload policy is `ud-risk-telemetry-payload-metadata-only`.
+
+      **Python Connection/Cursor**: decorator placement on `SnowflakeConnection` / `SnowflakeCursor` is owned by `ud-py-public-connection-cursor-api-telemetry` — do not re-flag those classes here. Still flag other Python public surfaces (`pandas_tools.write_pandas`, new module-level connect helpers, …) and every other wrapper.
+
+      **Hot-path exemption**: per-row / per-column accessors may skip `api_call` only with an explicit marker (`@NoTelemetry`, a comment next to a missing `@api_telemetry`, or ODBC omitting `record_api!` with a comment). Unmarked public entries are a finding.
+
+      ❌ **BAD:**
+      ```python
+      def connect(self, **kwargs):          # new public entry, no @api_telemetry
+          return self._open(**kwargs)
+      ```
+      ```java
+      public ResultSet executeQuery(String sql) throws SQLException {
+          return delegate.executeQuery(sql);   // bypasses generated decorator / recordApiUsage
+      }
+      ```
+      ```typescript
+      execute(options: StatementOption) {
+        return this.#core.execute(options.sqlText);  // no api_call
+      }
+      ```
+      ```rust
+      pub unsafe extern "system" fn SQLExecDirect(...) -> sql::RetCode {
+          set_dispatch!();
+          // missing record_api!(..., "SQLExecDirect")
+          api::statement::sql_exec_direct(...).to_sql_code()
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      from snowflake.connector._internal.decorators import api_telemetry
+
+      @api_telemetry
+      def connect(self, **kwargs):
+          return self._open(**kwargs)
+      ```
+      ```java
+      // @JdbcBoundary impl: generated decorator calls telemetry.recordApiUsage("Statement.execute")
+      public ResultSet executeQuery(String sql) { return delegate.executeQuery(sql); }
+      ```
+      ```typescript
+      execute(options: StatementOption) {
+        this.#telemetry?.recordApiUsage("Connection.execute");
+        return this.#runStatement(this.#core.execute(options.sqlText), options);
+      }
+      ```
+      ```rust
+      pub unsafe extern "system" fn SQLExecDirect(...) -> sql::RetCode {
+          set_dispatch!();
+          record_api!(sql::HandleType::Stmt, statement_handle, "SQLExecDirect");
+          let result = api::statement::sql_exec_direct(...);
+          record_err!(sql::HandleType::Stmt, statement_handle, result);
+          result.to_sql_code()
+      }
+      ```
+
+  - id: ud-tel-wrapper-boundary-records-exception
+    rule: |
+      **OBJECTIVE**: Errors caught or translated at a wrapper public boundary must emit the companion `exception` event in the same family (`telemetry_send_wrapper_error` → `sf_core::telemetry::record_exception`), so API-usage and failures can be correlated.
+
+      **REQUIREMENT**: When a public wrapper entry catches, maps, or otherwise handles an error before returning it to the host (JDBC `SqlExceptionMapper`, ODBC `record_err!` after setting the diagnostic, Python wrapper-error path on decorated APIs), it MUST also call the existing wrapper-error seam (`recordWrapperError` / `record_wrapper_error` / `send_wrapper_error`). Pass the already-classified **type/class name** and **error-source category** — not the raw throwable, not a Display/toString of a foreign error.
+
+      Do not add a third event type for the same failure. Nested frames that are not the outermost public entry must not double-count (same guard as `api_call`). Telemetry send failures stay on the fire-and-forget path (`ud-tel-telemetry-never-breaks-user-path`).
+
+      Flag: a new public boundary that translates/catches an error with no wrapper-error RPC; a homemade "error telemetry" payload that does not go through `telemetry_send_wrapper_error`.
+
+      ❌ **BAD:**
+      ```java
+      try {
+        return action.get();
+      } catch (RuntimeException e) {
+        throw SqlExceptionMapper.translate(e);   // translated, never recordWrapperError
+      }
+      ```
+      ```rust
+      if let Err(ref err) = result {
+          // diagnostic set, but no record_wrapper_error
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      try {
+        return action.get();
+      } catch (RuntimeException e) {
+        telemetry.recordWrapperError(e);
+        throw SqlExceptionMapper.translate(e);
+      }
+      ```
+      ```rust
+      record_err!(sql::HandleType::Stmt, statement_handle, result);
+      ```
+
+  - id: ud-tel-telemetry-never-breaks-user-path
+    rule: |
+      **OBJECTIVE**: Telemetry is best-effort. A down exporter, missing session, or RPC failure must never change the user's connect/execute/fetch/close outcome.
+
+      **REQUIREMENT**: Wrapper telemetry seams MUST swallow every failure from `telemetry_send_api_usage` / `telemetry_send_wrapper_error` (and language equivalents). Log the miss at DEBUG (class/type only is enough). Do not `unwrap`/`expect`, do not let the error replace the user's SQLException/InterfaceError, and do not skip the user operation because telemetry could not be sent.
+
+      Pre-session / unresolved-handle cases may silently drop the event (ODBC env handles, JDBC `Telemetry.NOOP` before a connection exists) — that is correct, not a finding.
+
+      ❌ **BAD:**
+      ```python
+      def send_api_usage(self, api_method: str) -> None:
+          core_driver.telemetry_send_api_usage(...)   # exception escapes to the caller
+      ```
+      ```java
+      public void recordApiUsage(String apiMethod) {
+          coreDriverApi.telemetrySendApiUsage(connectionHandle, apiMethod); // throws SQLException
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      def send_api_usage(self, api_method: str, passed_arguments=None) -> None:
+          try:
+              core_driver.telemetry_send_api_usage(...)
+          except Exception:
+              logger.debug("Failed to send api_usage telemetry", exc_info=True)
+      ```
+      ```java
+      public void recordApiUsage(String apiMethod) {
+          try {
+              coreDriverApi.telemetrySendApiUsage(connectionHandle, apiMethod);
+          } catch (Throwable t) {
+              logger.debug("Swallowed telemetry api-usage failure: {}", t.getClass().getName());
+          }
+      }
+      ```
+
+  - id: ud-tel-core-records-api-call-not-a-second-pipeline
+    rule: |
+      **OBJECTIVE**: `sf_core` is the single place that materializes `api_call` / `exception` events onto the session span. Wrappers emit; core records, batches, and transports.
+
+      **REQUIREMENT**: The protobuf RPCs `telemetry_send_api_usage` and `telemetry_send_wrapper_error` MUST keep calling `crate::telemetry::record_api_call` / `record_exception` on a `snowflake_op_span!` (or the current session-tagged span). Do not add a second in-band send path from a wrapper that bypasses these RPCs. Do not duplicate span construction in JDBC/Python/ODBC/Node.
+
+      Gating of the actual export remains `ud-risk-telemetry-requires-server-opt-in` — do not re-state that here. This rule is about **where** the event is recorded, not whether the session is opted in.
+
+      Flag: a wrapper posting its own telemetry HTTP body; a core change that records wrapper API usage without going through `record_api_call` / `record_exception`; a new FFI/RPC that "sends telemetry" without those helpers.
+
+      ❌ **BAD:**
+      ```rust
+      // in a wrapper
+      client.post("/telemetry/send").json(&api_call_body).send().await?;
+      ```
+      ```rust
+      // in telemetry_send_api_usage — ad-hoc event, skips record_api_call
+      tracing::info!(api_method = %input.api_method, "api usage");
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let span = crate::snowflake_op_span!("wrapper_api_usage", session_id);
+      let _guard = span.enter();
+      crate::telemetry::record_api_call(&input.api_method, &input.passed_arguments);
+      ```
