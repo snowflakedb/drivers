@@ -1,6 +1,20 @@
 id: universal-driver-nodejs
 friendly_name: "Universal Driver Node.js Guidelines"
 status: enabled
+# Category: Surface implementation.
+#
+# Production Node/TypeScript conventions for the snowflake-sdk wrapper
+# (`nodejs/src`) and its tests (`nodejs/tests`).
+#
+# Do NOT duplicate (link instead):
+#   - Logging / secret-in-logs: `.ai/review/universal-driver-logging.yaml`
+#     (already includes `nodejs/src`).
+#   - Flaky-test mechanics (bare sleep, shared mutable state, unique object
+#     names): `.ai/review/universal-driver-flaky-tests.yaml` (already includes
+#     `nodejs/tests`).
+#   - Secret STORAGE and trust-boundary risks: Rust-scoped
+#     (`universal-driver-security.yaml`, `universal-driver-risks.yaml`).
+#   - Gherkin `Scenario:` naming (`should` prefix): `universal-driver-tests.yaml`.
 allowed_folders:
   - "nodejs/src"
   - "nodejs/tests"
@@ -56,5 +70,410 @@ rules:
       ```typescript
       getNumRows(): number | undefined {
         /* ... */
+      }
+      ```
+
+  - id: ud-node-sql-parameterization
+    rule: |
+      **OBJECTIVE**: Never interpolate variable values into SQL strings via
+      template literals or concatenation. Every variable value must reach the
+      server as a binding (`binds`), not as part of the query text.
+
+      **REQUIREMENT**: Any `connection.execute({ sqlText, ... })` (or
+      `CoreConnection.execute(...)`) call that includes a non-constant
+      variable in `sqlText` is a finding. The snowflake-sdk contract is
+      positional `?` placeholders plus a `binds` array on the execute
+      options (see e2e `multi-statement.test.ts`:
+      `sqlText: 'select ?; select ?,3; select ?,5,6', binds: [1, 2, 4]`).
+
+      **Identifiers** (table, schema, stage, view, column name) in production
+      code (`nodejs/src`):
+      Use `IDENTIFIER(?)` and put the name in `binds`.
+
+      **Data values** (WHERE, INSERT, option arguments):
+      Use a bare `?` and put the value in `binds`.
+
+      **When binding is not possible** (syntax does not support it — e.g.
+      `PUT`/`GET` stage-path arguments, `@stage` references in `COPY INTO
+      FROM`):
+      Leave the interpolation in place but add an inline comment explaining
+      why binding cannot be used and noting the mitigating factor (internally
+      generated name, escaping applied). Do not silently interpolate without
+      justification.
+
+      **Exemptions** — raw interpolation is acceptable without a comment when:
+      - The interpolated token is a hard-coded string literal constant in the
+        same file.
+      - A SQL structural keyword assembled purely from hard-coded fragments
+        (`CREATE TEMPORARY`, `IF NOT EXISTS`) with no variable interpolation.
+      - **Test code only** (`nodejs/tests`): an identifier produced by a
+        harness helper such as `randomizeName()`. These are internally
+        controlled names; SQL injection is not the threat model for fixtures.
+
+      Adapted from `ud-py-sql-parameterization` /
+      `ud-java-sql-parameterization`. Do not re-flag flaky ORDER BY / unique
+      table-name issues here — those live in
+      `universal-driver-flaky-tests.yaml`.
+
+      ❌ **BAD:**
+      ```typescript
+      connection.execute({
+        sqlText: `SELECT COUNT(*) FROM ${tableName} WHERE id = ${userId}`,
+        complete,
+      });
+
+      this.#core.execute('TRUNCATE TABLE IF EXISTS ' + tableName);
+
+      connection.execute({
+        sqlText: `INSERT INTO ${tableName} (n, s) VALUES (?, ?)`,
+        binds: [n, s],
+        complete,
+      });
+      ```
+
+      ✅ **GOOD:**
+      ```typescript
+      connection.execute({
+        sqlText: 'SELECT COUNT(*) FROM IDENTIFIER(?) WHERE id = ?',
+        binds: [tableName, userId],
+        complete,
+      });
+
+      connection.execute({
+        sqlText: 'TRUNCATE TABLE IF EXISTS IDENTIFIER(?)',
+        binds: [tableName],
+        complete,
+      });
+
+      connection.execute({
+        sqlText: 'INSERT INTO IDENTIFIER(?) (n, s) VALUES (?, ?)',
+        binds: [tableName, n, s],
+        complete,
+      });
+
+      // PUT: binding not supported — comment required
+      connection.execute({
+        sqlText: `PUT 'file://${escapedUri}' @${stageName} PARALLEL=4`,
+        complete,
+      });
+      // PUT syntax does not support IDENTIFIER(?) or ? bindings for stage
+      // paths or file URIs. stageName is connector-internal
+      // (randomizeName()); escapedUri comes from a path-escaping helper.
+      ```
+
+  - id: ud-node-resource-cleanup
+    rule: |
+      **OBJECTIVE**: Connections, native statements, and row streams must be
+      released on every code path — including exception and early-return
+      paths. A leaked `Connection` holds a Snowflake session; a leaked core
+      `Statement` holds result buffers; an un-destroyed `Readable` from
+      `streamRows()` can pin both.
+
+      **REQUIREMENT**: Acquire and release lifecycle-managed resources with
+      `try/finally` (or an equivalent helper that always runs cleanup). A
+      bare `destroy()` / `close()` after the happy path is a leak when the
+      call in between throws.
+
+      Resources this applies to:
+      - `Connection` — `destroy(callback)` (tests: `destroyConnectionAsync`
+        from `nodejs/tests/e2e/utils`). Pair `createConnection` /
+        `connectAsync()` with destroy on every exit path.
+      - Core statements (`CoreStatementInstance`) — `close()` in `finally`,
+        as `collectRows()` already does. `createRowStream()` MUST close the
+        core statement from the stream `destroy()` hook.
+      - `Readable` from `RowStatement.streamRows()` — fully consume or
+        `destroy()`; attach an `'error'` listener so a failed stream is not
+        left unhandled.
+      - File handles / temp files used while building PUT/GET payloads.
+
+      Long-lived resources stored on `this` whose lifetime is bound to the
+      owning object (e.g. `Connection.#core`) are cleaned up in the owner's
+      `destroy()` / `close()` — do not flag those.
+
+      Test code is included: a test that calls `createTestConnection` MUST
+      destroy it in `finally` or `afterAll`/`afterEach`. See
+      `nodejs/tests/e2e/connection.test.ts`.
+
+      Do not re-flag bare `setTimeout` waits — that is
+      `ud-no-bare-sleep-for-async-wait` in
+      `universal-driver-flaky-tests.yaml`.
+
+      Adapted from `ud-py-resource-cleanup-via-context-managers` and
+      `ud-java-try-with-resources-required`.
+
+      ❌ **BAD:**
+      ```typescript
+      async function runQuery(sqlText: string) {
+        const connection = createConnection(options);
+        await connection.connectAsync();
+        const { rows } = await executeAsync(connection, sqlText);
+        await destroyConnectionAsync(connection); // skipped if execute throws
+        return rows;
+      }
+
+      const stream = statement.streamRows();
+      stream.on('data', onRow); // never destroyed; no 'error' handler
+      ```
+
+      ✅ **GOOD:**
+      ```typescript
+      async function runQuery(sqlText: string) {
+        const connection = createConnection(options);
+        try {
+          await connection.connectAsync();
+          const { rows } = await executeAsync(connection, sqlText);
+          return rows;
+        } finally {
+          await destroyConnectionAsync(connection);
+        }
+      }
+
+      export async function collectRows(
+        coreStatement: CoreStatementInstance,
+        rowMode: RowMode,
+      ): Promise<unknown[]> {
+        try {
+          await coreStatement.waitForCompletion();
+          /* drain rows */
+        } finally {
+          coreStatement.close();
+        }
+      }
+
+      const stream = statement.streamRows();
+      stream.on('error', onError).on('data', onRow).on('end', onEnd);
+      ```
+
+  - id: ud-node-no-accidental-public-api
+    rule: |
+      **OBJECTIVE**: Keep the public snowflake-sdk surface small and
+      intentional. Every newly exported symbol is a forward-compatibility
+      liability for callers of `snowflake-sdk`.
+
+      **REQUIREMENT**: The package entry is `nodejs/src/index.ts` (built to
+      `dist/index.js`). Implementation details MUST stay off that barrel:
+
+      - FFI/core types (`CoreConnection`, `CoreStatement`, `CoreColumn` from
+        `nodejs/src/core`) are native-bridge internals. Do not re-export
+        them from `index.ts`.
+      - Helpers such as `normalizeConnectionOptions`, `collectRows`,
+        `createRowStream`, `resolveColumnNames`, `updateGlobalConfig`, and
+        `resetGlobalConfig` are not part of the user contract. Tests may
+        import them from their module path; do not add them to the public
+        named-export list.
+      - Within a public class (`Connection`, `RowStatement`), a method that
+        is not part of the user contract MUST be a private field (`#runStatement`,
+        `#core`, `#defaultRowMode`). Do not promote a helper to a public
+        method solely so a sibling module can call it — keep it `#private`
+        or move it to a non-exported module.
+      - Re-exports added to `index.ts` count as making something public.
+        The package currently uses named exports only (`createConnection`,
+        `configure`, `Connection`, `RowStatement`, and the public types).
+        Do not add a default export, and do not export `FileAndStageBindStatement`
+        construction as a supported API while it still throws
+        "not implemented".
+
+      Treat these as red flags: a new top-level file under `nodejs/src/`
+      whose symbols are then exported from `index.ts` for plumbing no end
+      user should call; public methods named after internal protocols
+      (`executeOnCore`, `normalizeLoginPayload`); exporting generated
+      `binary-types.generated.ts` types from the barrel.
+
+      Adapted from `ud-py-no-accidental-public-api`.
+
+      ❌ **BAD:**
+      ```typescript
+      // index.ts — leaking the native bridge
+      export { CoreConnection, CoreStatement } from './core';
+      export { normalizeConnectionOptions } from './connection-option-aliases.js';
+      export { resetGlobalConfig } from './global-config.js';
+
+      export class Connection {
+        runStatement(coreStatement: CoreStatementInstance) { /* ... */ }
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```typescript
+      // index.ts — public barrel only
+      export {
+        RowStatement,
+        type StatementCallback,
+        type StreamOptions,
+        type ConfigureOptions,
+      };
+      export const createConnection = (options: ConnectionOptions) =>
+        new Connection(options);
+      export const configure = (options: ConfigureOptions) =>
+        updateGlobalConfig(options);
+
+      export class Connection {
+        #core: CoreConnectionInstance;
+        #runStatement(coreStatement: CoreStatementInstance, options: { complete?: StatementCallback }) {
+          /* ... */
+        }
+      }
+      ```
+
+  - id: ud-node-actionable-errors
+    rule: |
+      **OBJECTIVE**: Errors surfaced to users must tell them what went
+      wrong, what was being attempted, and what to do next. Swallowing
+      failures or throwing a bare `Error('failed')` wastes support cycles.
+
+      **REQUIREMENT**: When throwing or forwarding a user-visible failure
+      (not an internal sentinel caught immediately one frame up):
+
+      1. **What** failed, in concrete terms (not "an error occurred").
+      2. **Why** when the cause is known (offending value, missing field,
+         upstream message).
+      3. **What the user can do** when actionable (set `account`, rotate
+         the key, retry).
+
+      Prefer the driver's typed error surface: `SnowflakeError` together
+      with `ErrorCode` / `ErrorMessage` from `nodejs/src/constants`. Do
+      not throw a bare `Error` / `TypeError` for a condition that already
+      has an `ErrorCode` (e.g. missing `sqlText` → `ERR_CONN_EXEC_STMT_MISSING_SQL_TEXT`).
+      When wrapping a lower-level failure, preserve it via `cause` (or
+      forward the original `SnowflakeError` into `complete(err, stmt, rows)`).
+      Do not include passwords, tokens, or private-key PEM in the message —
+      secret *logging* is owned by `universal-driver-logging.yaml`; this
+      rule is about exception text and swallowing.
+
+      Do **not** swallow errors:
+      - Empty `catch { }` / `catch { return fallback }` on connection,
+        execute, or stream paths.
+      - `.then(...)` on a public Promise without `.catch(...)` when a
+        callback must observe the failure (`connect` / `destroy` / `cancel`
+        already attach both).
+      - `complete?.(undefined, stmt, rows)` after a caught failure.
+
+      Exemptions:
+      - Parse fallbacks that are the documented algorithm (VARIANT JSON
+        then XML in `transformCell`) — not a swallowed driver failure.
+      - Re-throw / callback-forward: `catch (err) { complete?.(err as SnowflakeError, statement, undefined); }`.
+
+      Adapted from `ud-py-actionable-exceptions`.
+
+      ❌ **BAD:**
+      ```typescript
+      if (!options.sqlText) {
+        throw new Error('invalid options');
+      }
+
+      try {
+        await this.#core.connect();
+      } catch {
+        return; // swallowed
+      }
+
+      this.connectAsync().then(() => {
+        callback?.(undefined, this);
+      }); // rejection never reaches callback
+      ```
+
+      ✅ **GOOD:**
+      ```typescript
+      if (!options.sqlText) {
+        throw Object.assign(new Error(ErrorMessage[ErrorCode.ERR_CONN_EXEC_STMT_MISSING_SQL_TEXT]), {
+          code: ErrorCode.ERR_CONN_EXEC_STMT_MISSING_SQL_TEXT,
+        });
+      }
+
+      this.connectAsync()
+        .then(() => {
+          callback?.(undefined, this);
+        })
+        .catch((err) => {
+          callback?.(err, this);
+        });
+
+      try {
+        await coreStatement.waitForCompletion();
+        complete?.(undefined, statement, await collectRows(coreStatement, rowMode));
+      } catch (err) {
+        complete?.(err as SnowflakeError, statement, undefined);
+      }
+      ```
+
+  - id: ud-node-public-async-surface
+    rule: |
+      **OBJECTIVE**: Public methods must match the existing snowflake-sdk
+      dual surface: callback-style entry points for the classic API, plus
+      Promise helpers where this codebase already exposes them. Mixing a
+      new Promise-only shape into a callback contract (or dropping the
+      callback) is a breaking change.
+
+      **REQUIREMENT**: Follow the patterns already on `Connection` and
+      `RowStatement` in `nodejs/src`:
+
+      - **Connect**: `connect(callback?: ConnectionCallback)` is fire-and-
+        callback; `connectAsync(): Promise<void>` is the Promise form.
+        `connect` MUST bridge through `connectAsync` and invoke `callback`
+        with `(err, conn)` on both success and failure.
+      - **Destroy**: `destroy(callback?: ConnectionCallback)` — same
+        callback shape. If you add a Promise form, keep `destroy(callback)`
+        working; do not replace it.
+      - **Execute / fetchResult**: return `RowStatement |
+        FileAndStageBindStatement` **synchronously**. Completion is
+        `options.complete?: StatementCallback` (`err, stmt, rows`). Do not
+        change `execute` into `async execute(...): Promise<rows>` as the
+        public method — that is not the snowflake-sdk contract. Internal
+        `#runStatement` may be `async` IIFE behind that callback.
+      - **Rows**: `fetchRows({ each, end })` stays callback-based;
+        `streamRows()` returns a Node `Readable`. Do not replace either
+        with a Promise-only `fetchAll()`.
+      - **Cancel**: `cancel(callback?: StatementCallback)` bridges a core
+        Promise (`.then` / `.catch` into the callback), same as today.
+
+      New *internal* helpers (not exported from `index.ts`) MAY be
+      Promise-only. New *public* methods SHOULD pick one existing pattern
+      and not invent a third (e.g. returning a Promise *and* taking a
+      Node-style `(err, result)` callback on the same function).
+
+      Flag:
+      - Removing `callback?` from `connect` / `destroy` / `cancel` /
+        `complete`.
+      - Making `execute` / `fetchResult` `async` so they return a Promise
+        instead of a statement handle.
+      - A public Promise method that never rejects (swallows inside).
+      - Adding a second public execute helper with a different option
+        shape (`executeSql(sql, params)`) without wrapping the existing
+        `{ sqlText, binds, complete }` object.
+
+      ❌ **BAD:**
+      ```typescript
+      async execute(sqlText: string, binds?: unknown[]): Promise<unknown[]> {
+        const stmt = this.#core.execute(sqlText);
+        return collectRows(stmt, this.#defaultRowMode ?? 'object');
+      }
+
+      connect(): Promise<void> {
+        return this.#core.connect(); // dropped ConnectionCallback
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```typescript
+      connect(callback?: ConnectionCallback) {
+        this.connectAsync()
+          .then(() => {
+            callback?.(undefined, this);
+          })
+          .catch((err) => {
+            callback?.(err, this);
+          });
+      }
+
+      connectAsync(): Promise<void> {
+        return this.#core.connect();
+      }
+
+      execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
+        return this.#runStatement(this.#core.execute(options.sqlText), {
+          complete: options.complete,
+          streamResult: options.streamResult,
+          rowMode: options.rowMode ?? this.#defaultRowMode,
+        });
       }
       ```
