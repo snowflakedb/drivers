@@ -10,6 +10,7 @@ import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
+import net.snowflake.client.internal.jdbc.SnowflakeTimestampWithTimezone;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.BaseIntVector;
 import org.apache.arrow.vector.IntVector;
@@ -65,15 +66,16 @@ public class TimeConverter extends AbstractArrowVectorConverter {
     if (isNull(index)) {
       return null;
     }
-    if (context.isUseSessionTimezone()) {
-      // Equivalent of snowflake-jdbc's SnowflakeTimestampWithTimezone(millisOfDay, nanos, UTC):
-      // a timestamp at 1970-01-01 in UTC carrying the time-of-day with nanosecond precision.
-      LocalTime localTime = getLocalTime(index);
-      Timestamp ts = new Timestamp(localTime.toNanoOfDay() / MILLIS_PER_NANO);
-      ts.setNanos(localTime.getNano());
-      return ts;
-    }
-    return new Timestamp(toTime(index).getTime());
+    // UTC-anchored SnowflakeTimestampWithTimezone (not a plain Timestamp) keeps toString() stable
+    // across JVM timezones. Precision mirrors snowflake-jdbc: full nanos under session timezone,
+    // else millisecond-truncated (the default path routes through millisecond-resolution SFTime).
+    LocalTime localTime = getLocalTime(index);
+    long millis = localTime.toNanoOfDay() / MILLIS_PER_NANO;
+    int nanos =
+        context.isUseSessionTimezone()
+            ? localTime.getNano()
+            : (int) (millis % 1000L * MILLIS_PER_NANO);
+    return new SnowflakeTimestampWithTimezone(millis, nanos, TimeZone.getTimeZone("UTC"));
   }
 
   @Override

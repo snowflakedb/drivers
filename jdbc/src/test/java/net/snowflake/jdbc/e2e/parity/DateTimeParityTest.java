@@ -16,6 +16,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -75,6 +76,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       the runtime value. Covered by {@link #defaultFormatDateWithTimezoneParity} (which keeps
  *       {@code JDBC_FORMAT_DATE_WITH_TIMEZONE} unset so the fallback is actually reached).
  * </ul>
+ *
+ * <h2>JVM default timezone</h2>
+ *
+ * The read/write matrix varies the session {@code TIMEZONE} but not {@code TimeZone.getDefault()},
+ * which the rendering getters also read — so a UTC-default CI JVM hides bugs that only shift under
+ * a non-UTC default. {@link #jvmDefaultTimezoneParity} re-runs the read comparison under a non-UTC
+ * default.
  *
  * <h2>Trap values</h2>
  *
@@ -505,6 +513,37 @@ public class DateTimeParityTest {
     }
   }
 
+  /**
+   * Re-runs the read comparison under a non-UTC JVM default zone (restored in {@code finally}). The
+   * guard for TIME {@code getTimestamp()} returning a JVM-rendered {@code java.sql.Timestamp}
+   * rather than a UTC-pinned {@code SnowflakeTimestampWithTimezone} — invisible to the UTC-default
+   * matrix.
+   */
+  @ParameterizedTest(name = "JVM_DEFAULT_TZ {0} jvmTz={1} sessionTz={2}")
+  @MethodSource("jvmDefaultTzCells")
+  void jvmDefaultTimezoneParity(SfType type, String jvmTz, String sessionTz) throws Exception {
+    assumeTrue(typeEnabled(type), () -> type + " disabled via parity.types");
+    TimeZone originalDefault = TimeZone.getDefault();
+    TimeZone.setDefault(TimeZone.getTimeZone(jvmTz));
+    try {
+      List<String> failures = new ArrayList<>();
+      runReadCells(
+          harness.sessionsFor(Collections.emptyMap()),
+          type,
+          sessionTz,
+          representativeFormat(type),
+          Profile.DEFAULT.overlay(),
+          GET_SINKS,
+          "jvmTz=" + jvmTz,
+          failures);
+      if (!failures.isEmpty()) {
+        fail(buildReport(failures));
+      }
+    } finally {
+      TimeZone.setDefault(originalDefault);
+    }
+  }
+
   // --------------------------------------------------------------------------------
   // Helpers
   // --------------------------------------------------------------------------------
@@ -580,6 +619,9 @@ public class DateTimeParityTest {
    */
   private static final List<String> TZ_FULL =
       Arrays.asList("UTC", "America/New_York", "Asia/Tokyo", "Asia/Kolkata", "Australia/Sydney");
+
+  // Non-UTC JVM defaults for jvmDefaultTimezoneParity: a whole-hour DST zone and a +05:30 zone.
+  private static final List<String> JVM_TZ = Arrays.asList("America/New_York", "Asia/Kolkata");
 
   static {
     // ---- DATE ----
@@ -909,6 +951,29 @@ public class DateTimeParityTest {
   /** Focused matrix for {@code CLIENT_TREAT_TIME_AS_WALL_CLOCK_TIME}: TIME only (bind path). */
   static Stream<Arguments> treatTimeWallClockCells() {
     return connectTimeCells(Collections.singletonList(SfType.TIME));
+  }
+
+  // (type, jvmTz, sessionTz) matrix for jvmDefaultTimezoneParity; honours DISABLED_TYPES and
+  // the parity.types filter.
+  static Stream<Arguments> jvmDefaultTzCells() {
+    Stream.Builder<Arguments> out = Stream.builder();
+    for (SfType type :
+        Arrays.asList(
+            SfType.DATE,
+            SfType.TIME,
+            SfType.TIMESTAMP_NTZ,
+            SfType.TIMESTAMP_LTZ,
+            SfType.TIMESTAMP_TZ)) {
+      if (DISABLED_TYPES.contains(type) || !typeEnabled(type)) {
+        continue;
+      }
+      for (String jvmTz : JVM_TZ) {
+        for (String sessionTz : TIMEZONES.get(type)) {
+          out.add(Arguments.of(type, jvmTz, sessionTz));
+        }
+      }
+    }
+    return out.build();
   }
 
   /**
