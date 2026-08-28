@@ -6,6 +6,7 @@ New features:
 
 - Implemented `SQLFreeConnect` (ODBC 2.x) as a thin wrapper around `SQLFreeHandle(SQL_HANDLE_DBC, …)` for direct-link and ODBC 2.x applications that bypass the Driver Manager. (snowflakedb/drivers#1186)
 - Implemented `SQLFreeEnv` (ODBC 2.x) as a thin wrapper around `SQLFreeHandle(SQL_HANDLE_ENV, …)` for direct-link and ODBC 2.x applications that bypass the Driver Manager. (snowflakedb/drivers#1187)
+- `SQLCancel` now cancels through the core's operation handle instead of issuing a separate server-side cancel call, so a cancelled statement is aborted server-side by the executing path itself. `SQLCancel` returns as soon as the cancel is signalled rather than waiting for the abort request to be processed; the statement's own call still reports `HY008` and does not return until the abort has been issued. (snowflakedb/drivers#1491)
 
 Bug fixes:
 

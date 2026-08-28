@@ -1086,10 +1086,11 @@ pub unsafe extern "system" fn SQLGetCursorNameW(
 /// This function is called by the ODBC driver manager.
 ///
 /// ODBC allows SQLCancel to be called from a different thread.
-/// Uses a two-path design via `Statement::cancel_token`:
-/// - Path 1 (RPC in flight): cancels the token without touching the inner
-///   Mutex. The executing thread observes cancellation via `tokio::select!`
-///   and returns HY008.
+/// Uses a two-path design via `Statement::operation`:
+/// - Path 1 (RPC in flight): cancels the core operation handle without touching
+///   the inner Mutex. The core observes the cancellation inside the operation,
+///   aborts the query server-side, and fails the executing thread's call with
+///   `ERROR_KIND_CANCELLED`, which maps to HY008.
 /// - Path 2 (no RPC): locks the inner Mutex to check/restore NeedData state.
 ///   This path only runs in single-threaded DAE scenarios.
 ///

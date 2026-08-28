@@ -16,6 +16,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use result::{ResultData, StatementResult};
 use sf_core::apis::database_driver_v1::{ApiError, ExecuteQueryResult};
+use sf_core::apis::operation_ctx::OperationCtx;
 use sf_core::handle_manager::Handle;
 use snafu::location;
 use std::future::Future;
@@ -25,14 +26,19 @@ use stream_state::StreamState;
 #[napi]
 pub struct Statement {
     result: StatementResult,
-    handle: Option<Handle>,
+    /// Cancellation context the pending work runs under, so [`Self::cancel`] can
+    /// trigger it from any thread. `None` when the work is not cancellable.
+    ///
+    /// `Arc`, not a clone: `OperationCtx` cancels on `Drop` and is deliberately
+    /// not `Clone`, so a copy going out of scope would cancel a live query.
+    ctx: Option<Arc<OperationCtx>>,
 }
 
 #[napi]
 impl Statement {
     pub(crate) fn from_pending(
-        handle: Option<Handle>,
         conn_handle: Handle,
+        ctx: Option<Arc<OperationCtx>>,
         result_future: impl Future<Output = std::result::Result<ExecuteQueryResult, ApiError>>
         + Send
         + 'static,
@@ -41,7 +47,7 @@ impl Statement {
             result: StatementResult::from_future(async move {
                 result_data_from(result_future.await?, conn_handle).await
             }),
-            handle,
+            ctx,
         }
     }
 
@@ -151,12 +157,19 @@ impl Statement {
         Ok(())
     }
 
-    // TODO: surface genuine cancel failures (e.g. CancelTimeout) instead of
-    // swallowing the outcome.
+    /// Cancel the running query. Returns once the signal is delivered, not once
+    /// the server-side abort completes. A no-op when there is no `ctx`.
+    ///
+    /// TODO: the abort's outcome (including a failed or unconfirmed abort) rides
+    /// on the cancelled execute's `ApiError::Cancelled`, but `to_napi_err` keeps
+    /// only the message, so JS callers cannot yet see it.
+    ///
+    /// `async` purely to keep the JS surface a `Promise`, which
+    /// `RowStatement.cancel` chains its callback off.
     #[napi]
     pub async fn cancel(&self) -> Result<()> {
-        if let Some(handle) = self.handle {
-            let _ = DRIVER.statement_cancel(handle).await;
+        if let Some(ctx) = &self.ctx {
+            ctx.cancel();
         }
         Ok(())
     }

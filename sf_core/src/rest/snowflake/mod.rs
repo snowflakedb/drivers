@@ -300,10 +300,9 @@ pub struct QueryOptions {
     pub execution_mode: QueryExecutionMode,
     /// Caller-supplied `requestId`. `None` mints a fresh id inside the query
     /// function — the right choice for callers that don't need to know it in
-    /// advance. The statement-execute path passes `Some(id)` so it can store
-    /// `{request_id, sql_text}` on the statement *before* the query-request is
-    /// sent, letting a cross-thread `statement_cancel` abort the running query
-    /// by that same `requestId`.
+    /// advance. The statement-execute path passes `Some(id)` because it needs the
+    /// same id afterwards: the abort-request it fires on cancellation or on a
+    /// client-side timeout is keyed on the `requestId` the query was sent with.
     pub request_id: Option<uuid::Uuid>,
 }
 
@@ -3634,7 +3633,8 @@ mod tests {
     /// Mirrors [`snowflake_abort_query_tests`]: the `success`-envelope →
     /// [`AbortOutcome`] mapping for the requestId-based cancel endpoint. The
     /// outbound body shape (`{sqlText, requestId}`) and the cross-thread
-    /// orchestration are covered by `tests/integration/query/statement_cancel.rs`.
+    /// orchestration are covered by
+    /// `tests/integration/query/operation_cancellation.rs`.
     mod snowflake_cancel_query_tests {
         use super::*;
         use wiremock::matchers::{method, path};

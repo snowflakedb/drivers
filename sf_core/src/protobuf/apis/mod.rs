@@ -69,6 +69,12 @@ impl RustTransport {
 
     /// Cancel an in-flight operation by handle, from any thread. Unknown or
     /// already-completed handles are ignored.
+    ///
+    /// Inherent *and* available through
+    /// [`CancellableTransport::cancel_operation`]: a bridge that holds the
+    /// concrete transport (Python, JDBC, the C API) calls this directly, while a
+    /// wrapper that only holds the generated typed client — ODBC — reaches the
+    /// same registry through the trait.
     pub fn cancel(&self, handle: u64) {
         self.cancellations.cancel(handle);
     }
@@ -181,11 +187,19 @@ impl Transport for RustTransport {
     }
 }
 
-/// Cancellation entry point. Inherent rather than part of [`Transport`]: every
-/// bridge holds the concrete `RustTransport`, so nothing needs to reach it
-/// through the trait, and `proto_utils` — which has no dependencies at all —
-/// would otherwise have to know about cancellation to declare it.
-impl RustTransport {
+impl CancellableTransport for RustTransport {
+    fn register_operation(&self) -> u64 {
+        self.register().0
+    }
+
+    fn cancel_operation(&self, operation: u64) {
+        self.cancel(operation);
+    }
+
+    fn deregister_operation(&self, operation: u64) {
+        self.cancellations.deregister(operation);
+    }
+
     /// Dispatch under `operation`'s registered token.
     ///
     /// Two shapes, picked by the proto's `async_first` marker via the generated
@@ -203,7 +217,7 @@ impl RustTransport {
     /// panic — so callers never pair register/deregister themselves. An unknown
     /// handle means the operation was cancelled or completed before dispatch,
     /// and resolves straight to a cancelled response.
-    pub async fn handle_message_cancellable(
+    async fn handle_message_cancellable(
         &self,
         service: &str,
         method: &str,

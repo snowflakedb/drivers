@@ -42,7 +42,7 @@ use tokio_util::task::TaskTracker;
 /// before reporting the operation's outcome.
 ///
 /// Deliberately short and deliberately *not* the same knob as the deadline a
-/// cleanup applies to its own work (e.g. `STATEMENT_CANCEL_TIMEOUT` bounds the
+/// cleanup applies to its own work (e.g. `ABORT_REQUEST_TIMEOUT` bounds the
 /// abort-request POST itself). This one only decides how long the cancelled
 /// *caller* blocks: long enough that "the operation reported cancelled" implies
 /// "cleanup was issued" in the healthy case, short enough that a wedged cleanup
@@ -285,14 +285,17 @@ impl CleanupGuard {
     }
 }
 
-/// Build an [`ApiError::Cancelled`]. The captured `Location` is this function
-/// rather than the cancelled operation; the operation is identified by the
-/// `method` field on the debug log and by the RPC the caller invoked.
+/// Build an [`ApiError::Cancelled`] with `abort: None` — an operation that fires
+/// an abort attaches its outcome on the way out, which is what keeps this module
+/// free of Snowflake concepts.
+///
+/// The captured `Location` is this function rather than the cancelled operation,
+/// which is identified by the `method` field on the debug log instead.
 fn cancelled() -> ApiError {
-    snafu::IntoError::into_error(
-        crate::apis::database_driver_v1::error::CancelledSnafu,
-        snafu::NoneError,
-    )
+    ApiError::Cancelled {
+        abort: None,
+        location: snafu::location!(),
+    }
 }
 
 /// Run `fut` under `ctx` if there is one, otherwise run it unguarded.

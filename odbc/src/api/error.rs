@@ -578,13 +578,6 @@ pub enum OdbcError {
         location: Location,
     },
 
-    // Caller-initiated cancel; no dedicated bucket — maps to [`ErrorSource::Unknown`].
-    #[snafu(display("Operation canceled"))]
-    OperationCanceled {
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     #[snafu(display("Invalid connection string: {reason}"))]
     InvalidConnectionString {
         reason: String,
@@ -792,7 +785,6 @@ impl OdbcError {
             OdbcError::InvalidFreeStmtOption { .. } => ErrorSource::ApiMisuse,
             OdbcError::OdbcRuntime { .. } => ErrorSource::InternalError,
             OdbcError::DataSourceNotFound { .. } => ErrorSource::ConfigParsing,
-            OdbcError::OperationCanceled { .. } => ErrorSource::Unknown,
             OdbcError::InvalidConnectionString { .. } => ErrorSource::ConfigParsing,
             OdbcError::DaeRequired { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidDuringDae { .. } => ErrorSource::ApiMisuse,
@@ -1027,12 +1019,14 @@ impl OdbcError {
                 } => {
                     // Query-canceled (gsCode 604) maps to HY008 regardless of
                     // the SQLSTATE the server attaches. A cross-thread
-                    // `SQLCancel` fires two signals at the in-flight execute:
-                    // the local cancellation token (→ `OperationCanceled` →
-                    // HY008) and the server abort (→ a canceled query-response
-                    // carrying 604). Whichever wins the race, the application
-                    // must observe the same SQLSTATE, so pin 604 to HY008 here
-                    // — before the verbatim server-SQLSTATE forwarding below.
+                    // `SQLCancel` can end an in-flight execute two ways: the
+                    // core observes the cancel and unwinds
+                    // (→ ERROR_KIND_CANCELLED → HY008 below), or the server's
+                    // abort lands first and the query-request comes back
+                    // canceled, carrying 604. Whichever wins the race, the
+                    // application must observe the same SQLSTATE, so pin 604 to
+                    // HY008 here — before the verbatim server-SQLSTATE
+                    // forwarding below.
                     if *vendor_code == Some(sf_core::rest::snowflake::QUERY_CANCELED) {
                         return SqlState::OperationCanceled;
                     }
@@ -1097,6 +1091,12 @@ impl OdbcError {
                             }
                         }
                         k if k == ProtoErrorKind::Timeout as i32 => SqlState::TimeoutExpired,
+                        // The core observed its operation being cancelled and
+                        // unwound. This is the ordinary `SQLCancel` outcome now
+                        // that the wrapper no longer races the core with a
+                        // cancellation token of its own, so without this arm a
+                        // cancelled statement would report HY000.
+                        k if k == ProtoErrorKind::Cancelled as i32 => SqlState::OperationCanceled,
                         _ => {
                             // No usable SQLSTATE on the wire and `sf_core`'s
                             // `snowflake_context` couldn't recover one
@@ -1120,7 +1120,6 @@ impl OdbcError {
             OdbcError::DataSourceNotFound { .. } => {
                 SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
             }
-            OdbcError::OperationCanceled { .. } => SqlState::OperationCanceled,
             OdbcError::InvalidConnectionString { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::DaeRequired { .. } => SqlState::GeneralError,
             OdbcError::InvalidDuringDae { .. } => SqlState::FunctionSequenceError,
@@ -1207,7 +1206,7 @@ pub enum CoreProtobufError {
         sql_state: Option<String>,
         /// Snowflake server error code (gsCode), if present. Used to map the
         /// query-canceled code (604) to `HY008` so a server-side abort races
-        /// SQLSTATE-stably against the local cancellation token.
+        /// SQLSTATE-stably against the core's own `ERROR_KIND_CANCELLED`.
         vendor_code: Option<i32>,
         /// Snowflake Query ID from the failed query, if available.
         query_id: Option<String>,
@@ -1380,12 +1379,6 @@ mod tests {
             }
             .telemetry_classification(),
             ("CoreError", ErrorSource::ServerError)
-        );
-
-        // unknown — the lone fallback, used by OperationCanceled.
-        assert_eq!(
-            OdbcError::OperationCanceled { location: loc() }.telemetry_classification(),
-            ("OperationCanceled", ErrorSource::Unknown)
         );
     }
 
@@ -1620,9 +1613,9 @@ mod tests {
         // A server-side abort surfaces on the executing thread as a canceled
         // query-response carrying gsCode 604. Even if the server attaches its
         // own SQLSTATE (here a well-formed "57014"), the ODBC layer pins the
-        // result to HY008 so it matches the local-token cancel path — the
-        // application sees a stable SQLSTATE no matter which signal wins the
-        // cross-thread SQLCancel race.
+        // result to HY008 so it matches the core-cancellation path asserted
+        // below — the application sees a stable SQLSTATE no matter which signal
+        // wins the cross-thread SQLCancel race.
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
                 message: "SQL execution canceled".to_string(),
@@ -1630,6 +1623,34 @@ mod tests {
                 error_trace: vec![],
                 sql_state: Some("57014".to_string()),
                 vendor_code: Some(sf_core::rest::snowflake::QUERY_CANCELED),
+                query_id: None,
+                parameter: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::OperationCanceled);
+        assert_eq!(odbc_err.to_sql_state().as_str(), "HY008");
+    }
+
+    /// The other half of the `SQLCancel` race: the core observes its operation
+    /// being cancelled and unwinds before the server answers, so what reaches the
+    /// wrapper is `ERROR_KIND_CANCELLED` with no server SQLSTATE and no vendor
+    /// code to pin on.
+    ///
+    /// This is the *ordinary* cancel outcome now that the wrapper no longer races
+    /// the core with a cancellation token of its own. Without the kind arm this
+    /// asserts, a cancelled statement would fall through to HY000 and callers
+    /// checking for HY008 would stop recognising their own cancels.
+    #[test]
+    fn should_map_core_cancellation_to_hy008() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                message: "Operation was cancelled".to_string(),
+                kind: ProtoErrorKind::Cancelled as i32,
+                error_trace: vec![],
+                sql_state: None,
+                vendor_code: None,
                 query_id: None,
                 parameter: None,
                 location: snafu::Location::new("test", 0, 0),

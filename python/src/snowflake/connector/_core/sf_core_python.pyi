@@ -18,7 +18,7 @@ def init(logger_callback: object) -> tuple[int, bool]:
 def log_event(level: int, message: str, file: str, line: int, function: str, logger_name: str) -> int:
     """Emit a wrapper-originated log event through the tracing pipeline.
 
-    Uses the same level encoding as the inbound [`sf_core::logging::CLogCallback`]:
+    Uses the same level encoding as the inbound wrapper log callback:
     0=ERROR, 1=WARN, 2=INFO, 3 or higher=DEBUG.
 
     Returns `0` on success, `1` when the pipeline is uninitialised, and `2` if the body panics.

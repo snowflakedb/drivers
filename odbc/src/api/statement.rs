@@ -10,9 +10,8 @@ use crate::api::error::{
     InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
     InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu,
     JsonBindingSnafu, NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu,
-    OdbcRuntimeSnafu, OperationCanceledSnafu, ReadOnlyAttributeSnafu, Required,
-    StatementNotExecutedSnafu, StillExecutingSnafu, UnsupportedAttributeSnafu,
-    UnsupportedFeatureSnafu,
+    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
+    StillExecutingSnafu, UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::handle_registry::{HandleId, HandleKind};
 use crate::api::query_type::{QueryType, ResultKind};
@@ -36,12 +35,11 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConfigSetting, ConnectionGetParameterRequest,
     ConnectionGetResultSetRequest, ConnectionHandle, ExecuteQueryResponse, QueryBindings,
     ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest, ResultSetResponse,
-    StatementCancelRequest, StatementExecuteQueryRequest, StatementHandle, StatementPrepareRequest,
+    StatementExecuteQueryRequest, StatementHandle, StatementPrepareRequest,
     StatementSetOptionsRequest, StatementSetSqlQueryRequest, config_setting,
     execute_query_response, query_bindings,
 };
 use snafu::{OptionExt, ResultExt};
-use tokio_util::sync::CancellationToken;
 use tracing;
 
 /// Scan the APD for parameters marked as data-at-execution.
@@ -96,7 +94,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
                 .set(StatementState::AsyncExecDirect { join_handle });
             return StillExecutingSnafu.fail();
         }
-        match complete_async_poll(&guard.cancel_token, &mut inner, join_handle) {
+        match complete_async_poll(&guard.operation, &mut inner, join_handle) {
             Ok(outcome) => outcome,
             Err(e) => {
                 tracing::error!("exec_direct: async poll failed: {e}");
@@ -172,7 +170,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         let multi_statement_count = inner.multi_statement_count;
         let async_enabled = inner.async_enabled;
 
-        match run_cancellable(&guard, async_enabled, |client| async move {
+        match run_cancellable(&guard, async_enabled, |client, operation| async move {
             let _bindings_owner = bindings_owner;
             if multi_statement_count >= 0 {
                 let mut options = std::collections::HashMap::new();
@@ -200,15 +198,18 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
                 .await?;
 
             let response = client
-                .statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings,
-                    timeout_seconds: if query_timeout > 0 {
-                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                    } else {
-                        None
+                .statement_execute_query_cancellable(
+                    operation,
+                    StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                        timeout_seconds: if query_timeout > 0 {
+                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                        } else {
+                            None
+                        },
                     },
-                })
+                )
                 .await?;
             Ok(ExecDirectOutcome {
                 response,
@@ -826,7 +827,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
                 .set(StatementState::AsyncPrepare { join_handle });
             return StillExecutingSnafu.fail();
         }
-        complete_async_poll(&guard.cancel_token, &mut inner, join_handle)?
+        complete_async_poll(&guard.operation, &mut inner, join_handle)?
     } else {
         // === SYNC / SPAWN PATH ===
         let _conn_handle = match &conn.state {
@@ -851,48 +852,52 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
 
         let query_owned = query.to_string();
 
-        let execution_outcome = run_cancellable(&guard, async_enabled, |client| async move {
-            client
-                .statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    query: query_owned,
-                })
-                .await?;
+        let execution_outcome =
+            run_cancellable(&guard, async_enabled, |client, operation| async move {
+                client
+                    .statement_set_sql_query(StatementSetSqlQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        query: query_owned,
+                    })
+                    .await?;
 
-            let prepare_response = client
-                .statement_prepare(StatementPrepareRequest {
-                    stmt_handle: Some(stmt_handle),
-                })
-                .await?;
+                let prepare_response = client
+                    .statement_prepare_cancellable(
+                        operation,
+                        StatementPrepareRequest {
+                            stmt_handle: Some(stmt_handle),
+                        },
+                    )
+                    .await?;
 
-            let result = prepare_response.result.required("Result is required")?;
-            let stream_ptr = result.stream.required("Stream is required")?;
-            let reader = reader_from_protobuf_stream(stream_ptr)?;
-            let schema = reader.schema();
+                let result = prepare_response.result.required("Result is required")?;
+                let stream_ptr = result.stream.required("Stream is required")?;
+                let reader = reader_from_protobuf_stream(stream_ptr)?;
+                let schema = reader.schema();
 
-            if result.number_of_binds < 0 {
-                tracing::warn!(
-                    "prepare: server reported negative bind count ({}), treating as 0",
-                    result.number_of_binds
-                );
-            }
-            let raw_bind_count = result.number_of_binds.max(0);
-            let param_count = u16::try_from(raw_bind_count).map_err(|_| {
-                crate::api::error::CountFieldIncorrectSnafu {
+                if result.number_of_binds < 0 {
+                    tracing::warn!(
+                        "prepare: server reported negative bind count ({}), treating as 0",
+                        result.number_of_binds
+                    );
+                }
+                let raw_bind_count = result.number_of_binds.max(0);
+                let param_count = u16::try_from(raw_bind_count).map_err(|_| {
+                    crate::api::error::CountFieldIncorrectSnafu {
                     reason: format!(
                         "server reported {raw_bind_count} parameter markers, exceeds maximum {}",
                         u16::MAX
                     ),
                 }
                 .build()
-            })?;
+                })?;
 
-            Ok(PrepareOutcome {
-                number_of_binds: param_count,
-                schema,
-                array_bind_supported: result.array_bind_supported,
-            })
-        })?;
+                Ok(PrepareOutcome {
+                    number_of_binds: param_count,
+                    schema,
+                    array_bind_supported: result.array_bind_supported,
+                })
+            })?;
         match execution_outcome {
             Execution::Completed(outcome) => outcome,
             Execution::Spawned(join_handle) => {
@@ -968,7 +973,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             });
             return StillExecutingSnafu.fail();
         }
-        let outcome = match complete_async_poll(&guard.cancel_token, &mut inner, join_handle) {
+        let outcome = match complete_async_poll(&guard.operation, &mut inner, join_handle) {
             Ok(outcome) => outcome,
             Err(e) => {
                 tracing::error!("execute: async poll failed: {e}");
@@ -1059,7 +1064,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         let multi_statement_count = inner.multi_statement_count;
         let async_enabled = inner.async_enabled;
 
-        let outcome = match run_cancellable(&guard, async_enabled, |client| async move {
+        let outcome = match run_cancellable(&guard, async_enabled, |client, operation| async move {
             let _bindings_owner = bindings_owner;
             if multi_statement_count >= 0 {
                 let mut options = std::collections::HashMap::new();
@@ -1079,15 +1084,18 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                     .await?;
             }
             let response = client
-                .statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings,
-                    timeout_seconds: if query_timeout > 0 {
-                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                    } else {
-                        None
+                .statement_execute_query_cancellable(
+                    operation,
+                    StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                        timeout_seconds: if query_timeout > 0 {
+                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                        } else {
+                            None
+                        },
                     },
-                })
+                )
                 .await?;
             Ok(ExecuteOutcome {
                 response,
@@ -3066,7 +3074,7 @@ pub fn param_data(
                     &mut inner,
                     &mut conn,
                     guard.stmt_handle,
-                    &guard.cancel_token,
+                    &guard.operation,
                     *dae_context,
                     origin,
                     restored,
@@ -3263,25 +3271,33 @@ fn accumulate_put_data(
     Ok(())
 }
 
-/// Sets `cancel_token` on creation and clears it on drop, so every exit
-/// path (including early returns and panics) releases the token.
-struct CancelTokenGuard<'a> {
-    slot: &'a parking_lot::Mutex<Option<CancellationToken>>,
+/// Publishes the in-flight core operation handle on creation and clears it on
+/// drop, so every exit path (including early returns and panics) stops
+/// `SQLCancel` from cancelling a call that is no longer running.
+///
+/// Drop also releases the handle's registry entry in the core. That matters for
+/// the path where the guarded closure fails *before* dispatching its cancellable
+/// RPC: `handle_message_cancellable` deregisters on its own way out, so without
+/// this the entry would outlive the statement.
+struct OperationGuard<'a> {
+    slot: &'a parking_lot::Mutex<Option<u64>>,
+    operation: u64,
 }
 
-impl<'a> CancelTokenGuard<'a> {
-    fn arm(
-        slot: &'a parking_lot::Mutex<Option<CancellationToken>>,
-        token: CancellationToken,
-    ) -> Self {
-        *slot.lock() = Some(token);
-        Self { slot }
+impl<'a> OperationGuard<'a> {
+    fn arm(slot: &'a parking_lot::Mutex<Option<u64>>, operation: u64) -> Self {
+        *slot.lock() = Some(operation);
+        Self { slot, operation }
     }
 }
 
-impl Drop for CancelTokenGuard<'_> {
+impl Drop for OperationGuard<'_> {
     fn drop(&mut self) {
         *self.slot.lock() = None;
+        // Idempotent: after a dispatch the core has already removed this entry.
+        if let Ok(g) = global() {
+            g.client().deregister_operation(self.operation);
+        }
     }
 }
 
@@ -3300,14 +3316,17 @@ fn poll_join_handle<T>(join_handle: tokio::task::JoinHandle<OdbcResult<T>>) -> O
     }
 }
 
-/// Completes an in-flight async operation: clears the cancel token, awaits
-/// the join handle, and sets state to `Error` on failure.
+/// Completes an in-flight async operation: clears the in-flight operation
+/// handle, awaits the join handle, and sets state to `Error` on failure.
+///
+/// Only clears the slot; the core deregisters the handle itself as the dispatch
+/// unwinds, on both the completed and aborted paths.
 fn complete_async_poll<T>(
-    cancel_token: &parking_lot::Mutex<Option<CancellationToken>>,
+    operation: &parking_lot::Mutex<Option<u64>>,
     inner: &mut StatementInner,
     join_handle: tokio::task::JoinHandle<OdbcResult<T>>,
 ) -> OdbcResult<T> {
-    *cancel_token.lock() = None;
+    *operation.lock() = None;
     match poll_join_handle(join_handle) {
         Ok(result) => Ok(result),
         Err(e) => {
@@ -3324,56 +3343,69 @@ enum Execution<T> {
     Spawned(tokio::task::JoinHandle<OdbcResult<T>>),
 }
 
-/// Executes an async operation either synchronously (blocking) or by spawning
-/// it as a background task.
+/// Executes an operation under a fresh core operation handle, either
+/// synchronously (blocking) or by spawning it as a background task.
 ///
-/// - **Sync** (`async_enabled = false`): arms a `CancelTokenGuard`, blocks on
+/// - **Sync** (`async_enabled = false`): arms an [`OperationGuard`], blocks on
 ///   the future, and returns `Execution::Completed(result)`.
-/// - **Async** (`async_enabled = true`): spawns the future, sets
-///   `cancel_token`, and returns `Execution::Spawned(join_handle)`. The
-///   caller is responsible for storing the handle in the appropriate
-///   `StatementState` variant and returning `StillExecuting`.
+/// - **Async** (`async_enabled = true`): spawns the future, publishes the handle
+///   on the statement, and returns `Execution::Spawned(join_handle)`. The caller
+///   stores the join handle in the appropriate `StatementState` variant and
+///   returns `StillExecuting`.
 ///
-/// In both modes, a `CancellationToken` is wired into `tokio::select!` so
-/// that `SQLCancel` can abort the operation.
+/// The handle is passed to `f` so it can dispatch through the client's
+/// `*_cancellable` methods. It is minted *before* the closure runs, so a
+/// `SQLCancel` arriving while `f` is still doing local work or non-cancellable
+/// setup calls still lands: the subsequent cancellable dispatch sees an
+/// already-cancelled handle and resolves as cancelled without starting the query.
+///
+/// There is deliberately **no `tokio::select!` on a cancellation token here**.
+/// The core observes cancellation inside the operation, where it can abort the
+/// query server-side before unwinding; a race at this layer would resolve in
+/// nanoseconds and drop the operation before that abort could finish — the exact
+/// failure `sf_core::apis::operation_ctx`'s "race the token in exactly one place"
+/// invariant describes. Cancellation therefore surfaces as the core's
+/// `ERROR_KIND_CANCELLED`, which `to_sql_state` maps to `HY008`.
 fn run_cancellable<T, F>(
     stmt: &crate::api::Statement,
     async_enabled: bool,
     f: impl FnOnce(
         std::sync::Arc<sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient>,
+        u64,
     ) -> F,
 ) -> OdbcResult<Execution<T>>
 where
     T: Send + 'static,
     F: std::future::Future<Output = OdbcResult<T>> + Send + 'static,
 {
-    let token = CancellationToken::new();
     let g = global().context(OdbcRuntimeSnafu)?;
     let client = g.client();
+    let operation = client.register_operation();
 
     if async_enabled {
-        let token_clone = token.clone();
-        let future = f(client);
+        // No `OperationGuard` on this path: the operation outlives this call, so
+        // the slot is cleared by `complete_async_poll` instead. The registry entry
+        // still needs releasing on the one path the dispatch cannot cover — a
+        // closure that fails *before* dispatching — so the task does it itself.
+        let releaser = g.client();
+        let future = f(client, operation);
+        // Published before spawning, so there is no window in which the task is
+        // running but `SQLCancel` would find an empty slot and silently do
+        // nothing. Safe to publish early: the handle is already registered, and a
+        // cancel landing before dispatch resolves the operation as cancelled
+        // rather than starting the query.
+        *stmt.operation.lock() = Some(operation);
         let join_handle = g.spawn(async move {
-            tokio::select! {
-                biased;
-                _ = token_clone.cancelled() => OperationCanceledSnafu.fail(),
-                result = future => result,
-            }
+            let result = future.await;
+            releaser.deregister_operation(operation);
+            result
         });
-        *stmt.cancel_token.lock() = Some(token);
         return Ok(Execution::Spawned(join_handle));
     }
 
-    let _cancel_guard = CancelTokenGuard::arm(&stmt.cancel_token, token.clone());
-    let future = f(client);
-    let result = g.block_on(async move |_c| {
-        tokio::select! {
-            biased;
-            _ = token.cancelled() => OperationCanceledSnafu.fail(),
-            result = future => result,
-        }
-    })?;
+    let _operation_guard = OperationGuard::arm(&stmt.operation, operation);
+    let future = f(client, operation);
+    let result = g.block_on(async move |_c| future.await)?;
     Ok(Execution::Completed(result))
 }
 
@@ -3401,7 +3433,7 @@ fn execute_dae(
     inner: &mut StatementInner,
     conn: &mut Connection,
     stmt_handle: StatementHandle,
-    cancel_token_slot: &parking_lot::Mutex<Option<CancellationToken>>,
+    operation_slot: &parking_lot::Mutex<Option<u64>>,
     dae_context: DaeContext,
     origin: ExecutionOrigin,
     restored: StatementState,
@@ -3509,9 +3541,6 @@ fn execute_dae(
     // `None` for prepared DAE executes, matching the `execute` path.
     let last_sql = deferred_query.clone();
 
-    let token = CancellationToken::new();
-    let _cancel_guard = CancelTokenGuard::arm(cancel_token_slot, token.clone());
-
     let globals = match global().context(OdbcRuntimeSnafu) {
         Err(e) => {
             inner.state.set(restored);
@@ -3519,30 +3548,33 @@ fn execute_dae(
         }
         Ok(globals) => globals,
     };
-    let response = globals.block_on(async |c| {
-        tokio::select! {
-            biased;
-            _ = token.cancelled() => OperationCanceledSnafu.fail(),
-            result = async {
-                if let Some(query) = deferred_query {
-                    c.statement_set_sql_query(StatementSetSqlQueryRequest {
-                        stmt_handle: Some(stmt_handle),
-                        query,
-                    })
-                    .await?;
-                }
-                c.statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings,
-                    timeout_seconds: if query_timeout > 0 {
-                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                    } else {
-                        None
-                    },
-                })
-                .await
-            } => result.map_err(Into::into),
+    let operation = globals.client().register_operation();
+    let _operation_guard = OperationGuard::arm(operation_slot, operation);
+
+    // Explicit type: with no `tokio::select!` arm left to pin it, the closure's
+    // error type is only fixed by this annotation.
+    let response: OdbcResult<ExecuteQueryResponse> = globals.block_on(async |c| {
+        if let Some(query) = deferred_query {
+            c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                query,
+            })
+            .await?;
         }
+        c.statement_execute_query_cancellable(
+            operation,
+            StatementExecuteQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                bindings,
+                timeout_seconds: if query_timeout > 0 {
+                    Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                } else {
+                    None
+                },
+            },
+        )
+        .await
+        .map_err(Into::into)
     });
 
     let response = match response {
@@ -3575,12 +3607,18 @@ fn execute_dae(
 
 /// Cancel processing on a statement (SQLCancel).
 ///
-/// Checks `Statement::cancel_token` first to signal any in-flight
-/// sync or async operation without touching `inner`. Falls back to
-/// restoring NeedData state (single-threaded DAE scenarios): from S8/S9/S10
-/// the statement is restored to its pre-execute state (`Prepared` for
-/// `SQLExecute` origin, `Created` for `SQLExecDirect`). Column and parameter
-/// bindings are preserved; accumulated SQLPutData is discarded.
+/// Checks `Statement::operation` first to cancel any in-flight sync or async
+/// operation without touching `inner`. Falls back to restoring NeedData state
+/// (single-threaded DAE scenarios): from S8/S9/S10 the statement is restored to
+/// its pre-execute state (`Prepared` for `SQLExecute` origin, `Created` for
+/// `SQLExecDirect`). Column and parameter bindings are preserved; accumulated
+/// SQLPutData is discarded.
+///
+/// Returns as soon as the cancel is *signalled* — it does not wait for the
+/// server-side abort. The core issues that abort from inside the cancelled
+/// operation and awaits it before reporting, so it is the executing thread, not
+/// this one, that blocks on it. That is also what makes this path free of any
+/// ordering subtlety: there is one signal, not a "server first, then local" pair.
 ///
 /// Per ODBC 3.5 spec, cross-thread `SQLCancel` does not clear or post
 /// diagnostic records.
@@ -3588,34 +3626,13 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("cancel: statement_handle={statement_handle:?}");
     let guard = stmt_from_handle(statement_handle)?;
 
-    // Server-side cancel FIRST, then signal the local token. Ordering is
-    // load-bearing: signalling the token drops the in-flight execute future,
-    // which drops core's `InflightGuard` and clears the requestId slot — so a
-    // `statement_cancel` fired *after* the token would find an empty slot and
-    // send no abort-request. Firing it here (while the slot is still populated)
-    // lets the server actually stop the running query.
-    //
-    // Best-effort: any error — including the no-op when nothing is in flight,
-    // or a transport failure — is swallowed. Per ODBC 3.5, cross-thread
-    // `SQLCancel` neither posts diagnostics nor fails; the app re-polls or
-    // re-issues. The core call is already bounded, so this cannot hang cancel.
-    let stmt_handle = guard.stmt_handle;
-    if let Ok(g) = global() {
-        let client = g.client();
-        let _ = g.block_on(async move |_c| {
-            client
-                .statement_cancel(StatementCancelRequest {
-                    stmt_handle: Some(stmt_handle),
-                })
-                .await
-        });
-    }
-
-    // Then cancel any in-flight execution via the local token.
+    // Cancel any in-flight execution by its core operation handle.
     {
-        let token = guard.cancel_token.lock();
-        if let Some(ref t) = *token {
-            t.cancel();
+        let operation = *guard.operation.lock();
+        if let Some(operation) = operation
+            && let Ok(g) = global()
+        {
+            g.client().cancel_operation(operation);
             return Ok(());
         }
     }
@@ -3699,38 +3716,41 @@ mod tests {
     use crate::api::{ApdDescriptor, IpdDescriptor, SqlState};
 
     #[test]
-    fn cancel_token_guard_clears_slot_on_drop() {
+    fn operation_guard_clears_slot_on_drop() {
         let slot = parking_lot::Mutex::new(None);
         {
-            let token = CancellationToken::new();
-            let _guard = CancelTokenGuard::arm(&slot, token);
-            assert!(slot.lock().is_some());
+            let _guard = OperationGuard::arm(&slot, 42);
+            assert_eq!(*slot.lock(), Some(42));
         }
         assert!(slot.lock().is_none());
     }
 
-    /// The execute paths arm a [`CancelTokenGuard`] *before* they look up the
-    /// global runtime (`let _cancel_guard = CancelTokenGuard::arm(...)` then
-    /// `global().context(OdbcRuntimeSnafu)?`). If the runtime is unavailable the
-    /// function returns early, and the guard's `Drop` must still clear the
-    /// cancel slot. `Drop` is deliberately runtime-agnostic — it only nulls the
-    /// slot — so we exercise that early-return shape directly.
+    /// The execute paths arm an [`OperationGuard`] *before* they finish their
+    /// setup, so an early return has to leave the slot clear — otherwise
+    /// `SQLCancel` would keep cancelling a handle belonging to a call that never
+    /// ran. `Drop` clears the slot unconditionally and only *then* tries the
+    /// global runtime to deregister, so the clearing half works even with no
+    /// runtime; we exercise that early-return shape directly.
     ///
-    /// The earlier version asserted `global().is_err()` to force the "runtime
+    /// An earlier version asserted `global().is_err()` to force the "runtime
     /// unavailable" precondition, but the global runtime is a process-wide
     /// singleton that other tests initialize; under parallel `cargo test` that
-    /// assertion flaked (globals were already up). Because `Drop` never consults
-    /// the runtime, simulating the early return is equivalent and deterministic.
+    /// assertion flaked (globals were already up). Since the slot-clearing half
+    /// of `Drop` never depends on the runtime, simulating the early return is
+    /// equivalent and deterministic.
     #[test]
-    fn cancel_token_guard_cleared_after_runtime_unavailable() {
+    fn operation_guard_cleared_after_runtime_unavailable() {
         let slot = parking_lot::Mutex::new(None);
 
         // Runtime unavailable → the guarded function bails out early while the
         // guard is still in scope, so its Drop runs as the block exits.
         let runtime_available = false;
         'guarded: {
-            let _guard = CancelTokenGuard::arm(&slot, CancellationToken::new());
-            assert!(slot.lock().is_some(), "arm must populate the cancel slot");
+            let _guard = OperationGuard::arm(&slot, 7);
+            assert!(
+                slot.lock().is_some(),
+                "arm must publish the operation handle"
+            );
             if !runtime_available {
                 break 'guarded; // mirrors `global().context(OdbcRuntimeSnafu)?` failing
             }
@@ -3739,7 +3759,7 @@ mod tests {
 
         assert!(
             slot.lock().is_none(),
-            "guard must clear the cancel slot even when the runtime is unavailable",
+            "guard must clear the operation slot even when the runtime is unavailable",
         );
     }
 

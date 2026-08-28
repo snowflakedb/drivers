@@ -9,6 +9,7 @@ use sf_core::apis::operation_ctx::OperationCtx;
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[napi]
 pub struct Connection {
@@ -90,13 +91,15 @@ impl Connection {
         // - too much map_err calls :/
         // - must release statement or result set on errors?
         let stmt_handle = DRIVER.statement_new(self.handle).map_err(to_napi_err)?;
+        // Shared with the `Statement` handed back, whose `cancel()` triggers it.
+        let ctx = Arc::new(OperationCtx::with_own_token());
         Ok(Statement::from_pending(
-            Some(stmt_handle),
             self.handle,
+            Some(ctx.clone()),
             async move {
                 DRIVER.statement_set_sql_query(stmt_handle, query).await?;
                 let result = DRIVER
-                    .statement_execute_query(None, stmt_handle, None, None)
+                    .statement_execute_query(Some(&ctx), stmt_handle, None, None)
                     .await?;
                 let _ = DRIVER.statement_release(stmt_handle);
                 // Node.js does not currently surface request_id to its callers (unlike
@@ -110,7 +113,8 @@ impl Connection {
     #[napi]
     pub fn get_query_result(&self, query_id: String) -> Statement {
         let conn_handle = self.handle;
-        Statement::from_pending(None, conn_handle, async move {
+        // No ctx: `connection_get_query_result` is not `async_first`.
+        Statement::from_pending(conn_handle, None, async move {
             DRIVER
                 .connection_get_query_result(conn_handle, query_id)
                 .await

@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
-use tokio_util::sync::CancellationToken;
 
 use super::CDataType;
 
@@ -2178,7 +2177,7 @@ impl GetDataState {
 /// Outer Statement handle.
 ///
 /// Most mutable state lives inside `inner: Mutex<StatementInner>`.
-/// `cancel_token` is also mutable (interior mutability via its own Mutex)
+/// `operation` is also mutable (interior mutability via its own Mutex)
 /// to allow zero-contention cross-thread cancellation without locking `inner`.
 /// The `HandleManager` stores `Statement` inside `Arc<RwLock<Option<Statement>>>`,
 /// so the outer fields are accessible through `HandleGuard::deref()` without
@@ -2188,10 +2187,15 @@ pub struct Statement {
     pub conn_id: HandleId,
     pub stmt_handle: StatementHandle,
     pub inner: parking_lot::Mutex<StatementInner>,
-    /// Cancellation token for the currently in-flight operation, if any.
-    /// `Some(token)` while a cancellable operation is running (sync or async); `None` otherwise.
-    /// SQLCancel checks this without locking `inner` — zero-contention cross-thread cancel.
-    pub cancel_token: parking_lot::Mutex<Option<CancellationToken>>,
+    /// Core operation handle of the currently in-flight cancellable call, if any.
+    /// `Some(handle)` while one is running (sync or async); `None` otherwise.
+    /// SQLCancel reads this without locking `inner` — zero-contention cross-thread
+    /// cancel — and passes it to `cancel_operation`, so the core cancels the
+    /// operation itself and aborts the query server-side. The wrapper deliberately
+    /// holds no cancellation primitive of its own: racing the core's own
+    /// cancellation observation would drop the operation before it could finish
+    /// aborting (see `sf_core::apis::operation_ctx`).
+    pub operation: parking_lot::Mutex<Option<u64>>,
 }
 
 pub struct ExecDirectOutcome {
@@ -2225,7 +2229,7 @@ pub struct ExecuteOutcome {
 /// do not lock `Connection` at all. `SQLSetStmtAttr` for `AppRowDesc`/
 /// `AppParamDesc` drops `inner`, acquires `Connection` to clone the descriptor
 /// Arc, then re-acquires `inner` — preserving the ordering invariant.
-/// `SQLCancel` operates only on `Statement::cancel_token` and
+/// `SQLCancel` operates only on `Statement::operation` and
 /// never touches either mutex.
 pub struct StatementInner {
     pub state: State<StatementState>,
@@ -2497,7 +2501,7 @@ impl Statement {
                 multi_statement_count: -1,
                 async_enabled: false,
             }),
-            cancel_token: parking_lot::Mutex::new(None),
+            operation: parking_lot::Mutex::new(None),
         }
     }
 
@@ -2507,7 +2511,7 @@ impl Statement {
     /// `dbc.connection`, (b) read the session `conn_handle` from
     /// `ConnectionState::Connected`, or (c) otherwise dereference connection
     /// state. Functions that only mutate `Statement::inner` or
-    /// `Statement::cancel_token` (e.g. `SQLBindCol`, `SQLBindParameter`,
+    /// `Statement::operation` (e.g. `SQLBindCol`, `SQLBindParameter`,
     /// `SQLPutData`, `SQLSetStmtAttr`, `SQLCancel`) do not need this.
     ///
     /// Returns an error if the parent connection has already been freed.

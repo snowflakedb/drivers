@@ -4,7 +4,7 @@ mod arrow;
 use std::sync::OnceLock;
 
 use futures::FutureExt;
-use proto_utils::{ProtoError, Transport};
+use proto_utils::{CancellableTransport, ProtoError, Transport};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use pyo3_async_runtimes::tokio::future_into_py;
