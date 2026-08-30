@@ -27,7 +27,7 @@ use crate::api::{
 use crate::conversion::{
     INTEGER_CONCISE_SQL_TYPE, NumericSettings, SMALLINT_CONCISE_SQL_TYPE,
     WVARCHAR_CONCISE_SQL_TYPE, column_size_from_field, decimal_digits_from_field,
-    num_prec_radix_from_field, octet_length_from_field, sql_type_from_field, type_name_from_field,
+    num_prec_radix_from_field, octet_length_from_field, sql_type_from_field,
     verbose_sql_type_from_field,
 };
 use arrow::array::{Array, ArrayRef, Int16Array, Int32Array, Int64Array, RecordBatch, StringArray};
@@ -1902,8 +1902,16 @@ fn field_from_sql_type_string(type_str: &str, numeric_settings: &NumericSettings
         "OBJECT" => rehydrate_field("OBJECT", None, None, Some(default_varchar), None, true),
         "ARRAY" => rehydrate_field("ARRAY", None, None, Some(default_varchar), None, true),
         "VECTOR" => rehydrate_field("VECTOR", None, None, Some(default_varchar), None, true),
-        // Unrecognized types fall back to a character type.
-        _ => rehydrate_field("TEXT", None, None, Some(default_varchar), None, true),
+        // Unsupported / unrecognized SQL type names keep their logical name so
+        // TYPE_NAME can report it; `from_field` maps them to SQL_VARCHAR.
+        other => rehydrate_field(
+            &other.to_ascii_uppercase(),
+            None,
+            None,
+            Some(default_varchar),
+            None,
+            true,
+        ),
     }
 }
 
@@ -2085,12 +2093,12 @@ fn append_procedure_column_rows(
             .map(|s| s.as_str())
             .unwrap_or("");
 
-        let data_type_val = sql_type_from_field(&field, numeric_settings)
-            .ok()
-            .map(|t| t.0.to_string());
-        let type_name_val = type_name_from_field(&field, numeric_settings)
-            .ok()
-            .map(|s| s.to_string());
+        let data_type_val = Some(
+            sql_type_from_field(&field, numeric_settings)
+                .map(|t| t.0.to_string())
+                .unwrap_or_else(|_| sql::SqlDataType::VARCHAR.0.to_string()),
+        );
+        let type_name_val = Some(catalog_type_name_from_logical_type(logical_type));
         let col_size_val = column_size_from_field(&field, numeric_settings)
             .ok()
             .map(|s| s.to_string());
@@ -2104,16 +2112,19 @@ fn append_procedure_column_rows(
         // binary-radix-2 path.
         let num_prec_radix_val =
             catalog_num_prec_radix(logical_type, &field, numeric_settings).map(|s| s.to_string());
-        let sql_data_type_val = verbose_sql_type_from_field(&field, numeric_settings)
-            .ok()
-            .map(|t| t.0.to_string());
+        let sql_data_type_val = Some(
+            verbose_sql_type_from_field(&field, numeric_settings)
+                .map(|t| t.0.to_string())
+                .unwrap_or_else(|_| sql::SqlDataType::VARCHAR.0.to_string()),
+        );
         let sql_dt_sub_val =
             sql_datetime_sub_from_logical_type(logical_type).map(|s| s.to_string());
-        let char_octet_val = match logical_type {
-            "TEXT" | "BINARY" => octet_length_from_field(&field, numeric_settings)
+        let char_octet_val = if catalog_char_octet_length_applies(logical_type) {
+            octet_length_from_field(&field, numeric_settings)
                 .ok()
-                .map(|s| s.to_string()),
-            _ => None,
+                .map(|s| s.to_string())
+        } else {
+            None
         };
         let is_result_set_col = if column_type == SQL_RESULT_COL {
             SQL_TRUE
@@ -3263,6 +3274,20 @@ fn catalog_buffer_length(
         .and_then(|s| i32::try_from(s).ok())
 }
 
+/// Whether `CHAR_OCTET_LENGTH` applies to `logical_type`. Character and binary types
+/// carry a maximum byte length; everything else reports NULL.
+fn catalog_char_octet_length_applies(logical_type: &str) -> bool {
+    match logical_type {
+        "TEXT" | "BINARY" => true,
+        "FIXED" | "DECFLOAT" | "REAL" | "BOOLEAN" | "DATE" | "TIME" | "TIMESTAMP"
+        | "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" | "VARIANT" | "OBJECT" | "ARRAY"
+        | "VECTOR" => false,
+        // Absent logical type is corrupt metadata, not an unknown type name.
+        "" => false,
+        _ => true,
+    }
+}
+
 /// Returns the datetime subcode for `SQL_DATETIME_SUB` (col 15), or `None`
 /// for types where `SQL_DATA_TYPE != SQL_DATETIME`.
 fn sql_datetime_sub_from_logical_type(logical_type: &str) -> Option<i16> {
@@ -3352,11 +3377,12 @@ fn flat_row_from_descriptor(
             .unwrap_or(odbc_sys::SqlDataType::VARCHAR.0),
     );
     let sql_dt_sub_val = sql_datetime_sub_from_logical_type(&desc.logical_type);
-    let char_octet_val = match desc.logical_type.as_str() {
-        "TEXT" | "BINARY" => octet_length_from_field(&field, numeric_settings)
+    let char_octet_val = if catalog_char_octet_length_applies(&desc.logical_type) {
+        octet_length_from_field(&field, numeric_settings)
             .ok()
-            .and_then(|s| i32::try_from(s).ok()),
-        _ => None,
+            .and_then(|s| i32::try_from(s).ok())
+    } else {
+        None
     };
 
     let nullable_val: i16 = if desc.nullable { 1 } else { 0 };
@@ -4933,6 +4959,92 @@ mod procedure_columns_tests {
         let f = field_from_sql_type_string("TIMESTAMP", &ns);
         assert_eq!(meta(&f, "logicalType"), Some("TIMESTAMP_NTZ"));
         assert_eq!(meta(&f, "scale"), Some("9"));
+        assert_eq!(
+            meta(&field_from_sql_type_string("GEOGRAPHY", &ns), "logicalType"),
+            Some("GEOGRAPHY")
+        );
+        assert_eq!(
+            meta(&field_from_sql_type_string("geometry", &ns), "logicalType"),
+            Some("GEOMETRY")
+        );
+    }
+
+    #[test]
+    fn geography_procedure_arg_reports_external_type_name_and_varchar_data_type() {
+        let ns = NumericSettings::default();
+        let mut rows = Vec::new();
+        append_procedure_column_rows(
+            &mut rows,
+            &Some("CAT".to_string()),
+            &Some("SCHEM".to_string()),
+            &Some("GEOPROC".to_string()),
+            "(G GEOGRAPHY)",
+            "VARCHAR",
+            None,
+            &ns,
+        );
+        assert_eq!(rows.len(), 2);
+        let geo = rows
+            .iter()
+            .find(|r| r.col_name.as_deref() == Some("G"))
+            .expect("GEOGRAPHY argument row");
+        assert_eq!(geo.type_name.as_deref(), Some("GEOGRAPHY"));
+        assert_eq!(geo.data_type, Some(sql::SqlDataType::VARCHAR.0.to_string()));
+
+        // A column advertised as SQL_VARCHAR must carry CHAR_OCTET_LENGTH, so a
+        // GEOGRAPHY argument reports the same byte length as an unsized VARCHAR
+        // argument (both default to the session max varchar).
+        let mut varchar_rows = Vec::new();
+        append_procedure_column_rows(
+            &mut varchar_rows,
+            &Some("CAT".to_string()),
+            &Some("SCHEM".to_string()),
+            &Some("TXTPROC".to_string()),
+            "(T VARCHAR)",
+            "VARCHAR",
+            None,
+            &ns,
+        );
+        let txt = varchar_rows
+            .iter()
+            .find(|r| r.col_name.as_deref() == Some("T"))
+            .expect("VARCHAR argument row");
+        assert!(
+            geo.char_octet.is_some(),
+            "GEOGRAPHY argument must report CHAR_OCTET_LENGTH, got NULL"
+        );
+        assert_eq!(geo.char_octet, txt.char_octet);
+    }
+
+    #[test]
+    fn catalog_char_octet_length_applies_to_character_and_unsupported_types() {
+        for lt in ["TEXT", "BINARY", "GEOGRAPHY", "GEOMETRY", "INTERVAL"] {
+            assert!(
+                catalog_char_octet_length_applies(lt),
+                "{lt} is reported as a character type and must carry CHAR_OCTET_LENGTH"
+            );
+        }
+        for lt in [
+            "FIXED",
+            "DECFLOAT",
+            "REAL",
+            "BOOLEAN",
+            "DATE",
+            "TIME",
+            "TIMESTAMP_NTZ",
+            "TIMESTAMP_LTZ",
+            "TIMESTAMP_TZ",
+            "VARIANT",
+            "OBJECT",
+            "ARRAY",
+            "VECTOR",
+            "",
+        ] {
+            assert!(
+                !catalog_char_octet_length_applies(lt),
+                "{lt} must report NULL CHAR_OCTET_LENGTH"
+            );
+        }
     }
 
     #[test]
