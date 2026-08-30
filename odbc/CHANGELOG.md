@@ -13,6 +13,8 @@ Bug fixes:
 - Fixed `SQLColumns` `BUFFER_LENGTH` for `NUMBER`/`DECIMAL` to return precision + 2 (ODBC transfer octet length); query-result `SQLColAttribute` octet/display for NUMBER remains 136. (snowflakedb/drivers#1166)
 - Fixed `SQLColumns` `COLUMN_SIZE` and `BUFFER_LENGTH` for `VARIANT`/`OBJECT`/`ARRAY` to follow `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT` instead of SHOW COLUMNS' 128 MB length. (snowflakedb/drivers#1299)
 - Fixed `SQLColumns` `COLUMN_SIZE` and `BUFFER_LENGTH` for unrecognized Snowflake types such as `GEOGRAPHY`/`GEOMETRY` to report the varchar metrics implied by their `SQL_VARCHAR` `DATA_TYPE` instead of NULL. (snowflakedb/drivers#1431)
+- Fixed `SQLProcedureColumns` `TYPE_NAME` for unsupported types such as `GEOGRAPHY`/`GEOMETRY` to report the Snowflake type name while `DATA_TYPE` remains `SQL_VARCHAR`. (snowflakedb/drivers#1432)
+- Fixed `SQLColumns` and `SQLProcedureColumns` `CHAR_OCTET_LENGTH` for unsupported types such as `GEOGRAPHY`/`GEOMETRY` to report a byte length instead of NULL, matching the `SQL_VARCHAR` they report as `DATA_TYPE`. (snowflakedb/drivers#1432)
 
 ## v4.0.0-rc1
 
