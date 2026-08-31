@@ -8,8 +8,8 @@ description: >
   be needed.
 ---
 
-This content moved into the knowledge base. See `/kb architecture formatting` —
-`.ai/commands/kb/references/architecture/best-practices/formatting.md`.
+This content lives in the knowledge base. See `/sdet-non-monorepo:kb architecture formatting` —
+`snowflake-eng/dev-platform-kb/.ai/commands/sdet-non-monorepo/kb/references/architecture/best-practices/formatting.md`.
 
 <!-- Retire this redirect once no citation of `format` as a skill slug remains:
      grep -rn 'skills/format\|/format\b' --include='*.md' . -->

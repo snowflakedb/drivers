@@ -10,8 +10,8 @@ description: >
   unavailable.
 ---
 
-This content moved into the knowledge base. See `/kb tools python-ud-tests` —
-`.ai/commands/kb/references/tools/python-ud-tests.md`.
+This content lives in the knowledge base. See `/sdet-non-monorepo:kb tools python-ud-tests` —
+`snowflake-eng/dev-platform-kb/.ai/commands/sdet-non-monorepo/kb/references/tools/python-ud-tests.md`.
 
 <!-- Retire this redirect once no citation of `run-python-ud-tests` remains:
      grep -rn 'run-python-ud-tests' --include='*.md' . -->

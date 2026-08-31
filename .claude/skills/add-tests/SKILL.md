@@ -8,8 +8,8 @@ description: >
   or "add unit test".
 ---
 
-This content moved into the knowledge base. See `/kb architecture adding-tests` —
-`.ai/commands/kb/references/architecture/best-practices/adding-tests.md`.
+This content lives in the knowledge base. See `/sdet-non-monorepo:kb architecture adding-tests` —
+`snowflake-eng/dev-platform-kb/.ai/commands/sdet-non-monorepo/kb/references/architecture/best-practices/adding-tests.md`.
 
 <!-- Retire this redirect once no citation of `add-tests` remains:
      grep -rn 'add-tests' --include='*.md' . -->

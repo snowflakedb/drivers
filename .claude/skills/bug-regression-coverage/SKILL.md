@@ -10,8 +10,8 @@ description: >
   suites (use test-coverage-mapper for those).
 ---
 
-This content moved into the knowledge base. See `/kb tools bug-regression-coverage` —
-`.ai/commands/kb/references/tools/bug-regression-coverage.md`.
+This content lives in the knowledge base. See `/sdet-non-monorepo:kb tools bug-regression-coverage` —
+`snowflake-eng/dev-platform-kb/.ai/commands/sdet-non-monorepo/kb/references/tools/bug-regression-coverage.md`.
 
 <!-- Retire this redirect once no citation of `bug-regression-coverage` remains:
      grep -rn 'bug-regression-coverage' --include='*.md' . -->
