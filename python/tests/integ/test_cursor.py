@@ -2863,8 +2863,8 @@ class TestCursorDescribeInternal:
     so this class opts out of the module-level async parametrization.
 
     Focus: properties that only a live server can confirm — ``vector_dimension``
-    propagation end-to-end, ``display_size``/``internal_size`` proto-field mapping
-    (BD#55), ``_to_result_metadata_v1()`` round-trip, and cursor-state side effects.
+    propagation end-to-end, ``display_size`` being new-driver-only (BD#90),
+    ``_to_result_metadata_v1()`` round-trip, and cursor-state side effects.
     """
 
     pytestmark = skip_async("_describe_internal is sync-only; Snowpark never calls it through the async cursor")
@@ -2938,13 +2938,10 @@ class TestCursorDescribeInternal:
         assert result[0].vector_dimension == 3
 
     def test_display_size_and_internal_size_for_varchar(self, cursor):
-        """display_size/internal_size map the proto length and byte_length fields (BD#55).
+        """internal_size is the char count on both drivers; display_size is new-driver-only (BD#90).
 
-        UD routes the char count to ``display_size`` and the byte count to
-        ``internal_size``; legacy never populates ``display_size`` and reports the char
-        count as ``internal_size``. The mapping lives in ``from_column``, which both the
-        V1 ``describe()`` and V2 ``_describe_internal()`` views share, so both are
-        asserted here.
+        The mapping lives in ``from_column``, which both the V1 ``describe()`` and
+        V2 ``_describe_internal()`` views share, so both are asserted here.
         """
         sql = "SELECT 'x'::VARCHAR(100) AS s"
         v2_result = cursor._describe_internal(sql)
@@ -2952,18 +2949,58 @@ class TestCursorDescribeInternal:
 
         assert v2_result is not None and v1_result is not None
 
-        if NEW_DRIVER_ONLY("BD#55"):
-            # proto `length` (chars) -> display_size, `byte_length` -> internal_size.
+        assert v2_result[0].internal_size == 100
+        assert v1_result[0].internal_size == 100
+
+        if NEW_DRIVER_ONLY("BD#90"):
             assert v2_result[0].display_size == 100
-            assert v2_result[0].internal_size == 400  # UTF-8, 4 bytes/char
             assert v1_result[0].display_size == 100
-            assert v1_result[0].internal_size == 400
         else:
-            # JSON `length` (chars) -> internal_size; display_size is never populated.
+            # The old driver never populates display_size.
             assert v2_result[0].display_size is None
-            assert v2_result[0].internal_size == 100
             assert v1_result[0].display_size is None
-            assert v1_result[0].internal_size == 100
+
+    def test_internal_size_per_type(self, cursor):
+        """internal_size is the char count for VARCHAR and None for every other type.
+
+        Ported from the old driver's test_dbapi.py::test_description2 expectation table,
+        using an explicit VARCHAR(100) column rather than its bare `name string`
+        column so the expected value is a fixed 100 (the old driver's version depends
+        on the server-side ENABLE_FIX_67159 flag, which has no new-driver equivalent). Identical on
+        both drivers, so asserted unconditionally with no BD marker.
+        """
+        sql = (
+            "SELECT 1::NUMBER AS fixed_col, 'x'::VARCHAR(100) AS varchar_col, "
+            "'2024-01-15'::DATE AS date_col, '12:00:00'::TIME AS time_col, "
+            "'2013-11-03 00:00:00'::TIMESTAMP_NTZ AS ntz_col, "
+            "'2013-11-03 00:00:00'::TIMESTAMP_LTZ AS ltz_col, "
+            "'2013-11-03 00:00:00-07'::TIMESTAMP_TZ AS tz_col, "
+            'TO_VARIANT(PARSE_JSON(\'{"k": "v"}\')) AS variant_col, '
+            "OBJECT_CONSTRUCT('k', 'v') AS object_col, "
+            "ARRAY_CONSTRUCT('a', 'b', 'c') AS array_col, "
+            "TRUE::BOOLEAN AS boolean_col"
+        )
+        v2_result = cursor._describe_internal(sql)
+        v1_result = cursor.describe(sql)
+
+        assert v2_result is not None and v1_result is not None
+
+        expected = {
+            "FIXED_COL": None,
+            "VARCHAR_COL": 100,
+            "DATE_COL": None,
+            "TIME_COL": None,
+            "NTZ_COL": None,
+            "LTZ_COL": None,
+            "TZ_COL": None,
+            "VARIANT_COL": None,
+            "OBJECT_COL": None,
+            "ARRAY_COL": None,
+            "BOOLEAN_COL": None,
+        }
+        for v2_col, v1_col in zip(v2_result, v1_result, strict=True):
+            assert v2_col.internal_size == expected[v2_col.name], v2_col.name
+            assert v1_col.internal_size == expected[v1_col.name], v1_col.name
 
     def test_to_v1_round_trip(self, cursor):
         """_to_result_metadata_v1() produces ResultMetadata matching describe() output."""
