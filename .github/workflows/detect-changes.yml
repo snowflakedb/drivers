@@ -28,9 +28,9 @@ on:
       shared:
         description: "True if shared config/build files changed"
         value: ${{ jobs.detect.outputs.shared }}
-      docs_only:
-        description: "True if only documentation changed"
-        value: ${{ jobs.detect.outputs.docs_only }}
+      no_build_impact:
+        description: "True if no changed file is built or tested by any driver job"
+        value: ${{ jobs.detect.outputs.no_build_impact }}
       # "Should run" outputs — GHA always runs ALL unit tests; these flags
       # control whether to run at all (skip when only unrelated files changed).
       # Per-feature test selection is handled by Buildkite via ci/select_tests.py.
@@ -107,7 +107,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       python_packaging: ${{ steps.filter.outputs.python_packaging }}
       shared: ${{ steps.filter.outputs.shared }}
-      docs_only: ${{ steps.computed.outputs.docs_only }}
+      no_build_impact: ${{ steps.computed.outputs.no_build_impact }}
       # Pre-computed "should run" outputs
       run_dotnet: ${{ steps.computed.outputs.run_dotnet }}
       run_jdbc: ${{ steps.computed.outputs.run_jdbc }}
@@ -138,10 +138,16 @@ jobs:
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
         with:
+          # On push, `base` must name the branch that was pushed to for the
+          # action to diff against the commit immediately before the push;
+          # left empty it falls back to the repository default branch, which
+          # would compare a release/** push against all of main. Empty (the
+          # action's default) is correct for pull_request and merge_group.
+          base: ${{ github.event_name == 'push' && github.ref || '' }}
           # `list-files: json` makes each filter expose `<filter>_files` as
           # a JSON array of matching paths. The computed step below uses
           # `all_files` (from the catch-all `all` filter) to verify every
-          # changed path against the documentation patterns explicitly.
+          # changed path against the no-build-impact patterns explicitly.
           list-files: 'json'
           # Each language filter explicitly includes:
           #   1. its source directories, and
@@ -304,7 +310,7 @@ jobs:
               - 'ci/test_matrix/mappings/__init__.py'
               - 'ci/test_matrix/mappings/shared.py'
               - 'ci/test_matrix/models/__init__.py'
-            # Catch-all used by the docs_only computation.
+            # Catch-all used by the no_build_impact computation.
             all:
               - '**'
 
@@ -317,21 +323,31 @@ jobs:
             IS_SNOWFLAKE_ENG=false
           fi
 
-          # docs_only is true if every modified file is a documentation
-          # file (path matches `**/*.md`, equals `LICENSE`, or equals
-          # `.github/CODEOWNERS`).
+          # no_build_impact is true when every modified file is one that no
+          # driver job compiles, packages or tests against:
+          #   - any `**/*.md`, plus `LICENSE` and `.github/CODEOWNERS`
+          #   - `.ai/`, `.claude/` and `.cursor/` — agent guidance and Arctic
+          #     Owl review rules. These are linted by pre-commit and by the
+          #     `universal-driver--skills` Buildkite pipeline, both of which
+          #     are triggered independently of this workflow.
+          # Nothing else belongs here: a false positive silently skips the
+          # whole matrix, so the list stays explicit rather than a negation
+          # of the language filters above.
           #
-          # Iterate the full changed-file list and verify
-          # each path explicitly against the documentation patterns.
-          DOCS_ONLY=$(jq -r '
+          # Iterate the full changed-file list and verify each path
+          # explicitly against those patterns.
+          NO_BUILD_IMPACT=$(jq -r '
             (length > 0)
             and all(.[];
               test("\\.md$")
               or . == "LICENSE"
               or . == ".github/CODEOWNERS"
+              or startswith(".ai/")
+              or startswith(".claude/")
+              or startswith(".cursor/")
             )
           ' <<<'${{ steps.filter.outputs.all_files }}')
-          echo "docs_only=$DOCS_ONLY" >> $GITHUB_OUTPUT
+          echo "no_build_impact=$NO_BUILD_IMPACT" >> $GITHUB_OUTPUT
 
           # .NET should run only if dotnet changed
           # Intentionally excludes `core` and `shared` for now: the .NET
@@ -451,7 +467,7 @@ jobs:
             echo "run_odbc_packaging=false" >> $GITHUB_OUTPUT
           fi
 
-          if [[ "$DOCS_ONLY" == "true" ]]; then
+          if [[ "$NO_BUILD_IMPACT" == "true" ]]; then
             for v in run_jdbc run_odbc run_python run_python_packaging \
                      run_rust_core run_nodejs run_dotnet run_jdbc_reference \
                      run_odbc_reference run_python_reference \
@@ -460,7 +476,7 @@ jobs:
             done
           fi
 
-          # Last assignment of KEY= wins in GITHUB_OUTPUT (docs_only override).
+          # Last assignment of KEY= wins in GITHUB_OUTPUT (no_build_impact override).
           last() { grep "^$1=" "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-; }
           any_lane() {
             local v
@@ -494,7 +510,7 @@ jobs:
           echo "| Node.js | ${{ steps.filter.outputs.nodejs }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dotnet | ${{ steps.filter.outputs.dotnet }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Shared | ${{ steps.filter.outputs.shared }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docs Only | ${{ steps.computed.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| No Build Impact | ${{ steps.computed.outputs.no_build_impact }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Tests to Run (GHA — all unit tests)" >> $GITHUB_STEP_SUMMARY
           echo "| Test Suite | Should Run |" >> $GITHUB_STEP_SUMMARY

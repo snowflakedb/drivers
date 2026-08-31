@@ -64,11 +64,16 @@ jobs:
     steps:
       - run: 'true'
 
-  # Only change-gated events need file detection. Push, schedule and dispatch
-  # run whole suites, so they skip the clone + paths-filter entirely.
+  # Schedule and dispatch run whole suites by definition, so they skip the
+  # clone + paths-filter entirely. Push still runs the whole suite for any
+  # real change, but needs detection to recognise a commit that touches no
+  # buildable code at all (see the `push` case in `plan`).
   detect-changes:
     needs: scope-label-gate
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: >-
+      github.event_name == 'pull_request'
+      || github.event_name == 'merge_group'
+      || github.event_name == 'push'
     uses: ./.github/workflows/detect-changes.yml
 
   # Resolves which driver suites run, for every event type. Kept as one bash
@@ -113,6 +118,7 @@ jobs:
           SCHEDULE: ${{ github.event.schedule }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           DETECT_RESULT: ${{ needs.detect-changes.result }}
+          NO_BUILD_IMPACT: ${{ needs.detect-changes.outputs.no_build_impact }}
           RUN_PYTHON: ${{ needs.detect-changes.outputs.run_python }}
           RUN_PYTHON_PACKAGING: ${{ needs.detect-changes.outputs.run_python_packaging }}
           RUN_PYTHON_REFERENCE: ${{ needs.detect-changes.outputs.run_python_reference }}
@@ -248,6 +254,16 @@ jobs:
               echo "Manual dispatch of '${DISPATCH_DRIVER:-all}':"
               ;;
             push)
+              # A push whose every file is unbuildable (docs, agent guidance)
+              # would otherwise rerun the entire matrix, because the cases
+              # below are deliberately not change-gated. Fail open: anything
+              # other than a successful detection saying "nothing to build"
+              # falls through to the full suite.
+              if [[ "$DETECT_RESULT" == "success" && "$NO_BUILD_IMPACT" == "true" ]]; then
+                echo "Push to $REF changed no buildable code: no driver suites selected."
+                emit
+                exit 0
+              fi
               # main exercises every driver; a release branch only builds its
               # own driver. Rust Core, Node.js and .NET have no release lines.
               case "$REF" in
@@ -267,7 +283,7 @@ jobs:
 
           emit
 
-  # !cancelled() is required: detect-changes is skipped on push/schedule/
+  # !cancelled() is required: detect-changes is skipped on schedule and
   # dispatch, and without a status function GitHub skips these jobs even
   # when plan ran and selected them (skip cascades through plan's needs).
   python:
