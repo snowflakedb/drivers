@@ -1,5 +1,5 @@
 use crate::DRIVER;
-use crate::error::to_napi_err;
+use crate::error::{ToJsError, async_to_js};
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -14,8 +14,6 @@ use std::sync::Arc;
 #[napi]
 pub struct Connection {
     handle: Handle,
-    connect_ctx: OperationCtx,
-
     /// TEMPORARY: Copied onto every [`Statement`] this connection creates.\
     session_parameters: HashMap<String, String>,
 }
@@ -25,6 +23,7 @@ impl Connection {
     #[napi(constructor)]
     pub fn new(
         options: HashMap<String, String>,
+        env: &Env,
         session_parameters: HashMap<String, String>,
     ) -> Result<Self> {
         let conn_handle = DRIVER.connection_new();
@@ -55,29 +54,28 @@ impl Connection {
                 .await?;
             Ok::<_, ApiError>(())
         })
-        // TODO: must release connection on any error
-        .map_err(to_napi_err)?;
+        .map_err(|e| {
+            let _ = DRIVER.connection_release(conn_handle);
+            e.to_js_error(*env)
+        })?;
 
         Ok(Self {
             handle: conn_handle,
-            connect_ctx: OperationCtx::with_own_token(),
             session_parameters,
         })
     }
 
     #[napi]
-    pub async fn connect(&self) -> Result<()> {
-        DRIVER
+    pub fn connect(&self, env: &Env) -> Result<AsyncBlock<()>> {
+        let handle = self.handle;
+        async_to_js(env, async move {
             // TODO:
             // The _db_handle parameter is currently unused but required; passing a dummy value for now.
             // This argument is planned for removal from connection_init in a future update.
-            .connection_init(
-                Some(&self.connect_ctx),
-                self.handle,
-                Handle { id: 0, magic: 0 },
-            )
-            .await
-            .map_err(to_napi_err)
+            DRIVER
+                .connection_init(None, handle, Handle { id: 0, magic: 0 })
+                .await
+        })
     }
 
     #[napi]
@@ -86,26 +84,24 @@ impl Connection {
     }
 
     #[napi]
-    pub fn execute(&self, query: String) -> Result<Statement> {
-        // TODO:
-        // - too much map_err calls :/
-        // - must release statement or result set on errors?
-        let stmt_handle = DRIVER.statement_new(self.handle).map_err(to_napi_err)?;
-        // Shared with the `Statement` handed back, whose `cancel()` triggers it.
+    pub fn execute(&self, env: &Env, query: String) -> Result<Statement> {
+        let stmt_handle = DRIVER
+            .statement_new(self.handle)
+            .map_err(|e| e.to_js_error(*env))?;
         let ctx = Arc::new(OperationCtx::with_own_token());
         Ok(Statement::from_pending(
             self.handle,
             Some(ctx.clone()),
             async move {
-                DRIVER.statement_set_sql_query(stmt_handle, query).await?;
-                let result = DRIVER
-                    .statement_execute_query(Some(&ctx), stmt_handle, None, None)
-                    .await?;
+                let result = async {
+                    DRIVER.statement_set_sql_query(stmt_handle, query).await?;
+                    DRIVER
+                        .statement_execute_query(Some(&ctx), stmt_handle, None, None)
+                        .await
+                }
+                .await;
                 let _ = DRIVER.statement_release(stmt_handle);
-                // Node.js does not currently surface request_id to its callers (unlike
-                // Python's cursor._request_id property) — no consumer needs it yet, so
-                // the `request_id` carried on the result is intentionally ignored.
-                Ok(result)
+                result
             },
         ))
     }
@@ -122,14 +118,12 @@ impl Connection {
     }
 
     #[napi]
-    pub async fn destroy(&self) -> Result<()> {
-        DRIVER
-            .connection_close(self.handle)
-            .await
-            .map_err(to_napi_err)?;
-        DRIVER
-            .connection_release(self.handle)
-            .map_err(to_napi_err)?;
-        Ok(())
+    pub fn destroy(&self, env: &Env) -> Result<AsyncBlock<()>> {
+        let handle = self.handle;
+        async_to_js(env, async move {
+            let close = DRIVER.connection_close(handle).await;
+            let _ = DRIVER.connection_release(handle);
+            close
+        })
     }
 }

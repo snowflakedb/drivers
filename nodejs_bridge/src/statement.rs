@@ -10,7 +10,7 @@ mod time_format;
 pub use column::Column;
 
 use crate::DRIVER;
-use crate::error::to_napi_err;
+use crate::error::{ToJsError, async_to_js};
 use crate::session_params::SessionParams;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -26,12 +26,21 @@ use stream_state::StreamState;
 #[napi]
 pub struct Statement {
     result: StatementResult,
-    /// Cancellation context the pending work runs under, so [`Self::cancel`] can
-    /// trigger it from any thread. `None` when the work is not cancellable.
-    ///
-    /// `Arc`, not a clone: `OperationCtx` cancels on `Drop` and is deliberately
-    /// not `Clone`, so a copy going out of scope would cancel a live query.
     ctx: Option<Arc<OperationCtx>>,
+}
+
+enum FetchBatchError {
+    Api(Arc<ApiError>),
+    Plain(String),
+}
+
+impl ToJsError for FetchBatchError {
+    fn to_js_error(&self, env: Env) -> napi::Error {
+        match self {
+            FetchBatchError::Api(e) => e.to_js_error(env),
+            FetchBatchError::Plain(message) => napi::Error::from_reason(message.clone()),
+        }
+    }
 }
 
 #[napi]
@@ -52,28 +61,29 @@ impl Statement {
     }
 
     #[napi]
-    pub async fn wait_for_completion(&self) -> Result<()> {
-        self.result.ready().await.as_ref().map_err(to_napi_err)?;
-        Ok(())
+    pub fn wait_for_completion(&self, env: &Env) -> Result<AsyncBlock<()>> {
+        let result = self.result.clone();
+        async_to_js(env, async move { result.ready().await.map(|_| ()) })
     }
 
     /// Loads the next batch of rows. Returns `false` when the result set is
     /// exhausted. Drain the loaded batch with
     /// [`get_next_row`](Self::get_next_row) before calling this again.
     #[napi]
-    pub async fn fetch_next_batch(&self) -> Result<bool> {
-        let data = self.result.ready().await.map_err(to_napi_err)?;
-        let stream_state = Arc::clone(&data.stream_state);
-        let session_params = Arc::clone(&data.session_params);
-
-        // `fetch_next_batch` may block on a chunk download; run on napi's
-        // blocking pool so the Node event loop stays responsive.
-        spawn_blocking(move || stream_state.fetch_next_batch(&session_params))
-            .await
-            // TODO: Investigate how .unwrap() usage affects Node and how to properly
-            // handle such errors.
-            .unwrap()
-            .map_err(to_napi_err)
+    pub fn fetch_next_batch(&self, env: &Env) -> Result<AsyncBlock<bool>> {
+        let result = self.result.clone();
+        async_to_js(env, async move {
+            let data = result.ready().await.map_err(FetchBatchError::Api)?;
+            let stream_state = Arc::clone(&data.stream_state);
+            let session_params = Arc::clone(&data.session_params);
+            // `fetch_next_batch` may block on a chunk download; run it on the
+            // blocking pool so it doesn't tie up napi's async runtime worker
+            // threads.
+            spawn_blocking(move || stream_state.fetch_next_batch(&session_params))
+                .await
+                .map_err(|e| FetchBatchError::Plain(e.to_string()))?
+                .map_err(|e| FetchBatchError::Plain(e.to_string()))
+        })
     }
 
     /// Returns the next row of the current batch, or `null` once that batch
@@ -84,7 +94,7 @@ impl Statement {
         match self.result.get() {
             None => Ok(None),
             Some(Ok(data)) => data.stream_state.next_row(env),
-            Some(Err(error)) => Err(to_napi_err(error)),
+            Some(Err(error)) => Err(error.to_js_error(*env)),
         }
     }
 
@@ -92,25 +102,25 @@ impl Statement {
     // - reusable error handling
     // - maybe an util to get field value so we don't repeat the match
     #[napi]
-    pub fn get_query_id(&self) -> Result<Option<String>> {
+    pub fn get_query_id(&self, env: &Env) -> Result<Option<String>> {
         match self.result.get() {
             None => Ok(None),
             Some(Ok(data)) => Ok(Some(data.result_set_descriptor.query_id.clone())),
-            Some(Err(error)) => Err(to_napi_err(error)),
+            Some(Err(error)) => Err(error.to_js_error(*env)),
         }
     }
 
     #[napi]
-    pub fn get_num_rows(&self) -> Result<Option<i64>> {
+    pub fn get_num_rows(&self, env: &Env) -> Result<Option<i64>> {
         match self.result.get() {
             None => Ok(None),
             Some(Ok(data)) => Ok(data.result_set_descriptor.row_count),
-            Some(Err(error)) => Err(to_napi_err(error)),
+            Some(Err(error)) => Err(error.to_js_error(*env)),
         }
     }
 
     #[napi]
-    pub fn get_columns(&self) -> Result<Option<Vec<Column>>> {
+    pub fn get_columns(&self, env: &Env) -> Result<Option<Vec<Column>>> {
         match self.result.get() {
             None => Ok(None),
             Some(Ok(data)) => Ok(Some(
@@ -121,12 +131,12 @@ impl Statement {
                     .map(|(i, meta)| Column::from_metadata(i as u32, meta))
                     .collect(),
             )),
-            Some(Err(error)) => Err(to_napi_err(error)),
+            Some(Err(error)) => Err(error.to_js_error(*env)),
         }
     }
 
     #[napi]
-    pub fn get_column(&self, identifier: Either<String, u32>) -> Result<Option<Column>> {
+    pub fn get_column(&self, env: &Env, identifier: Either<String, u32>) -> Result<Option<Column>> {
         match self.result.get() {
             None => Ok(None),
             Some(Ok(data)) => {
@@ -143,7 +153,7 @@ impl Statement {
                 };
                 Ok(column)
             }
-            Some(Err(error)) => Err(to_napi_err(error)),
+            Some(Err(error)) => Err(error.to_js_error(*env)),
         }
     }
 
@@ -157,15 +167,8 @@ impl Statement {
         Ok(())
     }
 
-    /// Cancel the running query. Returns once the signal is delivered, not once
-    /// the server-side abort completes. A no-op when there is no `ctx`.
-    ///
-    /// TODO: the abort's outcome (including a failed or unconfirmed abort) rides
-    /// on the cancelled execute's `ApiError::Cancelled`, but `to_napi_err` keeps
-    /// only the message, so JS callers cannot yet see it.
-    ///
-    /// `async` purely to keep the JS surface a `Promise`, which
-    /// `RowStatement.cancel` chains its callback off.
+    // TODO: surface genuine cancel failures (e.g. CancelTimeout) instead of
+    // swallowing the outcome.
     #[napi]
     pub async fn cancel(&self) -> Result<()> {
         if let Some(ctx) = &self.ctx {
@@ -192,7 +195,6 @@ async fn result_data_from(
     // Snapshotted once here (rather than per-decoder-call) so every column
     // reader in this result set shares the same session-parameter snapshot.
     let session_params = Arc::new(SessionParams::from_connection(conn_handle).await?);
-
     let batch_reader = DRIVER.result_set_get_stream(result_set_handle).await?;
 
     Ok(ResultData {
