@@ -55,6 +55,44 @@ pub const SNOWFLAKE_TROUBLESHOOTING_ENABLED: &str = "SNOWFLAKE_TROUBLESHOOTING_E
 /// Defaults to the current working directory if unset.
 pub const SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH: &str = "SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH";
 
+// ---------------------------------------------------------------------------
+// Azure Workload Identity Federation
+//
+// All of the variables below are set by the Azure runtime (App Service /
+// Functions host, or the AKS Azure Workload Identity mutating webhook), not by
+// the driver or the user.
+// ---------------------------------------------------------------------------
+
+/// Client ID of the user-assigned Managed Identity to request a token for.
+/// Unset ⇒ the system-assigned identity is used.
+pub const MANAGED_IDENTITY_CLIENT_ID: &str = "MANAGED_IDENTITY_CLIENT_ID";
+
+/// Local Managed Identity token endpoint exposed by the Azure App Service /
+/// Functions host. Paired with [`IDENTITY_HEADER`].
+pub const IDENTITY_ENDPOINT: &str = "IDENTITY_ENDPOINT";
+
+/// Shared secret required by the [`IDENTITY_ENDPOINT`] token endpoint, sent in
+/// the `X-IDENTITY-HEADER` request header.
+pub const IDENTITY_HEADER: &str = "IDENTITY_HEADER";
+
+/// Legacy (pre-2019) equivalent of [`IDENTITY_ENDPOINT`], still set by older
+/// Azure Functions runtimes.
+pub const MSI_ENDPOINT: &str = "MSI_ENDPOINT";
+
+/// Legacy (pre-2019) equivalent of [`IDENTITY_HEADER`].
+pub const MSI_SECRET: &str = "MSI_SECRET";
+
+/// AKS Workload Identity: client ID of the Entra ID application registration
+/// that the pod's federated identity credential is bound to.
+pub const AZURE_CLIENT_ID: &str = "AZURE_CLIENT_ID";
+
+/// AKS Workload Identity: Entra ID tenant that issues the access token.
+pub const AZURE_TENANT_ID: &str = "AZURE_TENANT_ID";
+
+/// AKS Workload Identity: path to the projected Kubernetes service-account
+/// token that is exchanged with Entra ID for an access token.
+pub const AZURE_FEDERATED_TOKEN_FILE: &str = "AZURE_FEDERATED_TOKEN_FILE";
+
 /// Additive escape hatch for the WORKLOAD_IDENTITY host allowlist: a
 /// comma-separated list of extra hostname suffixes recognized alongside the
 /// built-in `snowflakecomputing.com`/`.cn`/`.mil` suffixes. Read only from

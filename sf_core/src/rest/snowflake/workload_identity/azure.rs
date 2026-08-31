@@ -1,26 +1,35 @@
 //! Azure Managed Identity attestation for Workload Identity Federation.
 //!
 //! Token acquisition priority:
-//! 1. Azure Functions runtime (environment variables `IDENTITY_ENDPOINT` +
+//! 1. AKS Workload Identity — the Azure Workload Identity webhook injects
+//!    `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_FEDERATED_TOKEN_FILE`
+//!    into the pod and projects a Kubernetes service-account token at that
+//!    path. That federated JWT is exchanged directly with Entra ID for an
+//!    access token, so no IMDS round-trip is needed.
+//!    `workload_identity_impersonation_path` is **not supported** here and is
+//!    rejected with [`AzureAttestationError::AksImpersonationNotSupported`].
+//! 2. Azure Functions runtime (environment variables `IDENTITY_ENDPOINT` +
 //!    `IDENTITY_HEADER` or legacy `MSI_ENDPOINT` + `MSI_SECRET`).
-//! 2. Azure IMDS (`http://169.254.169.254/metadata/identity/oauth2/token`).
+//! 3. Azure IMDS (`http://169.254.169.254/metadata/identity/oauth2/token`).
 //!
 //! The `resource` (Entra audience) defaults to the Snowflake-assigned
 //! resource URI [`crate::config::rest_parameters::DEFAULT_AZURE_ENTRA_RESOURCE`].
 //! Callers can override via `workload_identity_entra_resource`.
 //!
-//! When `workload_identity_impersonation_path` is set (exactly one SP client_id),
-//! a two-step flow is performed:
+//! When `workload_identity_impersonation_path` is set (exactly one SP client_id)
+//! and the environment is *not* AKS, a two-step flow is performed:
 //! 1. Acquire a MI token scoped to `AZURE_WIF_FEDERATION_AUDIENCE`.
 //! 2. Exchange it for an SP access token via Entra ID's `oauth2/v2.0/token`
 //!    endpoint (`client_credentials` grant with JWT-bearer client assertion).
 //!    The resulting SP token is what is sent to Snowflake.
 
 use crate::config::rest_parameters::{DEFAULT_AZURE_ENTRA_RESOURCE, WorkloadIdentityConfig};
+use crate::env_vars;
 use crate::sensitive::SensitiveString;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
-use snafu::{Location, OptionExt, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu, ensure};
+use std::path::PathBuf;
 
 use super::AttestationEndpoints;
 
@@ -96,14 +105,67 @@ pub enum AzureAttestationError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("workload_identity_impersonation_path is not supported on AKS."))]
+    AksImpersonationNotSupported {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to read AKS federated token file '{path}'"))]
+    AksFederatedTokenFileRead {
+        path: String,
+        source: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
+/// Response shape shared by the Azure Managed Identity endpoints (IMDS and the
+/// Azure Functions identity endpoint) and the Entra ID `oauth2/v2.0/token`
+/// endpoint — all three return the token under `access_token`.
 #[derive(Debug, Deserialize)]
-struct ManagedIdentityTokenResponse {
+struct AccessTokenResponse {
     access_token: SensitiveString,
 }
 
+/// Workload identity injected into an AKS pod by the Azure Workload Identity
+/// mutating webhook.
+#[derive(Debug)]
+struct AksWorkloadIdentity {
+    /// `AZURE_CLIENT_ID` — Entra application registration the pod's federated
+    /// identity credential is bound to.
+    client_id: String,
+    /// `AZURE_TENANT_ID` — Entra tenant that issues the access token.
+    tenant_id: String,
+    /// Contents of the file at `AZURE_FEDERATED_TOKEN_FILE` — the projected
+    /// Kubernetes service-account token — read once at detection time and
+    /// held as `SensitiveString` so it is zeroized on drop and cannot be
+    /// printed by accident.
+    federated_token: SensitiveString,
+}
+
+/// Inputs for an Entra ID `oauth2/v2.0/token` request using the
+/// `client_credentials` grant with a JWT-bearer client assertion.
+struct EntraTokenExchange<'a> {
+    /// Label identifying which flow failed, used in error messages.
+    context: &'static str,
+    /// Entra tenant whose token endpoint is called.
+    tenant_id: &'a str,
+    /// Application the assertion authenticates as.
+    client_id: &'a str,
+    /// JWT presented as proof of identity — a Managed Identity token when
+    /// impersonating a service principal, or the projected Kubernetes
+    /// service-account token on AKS.
+    client_assertion: &'a str,
+    /// Entra resource the issued access token is scoped to; `/.default` is
+    /// appended to form the OAuth2 `scope`.
+    resource: &'a str,
+}
+
 /// Acquire an Azure token for Workload Identity Federation.
+///
+/// On AKS (see [`detect_aks_workload_identity`]): exchanges the projected
+/// Kubernetes service-account token for an Entra ID access token scoped to the
+/// Snowflake Entra resource. Impersonation is rejected in this environment.
 ///
 /// Without impersonation: fetches a Managed Identity access token scoped to
 /// the Snowflake Entra resource (default or caller-supplied) and returns it.
@@ -122,6 +184,17 @@ pub(super) async fn get_managed_identity_token(
         .as_deref()
         .unwrap_or(DEFAULT_AZURE_ENTRA_RESOURCE);
 
+    if let Some(aks) = detect_aks_workload_identity().await? {
+        // The federated credential authenticates as exactly one Entra
+        // application, and there is no Managed Identity token to present as the
+        // client assertion for a second hop.
+        ensure!(
+            config.impersonation_path.is_empty(),
+            AksImpersonationNotSupportedSnafu
+        );
+        return get_token_via_aks(client, &aks, snowflake_resource, endpoints).await;
+    }
+
     // When impersonating an SP, the MI token must be issued for the federation
     // audience so Entra ID will accept it as a client assertion.
     let mi_resource = if config.impersonation_path.is_empty() {
@@ -130,11 +203,11 @@ pub(super) async fn get_managed_identity_token(
         AZURE_WIF_FEDERATION_AUDIENCE
     };
 
-    let client_id = std::env::var("MANAGED_IDENTITY_CLIENT_ID").ok();
+    let client_id = std::env::var(env_vars::MANAGED_IDENTITY_CLIENT_ID).ok();
 
     if let (Ok(endpoint), Ok(header)) = (
-        std::env::var("IDENTITY_ENDPOINT"),
-        std::env::var("IDENTITY_HEADER"),
+        std::env::var(env_vars::IDENTITY_ENDPOINT),
+        std::env::var(env_vars::IDENTITY_HEADER),
     ) {
         return get_from_azure_functions(
             &endpoint,
@@ -150,8 +223,10 @@ pub(super) async fn get_managed_identity_token(
     }
 
     // Legacy Azure Functions (older runtimes)
-    if let (Ok(endpoint), Ok(secret)) = (std::env::var("MSI_ENDPOINT"), std::env::var("MSI_SECRET"))
-    {
+    if let (Ok(endpoint), Ok(secret)) = (
+        std::env::var(env_vars::MSI_ENDPOINT),
+        std::env::var(env_vars::MSI_SECRET),
+    ) {
         return get_from_azure_functions(
             &endpoint,
             &secret,
@@ -174,6 +249,153 @@ pub(super) async fn get_managed_identity_token(
         endpoints,
     )
     .await
+}
+
+/// Detect an AKS Workload Identity environment.
+///
+/// Returns `Some` only when all three variables injected by the Azure Workload
+/// Identity mutating webhook are set to a non-empty value *and* the projected
+/// service-account token file can be read.
+///
+/// Probing for the token file — rather than for `KUBERNETES_SERVICE_HOST` — is
+/// deliberate: that variable is absent in pods running with
+/// `enableServiceLinks: false`, and present on *any* Kubernetes cluster,
+/// including non-AKS ones that have no Azure federated identity to exchange.
+///
+/// The file is opened once here rather than probed for existence and reopened
+/// later: a missing file is not AKS (`Ok(None)`, so the pre-existing Azure
+/// Functions / IMDS flows still get their chance), while any other read
+/// failure — permission denied, a directory in its place — means AKS *is*
+/// detected but broken, surfaced as [`AzureAttestationError::AksFederatedTokenFileRead`].
+async fn detect_aks_workload_identity() -> Result<Option<AksWorkloadIdentity>, AzureAttestationError>
+{
+    let Some(client_id) = non_empty_env(env_vars::AZURE_CLIENT_ID) else {
+        return Ok(None);
+    };
+    let Some(tenant_id) = non_empty_env(env_vars::AZURE_TENANT_ID) else {
+        return Ok(None);
+    };
+    let Some(federated_token_file) = non_empty_env(env_vars::AZURE_FEDERATED_TOKEN_FILE) else {
+        return Ok(None);
+    };
+    let federated_token_file = PathBuf::from(federated_token_file);
+
+    let federated_token = match tokio::fs::read_to_string(&federated_token_file).await {
+        Ok(content) => content,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(source).context(AksFederatedTokenFileReadSnafu {
+                path: federated_token_file.display().to_string(),
+            });
+        }
+    };
+
+    Ok(Some(AksWorkloadIdentity {
+        client_id,
+        tenant_id,
+        // Projected token files are commonly newline-terminated.
+        federated_token: federated_token.trim().to_string().into(),
+    }))
+}
+
+/// Read an environment variable, treating unset and empty as equivalent.
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+/// Exchange the projected Kubernetes service-account token for an Entra ID
+/// access token scoped to the Snowflake resource.
+///
+/// This is the same `client_credentials` + JWT-bearer grant that
+/// `azure-identity`'s `WorkloadIdentityCredential` performs internally, which is
+/// why AKS needs no IMDS round-trip and no projected-volume workaround.
+async fn get_token_via_aks(
+    client: &reqwest::Client,
+    aks: &AksWorkloadIdentity,
+    snowflake_resource: &str,
+    endpoints: &AttestationEndpoints,
+) -> Result<String, AzureAttestationError> {
+    exchange_client_assertion(
+        client,
+        endpoints,
+        EntraTokenExchange {
+            context: "Entra ID AKS federated token exchange",
+            tenant_id: &aks.tenant_id,
+            client_id: &aks.client_id,
+            client_assertion: aks.federated_token.reveal(),
+            resource: snowflake_resource,
+        },
+    )
+    .await
+}
+
+/// Perform the Entra ID `client_credentials` + JWT-bearer token exchange shared
+/// by the AKS federated-token flow and service-principal impersonation.
+async fn exchange_client_assertion(
+    client: &reqwest::Client,
+    endpoints: &AttestationEndpoints,
+    exchange: EntraTokenExchange<'_>,
+) -> Result<String, AzureAttestationError> {
+    let EntraTokenExchange {
+        context,
+        tenant_id,
+        client_id,
+        client_assertion,
+        resource,
+    } = exchange;
+
+    let url = format!(
+        "{}/{tenant_id}/oauth2/v2.0/token",
+        endpoints.azure_entra_base_url
+    );
+    let params = [
+        ("grant_type", "client_credentials"),
+        ("client_id", client_id),
+        (
+            "client_assertion_type",
+            "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+        ),
+        ("client_assertion", client_assertion),
+        ("scope", &format!("{resource}/.default")),
+    ];
+
+    let parsed = reqwest::Url::parse(&url).ok();
+    tracing::info!(
+        method = "POST",
+        host = parsed
+            .as_ref()
+            .and_then(|u| u.host_str())
+            .unwrap_or("<none>"),
+        path = parsed.as_ref().map_or("", |u| u.path()),
+        "outbound HTTP call"
+    );
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(IMDS_TIMEOUT_SECS),
+        client.post(&url).form(&params).send(),
+    )
+    .await
+    .context(RequestTimedOutSnafu { context })?
+    .context(RequestSnafu { context })?;
+
+    let status = response.status();
+    tracing::info!(status = status.as_u16(), "HTTP response");
+    let body = response
+        .text()
+        .await
+        .context(ResponseBodyReadSnafu { context })?;
+
+    if !status.is_success() {
+        return UnexpectedHttpStatusSnafu {
+            context,
+            status,
+            body,
+        }
+        .fail();
+    }
+
+    let parsed: AccessTokenResponse =
+        serde_json::from_str(&body).context(ResponseParseSnafu { context })?;
+    Ok(parsed.access_token.reveal().to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -231,7 +453,7 @@ async fn get_from_azure_functions(
         .fail();
     }
 
-    let parsed: ManagedIdentityTokenResponse =
+    let parsed: AccessTokenResponse =
         serde_json::from_str(&body).context(ResponseParseSnafu { context: CTX })?;
     maybe_impersonate_sp(
         parsed.access_token.reveal().to_string(),
@@ -295,7 +517,7 @@ async fn get_from_imds(
         .fail();
     }
 
-    let parsed: ManagedIdentityTokenResponse =
+    let parsed: AccessTokenResponse =
         serde_json::from_str(&body).context(ResponseParseSnafu { context: CTX })?;
     maybe_impersonate_sp(
         parsed.access_token.reveal().to_string(),
@@ -343,67 +565,20 @@ async fn get_sp_token_via_impersonation(
     client: &reqwest::Client,
     endpoints: &AttestationEndpoints,
 ) -> Result<String, AzureAttestationError> {
-    const CTX: &str = "Entra ID SP token exchange";
-
     let tenant_id = extract_tid_from_jwt(mi_token)?;
 
-    #[derive(Deserialize)]
-    struct SpTokenResponse {
-        access_token: String,
-    }
-
-    let url = format!(
-        "{}/{tenant_id}/oauth2/v2.0/token",
-        endpoints.azure_entra_base_url
-    );
-    let params = [
-        ("grant_type", "client_credentials"),
-        ("client_id", sp_client_id),
-        (
-            "client_assertion_type",
-            "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-        ),
-        ("client_assertion", mi_token),
-        ("scope", &format!("{snowflake_resource}/.default")),
-    ];
-
-    let parsed = reqwest::Url::parse(&url).ok();
-    tracing::info!(
-        method = "POST",
-        host = parsed
-            .as_ref()
-            .and_then(|u| u.host_str())
-            .unwrap_or("<none>"),
-        path = parsed.as_ref().map_or("", |u| u.path()),
-        "outbound HTTP call"
-    );
-    let response = tokio::time::timeout(
-        std::time::Duration::from_secs(IMDS_TIMEOUT_SECS),
-        client.post(&url).form(&params).send(),
+    exchange_client_assertion(
+        client,
+        endpoints,
+        EntraTokenExchange {
+            context: "Entra ID SP token exchange",
+            tenant_id: &tenant_id,
+            client_id: sp_client_id,
+            client_assertion: mi_token,
+            resource: snowflake_resource,
+        },
     )
     .await
-    .context(RequestTimedOutSnafu { context: CTX })?
-    .context(RequestSnafu { context: CTX })?;
-
-    let status = response.status();
-    tracing::info!(status = status.as_u16(), "HTTP response");
-    let body = response
-        .text()
-        .await
-        .context(ResponseBodyReadSnafu { context: CTX })?;
-
-    if !status.is_success() {
-        return UnexpectedHttpStatusSnafu {
-            context: CTX,
-            status,
-            body,
-        }
-        .fail();
-    }
-
-    let parsed: SpTokenResponse =
-        serde_json::from_str(&body).context(ResponseParseSnafu { context: CTX })?;
-    Ok(parsed.access_token)
 }
 
 /// Extract the `tid` (tenant ID) claim from the JWT payload without verifying
@@ -461,18 +636,31 @@ mod tests {
         )
     }
 
-    /// Clears the Azure Functions env vars so `get_managed_identity_token`
+    /// Clears the AKS Workload Identity env vars, so a test's outcome cannot
+    /// depend on the host environment — a CI runner that is itself an AKS pod
+    /// would otherwise divert every test below into the AKS branch. Spread into
+    /// each `temp_env` list by the helpers that follow.
+    const NO_AKS_ENV: [(&str, Option<&str>); 3] = [
+        (env_vars::AZURE_CLIENT_ID, None),
+        (env_vars::AZURE_TENANT_ID, None),
+        (env_vars::AZURE_FEDERATED_TOKEN_FILE, None),
+    ];
+
+    /// Clears the Azure Functions and AKS env vars so `get_managed_identity_token`
     /// always takes the IMDS path, optionally setting
     /// `MANAGED_IDENTITY_CLIENT_ID` for the duration of `f`.
     async fn without_azure_functions_env<F: Future<Output = ()>>(client_id: Option<&str>, f: F) {
         temp_env::async_with_vars(
             [
-                ("IDENTITY_ENDPOINT", None::<&str>),
-                ("IDENTITY_HEADER", None::<&str>),
-                ("MSI_ENDPOINT", None::<&str>),
-                ("MSI_SECRET", None::<&str>),
-                ("MANAGED_IDENTITY_CLIENT_ID", client_id),
-            ],
+                (env_vars::IDENTITY_ENDPOINT, None::<&str>),
+                (env_vars::IDENTITY_HEADER, None::<&str>),
+                (env_vars::MSI_ENDPOINT, None::<&str>),
+                (env_vars::MSI_SECRET, None::<&str>),
+                (env_vars::MANAGED_IDENTITY_CLIENT_ID, client_id),
+            ]
+            .into_iter()
+            .chain(NO_AKS_ENV)
+            .collect::<Vec<_>>(),
             f,
         )
         .await;
@@ -529,12 +717,15 @@ mod tests {
     ) {
         temp_env::async_with_vars(
             [
-                ("IDENTITY_ENDPOINT", Some(endpoint)),
-                ("IDENTITY_HEADER", Some(identity_header)),
-                ("MSI_ENDPOINT", None::<&str>),
-                ("MSI_SECRET", None::<&str>),
-                ("MANAGED_IDENTITY_CLIENT_ID", client_id),
-            ],
+                (env_vars::IDENTITY_ENDPOINT, Some(endpoint)),
+                (env_vars::IDENTITY_HEADER, Some(identity_header)),
+                (env_vars::MSI_ENDPOINT, None::<&str>),
+                (env_vars::MSI_SECRET, None::<&str>),
+                (env_vars::MANAGED_IDENTITY_CLIENT_ID, client_id),
+            ]
+            .into_iter()
+            .chain(NO_AKS_ENV)
+            .collect::<Vec<_>>(),
             f,
         )
         .await;
@@ -547,12 +738,15 @@ mod tests {
     async fn with_legacy_msi_env<F: Future<Output = ()>>(endpoint: &str, secret: &str, f: F) {
         temp_env::async_with_vars(
             [
-                ("IDENTITY_ENDPOINT", None::<&str>),
-                ("IDENTITY_HEADER", None::<&str>),
-                ("MSI_ENDPOINT", Some(endpoint)),
-                ("MSI_SECRET", Some(secret)),
-                ("MANAGED_IDENTITY_CLIENT_ID", None::<&str>),
-            ],
+                (env_vars::IDENTITY_ENDPOINT, None::<&str>),
+                (env_vars::IDENTITY_HEADER, None::<&str>),
+                (env_vars::MSI_ENDPOINT, Some(endpoint)),
+                (env_vars::MSI_SECRET, Some(secret)),
+                (env_vars::MANAGED_IDENTITY_CLIENT_ID, None::<&str>),
+            ]
+            .into_iter()
+            .chain(NO_AKS_ENV)
+            .collect::<Vec<_>>(),
             f,
         )
         .await;
@@ -1257,12 +1451,15 @@ mod tests {
 
         temp_env::async_with_vars(
             [
-                ("IDENTITY_ENDPOINT", None::<&str>),
-                ("IDENTITY_HEADER", None::<&str>),
-                ("MSI_ENDPOINT", None::<&str>),
-                ("MSI_SECRET", None::<&str>),
-                ("MANAGED_IDENTITY_CLIENT_ID", Some(CLIENT_ID_CANARY)),
-            ],
+                (env_vars::IDENTITY_ENDPOINT, None::<&str>),
+                (env_vars::IDENTITY_HEADER, None::<&str>),
+                (env_vars::MSI_ENDPOINT, None::<&str>),
+                (env_vars::MSI_SECRET, None::<&str>),
+                (env_vars::MANAGED_IDENTITY_CLIENT_ID, Some(CLIENT_ID_CANARY)),
+            ]
+            .into_iter()
+            .chain(NO_AKS_ENV)
+            .collect::<Vec<_>>(),
             async {
                 let token = get_managed_identity_token(&client, &config, &endpoints)
                     .await
@@ -1296,5 +1493,281 @@ mod tests {
             !logs_contain("api-version"),
             "query string leaked into logs"
         );
+    }
+
+    // -- AKS Workload Identity --
+    //
+    // Backport of snowflake-connector-python#2903 (SNOW-3533720). The AKS
+    // branch is checked before the Azure Functions / IMDS branches, so these
+    // tests both prove the new flow and pin down when it must *not* engage.
+
+    const AKS_CLIENT_ID: &str = "66666666-7777-8888-9999-000000000000";
+    const AKS_TENANT_ID: &str = "11111111-2222-3333-4444-555555555555";
+
+    /// Sets the three variables the Azure Workload Identity webhook injects
+    /// (clearing the Azure Functions / IMDS pair so only the AKS branch can be
+    /// taken), plus any extra overrides the caller needs.
+    async fn with_aks_env<F: Future<Output = ()>>(
+        federated_token_file: &str,
+        extra: &[(&str, Option<&str>)],
+        f: F,
+    ) {
+        temp_env::async_with_vars(
+            [
+                (env_vars::AZURE_CLIENT_ID, Some(AKS_CLIENT_ID)),
+                (env_vars::AZURE_TENANT_ID, Some(AKS_TENANT_ID)),
+                (
+                    env_vars::AZURE_FEDERATED_TOKEN_FILE,
+                    Some(federated_token_file),
+                ),
+                (env_vars::IDENTITY_ENDPOINT, None),
+                (env_vars::IDENTITY_HEADER, None),
+                (env_vars::MSI_ENDPOINT, None),
+                (env_vars::MSI_SECRET, None),
+                (env_vars::MANAGED_IDENTITY_CLIENT_ID, None),
+            ]
+            .into_iter()
+            .chain(extra.iter().copied())
+            .collect::<Vec<_>>(),
+            f,
+        )
+        .await;
+    }
+
+    /// Returns a path that is guaranteed not to exist on disk, by creating a
+    /// temp file and immediately deleting it.
+    fn nonexistent_path() -> String {
+        let file = tempfile::NamedTempFile::new().expect("temp file can be created");
+        let path = file.path().display().to_string();
+        drop(file);
+        path
+    }
+
+    /// The projected Kubernetes service-account token is exchanged with Entra
+    /// ID for an access token: the request goes to the tenant named by
+    /// `AZURE_TENANT_ID`, authenticates as `AZURE_CLIENT_ID` with a JWT-bearer
+    /// client assertion carrying the token file's contents, and the returned
+    /// `access_token` is what the caller receives. No IMDS call is involved —
+    /// `azure_imds_base_url` is left at its real link-local default, so an IMDS
+    /// round-trip would fail rather than silently succeed.
+    #[tokio::test]
+    async fn get_managed_identity_token_exchanges_aks_federated_token_for_entra_access_token() {
+        let token_file = tempfile::NamedTempFile::new().expect("temp file can be created");
+        // Trailing newline is how the projected service-account token file is
+        // actually written; it must not end up inside the client assertion.
+        std::fs::write(token_file.path(), "k8s-service-account-jwt\n")
+            .expect("temp file can be written");
+
+        let entra_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("/{AKS_TENANT_ID}/oauth2/v2.0/token")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"access_token":"entra-access-token"}"#),
+            )
+            .expect(1)
+            .mount(&entra_server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            azure_entra_base_url: entra_server.uri(),
+            ..Default::default()
+        };
+        let config = azure_config(Some("api://test-resource"), Vec::new());
+        let client = reqwest::Client::new();
+
+        with_aks_env(&token_file.path().display().to_string(), &[], async {
+            let token = get_managed_identity_token(&client, &config, &endpoints)
+                .await
+                .expect("expected the AKS federated token exchange to succeed");
+            assert_eq!(token, "entra-access-token");
+        })
+        .await;
+
+        let requests = entra_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        let form: HashMap<String, String> = url::form_urlencoded::parse(&requests[0].body)
+            .into_owned()
+            .collect();
+        assert_eq!(
+            form.get("grant_type").map(String::as_str),
+            Some("client_credentials")
+        );
+        assert_eq!(
+            form.get("client_id").map(String::as_str),
+            Some(AKS_CLIENT_ID)
+        );
+        assert_eq!(
+            form.get("client_assertion_type").map(String::as_str),
+            Some("urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+        );
+        assert_eq!(
+            form.get("client_assertion").map(String::as_str),
+            Some("k8s-service-account-jwt"),
+            "the projected token's trailing newline must be trimmed off the assertion"
+        );
+        assert_eq!(
+            form.get("scope").map(String::as_str),
+            Some("api://test-resource/.default")
+        );
+    }
+
+    /// All three webhook variables set but no token file on disk is not an AKS
+    /// environment: the variables alone can be inherited by any process (e.g. a
+    /// local shell that once sourced a pod env dump), and without the projected
+    /// token there is nothing to exchange.
+    #[tokio::test]
+    async fn detect_aks_workload_identity_returns_none_when_federated_token_file_absent() {
+        let missing_path = nonexistent_path();
+
+        let mut detected = None;
+        with_aks_env(&missing_path, &[], async {
+            detected = detect_aks_workload_identity()
+                .await
+                .expect("a missing token file must not surface as an error");
+        })
+        .await;
+
+        assert!(
+            detected.is_none(),
+            "all three env vars set but no token file on disk must not be treated as AKS, \
+             got {detected:?}"
+        );
+    }
+
+    /// An empty `AZURE_CLIENT_ID` counts as unset — some tooling exports the
+    /// webhook variables with empty values, which would otherwise send an
+    /// assertion with a blank `client_id` to Entra.
+    #[tokio::test]
+    async fn detect_aks_workload_identity_returns_none_when_client_id_is_empty() {
+        let token_file = tempfile::NamedTempFile::new().expect("temp file can be created");
+        std::fs::write(token_file.path(), "k8s-service-account-jwt")
+            .expect("temp file can be written");
+
+        let mut detected = None;
+        with_aks_env(
+            &token_file.path().display().to_string(),
+            &[(env_vars::AZURE_CLIENT_ID, Some(""))],
+            async {
+                detected = detect_aks_workload_identity()
+                    .await
+                    .expect("an empty AZURE_CLIENT_ID must not surface as an error");
+            },
+        )
+        .await;
+
+        assert!(
+            detected.is_none(),
+            "an empty AZURE_CLIENT_ID must not be treated as AKS, got {detected:?}"
+        );
+    }
+
+    /// Failing AKS detection must not break the pre-existing flows: with the
+    /// webhook variables set but no token file, the Azure Functions branch
+    /// still runs. The Entra endpoint is pointed at a refused port, so any
+    /// attempt to take the AKS exchange after all would fail loudly.
+    #[tokio::test]
+    async fn get_managed_identity_token_falls_through_to_azure_functions_when_aks_token_file_absent()
+     {
+        let identity_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/MSI/token"))
+            .and(header("X-IDENTITY-HEADER", "test-identity-header"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"access_token":"managed-identity-token"}"#),
+            )
+            .expect(1)
+            .mount(&identity_server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            azure_entra_base_url: "http://127.0.0.1:1".to_string(),
+            ..Default::default()
+        };
+        let config = azure_config(None, Vec::new());
+        let client = reqwest::Client::new();
+        let identity_endpoint = format!("{}/MSI/token", identity_server.uri());
+
+        with_aks_env(
+            &nonexistent_path(),
+            &[
+                (env_vars::IDENTITY_ENDPOINT, Some(&identity_endpoint)),
+                (env_vars::IDENTITY_HEADER, Some("test-identity-header")),
+            ],
+            async {
+                let token = get_managed_identity_token(&client, &config, &endpoints)
+                    .await
+                    .expect("expected the Azure Functions branch to still run");
+                assert_eq!(token, "managed-identity-token");
+            },
+        )
+        .await;
+    }
+
+    /// `workload_identity_impersonation_path` has no meaning on AKS: the
+    /// federated credential authenticates as exactly one Entra application and
+    /// there is no Managed Identity token to present as the assertion for a
+    /// second hop. It is rejected with a dedicated error before any HTTP call
+    /// is made, rather than silently ignored — the Entra base URL is a refused
+    /// port so an attempted exchange would surface as a `Request` error.
+    #[tokio::test]
+    async fn get_managed_identity_token_rejects_impersonation_on_aks() {
+        let token_file = tempfile::NamedTempFile::new().expect("temp file can be created");
+        std::fs::write(token_file.path(), "k8s-service-account-jwt")
+            .expect("temp file can be written");
+
+        let endpoints = AttestationEndpoints {
+            azure_entra_base_url: "http://127.0.0.1:1".to_string(),
+            ..Default::default()
+        };
+        let config = azure_config(None, vec!["some-sp-client-id".to_string()]);
+        let client = reqwest::Client::new();
+
+        with_aks_env(&token_file.path().display().to_string(), &[], async {
+            let err = get_managed_identity_token(&client, &config, &endpoints)
+                .await
+                .expect_err("expected impersonation on AKS to be rejected");
+            assert!(
+                matches!(
+                    err,
+                    AzureAttestationError::AksImpersonationNotSupported { .. }
+                ),
+                "expected AksImpersonationNotSupported, got: {err:?}"
+            );
+            assert_eq!(
+                err.to_string(),
+                "workload_identity_impersonation_path is not supported on AKS."
+            );
+        })
+        .await;
+    }
+
+    /// A token file that exists at detection time but cannot be read surfaces a
+    /// dedicated error naming the path, rather than falling through to IMDS and
+    /// failing with an unrelated message. Exercised with a directory in place of
+    /// the token file, which `read_to_string` rejects with an error other than
+    /// `NotFound`.
+    #[tokio::test]
+    async fn get_managed_identity_token_surfaces_error_when_aks_token_file_unreadable() {
+        let token_dir = tempfile::tempdir().expect("temp dir can be created");
+        let token_path = token_dir.path().display().to_string();
+
+        let endpoints = AttestationEndpoints::default();
+        let config = azure_config(None, Vec::new());
+        let client = reqwest::Client::new();
+
+        with_aks_env(&token_path, &[], async {
+            let err = get_managed_identity_token(&client, &config, &endpoints)
+                .await
+                .expect_err("expected an unreadable token file to surface an error");
+            match err {
+                AzureAttestationError::AksFederatedTokenFileRead { ref path, .. } => {
+                    assert_eq!(path, &token_path);
+                }
+                other => panic!("expected AksFederatedTokenFileRead, got: {other:?}"),
+            }
+        })
+        .await;
     }
 }

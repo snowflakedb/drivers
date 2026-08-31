@@ -50,7 +50,7 @@ the allowed values:
 | `oauth_client_credentials` | OAuth client-credentials flow | `oauth_client_id`, `oauth_client_secret`, `oauth_token_request_url` | **External IdP only** — no browser. |
 | `externalbrowser` | Browser SSO (IdP-initiated) | `user` | Opens the system browser for the federated login. |
 | *(an `https://…` URL)* | Native Okta SSO | `user` (or `okta_username`), the Okta URL **as** the `authenticator` value | `authentication_timeout` bounds the wait; `disable_saml_url_check` relaxes the SAML endpoint check. |
-| `workload_identity` | Workload Identity Federation | `workload_identity_provider` (`AWS` / `AZURE` / `GCP` / `OIDC`) | For `OIDC`, also pass the pre-acquired token (`token`); `AZURE` may need `workload_identity_entra_resource`; optional `workload_identity_impersonation_path`. |
+| `workload_identity` | Workload Identity Federation | `workload_identity_provider` (`AWS` / `AZURE` / `GCP` / `OIDC`) | For `OIDC`, also pass the pre-acquired token (`token`); `AZURE` may need `workload_identity_entra_resource`; optional `workload_identity_impersonation_path` (rejected on AKS, where the pod's federated credential authenticates as a single Entra application). |
 
 Session-token reconnect (a previously issued `session_token` + `master_token`)
 is detected before the table above and does not use `authenticator`.
