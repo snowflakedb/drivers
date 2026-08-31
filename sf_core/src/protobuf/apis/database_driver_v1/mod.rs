@@ -604,17 +604,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_get_result_set",
-        skip(self, input)
+        skip(self, ctx, input)
     )]
     async fn connection_get_result_set(
         &self,
+        ctx: Option<&OperationCtx>,
         input: ConnectionGetResultSetRequest,
     ) -> Result<ResultSetResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let result = self
             .driver
-            .create_result_set_from_sfqid(conn_handle.into(), input.query_id)
+            .create_result_set_from_sfqid(ctx, conn_handle.into(), input.query_id)
             .await
             .to_protobuf()?;
 
@@ -754,17 +755,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_get_query_status",
-        skip(self, input)
+        skip(self, ctx, input)
     )]
     async fn connection_get_query_status(
         &self,
+        ctx: Option<&OperationCtx>,
         input: ConnectionGetQueryStatusRequest,
     ) -> Result<ConnectionGetQueryStatusResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let result = self
             .driver
-            .connection_get_query_status(conn_handle.into(), &input.query_id)
+            .connection_get_query_status(ctx, conn_handle.into(), &input.query_id)
             .await
             .to_protobuf()?;
 

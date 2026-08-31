@@ -18,7 +18,8 @@ use prost::Message as _;
 use proto_utils::{CancellableTransport, ProtoError, Transport};
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::generated::database_driver_v1::{
-    CancellationAbortOutcome, ConfigSetting, ConnectionInitRequest, ConnectionInitResponse,
+    CancellationAbortOutcome, ConfigSetting, ConnectionGetQueryStatusRequest,
+    ConnectionGetResultSetRequest, ConnectionHandle, ConnectionInitRequest, ConnectionInitResponse,
     ConnectionNewRequest, ConnectionNewResponse, ConnectionSetOptionsRequest,
     ConnectionSetOptionsResponse, DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest,
     DatabaseNewResponse, DriverException, ErrorKind, StatementExecuteQueryRequest, StatementHandle,
@@ -112,18 +113,48 @@ const LOGIN_OK: &str = r#"{"success":true,"data":{"token":"mock_token","masterTo
 const ABORT_OK: &str = r#"{"success":true,"data":{}}"#;
 const EMPTY_RESULT: &str = r#"{"success":true,"data":{"rowtype":[],"rowset":[],"total":0,"queryId":"01b2-cancel-test","queryResultFormat":"json"}}"#;
 const CATCH_ALL_OK: &str = r#"{"success":true,"data":{}}"#;
+/// Query id for the finished-query lookups (`connection_get_result_set`,
+/// `connection_get_query_status`). Must be a syntactically valid UUID:
+/// `snowflake_get_query_result` parses it with `Uuid::parse_str(..).expect(..)`,
+/// so a placeholder like `"not-a-uuid"` would panic in core rather than reach
+/// the network.
+const FINISHED_QUERY_ID: &str = "01b2c3d4-0000-4000-8000-000000000001";
 
-/// A mock that logs in successfully and then, unlike [`HangingLogin`], parks on
-/// the **query-request** while recording any abort-request that arrives.
+/// Which request the mock parks on, so the operation under test is genuinely
+/// blocked on the network when the cancel arrives.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HangOn {
+    /// `POST /queries/v1/query-request` — the execute and prepare paths.
+    QueryRequest,
+    /// A lookup of an **already-finished** query: `GET /queries/{id}/result`
+    /// (`connection_get_result_set`) or `GET /monitoring/queries/{id}`
+    /// (`connection_get_query_status`). One variant for both because both tests
+    /// want the same thing: park so only cancellation can end the call.
+    FinishedQueryLookup,
+    /// Nothing — every request is answered, for the no-cancellation control case.
+    Nothing,
+}
+
+/// True if `target` is a lookup of an already-finished query. Distinct prefixes
+/// from `/queries/v1/query-request` and `/queries/v1/abort-request`, so this
+/// cannot swallow either.
+fn is_finished_query_lookup(target: &str) -> bool {
+    target.starts_with("/monitoring/queries/")
+        || (target.starts_with("/queries/") && target.ends_with("/result"))
+}
+
+/// A mock that logs in successfully and then, unlike [`HangingLogin`], parks on a
+/// configurable later request while recording any abort-request that arrives.
 ///
-/// Separate from `HangingLogin` because this test needs the session to exist
-/// before the operation under test starts: cancelling a query requires a query to
-/// have been submitted, which requires a completed login.
-struct HangingQuery {
-    /// Signalled once the query-request has been read off the wire, so the
-    /// canceller knows the query is genuinely in flight and there is therefore
-    /// something for an abort-request to stop.
-    query_received: Mutex<SyncSender<()>>,
+/// Separate from `HangingLogin` because these tests need the session to exist
+/// before the operation under test starts: every one of them acts on a query,
+/// which requires a completed login.
+struct HangingServer {
+    /// Signalled once the request the test is waiting on has been read off the
+    /// wire, so the canceller knows the operation is genuinely in flight — and,
+    /// for the query-request, that its `requestId` has been published into the
+    /// statement's in-flight slot.
+    request_received: Mutex<SyncSender<()>>,
     /// The `requestId` query parameter the execute used, so the abort can be
     /// matched against it.
     query_request_id: Mutex<Option<String>>,
@@ -133,14 +164,14 @@ struct HangingQuery {
     connections: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
-/// Owns the mock's tasks and aborts all of them on drop — see [`MockServer`] for
-/// why teardown is `Drop`-based rather than an explicit call.
-struct QueryMockServer {
+/// Owns the [`HangingServer`] mock's tasks and aborts all of them on drop — see
+/// [`MockServer`] for why teardown is `Drop`-based rather than an explicit call.
+struct HangingServerHandle {
     listener: tokio::task::JoinHandle<()>,
-    state: Arc<HangingQuery>,
+    state: Arc<HangingServer>,
 }
 
-impl Drop for QueryMockServer {
+impl Drop for HangingServerHandle {
     fn drop(&mut self) {
         self.listener.abort();
         for conn in self.state.connections.lock().unwrap().drain(..) {
@@ -151,20 +182,27 @@ impl Drop for QueryMockServer {
 
 /// Spawn a mock whose query-request never answers, so only cancellation can end
 /// the call.
-async fn spawn_hanging_query(state: Arc<HangingQuery>) -> (SocketAddr, QueryMockServer) {
-    spawn_query_mock(state, true).await
+async fn spawn_hanging_query(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
+    spawn_hanging_server(state, HangOn::QueryRequest).await
+}
+
+/// Spawn a mock that logs in, then never answers a finished-query lookup, so
+/// only cancellation can end `connection_get_result_set` /
+/// `connection_get_query_status`.
+async fn spawn_hanging_lookup(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
+    spawn_hanging_server(state, HangOn::FinishedQueryLookup).await
 }
 
 /// Spawn a mock that answers the query-request immediately, for the
 /// no-cancellation control case.
-async fn spawn_answering_query(state: Arc<HangingQuery>) -> (SocketAddr, QueryMockServer) {
-    spawn_query_mock(state, false).await
+async fn spawn_answering_query(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
+    spawn_hanging_server(state, HangOn::Nothing).await
 }
 
-async fn spawn_query_mock(
-    state: Arc<HangingQuery>,
-    hang_on_query: bool,
-) -> (SocketAddr, QueryMockServer) {
+async fn spawn_hanging_server(
+    state: Arc<HangingServer>,
+    hang_on: HangOn,
+) -> (SocketAddr, HangingServerHandle) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let accept_state = state.clone();
@@ -188,8 +226,8 @@ async fn spawn_query_mock(
                     *state.query_request_id.lock().unwrap() = query_param(&target, "requestId");
                     // A full/closed channel just means the canceller already has
                     // its signal.
-                    let _ = state.query_received.lock().unwrap().try_send(());
-                    if hang_on_query {
+                    let _ = state.request_received.lock().unwrap().try_send(());
+                    if hang_on == HangOn::QueryRequest {
                         // Hold the query open, writing nothing: the only way out
                         // is cancellation.
                         std::future::pending::<()>().await;
@@ -198,6 +236,14 @@ async fn spawn_query_mock(
                 } else if target.contains("/queries/v1/abort-request") {
                     state.abort_bodies.lock().unwrap().push(body);
                     ABORT_OK.to_string()
+                } else if is_finished_query_lookup(&target) {
+                    let _ = state.request_received.lock().unwrap().try_send(());
+                    if hang_on == HangOn::FinishedQueryLookup {
+                        std::future::pending::<()>().await;
+                    }
+                    // Same body the catch-all served before this branch existed,
+                    // so no pre-existing test changes behaviour.
+                    CATCH_ALL_OK.to_string()
                 } else {
                     CATCH_ALL_OK.to_string()
                 };
@@ -209,7 +255,7 @@ async fn spawn_query_mock(
     });
     (
         addr,
-        QueryMockServer {
+        HangingServerHandle {
             listener: handle,
             state,
         },
@@ -385,10 +431,18 @@ async fn connected(transport: &RustTransport, addr: SocketAddr) -> ConnectionIni
 /// Shared by every test that cancels a query so they cannot drift in how the
 /// statement was set up, which is what would let one of them silently stop
 /// exercising a submitted query.
-async fn statement_with_slow_query(transport: &RustTransport, addr: SocketAddr) -> StatementHandle {
+/// Drive [`connected`] and then `connection_init`, returning the open
+/// connection handle. Shared by the statement setup and by the tests that act on
+/// a query id directly and need no statement at all.
+async fn open_connection(transport: &RustTransport, addr: SocketAddr) -> ConnectionHandle {
     let init = connected(transport, addr).await;
     let conn = init.conn_handle.expect("conn handle");
     let _: ConnectionInitResponse = call(transport, "connection_init", init).await;
+    conn
+}
+
+async fn statement_with_slow_query(transport: &RustTransport, addr: SocketAddr) -> StatementHandle {
+    let conn = open_connection(transport, addr).await;
 
     let stmt = call::<_, StatementNewResponse>(
         transport,
@@ -412,32 +466,35 @@ async fn statement_with_slow_query(transport: &RustTransport, addr: SocketAddr) 
     stmt
 }
 
-/// A fresh [`HangingQuery`] mock state, plus the receiver the canceller thread
-/// waits on to learn that the query-request has reached the server.
-fn hanging_query_state() -> (Arc<HangingQuery>, Receiver<()>) {
-    let (tx, query_received) = sync_channel(1);
+/// A fresh [`HangingServer`] mock state, plus the receiver the canceller thread
+/// waits on to learn that the request under test has reached the server.
+fn hanging_server_state() -> (Arc<HangingServer>, Receiver<()>) {
+    let (tx, request_received) = sync_channel(1);
     (
-        Arc::new(HangingQuery {
-            query_received: Mutex::new(tx),
+        Arc::new(HangingServer {
+            request_received: Mutex::new(tx),
             query_request_id: Mutex::new(None),
             abort_bodies: Mutex::new(Vec::new()),
             connections: Mutex::new(Vec::new()),
         }),
-        query_received,
+        request_received,
     )
 }
 
 /// Dispatch `method` under a fresh operation handle, cancelling it from a plain
-/// OS thread as soon as the mock reports that the query-request is on the wire.
+/// OS thread as soon as the mock reports that the request under test is on the
+/// wire.
 ///
 /// The `method` stays at the call site so each test still names the RPC it
-/// covers. Panics if the mock never saw a query-request: without that check a
-/// test could pass having cancelled an operation that never submitted anything,
-/// which is the precise false pass this file exists to rule out.
-async fn cancel_once_the_query_is_on_the_wire(
+/// covers, and `awaited` names the request the mock parks on so the panic below
+/// says which one never arrived. Panics if the mock never saw it: without that
+/// check a test could pass having cancelled an operation that never reached the
+/// network, which is the precise false pass this file exists to rule out.
+async fn cancel_once_the_request_is_on_the_wire(
     transport: &Arc<RustTransport>,
-    query_received: Receiver<()>,
+    request_received: Receiver<()>,
     method: &str,
+    awaited: &str,
     request: Vec<u8>,
 ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
     let (operation, _token) = transport.register();
@@ -445,9 +502,9 @@ async fn cancel_once_the_query_is_on_the_wire(
     let canceller = std::thread::spawn({
         let transport = transport.clone();
         move || {
-            let saw_query = query_received.recv_timeout(BOUND).is_ok();
+            let saw_request = request_received.recv_timeout(BOUND).is_ok();
             transport.cancel(operation);
-            saw_query
+            saw_request
         }
     });
 
@@ -458,10 +515,10 @@ async fn cancel_once_the_query_is_on_the_wire(
     .await
     .unwrap_or_else(|_| panic!("cancelling must unblock {method} well inside the bound"));
 
-    let saw_query = canceller.join().expect("canceller thread panicked");
+    let saw_request = canceller.join().expect("canceller thread panicked");
     assert!(
-        saw_query,
-        "the mock never received a query-request, so this did not test cancelling an in-flight {method}"
+        saw_request,
+        "the mock never received a {awaited}, so this did not test cancelling an in-flight {method}"
     );
     result
 }
@@ -509,7 +566,7 @@ fn assert_cancelled_with_abort(
 /// Matching against the observed `requestId` (rather than any well-formed UUID)
 /// is what makes this an abort *of the cancelled query* instead of an abort of
 /// something. The count pins at-most-one-abort-per-cancelled-query.
-fn assert_aborted_the_submitted_query(state: &HangingQuery) {
+fn assert_aborted_the_submitted_query(state: &HangingServer) {
     let query_request_id = state
         .query_request_id
         .lock()
@@ -531,6 +588,21 @@ fn assert_aborted_the_submitted_query(state: &HangingQuery) {
         abort_bodies[0].contains(&format!(r#""sqlText":"{SLOW_QUERY}""#)),
         "abort body must echo the cancelled query's sqlText; body: {}",
         abort_bodies[0]
+    );
+}
+
+/// Assert that cancellation emitted **no** abort-request.
+///
+/// The inverse of [`assert_aborted_the_submitted_query`], and the whole point of
+/// the finished-query-lookup tests: those RPCs read a query that has already
+/// completed, so there is nothing of ours still running to abort. Without this
+/// assertion the tests would pass just as well if a stray abort were fired,
+/// which would mean cancelling a status poll could cancel someone else's query.
+fn assert_no_abort_requests(state: &HangingServer) {
+    let abort_bodies = state.abort_bodies.lock().unwrap();
+    assert!(
+        abort_bodies.is_empty(),
+        "cancelling a finished-query lookup must not abort anything; got {abort_bodies:?}"
     );
 }
 
@@ -605,16 +677,17 @@ async fn cancelling_a_handle_from_another_thread_unblocks_an_in_flight_login() {
 /// and is awaited before the caller is told the operation was cancelled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancelling_an_in_flight_query_aborts_it_server_side() {
-    let (state, query_received) = hanging_query_state();
+    let (state, query_received) = hanging_server_state();
     let (addr, _server) = spawn_hanging_query(state.clone()).await;
 
     let transport = Arc::new(RustTransport::new());
     let stmt = statement_with_slow_query(&transport, addr).await;
 
-    let result = cancel_once_the_query_is_on_the_wire(
+    let result = cancel_once_the_request_is_on_the_wire(
         &transport,
         query_received,
         "statement_execute_query",
+        "query-request",
         StatementExecuteQueryRequest {
             stmt_handle: Some(stmt),
             bindings: None,
@@ -643,16 +716,17 @@ async fn cancelling_an_in_flight_query_aborts_it_server_side() {
 /// handed down so the abort is registered.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancelling_an_in_flight_prepare_aborts_it_server_side() {
-    let (state, query_received) = hanging_query_state();
+    let (state, query_received) = hanging_server_state();
     let (addr, _server) = spawn_hanging_query(state.clone()).await;
 
     let transport = Arc::new(RustTransport::new());
     let stmt = statement_with_slow_query(&transport, addr).await;
 
-    let result = cancel_once_the_query_is_on_the_wire(
+    let result = cancel_once_the_request_is_on_the_wire(
         &transport,
         query_received,
         "statement_prepare",
+        "query-request",
         StatementPrepareRequest {
             stmt_handle: Some(stmt),
         }
@@ -673,7 +747,7 @@ async fn cancelling_an_in_flight_prepare_aborts_it_server_side() {
 /// that cannot tell those apart learns nothing from the field.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancelling_before_dispatch_reports_no_abort_was_issued() {
-    let (state, _query_received) = hanging_query_state();
+    let (state, _query_received) = hanging_server_state();
     let (addr, _server) = spawn_hanging_query(state.clone()).await;
 
     let transport = Arc::new(RustTransport::new());
@@ -713,7 +787,7 @@ async fn cancelling_before_dispatch_reports_no_abort_was_issued() {
 /// aborted would cancel healthy work.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_query_that_completes_emits_no_abort_request() {
-    let (state, _query_received) = hanging_query_state();
+    let (state, _query_received) = hanging_server_state();
     // `hang: false` → the query-request is answered immediately.
     let (addr, _server) = spawn_answering_query(state.clone()).await;
 
@@ -773,4 +847,78 @@ async fn an_uncancelled_handle_does_not_short_circuit_the_operation() {
         "an uncancelled operation must not resolve on its own, got {:?}",
         outcome.map(|r| r.is_ok())
     );
+}
+
+/// Cancelling an in-flight `connection_get_result_set` must unblock the caller
+/// with `ERROR_KIND_CANCELLED` rather than waiting for
+/// `GET /queries/{id}/result` to answer.
+///
+/// Unlike the execute/prepare tests there is deliberately **no** abort here: the
+/// query being fetched has already finished, so cancelling abandons only the
+/// retrieval. [`assert_no_abort_requests`] pins that as intended behaviour — a
+/// stray abort on this path would target a query the caller does not own.
+///
+/// What makes this worth an integration test even though cancellation already
+/// worked before the RPC was marked: marking flips `observes_cancellation`, which
+/// turns **off** the transport-level race. If the impl were marked without also
+/// observing the ctx, nothing would watch the token and this call would park on
+/// the mock forever — so the bounded wait below is what catches that trap.
+/// Verified by removing the impl's `run_opt`: this test then fails on the bound
+/// instead of passing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_result_set_fetch_reports_cancelled_without_aborting() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_lookup(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_get_result_set",
+        "result lookup",
+        ConnectionGetResultSetRequest {
+            conn_handle: Some(conn),
+            query_id: FINISHED_QUERY_ID.to_string(),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled(result);
+    assert_no_abort_requests(&state);
+}
+
+/// The same guarantee for `connection_get_query_status`, which parks on
+/// `GET /monitoring/queries/{id}`.
+///
+/// Worth its own test rather than trusting the result-set coverage: it is a
+/// different endpoint reached through a different entry point, and it is the RPC
+/// a wrapper polls in a loop while waiting on an async query — the case where a
+/// caller most wants out without waiting for the server. Catches the same
+/// marked-but-not-observing trap described on the result-set test above.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_query_status_poll_reports_cancelled_without_aborting() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_lookup(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_get_query_status",
+        "monitoring request",
+        ConnectionGetQueryStatusRequest {
+            conn_handle: Some(conn),
+            query_id: FINISHED_QUERY_ID.to_string(),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled(result);
+    assert_no_abort_requests(&state);
 }

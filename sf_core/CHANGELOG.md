@@ -13,6 +13,7 @@ New features:
 - `StatementExecuteQuery` is now `async_first`: cancelling a running query aborts it on the server via `POST /queries/v1/abort-request` instead of only dropping the in-flight request locally, so the query stops consuming credits. The abort is bounded and is awaited before cancellation is reported, so a returned cancellation implies the abort was issued. (snowflakedb/drivers#TBD)
 - `StatementPrepare` is now `async_first` as well, so cancelling a prepare aborts its `describe_only` query on the server instead of only dropping the request locally — previously a cancelled prepare left the described query running. (snowflakedb/drivers#1463)
 - A cancellation error now reports what its abort-request achieved: `DriverException.cancellation_abort_outcome` is `ABORTED` (server acknowledged), `NOT_RUNNING` (nothing was running), or `NOT_CONFIRMED` (issued, outcome unknown), and is left unset when no abort was issued at all — the operation was cancelled before its query reached the server. This is the acknowledgement `StatementCancel` used to return to the canceller, delivered instead to the caller whose query was cancelled. (snowflakedb/drivers#1491)
+- `ConnectionGetResultSet` and `ConnectionGetQueryStatus` are now `async_first`, so a wrapper can cancel an in-flight fetch-by-query-id or status poll from another thread instead of blocking until the server answers — with no abort-request, since both read a query that has already finished. (snowflakedb/drivers#TBD)
 
 Bug fixes:
 

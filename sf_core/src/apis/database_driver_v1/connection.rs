@@ -2050,57 +2050,61 @@ impl DatabaseDriverV1 {
 
     pub async fn connection_get_query_status(
         &self,
+        ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         query_id: &str,
     ) -> Result<snowflake::QueryStatusResult, ApiError> {
-        if query_id.is_empty() {
-            return InvalidArgumentSnafu {
-                argument: "query_id must be non-empty".to_string(),
+        let status = async {
+            if query_id.is_empty() {
+                return InvalidArgumentSnafu {
+                    argument: "query_id must be non-empty".to_string(),
+                }
+                .fail();
             }
-            .fail();
-        }
 
-        let conn_ptr =
-            self.connections
-                .get_obj(conn_handle)
-                .with_context(|| InvalidArgumentSnafu {
-                    argument: "Connection handle not found".to_string(),
-                })?;
+            let conn_ptr =
+                self.connections
+                    .get_obj(conn_handle)
+                    .with_context(|| InvalidArgumentSnafu {
+                        argument: "Connection handle not found".to_string(),
+                    })?;
 
-        let (http_client, server_url, client_info, retry_policy) = {
-            let conn = conn_ptr.lock().await;
-            (
-                conn.http_client
-                    .clone()
-                    .context(ConnectionNotInitializedSnafu)?,
-                conn.server_url
-                    .clone()
-                    .context(ConnectionNotInitializedSnafu)?,
-                conn.client_info
-                    .clone()
-                    .context(ConnectionNotInitializedSnafu)?,
-                conn.retry_policy.clone(),
-            )
-        };
-
-        with_valid_session(&conn_ptr, |token| {
-            let http_client = &http_client;
-            let server_url = &server_url;
-            let client_info = &client_info;
-            let retry_policy = &retry_policy;
-            async move {
-                snowflake::get_query_status(
-                    http_client,
-                    server_url,
-                    client_info,
-                    &token,
-                    query_id,
-                    retry_policy,
+            let (http_client, server_url, client_info, retry_policy) = {
+                let conn = conn_ptr.lock().await;
+                (
+                    conn.http_client
+                        .clone()
+                        .context(ConnectionNotInitializedSnafu)?,
+                    conn.server_url
+                        .clone()
+                        .context(ConnectionNotInitializedSnafu)?,
+                    conn.client_info
+                        .clone()
+                        .context(ConnectionNotInitializedSnafu)?,
+                    conn.retry_policy.clone(),
                 )
-                .await
-            }
-        })
-        .await
+            };
+
+            with_valid_session(&conn_ptr, |token| {
+                let http_client = &http_client;
+                let server_url = &server_url;
+                let client_info = &client_info;
+                let retry_policy = &retry_policy;
+                async move {
+                    snowflake::get_query_status(
+                        http_client,
+                        server_url,
+                        client_info,
+                        &token,
+                        query_id,
+                        retry_policy,
+                    )
+                    .await
+                }
+            })
+            .await
+        };
+        crate::apis::operation_ctx::run_opt(ctx, "connection_get_query_status", status).await
     }
 
     pub async fn connection_get_all_parameters(

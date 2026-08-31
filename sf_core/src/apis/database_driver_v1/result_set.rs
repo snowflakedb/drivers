@@ -4,6 +4,7 @@ use super::connection::{Connection, RefreshContext};
 use super::error::*;
 use super::global_state::{DatabaseDriverV1, PutGetResultsetFlavor, WrapperPresets};
 use super::query::build_reader_from_rowset_data;
+use crate::apis::operation_ctx::{OperationCtx, run_opt};
 use crate::chunks::{ChunkDownloadData, ChunkFormatKind, PrefetchConfig};
 use crate::handle_manager::Handle;
 use crate::query_types::statement_type::{
@@ -603,23 +604,29 @@ impl DatabaseDriverV1 {
     /// retrieval — neither of which involves PUT/GET file transfers.
     pub async fn create_result_set_from_sfqid(
         &self,
+        ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         query_id: String,
     ) -> Result<ResultSetInfo, ApiError> {
-        let conn_ptr =
-            self.connections
-                .get_obj(conn_handle)
-                .with_context(|| InvalidArgumentSnafu {
-                    argument: "Connection handle not found".to_string(),
-                })?;
+        let fetch = async {
+            let conn_ptr =
+                self.connections
+                    .get_obj(conn_handle)
+                    .with_context(|| InvalidArgumentSnafu {
+                        argument: "Connection handle not found".to_string(),
+                    })?;
 
-        let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
-        let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-        let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
-        let handle =
-            self.create_result_set(descriptor.clone(), data.into_rowset_data(), reader_ctx);
+            let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
+            let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
+            let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+            let handle =
+                self.create_result_set(descriptor.clone(), data.into_rowset_data(), reader_ctx);
 
-        Ok(ResultSetInfo { handle, descriptor })
+            Ok(ResultSetInfo { handle, descriptor })
+        };
+        // Labelled with the RPC name, not this function's, so the operation is
+        // named the same way in logs as it is in the proto.
+        run_opt(ctx, "connection_get_result_set", fetch).await
     }
 }
 
