@@ -2037,7 +2037,7 @@ pub async fn snowflake_get_query_result(
 }
 
 /// Result of a query status check via the monitoring endpoint.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct QueryStatusResult {
     pub status_name: String,
     pub error_code: Option<i32>,
@@ -2105,6 +2105,17 @@ pub async fn get_query_status(
     let body: QueryStatusResponse =
         read_response_json::<Option<QueryStatusResponseData>>(response).await?;
 
+    query_status_from_monitoring_body(body, &ids)
+}
+
+/// Map a parsed `/monitoring/queries/{id}` body to [`QueryStatusResult`].
+///
+/// An empty `queries` array is the server saying the id is unknown, not a
+/// missing field. Legacy Python returns `NO_DATA` and Node `NO_QUERY_DATA`.
+fn query_status_from_monitoring_body(
+    body: QueryStatusResponse,
+    ids: &QueryIds,
+) -> Result<QueryStatusResult, RestError> {
     if !body.success {
         let message = body.message.unwrap_or_else(|| "Unknown error".to_owned());
         let code = body.code.as_deref().and_then(|c| c.parse::<i32>().ok());
@@ -2112,7 +2123,7 @@ pub async fn get_query_status(
             message,
             code,
             sql_state: None::<String>,
-            ids,
+            ids: ids.clone(),
         }
         .fail();
     }
@@ -2121,13 +2132,13 @@ pub async fn get_query_status(
         field: "data in monitoring response",
     })?;
 
-    let query_entry = data
-        .queries
-        .into_iter()
-        .next()
-        .context(MissingResponseFieldSnafu {
-            field: "queries[0] in monitoring response",
-        })?;
+    let Some(query_entry) = data.queries.into_iter().next() else {
+        return Ok(QueryStatusResult {
+            status_name: "NO_DATA".to_owned(),
+            query_id: ids.query_id.clone().unwrap_or_default(),
+            ..Default::default()
+        });
+    };
 
     let error_code = query_entry
         .error_code
@@ -3245,6 +3256,45 @@ mod tests {
         assert!(!response.success);
         assert!(response.data.is_none());
         assert_eq!(response.message.as_deref(), Some("Unauthorized"));
+    }
+
+    #[test]
+    fn empty_queries_array_maps_to_no_data() {
+        let body: QueryStatusResponse = serde_json::from_str(
+            r#"{
+            "success": true,
+            "data": { "queries": [] }
+        }"#,
+        )
+        .unwrap();
+        let ids = QueryIds {
+            request_id: None,
+            query_id: Some("00000000-0000-0000-0000-000000000000".to_owned()),
+        };
+        let result = query_status_from_monitoring_body(body, &ids).expect("unknown id is NO_DATA");
+        assert_eq!(result.status_name, "NO_DATA");
+        assert_eq!(result.query_id, "00000000-0000-0000-0000-000000000000");
+        assert_eq!(result.error_code, None);
+    }
+
+    #[test]
+    fn unsuccessful_monitoring_body_is_query_failed_even_with_empty_queries() {
+        let body: QueryStatusResponse = serde_json::from_str(
+            r#"{
+            "success": false,
+            "message": "Query not found",
+            "code": "000707",
+            "data": { "queries": [] }
+        }"#,
+        )
+        .unwrap();
+        match query_status_from_monitoring_body(body, &QueryIds::default()) {
+            Err(RestError::QueryFailed { message, code, .. }) => {
+                assert_eq!(message, "Query not found");
+                assert_eq!(code, Some(707));
+            }
+            other => panic!("expected QueryFailed, got {other:?}"),
+        }
     }
 
     #[test]

@@ -239,8 +239,8 @@ class TestErrorKindMapping:
     def test_authentication_error_maps_to_database_error(self):
         assert KIND_TO_EXCEPTION[ERROR_KIND_AUTHENTICATION_ERROR] is DatabaseError
 
-    def test_internal_error_maps_to_programming(self):
-        assert KIND_TO_EXCEPTION[ERROR_KIND_INTERNAL_ERROR] is ProgrammingError
+    def test_internal_error_maps_to_internal_error(self):
+        assert KIND_TO_EXCEPTION[ERROR_KIND_INTERNAL_ERROR] is InternalError
 
     def test_login_error_maps_to_database_error(self):
         assert KIND_TO_EXCEPTION[ERROR_KIND_LOGIN_ERROR] is DatabaseError
@@ -456,7 +456,7 @@ class TestConvertProtoError:
         proto_exc = ProtoApplicationException(driver_exc)
 
         result = _proto_to_public_error(proto_exc)
-        assert isinstance(result, ProgrammingError)
+        assert isinstance(result, InternalError)
         # INTERNAL_ERROR has no old-driver errno mapping, so proto ErrorKind is used as fallback.
         assert result.errno == ERROR_KIND_INTERNAL_ERROR
 
@@ -488,7 +488,7 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="SQL compilation error: syntax error",
-            kind=ERROR_KIND_INTERNAL_ERROR,
+            kind=ERROR_KIND_QUERY_FAILED,
             vendor_code=1003,
             sql_state="42000",
         )
@@ -508,7 +508,7 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="SQL compilation error: syntax error",
-            kind=ERROR_KIND_INTERNAL_ERROR,
+            kind=ERROR_KIND_QUERY_FAILED,
             vendor_code=1003,
             sql_state="42000",
             query_id="01abc-def-12345",
@@ -528,7 +528,7 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="SQL compilation error",
-            kind=ERROR_KIND_INTERNAL_ERROR,
+            kind=ERROR_KIND_QUERY_FAILED,
             vendor_code=1003,
             sql_state="42000",
         )
@@ -550,7 +550,7 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="SQL compilation error: Object 'FOO' does not exist.",
-            kind=ERROR_KIND_INTERNAL_ERROR,
+            kind=ERROR_KIND_QUERY_FAILED,
             vendor_code=2003,
             sql_state="42S02",
         )
@@ -569,7 +569,7 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="Query failed",
-            kind=ERROR_KIND_INTERNAL_ERROR,
+            kind=ERROR_KIND_QUERY_FAILED,
             root_cause="division by zero",
         )
         proto_exc = ProtoApplicationException(driver_exc)
@@ -586,7 +586,7 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="division by zero",
-            kind=ERROR_KIND_INTERNAL_ERROR,
+            kind=ERROR_KIND_QUERY_FAILED,
             root_cause="division by zero",
         )
         proto_exc = ProtoApplicationException(driver_exc)

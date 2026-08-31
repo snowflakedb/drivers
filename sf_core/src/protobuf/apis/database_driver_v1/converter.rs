@@ -777,9 +777,9 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::InvalidArgument { .. } | ApiError::ConnectionClosed { .. } => {
             ErrorKind::InvalidArgument
         }
-        ApiError::GenericError { .. }
-        | ApiError::HttpRequest { .. }
-        | ApiError::FileTransfersDisabled { .. } => ErrorKind::GenericError,
+
+        ApiError::HttpRequest { .. }
+        | ApiError::FileTransfersDisabled { .. } => ErrorKind::Io,
         ApiError::StageBinding { .. } => ErrorKind::StageBinding,
         ApiError::QueryTimeout { .. } | ApiError::CancelTimeout { .. } => ErrorKind::Timeout,
         ApiError::Cancelled { .. } => ErrorKind::Cancelled,
@@ -1629,6 +1629,15 @@ mod tests {
             }),
         };
         assert_eq!(to_driver_exception(download_err).kind, ErrorKind::Io as i32);
+    }
+
+    #[test]
+    fn connection_lock_maps_to_internal_error() {
+        let err = ApiError::ConnectionLock { location: loc() };
+        assert_eq!(
+            to_driver_exception(err).kind,
+            ErrorKind::InternalError as i32
+        );
     }
 
     #[tokio::test]

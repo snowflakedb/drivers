@@ -4,7 +4,7 @@ This module tests query status retrieval functionality including:
 - Retrieving success status for completed queries
 - Retrieving error status for failed queries
 - Checking still-running status for in-progress queries
-- Error handling for invalid query IDs
+- Returning NO_DATA for a well-formed query ID that does not exist
 """
 
 from __future__ import annotations
@@ -75,17 +75,14 @@ class TestQueryStatus:
         # And the query should not be indicated as an error
         assert not connection.is_an_error(status)
 
-    def test_should_raise_error_when_retrieving_status_with_invalid_query_id(self, connection):
-        """Test that retrieving status with invalid query ID raises error."""
+    def test_should_return_no_data_status_for_a_non_existent_query_id(self, connection):
+        """Test that a well-formed query ID with no server row returns NO_DATA."""
         # Given Snowflake client is logged in
         pass
 
         # When Query status is retrieved for a non-existent query ID
-        invalid_query_id = "00000000-0000-0000-0000-000000000000"
+        unknown_query_id = "00000000-0000-0000-0000-000000000000"
+        status = connection.get_query_status(unknown_query_id)
 
-        # Then An error should be returned
-        try:
-            status = connection.get_query_status(invalid_query_id)
-            assert connection.is_an_error(status) or status == QueryStatus.NO_DATA
-        except ProgrammingError:
-            pass
+        # Then the query status should indicate no data
+        assert status == QueryStatus.NO_DATA
