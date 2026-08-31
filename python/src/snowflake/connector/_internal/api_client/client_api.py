@@ -14,7 +14,7 @@ from snowflake.connector._internal.error_kinds import (
     KIND_TO_EXCEPTION,
     VENDOR_CODE_TO_EXCEPTION,
 )
-from snowflake.connector.errors import DatabaseError, Error, OperationalError
+from snowflake.connector.errors import DatabaseError, Error, OperationalError, ReauthenticationRequest
 
 from ..protobuf_gen.database_driver_v1_pb2 import (
     ColumnMetadata,
@@ -148,6 +148,16 @@ def _stringify_session_parameters(parameters: dict[str, Any]) -> dict[str, str]:
     return {key: (value if isinstance(value, str) else json.dumps(value)) for key, value in parameters.items()}
 
 
+def _is_reauthentication_required(driver_exception: Any) -> bool:
+    """Return whether *driver_exception* is a reauth-shaped error.
+
+    ``reauthentication_required`` is a plain bool on ``DriverException`` after
+    the DriverError flatten. The GS code, when there is one, travels on
+    ``vendor_code``.
+    """
+    return bool(getattr(driver_exception, "reauthentication_required", False))
+
+
 def _append_detail(base: str, detail: str) -> str:
     """Append *detail* to *base* with `. ` separator, avoiding double punctuation."""
     if not base:
@@ -170,14 +180,19 @@ def _proto_to_public_error(proto_exc: Exception) -> Error:
     return DatabaseError(str(proto_exc))
 
 
-def _resolve_exception_class(kind: int, vendor_code: int | None) -> type[Error]:
+def _resolve_exception_class(kind: int, vendor_code: int | None, reauthentication_required: bool) -> type[Error]:
     """Pick the PEP 249 exception class for a proto error.
 
     Resolution order:
-      1. VENDOR_CODE_TO_EXCEPTION — Snowflake-specific vendor_code overrides (e.g. 100072 → IntegrityError).
-      2. KIND_TO_EXCEPTION — default mapping from the proto ErrorKind.
-      3. DatabaseError — catch-all when the kind is unrecognized.
+      1. ``reauthentication_required`` — the session can never be renewed
+         regardless of what ErrorKind/vendor_code the Rust core also
+         reported, so this wins unconditionally.
+      2. VENDOR_CODE_TO_EXCEPTION — Snowflake-specific vendor_code overrides (e.g. 100072 → IntegrityError).
+      3. KIND_TO_EXCEPTION — default mapping from the proto ErrorKind.
+      4. DatabaseError — catch-all when the kind is unrecognized.
     """
+    if reauthentication_required:
+        return ReauthenticationRequest
     if vendor_code is not None:
         cls = VENDOR_CODE_TO_EXCEPTION.get(vendor_code)
         if cls is not None:
@@ -208,7 +223,7 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     # proto ErrorKind.
     vendor_code = _get_optional_int(driver_exc, "vendor_code")
 
-    exc_class = _resolve_exception_class(kind, vendor_code)
+    exc_class = _resolve_exception_class(kind, vendor_code, _is_reauthentication_required(driver_exc))
     errno = vendor_code if vendor_code is not None else KIND_TO_ERRNO.get(kind, kind)
 
     # Prefer the server-provided sql_state; fall back to a type-derived value.

@@ -4,8 +4,9 @@ PEP 249 Database API 2.0 Exception Classes
 This module defines the exception hierarchy for the Snowflake connector.
 
 The **active** exceptions (raised at runtime) are the PEP 249 hierarchy plus a
-handful of driver-specific types (``MissingDependencyError``, config errors).
-These are what ``sf_core`` error kinds map to via ``KIND_TO_EXCEPTION``.
+handful of driver-specific types (``MissingDependencyError``, config errors,
+``ReauthenticationRequest``). These are what ``sf_core`` error kinds map to via
+``KIND_TO_EXCEPTION``.
 
 Everything after the "Backward compatibility" section below exists solely so
 that ``from snowflake.connector.errors import BadGatewayError`` (etc.) does not
@@ -35,6 +36,8 @@ All backward-compatibility classes are marked with ``@backward_compatibility``.
 """
 
 from __future__ import annotations
+
+import warnings
 
 from typing import TYPE_CHECKING, Any
 
@@ -301,6 +304,55 @@ class NotSupportedError(DatabaseError):
 # ---------------------------------------------------------------------------
 # Driver-specific exceptions (active — raised at runtime)
 # ---------------------------------------------------------------------------
+
+_FUTURE_BASE_CHANGE_WARNED = False
+
+
+def _warn_future_base_change() -> None:
+    """Advise callers that ``ReauthenticationRequest``'s base will change.
+
+    An advisory must never shadow the failure it is advising about: wrapped in
+    try/except so a caller's ``filterwarnings("error")`` can't turn this into
+    the exception the caller receives instead of ``ReauthenticationRequest``.
+    Deduped once per process so a retry loop doesn't flood stderr.
+    """
+    global _FUTURE_BASE_CHANGE_WARNED
+    if _FUTURE_BASE_CHANGE_WARNED:
+        return
+    _FUTURE_BASE_CHANGE_WARNED = True
+    try:
+        warnings.warn(
+            "`ReauthenticationRequest` currently subclasses `ProgrammingError` for "
+            "compatibility with `snowflake-connector-python`. In a future major "
+            "release its base will change to `OperationalError`. If you catch this "
+            "via `except ProgrammingError`, switch to `except ReauthenticationRequest` "
+            "(or `except DatabaseError`) to stay correct across that change.",
+            FutureWarning,
+            stacklevel=3,
+        )
+    except Exception:
+        pass
+
+
+# NOTE: `ProgrammingError` is deliberately NOT the PEP 249-correct base here.
+# `ud-py-pep249-error-subclass-selection` classes token expiry as environmental
+# (`OperationalError`), and PEP 249's `OperationalError` example #1 is "an
+# unexpected disconnect occurs". We subclass `ProgrammingError` anyway so that
+# `except ProgrammingError` — what legacy snowflake-connector-python raised on
+# the common mid-session path — keeps working for migrating callers. The base
+# changes to `OperationalError` in a future major release: SNOW-3965765.
+class ReauthenticationRequest(ProgrammingError):
+    """Raised when the session cannot be renewed; open a new connection.
+
+    Subclasses `ProgrammingError` only for compatibility with
+    `snowflake-connector-python`; the base becomes `OperationalError` in a
+    future major release. Catch this class directly, or `DatabaseError`, to be
+    immune to that change.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        _warn_future_base_change()
 
 
 class MissingDependencyError(Error):

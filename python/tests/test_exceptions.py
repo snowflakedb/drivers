@@ -2,7 +2,11 @@
 Tests for PEP 249 exception classes.
 """
 
+import warnings
+
 from unittest.mock import MagicMock
+
+import pytest
 
 from snowflake.connector._internal.api_client.client_api import _proto_to_public_error
 from snowflake.connector._internal.error_kinds import (
@@ -16,6 +20,7 @@ from snowflake.connector._internal.error_kinds import (
     ERROR_KIND_QUERY_FAILED,
     ERROR_KIND_STAGE_BINDING,
     ERROR_KIND_TIMEOUT,
+    KIND_TO_ERRNO,
     KIND_TO_EXCEPTION,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -31,6 +36,7 @@ from snowflake.connector.errors import (
     NotSupportedError,
     OperationalError,
     ProgrammingError,
+    ReauthenticationRequest,
     Warning,
 )
 
@@ -67,6 +73,91 @@ class TestExceptionHierarchy:
 
     def test_not_supported_error_inheritance(self):
         assert issubclass(NotSupportedError, DatabaseError)
+
+    def test_reauthentication_request_inheritance(self):
+        assert issubclass(ReauthenticationRequest, ProgrammingError)
+        assert issubclass(ReauthenticationRequest, DatabaseError)
+        assert issubclass(ReauthenticationRequest, Error)
+        # Deliberately NOT OperationalError yet — base changes in a future
+        # major release (SNOW-3965765). This assertion is meant to flip when
+        # that happens, not silently pass either way.
+        assert not issubclass(ReauthenticationRequest, OperationalError)
+
+
+class TestReauthenticationRequest:
+    """Tests for ``ReauthenticationRequest`` — one class, raised uniformly on
+    every reauth path, handled the same as every other exception in
+    ``errors.py``."""
+
+    def test_is_catchable_as_programming_error(self):
+        with pytest.raises(ProgrammingError):
+            raise ReauthenticationRequest("master token expired", errno=390114)
+
+    def test_is_catchable_as_database_error(self):
+        with pytest.raises(DatabaseError):
+            raise ReauthenticationRequest("master token expired", errno=390114)
+
+    def test_is_catchable_as_error(self):
+        with pytest.raises(Error):
+            raise ReauthenticationRequest("master token expired", errno=390114)
+
+    def test_is_not_catchable_as_operational_error(self):
+        # `except OperationalError` must NOT intercept this — if it did, the
+        # AssertionError below would replace the expected ReauthenticationRequest.
+        with pytest.raises(ReauthenticationRequest):
+            try:
+                raise ReauthenticationRequest("master token expired", errno=390114)
+            except OperationalError as exc:
+                raise AssertionError("OperationalError must not catch ReauthenticationRequest yet") from exc
+
+    def test_no_second_name_exists(self):
+        # A modern-sounding alias would undercut the FutureWarning's "catch the
+        # exact class" advice.
+        import snowflake.connector.errors as errors_module
+
+        assert not hasattr(errors_module, "ReauthenticationRequiredError")
+
+    def test_raise_emits_future_warning_naming_escape_hatches(self):
+        import snowflake.connector.errors as errors_module
+
+        errors_module._FUTURE_BASE_CHANGE_WARNED = False
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                ReauthenticationRequest("master token expired", errno=390114)
+            future_warnings = [w for w in caught if issubclass(w.category, FutureWarning)]
+            assert len(future_warnings) == 1
+            message = str(future_warnings[0].message)
+            assert "ReauthenticationRequest" in message
+            assert "DatabaseError" in message
+        finally:
+            errors_module._FUTURE_BASE_CHANGE_WARNED = False
+
+    def test_future_warning_fires_at_most_once_per_process(self):
+        import snowflake.connector.errors as errors_module
+
+        errors_module._FUTURE_BASE_CHANGE_WARNED = False
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                ReauthenticationRequest("first", errno=390114)
+                ReauthenticationRequest("second", errno=390195)
+            future_warnings = [w for w in caught if issubclass(w.category, FutureWarning)]
+            assert len(future_warnings) == 1
+        finally:
+            errors_module._FUTURE_BASE_CHANGE_WARNED = False
+
+    def test_future_warning_never_masks_the_real_exception_under_filterwarnings_error(self):
+        import snowflake.connector.errors as errors_module
+
+        errors_module._FUTURE_BASE_CHANGE_WARNED = False
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                with pytest.raises(ReauthenticationRequest):
+                    raise ReauthenticationRequest("master token expired", errno=390114)
+        finally:
+            errors_module._FUTURE_BASE_CHANGE_WARNED = False
 
 
 class TestExceptionInstantiation:
@@ -213,6 +304,115 @@ class TestConvertProtoError:
         assert "Token expired" in str(result)
         assert result.errno == 250001
         assert result.sqlstate == "08001"
+
+    @pytest.mark.parametrize("code", [390113, 390114, 390115, 390195, 390303, 390318])
+    def test_application_exception_reauth_shaped_auth_error_constructs_reauthentication_request(self, code):
+        # Mid-session (390113/114/115) and login-time (390195/303/318) reauth
+        # triggers both route through presence of the same
+        # DriverException.reauthentication_required discriminant.
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="Master token can never be renewed",
+            kind=ERROR_KIND_AUTHENTICATION_ERROR,
+            vendor_code=code,
+            reauthentication_required=True,
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert isinstance(result, ReauthenticationRequest)
+        assert isinstance(result, ProgrammingError)
+        assert isinstance(result, DatabaseError)
+        assert isinstance(result, Error)
+        assert result.errno == code
+        assert result.sqlstate == "08001"
+
+    def test_application_exception_reauth_shaped_auth_error_without_code_still_constructs_reauthentication_request(
+        self,
+    ):
+        # Client-predicted expiry: no server round-trip occurred, so no
+        # vendor_code is set even though `reauthentication_required` is
+        # `True`. The class decision must come from `reauthentication_required`
+        # alone; requiring a code as well would silently fall back to a
+        # generic DatabaseError here.
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="Master token can never be renewed",
+            kind=ERROR_KIND_AUTHENTICATION_ERROR,
+            reauthentication_required=True,
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert isinstance(result, ReauthenticationRequest)
+        assert result.errno == KIND_TO_ERRNO[ERROR_KIND_AUTHENTICATION_ERROR]
+        assert result.sqlstate == "08001"
+
+    def test_application_exception_reauth_message_carries_gs_code_exactly_once(self):
+        # Regression test: the assembled user-facing message must contain the
+        # GS code exactly once, not 3x (message + root_cause + detail all
+        # carrying the same "(GS code N)" text via _append_detail's dedup).
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        detail = "Master token can never be renewed - full re-authentication required (GS code 390114)."
+        driver_exc = ProtoDriverException(
+            message=detail,
+            kind=ERROR_KIND_AUTHENTICATION_ERROR,
+            vendor_code=390114,
+            reauthentication_required=True,
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        # raw_msg is the assembled message body, before Error.__str__ prepends
+        # "errno (sqlstate): " — that prefix legitimately repeats the same
+        # numeral as the errno, which is not the bug under test here.
+        assert result.raw_msg.count("390114") == 1
+
+    def test_application_exception_auth_error_without_reauthentication_required_stays_generic(self):
+        # AuthenticationError without `reauthentication_required` set (unset
+        # per proto3 message-field default) must NOT be misread as
+        # reauth-required — this is the ordinary TlsClientCreation/
+        # SessionRefresh/etc. AuthenticationError shape.
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="TLS handshake failed",
+            kind=ERROR_KIND_AUTHENTICATION_ERROR,
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert not isinstance(result, ReauthenticationRequest)
+        assert isinstance(result, DatabaseError)
+
+    def test_application_exception_login_error_without_reauth_stays_plain_login_error(self):
+        # Negative control: an ordinary login failure (bad password) must not
+        # be misclassified as ReauthenticationRequest.
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="Incorrect username or password",
+            kind=ERROR_KIND_LOGIN_ERROR,
+            vendor_code=390100,
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert not isinstance(result, ReauthenticationRequest)
+        assert isinstance(result, DatabaseError)
 
     def test_application_exception_not_implemented(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
