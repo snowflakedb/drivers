@@ -143,29 +143,27 @@ pub struct Data {
     #[serde(rename = "operation")]
     _operation: Option<String>,
     #[serde(rename = "queryContext")]
-    _query_context: Option<QueryContext>,
+    pub query_context: Option<QueryContext>,
     #[serde(rename = "stats")]
     pub stats: Option<Stats>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct QueryContext {
-    //unused fields
     #[serde(rename = "entries")]
-    _entries: Option<Vec<QueryContextEntry>>,
+    pub entries: Option<Vec<QueryContextEntry>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct QueryContextEntry {
-    //unused fields
     #[serde(rename = "id")]
-    _id: i64,
+    pub id: i64,
     #[serde(rename = "timestamp")]
-    _timestamp: i64,
+    pub timestamp: i64,
     #[serde(rename = "priority")]
-    _priority: i64,
+    pub priority: i64,
     #[serde(rename = "context")]
-    _context: Option<String>,
+    pub context: Option<String>,
 }
 
 #[derive(Deserialize)]

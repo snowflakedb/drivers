@@ -4,8 +4,10 @@
     "method": "POST",
     "bodyPatterns": [
       {
-        "matchesJsonPath": "$.sqlText",
-        "contains": "PUT"
+        "matchesJsonPath": {
+          "expression": "$.sqlText",
+          "contains": "PUT"
+        }
       }
     ]
   },

@@ -7,11 +7,9 @@ use crate::apis::operation_ctx::OperationCtx;
 use crate::stage_binding::{AtomicStageState, StageState};
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::Mutex;
-use tokio::sync::RwLock as AsyncRwLock;
+use tokio::sync::{Mutex, RwLock as AsyncRwLock};
 use tracing::Instrument;
 
-use super::Setting;
 use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
@@ -23,22 +21,26 @@ use super::validation::{
     normalize_host_underscores, resolve_options, validate_connection_seed_write,
     validate_session_override_write,
 };
-use crate::config::ParamStore;
-use crate::config::connection_config::{ConnectionConfig, DiagnosticConfig};
-use crate::config::logout::LogoutConfig;
-use crate::config::param_registry::{ParamKey, param_names};
-use crate::config::resolver;
-use crate::config::rest_parameters::{
-    ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
-    resolve_log_query_parameters, resolve_log_query_text,
+use super::{Setting, WrapperPresets};
+use crate::config::{
+    ParamStore,
+    connection_config::{ConnectionConfig, DiagnosticConfig},
+    logout::LogoutConfig,
+    param_registry::{ParamKey, param_names},
+    resolver,
+    rest_parameters::{
+        ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
+        resolve_log_query_parameters, resolve_log_query_text,
+    },
+    retry::RetryPolicy,
+    settings::Settings,
 };
-use crate::config::retry::RetryPolicy;
-use crate::config::settings::Settings;
 use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
+use crate::rest::snowflake::query_context_cache::QueryContextCacheAdapter;
 use crate::rest::snowflake::{
-    self, QueryInput, QueryOptions, RestError, SessionTokens, heartbeat,
-    snowflake_query_with_client,
+    self, QueryInput, QueryOptions, RestError, SessionTokens, SnowflakeResponseError, heartbeat,
+    query_request, snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::config::ProxyConfig;
@@ -79,7 +81,7 @@ impl DatabaseDriverV1 {
                     } else {
                         "ALTER SESSION SET AUTOCOMMIT = FALSE"
                     };
-                    self.execute_session_sql(&conn, sql, SessionStateRefresh::Apply)
+                    self.execute_session_sql(&mut conn, sql, SessionStateRefresh::Apply)
                         .await
                 } else {
                     conn.init_session_parameters
@@ -115,7 +117,7 @@ impl DatabaseDriverV1 {
 
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let conn = conn_ptr.lock().await;
+                let mut conn = conn_ptr.lock().await;
                 if !conn.is_post_connect() {
                     return InvalidArgumentSnafu {
                         argument: "connection_use_database called before connection is open"
@@ -123,7 +125,7 @@ impl DatabaseDriverV1 {
                     }
                     .fail();
                 }
-                self.execute_session_sql(&conn, &sql, SessionStateRefresh::Apply)
+                self.execute_session_sql(&mut conn, &sql, SessionStateRefresh::Apply)
                     .await
             }
             None => InvalidArgumentSnafu {
@@ -156,7 +158,7 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let conn = conn_ptr.lock().await;
+                let mut conn = conn_ptr.lock().await;
                 if !conn.is_post_connect() {
                     return InvalidArgumentSnafu {
                         argument: format!("{sql} called before connection is open"),
@@ -166,7 +168,7 @@ impl DatabaseDriverV1 {
                 // COMMIT/ROLLBACK do not change session parameters or
                 // current database/schema/warehouse/role, so skip the
                 // session-state cache refresh.
-                self.execute_session_sql(&conn, sql, SessionStateRefresh::Skip)
+                self.execute_session_sql(&mut conn, sql, SessionStateRefresh::Skip)
                     .await
             }
             None => InvalidArgumentSnafu {
@@ -194,7 +196,7 @@ impl DatabaseDriverV1 {
 
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let conn = conn_ptr.lock().await;
+                let mut conn = conn_ptr.lock().await;
                 if !conn.is_post_connect() {
                     return InvalidArgumentSnafu {
                         argument: "connection_use_schema called before connection is open"
@@ -204,7 +206,7 @@ impl DatabaseDriverV1 {
                 }
                 let database = resolve_session_database(&conn)?;
                 let sql = build_use_schema_sql(database.as_deref(), schema);
-                self.execute_session_sql(&conn, &sql, SessionStateRefresh::Apply)
+                self.execute_session_sql(&mut conn, &sql, SessionStateRefresh::Apply)
                     .await
             }
             None => InvalidArgumentSnafu {
@@ -225,7 +227,7 @@ impl DatabaseDriverV1 {
     /// for a no-op merge.
     async fn execute_session_sql(
         &self,
-        conn: &Connection,
+        conn: &mut Connection,
         sql: &str,
         refresh: SessionStateRefresh,
     ) -> Result<(), ApiError> {
@@ -235,6 +237,7 @@ impl DatabaseDriverV1 {
             bind_stage: None,
             describe_only: None,
             query_parameters: None,
+            query_context: query_request::QueryContext::default(),
         };
         let query_parameters = conn.query_transport_parameters()?;
         let http_client = conn
@@ -263,6 +266,13 @@ impl DatabaseDriverV1 {
                 Err(e) => last_error = Some(e),
             }
         }?;
+
+        conn.query_context_cache
+            .update_query_context_cache(
+                response.data.query_context.as_ref(),
+                response.data.parameters.as_ref(),
+            )
+            .await;
 
         if response.success && matches!(refresh, SessionStateRefresh::Apply) {
             conn.update_session_params_cache(
@@ -585,6 +595,7 @@ impl DatabaseDriverV1 {
                         resolved_snapshot,
                         logout_config,
                         timeout_config,
+                        self.wrapper_presets.clone(),
                     )
                     .await;
 
@@ -1066,6 +1077,8 @@ pub struct Connection {
     pub client_info: Option<ClientInfo>,
     /// Session parameters cache (populated after login)
     pub session_parameters: Arc<AsyncRwLock<HashMap<String, String>>>,
+    /// Query context cache (HTAP support)
+    pub query_context_cache: QueryContextCacheAdapter,
     /// Session parameters to send during initialization (set before connection_init)
     pub init_session_parameters: Option<HashMap<String, String>>,
     /// Registry for tracking async queries (for Fire & Forget auto-detection)
@@ -1145,6 +1158,7 @@ impl Connection {
             server_url: None,
             client_info: None,
             session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
+            query_context_cache: QueryContextCacheAdapter::new(),
             init_session_parameters: None,
             async_query_registry: AsyncQueryRegistry::new(),
             is_closed: Arc::new(AtomicBool::new(false)),
@@ -1301,6 +1315,7 @@ impl Connection {
         resolved_connect: ParamStore,
         logout_config: LogoutConfig,
         timeout_config: crate::config::retry::TimeoutConfig,
+        wrapper_presets: WrapperPresets,
     ) {
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
@@ -1311,6 +1326,8 @@ impl Connection {
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
         self.resolved_connect = Some(resolved_connect);
+        self.query_context_cache
+            .init(self.resolved_connect.as_ref(), &wrapper_presets);
         self.session_overrides = ParamStore::new();
         self.logout_config = logout_config;
 

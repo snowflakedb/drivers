@@ -22,7 +22,7 @@ use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    AbortOutcome, QueryExecutionMode, QueryInput, QueryOptions, query_response,
+    AbortOutcome, QueryExecutionMode, QueryInput, QueryOptions, query_request, query_response,
     snowflake_abort_query, snowflake_cancel_query, snowflake_query_with_client,
 };
 use crate::utils::sync::MutexRecoverExt;
@@ -30,8 +30,6 @@ use crate::utils::sync::MutexRecoverExt;
 use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::async_exec::submit_statement_async;
-#[cfg(test)]
-use crate::rest::snowflake::query_request;
 use arrow::array::RecordBatchReader;
 use serde_json::value::RawValue;
 use std::sync::atomic::Ordering;
@@ -494,21 +492,24 @@ impl DatabaseDriverV1 {
             None
         };
 
+        let (query_context, query_deadline) = {
+            let conn = conn_arc.lock().await;
+            let qctx = conn.query_context_cache.get_query_context_snapshot().await;
+            let deadline = conn
+                .timeout_config
+                .query_timeout
+                .map(|budget| (budget, tokio::time::Instant::now() + budget));
+            (qctx, deadline)
+        };
+
         let query_input = QueryInput {
             sql: query.clone(),
             bindings: query_bindings,
             bind_stage: bind_stage_path,
             describe_only,
             query_parameters: query_parameter_map,
+            query_context,
         };
-
-        // Pair the budget with its deadline in one `Option` so the timeout arm
-        // has the budget without an `unwrap()`.
-        let query_deadline = {
-            let conn = conn_arc.lock().await;
-            conn.timeout_config.query_timeout
-        }
-        .map(|budget| (budget, tokio::time::Instant::now() + budget));
 
         // Abort the query server-side if the operation is cancelled while the
         // request below is in flight. The identity is moved into the cleanup
@@ -613,7 +614,21 @@ impl DatabaseDriverV1 {
                     };
                     match result {
                         Ok(result) => break Ok(result),
-                        Err(e) => last_error = Some(e),
+                        Err(e) => {
+                            // Update QCC from failed queries — the server may include
+                            // queryContext even in error responses.
+                            if let RestError::QueryFailed {
+                                query_context: Some(qctx),
+                                ..
+                            } = &e
+                            {
+                                let mut conn = conn_arc.lock().await;
+                                conn.query_context_cache
+                                    .update_query_context_cache(Some(qctx), None)
+                                    .await;
+                            }
+                            last_error = Some(e);
+                        }
                     }
                 }
             }),
@@ -621,7 +636,7 @@ impl DatabaseDriverV1 {
         .await?;
 
         if response.success {
-            let conn = conn_arc.lock().await;
+            let mut conn = conn_arc.lock().await;
             conn.update_session_params_cache(
                 &query,
                 response.data.parameters.as_ref(),
@@ -633,6 +648,12 @@ impl DatabaseDriverV1 {
                 },
             )
             .await;
+            conn.query_context_cache
+                .update_query_context_cache(
+                    response.data.query_context.as_ref(),
+                    response.data.parameters.as_ref(),
+                )
+                .await;
         }
 
         // Re-acquire lock to set the state
@@ -799,12 +820,18 @@ impl DatabaseDriverV1 {
             None
         };
 
+        let query_context = {
+            let conn = stmt.conn.lock().await;
+            conn.query_context_cache.get_query_context_snapshot().await
+        };
+
         let query_input = QueryInput {
             sql: query.clone(),
             bindings: query_bindings,
             bind_stage: bind_stage_path,
             describe_only: None,
             query_parameters: query_parameter_map,
+            query_context,
         };
         let request_id = uuid::Uuid::new_v4();
 
@@ -834,6 +861,16 @@ impl DatabaseDriverV1 {
         let query_id = result.query_id.with_context(|| InvalidArgumentSnafu {
             argument: "No query_id returned from async submission".to_string(),
         })?;
+
+        {
+            let mut conn = stmt.conn.lock().await;
+            conn.query_context_cache
+                .update_query_context_cache(
+                    result.response.data.query_context.as_ref(),
+                    result.response.data.parameters.as_ref(),
+                )
+                .await;
+        }
 
         stmt.state = StatementState::Executed;
 

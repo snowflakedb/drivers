@@ -61,6 +61,11 @@ pub struct WrapperPresets {
     /// are JDBC-specific; legacy Python and other drivers honor neither, so this
     /// stays false for them and the disable gate never fires.
     pub honor_put_get_disable: bool,
+    /// When `true`, receiving `queryContext: { entries: null }` in a response
+    /// clears the client-side query context cache. When `false`, null entries
+    /// are treated as absent (cache unchanged). JDBC and ODBC keeps `false` to match
+    /// the original driver behavior.
+    pub clear_query_context_on_null_entries: bool,
 }
 
 impl Default for WrapperPresets {
@@ -75,6 +80,7 @@ impl Default for WrapperPresets {
             put_get_fastfail_default: true,
             legacy_empty_get_on_missing: false,
             honor_put_get_disable: false,
+            clear_query_context_on_null_entries: true,
         }
     }
 }
@@ -97,6 +103,7 @@ impl WrapperPresets {
             put_get_fastfail_default: false,
             legacy_empty_get_on_missing: false,
             honor_put_get_disable: false,
+            clear_query_context_on_null_entries: false,
         }
     }
 
@@ -107,6 +114,7 @@ impl WrapperPresets {
             put_get_resultset_flavor: PutGetResultsetFlavor::Jdbc,
             legacy_empty_get_on_missing: true,
             honor_put_get_disable: true,
+            clear_query_context_on_null_entries: false,
             ..Self::default()
         }
     }

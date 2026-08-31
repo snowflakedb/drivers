@@ -122,7 +122,7 @@ fn build_async_query_request<'a>(query_input: &QueryInput<'a>) -> query_request:
         parameters: query_input.query_parameters.clone(),
         bindings: query_input.bindings,
         bind_stage: query_input.bind_stage.clone(),
-        query_context: query_request::QueryContext { entries: None },
+        query_context: query_input.query_context.clone(),
     }
 }
 

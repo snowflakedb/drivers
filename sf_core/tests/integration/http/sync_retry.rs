@@ -8,6 +8,7 @@
 
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::config::rest_parameters::{DEFAULT_LOG_MAX_QUERY_LENGTH, QueryParameters};
+use sf_core::rest::snowflake::query_request;
 use sf_core::rest::snowflake::{QueryInput, QueryOptions, snowflake_query_with_client};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -224,6 +225,7 @@ async fn should_include_statement_timeout_in_parameters_when_set() {
                 );
                 m
             }),
+            query_context: query_request::QueryContext::default(),
         },
         QueryOptions::default(),
     )

@@ -1241,6 +1241,30 @@ behavior_differences:
     description: |
       Tracked under SNOW-3965431.
 
+  83:
+    name: "Query context cache handles duplicate-priority new IDs via capacity eviction instead of displacement"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+     The legacy Python driver's query context cache mirrors the JDBC implementation:
+      when a new entry ID arrives with a priority already occupied, the existing entry
+      at that priority is replaced (displaced) by the new entry via replaceQCE.
+    new_driver_behavior: |
+      The universal driver inserts new entries alongside existing entries at the same
+      priority. Multiple entries with the same priority coexist in the cache. When the
+      cache exceeds capacity, the entry with the highest priority number and lowest
+      timestamp is evicted. This differs from the legacy displacement strategy where a
+      new ID at an occupied priority replaces the existing entry immediately.
+    description: |
+      The query context cache is an opaque optimization layer between the driver and the
+      server. The cache content is not exposed to end users via the Python DB-API. The
+      behavioral difference affects only which entries are retained internally when the
+      server assigns duplicate priorities, which may influence which context is sent in
+      subsequent requests.
+
   90:
     name: "display_size is populated for text columns; the old driver always returns None"
     status: allowed

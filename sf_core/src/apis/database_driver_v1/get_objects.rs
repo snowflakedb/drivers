@@ -34,8 +34,8 @@ use super::global_state::DatabaseDriverV1;
 use super::like_pattern;
 use crate::chunks::PrefetchConfig;
 use crate::handle_manager::Handle;
+use crate::rest::snowflake::query_request::QueryContext;
 use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
-
 // ---------------------------------------------------------------------------
 // Depth constants (public — used by wrapper to map SQLTables special cases)
 // ---------------------------------------------------------------------------
@@ -594,6 +594,7 @@ async fn execute_show(
         bind_stage: None,
         describe_only: None,
         query_parameters: None,
+        query_context: QueryContext::default(),
     };
 
     let response = with_valid_session(conn_ptr, |token| {
@@ -1520,6 +1521,7 @@ mod tests {
             message: "permission denied".to_string(),
             code: Some(3001),
             sql_state: Some("42501".to_string()),
+            query_context: None,
             ids: QueryIds::default(),
             location: snafu::Location::new("test", 1, 1),
         });
@@ -1533,6 +1535,7 @@ mod tests {
             message: "does not exist".to_string(),
             code: Some(2003),
             sql_state: Some("42S02".to_string()),
+            query_context: None,
             ids: QueryIds::default(),
             location: snafu::Location::new("test", 1, 1),
         });

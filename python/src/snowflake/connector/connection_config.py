@@ -123,6 +123,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     Default: True
     """
 
+    disable_query_context_cache: bool | None = False
+    """When true, disables the client-side query context cache. No context is sent in requests and server-returned
+    context is ignored..
+
+    Default: False
+    """
+
     disable_saml_url_check: bool | None = False
     """Skip the Okta SAML URL host-match safety check. Default: False"""
 
@@ -412,6 +419,7 @@ class ConnectionConfig(ConnectionConfigMixin):
         "clientstoretemporarycredential": "client_store_temporary_credential",
         "crl_enabled": "crl_check_mode",
         "crl_mode": "crl_check_mode",
+        "disablequerycontextcache": "disable_query_context_cache",
         "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
         "noproxy": "no_proxy",
         "oauth_token_url": "oauth_token_request_url",

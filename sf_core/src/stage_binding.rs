@@ -9,6 +9,7 @@ use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::RetryPolicy;
 use crate::file_manager;
 use crate::file_manager::upload_in_memory_file;
+use crate::rest::snowflake::query_request::QueryContext;
 use crate::rest::snowflake::query_response::{Data, QueryResponseError, Response};
 use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
 use crate::sensitive::SensitiveString;
@@ -164,6 +165,7 @@ async fn ensure_stage(
         bind_stage: None,
         describe_only: None,
         query_parameters: None,
+        query_context: QueryContext::default(),
     };
 
     let response = snowflake_query_with_client(
@@ -208,6 +210,7 @@ async fn issue_put_query(
         bind_stage: None,
         describe_only: None,
         query_parameters: None,
+        query_context: QueryContext::default(),
     };
 
     snowflake_query_with_client(

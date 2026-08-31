@@ -175,6 +175,7 @@ mod tests {
                 query_id: Some("01abc".to_owned()),
             },
             location: loc(),
+            query_context: None,
         };
         assert_eq!(
             err.snowflake_context(),
@@ -195,6 +196,7 @@ mod tests {
             sql_state: None,
             ids: QueryIds::default(),
             location: loc(),
+            query_context: None,
         };
         let ctx = err.snowflake_context();
         assert_eq!(ctx.vendor_code, Some(100038));

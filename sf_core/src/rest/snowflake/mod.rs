@@ -22,6 +22,7 @@ pub(crate) use oauth::BrowserLaunchFn;
 /// fallback chain. Production builds do not expose this helper.
 #[cfg(any(test, feature = "test-utils"))]
 pub use oauth::host_from_token_url;
+pub mod query_context_cache;
 pub mod query_request;
 pub mod query_response;
 pub mod sql_state;
@@ -313,6 +314,7 @@ pub struct QueryInput<'a> {
     pub bind_stage: Option<String>,
     pub describe_only: Option<bool>,
     pub query_parameters: Option<HashMap<String, serde_json::Value>>,
+    pub query_context: query_request::QueryContext,
 }
 
 impl<'a> QueryInput<'a> {
@@ -323,6 +325,7 @@ impl<'a> QueryInput<'a> {
             bind_stage: None,
             describe_only: None,
             query_parameters: None,
+            query_context: query_request::QueryContext::default(),
         }
     }
 }
@@ -1835,11 +1838,13 @@ pub(super) fn query_failed_from_response(
         .message
         .unwrap_or_else(|| "Unknown error".to_owned());
     let code = response.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+    let query_context = response.data.query_context.clone();
     QueryFailedSnafu {
         message,
         code,
         sql_state: response.data.sql_state,
         ids: ids.clone(),
+        query_context,
     }
     .build()
 }
@@ -1897,7 +1902,7 @@ async fn execute_sync_query<'a>(
         parameters: query_input.query_parameters.clone(),
         bindings: query_input.bindings,
         bind_stage: query_input.bind_stage.clone(),
-        query_context: query_request::QueryContext { entries: None },
+        query_context: query_input.query_context.clone(),
     };
 
     let query_url = Url::parse(query_parameters.server_url.as_str())
@@ -2124,6 +2129,7 @@ fn query_status_from_monitoring_body(
             code,
             sql_state: None::<String>,
             ids: ids.clone(),
+            query_context: None,
         }
         .fail();
     }
@@ -2652,6 +2658,9 @@ pub enum RestError {
         ids: QueryIds,
         #[snafu(implicit)]
         location: Location,
+        /// Query context returned alongside the error response, if any.
+        /// Allows callers to update the QCC even when the query itself failed.
+        query_context: Option<query_response::QueryContext>,
     },
     /// Error 612 from async polling — triggers automatic retry with sync
     /// mode only on the first poll. If we've already made progress, don't retry.

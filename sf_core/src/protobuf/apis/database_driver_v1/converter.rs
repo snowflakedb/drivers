@@ -929,6 +929,7 @@ mod tests {
                 sql_state: sql_state.map(|s| s.to_owned()),
                 ids: QueryIds::default(),
                 location: loc(),
+                query_context: None,
             }),
         }
     }
@@ -1049,6 +1050,7 @@ mod tests {
                 code: Some(2003),
                 sql_state: Some("42S02".to_owned()),
                 ids: QueryIds::default(),
+                query_context: None,
                 location: loc(),
             }),
         };
@@ -1069,6 +1071,7 @@ mod tests {
                 code: Some(1003),
                 sql_state: Some("42000".to_owned()),
                 ids: QueryIds::default(),
+                query_context: None,
                 location: loc(),
             }),
         };
@@ -1339,6 +1342,7 @@ mod tests {
                     request_id: Some(request_id),
                     query_id: Some("01abc-def-12345".to_owned()),
                 },
+                query_context: None,
                 location: loc(),
             }),
         };

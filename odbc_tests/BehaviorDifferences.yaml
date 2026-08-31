@@ -2631,3 +2631,25 @@ behavior_differences:
       passed relative paths continue to work; only symlink-heavy PUT workflows see the stage
       object name change to the resolved target name, or (for a glob matching a symlink and its
       target) one upload instead of two.
+
+  132:
+    name: "Query context cache handles duplicate-priority new IDs via capacity eviction instead of displacement"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The legacy ODBC driver's query context cache behavior for duplicate-priority entries
+      is inherited from the C/C++ implementation and is not explicitly documented.
+    new_driver_behavior: |
+      The universal driver inserts new entries alongside existing entries at the same
+      priority. Multiple entries with the same priority coexist in the cache. When the
+      cache exceeds capacity, the entry with the highest priority number and lowest
+      timestamp is evicted. This differs from JDBC's displacement strategy where a new
+      ID at an occupied priority replaces the existing entry immediately.
+    description: |
+      The query context cache is an opaque optimization layer between the driver and the
+      server. The cache content is not exposed to end users. The behavioral difference
+      affects only which entries are retained internally when the server assigns duplicate
+      priorities, which may influence which context is sent in subsequent requests.
