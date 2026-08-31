@@ -58,7 +58,7 @@ public abstract class SnowflakeIntegrationTestBase implements WithQueryUtils {
     // Read QUERY_RESULT_FORMAT from environment
     String resultFormat = System.getenv("QUERY_RESULT_FORMAT");
     if (resultFormat != null && !resultFormat.isEmpty()) {
-      props.setProperty("PYTHON_CONNECTOR_QUERY_RESULT_FORMAT", resultFormat);
+      props.setProperty("JDBC_QUERY_RESULT_FORMAT", resultFormat);
     }
 
     if (overrides != null) {
