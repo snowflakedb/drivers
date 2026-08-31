@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from ...conftest import with_paramstyle
+from ...conftest import with_paramstyle, with_paramstyles
 
 
 @with_paramstyle("pyformat")
@@ -731,6 +731,34 @@ class TestFormatParamstyleErrors:
         params = (1, 2)
         # Then TypeError should be raised indicating not enough arguments
         with pytest.raises(TypeError, match="not enough arguments"):
+            cursor.execute(sql, params)
+
+
+@with_paramstyles("pyformat", "format")
+class TestUnsupportedBindType:
+    """Tests for binding a Python value of a type the driver has no converter for.
+
+    SNOW-3989924: the reference driver's SnowflakeConverter.__getattr__ raises
+    ProgrammingError for any ``_<type>_to_snowflake`` method it doesn't
+    explicitly define, so an unrecognized Python type is a hard, fail-fast
+    error rather than a silent ``str()`` coercion.
+    """
+
+    def test_should_raise_error_for_unsupported_type_with_client_side_binding(self, cursor):
+        """Test that a value of an unrecognized type raises ProgrammingError instead of being stringified."""
+        from snowflake.connector import ProgrammingError
+
+        class UnsupportedType:
+            pass
+
+        # Given Snowflake client is logged in with pyformat or format paramstyle
+        assert not cursor.connection.is_closed()
+
+        # When Query "SELECT %s" is executed with a value of an unrecognized Python type
+        sql = "SELECT %s"
+        params = (UnsupportedType(),)
+        # Then ProgrammingError should be raised indicating the type is not supported
+        with pytest.raises(ProgrammingError, match="is not supported"):
             cursor.execute(sql, params)
 
 

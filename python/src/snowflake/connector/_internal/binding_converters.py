@@ -25,6 +25,7 @@ from enum import Enum
 from typing import Any
 
 from ..errors import ProgrammingError
+from .errorcode import ER_NOT_SUPPORT_DATA_TYPE
 from .extras import MissingOptionalDependency
 from .extras import numpy as np
 from .type_codes import PYTHON_TO_SNOWFLAKE_TYPE
@@ -286,7 +287,14 @@ class BindingConverterBase:
         elif _is_binary(value):
             converted = binascii.hexlify(value).decode("utf-8")
         else:
-            converted = str(value)
+            raise ProgrammingError(
+                msg=(
+                    f"Binding data in type ({type_name}) is not supported. "
+                    "Convert the value to a supported Python type (str, int, float, bool, "
+                    "bytes, date/datetime/time/timedelta) before binding it."
+                ),
+                errno=ER_NOT_SUPPORT_DATA_TYPE,
+            )
 
         return snowflake_type, converted
 
@@ -554,8 +562,14 @@ class ClientSideBindingConverter:
             # List for IN clause - convert each element
             return [cls.to_snowflake(v) for v in value]
         else:
-            # For other types, convert to string
-            return str(value)
+            raise ProgrammingError(
+                msg=(
+                    f"Binding data in type ({value.__class__.__name__.lower()}) is not supported. "
+                    "Convert the value to a supported Python type (str, int, float, bool, "
+                    "bytes, date/datetime/time/timedelta) before binding it."
+                ),
+                errno=ER_NOT_SUPPORT_DATA_TYPE,
+            )
 
     @staticmethod
     def _datetime_to_snowflake(value: datetime) -> str:

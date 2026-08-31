@@ -257,6 +257,40 @@ class TestEdgeCases:
             cursor.execute(sql, params)
 
 
+class TestUnsupportedBindType:
+    """Tests for binding a Python value of a type the driver has no converter for.
+
+    SNOW-3989924: the reference driver fails fast (ProgrammingError) for a
+    Python type it has no explicit qmark/numeric binding for. Only the
+    exception class is asserted here, not the exact message, since the
+    reference driver reports this pre-conversion (message mentions "cannot be
+    automatically mapped") while the universal driver reports it at
+    conversion time (message mentions "is not supported") -- the two drivers
+    intentionally use different wording for this case.
+    """
+
+    @pytest.mark.parametrize(
+        "connection, placeholder_sql",
+        [("qmark", "?"), ("numeric", ":1")],
+        indirect=["connection"],
+        ids=["qmark", "numeric"],
+    )
+    def test_should_raise_error_for_unsupported_bind_type_with_paramstyle(self, cursor, placeholder_sql):
+        # Given Snowflake client is logged in with <paramstyle> paramstyle
+        assert not cursor.connection.is_closed()
+
+        class UnsupportedType:
+            pass
+
+        # When Query "SELECT <placeholder_sql>" is executed with a value of an unrecognized Python type
+        sql = f"SELECT {placeholder_sql}"
+        params = (UnsupportedType(),)
+
+        # Then ProgrammingError should be raised instead of silently binding str(value)
+        with pytest.raises(ProgrammingError):
+            cursor.execute(sql, params)
+
+
 @with_paramstyle("qmark")
 class TestArrayBinding:
     """Tests for multirow binding (executemany functionality)."""
