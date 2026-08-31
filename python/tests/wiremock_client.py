@@ -191,12 +191,100 @@ class WiremockClient:
     def reset(self) -> None:
         """Clear all mappings and captured requests via the admin API.
 
-        Equivalent to restarting the JVM but far cheaper — use this between
-        tests sharing a session-scoped Wiremock instance.
+        Removes every stub (including those auto-loaded from the mappings/
+        directory on disk), resets scenario state machines, and clears the
+        request journal so each test starts with a blank slate.
+
+        WireMock's ``--root-dir`` auto-loads every JSON file under
+        ``mappings/`` at startup, and ``POST /__admin/reset`` reloads that
+        baseline.  Stray file-loaded mappings (e.g. PUT/upload stubs with
+        incorrect body filters, or 500/401 catch-all stubs) can interfere
+        with unrelated tests.  We enumerate and delete individually because
+        bulk ``DELETE /__admin/mappings`` fails with 500
+        (NotWritableException) when multi-mapping files are present.
+
+        After clearing, a low-priority logout stub is registered so that
+        connection teardown always succeeds even if a test does not
+        explicitly add a logout mapping.
         """
-        response = requests.post(f"{self.http_url()}/__admin/reset", timeout=5)
-        if response.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to reset Wiremock: {response.status_code} {response.text}")
+        base = self.http_url()
+        # Reset scenarios and request journal first.
+        resp = requests.post(f"{base}/__admin/reset", timeout=5)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to reset WireMock: {resp.status_code} {resp.text}")
+        # Enumerate all stubs and delete one by one to remove file-loaded
+        # mappings that __admin/reset just reloaded.
+        listing = requests.get(f"{base}/__admin/mappings", timeout=5)
+        if listing.status_code != 200:
+            raise RuntimeError(f"Failed to list WireMock mappings: {listing.status_code} {listing.text}")
+        for mapping in listing.json().get("mappings", []):
+            mapping_id = mapping.get("id") or mapping.get("uuid")
+            if mapping_id:
+                requests.delete(f"{base}/__admin/mappings/{mapping_id}", timeout=5)
+        # Register low-priority baseline stubs so connection teardown always
+        # succeeds without tests needing to add them explicitly.
+        resp = requests.post(
+            f"{base}/__admin/mappings",
+            json={
+                "priority": 999,
+                "request": {
+                    "urlPath": "/session",
+                    "method": "POST",
+                    "queryParameters": {"delete": {"equalTo": "true"}},
+                },
+                "response": {
+                    "status": 200,
+                    "jsonBody": {"success": True},
+                    "headers": {"Content-Type": "application/json"},
+                },
+            },
+            timeout=5,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to register logout baseline stub: {resp.status_code} {resp.text}")
+        # Catch-all query response for driver-initiated queries (COMMIT, etc.)
+        # that happen during connection teardown.
+        resp = requests.post(
+            f"{base}/__admin/mappings",
+            json={
+                "priority": 999,
+                "request": {
+                    "urlPathPattern": "/queries/v1/query-request.*",
+                    "method": "POST",
+                },
+                "response": {
+                    "status": 200,
+                    "jsonBody": {
+                        "success": True,
+                        "data": {
+                            "queryId": "baseline-catchall",
+                            "queryResultFormat": "json",
+                            "rowtype": [
+                                {
+                                    "name": "status",
+                                    "type": "text",
+                                    "nullable": True,
+                                    "length": 16777216,
+                                    "byteLength": 16777216,
+                                    "precision": None,
+                                    "scale": None,
+                                }
+                            ],
+                            "rowset": [["Statement executed successfully."]],
+                            "total": 1,
+                            "returned": 1,
+                            "parameters": [],
+                        },
+                        "code": None,
+                        "message": None,
+                    },
+                    "headers": {"Content-Type": "application/json"},
+                },
+            },
+            timeout=5,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to register query baseline stub: {resp.status_code} {resp.text}")
 
     def get_all_requests(self) -> list:
         """Query admin API for all captured requests."""
