@@ -21,7 +21,7 @@ import org.apache.hc.core5.util.Timeout;
 /** Minimal Apache HttpClient 5.x wrapper for synchronous test use. Java 8 source compatible. */
 public final class HttpTestClient implements AutoCloseable {
 
-  private static final Timeout DEFAULT_TIMEOUT = Timeout.ofSeconds(5);
+  private static final Timeout DEFAULT_TIMEOUT = Timeout.ofSeconds(15);
 
   private final CloseableHttpClient client;
 
@@ -46,6 +46,10 @@ public final class HttpTestClient implements AutoCloseable {
 
   public Response get(String url) {
     return execute(ClassicRequestBuilder.get(url).build());
+  }
+
+  public Response delete(String url) {
+    return execute(ClassicRequestBuilder.delete(url).build());
   }
 
   public Response post(String url, String body) {

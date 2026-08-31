@@ -227,10 +227,38 @@ public final class WiremockClient implements AutoCloseable {
   }
 
   public void reset() {
-    Response resp = postAdminIdempotent("/__admin/reset", null);
+    // Reset scenarios and request journal
+    Response resp = httpClient().post(adminUrl("/__admin/reset"), null);
     if (!resp.ok()) {
       throw new RuntimeException("Failed to reset WireMock: " + resp.status() + " " + resp.body());
     }
+    // Delete ALL stubs (including file-loaded ones from --root-dir) so that
+    // only mappings explicitly added by a test are active. Without this,
+    // scenario-based mappings from different test files interfere with each other.
+    Response mappingsResp = httpClient().get(adminUrl("/__admin/mappings"));
+    if (mappingsResp.ok()) {
+      JsonNode mappings = mappingsResp.json().get("mappings");
+      if (mappings != null) {
+        for (JsonNode mapping : mappings) {
+          String id = mapping.get("id").asText();
+          httpClient().delete(adminUrl("/__admin/mappings/" + id));
+        }
+      }
+    }
+    // Register baseline catch-all query response so driver teardown queries
+    // (COMMIT, session cleanup) don't 404.
+    httpClient()
+        .post(
+            adminUrl("/__admin/mappings"),
+            "{\"priority\":999,"
+                + "\"request\":{\"urlPathPattern\":\"/queries/v1/query-request.*\",\"method\":\"POST\"},"
+                + "\"response\":{\"status\":200,\"jsonBody\":{\"success\":true,"
+                + "\"data\":{\"queryId\":\"baseline\",\"queryResultFormat\":\"json\","
+                + "\"rowtype\":[{\"name\":\"status\",\"type\":\"text\",\"nullable\":true,"
+                + "\"length\":16777216,\"byteLength\":16777216,\"precision\":null,\"scale\":null}],"
+                + "\"rowset\":[[\"OK\"]],\"total\":1,\"returned\":1,\"parameters\":[]},"
+                + "\"code\":null,\"message\":null},"
+                + "\"headers\":{\"Content-Type\":\"application/json\"}}}");
   }
 
   /**

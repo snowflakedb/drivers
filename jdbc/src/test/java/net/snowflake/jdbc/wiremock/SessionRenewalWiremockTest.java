@@ -24,6 +24,7 @@ public class SessionRenewalWiremockTest extends BaseWiremockTest {
     //   * first query is 401, transitions state to "Token Expired"
     //   * token-request returns new tokens, transitions state to "Token Refreshed"
     //   * retry query returns success with statementTypeId=SCL (no result set)
+    wiremock.reset();
     wiremock.addMapping("auth/login_for_session_renewal.json");
     wiremock.addMapping("session/query_401_then_refresh_then_success.json");
     wiremock.addMapping("session/token_refresh_success.json");
