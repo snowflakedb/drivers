@@ -4,6 +4,7 @@
 
 New features:
 
+- Added native AKS Workload Identity support for Azure: when the Azure Workload Identity webhook injects `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_FEDERATED_TOKEN_FILE` into a pod and the projected token file exists on disk, `workload_identity_provider="AZURE"` now exchanges that federated token for an Entra ID access token directly, instead of requiring the projected-volume/OIDC workaround. `workload_identity_impersonation_path` is not supported in this environment. (snowflakedb/drivers#1367)
 - Added a `token_file_path` connection parameter that loads a PAT, legacy OAuth, or OIDC bearer token from a file (including from `connections.toml`), matching the legacy Python connector. If both `token` and `token_file_path` are set, the file contents are used. (snowflakedb/drivers#1445)
 - Added a `secondary_roles` connection parameter that lets a client control secondary-role activation at login (e.g. `ALL` or `NONE`) without relying on the user's `DEFAULT_SECONDARY_ROLES` setting, ported from legacy snowflake-connector-python. Also restores parity with legacy ODBC's `SecondaryRoles` connection attribute, and is newly available (with no legacy equivalent) for JDBC. (snowflakedb/drivers#954)
 - Added server-side query cancel: capture the in-flight `requestId`/`sqlText` on the statement at submit time and add a `statement_cancel` driver API (plus `StatementCancel` RPC) that aborts the running query via `POST /queries/v1/abort-request`, so a cross-thread `SQLCancel` can stop a query on the server. (snowflakedb/drivers#628)
