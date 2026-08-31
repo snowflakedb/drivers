@@ -1,0 +1,220 @@
+id: universal-driver-datatypes
+friendly_name: "Universal Driver Cross-Surface Datatype Completeness"
+status: enabled
+# Category: Contracts
+# Cross-surface datatype completeness. When a Snowflake SQL type, Arrow
+# layout, or language binding is added or changed, every shipped wrapper must
+# either implement it (with shared Gherkin coverage) or record the gap in
+# that surface's BehaviorDifferences.yaml.
+#
+# Source of truth for scenario *kinds* (not Gherkin style):
+#   .cursor/rules/datatype_gherkins.mdc
+# ODBC conversion matrices and bind-buffer details stay in:
+#   .cursor/rules/odbc-datatype-guidelines.mdc
+#   odbc-tests-cpp.yaml (`test-coverage-gap`, `tag-consistency`)
+#
+# Scope note (do NOT re-flag — those rulesets own the finding):
+#   - Gherkin style (scenario names must start with "should", one When,
+#     Scenario Outline parameterization, empty steps, Given consistency):
+#     `universal-driver-tests`.
+#   - JDBC `ResultSet.wasNull()` / nullable-getter audits:
+#     `universal-driver-java` (`ud-java-wasnull-after-nullable-getter`,
+#     `ud-java-nullable-getter-file-audit`).
+#   - ODBC `SQL_NULL_DATA`, sentinel buffers, SQLBindCol length buffers,
+#     per-C-type conversion coverage (`SQL_C_LONG` / `SQL_C_DOUBLE` / …):
+#     `odbc-tests-cpp.yaml`.
+#   - BD YAML schema, `reviewed: false` on new entries, WrapperPresets:
+#     `universal-driver-behavior-differences`. This file only requires that a
+#     *gap* has an entry; it does not restyle the entry.
+# This ruleset covers completeness across wrappers, not per-language NULL
+# sentinels and not ODBC conversion-target matrices.
+allowed_folders:
+  - "tests/definitions"
+  - "sf_core/src"
+  - "sf_core/tests"
+  - "jdbc/src"
+  - "jdbc_bridge/src"
+  - "python/src"
+  - "python/tests"
+  - "nodejs/src"
+  - "nodejs/tests"
+  - "odbc/src"
+  - "odbc_tests"
+  - "jdbc"
+  - "python"
+  - "nodejs"
+  - "odbc_tests"
+excluded_folders:
+  - "odbc_tests/build"
+  - "odbc_tests/cmake-build"
+  - "odbc_tests/cmake-build-reference"
+  - "python/tests/__pycache__"
+  - "nodejs/node_modules"
+  - "nodejs/dist"
+allowed_file_extensions:
+  - ".feature"
+  - ".rs"
+  - ".java"
+  - ".py"
+  - ".ts"
+  - ".cpp"
+  - ".hpp"
+  - ".h"
+  - ".yaml"
+  - ".yml"
+rules:
+  - id: ud-dt-new-sql-type-requires-shared-gherkin
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: Shared Gherkin is the contract for Snowflake SQL types. A new type that exists only in one wrapper's unit tests will drift — other surfaces will not know what to implement, and coverage reports will not show TODOs.
+
+      **REQUIREMENT**: When a PR adds or first-ships support for a Snowflake SQL type (a new `RowType` variant in `sf_core/src/query_types/row_type.rs`, a new Arrow / JSON result mapping, a new JDBC `Types` / getter mapping, a new Python converter, a new Node.js result codec, or a new ODBC SQL type / C-type binding), it MUST add or extend a feature file under `tests/definitions/shared/types/` (see `tests/definitions/README.md`). Do not put type Gherkin in language-specific directories.
+
+      The feature MUST cover the scenario *kinds* in `.cursor/rules/datatype_gherkins.mdc` (happy-path and corner literals; table select; parameter binding select + insert; multi-chunk download; type-casting where the surface does not let the caller pick the C/JDBC type). Do **not** comment on scenario name phrasing, `When` counts, or Outline vs repeated scenarios — those belong to `universal-driver-tests`.
+
+      **EXEMPTIONS** — do NOT flag if ANY hold:
+      - The PR only changes conversion *targets* inside one surface (e.g. extra `SQL_C_*` cases). That is `test-coverage-gap` in `odbc-tests-cpp.yaml`.
+      - The type is already described in `tests/definitions/shared/types/` and this PR only implements an existing tagged scenario.
+      - The work is a bugfix to an already-covered type with no new SQL type / binding.
+
+      ❌ **BAD** — JDBC-only VECTOR support, no shared feature:
+      ```java
+      // jdbc/src/main/java/.../SnowflakeType.java
+      VECTOR(2015, "VECTOR");
+      // no tests/definitions/shared/types/vector.feature
+      ```
+
+      ✅ **GOOD** — shared feature exists; wrappers implement tagged scenarios:
+      ```gherkin
+      # tests/definitions/shared/types/vector.feature
+      @python @jdbc @odbc @core_not_needed
+      Feature: VECTOR type support
+
+        @python_e2e @jdbc_e2e @odbc_e2e
+        Scenario: should select INT vector literal
+          Given Snowflake client is logged in
+          When Query "SELECT [1, 2, 3]::VECTOR(INT, 3)" is executed
+          Then Result should contain INT vector [1, 2, 3]
+      ```
+
+  - id: ud-dt-new-binding-requires-all-surfaces-or-bd
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: Universal Driver ships JDBC, ODBC, Python, and Node.js from one core. A SQL type or bind/fetch mapping that lands on one wrapper only is a silent product gap unless it is recorded.
+
+      **REQUIREMENT**: A PR that adds or changes a user-visible type mapping MUST update **every shipped surface** that is expected to expose the type, **or** add/update a `BehaviorDifferences.yaml` entry on each surface that is *not* updated, explaining the gap (unsupported, not yet wired to Gherkin, or intentionally different).
+
+      **Shipped surfaces and BD files:**
+      - JDBC — `jdbc/src/**`, `jdbc_bridge/src/**` → `jdbc/BehaviorDifferences.yaml`
+      - ODBC — `odbc/src/**`, `odbc_tests/**` → `odbc_tests/BehaviorDifferences.yaml`
+      - Python — `python/src/**`, `python/tests/**` → `python/BehaviorDifferences.yaml`
+      - Node.js — `nodejs/src/**`, `nodejs/tests/**` → `nodejs/BehaviorDifferences.yaml`
+      - Shared core `sf_core/src/query_types/**` / result codecs — if the change is observable from more than one wrapper, each affected surface needs implementation **or** a BD. Same mapping as `ud-behavior-change-requires-bd-entry`.
+
+      **"User-visible type mapping"** includes: a new `RowType` variant; Arrow / JSON decode of a SQL type; JDBC `getObject` / `getArray` / typed getters for that SQL type; Python converter / `cursor.description` type_code; Node.js column codec; ODBC SQL type identifier or default C-type for fetch/bind.
+
+      Node.js type tests today live under `nodejs/tests/e2e/query-data-types*.ts` (not always tagged in shared Gherkin). For Node, "updated" means those tests (or new Gherkin tags `@nodejs` / `@nodejs_e2e`) cover the type — not that a Java-style getter exists.
+
+      Do **not** require per-getter `wasNull()` or `SQL_NULL_DATA` checks here. Do **not** require every ODBC `SQL_C_*` conversion of the new type — cite `test-coverage-gap` in `odbc-tests-cpp.yaml` if the PR adds ODBC conversion tests that only exercise `SQL_C_CHAR`.
+
+      **EXEMPTIONS** — do NOT flag if ANY hold:
+      - The change is internal (rename, refactor) with no fetch/bind/result type change.
+      - The missing surface already has a BD that documents this type as unsupported / TODO, and the PR does not claim to ship it there.
+      - Core is tagged `@core_not_needed` on the feature (types are wrapper-facing); that is not a wrapper gap.
+
+      **PRIORITY**: High when a new SQL type ships on one wrapper with no BD on the others. Medium when an existing type gains a new bind path on one wrapper only.
+
+      ❌ **BAD** — DECFLOAT decode added in Python only; JDBC/ODBC/Node unchanged and no BD:
+      ```python
+      # python/src/snowflake/connector/_internal/arrow_context.py
+      elif sql_type == "DECFLOAT":
+          return Decimal(value)
+      ```
+
+      ✅ **GOOD** — all tagged wrappers implement fetch+bind, **or** a surface BD names the gap:
+      ```yaml
+      # nodejs/BehaviorDifferences.yaml
+      42:
+        name: "DECFLOAT not yet exposed on the Node.js driver"
+        status: todo
+        type: enhancement
+        reviewed: false
+        is_breaking_change: false
+        impact: medium
+        old_driver_behavior: |
+          DECFLOAT columns are returned as strings.
+        new_driver_behavior: |
+          Same. Shared Gherkin `decfloat.feature` is not tagged `@nodejs`;
+          Node coverage remains in query-data-types-numbers.test.ts until
+          Gherkin is wired.
+      ```
+
+  - id: ud-dt-gherkin-driver-tags-match-claimed-support
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: Feature tags are how the validator and coverage report know which wrappers must implement a type. Shipping a mapping in production code while leaving the feature untagged (or tagged `_not_needed` with no explanation) hides a TODO or a lie.
+
+      **REQUIREMENT**: When a PR adds or changes type support, the matching `tests/definitions/shared/types/*.feature` tags MUST match the claim:
+      1. Feature-level `@{driver}` for every shipped wrapper that implements the type (`@python`, `@odbc`, `@jdbc`, `@nodejs`).
+      2. Scenario-level `@{driver}_e2e` (or `_int` / `_unit`) on the scenarios that wrapper actually runs.
+      3. `@{driver}_not_needed` only when that driver truly must not implement the feature (typical for `@core_not_needed` on SQL types). A `_not_needed` tag on JDBC/ODBC/Python/Node for a type that those products ship is a High finding unless a BD entry explains why Gherkin is not the coverage vehicle.
+
+      If Node.js (or another wrapper) covers the type only via driver-specific tests, either tag the shared feature and implement step comments, **or** keep `_not_needed` / omit the tag **and** record that choice in the surface BD (see `ud-dt-new-binding-requires-all-surfaces-or-bd`). Language-specific bind APIs that cannot be shared (ODBC `SQLBindCol` target C types, JDBC getter choice) stay in driver test files with Gherkin comments — they must not be duplicated as extra shared scenarios. That split is documented in `tests/definitions/README.md` ("Language-Specific Scenarios").
+
+      **Do not** flag pre-existing tag gaps on files this PR did not touch. Only flag tags that this PR's type change makes inconsistent.
+
+      **CONSOLIDATION**: One comment per feature file per PR listing mismatched drivers.
+
+      ❌ **BAD** — Python+JDBC implement VECTOR; feature tagged `@python` only:
+      ```gherkin
+      @python @core_not_needed
+      Feature: VECTOR type support
+      ```
+      ```java
+      // jdbc/.../VectorTests.java implements the same scenarios
+      ```
+
+      ✅ **GOOD** — tags match implementers; ODBC conversion-only cases stay in C++ tests:
+      ```gherkin
+      @python @jdbc @odbc @core_not_needed
+      Feature: VECTOR type support
+
+        @python_e2e @jdbc_e2e @odbc_e2e
+        Scenario: should select INT vector literal
+          ...
+      ```
+
+  - id: ud-dt-core-rowtype-change-must-update-wrapper-maps
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: `RowType` in `sf_core/src/query_types/row_type.rs` is the shared catalogue of Snowflake column types. A new variant that is not plumbed through JSON/Arrow decode and each wrapper's type map will return a generic string/binary or fail only on some surfaces.
+
+      **REQUIREMENT**: A PR that adds or changes a `RowType` variant (or `VectorElementType` / `GeoRepresentation`) MUST also update, in the same PR or with an explicit BD gap:
+      1. JSON and Arrow result decoding in `sf_core` that constructs that `RowType`.
+      2. Each wrapper's type map / metadata code that users observe (`type_code`, JDBC `ResultSetMetaData`, ODBC `SQL_DESC_TYPE` / `SQLColAttribute`, Node.js column type).
+      3. Shared Gherkin under `tests/definitions/shared/types/` per `ud-dt-new-sql-type-requires-shared-gherkin`.
+
+      Flag a new `RowType::…` arm that is only matched in one decoder or one wrapper. Flag a wrapper `match` / `switch` on SQL type names that gains a new literal in one language and not the others, unless BD documents the lag.
+
+      **EXEMPTIONS** — do NOT flag if ANY hold:
+      - Pure documentation or test-fixture `RowType` construction that mirrors an existing variant.
+      - The wrapper has no type-map (it already forwards core metadata unchanged) **and** core decode is complete — still require Gherkin + wrapper e2e that fetch a column of that type.
+
+      ❌ **BAD** — new core variant, Python match only:
+      ```rust
+      // sf_core/src/query_types/row_type.rs
+      IntervalYearMonth { name, nullable, precision, scale }
+      ```
+      ```python
+      # python converter handles INTERVAL_YEAR_MONTH
+      # jdbc / odbc / nodejs type maps unchanged, no BD
+      ```
+
+      ✅ **GOOD** — core decode + wrapper maps + Gherkin, or BD on wrappers that lag:
+      ```rust
+      // JSON + Arrow paths both construct RowType::IntervalYearMonth
+      ```
+      ```gherkin
+      # tests/definitions/shared/types/interval.feature tagged for each
+      # wrapper that ships INTERVAL
+      ```
