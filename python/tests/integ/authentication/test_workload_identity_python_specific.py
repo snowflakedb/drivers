@@ -64,6 +64,22 @@ class TestWorkloadIdentityApiNormalisation:
         assert "invalid authenticator" not in text.lower()
         assert "unknown authenticator" not in text.lower()
 
+    def test_should_accept_workload_identity_aws_use_outbound_token(self, int_test_connection_factory):
+        # Given workload_identity_aws_use_outbound_token is set for AWS WIF
+        kwargs = {
+            "authenticator": "WORKLOAD_IDENTITY",
+            "workload_identity_provider": "AWS",
+            "workload_identity_aws_use_outbound_token": True,
+        }
+
+        # When Trying to Connect
+        exception = connect_expecting_error(int_test_connection_factory, **kwargs)
+
+        # Then The wrapper does not reject the connection parameter
+        text = full_error_text(exception)
+        assert "unknown parameter" not in text.lower()
+        assert "unsupported connection option" not in text.lower()
+
     def test_should_accept_workload_identity_without_user(self, int_test_connection_factory):
         # Given Authentication is set to WORKLOAD_IDENTITY without a user
         kwargs = {
@@ -95,6 +111,7 @@ class TestWorkloadIdentityDependentParamGuards:
             ("workload_identity_provider", "AWS"),
             ("workload_identity_entra_resource", "api://00000000-0000-0000-0000-000000000001"),
             ("workload_identity_impersonation_path", "arn:aws:iam::123456789012:role/A"),
+            ("workload_identity_aws_use_outbound_token", True),
         ],
     )
     def test_should_fail_when_wif_param_set_without_wif_authenticator(

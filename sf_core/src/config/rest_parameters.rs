@@ -515,6 +515,10 @@ pub struct WorkloadIdentityConfig {
     /// Pre-acquired OIDC JWT (OIDC provider only). Forwarded verbatim to GS
     /// as the `TOKEN` field. Stored as `None` for all other providers.
     pub oidc_token: Option<SensitiveString>,
+    /// When `true` (AWS provider only), use outbound STS `GetWebIdentityToken`
+    /// instead of the default pre-signed `GetCallerIdentity` attestation.
+    /// Takes precedence over `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN`.
+    pub aws_use_outbound_token: bool,
 }
 
 impl WorkloadIdentityConfig {
@@ -545,11 +549,16 @@ impl WorkloadIdentityConfig {
             })
             .unwrap_or_default();
         let oidc_token = read_optional_bearer_token(settings)?;
+        let aws_use_outbound_token = settings.get_bool_or(
+            param_names::WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str(),
+            false,
+        );
         Ok(Self {
             provider,
             entra_resource,
             impersonation_path,
             oidc_token,
+            aws_use_outbound_token,
         })
     }
 }

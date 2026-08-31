@@ -391,11 +391,14 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 })
                 .unwrap_or_default();
             let oidc_token = read_optional_bearer_token(settings)?;
+            let aws_use_outbound_token =
+                settings.get_bool_or(WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str(), false);
             Ok(AuthConfig::WorkloadIdentity(WorkloadIdentityConfig {
                 provider,
                 entra_resource,
                 impersonation_path,
                 oidc_token,
+                aws_use_outbound_token,
             }))
         }
         _ => InvalidParameterValueSnafu {
@@ -569,6 +572,7 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
                 entra_resource: cfg.entra_resource.clone(),
                 impersonation_path: cfg.impersonation_path.clone(),
                 oidc_token: cfg.oidc_token.clone(),
+                aws_use_outbound_token: cfg.aws_use_outbound_token,
             })
         }
     }
@@ -1097,6 +1101,16 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                     code: ValidationCode::ConflictingWifParameters,
                 });
             }
+        }
+        if settings.get_bool_or(WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str(), false) {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                parameter: WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.into(),
+                message: format!(
+                    "{WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN} was set but authenticator was not set to WORKLOAD_IDENTITY"
+                ),
+                code: ValidationCode::ConflictingWifParameters,
+            });
         }
     }
 
@@ -3140,6 +3154,27 @@ mod tests {
                     cfg.oidc_token.as_ref().map(|t| t.reveal().to_string()),
                     Some("my-oidc-jwt".to_string())
                 );
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_wif_aws_with_use_outbound_token() {
+        let mut pairs = wif_base_settings("AWS");
+        pairs.push((
+            "workload_identity_aws_use_outbound_token",
+            Setting::Bool(true),
+        ));
+        let settings = settings_from(&pairs);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(
+                    cfg.provider,
+                    crate::config::rest_parameters::WifProvider::Aws
+                );
+                assert!(cfg.aws_use_outbound_token);
             }
             other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
         }

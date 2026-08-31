@@ -132,6 +132,29 @@ fn should_authenticate_aws_wif_using_get_web_identity_token_when_opted_in() {
     );
 }
 
+#[test]
+fn should_authenticate_aws_wif_using_get_web_identity_token_when_workload_identity_aws_use_outbound_token_is_true()
+ {
+    //Given Authentication is set to WORKLOAD_IDENTITY and WORKLOAD_IDENTITY_PROVIDER is AWS
+    let client = build_wif_client();
+    let Some(provider) = require_aws_provider(&client) else {
+        return;
+    };
+    //And SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN is not set
+    temp_env::with_var_unset("SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN", || {
+        client.set_connection_option("authenticator", "WORKLOAD_IDENTITY");
+        client.set_connection_option("workload_identity_provider", &provider);
+        //And workload_identity_aws_use_outbound_token is set to true
+        client.set_connection_option_bool("workload_identity_aws_use_outbound_token", true);
+
+        //When Trying to Connect
+        let result = client.connect();
+
+        //Then Login is successful and a simple query can be executed
+        client.verify_simple_query(result);
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Failure scenarios
 // ---------------------------------------------------------------------------

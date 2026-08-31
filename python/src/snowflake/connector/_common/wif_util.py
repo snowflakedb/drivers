@@ -57,6 +57,7 @@ def create_attestation(
     entra_resource: str | None = None,
     token: str | None = None,
     impersonation_path: list[str] | None = None,
+    aws_use_outbound_token: bool | None = None,
 ) -> WorkloadIdentityAttestation:
     """Acquires a Workload Identity Federation attestation for the given provider.
 
@@ -78,6 +79,7 @@ def create_attestation(
         entra_resource=entra_resource,
         token=token,
         impersonation_path=impersonation_path or [],
+        aws_use_outbound_token=aws_use_outbound_token,
     )
     return WorkloadIdentityAttestation(
         provider=AttestationProvider.from_string(response.provider),

@@ -261,6 +261,12 @@ pub mod param_names {
     /// Not supported for AZURE or OIDC providers.
     pub const WORKLOAD_IDENTITY_IMPERSONATION_PATH: ParamKey =
         ParamKey("workload_identity_impersonation_path");
+    /// When `true` (AWS provider only), acquire the WIF attestation via outbound
+    /// STS `GetWebIdentityToken` instead of the default pre-signed
+    /// `GetCallerIdentity` token. Takes precedence over
+    /// `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN`. Default `false`.
+    pub const WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN: ParamKey =
+        ParamKey("workload_identity_aws_use_outbound_token");
     /// Pre-acquired OIDC JWT forwarded directly to Snowflake.
     /// Required when `workload_identity_provider = OIDC`.
     /// Reuses the existing `token` param key for OIDC so callers that
@@ -1995,6 +2001,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: true,
         mutable_after_connect: false,
     },
+    ParamDef {
+        canonical_name: param_names::WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str(),
+        aliases: aliases!["WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(DefaultValue::Bool(false)),
+        sensitive: false,
+        description: "Use outbound STS GetWebIdentityToken for AWS WIF (default: pre-signed GetCallerIdentity)",
+        deprecated_by: None,
+        scopes: &[ParamScope::Connection],
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
     // Legacy ODBC PROXY URL form (parsed and merged with the fields above).
     ParamDef {
         canonical_name: param_names::PROXY.as_str(),
@@ -2321,6 +2341,10 @@ mod tests {
                 "WORKLOAD_IDENTITY_IMPERSONATION_PATH",
                 "workload_identity_impersonation_path",
             ),
+            (
+                "WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN",
+                "workload_identity_aws_use_outbound_token",
+            ),
         ];
         for (alias, expected_canonical) in cases {
             let def = r
@@ -2517,6 +2541,8 @@ mod tests {
             "WORKLOAD_IDENTITY_ENTRA_RESOURCE",
             "workload_identity_impersonation_path",
             "WORKLOAD_IDENTITY_IMPERSONATION_PATH",
+            "workload_identity_aws_use_outbound_token",
+            "WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN",
         ] {
             assert!(
                 r.is_known(key),

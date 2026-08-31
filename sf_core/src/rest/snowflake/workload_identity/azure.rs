@@ -619,6 +619,7 @@ mod tests {
             provider: WifProvider::Azure,
             entra_resource: entra_resource.map(str::to_string),
             impersonation_path,
+            aws_use_outbound_token: false,
             oidc_token: None,
         }
     }
@@ -1445,6 +1446,7 @@ mod tests {
             provider: WifProvider::Azure,
             entra_resource: None,
             impersonation_path: Vec::new(),
+            aws_use_outbound_token: false,
             oidc_token: None,
         };
         let client = reqwest::Client::new();

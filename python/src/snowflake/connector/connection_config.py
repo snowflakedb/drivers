@@ -359,6 +359,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     verify_hostname: bool | None = True
     """Whether to verify the server hostname in TLS. Default: True"""
 
+    workload_identity_aws_use_outbound_token: bool | None = False
+    """Use outbound STS GetWebIdentityToken for AWS WIF (default: pre-signed GetCallerIdentity). Default: False"""
+
     workload_identity_entra_resource: str | None = None
     """Azure Entra resource URI for managed-identity token (Azure only; defaults to
     api://fd3f753b-eed3-462c-b6a7-a4b5bb650aad)

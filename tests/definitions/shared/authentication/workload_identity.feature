@@ -33,6 +33,14 @@ Feature: Workload Identity Federation Authentication
     When Trying to Connect
     Then Login is successful and a simple query can be executed
 
+  @core_e2e
+  Scenario: should authenticate AWS WIF using GetWebIdentityToken when workload_identity_aws_use_outbound_token is true
+    Given Authentication is set to WORKLOAD_IDENTITY and WORKLOAD_IDENTITY_PROVIDER is AWS
+    And SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN is not set
+    And workload_identity_aws_use_outbound_token is set to true
+    When Trying to Connect
+    Then Login is successful and a simple query can be executed
+
   @core_e2e @python_int
   Scenario: should fail WORKLOAD_IDENTITY when provider is missing
     Given Authentication is set to WORKLOAD_IDENTITY but WORKLOAD_IDENTITY_PROVIDER is absent
