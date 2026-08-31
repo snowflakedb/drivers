@@ -12,6 +12,19 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
 from ..type_codes import get_type_code
 
 
+_TEXT_TYPES = ("TEXT", "VARCHAR", "CHAR", "STRING")
+
+
+def _column_display_size(col: Any) -> int | None:
+    # Char count, text-only — a new-driver-only enhancement (BD#90); the old driver leaves it unset.
+    return col.length if col.HasField("length") and col.type.upper() in _TEXT_TYPES else None
+
+
+def _column_internal_size(col: Any) -> int | None:
+    # Char count (old-driver semantics), ungated — BINARY/VARBINARY need a real value too.
+    return col.length if col.HasField("length") else None
+
+
 class ResultMetadata(NamedTuple):
     """PEP 249 column description entry.
 
@@ -33,12 +46,8 @@ class ResultMetadata(NamedTuple):
         """Create a ``ResultMetadata`` from a protobuf ``ColumnMetadata``."""
         type_code = get_type_code(col.type)
 
-        # display_size (char count) only applies to string types. For numeric types,
-        # proto `length` carries precision — not a character count — so we leave it None.
-        display_size = (
-            col.length if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
-        )
-        internal_size = col.byte_length if col.HasField("byte_length") else None
+        display_size = _column_display_size(col)
+        internal_size = _column_internal_size(col)
         precision = col.precision if col.HasField("precision") else None
         scale = col.scale if col.HasField("scale") else None
 
@@ -186,12 +195,8 @@ class ResultMetadataV2:
     def from_column(cls, col: Any) -> ResultMetadataV2:
         """Build from a proto ``ColumnMetadata`` message."""
         type_code = get_type_code(col.type)
-        # display_size (char count) only applies to string types. For numeric types,
-        # proto `length` carries precision — not a character count — so we leave it None.
-        display_size = (
-            col.length if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
-        )
-        internal_size = col.byte_length if col.HasField("byte_length") else None
+        display_size = _column_display_size(col)
+        internal_size = _column_internal_size(col)
         precision = col.precision if col.HasField("precision") else None
         scale = col.scale if col.HasField("scale") else None
         vector_dimension = col.dimension if col.HasField("dimension") else None

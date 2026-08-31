@@ -690,8 +690,8 @@ behavior_differences:
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
-      Legacy raises network.ReauthenticationRequest, imported from
-      snowflake.connector.network, when the master token expires.
+      The old driver raises `network.ReauthenticationRequest`, imported from
+      `snowflake.connector.network`, when the master token expires.
     new_driver_behavior: |
       ReauthenticationRequest is raised for the codes above. It's importable
       only from errors, not network (which re-exports authenticator constants
@@ -955,41 +955,35 @@ behavior_differences:
       from it.
 
   55:
-    name: "display_size and internal_size map proto fields differently from legacy (V1 and V2)"
-    status: allowed
-    type: api_incompatibility
+    name: "internal_size mapped to byte count instead of the old driver's char count (V1 and V2)"
+    status: fixed
+    type: bug
     reviewed: false
     is_breaking_change: false
-    impact: low
+    impact: medium
     old_driver_behavior: |
-      `ResultMetadataV2.from_column` (JSON source) sets `display_size = None` for all
-      column types and `internal_size = col["length"]` (the JSON `length` field, which
-      carries the maximum character length for VARCHAR/TEXT columns). `ResultMetadata`
-      (V1) inherits the same values: legacy builds V1 entries via
-      `ResultMetadataV2._to_result_metadata_v1()`, which copies `_display_size` and
-      `_internal_size` verbatim. So `cursor.describe()` and `cursor.description` also
-      report `display_size=None`.
+      `ResultMetadataV2.from_column` (JSON source) sets `internal_size = col["length"]`
+      (the JSON `length` field, the maximum character count for VARCHAR/TEXT columns).
+      `ResultMetadata` (V1) inherits the same value via
+      `ResultMetadataV2._to_result_metadata_v1()`.
     new_driver_behavior: |
-      `from_column` (proto source) sets `display_size = col.length` for
-      TEXT/VARCHAR/CHAR/STRING column types (and `None` otherwise) and
-      `internal_size = col.byte_length` (maximum byte length) when the proto field is
-      present. This applies to BOTH `ResultMetadata` (V1, read via `cursor.describe()`
-      and `cursor.description`) and `ResultMetadataV2` (read via
-      `cursor._describe_internal()`) — each has its own `from_column` carrying the same
-      mapping. For a `VARCHAR(100)` column: legacy returns `display_size=None,
-      internal_size=100` from both views; UD returns `display_size=100,
-      internal_size=400` (UTF-8 4 bytes/char) from both. Snowpark reads `name`,
-      `type_code`, `is_nullable`, `vector_dimension`, and `fields` from V2 objects — not
-      `display_size` or `internal_size` — so this difference has no observed runtime
-      impact on Snowpark.
+      Previously, `from_column` (proto source) set `internal_size = col.byte_length`
+      (maximum byte length) in both `ResultMetadata` (V1) and `ResultMetadataV2` (V2) —
+      each has its own `from_column` carrying the same mapping. For a `VARCHAR(100)`
+      column this returned `internal_size=400` (UTF-8, 4 bytes/char) instead of the old driver's
+      `100`. Fixed to `internal_size = col.length`, matching the old driver on every type
+      including BINARY.
     description: |
-      The difference arises from the JSON-to-proto field renaming: JSON `length` is the
-      char count and maps to proto `length`; JSON `byteLength` is the byte count and maps
-      to proto `byte_length`. The legacy connector used `length` for `internal_size` with
-      no proto distinction; the UD splits them across two slots more precisely.
-      CONFIRMED from source (both connectors). The V1 half of this entry was previously
-      undocumented, which led an integration test to assert that UD's `describe()`
-      returns `display_size=None`; it has always returned the char count.
+      Root cause: PR #159's async-cursor rewrite picked `col.byte_length` for
+      `internal_size` without review of this specific field; this entry's own
+      "the new driver splits them across two slots more precisely" rationale was an unreviewed
+      guess, not a design decision — no surveyed driver (PEP 249, psycopg, PyMySQL, or
+      this repo's own JDBC/ODBC wrappers) puts byte-length in this slot. This also isn't
+      cosmetic: `snowpark-python`'s `convert_sf_to_sp_type` is a real, load-bearing
+      consumer of `internal_size`, building `StringType(length=internal_size)` for
+      `DataFrame.schema` and generated DDL — a `VARCHAR(100)` column was silently
+      reporting as `StringType(400)`. See entry 90 for the separate, still-live
+      `display_size` difference this entry previously conflated with the bug above.
 
   56:
     name: "cursor._request_id is a str instead of a uuid.UUID object"
@@ -1224,3 +1218,24 @@ behavior_differences:
       prompt for EXTERNALBROWSER.
     description: |
       Tracked under SNOW-3965431.
+
+  90:
+    name: "display_size is populated for text columns; the old driver always returns None"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `display_size` is always `None`, for every column type.
+    new_driver_behavior: |
+      `from_column` sets `display_size = col.length` for TEXT/VARCHAR/CHAR/STRING
+      column types (the character count) and `None` otherwise. Applies to both
+      `ResultMetadata` (V1) and `ResultMetadataV2` (V2), which each have their own
+      `from_column`.
+    description: |
+      Split out of entry 55, which previously conflated this permanent, new-driver-only
+      enhancement with the `internal_size` byte-vs-char bug (now fixed — see entry
+      55). No consumer in Snowpark's source reads `display_size` (CONFIRMED from
+      source), so this has no observed runtime impact; it's a strict improvement
+      over the old driver (extra, correct information) rather than a compatibility risk.
