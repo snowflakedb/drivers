@@ -15,6 +15,7 @@ Bug fixes:
 - Fixed `SQLColumns` `COLUMN_SIZE` and `BUFFER_LENGTH` for unrecognized Snowflake types such as `GEOGRAPHY`/`GEOMETRY` to report the varchar metrics implied by their `SQL_VARCHAR` `DATA_TYPE` instead of NULL. (snowflakedb/drivers#1431)
 - Fixed `SQLProcedureColumns` `TYPE_NAME` for unsupported types such as `GEOGRAPHY`/`GEOMETRY` to report the Snowflake type name while `DATA_TYPE` remains `SQL_VARCHAR`. (snowflakedb/drivers#1432)
 - Fixed `SQLColumns` and `SQLProcedureColumns` `CHAR_OCTET_LENGTH` for unsupported types such as `GEOGRAPHY`/`GEOMETRY` to report a byte length instead of NULL, matching the `SQL_VARCHAR` they report as `DATA_TYPE`. (snowflakedb/drivers#1432)
+- Fixed `SQLGetTypeInfo` string result columns (`TYPE_NAME`, `LITERAL_PREFIX`/`SUFFIX`, `CREATE_PARAMS`, `LOCAL_TYPE_NAME`) to report `SQL_WVARCHAR` as the IRD concise type, matching `SQLTables`/`SQLColumns`. (snowflakedb/drivers#1481)
 
 ## v4.0.0-rc1
 

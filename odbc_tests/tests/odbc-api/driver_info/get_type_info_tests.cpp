@@ -5,6 +5,7 @@
 #include <cstring>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
@@ -1014,6 +1015,64 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set has correct 
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(std::string(colName) == expectedColNames[col - 1]);
   }
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: string IRD columns report SQL_WVARCHAR",
+                 "[odbc-api][gettypeinfo][driver_info]") {
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const std::pair<SQLSMALLINT, SQLSMALLINT> expectedTypes[] = {
+      {1, SQL_WVARCHAR},   // TYPE_NAME
+      {4, SQL_WVARCHAR},   // LITERAL_PREFIX
+      {5, SQL_WVARCHAR},   // LITERAL_SUFFIX
+      {6, SQL_WVARCHAR},   // CREATE_PARAMS
+      {13, SQL_WVARCHAR},  // LOCAL_TYPE_NAME
+  };
+
+  for (const auto& [col, expected] : expectedTypes) {
+    INFO("col " << col << " expected=" << expected);
+    SQLLEN numAttr = 0;
+    SQLSMALLINT strLen = 0;
+    ret = SQLColAttribute(stmt_handle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(numAttr == expected);
+
+    char colName[256] = {};
+    SQLSMALLINT nameLen = 0;
+    SQLSMALLINT dataType = 0x7FFF;
+    SQLULEN colSize = 0;
+    SQLSMALLINT decDigits = 0;
+    SQLSMALLINT nullable = 0;
+    ret = SQLDescribeCol(stmt_handle(), col, reinterpret_cast<SQLCHAR*>(colName), sizeof(colName), &nameLen, &dataType,
+                         &colSize, &decDigits, &nullable);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(dataType == expected);
+  }
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: query-result VARCHAR remains SQL_VARCHAR",
+                 "[odbc-api][gettypeinfo][driver_info]") {
+  char query[] = "SELECT 'x'";
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(query), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN numAttr = 0;
+  SQLSMALLINT strLen = 0;
+  ret = SQLColAttribute(stmt_handle(), 1, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(numAttr == SQL_VARCHAR);
+
+  char colName[256] = {};
+  SQLSMALLINT nameLen = 0;
+  SQLSMALLINT dataType = 0x7FFF;
+  SQLULEN colSize = 0;
+  SQLSMALLINT decDigits = 0;
+  SQLSMALLINT nullable = 0;
+  ret = SQLDescribeCol(stmt_handle(), 1, reinterpret_cast<SQLCHAR*>(colName), sizeof(colName), &nameLen, &dataType,
+                       &colSize, &decDigits, &nullable);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(dataType == SQL_VARCHAR);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fetch data",
