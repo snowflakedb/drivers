@@ -19,6 +19,7 @@ on:
       - 'jdbc/src/main/java/net/snowflake/client/internal/unicore/LibcDetector.java'
       - '.github/workflows/build-jdbc-jars.yml'
       - '.github/workflows/_build-jdbc-fatjar.yml'
+      - '.github/actions/jdbc-bridge-cache/**'
   workflow_dispatch:
 
 concurrency:
