@@ -1,3 +1,4 @@
+use crate::rest::snowflake::query_context_cache::CacheEntry;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use std::collections::HashMap;
@@ -59,6 +60,19 @@ pub struct QueryContextEntry {
     pub priority: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<i64>,
+}
+
+impl From<&CacheEntry> for QueryContextEntry {
+    fn from(e: &CacheEntry) -> Self {
+        Self {
+            id: e.id,
+            priority: e.priority,
+            timestamp: Some(e.timestamp),
+            context: e.context.as_deref().map(|b64| ContextData {
+                base64_data: Some(b64.to_owned()),
+            }),
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]

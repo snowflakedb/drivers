@@ -588,14 +588,7 @@ async fn execute_show(
     };
 
     let sql_owned = sql.to_string();
-    let query_input = QueryInput {
-        sql: sql_owned.clone(),
-        bindings: None,
-        bind_stage: None,
-        describe_only: None,
-        query_parameters: None,
-        query_context: QueryContext::default(),
-    };
+    let query_input = QueryInput::new(sql_owned.clone());
 
     let response = with_valid_session(conn_ptr, |token| {
         let http_client = http_client.clone();

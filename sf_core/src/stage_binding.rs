@@ -159,14 +159,7 @@ async fn ensure_stage(
         return Ok(());
     }
 
-    let query_input = QueryInput {
-        sql: CREATE_STAGE_SQL.to_string(),
-        bindings: None,
-        bind_stage: None,
-        describe_only: None,
-        query_parameters: None,
-        query_context: QueryContext::default(),
-    };
+    let query_input = QueryInput::new(CREATE_STAGE_SQL);
 
     let response = snowflake_query_with_client(
         ctx.client,
@@ -204,14 +197,7 @@ async fn issue_put_query(
         "PUT 'file:///tmp/placeholder/0' '@{BIND_STAGE_NAME}/{request_id}' overwrite=true",
     );
 
-    let query_input = QueryInput {
-        sql: put_sql,
-        bindings: None,
-        bind_stage: None,
-        describe_only: None,
-        query_parameters: None,
-        query_context: QueryContext::default(),
-    };
+    let query_input = QueryInput::new(&put_sql);
 
     snowflake_query_with_client(
         ctx.client,

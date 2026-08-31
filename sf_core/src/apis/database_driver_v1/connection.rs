@@ -231,14 +231,7 @@ impl DatabaseDriverV1 {
         sql: &str,
         refresh: SessionStateRefresh,
     ) -> Result<(), ApiError> {
-        let query_input = QueryInput {
-            sql: sql.to_string(),
-            bindings: None,
-            bind_stage: None,
-            describe_only: None,
-            query_parameters: None,
-            query_context: query_request::QueryContext::default(),
-        };
+        let query_input = QueryInput::new(sql);
         let query_parameters = conn.query_transport_parameters()?;
         let http_client = conn
             .http_client
@@ -1816,14 +1809,7 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
     }
 }
 
-/// Server-echoed final names from query responses (e.g. after USE DATABASE).
-#[derive(Debug, Clone, Default)]
-pub struct FinalSessionNames {
-    pub database: Option<String>,
-    pub schema: Option<String>,
-    pub warehouse: Option<String>,
-    pub role: Option<String>,
-}
+pub use super::final_session_names::FinalSessionNames;
 
 /// HTTP response returned by connection_send_http_request
 #[derive(Debug, Clone)]
