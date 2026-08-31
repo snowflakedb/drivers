@@ -218,6 +218,66 @@ static std::string bulk_insert_hazard_strings(Connection& conn, const std::strin
   return get_last_query_id(stmt);
 }
 
+static void insert_all_null_row(Connection& conn, const std::string& table) {
+  SQLINTEGER integer_value = 0;
+  double double_value = 0;
+  float float_value = 0;
+  char varchar_value = '\0';
+  SQLBIGINT number_value = 0;
+  SQLLEN null_indicator = SQL_NULL_DATA;
+  SQLUSMALLINT param_status = 0xFFFF;
+  SQLULEN params_processed = 0;
+
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(static_cast<SQLULEN>(1)),
+                       0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_STATUS_PTR, &param_status, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &integer_value,
+                         sizeof(integer_value), &null_indicator);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &double_value,
+                         sizeof(double_value), &null_indicator);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_REAL, 0, 0, &float_value,
+                         sizeof(float_value), &null_indicator);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 4, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 255, 0, &varchar_value,
+                         sizeof(varchar_value), &null_indicator);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 5, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_NUMERIC, 38, 0, &number_value,
+                         sizeof(number_value), &null_indicator);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 6, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &integer_value,
+                         sizeof(integer_value), &null_indicator);
+  REQUIRE_ODBC(ret, stmt);
+
+  const std::string sql = "INSERT INTO " + table + " VALUES (?, ?, ?, ?, ?, ?)";
+  ret = SQLPrepare(stmt.getHandle(), sqlchar(sql.c_str()), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(params_processed == 1);
+  CHECK(param_status == SQL_PARAM_SUCCESS);
+}
+
+static void check_all_null_row(Connection& conn, const std::string& table) {
+  auto verify = conn.execute_fetch("SELECT id, colA, colB, colC, colD, colE FROM " + table);
+  CHECK(get_data_optional<SQL_C_SLONG>(verify, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(verify, 2) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_FLOAT>(verify, 3) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_CHAR>(verify, 4) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_SBIGINT>(verify, 5) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_SLONG>(verify, 6) == std::nullopt);
+  CHECK(SQLFetch(verify.getHandle()) == SQL_NO_DATA);
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -531,6 +591,58 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should use stage binding at exact threshold
   check_id_name_row(verify, 9, "stage-9");
   ret = SQLFetch(verify.getHandle());
   CHECK(ret == SQL_NO_DATA);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should keep an all-NULL row on the inline JSON path when stage binding is disabled",
+                 "[query][large_bindings]") {
+  // Given Snowflake client is logged in
+
+  // And A temporary table with columns (id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER)
+  // exists
+  ScopedTable table(conn, "lb_all_null_inline",
+                    "id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER");
+
+  // And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 0
+  auto session_stmt = conn.createStatement();
+  SessionParameterOverride threshold_override(session_stmt.getHandle(), "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD", "0");
+  auto before = list_system_bind_file_count(conn);
+
+  // When a batch of one row with every column set to SQL NULL is inserted using multirow binding
+  insert_all_null_row(conn, table.name());
+
+  // Then no new bind file should have been uploaded to SYSTEM$BIND
+  auto after = list_system_bind_file_count(conn);
+  CHECK(after == before);
+
+  // And every column of the round-tripped row reads back as SQL NULL
+  check_all_null_row(conn, table.name());
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should stage-bind an all-NULL row when the bound cell count meets the threshold",
+                 "[query][large_bindings]") {
+  // Given Snowflake client is logged in
+
+  // And A temporary table with columns (id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER)
+  // exists
+  ScopedTable table(conn, "lb_all_null_stage",
+                    "id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER");
+
+  // And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 6
+  auto session_stmt = conn.createStatement();
+  SessionParameterOverride threshold_override(session_stmt.getHandle(), "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD", "6");
+  auto before = list_system_bind_file_count(conn);
+
+  // When a batch of one row with every column set to SQL NULL is inserted using multirow binding
+  insert_all_null_row(conn, table.name());
+
+  // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as the bound parameters
+  auto after = list_system_bind_file_count(conn);
+  NEW_DRIVER_ONLY("BD#78") { CHECK(after > before); }
+  OLD_DRIVER_ONLY("BD#78") { CHECK(after == before); }
+
+  // And every column of the round-tripped row reads back as SQL NULL
+  check_all_null_row(conn, table.name());
 }
 
 // SNOW-3235553: SQL_ATTR_PARAM_OPERATION_PTR — parameter sets marked

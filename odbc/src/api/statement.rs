@@ -1505,7 +1505,7 @@ fn select_binding_mode(
         return Ok(BindingMode::Json);
     }
     let threshold = stage_binding_threshold(conn_handle)?;
-    if effective_cells >= u64::from(threshold) {
+    if threshold > 0 && effective_cells >= u64::from(threshold) {
         Ok(BindingMode::Csv)
     } else {
         Ok(BindingMode::Json)
