@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text.Json;
 using Xunit.Internal;
 using Xunit.Sdk;
 

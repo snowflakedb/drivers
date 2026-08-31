@@ -223,6 +223,7 @@ impl GherkinValidator {
             Language::Jdbc,
             Language::Odbc,
             Language::Python,
+            Language::CSharp,
         ] {
             let orphaned_files = self.find_orphaned_files_for_language(
                 language,
@@ -369,6 +370,11 @@ impl GherkinValidator {
                 (self._workspace_root.join("python/tests/e2e"), false),
                 (self._workspace_root.join("python/tests/integ"), true),
             ],
+            Language::CSharp => vec![(
+                self._workspace_root
+                    .join("dotnet/tests/Snowflake.Data.Tests.Reference"),
+                false,
+            )],
             _ => vec![],
         }
     }
@@ -685,6 +691,7 @@ impl GherkinValidator {
                 Language::Jdbc => extension == "java",
                 Language::Odbc => extension == "cpp",
                 Language::Python => extension == "py",
+                Language::CSharp => extension == "cs",
                 _ => false,
             }
         } else {
@@ -794,6 +801,17 @@ impl GherkinValidator {
             Language::Python => {
                 // Match pytest test functions: def test_something(...):
                 for captures in PYTHON_TEST_FN_REGEX.captures_iter(content) {
+                    methods.push(captures[1].to_string());
+                }
+            }
+            Language::CSharp => {
+                // Match xUnit attributes ([Fact], [Theory], [SnowflakeFact],
+                // [SnowflakeTheory]) optionally followed by more attributes, then
+                // the method declaration on the next line(s).
+                let test_regex = Regex::new(
+                    r"\[(?:Snowflake)?(?:Fact|Theory)(?:\([^)]*\))?\](?:\s*\n\s*\[[^\]]+\])*\s*\n\s*(?:public|protected|private)?\s*(?:static\s+)?(?:async\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+                )?;
+                for captures in test_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }
             }
@@ -932,6 +950,7 @@ impl GherkinValidator {
                         Language::Python => "python",
                         Language::Jdbc => "jdbc",
                         Language::Odbc => "odbc",
+                        Language::CSharp => "dotnet",
                         _ => "language",
                     };
                     tag_errors.push(format!(
@@ -964,6 +983,7 @@ impl GherkinValidator {
                         Language::Python => "python",
                         Language::Jdbc => "jdbc",
                         Language::Odbc => "odbc",
+                        Language::CSharp => "dotnet",
                         _ => "language",
                     };
                     missing_scenario_tags_errors.push(format!(
@@ -1354,6 +1374,7 @@ impl GherkinValidator {
             Language::Jdbc,
             Language::Odbc,
             Language::Python,
+            Language::CSharp,
         ] {
             let mut e2e_files: Vec<LanguageSpecificTestFile> = Vec::new();
             let mut integration_files: Vec<LanguageSpecificTestFile> = Vec::new();
@@ -1533,7 +1554,6 @@ impl GherkinValidator {
                                     | "python"
                                     | "pep249"
                                     | "core"
-                                    | "csharp"
                                     | "dotnet"
                                     | "javascript"
                                     | "nodejs"
@@ -1542,7 +1562,6 @@ impl GherkinValidator {
                                 || tag_str.starts_with("jdbc_")
                                 || tag_str.starts_with("python_")
                                 || tag_str.starts_with("core_")
-                                || tag_str.starts_with("csharp_")
                                 || tag_str.starts_with("dotnet_")
                                 || tag_str.starts_with("javascript_")
                                 || tag_str.starts_with("nodejs_")

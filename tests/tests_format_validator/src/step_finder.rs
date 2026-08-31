@@ -26,6 +26,14 @@ static RUST_TEST_ATTR_REGEX: LazyLock<Regex> =
 static JS_TEST_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?:it|test)\s*\(\s*['"]([^'"]+)['"]"#).unwrap());
 
+/// Returns true if the trimmed line is a recognized xUnit C# test attribute.
+fn is_csharp_test_attribute(s: &str) -> bool {
+    matches!(
+        s,
+        "[SnowflakeFact]" | "[SnowflakeTheory]"
+    )
+}
+
 /// Configuration for language-specific step finding
 #[derive(Debug)]
 struct LanguageConfig {
@@ -86,7 +94,7 @@ impl LanguageConfig {
 
     fn csharp() -> Self {
         Self {
-            test_annotation: "[Test]",
+            test_annotation: "[SnowflakeFact]",
             method_pattern: |method_name| format!("{}(", method_name),
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for C#
@@ -239,9 +247,10 @@ impl MethodBoundaryFinder {
                         }
                     }
                 }
-                "[Test]" => {
-                    // C#: [Test] followed by method declaration
-                    if trimmed == "[Test]" {
+                "[SnowflakeFact]" => {
+                    // C#: any xUnit test attribute
+                    // ([SnowflakeFact], [SnowflakeTheory]) followed by method declaration.
+                    if is_csharp_test_attribute(trimmed) {
                         // Look ahead for the method declaration
                         for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(4) {
                             if let Some(captures) = method_regex.captures(method_line.trim()) {
@@ -302,6 +311,7 @@ impl MethodBoundaryFinder {
                     && (trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(")))
                 || (self.config.test_annotation == "#[test]"
                     && rust_test_attr_regex.is_match(trimmed))
+                || (self.config.test_annotation.contains("[Snowflake") && is_csharp_test_attribute(trimmed))
             {
                 // Rust special-case: generic test attribute matched above
                 // For C++, the TEST_CASE line itself contains the method name
