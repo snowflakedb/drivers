@@ -1,5 +1,8 @@
 using System.Data.Common;
+using System.Diagnostics;
 using System.Reflection;
+using Microsoft.Extensions.Logging;
+using Snowflake.Data.Core.Session;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Utils;
 using Snowflake.Data.Tests.Assertions;
@@ -17,10 +20,18 @@ public sealed class PublicApiTest
         {
             typeof(SnowflakeDbConnection).FullName!,
             typeof(SnowflakeDbCommand).FullName!,
+            typeof(SnowflakeDbCommandBuilder).FullName!,
+            typeof(SnowflakeDbDataAdapter).FullName!,
             typeof(SnowflakeDbDataReader).FullName!,
+            typeof(SnowflakeDbLoggerConfig).FullName!,
             typeof(SnowflakeDbParameter).FullName!,
             typeof(SnowflakeDbParameterCollection).FullName!,
+            typeof(SnowflakeDbSessionPool).FullName!,
             typeof(SnowflakeDbTransaction).FullName!,
+            typeof(SnowflakeActivityStarter).FullName!,
+            typeof(ChangedSessionBehavior).FullName!,
+            typeof(ISnowflakeCredentialManager).FullName!,
+            typeof(SnowflakeCredentialManagerFactory).FullName!,
         };
 
         var violations = AssemblyUtil.LoadAssembly(AssembliesMetadata.RootAssembly).GetTypes()
@@ -168,16 +179,93 @@ public sealed class PublicApiTest
         $"M:{nameof(DbTransaction.Rollback)}()",
     ];
 
+    private static readonly HashSet<string> SnowflakeActivityStarterPublicApi =
+    [
+        $"M:{nameof(SnowflakeActivityStarter.StartActivity)}({nameof(SnowflakeDbCommand)}, {nameof(String)})",
+        $"M:{nameof(SnowflakeActivityStarter.SetSuccess)}({nameof(Activity)})",
+        $"M:{nameof(SnowflakeActivityStarter.SetException)}({nameof(Activity)}, {nameof(Exception)})",
+        $"M:{nameof(SnowflakeActivityStarter.AddTelemetryEvent)}({nameof(Activity)}, {nameof(String)})",
+        $"M:{nameof(SnowflakeActivityStarter.AddTelemetryEvent)}({nameof(Activity)}, {nameof(String)}, {nameof(ActivityTagsCollection)})",
+    ];
+
+    private static readonly HashSet<string> ChangedSessionBehaviorPublicApi = [];
+
+    private static readonly HashSet<string> ISnowflakeCredentialManagerPublicApi =
+    [
+        $"M:{nameof(ISnowflakeCredentialManager.GetCredentials)}({nameof(String)})",
+        $"M:{nameof(ISnowflakeCredentialManager.RemoveCredentials)}({nameof(String)})",
+        $"M:{nameof(ISnowflakeCredentialManager.SaveCredentials)}({nameof(String)}, {nameof(String)})",
+    ];
+
+    private static readonly HashSet<string> SnowflakeCredentialManagerFactoryPublicApi =
+    [
+        "C:()",
+        $"M:{nameof(SnowflakeCredentialManagerFactory.UseDefaultCredentialManager)}()",
+        $"M:{nameof(SnowflakeCredentialManagerFactory.UseInMemoryCredentialManager)}()",
+        $"M:{nameof(SnowflakeCredentialManagerFactory.UseFileCredentialManager)}()",
+        $"M:{nameof(SnowflakeCredentialManagerFactory.UseWindowsCredentialManager)}()",
+        $"M:{nameof(SnowflakeCredentialManagerFactory.SetCredentialManager)}({nameof(ISnowflakeCredentialManager)})",
+        $"M:{nameof(SnowflakeCredentialManagerFactory.GetCredentialManager)}()",
+    ];
+
+    private static readonly HashSet<string> SnowflakeDbCommandBuilderPublicApi =
+    [
+        "C:()",
+        $"C:({nameof(SnowflakeDbDataAdapter)})",
+        $"P:get_{nameof(DbCommandBuilder.QuotePrefix)}()",
+        $"P:set_{nameof(DbCommandBuilder.QuotePrefix)}({nameof(String)})",
+        $"P:get_{nameof(DbCommandBuilder.QuoteSuffix)}()",
+        $"P:set_{nameof(DbCommandBuilder.QuoteSuffix)}({nameof(String)})",
+    ];
+
+    private static readonly HashSet<string> SnowflakeDbDataAdapterPublicApi =
+    [
+        "C:()",
+        $"C:({nameof(SnowflakeDbCommand)})",
+        $"C:({nameof(String)}, {nameof(SnowflakeDbConnection)})",
+        $"P:get_SelectCommand()",
+        $"P:set_SelectCommand({nameof(SnowflakeDbCommand)})",
+    ];
+
+    private static readonly HashSet<string> SnowflakeDbLoggerConfigPublicApi =
+    [
+        "C:()",
+        $"M:{nameof(SnowflakeDbLoggerConfig.ResetCustomLogger)}()",
+        $"M:{nameof(SnowflakeDbLoggerConfig.SetCustomLogger)}({nameof(ILogger)})",
+    ];
+
+    private static readonly HashSet<string> SnowflakeDbSessionPoolPublicApi =
+    [
+        "C:()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetPooling)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetMinPoolSize)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetMaxPoolSize)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetCurrentPoolSize)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetExpirationTimeout)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetConnectionTimeout)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetWaitForIdleSessionTimeout)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.ClearPool)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetChangedSession)}()",
+    ];
+
     public static IEnumerable<object[]> PublicAreSurfaceKeys => PublicApiSurface.Keys.Select(x => new object[] { x });
 
     private static readonly Dictionary<Type, HashSet<string>> PublicApiSurface = new()
     {
         [typeof(SnowflakeDbConnection)] = SnowflakeDbConnectionPublicApi,
         [typeof(SnowflakeDbCommand)] = SnowflakeDbCommandPublicApi,
+        [typeof(SnowflakeDbCommandBuilder)] = SnowflakeDbCommandBuilderPublicApi,
+        [typeof(SnowflakeDbDataAdapter)] = SnowflakeDbDataAdapterPublicApi,
         [typeof(SnowflakeDbDataReader)] = SnowflakeDbDataReaderPublicApi,
+        [typeof(SnowflakeDbLoggerConfig)] = SnowflakeDbLoggerConfigPublicApi,
         [typeof(SnowflakeDbParameter)] = SnowflakeDbParameterPublicApi,
         [typeof(SnowflakeDbParameterCollection)] = SnowflakeDbParameterCollectionPublicApi,
-        [typeof(SnowflakeDbTransaction)] = SnowflakeDbTransactionPublicApi
+        [typeof(SnowflakeDbSessionPool)] = SnowflakeDbSessionPoolPublicApi,
+        [typeof(SnowflakeDbTransaction)] = SnowflakeDbTransactionPublicApi,
+        [typeof(SnowflakeActivityStarter)] = SnowflakeActivityStarterPublicApi,
+        [typeof(ChangedSessionBehavior)] = ChangedSessionBehaviorPublicApi,
+        [typeof(ISnowflakeCredentialManager)] = ISnowflakeCredentialManagerPublicApi,
+        [typeof(SnowflakeCredentialManagerFactory)] = SnowflakeCredentialManagerFactoryPublicApi,
     };
 
     private static string? FormatMemberSignature(MemberInfo member)

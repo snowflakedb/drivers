@@ -8,13 +8,10 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
 
-  <Import Project="targets/Snowflake.Data.Tests.xunit3.targets" />
-
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
+    <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj"/>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0"/>
+    <PackageReference Include="xunit.v3" Version="4.0.0-pre.128"/>
     <PackageReference Include="System.Text.Json" Version="10.0.3" />
   </ItemGroup>
 </Project>

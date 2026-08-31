@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Apache.Arrow" Version="18.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <ProjectReference Include="..\Snowflake.Data.Proto\Snowflake.Data.Proto.csproj" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Common" />

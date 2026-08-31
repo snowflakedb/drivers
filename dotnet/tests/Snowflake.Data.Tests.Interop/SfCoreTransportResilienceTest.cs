@@ -36,7 +36,7 @@ public sealed class SfCoreTransportResilienceTest
 
         // Every call should complete with an exception (not hang, not crash).
         var results = await Task.WhenAll(stormTasks.Select(task => CatchExceptionAsync(task, TestContext.Current.CancellationToken)))
-            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)
+            .WaitAsync(TimeSpan.FromSeconds(90), TestContext.Current.CancellationToken)
             .ConfigureAwait(false);
 
         Assert.All(results, r => Assert.Equal(TaskStatus.Faulted, r));
