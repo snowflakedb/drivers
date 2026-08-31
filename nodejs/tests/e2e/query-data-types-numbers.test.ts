@@ -120,6 +120,28 @@ describe('Query returning number data types', () => {
     expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
   });
 
+  it('returns fixed-point values as text when fetchAsString is set', async () => {
+    const beyondSafeInteger = BigInt(Number.MAX_SAFE_INTEGER) + 4n;
+    const cases = [
+      { expression: '1.25::NUMBER(10,2)', expected: '1.25' },
+      { expression: '1.50::NUMBER(10,2)', expected: '1.50' },
+      { expression: '123::INT', expected: '123' },
+      { expression: '-7::NUMBER(2,0)', expected: '-7' },
+      { expression: `${beyondSafeInteger}::INT`, expected: String(beyondSafeInteger) },
+      { expression: '1e1::INT', expected: '10' },
+      { expression: 'NULL::INT', expected: 'NULL' },
+    ];
+    const { statement, rows } = await executeAsync(connection, selectAll(cases), {
+      fetchAsString: ['Number'],
+    });
+    const values = Object.values(rows![0]);
+    for (const [index, column] of statement.getColumns()!.entries()) {
+      expect(column.getType()).toBe('fixed');
+      expect(column.isNumber()).toBe(true);
+      expect(values[index]).toBe(cases[index].expected);
+    }
+  });
+
   it('returns NULL for fixed-point and float-point types', async () => {
     const { rows } = await executeAsync(
       connection,
@@ -172,6 +194,41 @@ describe('Query returning number data types', () => {
     ];
     const { rows } = await executeAsync(connection, selectAll(cases));
     expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
+  });
+
+  it('returns float-point values as text when fetchAsString is set', async () => {
+    const cases = [
+      { expression: '1.15::FLOAT', expectedNew: '1.15', expectedOld: '1.15' },
+      { expression: '-0.5::FLOAT', expectedNew: '-0.5', expectedOld: '-0.5' },
+      { expression: '1e10::FLOAT', expectedNew: '10000000000', expectedOld: '10000000000' },
+      { expression: '1.5e5::FLOAT', expectedNew: '150000', expectedOld: '150000' },
+      { expression: '1e300::FLOAT', expectedNew: '1e+300', expectedOld: '1e+300' },
+      { expression: '1e-300::FLOAT', expectedNew: '1e-300', expectedOld: '1e-300' },
+      { expression: '1e-4::FLOAT', expectedNew: '0.0001', expectedOld: '0.0001' },
+      { expression: '1e-5::FLOAT', expectedNew: '0.00001', expectedOld: '1e-05' },
+      {
+        expression: '999999999999999::FLOAT',
+        expectedNew: '999999999999999',
+        expectedOld: '999999999999999',
+      },
+      { expression: '1e15::FLOAT', expectedNew: '1000000000000000', expectedOld: '1e+15' },
+      { expression: '-1e15::FLOAT', expectedNew: '-1000000000000000', expectedOld: '-1e+15' },
+      { expression: `'inf'::FLOAT`, expectedNew: 'inf', expectedOld: 'inf' },
+      { expression: `'-inf'::FLOAT`, expectedNew: '-inf', expectedOld: '-inf' },
+      { expression: `'NaN'::FLOAT`, expectedNew: 'NaN', expectedOld: 'NaN' },
+      { expression: 'NULL::FLOAT', expectedNew: 'NULL', expectedOld: 'NULL' },
+    ];
+    const { statement, rows } = await executeAsync(connection, selectAll(cases), {
+      fetchAsString: ['Number'],
+    });
+    const values = Object.values(rows![0]);
+    const isRunningNewDriver = isRunningNewDriverWithBD('BD#17');
+    for (const [index, column] of statement.getColumns()!.entries()) {
+      const { expectedNew, expectedOld } = cases[index];
+      expect(column.getType()).toBe('real');
+      expect(column.isNumber()).toBe(true);
+      expect(values[index]).toBe(isRunningNewDriver ? expectedNew : expectedOld);
+    }
   });
 
   // TODO: this test must have warning and telemetry event check
@@ -309,6 +366,14 @@ describe('Query returning number data types', () => {
       expect(value).toBe('10e16384');
     }
   });
+
+  it('renders a NULL DECFLOAT as text when fetchAsString is set', async () => {
+    const { rows } = await executeAsync(connection, "SELECT '1.5'::DECFLOAT, NULL::DECFLOAT", {
+      fetchAsString: ['String', 'Number'],
+    });
+    const expectedNull = isRunningNewDriverWithBD('BD#18') ? 'NULL' : null;
+    expect(Object.values(rows![0])).toEqual(['1.5', expectedNull]);
+  });
 });
 
 describe('Query returning BigInt data types', () => {
@@ -361,5 +426,14 @@ describe('Query returning BigInt data types', () => {
   it('returns NULL as null, not a BigInt', async () => {
     const { rows } = await executeAsync(connection!, 'SELECT NULL::INT');
     expect(Object.values(rows![0])[0]).toBeNull();
+  });
+
+  describe('fetchAsString', () => {
+    it('returns text rather than a BigInt', async () => {
+      const { rows } = await executeAsync(connection!, 'SELECT 90071992547409954434323', {
+        fetchAsString: ['Number'],
+      });
+      expect(Object.values(rows![0])).toEqual(['90071992547409954434323']);
+    });
   });
 });

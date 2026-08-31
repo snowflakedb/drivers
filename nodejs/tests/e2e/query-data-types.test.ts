@@ -46,6 +46,15 @@ describe('Query returning data types', () => {
     }
   });
 
+  // A TEXT cell is already a string, so rendering its NULL is the only thing the
+  // String token has left to do.
+  it("returns TEXT unchanged, and its NULL as the string 'NULL', when fetchAsString is set", async () => {
+    const { rows } = await executeAsync(connection, "SELECT 'a'::TEXT, NULL::TEXT", {
+      fetchAsString: ['String'],
+    });
+    expect(Object.values(rows![0])).toEqual(['a', 'NULL']);
+  });
+
   // NOTE: BINARY_OUTPUT_FORMAT (HEX or BASE64) does not affect results.
   // The server always returns HEX and it is always converted to Buffer.
   it('returns BINARY as Buffer', async () => {
@@ -71,6 +80,15 @@ describe('Query returning data types', () => {
     }
   });
 
+  it('returns BINARY as upper-case hex when fetchAsString is set', async () => {
+    const { rows } = await executeAsync(connection, "SELECT X'ABCDEF'::BINARY, NULL::BINARY", {
+      fetchAsString: ['Buffer'],
+    });
+    expect(Object.values(rows![0])).toEqual(['ABCDEF', 'NULL']);
+  });
+
+  it.todo('returns BINARY as base64 when fetchAsString is set and BINARY_OUTPUT_FORMAT is BASE64');
+
   it('returns NULL as null', async () => {
     const { statement, rows } = await executeAsync(connection, 'SELECT NULL::TEXT as NULL_COLUMN');
     const column = getStatementColumn(statement, 0);
@@ -91,6 +109,15 @@ describe('Query returning data types', () => {
     expect(falseColumn.isBoolean()).toBe(true);
     expect(rows![0].TRUE_COLUMN).toBe(true);
     expect(rows![0].FALSE_COLUMN).toBe(false);
+  });
+
+  it('returns BOOLEAN as an upper-case string when fetchAsString is set', async () => {
+    const { rows } = await executeAsync(
+      connection,
+      'SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, NULL::BOOLEAN',
+      { fetchAsString: ['Boolean'] },
+    );
+    expect(Object.values(rows![0])).toEqual(['TRUE', 'FALSE', 'NULL']);
   });
 
   // NOTE: DATE_OUTPUT_FORMAT does not affect results, we always convert to Date
@@ -169,6 +196,17 @@ describe('Query returning data types', () => {
       );
       expect(Object.values(rows![0])).toEqual([null, dateAtUtcMidnight('2024-01-15'), null]);
     });
+
+    it("renders dates as DATE_OUTPUT_FORMAT's default when fetchAsString is set", async () => {
+      const { rows } = await executeAsync(
+        connection,
+        `SELECT '2024-01-15'::DATE, '1900-01-01'::DATE, '9999-12-31'::DATE, NULL::DATE`,
+        { fetchAsString: ['Date'] },
+      );
+      expect(Object.values(rows![0])).toEqual(['2024-01-15', '1900-01-01', '9999-12-31', 'NULL']);
+    });
+
+    it.todo('honors a non-default DATE_OUTPUT_FORMAT when fetchAsString is set');
   });
 
   describe('TIME', () => {

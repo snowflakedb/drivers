@@ -52,12 +52,14 @@ export interface StatementOption {
   complete?: StatementCallback;
   streamResult?: boolean;
   rowMode?: RowMode;
+  fetchAsString?: DataType[];
 }
 
 export interface FetchResultOptions {
   queryId: string;
   complete?: StatementCallback;
   streamResult?: boolean;
+  fetchAsString?: DataType[];
 }
 
 // TODO:
@@ -98,6 +100,7 @@ export class Connection {
       complete: options.complete,
       streamResult: options.streamResult,
       rowMode: options.rowMode ?? this.#defaultRowMode,
+      fetchAsString: options.fetchAsString,
     });
   }
 
@@ -109,6 +112,7 @@ export class Connection {
       // rowMode default, unlike execute() -- that asymmetry is treated as a bug
       // here, not preserved (BD#3).
       rowMode: this.#defaultRowMode,
+      fetchAsString: options.fetchAsString,
     });
   }
 
@@ -122,10 +126,11 @@ export class Connection {
       complete?: StatementCallback;
       streamResult?: boolean;
       rowMode?: RowMode;
+      fetchAsString?: DataType[];
     },
   ): RowStatement | FileAndStageBindStatement {
-    const { complete, streamResult, rowMode } = options;
-    const statement = new RowStatement(this.#core, coreStatement, rowMode);
+    const { complete, streamResult, rowMode, fetchAsString } = options;
+    const statement = new RowStatement(this.#core, coreStatement, { rowMode, fetchAsString });
     (async () => {
       try {
         if (streamResult === true) {
@@ -135,7 +140,7 @@ export class Connection {
           complete?.(
             undefined,
             statement,
-            await collectRows(this.#core, coreStatement, statement.rowMode),
+            await collectRows(this.#core, coreStatement, statement.rowMode, fetchAsString),
           );
         }
       } catch (err) {

@@ -12,6 +12,11 @@ export type DataType = 'String' | 'Boolean' | 'Number' | 'Date' | 'JSON' | 'Buff
 
 export type Column = CoreColumnInstance;
 
+export interface RowOptions {
+  rowMode?: RowMode;
+  fetchAsString?: DataType[];
+}
+
 export type StatementCallback = (
   err: SnowflakeError | undefined,
   stmt: RowStatement | FileAndStageBindStatement,

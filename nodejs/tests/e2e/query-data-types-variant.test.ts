@@ -78,6 +78,22 @@ describe('Query returning variant data types', () => {
     });
   });
 
+  it('returns VARIANT as the raw text the server sent when fetchAsString is set', async () => {
+    const { rows } = await executeAsync(
+      connection,
+      `SELECT
+        parse_json('{"a": 1}'),
+        OBJECT_CONSTRUCT('key', 'value'),
+        NULL::VARIANT
+      `,
+      { fetchAsString: ['JSON'] },
+    );
+    // The old driver skips its whole conversion path for a variant fetched as a
+    // string, so its NULL rule never runs and the cell stays null (BD#18).
+    const expectedNull = isRunningNewDriverWithBD('BD#18') ? 'NULL' : null;
+    expect(Object.values(rows![0])).toEqual(['{\n  "a": 1\n}', { key: 'value' }, expectedNull]);
+  });
+
   it('parses XML as Object', async () => {
     const { rows } = await executeAsync(
       connection,
