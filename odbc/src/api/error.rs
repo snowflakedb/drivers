@@ -1457,7 +1457,7 @@ mod tests {
 
     #[test]
     fn server_generic_error_does_not_sniff_message_text() {
-        // Regression guard: this code path used to upgrade GenericError
+        // Regression guard: this code path used to upgrade a core error
         // to a more specific SqlState by substring-matching the
         // human-readable message ("SQL compilation error",
         // "out of representable range", "too long and would be
@@ -1523,7 +1523,7 @@ mod tests {
         // Anything outside `[0-9A-Z]{5}` is malformed: lowercase letters,
         // punctuation, padding, non-ASCII, wrong length. None of those may
         // be forwarded verbatim — the driver must fall back to the
-        // per-error-type default (HY000 for GenericError) rather than
+        // per-error-type default (HY000) rather than
         // emitting a non-conforming SQLSTATE in diagnostics.
         let malformed = [
             "22a01",  // lowercase letter

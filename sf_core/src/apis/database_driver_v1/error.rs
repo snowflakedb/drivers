@@ -35,11 +35,6 @@ pub enum CancellationAbortResult {
 #[derive(Debug, Snafu, ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub enum ApiError {
-    #[snafu(display("Generic error"))]
-    GenericError {
-        #[snafu(implicit)]
-        location: Location,
-    },
     #[snafu(display("File transfers have been disabled."))]
     FileTransfersDisabled {
         #[snafu(implicit)]
@@ -310,8 +305,7 @@ impl ApiError {
                 request_id: None,
             },
             // no wildcard - explicit empty arms
-            ApiError::GenericError { .. }
-            | ApiError::FileTransfersDisabled { .. }
+            ApiError::FileTransfersDisabled { .. }
             | ApiError::RuntimeCreation { .. }
             | ApiError::Configuration { .. }
             | ApiError::InvalidArgument { .. }
@@ -356,8 +350,7 @@ impl ApiError {
                 ..ConfigErrorContext::default()
             },
             // no wildcard - explicit empty arms
-            ApiError::GenericError { .. }
-            | ApiError::FileTransfersDisabled { .. }
+            ApiError::FileTransfersDisabled { .. }
             | ApiError::RuntimeCreation { .. }
             | ApiError::InvalidArgument { .. }
             | ApiError::Login { .. }

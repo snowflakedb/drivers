@@ -27,7 +27,7 @@ Feature: Query status
     And the query should not be indicated as an error
 
   @python_e2e
-  Scenario: should raise error when retrieving status with invalid query ID
+  Scenario: should return no data status for a non-existent query ID
     Given Snowflake client is logged in
     When Query status is retrieved for a non-existent query ID
-    Then An error should be returned
+    Then the query status should indicate no data
