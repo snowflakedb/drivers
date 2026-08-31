@@ -1,11 +1,11 @@
-@odbc @python @jdbc
+@odbc @python @jdbc @dotnet
 Feature: Basic execute query
 
   # ============================================================================
   # SELECT QUERIES
   # ============================================================================
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should execute simple SELECT returning single value
     Given Snowflake client is logged in
     When Query "SELECT 1 AS value" is executed

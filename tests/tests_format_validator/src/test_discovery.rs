@@ -62,7 +62,7 @@ impl TestDiscovery {
                 "python" | "python_e2e" | "python_int" | "pep249" => {
                     languages.push(Language::Python)
                 }
-                "csharp" | "csharp_e2e" | "csharp_int" | "dotnet" => {
+                "dotnet" | "dotnet_e2e" | "dotnet_int" => {
                     languages.push(Language::CSharp)
                 }
                 "javascript" | "javascript_e2e" | "javascript_int" | "nodejs" | "js" => {
@@ -91,7 +91,7 @@ impl TestDiscovery {
                 "odbc" => languages.push(Language::Odbc),
                 "jdbc" => languages.push(Language::Jdbc),
                 "python" | "pep249" => languages.push(Language::Python),
-                "csharp" | "dotnet" => languages.push(Language::CSharp),
+                "dotnet" => languages.push(Language::CSharp),
                 "javascript" | "nodejs" | "js" => languages.push(Language::JavaScript),
                 _ => {} // Ignore level-specific tags and unknown tags
             }
@@ -113,7 +113,7 @@ impl TestDiscovery {
                 "odbc_not_needed" => excluded.push(Language::Odbc),
                 "jdbc_not_needed" => excluded.push(Language::Jdbc),
                 "python_not_needed" => excluded.push(Language::Python),
-                "csharp_not_needed" => excluded.push(Language::CSharp),
+                "dotnet_not_needed" => excluded.push(Language::CSharp),
                 "javascript_not_needed" | "js_not_needed" => excluded.push(Language::JavaScript),
                 _ => {}
             }
@@ -133,7 +133,7 @@ impl TestDiscovery {
                 || tag == "odbc_e2e"
                 || tag == "jdbc_e2e"
                 || tag == "python_e2e"
-                || tag == "csharp_e2e"
+                || tag == "dotnet_e2e"
                 || tag == "javascript_e2e"
             {
                 return TestLevel::E2E;
@@ -143,7 +143,7 @@ impl TestDiscovery {
                 || tag == "odbc_int"
                 || tag == "jdbc_int"
                 || tag == "python_int"
-                || tag == "csharp_int"
+                || tag == "dotnet_int"
                 || tag == "javascript_int"
             {
                 return TestLevel::Integration;
@@ -161,7 +161,7 @@ impl TestDiscovery {
             Language::Odbc => "odbc",
             Language::Jdbc => "jdbc",
             Language::Python => "python",
-            Language::CSharp => "csharp",
+            Language::CSharp => "dotnet",
             Language::JavaScript => "javascript",
         };
 
@@ -406,9 +406,8 @@ impl TestDiscovery {
                 ]
             }
             Language::CSharp => vec![
-                // Add C# test paths when needed
                 self.workspace_root
-                    .join("dotnet/tests")
+                    .join("dotnet/tests/Snowflake.Data.Tests.Reference")
                     .join(format!("{}Test.cs", pascal_name)),
             ],
             Language::JavaScript => vec![
