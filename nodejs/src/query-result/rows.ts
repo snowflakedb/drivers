@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import type { CoreConnectionInstance, CoreStatementInstance } from '../core/index.js';
-import type { RowMode } from './types.js';
+import type { DataType, RowMode } from './types.js';
 import { createRowMapper } from './cell-mapping.js';
 import { resolveColumnNames } from './column-names.js';
 
@@ -20,12 +20,13 @@ export async function collectRows(
   connection: CoreConnectionInstance,
   coreStatement: CoreStatementInstance,
   rowMode: RowMode,
+  fetchAsString?: DataType[],
 ): Promise<unknown[]> {
   try {
     await coreStatement.waitForCompletion();
     const columns = coreStatement.getColumns()!;
     const columnNames = resolveColumnNames(columns, rowMode);
-    const remapRow = createRowMapper(columns, connection);
+    const remapRow = createRowMapper(columns, connection, fetchAsString);
 
     const rows: unknown[] = [];
     while (await coreStatement.fetchNextBatch()) {
@@ -46,10 +47,11 @@ export function createRowStream(
   connection: CoreConnectionInstance,
   coreStatement: CoreStatementInstance,
   rowMode: RowMode,
+  fetchAsString?: DataType[],
 ): Readable {
   const columns = coreStatement.getColumns()!;
   const columnNames = resolveColumnNames(columns, rowMode);
-  const remapRow = createRowMapper(columns, connection);
+  const remapRow = createRowMapper(columns, connection, fetchAsString);
 
   // Decodes one row out of the resident batch, returning false once it is
   // drained and the stream needs a refill.

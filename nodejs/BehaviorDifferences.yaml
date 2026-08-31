@@ -367,3 +367,43 @@ behavior_differences:
       The universal driver renders only min(n, scale) real digits and nothing invented.
     description: |
       The new driver consults the column's real scale. Verified live against both drivers.
+
+  17:
+    name: "fetchAsString: ['Number'] can spell a FLOAT differently than the server did"
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The server sends every FLOAT in the JSON response as text, and the old driver returns that
+      text unchanged. The server writes an exponent for numbers under 0.0001 and for numbers from
+      1e15 up, so `1e-5::FLOAT` arrives as `1e-05` and `1e15::FLOAT` as `1e+15`.
+    new_driver_behavior: |
+      There is no server text to return. The new driver reads results in Arrow format, where a FLOAT
+      is always a 64-bit float and never text, so how it is written is the driver's decision. The
+      string is built from the value with JavaScript's String(). JavaScript writes an exponent only
+      under 1e-7 and from 1e21 up, so numbers in between look different: `1e-5::FLOAT` gives
+      `0.00001` and `1e15::FLOAT` gives `1000000000000000`. Everything outside that range is the
+      same in both drivers, including `1e+300`, `1e-300`, `inf`, `-inf` and `NaN`.
+    status_rationale: |
+      Both spellings mean the same number and read back as the same value, so nothing breaks, but a
+      caller who asked for text does not get the same string as before. Matching it would mean
+      copying the server's number formatting into the driver, which is separate work -- and with
+      Arrow results there is no server string to copy, only a rule to imitate.
+
+  18:
+    name: "fetchAsString renders NULL as 'NULL' for every type"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Under fetchAsString a NULL cell becomes the string 'NULL' (representNullAsStringNull, on by
+      default), but some types never reach that rule and stay null -- e.g. DECFLOAT and VARIANT.
+    new_driver_behavior: |
+      Every type fetched as a string renders NULL as 'NULL', with no exceptions.
+    status_rationale: |
+      One rule for every type is easier to rely on than a rule with exceptions, and the old
+      driver's exceptions came from its internals rather than from a decision.

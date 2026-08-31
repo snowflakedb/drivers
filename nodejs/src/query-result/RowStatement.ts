@@ -3,8 +3,10 @@ import type { CoreConnectionInstance, CoreStatementInstance } from '../core/inde
 import type { SnowflakeError } from '../error.js';
 import type {
   Column,
+  DataType,
   FetchRowsOptions,
   RowMode,
+  RowOptions,
   StatementCallback,
   StreamOptions,
 } from './types.js';
@@ -19,11 +21,17 @@ export class RowStatement {
   #connection: CoreConnectionInstance;
   #core: CoreStatementInstance;
   #rowMode: RowMode;
+  #fetchAsString?: DataType[];
 
-  constructor(connection: CoreConnectionInstance, core: CoreStatementInstance, rowMode?: RowMode) {
+  constructor(
+    connection: CoreConnectionInstance,
+    core: CoreStatementInstance,
+    rowOptions: RowOptions = {},
+  ) {
     this.#connection = connection;
     this.#core = core;
-    this.#rowMode = rowMode ?? 'object';
+    this.#rowMode = rowOptions.rowMode ?? 'object';
+    this.#fetchAsString = rowOptions.fetchAsString;
   }
 
   get rowMode(): RowMode {
@@ -50,11 +58,21 @@ export class RowStatement {
   // and the result is already drained. (would suggest a BCR with error)
   // oxlint-disable-next-line no-unused-vars
   streamRows(options?: StreamOptions): Readable {
-    return createRowStream(this.#connection, this.#core, this.#rowMode);
+    return createRowStream(
+      this.#connection,
+      this.#core,
+      this.#rowMode,
+      options?.fetchAsString ?? this.#fetchAsString,
+    );
   }
 
   fetchRows(options: FetchRowsOptions): void {
-    const stream = createRowStream(this.#connection, this.#core, this.#rowMode);
+    const stream = createRowStream(
+      this.#connection,
+      this.#core,
+      this.#rowMode,
+      this.#fetchAsString,
+    );
     let finished = false;
 
     const onComplete = (err: SnowflakeError | undefined) => {
