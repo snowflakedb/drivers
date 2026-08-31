@@ -4,6 +4,7 @@ pub mod async_query_registry;
 pub mod connection;
 mod database;
 pub(crate) mod error;
+pub mod final_session_names;
 pub(crate) mod get_objects;
 mod global_state;
 // Gated public visibility so integration tests (via the `test-utils` feature) can reach
