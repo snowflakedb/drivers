@@ -30,6 +30,12 @@ Feature: TIMESTAMP_NTZ type support
       | microseconds | '2024-01-15 10:30:00.123456'::TIMESTAMP_NTZ                                       | 2024-01-15 10:30:00.123456                  |
 
   @python_e2e @jdbc_e2e
+  Scenario: should select sub-second timestamp_ntz values before epoch
+    Given Snowflake client is logged in
+    When Sub-second timestamp_ntz values before the epoch are selected
+    Then Result should contain the expected sub-second values before the epoch
+
+  @python_e2e @jdbc_e2e
   Scenario: should handle NULL values for timestamp_ntz
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ, NULL::TIMESTAMP_NTZ" is executed

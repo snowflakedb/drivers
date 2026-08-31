@@ -1279,7 +1279,11 @@ fn parse_epoch_fraction(bytes: &[u8], scale: u64) -> Result<(i64, i32), ArrowErr
             base * 10i32.pow((scale_usize - frac_part.len()) as u32)
         }
     };
-    Ok((epoch, fraction))
+    if epoch_part.first() == Some(&b'-') && fraction != 0 {
+        Ok((epoch - 1, 10i32.pow(scale as u32) - fraction))
+    } else {
+        Ok((epoch, fraction))
+    }
 }
 
 #[cfg(test)]
@@ -1483,6 +1487,72 @@ mod tests {
         let epoch = col.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
         assert_eq!(epoch.value(0), 1609459200 * 1000 + 123);
         let tz = col.column(1).as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(tz.value(0), 1500);
+    }
+
+    #[test]
+    fn timestamp_i64_negative_subsecond_scale3() {
+        let rt = vec![RowType::timestamp_ntz("ts", true, 3)];
+        let data = b"[\"-1.750\"],\n[\"-0.001\"],\n";
+        let batches = parse(rt, data);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(col.value(0), -1750);
+        assert_eq!(col.value(1), -1);
+    }
+
+    #[test]
+    fn timestamp_struct_negative_subsecond_scale9() {
+        let rt = vec![RowType::timestamp_ntz("ts", true, 9)];
+        let data = b"[\"-0.999999999\"],\n[\"-62030905199.000000001\"],\n";
+        let batches = parse(rt, data);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::StructArray>()
+            .unwrap();
+        let epoch = col.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        let frac = col.column(1).as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(epoch.value(0), -1);
+        assert_eq!(frac.value(0), 1);
+        assert_eq!(epoch.value(1), -62030905200);
+        assert_eq!(frac.value(1), 999999999);
+    }
+
+    #[test]
+    fn timestamp_tz2_negative_subsecond_scale3() {
+        let rt = vec![RowType::timestamp_tz("ts", true, 3)];
+        let data = b"[\"-1.750 1500\"],\n";
+        let batches = parse(rt, data);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::StructArray>()
+            .unwrap();
+        let epoch = col.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        let tz = col.column(1).as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(epoch.value(0), -1750);
+        assert_eq!(tz.value(0), 1500);
+    }
+
+    #[test]
+    fn timestamp_tz3_negative_subsecond_scale9() {
+        let rt = vec![RowType::timestamp_tz("ts", true, 9)];
+        let data = b"[\"-0.999999999 1500\"],\n";
+        let batches = parse(rt, data);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::StructArray>()
+            .unwrap();
+        let epoch = col.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        let frac = col.column(1).as_any().downcast_ref::<Int32Array>().unwrap();
+        let tz = col.column(2).as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(epoch.value(0), -1);
+        assert_eq!(frac.value(0), 1);
         assert_eq!(tz.value(0), 1500);
     }
 

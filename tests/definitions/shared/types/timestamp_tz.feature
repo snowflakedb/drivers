@@ -31,6 +31,12 @@ Feature: TIMESTAMP_TZ type support
       | microseconds | '2024-01-15 10:30:00.123456 +05:00'::TIMESTAMP_TZ                                                | 2024-01-15 10:30:00.123456 +05:00                       |
 
   @python_e2e @jdbc_e2e
+  Scenario: should select sub-second timestamp_tz values before epoch
+    Given Snowflake client is logged in
+    When Sub-second timestamp_tz values before the epoch are selected
+    Then Result should contain the expected sub-second values before the epoch
+
+  @python_e2e @jdbc_e2e
   Scenario: should preserve timezone offset for timestamp_tz
     # TIMESTAMP_TZ preserves the original offset — unlike LTZ which converts to session TZ
     # Includes fractional offsets (+05:30, +04:30, -02:30) found in real-world timezones

@@ -408,3 +408,34 @@ class TestFetchPandasTimestampTzPrecision:
         assert val.nanosecond == expected_nanosecond
         # And Values should have timezone info
         assert val.tzinfo is not None
+
+
+class TestFetchPandasTimestampTzNegativeEpoch:
+    """Sub-second TIMESTAMP_TZ instants just before the Unix epoch, via fetch_pandas_all.
+
+    The server pre-floors the seconds-since-epoch decimal, so Arrow surfaces
+    1969-12-31 23:59:59.999999999 with its borrowed second already applied and
+    pandas retains the full nanosecond fraction. TIMESTAMP_TZ is an absolute
+    instant, so assertions compare the UTC instant. The two scales cover both TZ
+    builders: scale 9 (struct epoch+fraction+tz) and scale 3 (combined Int64 + tz).
+    """
+
+    @pytest.mark.parametrize(
+        "query,expected",
+        [
+            ("SELECT '1969-12-31 23:59:59.999999999 +00:00'::TIMESTAMP_TZ(9)", "1969-12-31 23:59:59.999999999+00:00"),
+            ("SELECT '1969-12-31 23:59:58.5 +00:00'::TIMESTAMP_TZ(3)", "1969-12-31 23:59:58.5+00:00"),
+        ],
+    )
+    def test_should_select_sub_second_timestamp_tz_values_before_epoch(self, cursor, query, expected):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Sub-second timestamp_tz values before the epoch are selected
+        df = execute_and_fetch(cursor, query)
+
+        # Then Result should contain the expected sub-second values before the epoch
+        assert_dtypes(df, [is_datetime64_tz])
+        val = pd.Timestamp(get_row(df, 0)[0])
+        assert val.tzinfo is not None
+        assert val.tz_convert("UTC") == pd.Timestamp(expected).tz_convert("UTC")

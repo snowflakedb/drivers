@@ -129,6 +129,10 @@ pub fn create_field_with_type(
             metadata.insert("logicalType".to_string(), "TIMESTAMP_TZ".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
             metadata.insert("nullable".to_string(), nullable.to_string());
+            metadata.insert(
+                "byteLength".to_string(),
+                if scale <= &3 { "8" } else { "16" }.to_string(),
+            );
             let data_type = if scale <= &3 {
                 DataType::Struct(
                     vec![
@@ -977,6 +981,23 @@ mod tests {
         assert!(col.is_valid(0));
         assert!(col.is_null(1));
         assert!(col.is_valid(2));
+    }
+
+    #[test]
+    fn test_timestamp_tz_field_byte_length_metadata() {
+        let scale3 = create_field(&RowType::timestamp_tz("col", true, 3)).unwrap();
+        assert_eq!(scale3.metadata().get("byteLength"), Some(&"8".to_string()));
+        match scale3.data_type() {
+            DataType::Struct(children) => assert_eq!(children.len(), 2),
+            other => panic!("expected struct, got {other:?}"),
+        }
+
+        let scale9 = create_field(&RowType::timestamp_tz("col", true, 9)).unwrap();
+        assert_eq!(scale9.metadata().get("byteLength"), Some(&"16".to_string()));
+        match scale9.data_type() {
+            DataType::Struct(children) => assert_eq!(children.len(), 3),
+            other => panic!("expected struct, got {other:?}"),
+        }
     }
 
     #[test]

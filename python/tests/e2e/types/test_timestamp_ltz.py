@@ -210,6 +210,47 @@ class TestTimestampLtzTable:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=sequential_timestamp)
 
 
+class TestTimestampLtzNegativeEpochJsonResultFormat:
+    """Sub-second TIMESTAMP_LTZ instants before the Unix epoch, over JSON result format.
+
+    The JSON chunk decoder in sf_core floor-decomposes a signed seconds-since-epoch
+    decimal into whole seconds plus a non-negative fraction. For an instant just
+    before the epoch this borrows a second: -0.000000001s is 1969-12-31 23:59:59 +
+    999_999_999ns, not 1970-01-01 00:00:00 + 999_999_999ns. A regression dropped the
+    sign and skipped the borrow. Arrow-format results were always correct (pure IPC
+    passthrough), so JSON is forced here to exercise the fixed decode path. The two
+    scales cover both LTZ builders: scale 9 (struct epoch+fraction) and scale 3
+    (single combined Int64). LTZ is an absolute instant, so assertions compare the
+    UTC instant and are independent of the session timezone.
+    """
+
+    @pytest.mark.parametrize(
+        "query,expected",
+        [
+            (
+                "SELECT '1969-12-31 23:59:59.999999999 +00:00'::TIMESTAMP_LTZ(9)",
+                datetime(1969, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc),
+            ),
+            (
+                "SELECT '1969-12-31 23:59:58.5 +00:00'::TIMESTAMP_LTZ(3)",
+                datetime(1969, 12, 31, 23, 59, 58, 500000, tzinfo=timezone.utc),
+            ),
+        ],
+    )
+    def test_should_select_sub_second_timestamp_ltz_values_before_epoch(self, connection_factory, query, expected):
+        # Given Snowflake client is logged in
+        with connection_factory(session_parameters={"PYTHON_CONNECTOR_QUERY_RESULT_FORMAT": "JSON"}) as conn:
+            with conn.cursor() as cursor:
+                # When Sub-second timestamp_ltz values before the epoch are selected
+                cursor.execute(query)
+                result = cursor.fetchone()
+
+                # Then Result should contain the expected sub-second values before the epoch
+                assert result is not None
+                assert result[0].tzinfo is not None
+                assert result[0].astimezone(timezone.utc) == expected
+
+
 @with_paramstyle("qmark")
 class TestTimestampLtzBinding:
     """Tests for TIMESTAMP_LTZ type using parameter binding.
