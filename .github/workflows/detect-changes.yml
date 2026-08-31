@@ -184,6 +184,7 @@ jobs:
               - 'jdbc_bridge/**'
               - 'tests/definitions/jdbc/**'
               - '.github/workflows/test-jdbc.yml'
+              - '.github/actions/jdbc-bridge-cache/**'
               - 'scripts/validate_behavior_differences.py'
             jdbc_e2e_integ:
               - 'jdbc/src/test/java/net/snowflake/client/api/**'

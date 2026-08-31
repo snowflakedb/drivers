@@ -40,6 +40,14 @@ jobs:
           mode: restore
           shared-key: "jdbc-auth-no-mfa"
 
+      # debug-default mirrors `cargo build --locked -p jdbc_bridge` in tests/auth/auth_no_mfa_jdbc.sh.
+      - name: JDBC bridge cache
+        id: jdbc-bridge-cache
+        uses: ./.github/actions/jdbc-bridge-cache
+        with:
+          path: target/debug/libjdbc_bridge.so
+          key-suffix: debug-default
+
       - name: Run JDBC auth no-MFA tests
         run: ./tests/auth/auth_no_mfa_jdbc.sh
         env:
@@ -48,6 +56,7 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
           SF_TEST_NO_MFA: true
+          JDBC_BRIDGE_CACHE_HIT: ${{ steps.jdbc-bridge-cache.outputs.cache-hit }}
 
       - name: Save Rust cache
         if: always()

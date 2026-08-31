@@ -60,10 +60,19 @@ jobs:
           # whose cargo then can't execute. Exact-match only, so a key bump forces a clean reinstall.
           key: ${{ runner.os }}-${{ matrix.name }}-rustup-stable-minimal-v3
 
+      # key-suffix carries matrix.name, which maps 1:1 to cargo_extra_args, the macOS
+      # deployment target, and the container, so the key already tracks the build inputs.
+      - name: JDBC bridge cache
+        id: jdbc-bridge-cache
+        uses: ./.github/actions/jdbc-bridge-cache
+        with:
+          path: target/release/${{ matrix.lib }}
+          key-suffix: release-${{ matrix.name }}-vendored-openssl-opt2-v1
+
       # manylinux_2_28 pins an old glibc floor; musllinux_1_2 (Alpine) links musl. Needs a JDK
       # (jdbc_bridge's `jni` feature links libjvm at build time), installed via matrix.pkg_setup.
       - name: Build jdbc_bridge in manylinux/musllinux container (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git" \
                    "$HOME/.cargo/bin" "$HOME/.rustup"
@@ -121,13 +130,13 @@ jobs:
           distribution: 'temurin'
 
       - name: Build jdbc_bridge (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         run: cargo build --locked --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_deployment_target }}
 
       - name: Build jdbc_bridge (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         shell: cmd
         run: cargo build --locked --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
 

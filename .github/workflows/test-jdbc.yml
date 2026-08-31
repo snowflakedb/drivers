@@ -127,7 +127,15 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
+      - name: JDBC bridge cache
+        id: jdbc-bridge-cache
+        uses: ./.github/actions/jdbc-bridge-cache
+        with:
+          path: target/debug/libjdbc_bridge.so
+          key-suffix: debug-default
+
       - name: Build Rust components
+        if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         # jdbc_bridge depends on sf_core (as an rlib, statically linked into libjdbc_bridge.so),
         # so a single `cargo build --package jdbc_bridge` transitively builds sf_core.
         # No runtime consumer needs libsf_core.so directly — only libjdbc_bridge.so is loaded by
@@ -262,6 +270,13 @@ jobs:
             ${{ runner.os }}-gradle-jdbc-
             ${{ runner.os }}-gradle-
 
+      - name: JDBC bridge cache
+        id: jdbc-bridge-cache
+        uses: ./.github/actions/jdbc-bridge-cache
+        with:
+          path: target/debug/jdbc_bridge.dll
+          key-suffix: debug-vendored-openssl
+
       - name: Shrink MSVC debug info
         if: runner.os == 'Windows'
         shell: bash
@@ -270,6 +285,7 @@ jobs:
           echo "CARGO_PROFILE_TEST_DEBUG=line-tables-only" >> "$GITHUB_ENV"
 
       - name: Build Rust components
+        if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         # Windows runners have no system OpenSSL (openssl-sys can't find one and
         # the build fails), so build it from source. Mirrors the odbc/python
         # Windows release builds. Linux/macOS runners ship a discoverable
@@ -380,7 +396,15 @@ jobs:
             ${{ runner.os }}-gradle-jdbc-
             ${{ runner.os }}-gradle-
 
+      - name: JDBC bridge cache
+        id: jdbc-bridge-cache
+        uses: ./.github/actions/jdbc-bridge-cache
+        with:
+          path: target/debug/libjdbc_bridge.dylib
+          key-suffix: debug-default
+
       - name: Build Rust components
+        if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         run: cargo build --locked --package jdbc_bridge
 
       - name: Run JDBC tests
@@ -596,7 +620,15 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
+      - name: JDBC bridge cache
+        id: jdbc-bridge-cache
+        uses: ./.github/actions/jdbc-bridge-cache
+        with:
+          path: target/debug/libjdbc_bridge.so
+          key-suffix: debug-default
+
       - name: Build Rust components
+        if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         run: cargo build --locked --package jdbc_bridge
 
       - name: Run JDBC parity tests

@@ -6,9 +6,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/auth_no_mfa_common.sh"
 
-echo "=== Building JDBC bridge (libjdbc_bridge) ==="
 cd "${WORKSPACE_ROOT}"
-cargo build --locked -p jdbc_bridge
+if [[ "${JDBC_BRIDGE_CACHE_HIT:-false}" == "true" ]]; then
+  echo "=== Using cached JDBC bridge (libjdbc_bridge) ==="
+else
+  echo "=== Building JDBC bridge (libjdbc_bridge) ==="
+  cargo build --locked -p jdbc_bridge
+fi
 
 echo ""
 echo "=== Running JDBC requires_no_mfa tests ==="

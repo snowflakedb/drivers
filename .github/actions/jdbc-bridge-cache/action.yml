@@ -1,0 +1,31 @@
+name: JDBC bridge cache
+description: Cache the compiled jdbc_bridge native library to skip cargo build on an exact-input hit.
+
+inputs:
+  path:
+    description: Path to the compiled jdbc_bridge native library.
+    required: true
+  key-suffix:
+    description: >-
+      Build-configuration discriminator, such as debug-default. Must be distinct
+      whenever the build inputs differ (features, profile, target env) so two
+      configs never share a cache entry. Bump the trailing -vN token by hand when
+      a build input that is not one of the hashed files below changes.
+    required: true
+
+outputs:
+  cache-hit:
+    description: "'true' when the exact compiled library was restored."
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # A single actions/cache restores at step start and saves the freshly built
+    # library in a post-job hook, but only on a miss — so callers need just this
+    # one step plus an `if: cache-hit != 'true'` guard on their build step.
+    - id: cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ runner.os }}-${{ runner.arch }}-jdbc-bridge-${{ inputs.key-suffix }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'build_common.rs', '.cargo/**', 'jdbc_bridge/**', 'sf_core/Cargo.toml', 'sf_core/build.rs', 'sf_core/exports.def', 'sf_core/src/**', 'proto_utils/**', 'error_trace/Cargo.toml', 'error_trace/src/**', 'error_trace_derive/**', 'sf_params_spec/**', 'proto_generator/Cargo.toml', 'proto_generator/src/**', 'protobuf/**') }}
