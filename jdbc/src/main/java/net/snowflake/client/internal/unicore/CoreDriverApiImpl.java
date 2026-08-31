@@ -265,7 +265,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setConnHandle(connHandle)
             .setQueryId(queryId)
             .build();
-    return invoke(() -> client.connectionGetQueryStatus(request));
+    return await(client.connectionGetQueryStatus(request));
   }
 
   // =========================================================================
@@ -278,7 +278,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setConnHandle(connHandle)
             .setQueryId(queryId)
             .build();
-    return invoke(() -> client.connectionGetResultSet(request));
+    return await(client.connectionGetResultSet(request));
   }
 
   public ExecuteQueryResponse connectionGetQueryResult(

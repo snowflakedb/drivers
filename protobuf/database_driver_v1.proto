@@ -1091,8 +1091,12 @@ service DatabaseDriver {
   rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
   // Fetch the result of a previously executed query by Snowflake Query ID
   rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ExecuteQueryResponse);
-  rpc ConnectionGetResultSet(ConnectionGetResultSetRequest) returns (ResultSetResponse);
-  rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
+  rpc ConnectionGetResultSet(ConnectionGetResultSetRequest) returns (ResultSetResponse) {
+    option (async_first) = true;
+  }
+  rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse) {
+    option (async_first) = true;
+  }
   // Abort a running query by Snowflake Query ID
   rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
   // Streaming PUT (upload bytes) / GET (download to bytes) from a stage.
