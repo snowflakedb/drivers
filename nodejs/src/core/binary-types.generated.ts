@@ -31,15 +31,15 @@ export declare class Column {
 
 export declare class Connection {
   constructor(options: Record<string, string>, sessionParameters: Record<string, string>)
-  connect(): Promise<void>
+  connect(): Promise<undefined>
   getSessionParameter(name: string): string | null
   execute(query: string): Statement
   getQueryResult(queryId: string): Statement
-  destroy(): Promise<void>
+  destroy(): Promise<undefined>
 }
 
 export declare class Statement {
-  waitForCompletion(): Promise<void>
+  waitForCompletion(): Promise<undefined>
   /**
    * Loads the next batch of rows. Returns `false` when the result set is
    * exhausted. Drain the loaded batch with
