@@ -113,6 +113,31 @@ public class TimestampLtzTests extends SnowflakeIntegrationTestBase
   }
 
   @Test
+  public void shouldSelectSubSecondTimestampLtzValuesBeforeEpoch() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Sub-second timestamp_ltz values before the epoch are selected
+    withQueryResult(
+        connection,
+        "SELECT '1969-12-31 23:59:59.999999999 +00:00'::TIMESTAMP_LTZ",
+        resultSet -> {
+          // Then Result should contain the expected sub-second values before the epoch
+          assertTrue(resultSet.next());
+          assertLtz(resultSet, 1, Instant.parse("1969-12-31T23:59:59.999999999Z"));
+          assertFalse(resultSet.next());
+        });
+    withQueryResult(
+        connection,
+        "SELECT '1969-12-31 23:59:58.5 +00:00'::TIMESTAMP_LTZ(3)",
+        resultSet -> {
+          assertTrue(resultSet.next());
+          assertLtz(resultSet, 1, Instant.ofEpochSecond(-2, 500_000_000));
+          assertFalse(resultSet.next());
+        });
+  }
+
+  @Test
   public void shouldHandleNullValuesForTimestampLtz() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();

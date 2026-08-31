@@ -385,3 +385,33 @@ class TestFetchPandasTimestampNtzPrecision:
         # And Values should not have timezone info
         assert_datetime_type((val,))
         assert_timezone((val,), expected_tz=None)
+
+
+class TestFetchPandasTimestampNtzNegativeEpoch:
+    """Sub-second TIMESTAMP_NTZ instants just before the Unix epoch, via fetch_pandas_all.
+
+    The server pre-floors the seconds-since-epoch decimal, so Arrow surfaces
+    1969-12-31 23:59:59.999999999 with its borrowed second already applied and
+    pandas retains the full nanosecond fraction. The two scales cover both NTZ
+    builders: scale 9 (struct epoch+fraction) and scale 3 (single combined Int64).
+    """
+
+    @pytest.mark.parametrize(
+        "query,expected",
+        [
+            ("SELECT '1969-12-31 23:59:59.999999999'::TIMESTAMP_NTZ(9)", "1969-12-31 23:59:59.999999999"),
+            ("SELECT '1969-12-31 23:59:58.5'::TIMESTAMP_NTZ(3)", "1969-12-31 23:59:58.5"),
+        ],
+    )
+    def test_should_select_sub_second_timestamp_ntz_values_before_epoch(self, cursor, query, expected):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Sub-second timestamp_ntz values before the epoch are selected
+        df = execute_and_fetch(cursor, query)
+
+        # Then Result should contain the expected sub-second values before the epoch
+        assert_dtypes(df, [is_datetime64])
+        val = pd.Timestamp(get_row(df, 0)[0])
+        assert val == pd.Timestamp(expected)
+        assert_timezone((val,), expected_tz=None)

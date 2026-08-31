@@ -207,6 +207,41 @@ public class TimestampTzTests extends SnowflakeIntegrationTestBase
   }
 
   @Test
+  public void shouldSelectSubSecondTimestampTzValuesBeforeEpoch() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Sub-second timestamp_tz values before the epoch are selected
+    withQueryResult(
+        connection,
+        "SELECT '1969-12-31 23:59:59.999999999 +00:00'::TIMESTAMP_TZ",
+        resultSet -> {
+          // Then Result should contain the expected sub-second values before the epoch
+          assertTrue(resultSet.next());
+          assertTz(resultSet, 1, offset("1969-12-31T23:59:59.999999999", "+00:00"));
+          assertHasTimezoneInfo(resultSet, 1);
+          assertFalse(resultSet.next());
+        });
+    withQueryResult(
+        connection,
+        "SELECT '1969-12-31 23:59:58.5 +00:00'::TIMESTAMP_TZ(3)",
+        resultSet -> {
+          assertTrue(resultSet.next());
+          // TIMESTAMP_TZ at scale <= 3 decodes through the combined-Int64 builder, whose
+          // getObject returns a plain java.sql.Timestamp rather than a
+          // SnowflakeTimestampWithTimezone. This row exercises that builder's pre-epoch borrow;
+          // the absolute instant is what the fix restores, so the assertion checks the instant.
+          Timestamp ts = resultSet.getTimestamp(1);
+          assertFalse(resultSet.wasNull(), "scale-3 TZ column should not be NULL");
+          assertEquals(
+              offset("1969-12-31T23:59:58.5", "+00:00").toInstant(),
+              ts.toInstant(),
+              "scale-3 TZ instant mismatch");
+          assertFalse(resultSet.next());
+        });
+  }
+
+  @Test
   public void shouldHandleNullValuesForTimestampTz() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();

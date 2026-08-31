@@ -123,6 +123,33 @@ public class TimestampNtzTests extends SnowflakeIntegrationTestBase
   }
 
   @Test
+  public void shouldSelectSubSecondTimestampNtzValuesBeforeEpoch() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Sub-second timestamp_ntz values before the epoch are selected
+    withQueryResult(
+        connection,
+        "SELECT '1969-12-31 23:59:59.999999999'::TIMESTAMP_NTZ",
+        resultSet -> {
+          // Then Result should contain the expected sub-second values before the epoch
+          assertTrue(resultSet.next());
+          assertNtz(resultSet, 1, LocalDateTime.of(1969, 12, 31, 23, 59, 59, 999_999_999));
+          assertNoTimezoneInfo(resultSet, 1);
+          assertFalse(resultSet.next());
+        });
+    withQueryResult(
+        connection,
+        "SELECT '1969-12-31 23:59:58.5'::TIMESTAMP_NTZ(3)",
+        resultSet -> {
+          assertTrue(resultSet.next());
+          assertNtz(resultSet, 1, LocalDateTime.of(1969, 12, 31, 23, 59, 58, 500_000_000));
+          assertNoTimezoneInfo(resultSet, 1);
+          assertFalse(resultSet.next());
+        });
+  }
+
+  @Test
   public void shouldHandleNullValuesForTimestampNtz() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();

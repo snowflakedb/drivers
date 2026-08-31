@@ -351,3 +351,43 @@ class TestTimestampNtzPrecision:
         # And Values should not have timezone info
         assert_datetime_type(result)
         assert_timezone(result, expected_tz=None)
+
+
+class TestTimestampNtzNegativeEpochJsonResultFormat:
+    """Sub-second TIMESTAMP_NTZ instants before the Unix epoch, over JSON result format.
+
+    The JSON chunk decoder in sf_core floor-decomposes a signed seconds-since-epoch
+    decimal into whole seconds plus a non-negative fraction. For an instant just
+    before the epoch this borrows a second: -0.000000001s is 1969-12-31 23:59:59 +
+    999_999_999ns, not 1970-01-01 00:00:00 + 999_999_999ns. A regression dropped the
+    sign and skipped the borrow. Arrow-format results were always correct (pure IPC
+    passthrough), so JSON is forced here to exercise the fixed decode path. The two
+    scales cover both NTZ builders: scale 9 (struct epoch+fraction) and scale 3
+    (single combined Int64).
+    """
+
+    @pytest.mark.parametrize(
+        "query,expected",
+        [
+            (
+                "SELECT '1969-12-31 23:59:59.999999999'::TIMESTAMP_NTZ(9)",
+                datetime(1969, 12, 31, 23, 59, 59, 999999),
+            ),
+            (
+                "SELECT '1969-12-31 23:59:58.5'::TIMESTAMP_NTZ(3)",
+                datetime(1969, 12, 31, 23, 59, 58, 500000),
+            ),
+        ],
+    )
+    def test_should_select_sub_second_timestamp_ntz_values_before_epoch(self, connection_factory, query, expected):
+        # Given Snowflake client is logged in
+        with connection_factory(session_parameters={"PYTHON_CONNECTOR_QUERY_RESULT_FORMAT": "JSON"}) as conn:
+            with conn.cursor() as cursor:
+                # When Sub-second timestamp_ntz values before the epoch are selected
+                cursor.execute(query)
+                result = cursor.fetchone()
+
+                # Then Result should contain the expected sub-second values before the epoch
+                assert result is not None
+                assert result[0] == expected
+                assert result[0].tzinfo is None

@@ -154,6 +154,122 @@ TEST_CASE("TIMESTAMP_TZ year 0001 with positive offset", "[timestamp][historical
   CHECK(ts.second == 0);
 }
 
+// The instants below sit one nanosecond and one half-second before the Unix epoch. Decoding a
+// JSON-format result chunk floor-decomposes the signed seconds-since-epoch decimal into whole
+// seconds plus a non-negative fraction, borrowing a second: -0.000000001s is 1969-12-31 23:59:59
+// + 999_999_999ns, not 1970-01-01 00:00:00 + 999_999_999ns. A regression dropped the sign and
+// skipped the borrow on the JSON path; Arrow-format results were always correct. The two scales
+// per type cover both builders: scale 9 (struct epoch+fraction[+tz]) and scale 3 (combined Int64).
+TEST_CASE("TIMESTAMP_NTZ one nanosecond before epoch", "[timestamp][historical][ntz]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A TIMESTAMP_NTZ one nanosecond before the epoch is fetched
+  auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(
+      conn.execute_fetch("SELECT '1969-12-31 23:59:59.999999999'::TIMESTAMP_NTZ(9)"), 1);
+
+  // Then SQL_TIMESTAMP_STRUCT keeps the borrowed second and the full nanosecond fraction
+  CHECK(ts.year == 1969);
+  CHECK(ts.month == 12);
+  CHECK(ts.day == 31);
+  CHECK(ts.hour == 23);
+  CHECK(ts.minute == 59);
+  CHECK(ts.second == 59);
+  CHECK(ts.fraction == 999999999);
+}
+
+TEST_CASE("TIMESTAMP_NTZ half second before epoch at scale 3", "[timestamp][historical][ntz]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A TIMESTAMP_NTZ half a second before the epoch is fetched at scale 3
+  auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(
+      conn.execute_fetch("SELECT '1969-12-31 23:59:58.5'::TIMESTAMP_NTZ(3)"), 1);
+
+  // Then SQL_TIMESTAMP_STRUCT keeps the borrowed second and the half-second fraction
+  CHECK(ts.year == 1969);
+  CHECK(ts.month == 12);
+  CHECK(ts.day == 31);
+  CHECK(ts.hour == 23);
+  CHECK(ts.minute == 59);
+  CHECK(ts.second == 58);
+  CHECK(ts.fraction == 500000000);
+}
+
+TEST_CASE("TIMESTAMP_TZ one nanosecond before epoch", "[timestamp][historical][tz]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A TIMESTAMP_TZ one nanosecond before the epoch is fetched
+  auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(
+      conn.execute_fetch("SELECT '1969-12-31 23:59:59.999999999 +00:00'::TIMESTAMP_TZ(9)"), 1);
+
+  // Then SQL_TIMESTAMP_STRUCT keeps the borrowed second and the full nanosecond fraction
+  CHECK(ts.year == 1969);
+  CHECK(ts.month == 12);
+  CHECK(ts.day == 31);
+  CHECK(ts.hour == 23);
+  CHECK(ts.minute == 59);
+  CHECK(ts.second == 59);
+  CHECK(ts.fraction == 999999999);
+}
+
+TEST_CASE("TIMESTAMP_TZ half second before epoch at scale 3", "[timestamp][historical][tz]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A TIMESTAMP_TZ half a second before the epoch is fetched at scale 3
+  auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(
+      conn.execute_fetch("SELECT '1969-12-31 23:59:58.5 +00:00'::TIMESTAMP_TZ(3)"), 1);
+
+  // Then SQL_TIMESTAMP_STRUCT keeps the borrowed second and the half-second fraction
+  CHECK(ts.year == 1969);
+  CHECK(ts.month == 12);
+  CHECK(ts.day == 31);
+  CHECK(ts.hour == 23);
+  CHECK(ts.minute == 59);
+  CHECK(ts.second == 58);
+  CHECK(ts.fraction == 500000000);
+}
+
+TEST_CASE("TIMESTAMP_LTZ one nanosecond before epoch", "[timestamp][historical][ltz]") {
+  // Given Snowflake client is logged in with UTC timezone
+  Connection conn;
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
+
+  // When A TIMESTAMP_LTZ one nanosecond before the epoch is fetched
+  auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(
+      conn.execute_fetch("SELECT '1969-12-31 23:59:59.999999999 +00:00'::TIMESTAMP_LTZ(9)"), 1);
+
+  // Then SQL_TIMESTAMP_STRUCT keeps the borrowed second and the full nanosecond fraction
+  CHECK(ts.year == 1969);
+  CHECK(ts.month == 12);
+  CHECK(ts.day == 31);
+  CHECK(ts.hour == 23);
+  CHECK(ts.minute == 59);
+  CHECK(ts.second == 59);
+  CHECK(ts.fraction == 999999999);
+}
+
+TEST_CASE("TIMESTAMP_LTZ half second before epoch at scale 3", "[timestamp][historical][ltz]") {
+  // Given Snowflake client is logged in with UTC timezone
+  Connection conn;
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
+
+  // When A TIMESTAMP_LTZ half a second before the epoch is fetched at scale 3
+  auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(
+      conn.execute_fetch("SELECT '1969-12-31 23:59:58.5 +00:00'::TIMESTAMP_LTZ(3)"), 1);
+
+  // Then SQL_TIMESTAMP_STRUCT keeps the borrowed second and the half-second fraction
+  CHECK(ts.year == 1969);
+  CHECK(ts.month == 12);
+  CHECK(ts.day == 31);
+  CHECK(ts.hour == 23);
+  CHECK(ts.minute == 59);
+  CHECK(ts.second == 58);
+  CHECK(ts.fraction == 500000000);
+}
+
 TEST_CASE("TIMESTAMP_NTZ historical dates as SQL_C_CHAR", "[timestamp][historical][c_char]") {
   // Given Snowflake client is logged in
   Connection conn;

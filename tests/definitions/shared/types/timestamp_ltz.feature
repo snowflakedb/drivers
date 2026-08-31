@@ -24,10 +24,16 @@ Feature: TIMESTAMP_LTZ type support
     Then Result should contain timestamps <expected_values>
 
     Examples:
-      | values       | query_values                                                                                      | expected_values                                   |
-      | basic        | '2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ, '2024-06-20 14:45:30 +00:00'::TIMESTAMP_LTZ         | 2024-01-15 10:30:00 UTC, 2024-06-20 14:45:30 UTC |
-      | epoch        | '1970-01-01 00:00:00 +00:00'::TIMESTAMP_LTZ                                                       | 1970-01-01 00:00:00 UTC                           |
-      | microseconds | '2024-01-15 10:30:00.123456 +00:00'::TIMESTAMP_LTZ                                                | 2024-01-15 10:30:00.123456 UTC                    |
+      | values       | query_values                                                                              | expected_values                                   |
+      | basic        | '2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ, '2024-06-20 14:45:30 +00:00'::TIMESTAMP_LTZ | 2024-01-15 10:30:00 UTC, 2024-06-20 14:45:30 UTC |
+      | epoch        | '1970-01-01 00:00:00 +00:00'::TIMESTAMP_LTZ                                               | 1970-01-01 00:00:00 UTC                           |
+      | microseconds | '2024-01-15 10:30:00.123456 +00:00'::TIMESTAMP_LTZ                                        | 2024-01-15 10:30:00.123456 UTC                    |
+
+  @python_e2e @jdbc_e2e
+  Scenario: should select sub-second timestamp_ltz values before epoch
+    Given Snowflake client is logged in
+    When Sub-second timestamp_ltz values before the epoch are selected
+    Then Result should contain the expected sub-second values before the epoch
 
   @python_e2e @jdbc_e2e
   Scenario: should handle NULL values for timestamp_ltz
