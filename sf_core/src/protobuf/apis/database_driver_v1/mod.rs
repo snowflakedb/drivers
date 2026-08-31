@@ -1197,6 +1197,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             provider,
             entra_resource: input.entra_resource.filter(|s| !s.is_empty()),
             impersonation_path: input.impersonation_path,
+            aws_use_outbound_token: input.aws_use_outbound_token.unwrap_or(false),
             oidc_token: input
                 .token
                 .filter(|s| !s.is_empty())

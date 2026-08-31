@@ -105,10 +105,13 @@ class TestCreateAttestation:
 
 
 class TestCreateAttestationKwargsCompat:
-    def test_aws_use_outbound_token_is_no_longer_accepted(self, mock_db_api):
-        """aws_use_outbound_token was removed entirely rather than accepted-and-ignored."""
-        with pytest.raises(TypeError, match="aws_use_outbound_token"):
-            create_attestation(AttestationProvider.AWS, aws_use_outbound_token=True)
+    def test_forwards_aws_use_outbound_token_to_request(self, mock_db_api):
+        mock_db_api.wif_create_attestation.return_value = MagicMock(provider="AWS", credential="fake-credential")
+
+        create_attestation(AttestationProvider.AWS, aws_use_outbound_token=True)
+
+        request = mock_db_api.wif_create_attestation.call_args[0][0]
+        assert request.aws_use_outbound_token is True
 
     def test_unknown_kwarg_raises_type_error(self, mock_db_api):
         with pytest.raises(TypeError, match="unknown_kwarg"):

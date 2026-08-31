@@ -1007,6 +1007,10 @@ message WifCreateAttestationRequest {
   // WorkloadIdentityConfig.impersonation_path. Empty ⇒ use the ambient
   // workload identity directly (AWS/GCP role chain; Azure: single SP client_id).
   repeated string impersonation_path = 4;
+  // When true (AWS provider only), use outbound STS GetWebIdentityToken instead
+  // of the default pre-signed GetCallerIdentity attestation. Takes precedence
+  // over SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN.
+  optional bool aws_use_outbound_token = 5;
 }
 
 message WifCreateAttestationResponse {

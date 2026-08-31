@@ -5,7 +5,8 @@
 //! request server-side to verify the caller's identity.  No outbound STS call
 //! is made by the driver.
 //!
-//! **Opt-in** — when `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN=true` the driver
+//! **Opt-in** — when `workload_identity_aws_use_outbound_token=true` or
+//! `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN=true` the driver
 //! calls `sts:GetWebIdentityToken` directly and forwards the resulting JWT.
 //!
 //! **Impersonation** — in both modes the driver first walks
@@ -106,13 +107,14 @@ pub enum AwsAttestationError {
 ///
 /// Dispatches to the pre-signed `GetCallerIdentity` path (default) or the
 /// outbound `GetWebIdentityToken` path when
+/// `workload_identity_aws_use_outbound_token=true` or
 /// `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN=true`.
 pub(super) async fn get_attestation_token(
     client: &reqwest::Client,
     config: &WorkloadIdentityConfig,
     endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
-    if enable_outbound_token() {
+    if enable_outbound_token(config) {
         get_web_identity_token(client, config, endpoints).await
     } else {
         get_caller_identity_token(config, endpoints).await
@@ -120,7 +122,10 @@ pub(super) async fn get_attestation_token(
 }
 
 /// Returns `true` when the caller explicitly opts into the outbound-token path.
-fn enable_outbound_token() -> bool {
+fn enable_outbound_token(config: &WorkloadIdentityConfig) -> bool {
+    if config.aws_use_outbound_token {
+        return true;
+    }
     std::env::var("SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN")
         .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
         .unwrap_or(false)
@@ -753,6 +758,7 @@ mod tests {
             provider: WifProvider::Aws,
             entra_resource: None,
             impersonation_path: vec![],
+            aws_use_outbound_token: false,
             oidc_token: None,
         };
 
@@ -789,20 +795,28 @@ mod tests {
         .await;
     }
 
-    /// Legacy: `test_aws_token_format_based_on_env_variable` verifies AWS
-    /// dispatches on `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN`. UD's
-    /// dispatch (`get_attestation_token`'s `if enable_outbound_token() {
-    /// get_web_identity_token } else { get_caller_identity_token }`) delays
-    /// to the AWS SDK once outbound is selected, so this tests the pure,
-    /// directly-unit-testable dispatch decision rather than driving both
-    /// downstream paths end-to-end.
+    fn aws_config(aws_use_outbound_token: bool) -> WorkloadIdentityConfig {
+        WorkloadIdentityConfig {
+            provider: WifProvider::Aws,
+            entra_resource: None,
+            impersonation_path: vec![],
+            aws_use_outbound_token,
+            oidc_token: None,
+        }
+    }
+
+    /// Legacy `test_aws_token_format_based_on_connection_option` matrix:
+    /// `(True, false-env) → outbound`, `(False, true-env) → outbound`.
+    /// Dispatch (`if enable_outbound_token(config) { get_web_identity_token }
+    /// else { get_caller_identity_token }`) delays to the AWS SDK once
+    /// outbound is selected, so these tests cover the boolean decision.
     #[test]
     fn enable_outbound_token_defaults_to_false_when_unset() {
         temp_env::with_var(
             "SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN",
             None::<&str>,
             || {
-                assert!(!enable_outbound_token());
+                assert!(!enable_outbound_token(&aws_config(false)));
             },
         );
     }
@@ -815,7 +829,7 @@ mod tests {
                 Some(value),
                 || {
                     assert!(
-                        enable_outbound_token(),
+                        enable_outbound_token(&aws_config(false)),
                         "{value:?} should enable outbound token"
                     );
                 },
@@ -831,12 +845,34 @@ mod tests {
                 Some(value),
                 || {
                     assert!(
-                        !enable_outbound_token(),
+                        !enable_outbound_token(&aws_config(false)),
                         "{value:?} should not enable outbound token"
                     );
                 },
             );
         }
+    }
+
+    #[test]
+    fn enable_outbound_token_connection_param_enables_without_env() {
+        temp_env::with_var(
+            "SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN",
+            None::<&str>,
+            || {
+                assert!(enable_outbound_token(&aws_config(true)));
+            },
+        );
+    }
+
+    #[test]
+    fn enable_outbound_token_connection_param_takes_precedence_over_env() {
+        temp_env::with_var(
+            "SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN",
+            Some("false"),
+            || {
+                assert!(enable_outbound_token(&aws_config(true)));
+            },
+        );
     }
 
     /// Records every `assume_role` call this fake receives -- role ARN and

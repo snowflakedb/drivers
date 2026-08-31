@@ -4279,6 +4279,7 @@ mod tests {
                     provider: WifProvider::Oidc,
                     entra_resource: None,
                     impersonation_path: Vec::new(),
+                    aws_use_outbound_token: false,
                     // Deliberately absent: if dispatch ever reached the
                     // provider without the host guard short-circuiting first,
                     // `oidc::get_token` would fail with `MissingToken`

@@ -1649,6 +1649,7 @@ mod tests {
             provider: WifProvider::Oidc,
             entra_resource: None,
             impersonation_path: Vec::new(),
+            aws_use_outbound_token: false,
             oidc_token: None,
         };
         let client = reqwest::Client::new();
