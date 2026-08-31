@@ -217,9 +217,13 @@ When behavior differs between OLD and NEW drivers:
 ```yaml
 behavior_differences:
   1:
-    name: "Description of the behavior difference"
-    type: "Bug Fix"  # or "Breaking Change" or "New Feature"
+    name: "Short title of the divergence"
+    status: todo          # unknown | todo | fixed | allowed
+    type: bug             # unknown | api_incompatibility | bug | bugfix | enhancement
+    impact: high          # low | medium | high
+    is_breaking_change: true
 ```
+Full schema and the pre-commit validator are in [../../concepts/behavior-differences.md](../../concepts/behavior-differences.md).
 
 ### 2. Use in test code:
 ```cpp
@@ -239,14 +243,18 @@ NEW_DRIVER_ONLY("BD#1") {
 ### Directory Structure
 ```
 odbc_tests/tests/
-├── datatype_tests/     # Data type specific tests
+├── basic_tests/        # Fixture-based API/functionality tests
+├── bindings_tests/     # Parameter-binding tests
+├── conversion_matrix/  # bindparam type-conversion matrix
 ├── e2e/                # End-to-end tests matching Gherkin features
 │   ├── authentication/
+│   ├── logging/
 │   ├── put_get/
 │   ├── query/
-│   └── tls/
-├── integration/        # Integration tests
-└── basic_tests/        # Basic functionality tests
+│   ├── session/
+│   ├── tls/
+│   └── types/          # datatype coverage
+└── integration/        # Integration tests
 ```
 
 ### File Naming

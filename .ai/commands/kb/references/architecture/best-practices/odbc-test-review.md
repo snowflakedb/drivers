@@ -16,17 +16,9 @@ When asked to review ODBC test code, systematically check each category below. R
 
 ## 2. Test Structure
 
-- E2E tests (`odbc_tests/tests/e2e/`): require `TEST_CASE` + `Connection` RAII. Must have Given-When-Then comments, each followed by code (no empty Gherkin stubs).
-- API tests (`odbc_tests/tests/basic_tests/`, `odbc_tests/tests/bindings_tests/`): require `TEST_CASE_METHOD(Fixture, ...)` with the appropriate fixture (`EnvFixture`, `DbcFixture`, `StmtFixture`).
-
-  > **Two mismatches against the tree, for the ODBC owners to settle.** This rule previously named
-  > `odbc_tests/tests/datatype_tests/`, which no longer exists — those tests were moved to
-  > `odbc_tests/tests/e2e/types/` (see the `// Migrated from odbc_tests/tests/datatype_tests/...`
-  > comments there), and they use a mix of `TEST_CASE` and `TEST_CASE_METHOD`. Separately, every
-  > file in `basic_tests/` currently uses plain `TEST_CASE`, not `TEST_CASE_METHOD`. Treat the rule
-  > as the standard for *new* API tests and confirm the intended scope before enforcing it on the
-  > existing ones. `odbc_tests/tests/conversion_matrix/` holds the bindparam matrix and is not
-  > covered by either rule above.
+- E2E tests (`odbc_tests/tests/e2e/`): require `TEST_CASE` + `Connection` RAII. Must have Given-When-Then comments, each followed by code (no empty Gherkin stubs). `e2e/types/` (datatype coverage) mixes `TEST_CASE` and `TEST_CASE_METHOD`.
+- API tests (`odbc_tests/tests/basic_tests/`, `odbc_tests/tests/bindings_tests/`): the standard for a new test is `TEST_CASE_METHOD(Fixture, ...)` with the appropriate fixture (`EnvFixture`, `DbcFixture`, `StmtFixture`); existing `basic_tests/` files use plain `TEST_CASE`, so apply the rule to new tests, not retroactively.
+- `odbc_tests/tests/conversion_matrix/` holds the bindparam conversion matrix and is covered by neither rule above.
 - Test names: E2E should start with "should …"; API tests use `SQLFunctionName: description`.
 - Flag leftover debug sections named "TEST".
 

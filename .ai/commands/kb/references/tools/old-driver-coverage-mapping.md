@@ -321,12 +321,7 @@ Accept `status: mapped` only when the mapped UD test(s) collectively cover ALL a
 
 For every gap identified in Step 3b, **read the relevant BehaviorDifferences file** and check whether the divergence is already documented:
 
-| Driver | File |
-|---|---|
-| ODBC | `odbc_tests/BehaviorDifferences.yaml` |
-| Python | `python/BehaviorDifferences.yaml` |
-| JDBC | `jdbc/BehaviorDifferences.yaml` |
-| Node.js | `nodejs/BehaviorDifferences.yaml` |
+The four per-wrapper file paths are in [../concepts/behavior-differences.md](../concepts/behavior-differences.md).
 
 **For each gap, one of three outcomes applies:**
 

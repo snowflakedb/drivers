@@ -5,9 +5,6 @@ no-pointer: true
 
 # Driver Repository Locations
 
-Canonical reference for original driver repo identifiers and local paths.
-Used by skills that need to locate or access old-driver source code.
-
 | Driver | GitHub repo | Typical local paths |
 |---|---|---|
 | Python | `snowflakedb/snowflake-connector-python` | `~/snowflake-connector-python`, `~/emu/snowflake-connector-python` |
@@ -19,4 +16,4 @@ If a repo does not exist at the expected local path, tell the user and ask for
 the correct location, or fall back to GitHub MCP (`mcp__github__github_get_file`)
 using the GitHub repo column.
 
-These repos are not precloned into an agent workspace; resolve one through a local checkout or the GitHub MCP tools. Which of their tests the Universal Driver covers is tracked separately — see [../../concepts/old-driver-coverage-attribution.md](../../concepts/old-driver-coverage-attribution.md).
+These repos are not precloned into an agent workspace. Which of their tests the Universal Driver covers is tracked separately — see [../../concepts/old-driver-coverage-attribution.md](../../concepts/old-driver-coverage-attribution.md).
