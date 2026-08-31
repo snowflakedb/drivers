@@ -141,6 +141,11 @@ def bulk_insert_hazard_strings(cursor, table: str, count: int) -> None:
     cursor.executemany(f"INSERT INTO {table} VALUES ({placeholders})", rows)
 
 
+def bulk_insert_all_null_row(cursor, table: str) -> None:
+    placeholders = _insert_placeholders(cursor, 6)
+    cursor.executemany(f"INSERT INTO {table} VALUES ({placeholders})", [(None,) * 6])
+
+
 @with_paramstyles("qmark", "numeric")
 class TestLargeBindings:
     @pytest.fixture(autouse=True)
@@ -323,6 +328,63 @@ class TestLargeBindings:
 
         # Then Result should contain rows [[0, "stage-0"], [9, "stage-9"]]
         assert cursor.fetchall() == [(0, "stage-0"), (9, "stage-9")]
+
+    def test_should_keep_an_all_null_row_on_the_inline_json_path_when_stage_binding_is_disabled(
+        self, cursor, tmp_schema
+    ):
+        # Given Snowflake client is logged in
+        assert not cursor.connection.is_closed()
+
+        # And A temporary table with columns (id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE
+        # INTEGER) exists
+        table = f"{tmp_schema}.lb_all_null_inline"
+        cursor.execute(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table} "
+            "(id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER)"
+        )
+
+        # And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 0
+        set_stage_binding_threshold(cursor.connection, 0)
+        before = list_bind_stage_file_count(cursor.connection)
+
+        # When a batch of one row with every column set to SQL NULL is inserted using multirow binding
+        bulk_insert_all_null_row(cursor, table)
+
+        # Then no new bind file should have been uploaded to SYSTEM$BIND
+        after = list_bind_stage_file_count(cursor.connection)
+        assert_bind_stage_file_count_unchanged(cursor.connection, before, after)
+
+        # And every column of the round-tripped row reads back as SQL NULL
+        cursor.execute(f"SELECT id, colA, colB, colC, colD, colE FROM {table}")
+        assert cursor.fetchall() == [(None,) * 6]
+
+    def test_should_stage_bind_an_all_null_row_when_the_bound_cell_count_meets_the_threshold(self, cursor, tmp_schema):
+        # Given Snowflake client is logged in
+        assert not cursor.connection.is_closed()
+
+        # And A temporary table with columns (id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE
+        # INTEGER) exists
+        table = f"{tmp_schema}.lb_all_null_stage"
+        cursor.execute(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table} "
+            "(id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER)"
+        )
+
+        # And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 6
+        set_stage_binding_threshold(cursor.connection, 6)
+        before = list_bind_stage_file_count(cursor.connection)
+
+        # When a batch of one row with every column set to SQL NULL is inserted using multirow binding
+        bulk_insert_all_null_row(cursor, table)
+
+        # Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as the bound
+        # parameters
+        after = list_bind_stage_file_count(cursor.connection)
+        assert_bind_stage_file_count_increased(cursor.connection, before, after)
+
+        # And every column of the round-tripped row reads back as SQL NULL
+        cursor.execute(f"SELECT id, colA, colB, colC, colD, colE FROM {table}")
+        assert cursor.fetchall() == [(None,) * 6]
 
     def test_should_fall_back_to_per_row_execution_for_non_insert_statements(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
