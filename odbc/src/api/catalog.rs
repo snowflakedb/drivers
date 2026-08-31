@@ -3895,7 +3895,7 @@ fn type_info_schema() -> SchemaRef {
         catalog_smallint_field("SQL_DATA_TYPE"),
         catalog_smallint_field("SQL_DATETIME_SUB"),
         catalog_int_field("NUM_PREC_RADIX"),
-        catalog_int_field("INTERVAL_PRECISION"),
+        catalog_smallint_field("INTERVAL_PRECISION"),
         catalog_smallint_field("USER_DATA_TYPE"),
     ]))
 }
@@ -4488,7 +4488,7 @@ fn build_type_info_batch(rows: &[&TypeInfoRow]) -> OdbcResult<RecordBatch> {
     let sql_data_types: Vec<Option<i16>> = rows.iter().map(|r| Some(r.sql_data_type)).collect();
     let sql_datetime_subs: Vec<Option<i16>> = rows.iter().map(|r| r.sql_datetime_sub).collect();
     let num_prec_radixes: Vec<Option<i32>> = rows.iter().map(|r| r.num_prec_radix).collect();
-    let interval_precisions: Vec<Option<i32>> = rows.iter().map(|_| None).collect();
+    let interval_precisions: Vec<Option<i16>> = rows.iter().map(|_| None).collect();
     let user_data_types: Vec<Option<i16>> = rows.iter().map(|r| Some(r.user_data_type)).collect();
 
     fn str_col(v: Vec<Option<&str>>) -> ArrayRef {
@@ -4522,7 +4522,7 @@ fn build_type_info_batch(rows: &[&TypeInfoRow]) -> OdbcResult<RecordBatch> {
             i16_col(sql_data_types),
             i16_col(sql_datetime_subs),
             i32_col(num_prec_radixes),
-            i32_col(interval_precisions),
+            i16_col(interval_precisions),
             i16_col(user_data_types),
         ],
     )
@@ -4604,6 +4604,35 @@ mod type_info_tests {
                 field.name()
             );
         }
+    }
+
+    #[test]
+    fn interval_precision_is_smallint_num_prec_radix_is_integer() {
+        let schema = type_info_schema();
+        let radix = &schema.fields()[17];
+        assert_eq!(radix.name(), "NUM_PREC_RADIX");
+        assert_eq!(radix.data_type(), &DataType::Int32);
+        assert_eq!(
+            radix.metadata().get("conciseSqlType"),
+            Some(&INTEGER_CONCISE_SQL_TYPE.to_string())
+        );
+        let interval = &schema.fields()[18];
+        assert_eq!(interval.name(), "INTERVAL_PRECISION");
+        assert_eq!(interval.data_type(), &DataType::Int16);
+        assert_eq!(
+            interval.metadata().get("conciseSqlType"),
+            Some(&SMALLINT_CONCISE_SQL_TYPE.to_string())
+        );
+
+        let all: Vec<&TypeInfoRow> = ALL_SF_TYPE_INFO.iter().collect();
+        let batch = build_type_info_batch(&all).expect("batch build failed");
+        let col = batch
+            .column(18)
+            .as_any()
+            .downcast_ref::<Int16Array>()
+            .expect("INTERVAL_PRECISION is Int16");
+        assert_eq!(col.len(), batch.num_rows());
+        assert_eq!(col.null_count(), col.len());
     }
 
     #[test]
