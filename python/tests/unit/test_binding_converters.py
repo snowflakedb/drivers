@@ -85,10 +85,16 @@ class TestTypeMapping:
         snowflake_type, _ = JsonBindingConverter._convert_value(st)
         assert snowflake_type == "TIMESTAMP_NTZ"
 
-    def test_unknown_type_defaults_to_text(self):
-        """Unknown types should fall back to TEXT."""
-        snowflake_type, _ = JsonBindingConverter._convert_value(object())
-        assert snowflake_type == "TEXT"
+    def test_unknown_type_raises_programming_error(self):
+        """Unrecognized types should raise instead of silently coercing to TEXT/str().
+
+        SNOW-3989924 / BehaviorDifferences.yaml#89: the reference connector's
+        analogous pre-conversion check, `Connection._get_snowflake_type_and_binding`
+        finding no entry in `PYTHON_TO_SNOWFLAKE_TYPE`, also fails fast for this
+        case, though with a different message and errno (documented in #89).
+        """
+        with pytest.raises(ProgrammingError, match="is not supported"):
+            JsonBindingConverter._convert_value(object())
 
 
 class TestConvertValueScalars:
@@ -1051,13 +1057,19 @@ class TestToSnowflake:
         result = ClientSideBindingConverter.to_snowflake([date(2024, 1, 1), date(2024, 12, 31)])
         assert result == ["2024-01-01", "2024-12-31"]
 
-    def test_unknown_type_converts_to_str(self):
+    def test_unknown_type_raises_programming_error(self):
+        """Unrecognized types should raise instead of silently coercing via str().
+
+        SNOW-3989924 / BehaviorDifferences.yaml#89: matches the reference
+        connector's SnowflakeConverter.__getattr__ fail-fast behavior.
+        """
+
         class Custom:
             def __str__(self):
                 return "custom_value"
 
-        result = ClientSideBindingConverter.to_snowflake(Custom())
-        assert result == "custom_value"
+        with pytest.raises(ProgrammingError, match="is not supported"):
+            ClientSideBindingConverter.to_snowflake(Custom())
 
 
 class TestProcessSingleParam:

@@ -118,6 +118,17 @@ Feature: Parameter binding
     When Query with 3 placeholders is executed with 1 argument
     Then Error should be raised for the unbound placeholders
 
+  @python_e2e
+  Scenario Outline: should raise error for unsupported bind type with <paramstyle>
+    Given Snowflake client is logged in with <paramstyle> paramstyle
+    When Query "SELECT <placeholder_sql>" is executed with a value of an unrecognized Python type
+    Then ProgrammingError should be raised instead of silently binding str(value)
+
+    Examples:
+      | paramstyle | placeholder_sql |
+      | qmark      | ?               |
+      | numeric    | :1              |
+
   # =========================================================================== #
   #                        Multirow binding                                   #
   # =========================================================================== #

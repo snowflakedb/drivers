@@ -1239,3 +1239,37 @@ behavior_differences:
       55). No consumer in Snowpark's source reads `display_size` (CONFIRMED from
       source), so this has no observed runtime impact; it's a strict improvement
       over the old driver (extra, correct information) rather than a compatibility risk.
+
+  89:
+    name: "Unrecognized qmark/numeric bind value raises with a different message, errno, and raise-point than the reference driver"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `Connection._get_snowflake_type_and_binding` (connection.py) calls
+      `self.converter.snowflake_type(v)` before any conversion is attempted,
+      which looks up `type(v).__name__` in `PYTHON_TO_SNOWFLAKE_TYPE`
+      (converter.py). For a type with no entry, the lookup returns `None` and
+      the connection raises `ProgrammingError` (`errno=
+      ER_NOT_IMPLICITY_SNOWFLAKE_DATATYPE`, 252011) with message "Python data
+      type [<type>] cannot be automatically mapped to Snowflake data type.
+      Specify the snowflake data type explicitly." This is the same code path
+      for both qmark and numeric paramstyles.
+    new_driver_behavior: |
+      `JsonBindingConverter._convert_value` / `ClientSideBindingConverter.to_snowflake`
+      (binding_converters.py) fall through the same type-dispatch `if`/`elif`
+      chain used for the actual conversion, and the `else` branch raises
+      `ProgrammingError` (`errno=ER_NOT_SUPPORT_DATA_TYPE`, 255001) with
+      message "Binding data in type (<type>) is not supported. Convert the
+      value to a supported Python type (str, int, float, bool, bytes,
+      date/datetime/time/timedelta) before binding it." — raised at
+      conversion time rather than pre-conversion.
+    description: |
+      Both drivers raise `ProgrammingError` for the same class of input, so
+      `except ProgrammingError` handlers are unaffected; only the message
+      text, `errno`, and which call site raises differ. SNOW-3989924's tests
+      (`test_should_raise_error_for_unsupported_bind_type_with_paramstyle` in
+      test_parameter_binding.py, and its client-side-binding counterpart)
+      assert the exception class only, not the message, for this reason.
