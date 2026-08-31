@@ -60,13 +60,7 @@ public static class AssemblyUtil
         var dllFile = files.FirstOrDefault(x => x.Contains(platform));
 
         if (dllFile == null)
-        {
-#if NETFRAMEWORK
-            Skip.When(true, "Different versions of .net framework might not be able to load type system properly");
-#else
-            dllFile = files.First();
-#endif
-        }
+            Skip.When(true, $"Assembly {asTarget} does not target the current runtime (net{Environment.Version.Major}.0)");
 
         result = Assembly.LoadFrom(dllFile!);
         return true;
