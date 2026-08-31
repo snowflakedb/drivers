@@ -3877,19 +3877,19 @@ fn catalog_int_field(name: &str) -> Field {
 /// columns + driver-specific `USER_DATA_TYPE`).
 fn type_info_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("TYPE_NAME", 128),
+        catalog_wvarchar_field("TYPE_NAME", 128),
         catalog_smallint_field("DATA_TYPE"),
         catalog_int_field("COLUMN_SIZE"),
-        catalog_text_field("LITERAL_PREFIX", 32),
-        catalog_text_field("LITERAL_SUFFIX", 32),
-        catalog_text_field("CREATE_PARAMS", 128),
+        catalog_wvarchar_field("LITERAL_PREFIX", 32),
+        catalog_wvarchar_field("LITERAL_SUFFIX", 32),
+        catalog_wvarchar_field("CREATE_PARAMS", 128),
         catalog_smallint_field("NULLABLE"),
         catalog_smallint_field("CASE_SENSITIVE"),
         catalog_smallint_field("SEARCHABLE"),
         catalog_smallint_field("UNSIGNED_ATTRIBUTE"),
         catalog_smallint_field("FIXED_PREC_SCALE"),
         catalog_smallint_field("AUTO_UNIQUE_VALUE"),
-        catalog_text_field("LOCAL_TYPE_NAME", 128),
+        catalog_wvarchar_field("LOCAL_TYPE_NAME", 128),
         catalog_smallint_field("MINIMUM_SCALE"),
         catalog_smallint_field("MAXIMUM_SCALE"),
         catalog_smallint_field("SQL_DATA_TYPE"),
@@ -4588,6 +4588,22 @@ mod type_info_tests {
         assert_eq!(batch.num_rows(), 24);
         assert_eq!(batch.num_columns(), 20);
         assert_eq!(type_info_schema().fields().len(), 20);
+    }
+
+    #[test]
+    fn string_columns_are_tagged_wvarchar() {
+        let schema = type_info_schema();
+        let expected = WVARCHAR_CONCISE_SQL_TYPE.to_string();
+        for idx in [0usize, 3, 4, 5, 12] {
+            let field = &schema.fields()[idx];
+            assert_eq!(
+                field.metadata().get("conciseSqlType"),
+                Some(&expected),
+                "col {} {}",
+                idx + 1,
+                field.name()
+            );
+        }
     }
 
     #[test]
