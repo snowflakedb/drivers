@@ -138,6 +138,7 @@ pub mod param_names {
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
     pub const DISABLE_PARALLEL_USER_PROMPT: ParamKey = ParamKey("disable_parallel_user_prompt");
+    pub const DISABLE_QUERY_CONTEXT_CACHE: ParamKey = ParamKey("disable_query_context_cache");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
     pub const LOG_QUERY_TEXT: ParamKey = ParamKey("log_query_text");
     pub const LOG_QUERY_PARAMETERS: ParamKey = ParamKey("log_query_parameters");
@@ -751,6 +752,21 @@ static PARAM_DEFS: &[ParamDef] = &[
         deprecated_by: None,
         scopes: &[ParamScope::Connection],
         used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::DISABLE_QUERY_CONTEXT_CACHE.as_str(),
+        aliases: aliases!["DISABLEQUERYCONTEXTCACHE"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(DefaultValue::Bool(false)),
+        sensitive: false,
+        description: "When true, disables the client-side query context cache. \
+                      No context is sent in requests and server-returned context is ignored.",
+        deprecated_by: None,
+        scopes: &[ParamScope::Connection],
+        used_at_connect: false,
         mutable_after_connect: false,
     },
     ParamDef {

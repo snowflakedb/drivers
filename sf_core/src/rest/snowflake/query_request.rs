@@ -45,13 +45,13 @@ pub struct BindParameter {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct BindingSchema {}
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Default)]
 pub struct QueryContext {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entries: Option<Vec<QueryContextEntry>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct QueryContextEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<ContextData>,
@@ -61,7 +61,7 @@ pub struct QueryContextEntry {
     pub timestamp: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct ContextData {
     #[serde(rename = "base64Data", skip_serializing_if = "Option::is_none")]
     pub base64_data: Option<String>,

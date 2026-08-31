@@ -1078,3 +1078,28 @@ behavior_differences:
       getUpdateCount() returns -1 (the JDBC-spec value for "current result is a ResultSet") after
       any statement that produces a result set, including PUT/GET/REMOVE. We accept this rather
       than replicate legacy's stale-value quirk.
+  59:
+    name: "Query context cache handles duplicate-priority new IDs via capacity eviction instead of displacement"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When a new entry ID arrives with a priority that already exists in the cache,
+      the legacy JDBC driver replaces the existing entry at that priority (displacement).
+      The TreeSet uses a composite comparator (priority, id, timestamp) but the priorityMap
+      enforces one entry per priority via replaceQCE. The displaced entry is fully removed.
+    new_driver_behavior: |
+      The universal driver inserts the new entry alongside existing entries at the same
+      priority. Multiple entries with the same priority coexist in the cache. When the
+      cache exceeds capacity, the entry with the highest priority number and lowest
+      timestamp is evicted via pop_last() on the BTreeMap<(priority, -timestamp), id>
+      index. This means a different entry may be evicted than JDBC would have displaced.
+    description: |
+      The UD allows duplicate priorities in the cache and relies on capacity-based eviction
+      to trim excess entries. JDBC's displacement strategy removes the prior occupant of a
+      priority slot immediately. The practical difference surfaces when a new ID arrives at
+      an already-occupied priority and the cache is at capacity: JDBC evicts the same-priority
+      incumbent, while the UD evicts the entry with the highest priority number (lowest
+      importance) regardless of which priority the new entry occupies.

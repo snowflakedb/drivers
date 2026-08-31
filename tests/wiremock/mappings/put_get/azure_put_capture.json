@@ -7,12 +7,10 @@
         "method": "POST",
         "bodyPatterns": [
           {
-            "matchesJsonPath": "$.sqlText",
-            "contains": "PUT"
+            "matchesJsonPath": { "expression": "$.sqlText", "contains": "PUT" }
           },
           {
-            "matchesJsonPath": "$.sqlText",
-            "contains": "@AZURE_TEST_STAGE"
+            "matchesJsonPath": { "expression": "$.sqlText", "contains": "@AZURE_TEST_STAGE" }
           }
         ]
       },
