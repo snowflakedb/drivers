@@ -679,24 +679,25 @@ behavior_differences:
       set both toggles to `False` explicitly.
   44:
     name: "ReauthenticationRequest is not raised in MasterTokenExpired scenarios"
-    status: todo
+    status: fixed
     type: bug
     reviewed: false
+    status_rationale: |
+      ReauthenticationRequest is now raised for mid-session master-token codes
+      390113/390114/390115 and login-time codes 390195/390303/390318, with the
+      real GS code preserved as errno. See entry 82 for the one remaining gap
+      (no automatic reauth for EXTERNALBROWSER).
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
-      The legacy connector raises `network.ReauthenticationRequest` (carrying the
-      original exception as `.cause`) when the master token expires and a refresh
-      is required. Snowpark catches this exception to trigger session re-establishment.
+      Legacy raises network.ReauthenticationRequest, imported from
+      snowflake.connector.network, when the master token expires.
     new_driver_behavior: |
-      The universal driver does not raise `ReauthenticationRequest` or any equivalent
-      signal in these token-refresh scenarios; the UD has no compat class for Snowpark
-      to catch or subclass, and no wiring to the internal refresh paths that would need
-      to raise it.
-    description: |
-      TODO: identify the UD token-refresh code paths that correspond to the old
-      driver's MasterTokenExpired handling and raise `ReauthenticationRequest`
-      (or an equivalent signal Snowpark catches) in those cases.
+      ReauthenticationRequest is raised for the codes above. It's importable
+      only from errors, not network (which re-exports authenticator constants
+      but not this class — that import still raises ImportError). It
+      subclasses ProgrammingError for compatibility and emits a FutureWarning
+      that the base moves to OperationalError in a future major release.
 
   45:
     name: "Out-of-band (OOB) telemetry is not implemented"
@@ -1204,3 +1205,22 @@ behavior_differences:
       new driver has no equivalent request-session pool; HTTP keep-alive on the
       core HTTP client is internal and not user-configurable. Mapping the flag
       onto keep-alive would invent a different feature under a legacy name.
+
+  82:
+    name: "EXTERNALBROWSER no longer auto-reauthenticates on mid-session master-token expiry"
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      For EXTERNALBROWSER, a mid-session master-token expiry is caught and
+      silently recovered: the driver re-runs the browser flow and retries,
+      so the in-flight query succeeds without the caller seeing an exception.
+    new_driver_behavior: |
+      No authenticator auto-reauthenticates. A mid-session master-token code
+      (390113/390114/390115) raises ReauthenticationRequest instead; the
+      caller must open a new connection, which re-triggers the browser
+      prompt for EXTERNALBROWSER.
+    description: |
+      Tracked under SNOW-3965431.
