@@ -43,8 +43,8 @@ class ClientIdentityTests extends BaseWiremockTest {
     JsonNode data = parseJson(loginRequests.get(0).get("body").asText()).get("data");
 
     assertEquals("JDBC", data.get("CLIENT_APP_ID").asText());
-    assertEquals(SnowflakeDriver.CLIENT_APP_VERSION, data.get("CLIENT_APP_VERSION_FULL").asText());
-    assertEquals("5.0.0", data.get("CLIENT_APP_VERSION").asText());
+    // CLIENT_APP_VERSION is sent unstripped from wrapper identity (no FULL field).
+    assertEquals(SnowflakeDriver.CLIENT_APP_VERSION, data.get("CLIENT_APP_VERSION").asText());
 
     JsonNode env = data.get("CLIENT_ENVIRONMENT");
     assertEquals("JDBC", env.get("APPLICATION").asText());

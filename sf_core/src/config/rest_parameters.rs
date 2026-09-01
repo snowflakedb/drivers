@@ -93,10 +93,17 @@ impl QueryParameters {
 #[derive(Clone, Debug)]
 pub struct ClientInfo {
     /// Driver identity sent as CLIENT_APP_ID and used in the User-Agent header.
+    /// Populated from wrapper identity (`driver_name`) via the `client_app_id`
+    /// connection setting, falling back to this crate's Cargo package name.
     pub client_app_id: String,
     /// User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION.
     /// Falls back to `client_app_id` when not explicitly provided.
     pub application: String,
+    /// Driver version sent as CLIENT_APP_VERSION and used in the User-Agent
+    /// header. Populated from wrapper identity (`driver_version`) via the
+    /// `client_app_version` connection setting, falling back to this crate's
+    /// Cargo package version. Sent as-is; suffixes such as `dev` or `rc1` are
+    /// not stripped.
     pub version: String,
     pub os: String,
     pub os_version: String,
