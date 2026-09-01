@@ -13,9 +13,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Literal
 
+from .._common.extras import pandas, requires_dependency
 from .._internal.decorators import api_telemetry
 from .._internal.errorhandler import route_exception
-from .._internal.extras import pandas, requires_dependency
 from .._internal.logging import get_logger
 from .._internal.write_pandas_operation import (
     WritePandasConfig,

@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, cast
 
+from ._common.extras import pandas, pyarrow, requires_dependency
 from ._internal.api_client.client_api import core_driver
 from ._internal.arrow_stream_utils import (
     collect_arrow_table,
@@ -22,7 +23,6 @@ from ._internal.arrow_stream_utils import (
 )
 from ._internal.backward_compatibility import install_backward_compatibility_getattr
 from ._internal.decorators import backward_compatibility
-from ._internal.extras import pandas, pyarrow, requires_dependency
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ColumnMetadata,
     ResultChunk,

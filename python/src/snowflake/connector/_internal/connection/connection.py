@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
 
+from ..._common.extras import check_dependency
+from ..._common.extras import numpy as np
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus, SessionParameterName
 from ...errors import Error, ErrorValue, InterfaceError, ProgrammingError
@@ -12,8 +14,6 @@ from ..api_client.client_api import core_driver
 from ..binding_converters import ParamStyle
 from ..decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from ..errorhandler import ErrorHandlerMixin
-from ..extras import check_dependency
-from ..extras import numpy as np
 from ..logging import get_logger
 from .constants import LOG_MAX_QUERY_LENGTH
 from .decorators import requires_open

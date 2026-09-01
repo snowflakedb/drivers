@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING, cast
 from snowflake.connector._core import sf_core_python
 from snowflake.connector.errors import InternalError, NotSupportedError
 
+from .._common.extras import pyarrow
 from .arrow import ArrowRowIterator
 from .arrow_context import ArrowConverterContext
 from .arrow_stream_iterator import ArrowStreamIterator as CythonArrowStreamIterator
 from .arrow_stream_iterator import ArrowStreamTableIterator
-from .extras import pyarrow
 from .type_codes import FIXED
 
 

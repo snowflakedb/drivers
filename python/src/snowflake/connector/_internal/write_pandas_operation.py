@@ -15,9 +15,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
+from .._common.extras import pandas
 from ..cursor import SnowflakeCursor
 from ..errors import ProgrammingError
-from .extras import pandas
 from .logging import get_logger
 
 

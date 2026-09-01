@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
 
+from .._common.extras import pandas, pyarrow, requires_dependency
 from .._internal.api_client.client_api import async_core_driver
 from .._internal.arrow_stream_async import (
     AsyncArrowStreamIterator,
@@ -12,7 +13,6 @@ from .._internal.arrow_stream_async import (
     to_pandas_async,
 )
 from .._internal.arrow_stream_utils import create_row_iterator, create_table_iterator
-from .._internal.extras import pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import ColumnMetadata, ResultChunk
 from .._internal.result_batch import IterTableStructure, IterUnit, ResultBatchMixin
 from .._internal.statement_utils import get_stream_ptr

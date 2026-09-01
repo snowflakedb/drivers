@@ -4,15 +4,18 @@ Unit tests for the extras module (optional dependency management).
 
 import pytest
 
-from snowflake.connector._internal.errorcode import ER_NO_NUMPY, ER_NO_PYARROW
-from snowflake.connector._internal.extras import (
+from snowflake.connector._common.extras import (
     DEP_NUMPY,
     DEP_PANDAS,
     DEP_PYARROW,
     DEP_TZLOCAL,
     MissingOptionalDependency,
+    ModuleLikeObject,
     check_dependency,
+    installed_pandas,
+    installed_pyarrow,
 )
+from snowflake.connector._internal.errorcode import ER_NO_NUMPY, ER_NO_PYARROW
 from snowflake.connector.errors import MissingDependencyError, ProgrammingError
 
 
@@ -85,3 +88,28 @@ class TestMissingOptionalDependency:
         stub = MissingOptionalDependency(DEP_NUMPY)
         with pytest.raises(MissingDependencyError):
             _ = stub.some_attribute
+
+
+class TestOptionalDependencyStatus:
+    """Tests for the installed_pandas/installed_pyarrow status flags and the
+    ModuleLikeObject type alias."""
+
+    def test_installed_pandas_is_bool_consistent_with_pandas_module(self):
+        from snowflake.connector._common import extras as extras_module
+
+        assert isinstance(installed_pandas, bool)
+        assert installed_pandas == (not isinstance(extras_module.pandas, MissingOptionalDependency))
+
+    def test_installed_pyarrow_is_bool_consistent_with_pyarrow_module(self):
+        """installed_pyarrow checks pyarrow independently rather than mirroring
+        installed_pandas (a fixed port artifact from v4's options.py, where
+        pandas+pyarrow were always imported as one coupled unit)."""
+        from snowflake.connector._common import extras as extras_module
+
+        assert isinstance(installed_pyarrow, bool)
+        assert installed_pyarrow == (not isinstance(extras_module.pyarrow, MissingOptionalDependency))
+
+    def test_module_like_object_is_expected_union_type(self):
+        from types import ModuleType
+
+        assert ModuleLikeObject == ModuleType | MissingOptionalDependency

@@ -663,7 +663,7 @@ def _bypass_deps():
     mock_pandas = MagicMock()
     mock_pandas.DataFrame = MagicMock
     with (
-        patch("snowflake.connector._internal.extras.check_dependency"),
+        patch("snowflake.connector._common.extras.check_dependency"),
         patch("snowflake.connector.pandas_tools.pandas", mock_pandas),
         patch("snowflake.connector.pandas_tools.sqlalchemy", MagicMock()),
     ):

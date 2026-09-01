@@ -10,6 +10,7 @@ import warnings
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+from ..._common.extras import check_dependency, pandas, pyarrow
 from ...constants import SessionParameterName, StatementParameterName
 from ...errors import Error, ErrorValue, InterfaceError, NotSupportedError, ProgrammingError
 from ..api_client.client_api import core_driver
@@ -25,7 +26,6 @@ from ..config_utils import create_config_setting
 from ..decorators import api_telemetry, backward_compatibility, pep249, snowpark_compat
 from ..errorcode import ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT, ER_INVALID_VALUE
 from ..errorhandler import ErrorHandlerMixin
-from ..extras import check_dependency, pandas, pyarrow
 from ..protobuf_gen.database_driver_v1_pb2 import BinaryDataPtr, ConfigSetting, QueryBindings, StatementHandle
 from ..text_utils import extract_values_clause
 from .decorators import requires_open
