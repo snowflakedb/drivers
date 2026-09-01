@@ -57,8 +57,9 @@ build-python = "bash -c 'cd drivers/python && ./build.sh'"
 build-core = "bash -c 'cd drivers/core && ./build.sh'"
 build-odbc = "bash -c 'cd drivers/odbc && ./build.sh'"
 build-jdbc = "bash -c 'cd drivers/jdbc && ./build.sh'"
+build-nodejs = "bash -c 'cd drivers/nodejs && ./build.sh'"
 build-wiremock = "bash -c 'cd wiremock && ./build.sh'"
-build = "bash -c 'cd drivers/python && ./build.sh && cd ../core && ./build.sh && cd ../odbc && ./build.sh && cd ../jdbc && ./build.sh && cd ../wiremock && ./build.sh'"
+build = "bash -c 'cd drivers/python && ./build.sh && cd ../core && ./build.sh && cd ../odbc && ./build.sh && cd ../jdbc && ./build.sh && cd ../nodejs && ./build.sh && cd ../wiremock && ./build.sh'"
 
 # Local (always builds before execution, including WireMock for tests that need it)
 # Preserves WireMock mappings for debugging
@@ -75,6 +76,10 @@ odbc-both-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python 
 jdbc-universal-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=jdbc --driver-type=universal --preserve-mappings -s -v"]
 jdbc-old-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=jdbc --driver-type=old --preserve-mappings -s -v"]
 jdbc-both-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=jdbc --driver-type=both --preserve-mappings -s -v"]
+# Node.js (universal + old SELECT only in v1; no PUT-GET/recorded-HTTP/cold-start yet)
+nodejs-universal-local = ["build-nodejs", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=nodejs --driver-type=universal --preserve-mappings -s -v"]
+nodejs-old-local = ["build-nodejs", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=nodejs --driver-type=old --preserve-mappings -s -v"]
+nodejs-both-local = ["build-nodejs", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=nodejs --driver-type=both --preserve-mappings -s -v"]
 
 # CI
 core = "python -m pytest {args:tests/} --driver=core --upload-to-benchstore -s -v"
@@ -87,6 +92,9 @@ odbc-both = "python -m pytest {args:tests/} --driver=odbc --driver-type=both --u
 jdbc-universal = "python -m pytest {args:tests/} --driver=jdbc --driver-type=universal --upload-to-benchstore -s -v"
 jdbc-old = "python -m pytest {args:tests/} --driver=jdbc --driver-type=old --upload-to-benchstore -s -v"
 jdbc-both = "python -m pytest {args:tests/} --driver=jdbc --driver-type=both --upload-to-benchstore -s -v"
+nodejs-universal = "python -m pytest {args:tests/} --driver=nodejs --driver-type=universal --upload-to-benchstore -s -v"
+nodejs-old = "python -m pytest {args:tests/} --driver=nodejs --driver-type=old --upload-to-benchstore -s -v"
+nodejs-both = "python -m pytest {args:tests/} --driver=nodejs --driver-type=both --upload-to-benchstore -s -v"
 
 # Clean all generated files and results
 clean = """python -c '

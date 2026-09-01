@@ -11,16 +11,38 @@ logger = logging.getLogger(__name__)
 MEMORY_LIMIT = "4096m"
 CPU_LIMIT = 2.0
 
+# nodejs's old driver (published snowflake-sdk) fully materializes wide SELECT
+# results as an array of per-row JS objects before returning. For the
+# 15-column TPCH LINEITEM case (1M rows incl. a free-text comment field) this
+# needs more heap than the shared default budgets for -- real demand exceeds
+# even a 3584MB --max-old-space-size ceiling under the standard 4096m
+# container (itself already a fix for V8's default heap-size heuristic
+# capping at ~half of MEMORY_LIMIT regardless of driver). Scoped to just this
+# (driver, driver_type) pair so every other driver/case keeps the standard
+# budget -- this is a nodejs-old-driver-specific memory need, not a general
+# one.
+MEMORY_LIMIT_OVERRIDES = {
+    ("nodejs", "old"): "8192m",
+}
 
-def get_resource_limits() -> dict:
+
+def get_memory_limit(driver: str = None, driver_type: str = None) -> str:
+    """
+    Get the Docker memory limit for a given driver/driver_type, falling back
+    to the shared default when no override applies.
+    """
+    return MEMORY_LIMIT_OVERRIDES.get((driver, driver_type), MEMORY_LIMIT)
+
+
+def get_resource_limits(driver: str = None, driver_type: str = None) -> dict:
     """
     Get the Docker resource limits used for performance test containers.
-    
+
     Returns:
         Dict with 'memory' and 'cpu' keys
     """
     return {
-        "memory": MEMORY_LIMIT,
+        "memory": get_memory_limit(driver, driver_type),
         "cpu": str(CPU_LIMIT),
     }
 
@@ -43,7 +65,7 @@ def create_perf_container(
     Create and configure a Docker container for performance testing.
     
     Args:
-        driver: Driver name (core, python, odbc, jdbc)
+        driver: Driver name (core, python, odbc, jdbc, nodejs)
         parameters_json: JSON string with connection parameters
         sql_command: SQL command to execute
         test_name: Name of the test
@@ -65,7 +87,7 @@ def create_perf_container(
         image_name = f"{driver}-perf-driver-{driver_type}:latest"
     
     container_kwargs = {
-        "mem_limit": MEMORY_LIMIT,
+        "mem_limit": get_memory_limit(driver, driver_type),
         "nano_cpus": int(CPU_LIMIT * 1_000_000_000)  # Convert to nano CPUs
     }
     

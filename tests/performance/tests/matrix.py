@@ -29,7 +29,7 @@ VARIANTS: dict[str, tuple[Variant, ...]] = {
 }
 
 
-def cases(sizes, suffixes, *, infix="", types=None):
+def cases(sizes, suffixes, *, infix="", types=None, id_suffix=""):
     """Pytest params marked with supported_drivers.
 
     Without `types`: (row_count, name, fetch_mode, bind_mode).
@@ -37,6 +37,12 @@ def cases(sizes, suffixes, *, infix="", types=None):
 
     `infix` is inserted between the size label and the variant suffix
     (e.g. infix="_arrow" → `10k_arrow_fetchall`).
+
+    `id_suffix` is appended only to the pytest node id, not to `name` (which
+    flows into `test_name` for BenchStore). Use it to keep ids unique when a
+    driver reuses an existing suffix in a separate `cases()` call — e.g. a
+    driver added later that shares the `""` suffix with drivers already in
+    another `suffixes` dict would otherwise silently collide on id with them.
     """
     unique_suffixes = list(dict.fromkeys(s for ss in suffixes.values() for s in ss))
     type_keys = types if types is not None else (None,)
@@ -58,7 +64,7 @@ def cases(sizes, suffixes, *, infix="", types=None):
                 params.append(
                     pytest.param(
                         *values,
-                        id=name,
+                        id=f"{name}{id_suffix}",
                         marks=pytest.mark.supported_drivers(*_drivers(suffix, suffixes)),
                     )
                 )

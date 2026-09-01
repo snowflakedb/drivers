@@ -61,7 +61,7 @@ def pytest_addoption(parser):
         "--driver",
         action="store",
         default="core",
-        help="Driver to test: core, python, odbc, jdbc",
+        help="Driver to test: core, python, odbc, jdbc, nodejs",
     )
     parser.addoption(
         "--driver-type",

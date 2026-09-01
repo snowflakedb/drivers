@@ -40,6 +40,12 @@ _TEMPLATES = {
 
 TYPE_KEYS = tuple(_TEMPLATES)
 
+# nodejs_bridge's Arrow decoder (column_reader.rs) has no TIME/TIMESTAMP_NTZ/
+# TIMESTAMP_TZ logicalType support yet (SNOW-3946933/SNOW-3965562 family is
+# landing decoders type-by-type). Keep this in one place so it stays correct
+# as new decoders land.
+NODEJS_UNSUPPORTED_TYPES = frozenset({"time", "timestamp_ntz", "timestamp_tz"})
+
 
 def get_sql(type_key: str, n: int, *, ordered: bool = False) -> str:
     template = _TEMPLATES.get(type_key)

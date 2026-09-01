@@ -273,7 +273,7 @@ def _upload_to_benchstore(
     jenkins_node = os.getenv("JENKINS_NODE_LABEL", "UNKNOWN")
     pr_number = os.getenv("CHANGE_ID", "LOCAL")
 
-    resource_limits = get_resource_limits()
+    resource_limits = get_resource_limits(driver, driver_type)
     node_info = collect_node_info()
 
     driver_tag_value = f"{driver}_old" if driver_type == "old" else driver

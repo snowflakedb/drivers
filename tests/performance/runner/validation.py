@@ -49,7 +49,16 @@ def verify_results(
             lines = f.readlines()
             if len(lines) <= 1:
                 raise RuntimeError(f"Result file {latest_file} is empty or missing data")
-            has_valid_header = "timestamp" in lines[0] and ("query_s" in lines[0] or "e2e_s" in lines[0])
+            # nodejs has no query_s: its execute() API (old snowflake-sdk and the
+            # new bridge alike) resolves once fully drained, with no exposed
+            # boundary between "query submitted" and "rows fetched" (see
+            # drivers/nodejs/app/query_execution.js) -- fetch_s is its sole
+            # per-iteration timing signal. Every other driver's SELECT header
+            # already includes query_s alongside fetch_s, so accepting fetch_s
+            # here doesn't loosen validation for them.
+            has_valid_header = "timestamp" in lines[0] and (
+                "query_s" in lines[0] or "e2e_s" in lines[0] or "fetch_s" in lines[0]
+            )
             if not has_valid_header:
                 raise RuntimeError(f"Invalid CSV header in {latest_file}")
             # +1 for header line

@@ -15,6 +15,13 @@ import groovy.transform.Field
     "tests/test_select_1M.py::test_select_1M_recorded_http[number_1M_arrow]",
     "tests/test_select_1M.py::test_select_1M_recorded_http[date_1M_arrow]",
 ]
+@Field def NODEJS_FAST_TEST_NODES = [
+    "tests/test_select_1M.py::test_select_1M[string_1M_arrow_nodejs]",
+    "tests/test_select_1M.py::test_select_1M[number_1M_arrow_nodejs]",
+    "tests/test_select_1M.py::test_select_1M[date_1M_arrow_nodejs]",
+    "tests/test_select_1M.py::test_select_1M[boolean_1M_arrow_nodejs]",
+    "tests/test_select_1M.py::test_select_1M[15columns_1M_arrow_nodejs]",
+]
 @Field def ACCEPT_PERF_LABEL = 'ACCEPT_PERFORMANCE_CHANGES'
 @Field def REGRESSION_STATUS_CONTEXT = 'performance/regression'
 @Field def REGRESSION_EXIT_CODE = 77
@@ -30,6 +37,7 @@ import groovy.transform.Field
 @Field def runPython = false
 @Field def runOdbc = false
 @Field def runJdbc = false
+@Field def runNodejs = false
 @Field def skipAll = false
 
 def isMergeQueue() {
@@ -230,6 +238,7 @@ def detectChanges() {
         runPython = true
         runOdbc = true
         runJdbc = true
+        runNodejs = true
         return
     }
 
@@ -261,12 +270,16 @@ def detectChanges() {
     // JDBC-specific changes (the JNI bridge + the perf front-end)
     def jdbcPatterns = ['jdbc/', 'jdbc_bridge/']
 
+    // Node.js-specific changes (the napi bridge + the consumer package + the perf front-end)
+    def nodejsPatterns = ['nodejs/', 'nodejs_bridge/']
+
     for (file in changedFiles) {
         if (corePatterns.any { file.startsWith(it) }) {
             runCore = true
             runPython = true
             runOdbc = true
             runJdbc = true
+            runNodejs = true
             break
         }
         if (perfPatterns.any { file.startsWith(it) }) {
@@ -274,6 +287,7 @@ def detectChanges() {
             runPython = true
             runOdbc = true
             runJdbc = true
+            runNodejs = true
             break
         }
         if (pythonPatterns.any { file.startsWith(it) }) {
@@ -285,9 +299,12 @@ def detectChanges() {
         if (jdbcPatterns.any { file.startsWith(it) }) {
             runJdbc = true
         }
+        if (nodejsPatterns.any { file.startsWith(it) }) {
+            runNodejs = true
+        }
     }
 
-    skipAll = !runCore && !runPython && !runOdbc && !runJdbc
+    skipAll = !runCore && !runPython && !runOdbc && !runJdbc && !runNodejs
 
     echo ""
     echo "=== Performance Change Detection ==="
@@ -295,6 +312,7 @@ def detectChanges() {
     echo "  Run Python: ${runPython}"
     echo "  Run ODBC:   ${runOdbc}"
     echo "  Run JDBC:   ${runJdbc}"
+    echo "  Run Node.js:${runNodejs}"
     echo "  Skip all:   ${skipAll}"
     echo "====================================="
 }
@@ -530,6 +548,85 @@ pipeline {
                                                     postRegressionStatus('FAILURE', 'ODBC tests failed before regression check could complete')
                                                     error("ODBC tests failed with exit code ${odbc.exit}")
                                                 }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                stage('Node.js') {
+                    when {
+                        expression { runNodejs }
+                    }
+                    agent { label 'drivers-perf-regular-memory-node-snowos' }
+                    environment {
+                        JENKINS_NODE_LABEL = 'drivers-perf-regular-memory-node-snowos'
+                    }
+                    stages {
+                        stage('Setup - Node.js') {
+                            steps {
+                                setupVenv()
+                            }
+                        }
+                        stage('Build - Node.js') {
+                            steps {
+                                withCredentials([
+                                    usernamePassword(
+                                        credentialsId: '063fc85b-62a6-4181-9d72-873b43488411',
+                                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                                    )
+                                ]) {
+                                    sh 'tests/performance/drivers/nodejs/build.sh'
+                                }
+                            }
+                        }
+                        stage('Test - Node.js') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                                ]) {
+                                    sh './scripts/decode_secrets.sh'
+                                }
+                                dir('tests/performance') {
+                                    withCredentials([
+                                        file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
+                                    ]) {
+                                        script {
+                                            // v1: real network only, no WireMock/recorded_http support yet,
+                                            // so no regression-check here (that path requires the
+                                            // deterministic recorded_http tests python/odbc/jdbc use).
+                                            //
+                                            // Runs a curated subset of test_select_1M.py (NODEJS_FAST_TEST_NODES),
+                                            // mirroring REGRESSION_FAST_TEST_NODES' role for python/odbc/jdbc.
+                                            // Full-matrix nodejs runs happen via the separate manual
+                                            // universal-driver-performance-tests job (plain Jenkinsfile).
+                                            //
+                                            // PRs/merge-queue just get a smoke test; main-branch pushes
+                                            // upload a real baseline so BenchDash has data to chart.
+                                            if (env.CHANGE_ID == null) {
+                                                sh """
+                                                    source .venv/bin/activate
+                                                    export CLOUD=aws
+                                                    python -m hatch run -- python -m pytest \
+                                                        ${NODEJS_FAST_TEST_NODES.join(' ')} \
+                                                        --driver=nodejs --driver-type=universal \
+                                                        --upload-to-benchstore \
+                                                        -s -v
+                                                """
+                                            } else {
+                                                sh """
+                                                    source .venv/bin/activate
+                                                    export CLOUD=aws
+                                                    python -m hatch run -- python -m pytest \
+                                                        ${NODEJS_FAST_TEST_NODES.join(' ')} \
+                                                        --driver=nodejs --driver-type=universal \
+                                                        --iterations=1 \
+                                                        -s -v
+                                                """
                                             }
                                         }
                                     }
