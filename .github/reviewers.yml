@@ -53,9 +53,12 @@
 #      label.
 #   4. PR author, already-requested reviewers, and anyone whose
 #      Slack status currently signals OOO are removed (the OOO
-#      filter no-ops if it would empty the pool, so a PR is never
-#      left unassigned). The `notify` opt-out does NOT affect the
-#      pool — every declared reviewer remains assignable.
+#      filter no-ops if it would empty the pool). If the remaining
+#      label-matched pool is empty — typically a one-person domain
+#      rule matching the PR author — the pick falls back to the
+#      full roster so the PR is not left unassigned. The `notify`
+#      opt-out does NOT affect the pool — every declared reviewer
+#      remains assignable.
 #   5. One reviewer is picked at random.
 #   6. The picked reviewer is requested + assigned via the GitHub
 #      REST API. Then, if and only if their `notify` pref is true
@@ -135,3 +138,4 @@ rules:
   # result chunks, and file-manager (stage PUT/GET) changes.
   transport:
     - bartosz-oler_snow
+    - patryk-czajka_snow

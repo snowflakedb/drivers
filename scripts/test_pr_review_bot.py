@@ -50,6 +50,68 @@ class FormatPrChangeStatsTests(unittest.TestCase):
         )
 
 
+class _NeverOoo:
+    """Stub Slack-status lookup used by assign-pool tests."""
+
+    def is_ooo(self, login: str) -> bool:
+        return False
+
+
+class PickAssignReviewerTests(unittest.TestCase):
+    def test_uses_label_pool_when_someone_other_than_the_author_is_eligible(
+        self,
+    ) -> None:
+        picked = bot._pick_assign_reviewer(
+            candidates=["alice_snow", "bob_snow"],
+            full_pool=["alice_snow", "bob_snow", "carol_snow"],
+            excluded=["alice_snow"],
+            names=_NeverOoo(),
+        )
+        self.assertEqual(picked, "bob_snow")
+
+    def test_falls_back_to_full_pool_when_label_pool_is_only_the_author(
+        self,
+    ) -> None:
+        # PR #1558: transport rule is a one-person pool matching the author.
+        picked = bot._pick_assign_reviewer(
+            candidates=["bartosz-oler_snow"],
+            full_pool=["bartosz-oler_snow", "alice_snow", "bob_snow"],
+            excluded=["bartosz-oler_snow"],
+            names=_NeverOoo(),
+        )
+        self.assertIn(picked, {"alice_snow", "bob_snow"})
+
+    def test_does_not_assign_the_author_from_the_fallback_pool(self) -> None:
+        picked = bot._pick_assign_reviewer(
+            candidates=["bartosz-oler_snow"],
+            full_pool=["bartosz-oler_snow", "alice_snow"],
+            excluded=["bartosz-oler_snow"],
+            names=_NeverOoo(),
+        )
+        self.assertEqual(picked, "alice_snow")
+
+    def test_returns_none_when_full_pool_is_only_the_author(self) -> None:
+        picked = bot._pick_assign_reviewer(
+            candidates=["bartosz-oler_snow"],
+            full_pool=["bartosz-oler_snow"],
+            excluded=["bartosz-oler_snow"],
+            names=_NeverOoo(),
+        )
+        self.assertIsNone(picked)
+
+    def test_does_not_retry_when_candidates_already_are_the_full_pool(
+        self,
+    ) -> None:
+        roster = ["bartosz-oler_snow"]
+        picked = bot._pick_assign_reviewer(
+            candidates=roster,
+            full_pool=roster,
+            excluded=["bartosz-oler_snow"],
+            names=_NeverOoo(),
+        )
+        self.assertIsNone(picked)
+
+
 class AssignSlackMessageTests(unittest.TestCase):
     def test_link_line_includes_backtick_stats_suffix(self) -> None:
         pr = {

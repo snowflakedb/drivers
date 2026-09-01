@@ -29,7 +29,10 @@ Subcommands
     straight from the PR payload — no extra API call is required.
 
     The PR author and any user already requested for review are
-    excluded from the pool. Per-user Slack opt-outs (``notify`` /
+    excluded from the pool. If that leaves the *label-matched* pool
+    empty (the usual case when a one-person domain rule matches the
+    PR author), the pick widens to the full roster so the PR is not
+    left unassigned. Per-user Slack opt-outs (``notify`` /
     ``remind``) deliberately do *not* prune the pool — every declared
     reviewer is always assignable; ``notify: false`` only suppresses
     the channel announcement after the GitHub assignment has been
@@ -1237,6 +1240,36 @@ def _filter_ooo(
     return available
 
 
+def _pick_assign_reviewer(
+    candidates: list[str],
+    full_pool: list[str],
+    excluded: Iterable[str],
+    names: ReviewerDisplay,
+) -> str | None:
+    """Pick from *candidates*, widening to *full_pool* if needed.
+
+    The label-matched pool is preferred. If every remaining candidate
+    is the PR author or already requested, a naive pick returns
+    ``None`` and leaves the PR unassigned — which is what happens
+    when a one-person domain rule (e.g. ``transport``) matches the
+    PR author. Falling back to the full roster matches the OOO
+    filter's "never leave unassigned" contract.
+    """
+    excluded_list = list(excluded)
+    reviewer = _pick_reviewer(_filter_ooo(candidates, names), excluded_list)
+    if reviewer:
+        return reviewer
+    # Unlabeled PRs already use the full roster; don't retry it.
+    if candidates == full_pool:
+        return None
+    log.info(
+        "No eligible reviewer in the label-matched pool after excluding "
+        "%s; falling back to the full reviewer roster.",
+        ", ".join(excluded_list) or "(none)",
+    )
+    return _pick_reviewer(_filter_ooo(full_pool, names), excluded_list)
+
+
 def _skip_assign(reason: str) -> int:
     log.info("%s", reason)
     set_gh_output("skip", "true")
@@ -1385,18 +1418,21 @@ def cmd_assign(args: argparse.Namespace) -> int:
     # below for assign mode, and the digest filter in `cmd_remind`
     # for the reminder pass).
 
-    # Build the display/OOO resolver early so we can pre-filter the
-    # candidate pool by Slack status. The resolver caches per-login
+    # Build the display/OOO resolver early so the pick helper can
+    # pre-filter by Slack status. The resolver caches per-login
     # lookups, so reusing it later for the picked reviewer's mention
-    # doesn't re-hit Slack.
+    # doesn't re-hit Slack. `_pick_assign_reviewer` also widens to
+    # the full roster when the label-matched pool is empty after
+    # excluding the author (one-person domain rule vs. PR author).
     names = ReviewerDisplay(
         repo=repo,
         slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
     )
-    available_candidates = _filter_ooo(candidates, names)
-
-    reviewer = _pick_reviewer(
-        available_candidates, excluded=[author, *already_requested]
+    reviewer = _pick_assign_reviewer(
+        candidates,
+        full_pool,
+        excluded=[author, *already_requested],
+        names=names,
     )
     if not reviewer:
         return _skip_assign(
