@@ -32,11 +32,21 @@ class TestConfig:
         self.setup_queries_json = os.getenv("SETUP_QUERIES")
 
         self.fetch_mode = os.getenv("FETCH_MODE", "fetchmany")
-        if self.fetch_mode not in ("fetchmany", "fetchone", "fetchall", "pandas", "arrow_batches"):
+        if self.fetch_mode not in (
+            "fetchmany",
+            "fetchone",
+            "fetchall",
+            "pandas",
+            "arrow_batches",
+            "aio",
+        ):
             print(
                 f"ERROR: Invalid fetch mode '{self.fetch_mode}'. "
-                "Supported: fetchmany, fetchone, fetchall, pandas, arrow_batches"
+                "Supported: fetchmany, fetchone, fetchall, pandas, arrow_batches, aio"
             )
+            sys.exit(1)
+        if self.fetch_mode == "aio" and self.driver_type != "universal":
+            print("ERROR: FETCH_MODE=aio requires DRIVER_TYPE=universal")
             sys.exit(1)
 
         try:

@@ -2,7 +2,14 @@ import sys
 import os
 
 from config import TestConfig
-from connection import create_connection, get_server_version, execute_setup_queries
+from connection import (
+    close_connection,
+    create_aio_connection,
+    create_connection,
+    execute_setup_queries,
+    get_server_version,
+)
+from concurrent_aio_execution import execute_concurrent_aio_test
 from concurrent_execution import execute_concurrent_test
 from put_execution import execute_put_get_test
 from query_execution import execute_fetch_test
@@ -96,7 +103,10 @@ def main():
     setup_queries = config.get_setup_queries()
 
     try:
-        conn, driver_version = create_connection(config.driver_type, conn_params)
+        if config.fetch_mode == "aio":
+            conn, driver_version = create_aio_connection(conn_params)
+        else:
+            conn, driver_version = create_connection(config.driver_type, conn_params)
     except Exception as e:
         print(f"❌ Connection failed: {e}")
         sys.exit(1)
@@ -107,20 +117,29 @@ def main():
         execute_setup_queries(cursor, setup_queries)
     except Exception as e:
         print(f"❌ Setup query failed: {e}")
-        cursor.close()
-        conn.close()
+        close_connection(cursor, conn)
         sys.exit(1)
 
     try:
         if config.test_type == TestType.CONCURRENT:
-            results, memory_timeline = execute_concurrent_test(
-                conn,
-                config.sql_command,
-                config.warmup_iterations,
-                config.iterations,
-                config.worker_count,
-                config.fetch_mode,
-            )
+            if config.fetch_mode == "aio":
+                results, memory_timeline = execute_concurrent_aio_test(
+                    conn,
+                    config.sql_command,
+                    config.warmup_iterations,
+                    config.iterations,
+                    config.worker_count,
+                    config.fetch_mode,
+                )
+            else:
+                results, memory_timeline = execute_concurrent_test(
+                    conn,
+                    config.sql_command,
+                    config.warmup_iterations,
+                    config.iterations,
+                    config.worker_count,
+                    config.fetch_mode,
+                )
         else:
             results, memory_timeline = execute_test(
                 config.test_type,
@@ -132,16 +151,14 @@ def main():
             )
     except Exception as e:
         print(f"❌ Test execution failed: {e}")
-        cursor.close()
-        conn.close()
+        close_connection(cursor, conn)
         sys.exit(1)
 
     if os.getenv("WIREMOCK_REPLAY") == "true":
         server_version = "N/A"
     else:
         server_version = get_server_version(cursor)
-    cursor.close()
-    conn.close()
+    close_connection(cursor, conn)
 
     write_run_metadata(config.driver_type, driver_version, server_version or "UNKNOWN")
 

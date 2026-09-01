@@ -256,7 +256,10 @@ def test_put_files_12mx100(perf_test):
   CHAR baselines keep historical bind-then-`ROW_ARRAY_SIZE` order; default mode sets
   bulk-fetch attrs before `SQLBindCol`.
 - **Concurrent tests (Python)**: pass `test_type=PerfTestType.CONCURRENT` and
-  `worker_count=N`. Burst wall time is written as `query_s` / `fetch_s`.
+  `worker_count=N`. Sync tests use `fetch_mode="fetchmany"` (thread pool on one
+  connection). UD-only aio tests use `fetch_mode="aio"` (`snowflake.connector.aio`
+  with `asyncio.gather` on one connection); mark them `@pytest.mark.universal_only`.
+  Burst wall time is written as `query_s` / `fetch_s`.
   `throughput_rows_s` is total rows divided by burst wall.
 
 ### Test Configuration Priority
@@ -384,7 +387,7 @@ All drivers receive their configuration through **environment variables**. The r
 | `DRIVER_TYPE`   | String     | `"universal"` or `"old"`                                                                                                                 | `"universal"` |
 | `TEST_TYPE`     | String     | `"select"`, `"put_get"`, `"cold_start"`, or `"concurrent"`                                                                               | `"select"`    |
 | `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, ARROW format is prepended. For PUT/GET tests, `USE DATABASE` is prepended.             | `[]`          |
-| `FETCH_MODE`    | String     | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, `"pandas"`, or `"arrow_batches"` (Python driver only) | `"fetchmany"` |
+| `FETCH_MODE`    | String     | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, `"pandas"`, `"arrow_batches"`, or `"aio"` (concurrent UD only) | `"fetchmany"` |
 | `BIND_MODE`     | String     | ODBC column bind target: `"char"` (`SQL_C_CHAR`) or `"default"` (`SQL_C_DEFAULT`). Ignored by other drivers.                             | `"char"`      |
 | `WORKER_COUNT`  | Integer    | Concurrent workers for `TEST_TYPE=concurrent`. One shared connection, one statement & resultset per thread.                              | `"1"`         |
 
