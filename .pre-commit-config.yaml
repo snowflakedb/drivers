@@ -128,6 +128,13 @@ repos:
         additional_dependencies: ['pyyaml']
         files: ^(odbc_tests|python|jdbc|nodejs)/BehaviorDifferences\.yaml$
         language: python
+    -   id: mirror-config-consistency
+        name: Mirror config generation consistency
+        description: Ensure committed mirror infrastructure matches its generator
+        entry: python3 -m unittest ci/mirroring/scripts/test_generate_mirror_config.py
+        pass_filenames: false
+        files: ^(ci/mirroring/|\.github/workflows/(mirror|mirror-inbound|close-imported-pr)\.yml$)
+        language: system
     -   id: tests-format-validator
         name: Tests format validator
         description: Validate that test implementations match Gherkin feature scenarios

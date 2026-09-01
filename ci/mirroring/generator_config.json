@@ -1,0 +1,13 @@
+{
+  "REPO_NAME": "drivers",
+  "MIRROR_REPO_NAME": "",
+  "EXTRA_EXCLUDED_PATHS": "",
+  "EXTRA_EXCLUDED_PATH_OVERRIDES": "",
+  "EXTRA_IMPORT_EXCLUDED_PATHS": "",
+  "EXTRA_IMPORT_OVERRIDES": ".github/workflows/pre-commit.yml,.github/workflows/validations.yml,.github/actions/cargo-cache/action.yml,.github/workflows/mirror-test-rust-core.yml,.github/workflows/mirror-test-odbc.yml,.github/workflows/mirror-test-python.yml,.github/actions/setup-odbc-build-env/action.yml",
+  "MAIN_BRANCH": "main",
+  "IS_SOURCE_OF_TRUTH_REPO": "true",
+  "INTERNAL_TOKEN_NAME": "DRIVER_MIRROR_TOKEN",
+  "SLACK_CHANNEL_ID": "C092X1UAAMB",
+  "SLACK_ONCALL_SUBTEAM_ID": "S077RA1UXAS"
+}
