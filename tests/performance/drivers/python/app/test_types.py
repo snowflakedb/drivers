@@ -7,4 +7,5 @@ class TestType(str, Enum):
     SELECT = "select"
     PUT_GET = "put_get"
     COLD_START = "cold_start"
+    CONCURRENT = "concurrent"
 

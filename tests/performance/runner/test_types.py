@@ -9,3 +9,4 @@ class PerfTestType(str, Enum):
     SELECT_RECORDED_HTTP = "select_recorded_http"
     COLD_START = "cold_start"
     COLD_START_RECORDED_HTTP = "cold_start_recorded_http"
+    CONCURRENT = "concurrent"

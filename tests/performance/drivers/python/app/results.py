@@ -49,10 +49,14 @@ def write_csv_results(results, test_name, driver_type, test_type: TestType = Tes
                 "wrapper_time_s",
             ]
             has_perf = any(k in results[0] for k in perf_metric_keys) if results else False
+            concurrent_keys = ["worker_count", "throughput_rows_s"]
+            has_concurrent = any(k in results[0] for k in concurrent_keys) if results else False
             base_fields = ["timestamp_ms", "query_s", "fetch_s"]
             if has_perf:
                 base_fields += perf_metric_keys
             base_fields += ["row_count", "cpu_time_s", "peak_rss_mb"]
+            if has_concurrent:
+                base_fields += concurrent_keys
 
             writer = csv.DictWriter(f, fieldnames=base_fields)
             writer.writeheader()
@@ -68,6 +72,9 @@ def write_csv_results(results, test_name, driver_type, test_type: TestType = Tes
                 if has_perf:
                     for key in perf_metric_keys:
                         row[key] = f"{result.get(key, 0.0):.9f}"
+                if has_concurrent:
+                    row["worker_count"] = result["worker_count"]
+                    row["throughput_rows_s"] = f"{result['throughput_rows_s']:.1f}"
                 writer.writerow(row)
     
     return filename

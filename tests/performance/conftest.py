@@ -349,7 +349,7 @@ def _prepare_setup_queries(test_type: PerfTestType, parameters_json: str, setup_
         List of setup queries with test-type-specific prefixes
     """
     match test_type:
-        case PerfTestType.SELECT | PerfTestType.SELECT_RECORDED_HTTP:
+        case PerfTestType.SELECT | PerfTestType.SELECT_RECORDED_HTTP | PerfTestType.CONCURRENT:
             # SELECT tests: always use ARROW format
             arrow_query = "alter session set query_result_format = 'ARROW'"
             return [arrow_query] + (setup_queries or [])
@@ -405,9 +405,12 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_download_dir: str = None,  # Local directory for downloaded files
         fetch_mode: str = "fetchmany",  # Cursor fetch strategy for SELECT tests
         bind_mode: str = "char",  # ODBC: "char" (SQL_C_CHAR) or "default" (SQL_C_DEFAULT)
+        worker_count: int = 1,
     ):
         if bind_mode not in ("char", "default"):
             raise ValueError(f"Invalid bind_mode '{bind_mode}'. Supported: char, default")
+        if worker_count < 1:
+            raise ValueError(f"worker_count must be >= 1, got {worker_count}")
 
         # Prepare test parameters
         if test_name is None:
@@ -447,6 +450,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 is_comparison=is_comparison,
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
+                worker_count=worker_count,
             )
 
         # Performance history comparison
@@ -525,6 +529,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         is_comparison: bool,
         fetch_mode: str = "fetchmany",
         bind_mode: str = "char",
+        worker_count: int = 1,
     ):
         """Run E2E test (real Snowflake connection)."""
         if is_comparison:
@@ -541,6 +546,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 s3_files_dir=s3_files_dir,
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
+                worker_count=worker_count,
             )
         else:
             return run_performance_test(
@@ -558,6 +564,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 s3_files_dir=s3_files_dir,
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
+                worker_count=worker_count,
             )
     
     def _compare_local_results(result, test_name, driver, driver_type, is_comparison, results_dir):

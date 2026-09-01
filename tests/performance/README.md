@@ -255,6 +255,9 @@ def test_put_files_12mx100(perf_test):
   `_default` suffix so BenchDash charts them separately. Invalid `BIND_MODE` values fail fast.
   CHAR baselines keep historical bind-then-`ROW_ARRAY_SIZE` order; default mode sets
   bulk-fetch attrs before `SQLBindCol`.
+- **Concurrent tests (Python)**: pass `test_type=PerfTestType.CONCURRENT` and
+  `worker_count=N`. Burst wall time is written as `query_s` / `fetch_s`.
+  `throughput_rows_s` is total rows divided by burst wall.
 
 ### Test Configuration Priority
 
@@ -301,9 +304,9 @@ hatch run python-universal-local tests/test_select_1M.py::test_select_1M_recorde
 
 ### WireMock-Specific Parameters
 
-| Parameter | Description | Use Case |
-|-----------|-------------|----------|
-| `--preserve-mappings` | Keep mappings after test completion | Debugging or reusing mappings later. Enabled by default in local runs. |
+| Parameter                | Description                                      | Use Case                                                                                                       |
+|--------------------------|--------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
+| `--preserve-mappings`    | Keep mappings after test completion              | Debugging or reusing mappings later. Enabled by default in local runs.                                         |
 | `--reuse-mappings <dir>` | Skip recording phase and reuse existing mappings | Faster iteration when testing against the same recorded traffic (e.g., `--reuse-mappings run_20260115_120000`) |
 
 **Note**: Mappings are stored in `mappings/<run_id>/<test_name>/` and can be found by checking the test output for the run ID.
@@ -366,23 +369,24 @@ All drivers receive their configuration through **environment variables**. The r
 
 ### Required Environment Variables
 
-| Variable | Type | Description | Example |
-|----------|------|-------------|---------|
-| `PARAMETERS_JSON` | JSON string | Snowflake connection parameters | See below |
-| `SQL_COMMAND` | String | SQL query to execute | `"SELECT * FROM table LIMIT 1000000"` |
-| `TEST_NAME` | String | Test and metric name | `"select_string_1000000_rows"` |
-| `PERF_ITERATIONS` | Integer | Number of test iterations | `"3"` |
-| `PERF_WARMUP_ITERATIONS` | Integer | Number of warmup iterations | `"1"` |
+| Variable                 | Type        | Description                     | Example                               |
+|--------------------------|-------------|---------------------------------|---------------------------------------|
+| `PARAMETERS_JSON`        | JSON string | Snowflake connection parameters | See below                             |
+| `SQL_COMMAND`            | String      | SQL query to execute            | `"SELECT * FROM table LIMIT 1000000"` |
+| `TEST_NAME`              | String      | Test and metric name            | `"select_string_1000000_rows"`        |
+| `PERF_ITERATIONS`        | Integer     | Number of test iterations       | `"3"`                                 |
+| `PERF_WARMUP_ITERATIONS` | Integer     | Number of warmup iterations     | `"1"`                                 |
 
 ### Optional Environment Variables
 
-| Variable | Type | Description | Default |
-|----------|------|-------------|---------|
-| `DRIVER_TYPE` | String | `"universal"` or `"old"` | `"universal"` |
-| `TEST_TYPE` | String | `"select"` or `"put_get"` | `"select"` |
-| `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, ARROW format is prepended. For PUT/GET tests, `USE DATABASE` is prepended. | `[]` |
-| `FETCH_MODE` | String | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, `"pandas"`, or `"arrow_batches"` (Python driver only) | `"fetchmany"` |
-| `BIND_MODE` | String | ODBC column bind target: `"char"` (`SQL_C_CHAR`) or `"default"` (`SQL_C_DEFAULT`). Ignored by other drivers. | `"char"` |
+| Variable        | Type       | Description                                                                                                                              | Default       |
+|-----------------|------------|------------------------------------------------------------------------------------------------------------------------------------------|---------------|
+| `DRIVER_TYPE`   | String     | `"universal"` or `"old"`                                                                                                                 | `"universal"` |
+| `TEST_TYPE`     | String     | `"select"`, `"put_get"`, `"cold_start"`, or `"concurrent"`                                                                               | `"select"`    |
+| `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, ARROW format is prepended. For PUT/GET tests, `USE DATABASE` is prepended.             | `[]`          |
+| `FETCH_MODE`    | String     | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, `"pandas"`, or `"arrow_batches"` (Python driver only) | `"fetchmany"` |
+| `BIND_MODE`     | String     | ODBC column bind target: `"char"` (`SQL_C_CHAR`) or `"default"` (`SQL_C_DEFAULT`). Ignored by other drivers.                             | `"char"`      |
+| `WORKER_COUNT`  | Integer    | Concurrent workers for `TEST_TYPE=concurrent`. One shared connection, one statement & resultset per thread.                              | `"1"`         |
 
 ### PARAMETERS_JSON Format
 
