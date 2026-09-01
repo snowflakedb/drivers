@@ -22,7 +22,14 @@ SUFFIXES = {
     "core": ("",),
 }
 
+# Separate from SUFFIXES: nodejs has no WireMock/recorded_http support, and
+# this dict also feeds RECORDED_CASES below, so nodejs must never enter it.
+NODEJS_SUFFIXES = {"nodejs": ("",)}
+
 CASES = cases(SIZES, SUFFIXES, infix="_arrow", types=("15columns",))
+NODEJS_CASES = cases(
+    SIZES, NODEJS_SUFFIXES, infix="_arrow", types=("15columns",), id_suffix="_nodejs"
+)
 
 ORDERED_CASES = cases(
     SIZES, SUFFIXES, infix="_ordered_arrow", types=("string", "number")
@@ -35,7 +42,7 @@ RECORDED_CASES = cases(
 
 @pytest.mark.iterations(2)
 @pytest.mark.warmup_iterations(0)
-@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", CASES)
+@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", CASES + NODEJS_CASES)
 def test_select_50M(perf_test, row_count, dtype, name, fetch_mode, bind_mode):
     perf_test(
         sql_command=get_sql(dtype, row_count),

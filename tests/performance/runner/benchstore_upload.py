@@ -253,7 +253,7 @@ def parse_csv_filename(filename: str) -> Optional[Dict[str, str]]:
     Parse performance test CSV filename.
     
     Expected formats: 
-      - {test_name}_{driver}_{driver_type}_{timestamp}.csv (python, odbc, jdbc)
+      - {test_name}_{driver}_{driver_type}_{timestamp}.csv (python, odbc, jdbc, nodejs)
       - {test_name}_{driver}_{timestamp}.csv (core only has universal)
     Examples:
       - fetch_string_1000000_rows_odbc_universal_1761569440.csv
@@ -265,8 +265,8 @@ def parse_csv_filename(filename: str) -> Optional[Dict[str, str]]:
     Returns:
         Dict with test_name, driver, driver_type, timestamp or None if parsing fails
     """
-    # First try pattern with driver_type (python, odbc, jdbc)
-    pattern_with_type = r'(.+)_(python|odbc|jdbc)_(universal|old)_(\d+)\.csv'
+    # First try pattern with driver_type (python, odbc, jdbc, nodejs)
+    pattern_with_type = r'(.+)_(python|odbc|jdbc|nodejs)_(universal|old)_(\d+)\.csv'
     match = re.match(pattern_with_type, filename)
     
     if match:
@@ -365,7 +365,7 @@ def parse_memory_timeline_filename(filename: str) -> Optional[Dict[str, str]]:
     Returns:
         Dict with test_name, driver, driver_type, timestamp or None if not a timeline file
     """
-    pattern_with_type = r'memory_timeline_(.+)_(python|odbc|jdbc)_(universal|old)_(\d+)\.csv'
+    pattern_with_type = r'memory_timeline_(.+)_(python|odbc|jdbc|nodejs)_(universal|old)_(\d+)\.csv'
     match = re.match(pattern_with_type, filename)
     if match:
         return {
@@ -520,19 +520,21 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
         csv_groups[group_key].append((csv_file, file_info))
     
     total_uploaded = 0
-    
-    # Get resource limits from container configuration
-    resource_limits = get_resource_limits()
-    docker_memory = resource_limits['memory']
-    docker_cpu = resource_limits['cpu']
-    
+
     jenkins_node = os.getenv('JENKINS_NODE_LABEL', 'UNKNOWN')
     trigger_type = os.getenv('TRIGGER_TYPE', 'LOCAL' if is_local else 'unknown')
-    
+
     # Collect host hardware info for node equivalence tracking
     node_info = collect_node_info()
-    
+
     for (driver, driver_type), csv_file_list in csv_groups.items():
+        # Resource limits can vary per (driver, driver_type) -- see
+        # runner/container.py's MEMORY_LIMIT_OVERRIDES -- so compute them
+        # per group rather than once for the whole upload.
+        resource_limits = get_resource_limits(driver, driver_type)
+        docker_memory = resource_limits['memory']
+        docker_cpu = resource_limits['cpu']
+
         # Get versions from run metadata
         metadata_key = (driver, driver_type)
         if metadata_key not in run_metadata:

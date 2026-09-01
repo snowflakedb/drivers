@@ -21,12 +21,18 @@ SUFFIXES = {
     "core": ("",),
 }
 
+# Separate from SUFFIXES: nodejs has no WireMock/recorded_http support, and
+# CASES below also feeds test_select_string_recorded_http, so nodejs must
+# never enter that shared dict.
+NODEJS_SUFFIXES = {"nodejs": ("",)}
+
 CASES = cases(SIZES, SUFFIXES)
+NODEJS_CASES = cases(SIZES, NODEJS_SUFFIXES, id_suffix="_nodejs")
 
 
 @pytest.mark.iterations(15)
 @pytest.mark.warmup_iterations(1)
-@pytest.mark.parametrize("row_count,name,fetch_mode,bind_mode", CASES)
+@pytest.mark.parametrize("row_count,name,fetch_mode,bind_mode", CASES + NODEJS_CASES)
 def test_select_string(perf_test, row_count, name, fetch_mode, bind_mode):
     perf_test(
         sql_command=get_sql("string", row_count),

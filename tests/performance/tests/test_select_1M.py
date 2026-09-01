@@ -9,7 +9,7 @@ existing charts keep their series. Pytest node ids are parametrized
 (`test_select_1M[string_1M_arrow]`).
 """
 import pytest
-from catalog import TYPE_KEYS, get_sql
+from catalog import NODEJS_UNSUPPORTED_TYPES, TYPE_KEYS, get_sql
 from matrix import cases
 from runner.test_types import PerfTestType
 
@@ -22,7 +22,16 @@ SUFFIXES = {
     "core": ("",),
 }
 
+# Separate from SUFFIXES: nodejs has no WireMock/recorded_http support, and
+# this dict also feeds test_select_1M_recorded_http, so nodejs must never
+# enter it. nodejs also doesn't decode every TYPE_KEYS type yet.
+NODEJS_SUFFIXES = {"nodejs": ("",)}
+NODEJS_TYPE_KEYS = tuple(t for t in TYPE_KEYS if t not in NODEJS_UNSUPPORTED_TYPES)
+
 CASES = cases(SIZES, SUFFIXES, infix="_arrow", types=TYPE_KEYS)
+NODEJS_CASES = cases(
+    SIZES, NODEJS_SUFFIXES, infix="_arrow", types=NODEJS_TYPE_KEYS, id_suffix="_nodejs"
+)
 
 ORDERED_SUFFIXES = {
     "python": ("", "_fetchall", "_arrow_batches"),
@@ -38,7 +47,7 @@ ORDERED_CASES = cases(
 
 @pytest.mark.iterations(8)
 @pytest.mark.warmup_iterations(1)
-@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", CASES)
+@pytest.mark.parametrize("row_count,dtype,name,fetch_mode,bind_mode", CASES + NODEJS_CASES)
 def test_select_1M(perf_test, row_count, dtype, name, fetch_mode, bind_mode):
     perf_test(
         sql_command=get_sql(dtype, row_count),
