@@ -202,6 +202,11 @@ fn validate_pair(
             continue;
         }
 
+        let target_languages = TestDiscovery::get_target_languages(&scenario.tags);
+        if !target_languages.is_empty() && !target_languages.contains(language) {
+            continue;
+        }
+
         let matching: Vec<&String> = all_test_methods
             .iter()
             .filter(|m| method_matches_scenario(m, &scenario.name))

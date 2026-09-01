@@ -407,7 +407,7 @@ impl TestDiscovery {
             }
             Language::Dotnet => vec![
                 self.workspace_root
-                    .join("dotnet/tests/Snowflake.Data.Tests.Reference")
+                    .join("dotnet/tests/Snowflake.Data.Tests")
                     .join(format!("{}Test.cs", pascal_name)),
             ],
             Language::JavaScript => vec![

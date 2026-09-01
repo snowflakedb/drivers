@@ -3,9 +3,9 @@ using Snowflake.Data.Tests.Reference.Fixtures;
 namespace Snowflake.Data.Tests.Reference;
 
 [Trait("Driver", "Reference")]
-public class BasicExecuteQueryTest : Snowflake.Data.Tests.BasicExecuteQueryTest, IReferenceTest
+public class IntTest : Snowflake.Data.Tests.IntTest, IReferenceTest
 {
-    public BasicExecuteQueryTest(ReferenceITFixture fixture, ITestOutputHelper output) : base(fixture, output)
+    public IntTest(ReferenceITFixture fixture, ITestOutputHelper output) : base(fixture, output)
     {
         Fixture = fixture;
     }
