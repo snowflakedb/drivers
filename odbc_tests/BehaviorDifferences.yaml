@@ -2674,3 +2674,21 @@ behavior_differences:
       SQL_TIME_STRUCT has no fractional-seconds field, so BUFFER_LENGTH stays 6
       even when COLUMN_SIZE is 18. Sibling of BD#129 (TIMESTAMP BUFFER_LENGTH 16);
       do not fold DATE/TIME into that entry.
+
+  134:
+    name: "Flat Int64 TIMESTAMP_TZ Arrow layout is rejected"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      A TIMESTAMP_TZ column whose Arrow physical type is flat Int64 (no timezone
+      child) can be fetched as a UTC instant with the offset dropped.
+    new_driver_behavior: |
+      Building a converter for TIMESTAMP_TZ with a non-struct Arrow type fails.
+      The driver no longer invents offset 0 for that illegal layout.
+    description: |
+      Production GS TIMESTAMP_TZ results are Arrow structs with a timezone child.
+      Treating a flat Int64 as UTC hid a layout error. Dual-driver SQL cannot
+      produce this case; the difference only appears on synthetic Int64 TZ arrays.

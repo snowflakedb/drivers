@@ -20,6 +20,7 @@ New features:
 
 Bug fixes:
 
+- Fixed JSON timestamp cells with a negative fractional epoch so the seconds and fraction floor the same way as Arrow (`div_euclid`), instead of truncating toward zero. (snowflakedb/drivers#1580)
 - Fixed an empty `account` value skipping required-parameter validation and hanging until login timed out; it is now rejected immediately as a missing account. (snowflakedb/drivers#1514)
 - Fixed cancelling a PUT abandoning the in-progress cloud upload instead of aborting it: an S3 multipart upload was left with its uploaded parts in place, which AWS bills until a lifecycle rule reaps them, and a GCS resumable session was left half-staged until Google expired it a week later. Both are now aborted when the transfer is cancelled, not only when it errors. (snowflakedb/drivers#TBD)
 - Fixed cancelling a GET continuing to download the whole file in the background after the caller was told the operation was cancelled, and leaving a partial `.part` file beside the destination; the transfer is now stopped and the partial file removed. (snowflakedb/drivers#TBD)

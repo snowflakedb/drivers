@@ -1263,12 +1263,13 @@ fn split_tz(cell: &[u8]) -> Result<(&[u8], i32), ArrowError> {
 }
 
 fn parse_epoch_fraction(bytes: &[u8], scale: u64) -> Result<(i64, i32), ArrowError> {
+    let negative = bytes.first() == Some(&b'-');
     let (epoch_part, frac_part) = match memchr::memchr(b'.', bytes) {
         Some(pos) => (&bytes[..pos], &bytes[pos + 1..]),
         None => (bytes, &[] as &[u8]),
     };
-    let epoch: i64 = parse_int_bytes(epoch_part)?;
-    let fraction: i32 = if frac_part.is_empty() {
+    let mut epoch: i64 = parse_int_bytes(epoch_part)?;
+    let mut fraction: i32 = if frac_part.is_empty() {
         0
     } else {
         let scale_usize = scale as usize;
@@ -1279,11 +1280,11 @@ fn parse_epoch_fraction(bytes: &[u8], scale: u64) -> Result<(i64, i32), ArrowErr
             base * 10i32.pow((scale_usize - frac_part.len()) as u32)
         }
     };
-    if epoch_part.first() == Some(&b'-') && fraction != 0 {
-        Ok((epoch - 1, 10i32.pow(scale as u32) - fraction))
-    } else {
-        Ok((epoch, fraction))
+    if negative && fraction != 0 {
+        epoch -= 1;
+        fraction = 10i32.pow(scale as u32) - fraction;
     }
+    Ok((epoch, fraction))
 }
 
 #[cfg(test)]
@@ -1491,6 +1492,22 @@ mod tests {
     }
 
     #[test]
+    fn timestamp_tz3_pre_epoch_fraction_floors_the_epoch() {
+        let rt = vec![RowType::timestamp_tz("ts", true, 9)];
+        let data = b"[\"-1.250000000 1440\"],\n";
+        let batches = parse(rt, data);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::StructArray>()
+            .unwrap();
+        let epoch = col.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        let frac = col.column(1).as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(epoch.value(0), -2);
+        assert_eq!(frac.value(0), 750_000_000);
+    }
+
+    #[test]
     fn timestamp_i64_negative_subsecond_scale3() {
         let rt = vec![RowType::timestamp_ntz("ts", true, 3)];
         let data = b"[\"-1.750\"],\n[\"-0.001\"],\n";
@@ -1523,6 +1540,20 @@ mod tests {
     }
 
     #[test]
+    fn timestamp_tz2_pre_epoch_fraction_is_a_combined_scaled_epoch() {
+        let rt = vec![RowType::timestamp_tz("ts", true, 3)];
+        let data = b"[\"-1.250 1440\"],\n";
+        let batches = parse(rt, data);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::StructArray>()
+            .unwrap();
+        let epoch = col.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        assert_eq!(epoch.value(0), -1250);
+    }
+
+    #[test]
     fn timestamp_tz2_negative_subsecond_scale3() {
         let rt = vec![RowType::timestamp_tz("ts", true, 3)];
         let data = b"[\"-1.750 1500\"],\n";
@@ -1536,6 +1567,20 @@ mod tests {
         let tz = col.column(1).as_any().downcast_ref::<Int32Array>().unwrap();
         assert_eq!(epoch.value(0), -1750);
         assert_eq!(tz.value(0), 1500);
+    }
+
+    #[test]
+    fn timestamp_tz2_negative_fraction_only_floors_past_zero() {
+        let rt = vec![RowType::timestamp_tz("ts", true, 3)];
+        let data = b"[\"-0.250 1440\"],\n";
+        let batches = parse(rt, data);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::StructArray>()
+            .unwrap();
+        let epoch = col.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        assert_eq!(epoch.value(0), -250);
     }
 
     #[test]
