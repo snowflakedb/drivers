@@ -2653,3 +2653,24 @@ behavior_differences:
       server. The cache content is not exposed to end users. The behavioral difference
       affects only which entries are retained internally when the server assigns duplicate
       priorities, which may influence which context is sent in subsequent requests.
+
+  133:
+    name: "SQLColumns DATE/TIME BUFFER_LENGTH is 6 (not legacy 10 / 18)"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      SQLColumns BUFFER_LENGTH (col 8) for DATE and TIME copies COLUMN_SIZE:
+      DATE returns 10 and TIME(9) returns 18.
+    new_driver_behavior: |
+      SQLColumns BUFFER_LENGTH for DATE and TIME is 6 (sizeof SQL_DATE_STRUCT /
+      sizeof SQL_TIME_STRUCT), the ODBC transfer octet length under SQL_C_DEFAULT.
+      COLUMN_SIZE remains 10 for DATE and 18 for TIME(9). Query-result
+      SQLColAttribute OCTET_LENGTH for DATE/TIME remains 6 (unchanged).
+    description: |
+      Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
+      SQL_TIME_STRUCT has no fractional-seconds field, so BUFFER_LENGTH stays 6
+      even when COLUMN_SIZE is 18. Sibling of BD#129 (TIMESTAMP BUFFER_LENGTH 16);
+      do not fold DATE/TIME into that entry.
