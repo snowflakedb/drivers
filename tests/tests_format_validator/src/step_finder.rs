@@ -251,8 +251,10 @@ impl MethodBoundaryFinder {
                     // dotnet: any xUnit test attribute
                     // ([SnowflakeFact], [SnowflakeTheory]) followed by method declaration.
                     if is_dotnet_test_attribute(trimmed) {
-                        // Look ahead for the method declaration
-                        for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(4) {
+                        // Look ahead for the method declaration (up to 20 lines to handle
+                        // multiple [InlineData]/[MemberData] attributes between the test
+                        // attribute and the method signature)
+                        for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(20) {
                             if let Some(captures) = method_regex.captures(method_line.trim()) {
                                 let method_name = captures[1].to_string();
                                 methods.push((method_name, j + 1)); // +1 for 1-indexed line numbers
@@ -344,6 +346,9 @@ impl MethodBoundaryFinder {
                         && (trimmed.starts_with("#[rstest") || trimmed.starts_with("#[test_case"))
                     {
                         // For #[rstest] or #[test_case], we might need to look further ahead due to #[case] or #[test_case] lines
+                        20
+                    } else if self.config.test_annotation.contains("[Snowflake") {
+                        // For dotnet, [SnowflakeTheory] may be followed by many [InlineData] attributes
                         20
                     } else {
                         4

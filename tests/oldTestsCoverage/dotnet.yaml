@@ -418,11 +418,13 @@ tests:
       ud_tests: [ ]
   Snowflake.Data.Tests.IntegrationTests.SFBindTestIT:
     - test_name: TestArrayBind
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldInsertIntegersUsingBatchParameterBinding
     - test_name: TestBindNullValue
       ud_tests: [ ]
     - test_name: TestBindValue
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldInsertIntegerUsingParameterBinding
     - test_name: TestBindValueWithSFDataType
       ud_tests: [ ]
     - test_name: TestExplicitDbTypeAssignmentForArrayValue
@@ -436,7 +438,8 @@ tests:
     - test_name: TestPutArrayBindWorkDespiteOtTypeNameHandlingAuto
       ud_tests: [ ]
     - test_name: TestPutArrayIntegerBind
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldInsertIntegersUsingBatchParameterBinding
   Snowflake.Data.Tests.IntegrationTests.SFBindTestIT.TestDateTimeBinding:
     - test_name: TestDateTimeBinding/resultFormat/ ARROW, tableType/ Standard, columnType/ DATE, columnPrecision/ null, bindingType/ Date, comparisonFormat/ yyyy/MM/dd, timeZone/ null/
       ud_tests: [ ]
@@ -831,7 +834,8 @@ tests:
     - test_name: TestSimpleCommand
       ud_tests: [ ]
     - test_name: TestSimpleLargeResultSet
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldDownloadLargeResultSetWithMultipleChunks
     - test_name: TestTransaction
       ud_tests: [ ]
     - test_name: TestUseV3ChunkDownloader
@@ -917,7 +921,10 @@ tests:
     - test_name: TestGetGuid
       ud_tests: [ ]
     - test_name: TestGetNumber
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldCastIntegerValuesToAppropriateType
+        - Snowflake.Data.Tests.IntTest.ShouldSelectIntegerBoundaryValues
+        - Snowflake.Data.Tests.IntTest.ShouldInsertIntegerUsingParameterBinding
     - test_name: TestGetStream
       ud_tests: [ ]
     - test_name: TestGetTimeSpanError
@@ -933,7 +940,8 @@ tests:
     - test_name: TestHasRowsMultiStatement
       ud_tests: [ ]
     - test_name: TestReadOutNullVal
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldHandleNullValues
     - test_name: TestRecordsAffected
       ud_tests: [ ]
     - test_name: TestResultSetMetadata
@@ -1146,7 +1154,10 @@ tests:
     - test_name: TestGetGuid
       ud_tests: [ ]
     - test_name: TestGetNumber
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldCastIntegerValuesToAppropriateType
+        - Snowflake.Data.Tests.IntTest.ShouldSelectIntegerBoundaryValues
+        - Snowflake.Data.Tests.IntTest.ShouldInsertIntegerUsingParameterBinding
     - test_name: TestGetStream
       ud_tests: [ ]
     - test_name: TestGetTimeSpanError
@@ -1162,7 +1173,8 @@ tests:
     - test_name: TestHasRowsMultiStatement
       ud_tests: [ ]
     - test_name: TestReadOutNullVal
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldHandleNullValues
     - test_name: TestRecordsAffected
       ud_tests: [ ]
     - test_name: TestResultSetMetadata
@@ -3403,13 +3415,17 @@ tests:
     - test_name: TestGetDecimal
       ud_tests: [ ]
     - test_name: TestGetNumber16
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldCastIntegerValuesToAppropriateType
     - test_name: TestGetNumber32
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldCastIntegerValuesToAppropriateType
     - test_name: TestGetNumber64
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldCastIntegerValuesToAppropriateType
     - test_name: TestGetNumber8
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldCastIntegerValuesToAppropriateType
     - test_name: TestGetReal
       ud_tests: [ ]
     - test_name: TestGetText
@@ -3901,11 +3917,14 @@ tests:
     - test_name: TestConvertToFloat
       ud_tests: [ ]
     - test_name: TestConvertToInt16
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldSelectIntegerBoundaryValues
     - test_name: TestConvertToInt32
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldSelectIntegerBoundaryValues
     - test_name: TestConvertToInt64
-      ud_tests: [ ]
+      ud_tests:
+        - Snowflake.Data.Tests.IntTest.ShouldSelectIntegerBoundaryValues
     - test_name: TestCSharpTypeValToSfTypeValBinary
       ud_tests: [ ]
     - test_name: TestCSharpTypeValToSfTypeValBoolean
