@@ -30,6 +30,7 @@ Front-end **policy** rides along on the WRITE side and also stays per-wrapper.
 | ---- | --------------------------------- | --------------------------------------------- | ---------------------------------------- | --------------------------------------------- |
 | DATE | `Date32` days → `NaiveDate`       | `SQL_DATE_STRUCT` / `YYYY-MM-DD` char / wire  | midnight `NaiveDateTime` → JS `Date`     | ODBC enforces SQL `0001..9999`; JS has no cap |
 | TIME | `Int32`/`Int64` + scale → `NaiveTime` | `SQL_TIME_STRUCT` / `HH:MM:SS[.fff]` char | string via `TIME_OUTPUT_FORMAT`          | ODBC uses fixed ISO; JS applies output format |
+| BOOLEAN | `BooleanArray` → `bool`        | `SQL_C_BIT` / numeric / `"1"`-or-`"0"` char   | JS boolean                               | none in ODBC decode; bind-side string/numeric → bool coercion |
 
 The seam is why the shared crate can exist at all: the bytes-to-value step is
 identical across front ends; everything downstream of the value is not.
@@ -266,6 +267,12 @@ drivers.
 - TIME: analyzed here; not implemented. Blocked on the sequencing decision above.
   Follows DATE's shape — share `split_time_raw` (Level 2) plus the
   `SnowflakeTime { scale }` materializer (Level 1).
+- BOOLEAN: Level 1 shared (`sf_types::SnowflakeBoolean`). Like DATE it is
+  self-describing — a `BooleanArray` bit read with no column metadata — so there
+  is no Kind-1 metadata and no Level-2 primitive (a `bool` is not a split of a
+  scaled integer; the materializer is the whole decode). ODBC keeps the
+  `SQL_C_BIT`/numeric/char writers and the bind-side string/numeric → bool
+  coercion; it needs no `validate_value` policy.
 - Open question: does Python grow a native-object decode path (Level-2 consumer)
   or hand Arrow to pyarrow wholesale (neither)? This determines how much the
   Level-2 investment pays back beyond ODBC.

@@ -239,9 +239,14 @@ impl ColumnReader {
 
     pub(crate) fn read(&self, row_index: usize) -> JsCell<'_> {
         match self {
-            Self::Boolean(array) => {
-                read_cell(array, row_index, || JsCell::Bool(array.value(row_index)))
-            }
+            Self::Boolean(array) => read_cell(array, row_index, || {
+                let value = sf_types::SnowflakeBoolean
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!("non-null BooleanArray cell always decodes to a bool")
+                    });
+                JsCell::Bool(value)
+            }),
             Self::Binary(array) => {
                 read_cell(array, row_index, || JsCell::Buffer(array.value(row_index)))
             }

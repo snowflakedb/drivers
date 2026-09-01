@@ -7,7 +7,8 @@
 //! crates, so `odbc`, `nodejs_bridge`, and `python_bridge` can share this one
 //! decode step instead of each maintaining their own.
 //!
-//! DATE is the first type moved here; more will follow the same shape.
+//! DATE and BOOLEAN are the first types moved here; more will follow the same
+//! shape.
 //!
 //! A reader has two layers worth naming. The *materializer*
 //! ([`ReadArrowType::read_arrow_type`]) produces a checked chrono value and is
@@ -16,12 +17,14 @@
 //! directly. Sharing the primitive — not just the materializer — keeps the
 //! calendar/clock math in one place across every driver.
 
+mod boolean;
 mod civil;
 mod date;
 mod error;
 mod nullable;
 mod traits;
 
+pub use boolean::SnowflakeBoolean;
 pub use civil::civil_from_unix_days;
 pub use date::SnowflakeDate;
 pub use error::{InvalidArrowValueSnafu, NullValueSnafu, ReadArrowError};
