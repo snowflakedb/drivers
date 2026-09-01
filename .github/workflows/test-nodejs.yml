@@ -66,8 +66,14 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
       - name: Run unit tests
-        run: npm run build:core && npm run test:unit
+        run: npm run test:unit
         working-directory: nodejs
+
+      - name: Run e2e tests (new driver)
+        run: npm run test:e2e
+        working-directory: nodejs
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
 
       - name: Save Rust cache
         if: always()
@@ -81,13 +87,6 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
-      # TODO: for now skip e2e as they fail anyway
-      # - name: Run e2e tests (new driver)
-      #   run: npm run test:e2e
-      #   working-directory: nodejs
-      #   env:
-      #     PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-
   nodejs_tests_reference:
     if: inputs.run_nodejs_reference
     name: Node.js Old Driver Reference Tests
@@ -100,6 +99,14 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: '22'
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "nodejs"
 
       - name: Install dependencies
         run: npm install
@@ -119,11 +126,21 @@ jobs:
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
 
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          slim-mode: aggressive
+          shared-key: "nodejs"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
   nodejs-status:
     needs: [nodejs_tests, nodejs_tests_reference]
-    # TODO: Re-enable Node.js CI once it is ready to gate Driver CI.
-    # if: always()
-    if: false
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check status

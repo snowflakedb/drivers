@@ -39,7 +39,9 @@ await fs.rm(BUILD_CORE_PACKAGE_DIR, { recursive: true, force: true });
 const cli = new NapiCli();
 const { task } = await cli.build({
   platform: true,
-  release: true,
+  // TODO:
+  // SNOW-3996214 - this should be true when we build for the release
+  release: false,
   cargoName: 'nodejs_bridge',
   manifestPath: path.join(ROOT_DIR, '..', 'nodejs_bridge', 'Cargo.toml'),
   packageJsonPath: NODE_SDK_PACKAGE_JSON_PATH,
