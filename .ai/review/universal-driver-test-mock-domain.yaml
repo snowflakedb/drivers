@@ -1,0 +1,72 @@
+id: universal-driver-test-mock-domain
+friendly_name: "Universal Driver Test Mock-Domain Rules"
+status: enabled
+# Dedicated ruleset so this convention is repo-wide without widening
+# `universal-driver-tests.yaml` (Gherkin "Scenario: should …") onto Node.js
+# files that use the opposite `it()` naming convention.
+allowed_folders:
+  - "tests/definitions"
+  - "sf_core/tests"
+  - "jdbc/src/test"
+  - "odbc_tests"
+  - "python/tests"
+  - "nodejs/tests"
+  - "dotnet/tests"
+  - "gosnowflake"
+excluded_folders:
+  - "odbc_tests/build"
+  - "odbc_tests/cmake-build"
+  - "odbc_tests/cmake-build-reference"
+  - "python/tests/__pycache__"
+  - "nodejs/tests/_old-driver-reference"
+  - "nodejs/node_modules"
+allowed_file_extensions:
+  - ".ts"
+  - ".js"
+  - ".py"
+  - ".java"
+  - ".rs"
+  - ".cpp"
+  - ".hpp"
+  - ".h"
+  - ".cs"
+  - ".go"
+  - ".feature"
+rules:
+  - id: ud-test-mock-domain
+    rule: |
+      **OBJECTIVE**: If request interception ever fails in a test, escaped traffic should hit infrastructure Snowflake controls, not someone else's domain.
+
+      **REQUIREMENT**: Mock-server and intercepted HTTP request URLs in tests must use a `snowflake.com` host, not an externally-owned domain (`test.com`) or a placeholder domain (`example.com`).
+
+      This rule applies across all test languages (TypeScript, Python, Java, Rust, C++, Go, C#, etc.).
+
+      ❌ **BAD:**
+      ```typescript
+      // TypeScript/Node.js
+      nock('https://test.com').post('/session/v1/login-request').reply(200, body);
+      ```
+      ```python
+      # Python
+      responses.add(responses.POST, 'https://example.com/session/v1/login-request', json=body)
+      ```
+      ```java
+      // Java
+      wireMock.stubFor(post(urlEqualTo("/session/v1/login-request"))
+          .withHost(equalTo("test.com")).willReturn(aResponse().withBody(body)));
+      ```
+
+      ✅ **GOOD:**
+      ```typescript
+      // TypeScript/Node.js
+      nock('https://snowflake.com').post('/session/v1/login-request').reply(200, body);
+      ```
+      ```python
+      # Python
+      responses.add(responses.POST, 'https://snowflake.com/session/v1/login-request', json=body)
+      ```
+      ```java
+      // Java
+      wireMock.stubFor(post(urlEqualTo("/session/v1/login-request"))
+          .withHost(equalTo("snowflake.com")).willReturn(aResponse().withBody(body)));
+      ```

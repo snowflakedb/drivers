@@ -1,0 +1,20 @@
+---
+description: Standards for writing Node.js test names: no "should" prefix
+globs: nodejs/tests/**/*.ts
+alwaysApply: false
+# DERIVED FROM .claude/rules/nodejs-test-standards.md (canonical source).
+# Edit the .claude/ file first, then copy its full contents below.
+# The pre-commit hook (ai-rules-sync) or scripts/check-ai-rules-sync.sh will catch drift.
+---
+
+# Node.js Test Standards
+
+### Code Rules
+
+When writing test names, don't use "should"
+❌ `it('should pass the check')`
+✅ `it('passes the check')`
+
+<!-- sync-target: .cursor/rules/nodejs-test-standards.mdc carries this body verbatim plus
+     Cursor frontmatter. TO UPDATE: edit this file, copy it below the .mdc frontmatter,
+     then run bash scripts/check-ai-rules-sync.sh (also a pre-commit hook). -->

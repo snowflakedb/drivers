@@ -21,6 +21,7 @@ allowed_folders:
 excluded_folders:
   - "nodejs/node_modules"
   - "nodejs/dist"
+  - "nodejs/tests/_old-driver-reference"
 allowed_file_extensions:
   - ".ts"
 rules:
@@ -477,3 +478,12 @@ rules:
         });
       }
       ```
+
+  - id: ud-node-test-name-no-should
+    rule: |
+      **OBJECTIVE**: Keep `it`/`describe` names reading as present-tense statements, matching this suite's existing style.
+
+      **REQUIREMENT**: `it(...)`/`test(...)` description strings must not start with "should" — state the behavior directly.
+
+      ❌ `it('should pass the check')`
+      ✅ `it('passes the check')`
