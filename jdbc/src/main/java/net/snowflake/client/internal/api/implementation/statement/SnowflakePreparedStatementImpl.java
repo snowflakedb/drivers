@@ -54,6 +54,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Drive
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.PrepareResult;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementPrepareResponse;
 import net.snowflake.client.internal.util.HexUtil;
+import net.snowflake.client.internal.util.SnowflakeColumnTypes;
 
 @JdbcBoundary
 public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
@@ -758,7 +759,10 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
    * SnowflakeType#TIMESTAMP_NTZ}; defaults to LTZ).
    */
   private SnowflakeType mappedTimestampBindType() {
-    return SnowflakeType.valueOf(conversionContext().getTimestampMappedType());
+    // CLIENT_TIMESTAMP_TYPE_MAPPING is a lowercase wire name (e.g. timestamp_ntz).
+    SnowflakeType mapped =
+        SnowflakeColumnTypes.fromStringOrNull(conversionContext().getTimestampMappedType());
+    return mapped != null ? mapped : SnowflakeType.TIMESTAMP_LTZ;
   }
 
   private static SnowflakeType sqlTypeToBindType(int sqlType) {
