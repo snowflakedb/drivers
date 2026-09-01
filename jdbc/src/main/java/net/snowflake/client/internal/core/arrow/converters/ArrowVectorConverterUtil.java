@@ -3,6 +3,7 @@ package net.snowflake.client.internal.core.arrow.converters;
 import java.util.Map;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.util.SnowflakeColumnTypes;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.complex.FixedSizeListVector;
@@ -15,7 +16,7 @@ public final class ArrowVectorConverterUtil {
   public static SnowflakeType getSnowflakeTypeFromFieldMetadata(Field field) {
     Map<String, String> customMeta = field.getMetadata();
     if (customMeta != null && customMeta.containsKey("logicalType")) {
-      return SnowflakeType.valueOf(customMeta.get("logicalType"));
+      return SnowflakeColumnTypes.fromStringOrNull(customMeta.get("logicalType"));
     }
     return null;
   }
@@ -133,13 +134,15 @@ public final class ArrowVectorConverterUtil {
           // CLIENT_TIMESTAMP_TYPE_MAPPING, which only ever maps to NTZ or LTZ (never TZ).
           // Result-set Arrow metadata normally carries the concrete logical type, so this is
           // defensive.
-          String mappedType = context.getTimestampMappedType();
-          if (SnowflakeType.TIMESTAMP_LTZ.name().equals(mappedType)) {
+          SnowflakeType mappedType =
+              SnowflakeColumnTypes.fromStringOrNull(context.getTimestampMappedType());
+          if (mappedType == SnowflakeType.TIMESTAMP_LTZ) {
             return initTimestampLtzConverter(vector, context, idx);
           }
-          if (!SnowflakeType.TIMESTAMP_NTZ.name().equals(mappedType)) {
+          if (mappedType != SnowflakeType.TIMESTAMP_NTZ) {
             throw new SFSQLException(
-                "Unsupported TIMESTAMP mapping for bare TIMESTAMP: " + mappedType);
+                "Unsupported TIMESTAMP mapping for bare TIMESTAMP: "
+                    + context.getTimestampMappedType());
           }
           // fall through: mapped to NTZ
         case TIMESTAMP_NTZ:
