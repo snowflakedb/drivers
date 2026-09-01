@@ -32,20 +32,24 @@ pub enum CancellationAbortResult {
     NotConfirmed,
 }
 
+/// Variants are `#[non_exhaustive]`: wrappers can match them but cannot construct them.
 #[derive(Debug, Snafu, ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub enum ApiError {
+    #[non_exhaustive]
     #[snafu(display("File transfers have been disabled."))]
     FileTransfersDisabled {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to create runtime"))]
     RuntimeCreation {
         #[snafu(implicit)]
         location: Location,
         source: std::io::Error,
     },
+    #[non_exhaustive]
     #[snafu(display("Configuration error: {source}"))]
     Configuration {
         #[snafu(implicit)]
@@ -53,12 +57,14 @@ pub enum ApiError {
         #[snafu(source(from(ConfigError, Box::new)))]
         source: Box<ConfigError>,
     },
+    #[non_exhaustive]
     #[snafu(display("Invalid argument: {argument}"))]
     InvalidArgument {
         argument: String,
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to login"))]
     Login {
         #[snafu(implicit)]
@@ -66,21 +72,25 @@ pub enum ApiError {
         #[snafu(source(from(RestError, Box::new)))]
         source: Box<RestError>,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to lock connection"))]
     ConnectionLock {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Connection not initialized"))]
     ConnectionNotInitialized {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Connection is closed"))]
     ConnectionClosed {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("TLS client creation failed: {source}"))]
     TlsClientCreation {
         #[snafu(source(from(TlsError, Box::new)))]
@@ -88,16 +98,19 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to lock statement"))]
     StatementLocking {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to lock database"))]
     DatabaseLocking {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to process query response: {source}"))]
     QueryResponseProcess {
         #[snafu(implicit)]
@@ -105,6 +118,7 @@ pub enum ApiError {
         #[snafu(source(from(QueryResponseProcessingError, Box::new)))]
         source: Box<QueryResponseProcessingError>,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to refresh session: {source}"))]
     SessionRefresh {
         #[snafu(implicit)]
@@ -112,12 +126,14 @@ pub enum ApiError {
         #[snafu(source(from(RestError, Box::new)))]
         source: Box<RestError>,
     },
+    #[non_exhaustive]
     #[snafu(display("Statement error: {source}"))]
     Statement {
         #[snafu(implicit)]
         location: Location,
         source: StatementError,
     },
+    #[non_exhaustive]
     #[snafu(display("{source}"))]
     Query {
         #[snafu(implicit)]
@@ -125,6 +141,7 @@ pub enum ApiError {
         #[snafu(source(from(RestError, Box::new)))]
         source: Box<RestError>,
     },
+    #[non_exhaustive]
     #[snafu(display("HTTP request failed: {context}: {source}"))]
     HttpRequest {
         context: String,
@@ -132,6 +149,7 @@ pub enum ApiError {
         location: Location,
         source: reqwest::Error,
     },
+    #[non_exhaustive]
     #[snafu(display("Token request failed: {source}"))]
     TokenRequest {
         #[snafu(implicit)]
@@ -139,6 +157,7 @@ pub enum ApiError {
         #[snafu(source(from(RestError, Box::new)))]
         source: Box<RestError>,
     },
+    #[non_exhaustive]
     #[snafu(display("{}", master_token_terminal_detail(*master_token_gs_code)))]
     MasterTokenTerminal {
         /// The GS code the server sent (390113/390114/390115), or `None` when
@@ -148,18 +167,21 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Logout failed: {message}"))]
     Logout {
         message: String,
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Invalid refresh state: {message}"))]
     InvalidRefreshState {
         message: String,
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display(
         "MFA token caching was requested but the token cache failed to initialize: {source}"
     ))]
@@ -168,36 +190,42 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to fetch chunk data"))]
     ChunkFetch {
         source: ChunkError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to parse Arrow IPC data"))]
     ArrowParse {
         source: arrow::error::ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to decode JSON chunk data"))]
     JsonChunkDecode {
         source: arrow::error::ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Background chunk-decode task failed to join"))]
     BlockingTaskJoin {
         source: tokio::task::JoinError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to encode inline JSON rowset as Arrow IPC"))]
     InlineJsonEncode {
         #[snafu(implicit)]
         location: Location,
         source: ChunkError,
     },
+    #[non_exhaustive]
     #[snafu(display("Invalid column metadata for '{column}'"))]
     InvalidColumnMetadata {
         column: String,
@@ -205,18 +233,21 @@ pub enum ApiError {
         location: Location,
         source: crate::rest::snowflake::query_response::QueryResponseError,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to decode base64 chunk data"))]
     Base64Decode {
         source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Unsupported queryResultFormat reported by the server: '{format}'"))]
     UnsupportedQueryResultFormat {
         format: String,
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Stage binding failed: {source}"))]
     StageBinding {
         #[snafu(source(from(crate::stage_binding::StageBindingError, Box::new)))]
@@ -224,6 +255,7 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Query timed out after {budget:?}"))]
     QueryTimeout {
         budget: Duration,
@@ -231,6 +263,7 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Query cancel timed out after {timeout:?}"))]
     CancelTimeout {
         timeout: Duration,
@@ -244,8 +277,8 @@ pub enum ApiError {
     /// Raised by the operation itself, not synthesised at the FFI boundary, so
     /// callers below the protobuf layer (Node, in-process Rust) see the same
     /// typed error the protobuf layer maps to `ERROR_KIND_CANCELLED`.
+    #[non_exhaustive]
     #[snafu(display("Operation was cancelled"))]
-    #[snafu(visibility(pub))]
     Cancelled {
         /// What the abort-request fired on cancellation achieved. `None` when no
         /// abort was issued — the operation submitted no query, or was cancelled
@@ -257,12 +290,14 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Failed to write upload stream chunk to spool buffer: {source}"))]
     SpoolBufferWrite {
         #[snafu(implicit)]
         location: Location,
         source: std::io::Error,
     },
+    #[non_exhaustive]
     #[snafu(display(
         "Invalid workload_identity_provider: '{provider}'. Allowed values: {}",
         crate::config::rest_parameters::WifProvider::allowed_values()
@@ -272,6 +307,7 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[non_exhaustive]
     #[snafu(display("Workload Identity Federation attestation failed: {source}"))]
     WorkloadIdentityAttestation {
         #[snafu(implicit)]
@@ -282,6 +318,15 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// synthesized argument error - #[track_caller]` records the call site
+    #[track_caller]
+    pub fn invalid_argument(argument: impl Into<String>) -> Self {
+        Self::InvalidArgument {
+            argument: argument.into(),
+            location: Location::default(),
+        }
+    }
+
     pub(crate) fn snowflake_context(&self) -> SnowflakeErrorContext {
         match self {
             ApiError::Query { source, .. }

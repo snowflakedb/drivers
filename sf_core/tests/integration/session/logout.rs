@@ -1858,11 +1858,10 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
         elapsed
     );
 
-    //And Timeout is logged as WARN
-    let api_result = result.map_err(|e| sf_core::apis::database_driver_v1::ApiError::Logout {
-        message: format!("{e}"),
-        location: snafu::Location::default(),
-    });
+    // BestEffort only inspects Ok vs Err; ApiError is sealed so the
+    // stand-in is the public constructor, not a Logout variant.
+    let api_result = result
+        .map_err(|e| sf_core::apis::database_driver_v1::ApiError::invalid_argument(format!("{e}")));
     let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
     //Then Close succeeds

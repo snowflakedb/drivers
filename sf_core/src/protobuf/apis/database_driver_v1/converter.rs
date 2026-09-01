@@ -9,9 +9,8 @@ use crate::apis::database_driver_v1::ResultSetInfo as NativeResultSetInfo;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::{
     CancellationAbortResult, InlineJsonEncodeSnafu, InvalidColumnMetadataSnafu,
-    QueryResponseProcessingError, RestError,
 };
-use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
+use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr, ErrorKind as CoreErrorKind};
 use crate::apis::database_driver_v1::{
     ValidationCode as CoreValidationCode, ValidationIssue as CoreValidationIssue,
     ValidationSeverity as CoreValidationSeverity,
@@ -20,13 +19,10 @@ use crate::chunks::{
     ArrowIpcEncodeSnafu, ChunkDownloadData, ChunkError, ChunkFormatKind, ChunkReadSnafu,
     FetchChunkInput, convert_string_rowset_to_arrow_reader,
 };
-use crate::compression_types::CompressionTypeError;
-use crate::config::{ConfigErrorClass, ConfigErrorContext};
-use crate::file_manager::FileManagerError;
 use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
-use crate::rest::snowflake::{AbortOutcome, SnowflakeErrorContext};
+use crate::rest::snowflake::AbortOutcome;
 use arrow::array::RecordBatchReader;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -662,169 +658,30 @@ pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> Vali
 // Error conversion (ApiError → DriverException)
 // ---------------------------------------------------------------------------
 
-impl From<ConfigErrorClass> for ErrorKind {
-    fn from(value: ConfigErrorClass) -> Self {
+impl From<CoreErrorKind> for ErrorKind {
+    fn from(value: CoreErrorKind) -> Self {
         match value {
-            ConfigErrorClass::MissingParameter => ErrorKind::MissingParameter,
-            ConfigErrorClass::InvalidParameterValue => ErrorKind::InvalidParameterValue,
-            ConfigErrorClass::InternalError => ErrorKind::InternalError,
+            CoreErrorKind::Unspecified => ErrorKind::Unspecified,
+            CoreErrorKind::AuthenticationError => ErrorKind::AuthenticationError,
+            CoreErrorKind::NotImplemented => ErrorKind::NotImplemented,
+            CoreErrorKind::InvalidArgument => ErrorKind::InvalidArgument,
+            CoreErrorKind::Io => ErrorKind::Io,
+            CoreErrorKind::Cancelled => ErrorKind::Cancelled,
+            CoreErrorKind::InternalError => ErrorKind::InternalError,
+            CoreErrorKind::MissingParameter => ErrorKind::MissingParameter,
+            CoreErrorKind::InvalidParameterValue => ErrorKind::InvalidParameterValue,
+            CoreErrorKind::LoginError => ErrorKind::LoginError,
+            CoreErrorKind::LocalFileNotFound => ErrorKind::LocalFileNotFound,
+            CoreErrorKind::RemoteFileNotFound => ErrorKind::RemoteFileNotFound,
+            CoreErrorKind::UnsupportedCompression => ErrorKind::UnsupportedCompression,
+            CoreErrorKind::QueryFailed => ErrorKind::QueryFailed,
+            CoreErrorKind::Timeout => ErrorKind::Timeout,
+            CoreErrorKind::StageBinding => ErrorKind::StageBinding,
         }
-    }
-}
-
-impl From<&QueryResponseProcessingError> for ErrorKind {
-    fn from(value: &QueryResponseProcessingError) -> Self {
-        match value {
-            QueryResponseProcessingError::FileUpload { source, .. }
-            | QueryResponseProcessingError::FileDownload { source, .. } => match source {
-                FileManagerError::NoFilesMatched { .. } => ErrorKind::LocalFileNotFound,
-                FileManagerError::CompressionType {
-                    source: CompressionTypeError::UnsupportedCompressionType { .. },
-                    ..
-                } => ErrorKind::UnsupportedCompression,
-                // A too-large source file / stage object is an input
-                // error, not a driver fault — surface it as
-                // `InvalidArgument` rather than `InternalError`.
-                s if s.is_file_too_large() => ErrorKind::InvalidArgument,
-                // Everything else here (Io, UploadBatch, cloud
-                // transport errors, ...) is an environmental/transfer
-                // failure, not an internal driver bug — `Io` maps to
-                // `OperationalError` on the Python side, matching the
-                // reference connector's own classification for the
-                // same class of failure.
-                _ => ErrorKind::Io,
-            },
-            QueryResponseProcessingError::RemoteFileNotFound { .. } => {
-                ErrorKind::RemoteFileNotFound
-            }
-            // no wildcard - explicit empty arms
-            QueryResponseProcessingError::UploadResultsConversion { .. }
-            | QueryResponseProcessingError::DownloadResultsConversion { .. }
-            | QueryResponseProcessingError::BatchRead { .. }
-            | QueryResponseProcessingError::UnsupportedCommand { .. }
-            | QueryResponseProcessingError::FileTransferPreparation { .. } => {
-                ErrorKind::InternalError
-            }
-        }
-    }
-}
-
-/// Classify a REST failure that escaped through `ApiError::Query`.
-///
-/// `execute_with_refresh` wraps every `RestError` in `QuerySnafu`, so this
-/// must discriminate the inner error: a GS body is a query failure, a
-/// timeout is a timeout, transport/retry is I/O — not all "QueryFailed".
-fn kind_from_query_rest_error(err: &RestError) -> ErrorKind {
-    match err {
-        RestError::QueryFailed { .. } => ErrorKind::QueryFailed,
-        RestError::OperationTimeout { .. } => ErrorKind::Timeout,
-        RestError::Communication { .. } | RestError::HttpRetry { .. } => ErrorKind::Io,
-        RestError::Authentication { .. }
-        | RestError::NativeOkta { .. }
-        | RestError::ExternalBrowser { .. }
-        | RestError::OAuthFlow { .. }
-        | RestError::WorkloadIdentityAttestation { .. }
-        | RestError::LoginError { .. }
-        | RestError::SessionRefresh { .. }
-        | RestError::SessionRefreshFailed { .. }
-        | RestError::SessionExpired { .. }
-        | RestError::MasterTokenTerminal { .. }
-        | RestError::TokenRequestHttp { .. }
-        | RestError::TokenRequestFailed { .. } => ErrorKind::AuthenticationError,
-        RestError::InvalidSnowflakeResponse { .. }
-        | RestError::RequestConstruction { .. }
-        | RestError::CrlValidation { .. }
-        | RestError::UrlJoin { .. }
-        | RestError::Heartbeat { .. }
-        | RestError::MissingResponseField { .. }
-        | RestError::Logout { .. }
-        | RestError::InvalidUrl { .. }
-        | RestError::PayloadEncode { .. }
-        | RestError::AsyncPollResultNotFound { .. }
-        | RestError::MissingResultUrl { .. }
-        | RestError::MissingQueryId { .. } => ErrorKind::InternalError,
     }
 }
 
 fn to_driver_exception(error: ApiError) -> DriverException {
-    let snowflake_ctx: SnowflakeErrorContext = error.snowflake_context();
-    let params_ctx: ConfigErrorContext = error.parameter_context();
-    let kind: ErrorKind = match &error {
-        ApiError::Configuration { .. } => params_ctx.class.into(),
-        ApiError::QueryResponseProcess { source, .. } => source.as_ref().into(),
-
-        ApiError::InvalidColumnMetadata { .. } => ErrorKind::InvalidArgument,
-        ApiError::InvalidWifProvider { .. } => ErrorKind::InvalidParameterValue,
-        // Use InvalidParameterValue so Python callers see ProgrammingError,
-        // matching the legacy connector's exception class for this function.
-        ApiError::WorkloadIdentityAttestation { .. } => ErrorKind::InvalidParameterValue,
-
-        ApiError::Login { source, .. } => match source.as_ref() {
-            RestError::LoginError {
-                reauthentication_required: true,
-                ..
-            } => ErrorKind::AuthenticationError,
-            RestError::LoginError { .. } => ErrorKind::LoginError,
-            RestError::OperationTimeout { .. } => ErrorKind::Timeout,
-            _ => ErrorKind::AuthenticationError,
-        },
-        ApiError::TlsClientCreation { .. }
-        | ApiError::SessionRefresh { .. }
-        | ApiError::MasterTokenTerminal { .. }
-        | ApiError::TokenCacheInitialization { .. }
-        | ApiError::TokenRequest { .. } => ErrorKind::AuthenticationError,
-
-        ApiError::InvalidArgument { .. } | ApiError::ConnectionClosed { .. } => {
-            ErrorKind::InvalidArgument
-        }
-
-        ApiError::HttpRequest { .. }
-        | ApiError::FileTransfersDisabled { .. } => ErrorKind::Io,
-        ApiError::StageBinding { .. } => ErrorKind::StageBinding,
-        ApiError::QueryTimeout { .. } | ApiError::CancelTimeout { .. } => ErrorKind::Timeout,
-        ApiError::Cancelled { .. } => ErrorKind::Cancelled,
-
-        ApiError::Query { source, .. } => kind_from_query_rest_error(source),
-        ApiError::Statement { .. }
-        | ApiError::ConnectionLock { .. }
-        | ApiError::StatementLocking { .. }
-        | ApiError::DatabaseLocking { .. }
-        | ApiError::ConnectionNotInitialized { .. }
-        | ApiError::InvalidRefreshState { .. }
-        | ApiError::Logout { .. }
-        | ApiError::RuntimeCreation { .. }
-        | ApiError::ChunkFetch { .. }
-        | ApiError::ArrowParse { .. }
-        | ApiError::JsonChunkDecode { .. }
-        | ApiError::BlockingTaskJoin { .. }
-        | ApiError::InlineJsonEncode { .. }
-        | ApiError::Base64Decode { .. }
-        | ApiError::UnsupportedQueryResultFormat { .. }
-        // Local temp-file / in-memory spool I/O failure while buffering a
-        // chunked upload-stream chunk — a driver-side fault, not caller input.
-        | ApiError::SpoolBufferWrite { .. } => ErrorKind::InternalError,
-    };
-
-    let message = error.to_string();
-    let root_cause = extract_root_cause(&error);
-    let reauthentication_required = match &error {
-        ApiError::MasterTokenTerminal { .. } => true,
-        ApiError::Login { source, .. } => matches!(
-            source.as_ref(),
-            RestError::LoginError {
-                reauthentication_required: true,
-                ..
-            }
-        ),
-        _ => false,
-    };
-
-    // Left unset unless a cancellation actually issued an abort.
-    let cancellation_abort_outcome = match &error {
-        ApiError::Cancelled { abort, .. } => abort.map(|a| cancel_abort_to_proto(a) as i32),
-        _ => None,
-    };
-
     let error_trace = error
         .error_trace()
         .into_iter()
@@ -836,21 +693,21 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         })
         .collect();
     DriverException {
-        message,
-        kind: kind as i32,
+        message: error.to_string(),
+        kind: ErrorKind::from(error.kind()) as i32,
         error_trace,
-        vendor_code: snowflake_ctx.vendor_code,
-        sql_state: snowflake_ctx.sql_state,
-        root_cause,
-        query_id: snowflake_ctx.query_id,
-        request_id: snowflake_ctx.request_id,
-        parameter: params_ctx.parameter,
-        parameter_value: params_ctx.parameter_value,
-        validation_code: params_ctx
-            .validation_code
-            .map(core_validation_code_to_proto),
-        reauthentication_required,
-        cancellation_abort_outcome,
+        vendor_code: error.vendor_code(),
+        sql_state: error.sql_state(),
+        root_cause: error.root_cause(),
+        query_id: error.query_id(),
+        request_id: error.request_id(),
+        parameter: error.parameter(),
+        parameter_value: error.parameter_value(),
+        validation_code: error.validation_code().map(core_validation_code_to_proto),
+        reauthentication_required: error.reauthentication_required(),
+        cancellation_abort_outcome: error
+            .cancellation_abort_outcome()
+            .map(|a| cancel_abort_to_proto(a) as i32),
     }
 }
 
@@ -860,19 +717,6 @@ fn cancel_abort_to_proto(abort: CancellationAbortResult) -> CancellationAbortOut
         CancellationAbortResult::NotRunning => CancellationAbortOutcome::NotRunning,
         CancellationAbortResult::NotConfirmed => CancellationAbortOutcome::NotConfirmed,
     }
-}
-
-/// Walk the `source()` chain to the deepest error and return its message.
-/// Returns `None` when the error has no source (i.e. the message itself is
-/// already the root cause).
-fn extract_root_cause(error: &dyn std::error::Error) -> Option<String> {
-    let mut deepest: Option<&dyn std::error::Error> = None;
-    let mut current = error.source();
-    while let Some(cause) = current {
-        deepest = Some(cause);
-        current = cause.source();
-    }
-    deepest.map(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -891,10 +735,6 @@ impl<T> ToProtobuf<T> for Result<T, ApiError> {
     }
 }
 
-/// Exists so operation-layer code can be generic over `E: From<ApiError>` and
-/// still be usable from the protobuf layer, whose error type is
-/// `DriverException`. `OperationCtx::run` is the current caller — it raises
-/// `ApiError::Cancelled` without knowing which layer it was invoked from.
 impl From<ApiError> for DriverException {
     fn from(error: ApiError) -> Self {
         to_driver_exception(error)
@@ -904,7 +744,9 @@ impl From<ApiError> for DriverException {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::apis::database_driver_v1::ApiError;
     use crate::apis::database_driver_v1::error::ConfigError;
+    use crate::apis::database_driver_v1::error::RestError;
     use crate::rest::snowflake::{
         GS_CODE_UNAVAILABLE, MASTER_TOKEN_EXPIRED, QueryIds, SESSION_TOKEN_EXPIRED,
         SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED,
