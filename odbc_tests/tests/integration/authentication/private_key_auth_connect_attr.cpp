@@ -128,7 +128,7 @@ TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core",
   SKIP_IODBC(
       "iODBC does not transcode narrow→wide for driver-defined string "
       "attribute IDs; driver-side mitigation is not feasible. Use a wide "
-      "SQLSetConnectAttrW call or set PRIVATE_KEY_BASE64 in the connect string.");
+      "SQLSetConnectAttrW call or set PRIV_KEY_BASE64 in the connect string.");
 
   // Given a fresh environment and connection handle
   auto env = setup_environment_integration();

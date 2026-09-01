@@ -1,9 +1,27 @@
+use super::param_registry::Wrapper;
 use super::path_resolver::{ConfigPaths, get_config_paths};
 use super::settings::Setting;
 use super::toml_loader::{FilePermissionCheck, load_toml_file};
 use super::{ConfigError, ConnectionNotFoundSnafu};
 use crate::env_vars;
 use std::collections::HashMap;
+
+/// Wrapper scope used to canonicalize TOML profile keys.
+///
+/// `config.toml` / `connections.toml` are the snowflake-connector-python
+/// configuration format, and the loader has no wrapper context of its own, so
+/// profile keys resolve under [`Wrapper::Python`] — the same scope the Python
+/// wrapper uses. That makes the legacy connector's own kwarg spellings (the
+/// only ones a legacy profile could contain) resolvable, and nothing else.
+///
+/// This is deliberately narrower than the pre-migration wrapper-agnostic
+/// `resolve`, which also remapped other wrappers' DSN keys: a profile written
+/// with the legacy ODBC spellings (`server`, `uid`, `pwd`) used to canonicalize
+/// and no longer does. No legacy driver accepted those keys in a TOML profile,
+/// so matching the connector exactly is the point rather than a regression.
+/// Keys that fail to resolve are kept verbatim by the callers below and
+/// surface as an `UnknownParameter` warning during validation.
+const TOML_ALIAS_FLAVOR: Wrapper = Wrapper::Python;
 
 /// Load configuration for a specific connection from TOML files
 pub fn load_connection_config(
@@ -40,7 +58,7 @@ pub fn load_connection_config_with_paths(
         for (key, value) in conn_config {
             if let Some(setting) = toml_value_to_setting(value) {
                 let canonical = registry
-                    .resolve(key)
+                    .resolve_for(TOML_ALIAS_FLAVOR, key)
                     .map(|def| def.canonical_name.to_owned())
                     .unwrap_or_else(|| key.clone());
                 settings.insert(canonical, setting);
@@ -60,7 +78,7 @@ pub fn load_connection_config_with_paths(
         for (key, value) in conn_config {
             if let Some(setting) = toml_value_to_setting(value) {
                 let canonical = registry
-                    .resolve(key)
+                    .resolve_for(TOML_ALIAS_FLAVOR, key)
                     .map(|def| def.canonical_name.to_owned())
                     .unwrap_or_else(|| key.clone());
                 settings.insert(canonical, setting);
@@ -1034,6 +1052,40 @@ private_key_file_pwd = "supersecret"
         assert!(
             matches!(settings.get("private_key_password"), Some(Setting::String(s)) if s == "supersecret")
         );
+    }
+
+    #[test]
+    fn test_toml_passcode_in_password_resolves_to_canonical_name() {
+        // Regression: the canonical name is camelCase (`passcodeInPassword`), so the
+        // legacy Python kwarg spelling `passcode_in_password` only canonicalizes via
+        // its `Python`-scoped alias — the TOML loader resolves under that flavor.
+        // Without the alias the key was stored verbatim and MFA-in-password was
+        // silently dropped for `connections.toml` profiles.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[test]
+account = "myaccount"
+user = "myuser"
+passcode_in_password = true
+"#,
+        );
+
+        let settings =
+            load_connection_config_with_paths("test", &paths, FilePermissionCheck::Enabled)
+                .expect("load must succeed");
+        assert!(
+            !settings.contains_key("passcode_in_password"),
+            "alias key `passcode_in_password` must not be stored verbatim; got keys: {:?}",
+            settings.keys().collect::<Vec<_>>()
+        );
+        assert!(matches!(
+            settings.get("passcodeInPassword"),
+            Some(Setting::Bool(true))
+        ));
     }
 
     #[test]

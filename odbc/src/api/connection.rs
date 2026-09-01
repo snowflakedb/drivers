@@ -105,6 +105,22 @@ fn normalize_connection_string_option(
         return Some((canonical.to_owned(), value.into()));
     }
 
+    // The `LOGIN_TIMEOUT` and `PRIV_KEY_*` arms below duplicate `Odbc`-scoped
+    // aliases that `sf_params_spec` already carries, so the registry would
+    // resolve them on its own. They stay here because
+    // `apply_pre_connection_overrides` writes *canonical* keys (`private_key`,
+    // `private_key_file`, `private_key_password`, `authentication_timeout`) from
+    // SQLSetConnectAttr values before the options reach sf_core; without these
+    // arms the DSN value would still sit under its DSN spelling and the override
+    // would land beside it instead of replacing it. Collapsing the two sources
+    // of truth means teaching that override pass to resolve aliases first — a
+    // separate change.
+    //
+    // `PASSCODEINPASSWORD` is not backed by an alias at all: it lowercases to
+    // the canonical `passcodeInPassword`, so the registry matches it
+    // case-insensitively (that param's `sf_params_spec` comment says explicitly
+    // that no ODBC alias belongs there). The arm only pre-canonicalizes the
+    // spelling in `options`.
     match upper.as_str() {
         "PORT" => Some(("port".to_owned(), value.into())),
         // APPLICATION carries the user-facing app name → CLIENT_ENVIRONMENT.APPLICATION.
@@ -2767,15 +2783,17 @@ mod tests {
 
     #[test]
     fn normalize_connection_string_options_passes_through_legacy_odbc_proxy_aliases() {
-        // Legacy ODBC also accepts NOPROXY / PROXYWITHENV / ALLOWEMPTYPROXY.
-        // These flow through as UPPERCASE and sf_core's registry resolves
-        // them to canonical names.
+        // Legacy ODBC's proxy DSN keys are `NO_PROXY` / `ProxyWithEnv` /
+        // `AllowEmptyProxy` (`Snowflake.h`). They flow through as UPPERCASE and
+        // sf_core resolves them: `NO_PROXY` matches the canonical `no_proxy`
+        // case-insensitively, the other two via `Odbc`-scoped aliases. The
+        // separator-less `NOPROXY` was UD-only leniency and is no longer accepted.
         let options = normalize_connection_string_options(HashMap::from([
-            ("NOPROXY".to_owned(), "*.corp".to_owned()),
+            ("NO_PROXY".to_owned(), "*.corp".to_owned()),
             ("PROXYWITHENV".to_owned(), "true".to_owned()),
             ("ALLOWEMPTYPROXY".to_owned(), "false".to_owned()),
         ]));
-        assert_eq!(config_string(&options, "NOPROXY"), Some("*.corp"));
+        assert_eq!(config_string(&options, "NO_PROXY"), Some("*.corp"));
         assert_eq!(config_string(&options, "PROXYWITHENV"), Some("true"));
         assert_eq!(config_string(&options, "ALLOWEMPTYPROXY"), Some("false"));
     }

@@ -53,16 +53,19 @@ class TestFromKwargs:
         assert config.port == 8080
 
     def test_case_insensitive_alias(self):
-        config = ConnectionConfig.from_kwargs(SERVER="myhost.example.com")
+        config = ConnectionConfig.from_kwargs(HOST="myhost.example.com")
         assert config.host == "myhost.example.com"
 
-    def test_uid_alias(self):
-        config = ConnectionConfig.from_kwargs(UID="bob")
-        assert config.user == "bob"
-
-    def test_pwd_alias(self):
-        config = ConnectionConfig.from_kwargs(PWD="secret")
-        assert config.password == "secret"
+    def test_odbc_only_dsn_keys_are_not_python_kwargs(self):
+        # `SERVER` / `UID` / `PWD` are legacy ODBC DSN keys (`Snowflake.h`); the
+        # legacy connector has no such kwargs, so the universal driver must not
+        # accept them either — they stay unresolved in `_extra` like any unknown
+        # key rather than silently populating host/user/password.
+        config = ConnectionConfig.from_kwargs(SERVER="myhost.example.com", UID="bob", PWD="secret")
+        assert config.host is None
+        assert config.user is None
+        assert config.password is None
+        assert config._extra == {"SERVER": "myhost.example.com", "UID": "bob", "PWD": "secret"}
 
     def test_token_file_path_is_a_known_field(self):
         config = ConnectionConfig.from_kwargs(token_file_path="/tmp/pat.token")
@@ -199,20 +202,20 @@ class TestFromKwargs:
         assert config.proxy_port == 8080
         assert config.no_proxy == "internal.example.com"
 
-    def test_use_proxy_env_kwarg_aliases(self):
-        # Legacy ODBC `PROXYWITHENV` aliases to `use_proxy_env`; default False.
-        config = ConnectionConfig.from_kwargs(PROXYWITHENV=True)
-        assert config.use_proxy_env is True
-
-    def test_allow_empty_proxy_kwarg_aliases(self):
-        # Legacy ODBC `ALLOWEMPTYPROXY` aliases to `allow_empty_proxy`; default True.
-        config = ConnectionConfig.from_kwargs(ALLOWEMPTYPROXY=False)
-        assert config.allow_empty_proxy is False
-
-    def test_noproxy_kwarg_aliases(self):
-        # Legacy ODBC `NOPROXY` (no underscore) aliases to `no_proxy`.
-        config = ConnectionConfig.from_kwargs(NOPROXY="*.corp")
-        assert config.no_proxy == "*.corp"
+    def test_odbc_only_proxy_dsn_keys_are_not_python_kwargs(self):
+        # `PROXYWITHENV` / `ALLOWEMPTYPROXY` are legacy ODBC DSN keys and
+        # `NOPROXY` was never a key of any old driver (legacy ODBC uses
+        # `NO_PROXY`, legacy Python `no_proxy`). None of them is a legacy
+        # connector kwarg, so none resolves here; the canonical spellings do.
+        config = ConnectionConfig.from_kwargs(PROXYWITHENV=True, ALLOWEMPTYPROXY=False, NOPROXY="*.corp")
+        assert config.use_proxy_env is False
+        assert config.allow_empty_proxy is True
+        assert config.no_proxy is None
+        assert config._extra == {
+            "PROXYWITHENV": True,
+            "ALLOWEMPTYPROXY": False,
+            "NOPROXY": "*.corp",
+        }
 
 
 class TestFromConnectionArgs:
@@ -554,11 +557,28 @@ class TestToProtoOptions:
 class TestClassVariables:
     """Test class-level metadata."""
 
-    def test_alias_map_contains_server(self):
-        assert ConnectionConfig._ALIAS_MAP["server"] == "host"
+    def test_alias_map_holds_only_legacy_connector_kwarg_spellings(self):
+        # `_ALIAS_MAP` is generated from the `Python`-scoped aliases in
+        # sf_params_spec, so it is the wrapper's whole extra-spelling surface. Each
+        # entry must be a spelling the legacy snowflake-connector-python actually
+        # accepted (`DEFAULT_CONFIGURATION`) or the Rust canonical name where it
+        # differs from the Python field name — never an ODBC DSN key or a
+        # UD-invented shorthand, so the universal driver is no more lenient than
+        # the connector it replaces.
+        assert ConnectionConfig._ALIAS_MAP == {
+            # legacy kwarg -> renamed field
+            "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
+            # Rust canonical camelCase -> snake_case Python field
+            "passcodeinpassword": "passcode_in_password",
+            # legacy kwarg -> renamed field
+            "private_key_file_pwd": "private_key_password",
+        }
 
-    def test_alias_map_contains_uid(self):
-        assert ConnectionConfig._ALIAS_MAP["uid"] == "user"
+    def test_alias_map_excludes_odbc_dsn_keys(self):
+        # Guard against the pre-scoping state, where globally-registered ODBC DSN
+        # spellings leaked into the generated Python alias map.
+        for odbc_key in ("server", "uid", "pwd", "noproxy", "proxywithenv", "allowemptyproxy"):
+            assert odbc_key not in ConnectionConfig._ALIAS_MAP
 
     def test_proxy_is_distinct_canonical_param_not_alias_of_proxy_host(self):
         # `PROXY` (legacy ODBC URL form) and `proxy_host` (legacy Python
@@ -566,13 +586,6 @@ class TestClassVariables:
         # an alias of `proxy_host`. They are merged later in sf_core's
         # `ProxyConfig::from_settings`.
         assert "proxy" not in ConnectionConfig._ALIAS_MAP
-
-    def test_alias_map_contains_legacy_odbc_proxy_aliases(self):
-        # ODBC connection-string conventions: PROXYWITHENV / NOPROXY /
-        # ALLOWEMPTYPROXY (no underscores, uppercase).
-        assert ConnectionConfig._ALIAS_MAP["proxywithenv"] == "use_proxy_env"
-        assert ConnectionConfig._ALIAS_MAP["noproxy"] == "no_proxy"
-        assert ConnectionConfig._ALIAS_MAP["allowemptyproxy"] == "allow_empty_proxy"
 
     def test_sensitive_params(self):
         assert "password" in ConnectionConfig._SENSITIVE_PARAMS

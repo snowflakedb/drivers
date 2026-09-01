@@ -348,11 +348,61 @@ impl Alias {
     }
 }
 
-/// Shorthand for a slice of global aliases: `aliases!["SERVER", "HOST"]`.
+/// Builds the `aliases:` slice for a [`ParamDef`], in either global or
+/// wrapper-scoped form:
+///
+/// * `aliases![]` — no aliases (the common case; canonical name still resolves
+///   case-insensitively).
+/// * `aliases!["A", "B"]` — global aliases visible to every wrapper via
+///   [`ParamRegistry::resolve`]. **Do not use this form.** After the
+///   per-wrapper migration no parameter has a global alias, and the
+///   `every_alias_is_wrapper_scoped` test fails if one appears; the arm exists
+///   only because the empty `aliases![]` above parses through it. Scope the
+///   spelling to the wrapper(s) whose old driver accepted it instead — a
+///   spelling every wrapper really shares belongs in that test's exception list
+///   with a comment naming each driver.
+/// * `aliases![Odbc; "A", "B"]` — each name scoped to one wrapper.
+///
+/// Scoped spellings resolve under [`ParamRegistry::resolve_for`] for the listed
+/// wrappers only and are invisible to the wrapper-agnostic
+/// [`ParamRegistry::resolve`]. An alias exists **only** where the old driver for
+/// that wrapper actually accepted the spelling — UD is no more lenient than the
+/// driver it replaces, so a convenience spelling nobody shipped is not added:
+/// * SCREAMING/DSN spellings (`SERVER`, `PRIV_KEY_FILE`, …) are legacy ODBC
+///   connection-string keys from snowflake-odbc's `Snowflake.h`. The exception is
+///   `CRL_MODE`/`CRL_ENABLED`, UD-ODBC's own DSN keys for a feature legacy spelled
+///   `CRL_CHECK`.
+/// * camelCase spellings (`oauthClientId`, `allowUnderscoresInHost`, …) are JDBC
+///   `SFSessionProperty` keys. JDBC also has lowercase-underscore properties that
+///   differ from our canonical name (`private_key_base64`, `private_key_pwd`),
+///   so those are `Jdbc`-scoped too — not ODBC keys despite the shape.
+/// * `Python` scope covers two callers: the Python wrapper (whose `_ALIAS_MAP` is
+///   generated from these aliases) and `config.toml`/`connections.toml` profiles,
+///   which `config_manager` canonicalizes under `Wrapper::Python`. Every
+///   `Python`-scoped spelling is a legacy `snowflake-connector-python` kwarg from
+///   its `DEFAULT_CONFIGURATION`.
+/// * `NodeJs` spellings are legacy snowflake-connector-nodejs connection options
+///   (`lib/connection/connection_config.js`).
+///
+/// A spelling that matches the canonical name case-insensitively (legacy ODBC's
+/// `NO_PROXY`, legacy Python's `no_proxy`) needs no alias at all.
+///
+/// `aliases![Odbc; "KEY"]` == `&[Alias::scoped(Wrapper::Odbc, "KEY")]`.
+///
+/// Three cases are written with explicit [`Alias::scoped`] entries instead of
+/// the macro: a spelling two or more wrappers share (one entry per wrapper),
+/// wrappers that map *different* spellings to the same canonical (the ODBC
+/// `PRIV_KEY_PWD` / JDBC `private_key_pwd` split), and the same spelling
+/// mapping to different canonicals (the ODBC-only `LOGIN_TIMEOUT`).
 #[macro_export]
 macro_rules! aliases {
+    // Global aliases (visible to every wrapper), including the empty list.
     ($($name:expr),* $(,)?) => {
         &[$($crate::Alias::global($name)),*]
+    };
+    // One wrapper, one or more names.
+    ($wrapper:ident; $($name:expr),+ $(,)?) => {
+        &[$($crate::Alias::scoped($crate::Wrapper::$wrapper, $name)),+]
     };
 }
 
@@ -425,7 +475,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Server ──────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::ACCOUNT.as_str(),
-        aliases: aliases!["ACCOUNT"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Always,
@@ -439,7 +489,11 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::HOST.as_str(),
-        aliases: aliases!["SERVER", "HOST"],
+        // `HOST` is redundant with the canonical name (case-insensitive match).
+        // `SERVER` is the ODBC DSN spelling (`Snowflake.h` `SF_HOST_KEY`) and is
+        // ODBC-only: the legacy Python connector has no `server` kwarg, and JDBC
+        // carries the host in the JDBC URL.
+        aliases: aliases![Odbc; "SERVER"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -453,7 +507,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PORT.as_str(),
-        aliases: aliases!["PORT"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -467,7 +521,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PROTOCOL.as_str(),
-        aliases: aliases!["PROTOCOL"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -481,7 +535,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::SSL.as_str(),
-        aliases: aliases!["SSL"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -509,7 +563,8 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.as_str(),
-        aliases: aliases!["ALLOWUNDERSCORESINHOST"],
+        // JDBC-only `allowUnderscoresInHost` property (case-insensitive).
+        aliases: aliases![Jdbc; "allowUnderscoresInHost"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -524,7 +579,9 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Auth ────────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::USER.as_str(),
-        aliases: aliases!["UID"],
+        // ODBC DSN `UID` (`Snowflake.h`). ODBC-only: the legacy Python connector
+        // has no `uid` kwarg.
+        aliases: aliases![Odbc; "UID"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Always,
@@ -538,7 +595,9 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PASSWORD.as_str(),
-        aliases: aliases!["PWD"],
+        // ODBC DSN `PWD` (`Snowflake.h`). ODBC-only: the legacy Python connector
+        // has no `pwd` kwarg.
+        aliases: aliases![Odbc; "PWD"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::WhenAuthMethod("SNOWFLAKE_PASSWORD"),
@@ -552,7 +611,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::AUTHENTICATOR.as_str(),
-        aliases: aliases!["AUTHENTICATOR"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -566,7 +625,14 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY.as_str(),
-        aliases: aliases!["PRIV_KEY_BASE64", "PRIVATE_KEY_BASE64"],
+        // `PRIV_KEY_BASE64` is the legacy ODBC DSN key (`Snowflake.h`
+        // `SF_PRIV_KEY_BASE64_KEY`); `private_key_base64` is the JDBC property
+        // (`SFSessionProperty.PRIVATE_KEY_BASE64`) — legacy ODBC never accepted
+        // the fully-underscored spelling.
+        aliases: &[
+            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_BASE64"),
+            Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_BASE64"),
+        ],
         value_type: ValueType::String,
         additional_value_type: Some(ValueType::Bytes),
         required: Required::WhenAuthMethod("SNOWFLAKE_JWT"),
@@ -580,7 +646,8 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY_FILE.as_str(),
-        aliases: aliases!["PRIV_KEY_FILE"],
+        // ODBC DSN `PRIV_KEY_FILE`.
+        aliases: aliases![Odbc; "PRIV_KEY_FILE"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -594,11 +661,19 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY_PASSWORD.as_str(),
-        aliases: aliases![
-            "PRIV_KEY_FILE_PWD",
-            "PRIV_KEY_PWD",
-            "PRIVATE_KEY_PWD",
-            "PRIVATE_KEY_FILE_PWD",
+        // `PRIV_KEY_FILE_PWD` / `PRIV_KEY_PWD` are the legacy ODBC DSN
+        // passphrase keys (`Snowflake.h`). `private_key_pwd` and
+        // `private_key_file_pwd` are JDBC properties (`SFSessionProperty`);
+        // `private_key_file_pwd` is also a legacy snowflake-connector-python
+        // kwarg, and needs `Python` scope for the TOML loader, which
+        // canonicalizes through the registry under the Python flavor rather
+        // than through the Python wrapper's generated `_ALIAS_MAP`.
+        aliases: &[
+            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_FILE_PWD"),
+            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_PWD"),
+            Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_PWD"),
+            Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_FILE_PWD"),
+            Alias::scoped(Wrapper::Python, "PRIVATE_KEY_FILE_PWD"),
         ],
         value_type: ValueType::String,
         additional_value_type: None,
@@ -613,7 +688,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::TOKEN.as_str(),
-        aliases: aliases!["TOKEN"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::WhenAuthMethod("PROGRAMMATIC_ACCESS_TOKEN"),
@@ -627,7 +702,13 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::TOKEN_FILE_PATH.as_str(),
-        aliases: aliases!["TOKEN_FILE_PATH", "tokenFilePath"],
+        // `tokenFilePath` is legacy snowflake-connector-nodejs' option spelling
+        // (`lib/connection/connection_config.js`). Legacy .NET and JDBC read the
+        // snake_case `token_file_path`, which matches the canonical name
+        // case-insensitively and so needs no alias. This alias is inert for any
+        // wrapper that takes the `Default` presets — see
+        // `WrapperPresets::default`.
+        aliases: aliases![NodeJs; "tokenFilePath"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -641,7 +722,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::SESSION_TOKEN.as_str(),
-        aliases: aliases!["SESSION_TOKEN"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -655,7 +736,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::MASTER_TOKEN.as_str(),
-        aliases: aliases!["MASTER_TOKEN"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -669,7 +750,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::MASTER_VALIDITY_IN_SECONDS.as_str(),
-        aliases: aliases!["MASTER_VALIDITY_IN_SECONDS"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -683,7 +764,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PASSCODE.as_str(),
-        aliases: aliases!["PASSCODE"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -697,7 +778,15 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PASSCODE_IN_PASSWORD.as_str(),
-        aliases: aliases!["PASSCODE_IN_PASSWORD"],
+        // `PASSCODE_IN_PASSWORD` is the legacy snowflake-connector-python kwarg
+        // spelling. It needs `Python` scope for the TOML loader: the canonical
+        // camelCase name does *not* match `passcode_in_password`
+        // case-insensitively (the underscores differ), so a
+        // `config.toml`/`connections.toml` profile would otherwise fail to
+        // canonicalize. Legacy ODBC's DSN key is `PASSCODEINPASSWORD` (no
+        // separators) and is rewritten wrapper-side in
+        // `odbc/src/api/connection.rs`, so no ODBC alias belongs here.
+        aliases: aliases![Python; "PASSCODE_IN_PASSWORD"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -711,7 +800,8 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.as_str(),
-        aliases: aliases!["clientStoreTemporaryCredential"],
+        // JDBC-only camelCase property.
+        aliases: aliases![Jdbc; "clientStoreTemporaryCredential"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -725,7 +815,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::ENABLE_PUT_GET.as_str(),
-        aliases: aliases!["enablePutGet"],
+        // JDBC `SFSessionProperty.ENABLE_PUT_GET`. `ParameterKeyNormalizer` does
+        // not carry this key, so the spelling reaches core verbatim and this
+        // alias is what resolves it.
+        aliases: aliases![Jdbc; "enablePutGet"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -739,7 +832,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(),
-        aliases: aliases!["DISABLE_PARALLEL_USER_PROMPT"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -756,7 +849,19 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::DISABLE_QUERY_CONTEXT_CACHE.as_str(),
-        aliases: aliases!["DISABLEQUERYCONTEXTCACHE"],
+        // Legacy ODBC (libsnowflakeclient `connection.c`) and legacy .NET
+        // (`SFSessionProperty`) spell this `DISABLEQUERYCONTEXTCACHE`; legacy JDBC
+        // (`SFSessionProperty`) and snowflake-connector-nodejs
+        // (`connection_config.js`) spell it `disableQueryContextCache`. The two
+        // differ only by case and resolve identically. Legacy Python's
+        // `disable_query_context_cache` matches the canonical name, so `Python`
+        // is absent here.
+        aliases: &[
+            Alias::scoped(Wrapper::Odbc, "DISABLEQUERYCONTEXTCACHE"),
+            Alias::scoped(Wrapper::DotNet, "DISABLEQUERYCONTEXTCACHE"),
+            Alias::scoped(Wrapper::Jdbc, "disableQueryContextCache"),
+            Alias::scoped(Wrapper::NodeJs, "disableQueryContextCache"),
+        ],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -771,8 +876,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::AUTHENTICATION_TIMEOUT.as_str(),
-        // ODBC's LOGIN_TIMEOUT historically means authentication_timeout; other
-        // wrappers keep the global LOGIN_TIMEOUT → login_timeout mapping below.
+        // ODBC's LOGIN_TIMEOUT historically means authentication_timeout (it is an
+        // auth-retry budget, not a socket timeout); for the other wrappers
+        // `LOGIN_TIMEOUT` keeps matching the canonical `login_timeout` parameter
+        // below, case-insensitively.
         aliases: &[Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")],
         value_type: ValueType::Int,
         additional_value_type: None,
@@ -817,9 +924,23 @@ static PARAM_DEFS: &[ParamDef] = &[
     // Cross-driver canonical naming follows JDBC `SFSessionProperty.OAUTH_*`.
     // All OAuth params are connect-time and immutable for the life of the
     // connection.
+    //
+    // The camelCase `oauth*` aliases below — and `allowUnderscoresInHost` — are
+    // also rewritten to these canonical names Java-side, by the JDBC bridge's
+    // `ParameterKeyNormalizer.LEGACY_KEY_ALIASES`, which
+    // `SnowflakeConnectionImpl.setOptions` applies to every key. sf_core
+    // therefore sees the camelCase spelling only from a direct `resolve_for`
+    // caller, never from a real JDBC connection; the aliases stay so the
+    // registry remains an accurate record of what JDBC accepts until that
+    // mapping moves wrapper-side wholesale. The other `Jdbc`-scoped aliases
+    // (`clientStoreTemporaryCredential`, `enablePutGet`,
+    // `oauthEnableSingleUseRefreshTokens`, `PRIVATE_KEY_*`) have no Java-side
+    // entry and resolve here only.
     ParamDef {
         canonical_name: param_names::OAUTH_CLIENT_ID.as_str(),
-        aliases: aliases!["OAUTH_CLIENT_ID", "oauthClientId"],
+        // `OAUTH_CLIENT_ID` is the canonical spelling (case-insensitive match);
+        // the camelCase form is the JDBC-only `SFSessionProperty` key.
+        aliases: aliases![Jdbc; "oauthClientId"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -833,7 +954,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_CLIENT_SECRET.as_str(),
-        aliases: aliases!["OAUTH_CLIENT_SECRET", "oauthClientSecret"],
+        aliases: aliases![Jdbc; "oauthClientSecret"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -847,7 +968,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_AUTHORIZATION_URL.as_str(),
-        aliases: aliases!["OAUTH_AUTHORIZATION_URL", "oauthAuthorizationUrl"],
+        aliases: aliases![Jdbc; "oauthAuthorizationUrl"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -861,11 +982,12 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_TOKEN_REQUEST_URL.as_str(),
-        aliases: aliases![
-            "OAUTH_TOKEN_REQUEST_URL",
-            "OAUTH_TOKEN_URL",
-            "oauthTokenRequestUrl",
-        ],
+        // `OAUTH_TOKEN_REQUEST_URL` matches the canonical name case-insensitively,
+        // which is also the legacy Python kwarg and the legacy ODBC DSN key
+        // (`Snowflake.h` `SF_OAUTH_TOKEN_REQUEST_URL_KEY`). Only the camelCase
+        // JDBC property needs an alias; the shorter `OAUTH_TOKEN_URL` was UD-only
+        // leniency (no such kwarg in the legacy connector) and is gone.
+        aliases: aliases![Jdbc; "oauthTokenRequestUrl"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::WhenAuthMethod("OAUTH_CLIENT_CREDENTIALS"),
@@ -879,7 +1001,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_REDIRECT_URI.as_str(),
-        aliases: aliases!["OAUTH_REDIRECT_URI", "oauthRedirectUri"],
+        aliases: aliases![Jdbc; "oauthRedirectUri"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -893,7 +1015,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_SCOPE.as_str(),
-        aliases: aliases!["OAUTH_SCOPE", "oauthScope"],
+        aliases: aliases![Jdbc; "oauthScope"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -907,10 +1029,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.as_str(),
-        aliases: aliases![
-            "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
-            "oauthEnableSingleUseRefreshTokens",
-        ],
+        aliases: aliases![Jdbc; "oauthEnableSingleUseRefreshTokens"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -924,7 +1043,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_DISABLE_PKCE.as_str(),
-        aliases: aliases!["OAUTH_DISABLE_PKCE"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -938,7 +1057,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_ENABLE_DPOP.as_str(),
-        aliases: aliases!["OAUTH_ENABLE_DPOP"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -952,7 +1071,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_CREDENTIALS_IN_BODY.as_str(),
-        aliases: aliases!["OAUTH_CREDENTIALS_IN_BODY"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -966,7 +1085,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_DISABLE_CONSOLE_LOGIN.as_str(),
-        aliases: aliases!["OAUTH_DISABLE_CONSOLE_LOGIN"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -981,7 +1100,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Session ─────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::DATABASE.as_str(),
-        aliases: aliases!["DATABASE"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -995,7 +1114,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::SCHEMA.as_str(),
-        aliases: aliases!["SCHEMA"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1009,7 +1128,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::WAREHOUSE.as_str(),
-        aliases: aliases!["WAREHOUSE"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1023,7 +1142,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::ROLE.as_str(),
-        aliases: aliases!["ROLE"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1052,7 +1171,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── TLS ─────────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CUSTOM_ROOT_STORE_PATH.as_str(),
-        aliases: aliases!["TLS_CUSTOM_ROOT_STORE_PATH"],
+        // No alias: legacy ODBC had no custom-root-store DSN key (only `SSL`), and
+        // the `TLS_`-prefixed spelling had no users — the canonical name resolves
+        // for every wrapper case-insensitively.
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1066,7 +1188,9 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::VERIFY_HOSTNAME.as_str(),
-        aliases: aliases!["TLS_VERIFY_HOSTNAME"],
+        // No alias: no legacy TLS-verification DSN key existed, and the
+        // `TLS_VERIFY_HOSTNAME` spelling had no users.
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1080,7 +1204,8 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::VERIFY_CERTIFICATES.as_str(),
-        aliases: aliases!["TLS_VERIFY_CERTIFICATES"],
+        // No alias: see `verify_hostname` above.
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1138,7 +1263,13 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── CRL ─────────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CRL_CHECK_MODE.as_str(),
-        aliases: aliases!["CRL_MODE", "CRL_ENABLED"],
+        // UD-ODBC's own DSN spellings for CRL checking (legacy snowflake-odbc
+        // spelled this family `CRL_CHECK` / `CRL_ADVISORY`, `Snowflake.h:197-202`;
+        // UD has not adopted those names). Wired wrapper-side for value
+        // normalization and exercised by `odbc_tests/tests/e2e/tls/crl_enabled.cpp`.
+        // Python uses the `cert_revocation_check_mode` legacy kwarg, rewritten
+        // wrapper-side by `_LEGACY_REWRITES`.
+        aliases: aliases![Odbc; "CRL_MODE", "CRL_ENABLED"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1349,7 +1480,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::LOG_QUERY_TEXT.as_str(),
-        aliases: aliases!["LOG_QUERY_TEXT"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: Some(ValueType::String),
         required: Required::Never,
@@ -1363,7 +1494,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::LOG_QUERY_PARAMETERS.as_str(),
-        aliases: aliases!["LOG_QUERY_PARAMETERS"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: Some(ValueType::String),
         required: Required::Never,
@@ -1562,7 +1693,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Timeout configuration ─────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::LOGIN_TIMEOUT.as_str(),
-        aliases: aliases!["LOGIN_TIMEOUT"],
+        // `LOGIN_TIMEOUT` matches this canonical case-insensitively for every
+        // wrapper except ODBC, where it is scoped to `authentication_timeout`
+        // (see that param's `Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")`).
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1576,7 +1710,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::QUERY_TIMEOUT.as_str(),
-        aliases: aliases!["QUERY_TIMEOUT"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1590,7 +1724,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::REQUEST_TIMEOUT.as_str(),
-        aliases: aliases!["REQUEST_TIMEOUT"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1604,7 +1738,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::RETRY_TIMEOUT.as_str(),
-        aliases: aliases!["RETRY_TIMEOUT"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1618,7 +1752,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CONNECT_TIMEOUT.as_str(),
-        aliases: aliases!["CONNECT_TIMEOUT"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1734,7 +1868,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::QUERY_TAG.as_str(),
-        aliases: aliases!["QUERY_TAG"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1765,7 +1899,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PUT_FASTFAIL.as_str(),
-        aliases: aliases!["PUT_FASTFAIL"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1786,7 +1920,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::GET_FASTFAIL.as_str(),
-        aliases: aliases!["GET_FASTFAIL"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1806,7 +1940,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Prefetch ───────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CLIENT_PREFETCH_THREADS.as_str(),
-        aliases: aliases!["CLIENT_PREFETCH_THREADS"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1820,7 +1954,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CLIENT_MEMORY_LIMIT.as_str(),
-        aliases: aliases!["CLIENT_MEMORY_LIMIT"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1835,7 +1969,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Session keep-alive ─────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE.as_str(),
-        aliases: aliases!["CLIENT_SESSION_KEEP_ALIVE"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1849,7 +1983,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str(),
-        aliases: aliases!["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1868,12 +2002,14 @@ static PARAM_DEFS: &[ParamDef] = &[
     // Python connector, snowflake-jdbc, and libsnowflakeclient all implement.
     //
     // `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` is the server-pushed
-    // session-parameter key. `enable_stage_s3_privatelink_for_us_east_1` is
-    // the legacy Python kwarg name (kept as a deprecated alias via the
-    // Python wrapper's `_DEPRECATED_REWRITES`).
+    // session-parameter key (read directly by
+    // `read_use_s3_regional_url_session_param`, not via the registry).
+    // As a connection alias it is the legacy Python kwarg name
+    // (`enable_stage_s3_privatelink_for_us_east_1`), so it is Python-scoped;
+    // the Python wrapper additionally rewrites it via `_DEPRECATED_REWRITES`.
     ParamDef {
         canonical_name: param_names::USE_S3_REGIONAL_URL.as_str(),
-        aliases: aliases!["ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1"],
+        aliases: aliases![Python; "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1887,7 +2023,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::VALIDATE_DEFAULT_PARAMETERS.as_str(),
-        aliases: aliases!["VALIDATE_DEFAULT_PARAMETERS"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1906,7 +2042,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         // with embedded creds), so it is registered as a distinct canonical
         // param `proxy` rather than aliased here. `build_proxy_config` parses
         // the URL and merges it with the fields below.
-        aliases: aliases!["PROXY_HOST"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1920,7 +2056,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PROXY_PORT.as_str(),
-        aliases: aliases!["PROXY_PORT"],
+        aliases: aliases![],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -1934,7 +2070,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PROXY_USER.as_str(),
-        aliases: aliases!["PROXY_USER"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1948,7 +2084,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PROXY_PASSWORD.as_str(),
-        aliases: aliases!["PROXY_PASSWORD"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1962,7 +2098,11 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::NO_PROXY.as_str(),
-        aliases: aliases!["NO_PROXY", "NOPROXY"],
+        // No alias: legacy ODBC's DSN key is `NO_PROXY` (`Snowflake.h`
+        // `SF_NO_PROXY_KEY`) and legacy Python's kwarg is `no_proxy`, both of
+        // which match the canonical name case-insensitively. The separator-less
+        // `NOPROXY` was UD-only leniency and is no longer accepted.
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1977,7 +2117,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Workload Identity Federation (WIF) ────────────────────────────
     ParamDef {
         canonical_name: param_names::WORKLOAD_IDENTITY_PROVIDER.as_str(),
-        aliases: aliases!["WORKLOAD_IDENTITY_PROVIDER"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::WhenAuthMethod("WORKLOAD_IDENTITY"),
@@ -1991,7 +2131,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::WORKLOAD_IDENTITY_ENTRA_RESOURCE.as_str(),
-        aliases: aliases!["WORKLOAD_IDENTITY_ENTRA_RESOURCE"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -2005,7 +2145,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::WORKLOAD_IDENTITY_IMPERSONATION_PATH.as_str(),
-        aliases: aliases!["WORKLOAD_IDENTITY_IMPERSONATION_PATH"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -2019,7 +2159,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str(),
-        aliases: aliases!["WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -2034,7 +2174,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // Legacy ODBC PROXY URL form (parsed and merged with the fields above).
     ParamDef {
         canonical_name: param_names::PROXY.as_str(),
-        aliases: aliases!["PROXY"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -2048,7 +2188,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::USE_PROXY_ENV.as_str(),
-        aliases: aliases!["USE_PROXY_ENV", "PROXYWITHENV"],
+        // Legacy ODBC DSN `ProxyWithEnv` (`Snowflake.h`), uppercased by the
+        // connection-string parser. ODBC-only: the legacy Python connector has
+        // no equivalent kwarg (it consulted the proxy env vars unconditionally).
+        aliases: aliases![Odbc; "PROXYWITHENV"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -2062,7 +2205,9 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::ALLOW_EMPTY_PROXY.as_str(),
-        aliases: aliases!["ALLOW_EMPTY_PROXY", "ALLOWEMPTYPROXY"],
+        // Legacy ODBC DSN `AllowEmptyProxy` (`Snowflake.h`), uppercased by the
+        // connection-string parser. ODBC-only: no legacy Python equivalent.
+        aliases: aliases![Odbc; "ALLOWEMPTYPROXY"],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -2076,7 +2221,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::ENABLE_CONNECTION_DIAG.as_str(),
-        aliases: aliases!["ENABLE_CONNECTION_DIAG"],
+        aliases: aliases![],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -2095,7 +2240,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CONNECTION_DIAG_LOG_PATH.as_str(),
-        aliases: aliases!["CONNECTION_DIAG_LOG_PATH"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -2109,7 +2254,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::CONNECTION_DIAG_ALLOWLIST_PATH.as_str(),
-        aliases: aliases!["CONNECTION_DIAG_ALLOWLIST_PATH"],
+        aliases: aliases![],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -2124,14 +2269,6 @@ static PARAM_DEFS: &[ParamDef] = &[
 ];
 
 impl ParamDef {
-    /// Global (all-wrapper) alias names only. Used where wrapper context is absent.
-    pub fn global_alias_names(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.aliases
-            .iter()
-            .filter(|a| a.wrapper.is_none())
-            .map(|a| a.name)
-    }
-
     /// Alias names visible to `wrapper`: globals plus that wrapper's scoped ones.
     pub fn alias_names_for(&self, wrapper: Wrapper) -> impl Iterator<Item = &'static str> + '_ {
         self.aliases
@@ -2272,13 +2409,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_aliases_to_canonical() {
+    fn canonical_names_resolve_for_every_wrapper() {
+        // SCREAMING_SNAKE spellings that match a canonical name
+        // case-insensitively must resolve for every wrapper (and globally),
+        // regardless of alias scoping — they are not aliases at all.
         let r = registry();
-        let cases: &[(&str, &str)] = &[
-            ("SERVER", "host"),
+        let canonical_cases: &[(&str, &str)] = &[
             ("HOST", "host"),
-            ("UID", "user"),
-            ("PWD", "password"),
             ("PORT", "port"),
             ("PROTOCOL", "protocol"),
             ("ACCOUNT", "account"),
@@ -2287,67 +2424,28 @@ mod tests {
             ("WAREHOUSE", "warehouse"),
             ("ROLE", "role"),
             ("AUTHENTICATOR", "authenticator"),
-            ("PRIV_KEY_FILE", "private_key_file"),
-            ("PRIV_KEY_BASE64", "private_key"),
-            ("PRIVATE_KEY_BASE64", "private_key"),
-            ("PRIV_KEY_FILE_PWD", "private_key_password"),
-            ("PRIV_KEY_PWD", "private_key_password"),
-            ("PRIVATE_KEY_PWD", "private_key_password"),
-            ("PRIVATE_KEY_FILE_PWD", "private_key_password"),
             ("TOKEN", "token"),
             ("TOKEN_FILE_PATH", "token_file_path"),
-            ("tokenFilePath", "token_file_path"),
             ("PASSCODE", "passcode"),
-            ("PASSCODE_IN_PASSWORD", "passcodeInPassword"),
-            // OAuth: both SCREAMING_SNAKE (universal-driver canonical) and
-            // camelCase (legacy JDBC `SFSessionProperty` keys) aliases must
-            // resolve so applications migrating from snowflake-jdbc keep
-            // working without renaming their Properties keys.
             ("OAUTH_CLIENT_ID", "oauth_client_id"),
-            ("oauthClientId", "oauth_client_id"),
             ("OAUTH_CLIENT_SECRET", "oauth_client_secret"),
-            ("oauthClientSecret", "oauth_client_secret"),
             ("OAUTH_AUTHORIZATION_URL", "oauth_authorization_url"),
-            ("oauthAuthorizationUrl", "oauth_authorization_url"),
             ("OAUTH_TOKEN_REQUEST_URL", "oauth_token_request_url"),
-            ("OAUTH_TOKEN_URL", "oauth_token_request_url"),
-            ("oauthTokenRequestUrl", "oauth_token_request_url"),
             ("OAUTH_REDIRECT_URI", "oauth_redirect_uri"),
-            ("oauthRedirectUri", "oauth_redirect_uri"),
             ("OAUTH_SCOPE", "oauth_scope"),
-            ("oauthScope", "oauth_scope"),
             (
                 "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
                 "oauth_enable_single_use_refresh_tokens",
             ),
-            (
-                "oauthEnableSingleUseRefreshTokens",
-                "oauth_enable_single_use_refresh_tokens",
-            ),
-            (
-                "clientStoreTemporaryCredential",
-                "client_store_temporary_credential",
-            ),
-            ("enablePutGet", "enable_put_get"),
-            ("TLS_CUSTOM_ROOT_STORE_PATH", "custom_root_store_path"),
-            ("TLS_VERIFY_HOSTNAME", "verify_hostname"),
-            ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
             ("TLS_SKIP_VERIFY", "tls_skip_verify"),
-            ("CRL_MODE", "crl_check_mode"),
-            ("CRL_ENABLED", "crl_check_mode"),
-            ("ALLOWUNDERSCORESINHOST", "preserve_underscores_in_hostname"),
             ("PROXY_HOST", "proxy_host"),
             ("PROXY_PORT", "proxy_port"),
             ("PROXY_USER", "proxy_user"),
             ("PROXY_PASSWORD", "proxy_password"),
             ("NO_PROXY", "no_proxy"),
-            ("NOPROXY", "no_proxy"),
             ("PROXY", "proxy"),
             ("USE_PROXY_ENV", "use_proxy_env"),
-            ("PROXYWITHENV", "use_proxy_env"),
             ("ALLOW_EMPTY_PROXY", "allow_empty_proxy"),
-            ("ALLOWEMPTYPROXY", "allow_empty_proxy"),
-            // WIF params
             ("WORKLOAD_IDENTITY_PROVIDER", "workload_identity_provider"),
             (
                 "WORKLOAD_IDENTITY_ENTRA_RESOURCE",
@@ -2362,15 +2460,203 @@ mod tests {
                 "workload_identity_aws_use_outbound_token",
             ),
         ];
-        for (alias, expected_canonical) in cases {
-            let def = r
-                .resolve(alias)
-                .unwrap_or_else(|| panic!("alias {alias:?} should resolve"));
-            assert_eq!(
-                def.canonical_name, *expected_canonical,
-                "alias {alias:?} resolved to {:?}, expected {expected_canonical:?}",
-                def.canonical_name
+        for (name, expected_canonical) in canonical_cases {
+            for wrapper in [Wrapper::Odbc, Wrapper::Jdbc, Wrapper::Python] {
+                let def = r
+                    .resolve_for(wrapper, name)
+                    .unwrap_or_else(|| panic!("{name:?} should resolve for {wrapper:?}"));
+                assert_eq!(def.canonical_name, *expected_canonical);
+            }
+            assert!(
+                r.resolve(name).is_some(),
+                "canonical spelling {name:?} must also resolve globally"
             );
+        }
+    }
+
+    #[test]
+    fn scoped_aliases_resolve_only_for_owning_wrappers() {
+        use Wrapper::{DotNet, Jdbc, NodeJs, Odbc, Python};
+        // Each wire alias resolves for exactly the wrappers whose old driver
+        // accepted that spelling — UD is no more lenient than the driver it
+        // replaces:
+        //   * legacy ODBC DSN keys (`Snowflake.h`) -> Odbc, plus UD-ODBC's own
+        //     `CRL_MODE`/`CRL_ENABLED`.
+        //   * JDBC `SFSessionProperty` keys -> Jdbc, both camelCase and the
+        //     lowercase-underscore key-pair properties.
+        //   * legacy snowflake-connector-python kwargs (`DEFAULT_CONFIGURATION`,
+        //     which are also the TOML-profile spellings `config_manager` resolves
+        //     under the Python flavor) -> Python.
+        let r = registry();
+        let scoped_cases: &[(&str, &str, &[Wrapper])] = &[
+            // Legacy ODBC DSN keys. None of these are Python kwargs or JDBC
+            // properties, so no other wrapper may resolve them.
+            ("SERVER", "host", &[Odbc]),
+            ("UID", "user", &[Odbc]),
+            ("PWD", "password", &[Odbc]),
+            ("PROXYWITHENV", "use_proxy_env", &[Odbc]),
+            ("ALLOWEMPTYPROXY", "allow_empty_proxy", &[Odbc]),
+            ("PRIV_KEY_FILE", "private_key_file", &[Odbc]),
+            ("PRIV_KEY_BASE64", "private_key", &[Odbc]),
+            ("PRIV_KEY_FILE_PWD", "private_key_password", &[Odbc]),
+            ("PRIV_KEY_PWD", "private_key_password", &[Odbc]),
+            // JDBC key-pair properties (`SFSessionProperty`); legacy ODBC used
+            // the `PRIV_KEY_*` spellings above, never these.
+            ("PRIVATE_KEY_BASE64", "private_key", &[Jdbc]),
+            ("PRIVATE_KEY_PWD", "private_key_password", &[Jdbc]),
+            // JDBC property that is also a legacy Python kwarg (the latter
+            // required by the TOML loader).
+            (
+                "PRIVATE_KEY_FILE_PWD",
+                "private_key_password",
+                &[Jdbc, Python],
+            ),
+            // Legacy Python kwarg spelling; the canonical camelCase name does
+            // not match it case-insensitively, so the TOML loader needs it.
+            ("PASSCODE_IN_PASSWORD", "passcodeInPassword", &[Python]),
+            // UD-ODBC's own CRL DSN keys (legacy spelled the family `CRL_CHECK`).
+            ("CRL_MODE", "crl_check_mode", &[Odbc]),
+            ("CRL_ENABLED", "crl_check_mode", &[Odbc]),
+            // JDBC-only camelCase properties.
+            ("oauthClientId", "oauth_client_id", &[Jdbc]),
+            ("oauthClientSecret", "oauth_client_secret", &[Jdbc]),
+            ("oauthAuthorizationUrl", "oauth_authorization_url", &[Jdbc]),
+            ("oauthTokenRequestUrl", "oauth_token_request_url", &[Jdbc]),
+            ("oauthRedirectUri", "oauth_redirect_uri", &[Jdbc]),
+            ("oauthScope", "oauth_scope", &[Jdbc]),
+            (
+                "oauthEnableSingleUseRefreshTokens",
+                "oauth_enable_single_use_refresh_tokens",
+                &[Jdbc],
+            ),
+            (
+                "clientStoreTemporaryCredential",
+                "client_store_temporary_credential",
+                &[Jdbc],
+            ),
+            (
+                "allowUnderscoresInHost",
+                "preserve_underscores_in_hostname",
+                &[Jdbc],
+            ),
+            ("enablePutGet", "enable_put_get", &[Jdbc]),
+            // Python-only legacy kwarg.
+            (
+                "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1",
+                "use_s3_regional_url",
+                &[Python],
+            ),
+            // Legacy snowflake-connector-nodejs option spelling. Legacy .NET and
+            // JDBC use `token_file_path`, a canonical case variant.
+            ("tokenFilePath", "token_file_path", &[NodeJs]),
+        ];
+        for (alias, expected_canonical, owners) in scoped_cases {
+            for wrapper in [Odbc, Jdbc, Python, NodeJs, DotNet] {
+                let resolved = r.resolve_for(wrapper, alias).map(|d| d.canonical_name);
+                if owners.contains(&wrapper) {
+                    assert_eq!(
+                        resolved,
+                        Some(*expected_canonical),
+                        "alias {alias:?} should resolve to {expected_canonical:?} for {wrapper:?}"
+                    );
+                } else {
+                    assert_eq!(
+                        resolved, None,
+                        "alias {alias:?} must NOT resolve for {wrapper:?} (owned by {owners:?})"
+                    );
+                }
+            }
+            // Scoped aliases are never globally resolvable.
+            assert!(
+                r.resolve(alias).is_none(),
+                "scoped alias {alias:?} must not resolve without wrapper context"
+            );
+        }
+    }
+
+    #[test]
+    fn spellings_no_old_driver_accepted_resolve_for_no_wrapper() {
+        // UD must be no more lenient than the driver it replaces. These
+        // convenience spellings were accepted while aliases were global; none of
+        // them appears in snowflake-odbc's `Snowflake.h`, JDBC's
+        // `SFSessionProperty`, or the Python connector's `DEFAULT_CONFIGURATION`,
+        // so no wrapper may resolve them. The canonical name (right column) is
+        // what each driver actually accepted, and still resolves everywhere.
+        let r = registry();
+        let removed: &[(&str, &str)] = &[
+            // Legacy ODBC's key is `NO_PROXY`; legacy Python's kwarg is `no_proxy`.
+            ("NOPROXY", "no_proxy"),
+            // The legacy Python kwarg is the full `oauth_token_request_url`.
+            ("OAUTH_TOKEN_URL", "oauth_token_request_url"),
+            // No legacy driver had TLS-verification or root-store DSN keys.
+            ("TLS_VERIFY_HOSTNAME", "verify_hostname"),
+            ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
+            ("TLS_CUSTOM_ROOT_STORE_PATH", "custom_root_store_path"),
+        ];
+        for (spelling, canonical) in removed {
+            for wrapper in [Wrapper::Odbc, Wrapper::Jdbc, Wrapper::Python] {
+                assert!(
+                    r.resolve_for(wrapper, spelling).is_none(),
+                    "{spelling:?} was accepted by no old driver and must not resolve for {wrapper:?}"
+                );
+            }
+            assert_eq!(
+                r.resolve(canonical).map(|d| d.canonical_name),
+                Some(*canonical),
+                "canonical {canonical:?} must still resolve"
+            );
+        }
+    }
+
+    #[test]
+    fn wire_aliases_are_not_globally_resolvable() {
+        // The whole point of the per-wrapper migration: DSN/wire spellings are
+        // scoped, so the wrapper-agnostic `resolve` (used by TOML profile
+        // loading with an explicit flavor, and by `is_known`) no longer remaps
+        // them. Canonical names still resolve globally, case-insensitively.
+        let r = registry();
+        for scoped_only in ["SERVER", "UID", "PWD", "PRIV_KEY_FILE", "oauthClientId"] {
+            assert!(
+                r.resolve(scoped_only).is_none(),
+                "{scoped_only:?} must not resolve without wrapper context after scoping"
+            );
+        }
+        for canonical in ["host", "user", "password", "private_key_file"] {
+            assert_eq!(
+                r.resolve(canonical).map(|d| d.canonical_name),
+                Some(canonical),
+                "canonical {canonical:?} must still resolve globally"
+            );
+        }
+    }
+
+    #[test]
+    fn every_alias_is_wrapper_scoped() {
+        // Structural invariant, not a spelling list: an alias exists only where
+        // some old driver accepted the spelling, so every alias must name the
+        // wrapper it came from. Asserting it over `PARAM_DEFS` — rather than
+        // over an enumerated list of known spellings like the tests above — is
+        // what makes a newly added global alias fail here instead of drifting
+        // in unnoticed.
+        //
+        // A genuinely wrapper-agnostic spelling would need a deliberate
+        // exception here plus a comment naming every driver that accepts it.
+        // A spelling that merely matches a canonical name case-insensitively
+        // (legacy ODBC's `NO_PROXY` for `no_proxy`, `TOKEN_FILE_PATH` for
+        // `token_file_path`, `PASSCODEINPASSWORD` for `passcodeInPassword`) is
+        // not an alias at all and must not be added as one — see
+        // `canonical_names_resolve_for_every_wrapper`.
+        for param in registry().all_params() {
+            for alias in param.aliases {
+                assert!(
+                    alias.wrapper.is_some(),
+                    "alias {:?} of {:?} is global; scope it to the wrapper(s) whose old \
+                     driver accepted that spelling, e.g. `aliases![Jdbc; {:?}]`",
+                    alias.name,
+                    param.canonical_name,
+                    alias.name
+                );
+            }
         }
     }
 
@@ -2516,20 +2802,44 @@ mod tests {
     }
 
     #[test]
-    fn no_alias_collides_with_another_canonical_name() {
-        let r = registry();
-        let canonical_set: std::collections::HashSet<&str> =
-            r.all_params().iter().map(|p| p.canonical_name).collect();
+    fn no_wrapper_visible_alias_shadows_another_canonical_name() {
+        // Every spelling a wrapper can see must mean that wrapper's own canonical
+        // name, with one deliberate exception per entry below: legacy ODBC's
+        // `LOGIN_TIMEOUT` means `authentication_timeout`, shadowing the canonical
+        // `login_timeout` param. Per-wrapper divergence like that is the point of
+        // `configuration_flavor` (see `resolve_for_prefers_wrapper_scoped_alias`),
+        // so it is enumerated rather than tolerated wholesale.
+        const DELIBERATE_SHADOWS: &[(Wrapper, &str)] = &[(Wrapper::Odbc, "LOGIN_TIMEOUT")];
 
-        // Only global aliases: a scoped alias may intentionally share a spelling
-        // with another param's canonical / global alias (LOGIN_TIMEOUT).
-        for param in r.all_params() {
-            for alias in param.global_alias_names() {
-                let lower = alias.to_ascii_lowercase();
-                if canonical_set.contains(lower.as_str()) {
-                    assert_eq!(
-                        param.canonical_name, lower,
-                        "alias {alias:?} of {:?} collides with canonical name {lower:?}",
+        let r = registry();
+        // Lowercased canonical -> canonical, so camelCase canonicals
+        // (`passcodeInPassword`) compare case-insensitively like the resolver does.
+        let canonical_by_lower: HashMap<String, &'static str> = r
+            .all_params()
+            .iter()
+            .map(|p| (p.canonical_name.to_ascii_lowercase(), p.canonical_name))
+            .collect();
+
+        for wrapper in [
+            Wrapper::Odbc,
+            Wrapper::Jdbc,
+            Wrapper::Python,
+            Wrapper::NodeJs,
+            Wrapper::DotNet,
+        ] {
+            for param in r.all_params() {
+                for alias in param.alias_names_for(wrapper) {
+                    let lower = alias.to_ascii_lowercase();
+                    let Some(shadowed) = canonical_by_lower.get(lower.as_str()) else {
+                        continue; // not a canonical spelling at all
+                    };
+                    if *shadowed == param.canonical_name {
+                        continue; // merely a case variant of this param's own name
+                    }
+                    assert!(
+                        DELIBERATE_SHADOWS.contains(&(wrapper, alias)),
+                        "alias {alias:?} of {:?} shadows the canonical name {shadowed:?} for \
+                         {wrapper:?}; add it to DELIBERATE_SHADOWS only if that remap is intended",
                         param.canonical_name
                     );
                 }
@@ -2540,10 +2850,15 @@ mod tests {
     #[test]
     fn is_known_works() {
         let r = registry();
+        // `is_known` reflects the wrapper-agnostic index (canonicals + any
+        // remaining global aliases). Canonical names resolve case-insensitively;
+        // wrapper-scoped wire spellings (e.g. `SERVER`) are deliberately not
+        // "known" without wrapper context.
         assert!(r.is_known("account"));
         assert!(r.is_known("ACCOUNT"));
-        assert!(r.is_known("SERVER"));
         assert!(r.is_known("host"));
+        assert!(r.is_known("HOST"));
+        assert!(!r.is_known("SERVER"));
         assert!(!r.is_known("unknown_key"));
     }
 
@@ -2720,7 +3035,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_for_falls_back_to_global() {
+    fn resolve_for_falls_back_to_canonical_index() {
         let r = registry();
         for wrapper in [Wrapper::Jdbc, Wrapper::Python] {
             let def = r
@@ -2731,27 +3046,44 @@ mod tests {
                 "{wrapper:?} LOGIN_TIMEOUT should map to login_timeout"
             );
         }
-        // Global resolve (no wrapper) still gets login_timeout.
+        // Global resolve (no wrapper) still gets login_timeout via the canonical
+        // name match — `LOGIN_TIMEOUT` is no longer a stored alias.
         assert_eq!(
             r.resolve("LOGIN_TIMEOUT").map(|d| d.canonical_name),
             Some("login_timeout")
         );
-        // Unscoped aliases stay visible to every wrapper.
+        // Canonical names fall back to the global index for every wrapper.
         for wrapper in [Wrapper::Odbc, Wrapper::Jdbc, Wrapper::Python] {
             assert_eq!(
-                r.resolve_for(wrapper, "SERVER").map(|d| d.canonical_name),
-                Some("host"),
+                r.resolve_for(wrapper, "account").map(|d| d.canonical_name),
+                Some("account"),
                 "{wrapper:?}"
             );
         }
+        // `SERVER` is the legacy ODBC DSN spelling and ODBC-only: JDBC carries the
+        // host in the URL and the legacy Python connector has no `server` kwarg.
+        // The wrapper-agnostic `resolve` never sees it.
+        assert_eq!(
+            r.resolve_for(Wrapper::Odbc, "SERVER")
+                .map(|d| d.canonical_name),
+            Some("host")
+        );
+        for wrapper in [Wrapper::Jdbc, Wrapper::Python] {
+            assert!(
+                r.resolve_for(wrapper, "SERVER").is_none(),
+                "{wrapper:?} must not resolve the ODBC-only SERVER spelling"
+            );
+        }
+        assert!(r.resolve("SERVER").is_none());
     }
 
     #[test]
     fn wrapper_scoped_alias_names_are_unique_per_wrapper() {
         // Same-name → different-canonical within one registration class is an
         // authoring error. Globals and (wrapper, name) scoped entries live in
-        // separate indexes, so LOGIN_TIMEOUT may be both a global → login_timeout
-        // and an Odbc-scoped → authentication_timeout.
+        // separate indexes, so one spelling may be both a canonical/global name and
+        // a scoped alias for a different param: `LOGIN_TIMEOUT` is the canonical
+        // `login_timeout`, and an Odbc-scoped alias of `authentication_timeout`.
         let mut global: HashMap<String, &'static str> = HashMap::new();
         let mut scoped: HashMap<(Wrapper, String), &'static str> = HashMap::new();
         for param in registry().all_params() {
