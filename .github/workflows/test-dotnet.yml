@@ -381,6 +381,12 @@ jobs:
           shared-key: "sf-core"
           registry-cache-hit: ${{ steps.sf-core-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.sf-core-cache.outputs.target-cache-hit }}
+          
+      - name: Copy native lib to test output directory
+        shell: bash
+        run: |
+          cp "${{ github.workspace }}/target/debug/libsf_core.so" \
+          "dotnet/tests/Snowflake.Data.Tests.Reference/bin/Debug/net10.0/"
 
       - name: Run reference tests (new driver)
         run: dotnet run --no-build --framework net10.0

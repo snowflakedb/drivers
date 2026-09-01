@@ -45,9 +45,9 @@ public static class AssembliesMetadata
     public static readonly AssemblyMetadata ProtoAssembly = new("Snowflake.Data.Proto");
     public static readonly AssemblyMetadata RootAssembly = new("Snowflake.Data.UD", "Snowflake.Data", ProtoAssembly);
     public static readonly AssemblyMetadata TestsCommonsAssembly = new("Snowflake.Data.Tests.Common", RootAssembly, ProtoAssembly);
-    public static readonly AssemblyMetadata RegressionTestsAssembly = new("Snowflake.Data.Tests.Reference", RootAssembly, ProtoAssembly, OldDriverAssembly, TestsCommonsAssembly);
     public static readonly AssemblyMetadata InteropTestsAssembly = new("Snowflake.Data.Tests.Interop", RootAssembly, ProtoAssembly, TestsCommonsAssembly);
     public static readonly AssemblyMetadata TestsAssembly = new("Snowflake.Data.Tests", RootAssembly, ProtoAssembly, TestsCommonsAssembly);
+    public static readonly AssemblyMetadata RegressionTestsAssembly = new("Snowflake.Data.Tests.Reference", RootAssembly, ProtoAssembly, OldDriverAssembly, TestsCommonsAssembly, TestsAssembly);
 
     public static AssemblyMetadata[] AllAssemblies => DriverAssemblies.Concat([OldDriverAssembly]).ToArray();
 

@@ -8,7 +8,7 @@ pub enum Language {
     Odbc,
     Jdbc,
     Python,
-    CSharp,
+    Dotnet,
     JavaScript,
 }
 
@@ -25,7 +25,7 @@ impl std::fmt::Display for Language {
             Language::Odbc => write!(f, "Odbc"),
             Language::Jdbc => write!(f, "Jdbc"),
             Language::Python => write!(f, "Python"),
-            Language::CSharp => write!(f, "CSharp"),
+            Language::Dotnet => write!(f, "Dotnet"),
             Language::JavaScript => write!(f, "JavaScript"),
         }
     }
@@ -63,7 +63,7 @@ impl TestDiscovery {
                     languages.push(Language::Python)
                 }
                 "dotnet" | "dotnet_e2e" | "dotnet_int" => {
-                    languages.push(Language::CSharp)
+                    languages.push(Language::Dotnet)
                 }
                 "javascript" | "javascript_e2e" | "javascript_int" | "nodejs" | "js" => {
                     languages.push(Language::JavaScript)
@@ -91,7 +91,7 @@ impl TestDiscovery {
                 "odbc" => languages.push(Language::Odbc),
                 "jdbc" => languages.push(Language::Jdbc),
                 "python" | "pep249" => languages.push(Language::Python),
-                "dotnet" => languages.push(Language::CSharp),
+                "dotnet" => languages.push(Language::Dotnet),
                 "javascript" | "nodejs" | "js" => languages.push(Language::JavaScript),
                 _ => {} // Ignore level-specific tags and unknown tags
             }
@@ -113,7 +113,7 @@ impl TestDiscovery {
                 "odbc_not_needed" => excluded.push(Language::Odbc),
                 "jdbc_not_needed" => excluded.push(Language::Jdbc),
                 "python_not_needed" => excluded.push(Language::Python),
-                "dotnet_not_needed" => excluded.push(Language::CSharp),
+                "dotnet_not_needed" => excluded.push(Language::Dotnet),
                 "javascript_not_needed" | "js_not_needed" => excluded.push(Language::JavaScript),
                 _ => {}
             }
@@ -161,7 +161,7 @@ impl TestDiscovery {
             Language::Odbc => "odbc",
             Language::Jdbc => "jdbc",
             Language::Python => "python",
-            Language::CSharp => "dotnet",
+            Language::Dotnet => "dotnet",
             Language::JavaScript => "javascript",
         };
 
@@ -405,7 +405,7 @@ impl TestDiscovery {
                     base_path.join(format!("{}.py", snake_name)),
                 ]
             }
-            Language::CSharp => vec![
+            Language::Dotnet => vec![
                 self.workspace_root
                     .join("dotnet/tests/Snowflake.Data.Tests.Reference")
                     .join(format!("{}Test.cs", pascal_name)),

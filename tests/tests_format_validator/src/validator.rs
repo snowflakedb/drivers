@@ -223,7 +223,7 @@ impl GherkinValidator {
             Language::Jdbc,
             Language::Odbc,
             Language::Python,
-            Language::CSharp,
+            Language::Dotnet,
         ] {
             let orphaned_files = self.find_orphaned_files_for_language(
                 language,
@@ -370,7 +370,7 @@ impl GherkinValidator {
                 (self._workspace_root.join("python/tests/e2e"), false),
                 (self._workspace_root.join("python/tests/integ"), true),
             ],
-            Language::CSharp => vec![(
+            Language::Dotnet => vec![(
                 self._workspace_root
                     .join("dotnet/tests/Snowflake.Data.Tests.Reference"),
                 false,
@@ -691,7 +691,7 @@ impl GherkinValidator {
                 Language::Jdbc => extension == "java",
                 Language::Odbc => extension == "cpp",
                 Language::Python => extension == "py",
-                Language::CSharp => extension == "cs",
+                Language::Dotnet => extension == "cs",
                 _ => false,
             }
         } else {
@@ -804,7 +804,7 @@ impl GherkinValidator {
                     methods.push(captures[1].to_string());
                 }
             }
-            Language::CSharp => {
+            Language::Dotnet => {
                 // Match xUnit attributes ([Fact], [Theory], [SnowflakeFact],
                 // [SnowflakeTheory]) optionally followed by more attributes, then
                 // the method declaration on the next line(s).
@@ -950,7 +950,7 @@ impl GherkinValidator {
                         Language::Python => "python",
                         Language::Jdbc => "jdbc",
                         Language::Odbc => "odbc",
-                        Language::CSharp => "dotnet",
+                        Language::Dotnet => "dotnet",
                         _ => "language",
                     };
                     tag_errors.push(format!(
@@ -983,7 +983,7 @@ impl GherkinValidator {
                         Language::Python => "python",
                         Language::Jdbc => "jdbc",
                         Language::Odbc => "odbc",
-                        Language::CSharp => "dotnet",
+                        Language::Dotnet => "dotnet",
                         _ => "language",
                     };
                     missing_scenario_tags_errors.push(format!(
@@ -1374,7 +1374,7 @@ impl GherkinValidator {
             Language::Jdbc,
             Language::Odbc,
             Language::Python,
-            Language::CSharp,
+            Language::Dotnet,
         ] {
             let mut e2e_files: Vec<LanguageSpecificTestFile> = Vec::new();
             let mut integration_files: Vec<LanguageSpecificTestFile> = Vec::new();

@@ -266,7 +266,7 @@ class CoverageReportGenerator:
         for i, component in enumerate(path_parts):
             if component == "definitions" and i + 1 < len(path_parts):
                 org_dir = path_parts[i + 1]
-                if org_dir in ('core', 'python', 'odbc', 'jdbc', 'csharp', 'javascript'):
+                if org_dir in ('core', 'python', 'odbc', 'jdbc', 'dotnet', 'javascript'):
                     return True, org_dir
                 elif org_dir == 'shared':
                     return False, ''
@@ -1061,7 +1061,7 @@ class CoverageReportGenerator:
                 # Check if we have organizational dir (shared, core, python, odbc)
                 if def_idx + 2 < len(path_parts):
                     org_dir = path_parts[def_idx + 1]
-                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'csharp', 'javascript'):
+                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'dotnet', 'javascript'):
                         # New structure: get category after organizational dir
                         folder = path_parts[def_idx + 2] if def_idx + 2 < len(path_parts) else 'other'
                     else:
@@ -1603,7 +1603,7 @@ class CoverageReportGenerator:
                 # Check if we have organizational dir (shared, core, python, odbc)
                 if def_idx + 2 < len(path_parts):
                     org_dir = path_parts[def_idx + 1]
-                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'csharp', 'javascript'):
+                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'dotnet', 'javascript'):
                         # New structure: get category after organizational dir
                         folder = path_parts[def_idx + 2] if def_idx + 2 < len(path_parts) else 'other'
                     else:

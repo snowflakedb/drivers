@@ -4,6 +4,8 @@ namespace Snowflake.Data.Tests.Compatibility;
 
 public static class Skip
 {
+    public static void FutureMilestone() => When(true, "TODO not yet implemented");
+
     public static void When(bool condition, string rationale)
     {
         if (condition)

@@ -4,7 +4,7 @@ namespace Snowflake.Data.Tests.Reference;
 
 public sealed class BasicExecuteQueryTest : ReferenceTestBase
 {
-    public BasicExecuteQueryTest(RegressionITFixture fixture, ITestOutputHelper output)
+    public BasicExecuteQueryTest(ReferenceITFixture fixture, ITestOutputHelper output)
         : base(fixture, output) { }
 
     // Scenario: should execute simple SELECT returning single value
