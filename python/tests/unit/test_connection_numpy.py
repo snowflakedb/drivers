@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from snowflake.connector._common.extras import MissingOptionalDependency
 from snowflake.connector._internal.errorcode import ER_NO_NUMPY
-from snowflake.connector._internal.extras import MissingOptionalDependency
 from snowflake.connector.errors import ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 

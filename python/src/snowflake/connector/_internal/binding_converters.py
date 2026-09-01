@@ -24,10 +24,10 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
+from .._common.extras import MissingOptionalDependency
+from .._common.extras import numpy as np
 from ..errors import ProgrammingError
 from .errorcode import ER_NOT_SUPPORT_DATA_TYPE
-from .extras import MissingOptionalDependency
-from .extras import numpy as np
 from .type_codes import PYTHON_TO_SNOWFLAKE_TYPE
 
 
