@@ -2,21 +2,49 @@
 
 ## Upcoming Release
 
+Breaking changes:
+- Changed `SQLColumns` `BUFFER_LENGTH` for `DATE`/`TIME` from `COLUMN_SIZE` (`10` / `18` for `TIME(9)`) to `6` (`sizeof(SQL_DATE_STRUCT)` / `sizeof(SQL_TIME_STRUCT)`); query-result `SQLColAttribute` octet length for DATE/TIME remains 6. (snowflakedb/drivers#1485)
+
+New features:
+- Added native AKS Workload Identity support for Azure: when the Azure Workload Identity webhook injects `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE` into a pod and the projected token file exists on disk, `WORKLOAD_IDENTITY_PROVIDER=AZURE` exchanges that federated token for an Entra ID access token directly. `WORKLOAD_IDENTITY_IMPERSONATION_PATH` is not supported in this environment. (snowflakedb/drivers#1367)
+- Added a `WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN` connection parameter for AWS Workload Identity Federation. When set to true, attestation uses outbound STS `GetWebIdentityToken` instead of the default pre-signed `GetCallerIdentity` token; the connection parameter takes precedence over `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN`. (snowflakedb/drivers#1551)
+
+## v4.0.0-rc2
+
+Breaking changes:
+
+- Changed `SQLColumns` `BUFFER_LENGTH` for `NUMBER`/`DECIMAL` to return precision + 2 (ODBC transfer octet length); query-result `SQLColAttribute` octet/display for NUMBER remains 136. (snowflakedb/drivers#1166)
+- Changed `SQLColumns` `SQL_DATA_TYPE` for DATE/TIME/TIMESTAMP to the verbose `SQL_DATETIME` (`9`) with the subtype in `SQL_DATETIME_SUB`; `DATA_TYPE` still returns the concise type (`91` / `92` / `93`). (snowflakedb/drivers#1296)
+- Changed `SQLColumns` `COLUMN_SIZE` for `TIMESTAMP*` from a fixed `35` to `20` + scale (`19` when scale is `0`). (snowflakedb/drivers#1297)
+- Changed `SQLColumns` `BUFFER_LENGTH` for `TIMESTAMP*` from `35` to `16` (`sizeof(SQL_TIMESTAMP_STRUCT)`). (snowflakedb/drivers#1298)
+- Changed `SQLColumns` `COLUMN_SIZE` and `BUFFER_LENGTH` for `VARIANT`/`OBJECT`/`ARRAY` to follow `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT` instead of SHOW COLUMNS' 128 MB length. (snowflakedb/drivers#1299)
+
 New features:
 
 - Implemented `SQLFreeConnect` (ODBC 2.x) as a thin wrapper around `SQLFreeHandle(SQL_HANDLE_DBC, …)` for direct-link and ODBC 2.x applications that bypass the Driver Manager. (snowflakedb/drivers#1186)
 - Implemented `SQLFreeEnv` (ODBC 2.x) as a thin wrapper around `SQLFreeHandle(SQL_HANDLE_ENV, …)` for direct-link and ODBC 2.x applications that bypass the Driver Manager. (snowflakedb/drivers#1187)
-- `SQLCancel` now cancels through the core's operation handle instead of issuing a separate server-side cancel call, so a cancelled statement is aborted server-side by the executing path itself. `SQLCancel` returns as soon as the cancel is signalled rather than waiting for the abort request to be processed; the statement's own call still reports `HY008` and does not return until the abort has been issued. (snowflakedb/drivers#1491)
+- Added a `TOKEN_FILE_PATH` connection parameter that loads a PAT, legacy OAuth, or OIDC bearer token from a file; when both `TOKEN` and `TOKEN_FILE_PATH` are set, the file contents are used. (snowflakedb/drivers#1445)
+
+Changes:
+
+- Changed `SQLCancel` to cancel through the statement's operation handle so the executing path aborts the query on the server; `SQLCancel` returns once the cancel is signaled, and the canceled call still reports `HY008` after the abort is issued. (snowflakedb/drivers#1491)
+- Changed query, cancel, and login timeouts to report SQLSTATE `HYT00` when no server SQLSTATE is present. (snowflakedb/drivers#1380)
+- Changed `SQL_C_CHAR`/`SQL_C_WCHAR` fetch of `+/-Infinity` `FLOAT`/`REAL` to return `INFINITY` / `-INFINITY` instead of `inf` / `-inf`. (snowflakedb/drivers#1219)
+- Changed PUT to resolve relative source paths to an absolute canonical form before upload. (snowflakedb/drivers#666)
 
 Bug fixes:
 
-- Fixed `SQLColumns` `BUFFER_LENGTH` for `NUMBER`/`DECIMAL` to return precision + 2 (ODBC transfer octet length); query-result `SQLColAttribute` octet/display for NUMBER remains 136. (snowflakedb/drivers#1166)
-- Fixed `SQLColumns` `COLUMN_SIZE` and `BUFFER_LENGTH` for `VARIANT`/`OBJECT`/`ARRAY` to follow `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT` instead of SHOW COLUMNS' 128 MB length. (snowflakedb/drivers#1299)
 - Fixed `SQLColumns` `COLUMN_SIZE` and `BUFFER_LENGTH` for unrecognized Snowflake types such as `GEOGRAPHY`/`GEOMETRY` to report the varchar metrics implied by their `SQL_VARCHAR` `DATA_TYPE` instead of NULL. (snowflakedb/drivers#1431)
 - Fixed `SQLProcedureColumns` `TYPE_NAME` for unsupported types such as `GEOGRAPHY`/`GEOMETRY` to report the Snowflake type name while `DATA_TYPE` remains `SQL_VARCHAR`. (snowflakedb/drivers#1432)
 - Fixed `SQLColumns` and `SQLProcedureColumns` `CHAR_OCTET_LENGTH` for unsupported types such as `GEOGRAPHY`/`GEOMETRY` to report a byte length instead of NULL, matching the `SQL_VARCHAR` they report as `DATA_TYPE`. (snowflakedb/drivers#1432)
 - Fixed `SQLGetTypeInfo` string result columns (`TYPE_NAME`, `LITERAL_PREFIX`/`SUFFIX`, `CREATE_PARAMS`, `LOCAL_TYPE_NAME`) to report `SQL_WVARCHAR` as the IRD concise type, matching `SQLTables`/`SQLColumns`. (snowflakedb/drivers#1481)
 - Fixed `SQLGetTypeInfo` `INTERVAL_PRECISION` to report `SQL_SMALLINT` as the IRD concise type, matching the ODBC spec and the reference driver; `NUM_PREC_RADIX` remains `SQL_INTEGER`. (snowflakedb/drivers#1482)
+- Fixed reauth-required authentication failures to report SQLSTATE `08001` instead of `28000`. (snowflakedb/drivers#1133)
+- Fixed an empty `ACCOUNT` value hanging until login timed out; it is now rejected immediately. (snowflakedb/drivers#1514)
+- Fixed cancelling a PUT or GET to abort the in-flight cloud transfer and remove any partial `.part` download file. (snowflakedb/drivers#1424)
+- Fixed a client-side query timeout to abort the query on the server instead of giving up locally and leaving it running. (snowflakedb/drivers#1491)
+- Fixed JSON-format decode of timestamps just before the Unix epoch so the fractional second does not shift the instant forward by one second. (snowflakedb/drivers#1498)
+- Fixed PUT with overwrite disabled to skip an existing stage object instead of replacing it. (snowflakedb/drivers#1434)
 
 ## v4.0.0-rc1
 
@@ -81,7 +109,6 @@ New features:
 
 Changes:
 
-- Changed query, cancel, and login timeouts to classify as SQLSTATE `HYT00` from the Timeout error kind when no server SQLSTATE is present. (snowflakedb/drivers#1380)
 - Renamed the default driver registration name to `Snowflake ODBC`; update DSN `Driver=` entries that reference `SnowflakeDSIIDriver` (custom names still configurable via `DRIVER_NAME=` / `SF_DRIVER_NAME`). (snowflakedb/drivers#1143)
 - Changed distributable ODBC package filenames to `snowflake-odbc-<version>.<arch>.<extension>` with unified architectures `aarch64` / `x86_64` / `x86_32` / `universal`. (snowflakedb/drivers#1181)
 - Changed `SQLGetInfo(SQL_DRIVER_VER)` to return the zero-padded `MM.mm.bbbb` format (e.g. `04.00.0000`) per the ODBC specification instead of the unpadded semver string (e.g. `3.16.0`). (snowflakedb/drivers#1074)
@@ -100,7 +127,6 @@ Changes:
 
 Bug fixes:
 
-- Fixed reauth-required authentication failures to report SQLSTATE `08001` instead of `28000`, matching the legacy connector and the Python wrapper. (snowflakedb/drivers#1133)
 - Fixed failed `GET` downloads to leave no partial or corrupt file at the destination; the driver now writes to a `.part` temporary file and renames it on successful completion. (snowflakedb/drivers#812)
 - Fixed concurrent `SQLDisconnect` to be thread-safe. (snowflakedb/drivers#1018)
 - Fixed `SQLDisconnect` to free child statement handles and explicitly allocated descriptors after a successful disconnect so a later `SQLFreeHandle` on those handles returns `SQL_INVALID_HANDLE`. (snowflakedb/drivers#1174)
