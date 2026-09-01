@@ -17,11 +17,17 @@ on:
         default: false
 
 concurrency:
+  # Group by PR number for PRs; fall back to run ID for push-to-main,
+  # push-to-release, and merge_group runs (each run is unique so they won't
+  # cancel each other). The fallback is github.run_id and not github.ref
+  # because github.ref is refs/heads/main for every main push, which puts
+  # consecutive commits in one group and cancels the older commit's matrix.
+  #
   # The prefix is a literal, not ${{ github.workflow }}: inside a workflow_call
   # the github context belongs to the caller, so github.workflow would resolve
   # to "Driver CI" and put this run in the orchestrator's own group. GitHub
   # reads that as a deadlock and fails the call before any job starts.
-  group: dotnet-ci-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  group: dotnet-ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
 
 jobs:
