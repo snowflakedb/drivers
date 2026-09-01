@@ -7,6 +7,7 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   username: 'user',
   privateKey: 'private_key',
   privateKeyPass: 'private_key_password',
+  useEnvProxy: 'use_proxy_env',
 };
 
 export function normalizeConnectionOptions(

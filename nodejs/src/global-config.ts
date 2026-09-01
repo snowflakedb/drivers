@@ -45,6 +45,15 @@ export interface ConfigureOptions {
    * Has no effect if you supply your own `xmlColumnVariantParser`.
    */
   xmlParserConfig?: XMlParserConfigOption;
+
+  /**
+   * Whether the driver reads proxy settings from the `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`
+   * environment variables when a connection does not configure an explicit proxy. An explicit
+   * `proxyHost`/`proxyPort` always takes precedence over the environment.
+   *
+   * @default true
+   */
+  useEnvProxy?: boolean;
 }
 
 type ResolvedConfig = Required<ConfigureOptions>;
@@ -74,6 +83,7 @@ const buildDefaults = (): ResolvedConfig => ({
     }
   },
   xmlParserConfig: {},
+  useEnvProxy: true,
 });
 
 export const GlobalConfig: ResolvedConfig = {

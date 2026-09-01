@@ -17,6 +17,7 @@ import {
   type CoreStatementInstance,
 } from './core/index.js';
 import {
+  GlobalConfig,
   updateGlobalConfig,
   type ConfigureOptions,
   type CustomParser,
@@ -74,7 +75,10 @@ export class Connection {
     this.#defaultRowMode = rowMode;
     this.#core = new CoreConnection(
       // Cast until options are typed across the bridge, which takes strings only.
-      normalizeConnectionOptions(coreOptions as Record<string, string>),
+      normalizeConnectionOptions({
+        ...(coreOptions as Record<string, string>),
+        useEnvProxy: String(GlobalConfig.useEnvProxy),
+      }),
       jsTreatIntegerAsBigInt === undefined
         ? {}
         : { [SessionParameterName.JS_TREAT_INTEGER_AS_BIGINT]: String(jsTreatIntegerAsBigInt) },
