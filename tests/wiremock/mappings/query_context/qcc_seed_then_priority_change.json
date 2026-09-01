@@ -1,0 +1,91 @@
+{
+  "mappings": [
+    {
+      "name": "QCC priority-change: seed with id=1 at priority=10",
+      "scenarioName": "qcc-priority-change",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "seeded",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-seed",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [],
+            "queryContext": {
+              "entries": [
+                {"id": 1, "timestamp": 100, "priority": 10, "context": "original"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "QCC priority-change: merge changes id=1 priority to 5, same timestamp",
+      "scenarioName": "qcc-priority-change",
+      "requiredScenarioState": "seeded",
+      "newScenarioState": "merged",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-reindex",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [],
+            "queryContext": {
+              "entries": [
+                {"id": 1, "timestamp": 100, "priority": 5, "context": "original"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "QCC priority-change: third query captures request",
+      "scenarioName": "qcc-priority-change",
+      "requiredScenarioState": "merged",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-capture",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": []
+          }
+        }
+      }
+    }
+  ]
+}

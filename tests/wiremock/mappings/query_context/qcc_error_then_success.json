@@ -1,0 +1,62 @@
+{
+  "mappings": [
+    {
+      "name": "QCC error-then-success: first query returns error with queryContext",
+      "scenarioName": "qcc-error-then-success",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "errored",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": false,
+          "code": "002043",
+          "message": "SQL compilation error",
+          "data": {
+            "queryId": "qid-004",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["Statement executed successfully."]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [],
+            "queryContext": {
+              "entries": [
+                {"id": 1, "timestamp": 100, "priority": 4, "context": "fromError"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "QCC error-then-success: second query returns plain success",
+      "scenarioName": "qcc-error-then-success",
+      "requiredScenarioState": "errored",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-success",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": []
+          }
+        }
+      }
+    }
+  ]
+}

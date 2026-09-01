@@ -1,0 +1,30 @@
+{
+  "name": "Query response with 3 entries sharing the same priority (duplicate priorities test)",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "qid-dup-pri-1",
+        "queryResultFormat": "json",
+        "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+        "rowset": [["OK"]],
+        "total": 1,
+        "returned": 1,
+        "parameters": [],
+        "queryContext": {
+          "entries": [
+            {"id": 1, "timestamp": 100, "priority": 5, "context": "ctx1"},
+            {"id": 2, "timestamp": 200, "priority": 5, "context": "ctx2"},
+            {"id": 3, "timestamp": 300, "priority": 5, "context": "ctx3"}
+          ]
+        }
+      }
+    }
+  }
+}

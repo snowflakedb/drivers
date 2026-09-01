@@ -1,0 +1,93 @@
+{
+  "mappings": [
+    {
+      "name": "QCC overlap-merge: first query seeds ids 1,2",
+      "scenarioName": "qcc-overlap-merge",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "seeded",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-seed",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [],
+            "queryContext": {
+              "entries": [
+                {"id": 1, "timestamp": 100, "priority": 10, "context": "ctx1"},
+                {"id": 2, "timestamp": 200, "priority": 20, "context": "ctx2"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "QCC overlap-merge: second query merges id=1 updated + id=3 new",
+      "scenarioName": "qcc-overlap-merge",
+      "requiredScenarioState": "seeded",
+      "newScenarioState": "merged",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-merge",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [],
+            "queryContext": {
+              "entries": [
+                {"id": 1, "timestamp": 999, "priority": 10, "context": "ctx1-updated"},
+                {"id": 3, "timestamp": 300, "priority": 30, "context": "ctx3"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "QCC overlap-merge: third query captures request",
+      "scenarioName": "qcc-overlap-merge",
+      "requiredScenarioState": "merged",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-capture",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": []
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "mappings": [
+    {
+      "name": "QCC dup-priority-merge: seed with ids 1,2 at p=10 and id=3 at p=20 (QCCSIZE=3)",
+      "scenarioName": "qcc-dup-priority-merge",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "seeded",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-seed",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [{"name": "QUERY_CONTEXT_CACHE_SIZE", "value": 3}],
+            "queryContext": {
+              "entries": [
+                {"id": 1, "timestamp": 100, "priority": 10, "context": "first"},
+                {"id": 2, "timestamp": 200, "priority": 10, "context": "second"},
+                {"id": 3, "timestamp": 300, "priority": 20, "context": "other"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "QCC dup-priority-merge: merge adds id=5 at p=10",
+      "scenarioName": "qcc-dup-priority-merge",
+      "requiredScenarioState": "seeded",
+      "newScenarioState": "merged",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-merge",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [],
+            "queryContext": {
+              "entries": [
+                {"id": 2, "timestamp": 200, "priority": 10, "context": "second"},
+                {"id": 5, "timestamp": 500, "priority": 10, "context": "newcomer"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "QCC dup-priority-merge: third query captures request",
+      "scenarioName": "qcc-dup-priority-merge",
+      "requiredScenarioState": "merged",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-capture",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": []
+          }
+        }
+      }
+    }
+  ]
+}

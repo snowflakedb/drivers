@@ -1,0 +1,86 @@
+{
+  "mappings": [
+    {
+      "name": "QCC seed-then-no-context: first query returns QCC seed",
+      "scenarioName": "qcc-seed-then-no-context",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "seeded",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-seed",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [],
+            "queryContext": {
+              "entries": [
+                {"id": 1, "timestamp": 100, "priority": 4, "context": "base64seed"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "QCC seed-then-no-context: second query has no queryContext field",
+      "scenarioName": "qcc-seed-then-no-context",
+      "requiredScenarioState": "seeded",
+      "newScenarioState": "captured",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-no-ctx",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": []
+          }
+        }
+      }
+    },
+    {
+      "name": "QCC seed-then-no-context: third query captures request",
+      "scenarioName": "qcc-seed-then-no-context",
+      "requiredScenarioState": "captured",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "qid-capture",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["OK"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": []
+          }
+        }
+      }
+    }
+  ]
+}
