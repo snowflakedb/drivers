@@ -17,7 +17,7 @@ mod tests {
     use crate::conversion::warning::Warning;
     use crate::conversion::{
         NumericSettings, ReadArrowType, SnowflakeType, WriteODBCType, decimal_digits_from_field,
-        sql_type_from_field,
+        make_converter, sql_type_from_field,
     };
 
     fn ntz(scale: u32) -> SnowflakeTimestampNtz {
@@ -165,14 +165,26 @@ mod tests {
     }
 
     #[test]
-    fn read_scaled_tz_scale_over_9_returns_invalid() {
-        let sn = tz(15);
-        let array = PrimitiveArray::<Int64Type>::from(vec![Some(0)]);
-        let result = sn.read_arrow_type(&array, 0);
-        assert!(matches!(
-            result,
-            Err(ReadArrowError::InvalidArrowValue { .. })
-        ));
+    fn should_reject_timestamp_tz_flat_int64_converter() {
+        let mut meta = HashMap::new();
+        meta.insert("logicalType".to_string(), "TIMESTAMP_TZ".to_string());
+        meta.insert("scale".to_string(), "9".to_string());
+        let field = timestamp_field_with_metadata(meta);
+        let err = match make_converter(&field, &settings()) {
+            Err(e) => e,
+            Ok(_) => panic!("expected converter construction to fail for Int64 TIMESTAMP_TZ"),
+        };
+        assert!(
+            matches!(
+                err,
+                ConversionError::IncompatibleFieldMetadata {
+                    ref logical_type,
+                    data_type: DataType::Int64,
+                    ..
+                } if logical_type == "TIMESTAMP_TZ"
+            ),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -441,36 +453,8 @@ mod tests {
         assert_eq!(&buffer[..19], b"2023-06-15 10:30:45");
     }
 
-    /// Build a 3-column TIMESTAMP_TZ Arrow struct as Snowflake sends it on the
-    /// wire. `offset_minutes` is the *signed* offset in minutes (e.g. -480 for
-    /// UTC-08:00); the helper applies the +1440 bias the server actually puts
-    /// in the column so tests can read naturally.
-    fn make_tz_struct_array_3col(epoch: i64, fraction: i32, offset_minutes: i32) -> StructArray {
-        let epoch_col: ArrayRef = Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(epoch)]));
-        let frac_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(fraction)]));
-        let tz_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(
-            offset_minutes + 1440,
-        )]));
-        StructArray::from(vec![
-            (
-                Arc::new(ArrowField::new("epoch", DataType::Int64, false)),
-                epoch_col,
-            ),
-            (
-                Arc::new(ArrowField::new("fraction", DataType::Int32, false)),
-                frac_col,
-            ),
-            (
-                Arc::new(ArrowField::new("tz_offset", DataType::Int32, false)),
-                tz_col,
-            ),
-        ])
-    }
-
-    /// Build a 2-column TIMESTAMP_TZ Arrow struct (the layout Snowflake uses
-    /// for scales 0-5, where epoch and fraction are pre-combined into a single
-    /// scaled Int64). `offset_minutes` is the signed offset; the helper
-    /// applies the +1440 server bias.
+    /// Build a 2-column TIMESTAMP_TZ Arrow struct for WRITE/policy tests that
+    /// still need a decoded `TzInstant`. Arrow READ coverage lives in `sf_types`.
     fn make_tz_struct_array_2col(scaled_epoch: i64, offset_minutes: i32) -> StructArray {
         let epoch_col: ArrayRef =
             Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(scaled_epoch)]));
@@ -487,103 +471,6 @@ mod tests {
                 tz_col,
             ),
         ])
-    }
-
-    fn make_single_col_struct_array(epoch: i64) -> StructArray {
-        let epoch_col: ArrayRef = Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(epoch)]));
-        StructArray::from(vec![(
-            Arc::new(ArrowField::new("epoch", DataType::Int64, false)),
-            epoch_col,
-        )])
-    }
-
-    #[test]
-    fn read_tz_3col_struct_valid() {
-        let sn = tz(9);
-        let array = make_tz_struct_array_3col(1_700_000_000, 0, 0);
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(value.utc.and_utc().timestamp(), 1_700_000_000);
-        assert_eq!(value.offset_minutes, 0);
-    }
-
-    #[test]
-    fn read_tz_3col_struct_preserves_offset() {
-        // Positive offset: e.g. UTC+05:30 (India) is +330 minutes.
-        let sn = tz(9);
-        let array = make_tz_struct_array_3col(1_700_000_000, 0, 330);
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(value.utc.and_utc().timestamp(), 1_700_000_000);
-        assert_eq!(value.offset_minutes, 330);
-    }
-
-    #[test]
-    fn read_tz_3col_struct_preserves_negative_offset() {
-        // Negative offset: e.g. UTC-08:00 (PST) is -480 minutes. Server biases
-        // by +1440 so the wire value is 960; we recover -480 here.
-        let sn = tz(9);
-        let array = make_tz_struct_array_3col(1_700_000_000, 0, -480);
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(value.offset_minutes, -480);
-    }
-
-    #[test]
-    fn read_tz_2col_struct_valid() {
-        let sn = tz(0);
-        let array = make_tz_struct_array_2col(1_700_000_000, 0);
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(value.utc.and_utc().timestamp(), 1_700_000_000);
-        assert_eq!(value.offset_minutes, 0);
-    }
-
-    #[test]
-    fn read_tz_2col_struct_preserves_offset() {
-        let sn = tz(0);
-        let array = make_tz_struct_array_2col(1_700_000_000, 330);
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(value.offset_minutes, 330);
-    }
-
-    #[test]
-    fn read_tz_1col_struct_returns_invalid() {
-        let sn = tz(0);
-        let array = make_single_col_struct_array(1_700_000_000);
-        let result = sn.read_arrow_type(&array, 0);
-        assert!(matches!(
-            result,
-            Err(ReadArrowError::InvalidArrowValue { .. })
-        ));
-    }
-
-    #[test]
-    fn read_tz_4col_struct_returns_invalid() {
-        let sn = tz(9);
-        let epoch_col: ArrayRef = Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(0i64)]));
-        let frac_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(0i32)]));
-        let tz_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(0i32)]));
-        let extra_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(0i32)]));
-        let array = StructArray::from(vec![
-            (
-                Arc::new(ArrowField::new("epoch", DataType::Int64, false)),
-                epoch_col,
-            ),
-            (
-                Arc::new(ArrowField::new("fraction", DataType::Int32, false)),
-                frac_col,
-            ),
-            (
-                Arc::new(ArrowField::new("tz_offset", DataType::Int32, false)),
-                tz_col,
-            ),
-            (
-                Arc::new(ArrowField::new("extra", DataType::Int32, false)),
-                extra_col,
-            ),
-        ]);
-        let result = sn.read_arrow_type(&array, 0);
-        assert!(matches!(
-            result,
-            Err(ReadArrowError::InvalidArrowValue { .. })
-        ));
     }
 
     #[test]

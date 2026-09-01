@@ -32,6 +32,11 @@ Changes:
 - Changed `SQL_C_CHAR`/`SQL_C_WCHAR` fetch of `+/-Infinity` `FLOAT`/`REAL` to return `INFINITY` / `-INFINITY` instead of `inf` / `-inf`. (snowflakedb/drivers#1219)
 - Changed PUT to resolve relative source paths to an absolute canonical form before upload. (snowflakedb/drivers#666)
 
+Changes:
+
+- Changed `TIMESTAMP_TZ` Arrow fetch to reject a timezone offset outside the valid biased range 0 through 2880. (snowflakedb/drivers#1484)
+- Changed `TIMESTAMP_TZ` Arrow fetch to reject a flat Int64 physical type instead of decoding it as UTC with offset 0. (snowflakedb/drivers#1542)
+
 Bug fixes:
 
 - Fixed `SQLColumns` `COLUMN_SIZE` and `BUFFER_LENGTH` for unrecognized Snowflake types such as `GEOGRAPHY`/`GEOMETRY` to report the varchar metrics implied by their `SQL_VARCHAR` `DATA_TYPE` instead of NULL. (snowflakedb/drivers#1431)

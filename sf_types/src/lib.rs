@@ -7,8 +7,9 @@
 //! crates, so `odbc`, `nodejs_bridge`, and `python_bridge` can share this one
 //! decode step instead of each maintaining their own.
 //!
-//! DATE and BOOLEAN are the first types moved here; more will follow the same
-//! shape.
+//! DATE and BOOLEAN were the first types moved here. TIMESTAMP_TZ follows the
+//! same READ seam (`SnowflakeTimestampTz`); NTZ/LTZ still use the Level-2 epoch
+//! helpers from this crate without their own materializer types yet.
 //!
 //! A reader has two layers worth naming. The *materializer*
 //! ([`ReadArrowType::read_arrow_type`]) produces a checked chrono value and is
@@ -22,6 +23,7 @@ mod civil;
 mod date;
 mod error;
 mod nullable;
+mod timestamp;
 mod traits;
 
 pub use boolean::SnowflakeBoolean;
@@ -29,4 +31,8 @@ pub use civil::civil_from_unix_days;
 pub use date::SnowflakeDate;
 pub use error::{InvalidArrowValueSnafu, NullValueSnafu, ReadArrowError};
 pub use nullable::Nullable;
+pub use timestamp::{
+    SnowflakeTimestampTz, TZ_OFFSET_BIAS_MINUTES, TZ_OFFSET_MAX_RAW, TzInstant,
+    read_scaled_timestamp, read_struct_timestamp, split_scaled_epoch,
+};
 pub use traits::{ReadArrowType, SnowflakeType};

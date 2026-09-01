@@ -267,6 +267,11 @@ drivers.
 - TIME: analyzed here; not implemented. Blocked on the sequencing decision above.
   Follows DATE's shape — share `split_time_raw` (Level 2) plus the
   `SnowflakeTime { scale }` materializer (Level 1).
+- TIMESTAMP_TZ: Level 1 (`sf_types::SnowflakeTimestampTz`) plus Level-2 epoch
+  split (`split_scaled_epoch`, `read_struct_timestamp`, `read_scaled_timestamp`).
+  Biased offsets outside `0..=2880` are decode errors. ODBC WRITE/policy and
+  Node `toJSON` stay in the wrappers. NTZ/LTZ Level-1 types are not extracted
+  yet; they call the shared Level-2 helpers.
 - BOOLEAN: Level 1 shared (`sf_types::SnowflakeBoolean`). Like DATE it is
   self-describing — a `BooleanArray` bit read with no column metadata — so there
   is no Kind-1 metadata and no Level-2 primitive (a `bool` is not a split of a

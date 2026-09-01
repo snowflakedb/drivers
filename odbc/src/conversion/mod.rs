@@ -847,9 +847,16 @@ pub fn make_converter(
         SnowflakeFieldType::TimestampLtz(snowflake_type) => {
             make_timestamp_converter!(snowflake_type, field, nullable)
         }
-        SnowflakeFieldType::TimestampTz(snowflake_type) => {
-            make_timestamp_converter!(snowflake_type, field, nullable)
-        }
+        SnowflakeFieldType::TimestampTz(snowflake_type) => match field.data_type() {
+            DataType::Struct(_) => {
+                make_converter!(arrow::array::StructArray, snowflake_type, nullable)
+            }
+            dt => IncompatibleFieldMetadataSnafu {
+                logical_type: "TIMESTAMP_TZ".to_string(),
+                data_type: dt.clone(),
+            }
+            .fail(),
+        },
         SnowflakeFieldType::Boolean(snowflake_type) => {
             make_converter!(arrow::array::BooleanArray, snowflake_type, nullable)
         }
