@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Snowflake.Data.Tests.Common\Snowflake.Data.Tests.Common.csproj" />
+    <ProjectReference Include="..\Snowflake.Data.Tests\Snowflake.Data.Tests.csproj" />
     <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj" />
   </ItemGroup>
 

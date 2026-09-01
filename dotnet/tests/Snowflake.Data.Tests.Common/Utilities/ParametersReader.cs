@@ -10,12 +10,7 @@ public static class ParametersReader
 
     public static void Init(ITestOutputHelper? testOutputHelper) => _testOutputHelper = testOutputHelper;
 
-    public static string? Get(string key)
-    {
-        if (Parameters.Value.TryGetValue(key, out var value))
-            return value;
-        return Environment.GetEnvironmentVariable(key);
-    }
+    public static string? Get(string key) => Parameters.Value.TryGetValue(key, out var value) ? value : Environment.GetEnvironmentVariable(key);
 
     private static Dictionary<string, string> LoadParameters()
     {
@@ -58,10 +53,9 @@ public static class ParametersReader
             throw new JsonException("no testconnection found!");
 
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var prop in testConn.EnumerateObject())
+        foreach (var prop in testConn.EnumerateObject().Where(prop => prop.Value.ValueKind == JsonValueKind.String))
         {
-            if (prop.Value.ValueKind == JsonValueKind.String)
-                result[prop.Name] = prop.Value.GetString()!;
+            result[prop.Name] = prop.Value.GetString()!;
         }
         return result;
     }

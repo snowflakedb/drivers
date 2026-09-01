@@ -15,7 +15,13 @@ public class ITFixture
 
     private static string? _baseSchema;
     private string? _schemaName;
-    public virtual ITestConnectionFactory Factory { get; } = new DefaultTestConnectionFactory();
+
+    public virtual ITestConnectionFactory Factory
+    {
+        get => OverriddenFactory ?? field;
+    } = new DefaultTestConnectionFactory();
+
+    public static ITestConnectionFactory? OverriddenFactory { get; set; }
 
     private static ITestOutputHelper? TestOutputHelper => TestContext.Current.TestOutputHelper;
 
@@ -25,14 +31,15 @@ public class ITFixture
     }
 
 #if !NETFRAMEWORK
-    public async ValueTask InitializeAsync()
+    public virtual async ValueTask InitializeAsync()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         _schemaName = $"{_baseSchema}_DOTNET_{suffix}";
 
         try
         {
-            await ModifySchemaAsync(_schemaName, "CREATE OR REPLACE").ConfigureAwait(false);
+            await DDLCallAsync($"CREATE SCHEMA {_schemaName}").ConfigureAwait(false);
+            await DDLCallAsync($"USE SCHEMA {_schemaName}").ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -48,7 +55,7 @@ public class ITFixture
 
         try
         {
-            await ModifySchemaAsync(_schemaName, "DROP").ConfigureAwait(false);
+            await DDLCallAsync($"DROP SCHEMA {_schemaName}").ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -63,7 +70,7 @@ public class ITFixture
 
         try
         {
-            ModifySchemaAsync(_schemaName, "DROP IF EXISTS").GetAwaiter().GetResult();
+            DDLCallAsync($"DROP IF EXISTS SCHEMA {_schemaName}").GetAwaiter().GetResult();
         }
         catch(Exception ex)
         {
@@ -78,7 +85,7 @@ public class ITFixture
 
         try
         {
-            ModifySchemaAsync(_schemaName, "CREATE OR REPLACE").GetAwaiter().GetResult();
+            DDLCallAsync($"CREATE OR REPLACE SCHEMA {_schemaName}").GetAwaiter().GetResult();
         }
         catch(Exception ex)
         {
@@ -88,14 +95,14 @@ public class ITFixture
     }
 #endif
 
-    private async Task ModifySchemaAsync(string schemaName, string action)
+    private async Task DDLCallAsync(string ddl)
     {
         using var connection = Factory.Create(TestOutputHelper);
 
         await connection.OpenAsync().ConfigureAwait(false);
 
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = $"{action} SCHEMA {schemaName}";
+        cmd.CommandText = ddl;
 
         await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
     }

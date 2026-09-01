@@ -27,7 +27,7 @@ static JS_TEST_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?:it|test)\s*\(\s*['"]([^'"]+)['"]"#).unwrap());
 
 /// Returns true if the trimmed line is a recognized xUnit C# test attribute.
-fn is_csharp_test_attribute(s: &str) -> bool {
+fn is_dotnet_test_attribute(s: &str) -> bool {
     matches!(
         s,
         "[SnowflakeFact]" | "[SnowflakeTheory]"
@@ -92,7 +92,7 @@ impl LanguageConfig {
         }
     }
 
-    fn csharp() -> Self {
+    fn dotnet() -> Self {
         Self {
             test_annotation: "[SnowflakeFact]",
             method_pattern: |method_name| format!("{}(", method_name),
@@ -248,9 +248,9 @@ impl MethodBoundaryFinder {
                     }
                 }
                 "[SnowflakeFact]" => {
-                    // C#: any xUnit test attribute
+                    // dotnet: any xUnit test attribute
                     // ([SnowflakeFact], [SnowflakeTheory]) followed by method declaration.
-                    if is_csharp_test_attribute(trimmed) {
+                    if is_dotnet_test_attribute(trimmed) {
                         // Look ahead for the method declaration
                         for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(4) {
                             if let Some(captures) = method_regex.captures(method_line.trim()) {
@@ -311,7 +311,7 @@ impl MethodBoundaryFinder {
                     && (trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(")))
                 || (self.config.test_annotation == "#[test]"
                     && rust_test_attr_regex.is_match(trimmed))
-                || (self.config.test_annotation.contains("[Snowflake") && is_csharp_test_attribute(trimmed))
+                || (self.config.test_annotation.contains("[Snowflake") && is_dotnet_test_attribute(trimmed))
             {
                 // Rust special-case: generic test attribute matched above
                 // For C++, the TEST_CASE line itself contains the method name
@@ -777,7 +777,7 @@ impl StepFinder {
 
         let comment_prefix = match self.language {
             Language::Python => "#",
-            _ => "//", // Rust, ODBC, JDBC, CSharp, JavaScript all use //
+            _ => "//", // Rust, ODBC, JDBC, Dotnet, JavaScript all use //
         };
 
         self.find_steps_generic(&content, comment_prefix)
@@ -854,7 +854,7 @@ impl StepFinder {
             Language::Odbc => LanguageConfig::odbc(),
             Language::Jdbc => LanguageConfig::jdbc(),
             Language::Python => LanguageConfig::python(),
-            Language::CSharp => LanguageConfig::csharp(),
+            Language::Dotnet => LanguageConfig::dotnet(),
             Language::JavaScript => LanguageConfig::javascript(),
         }
     }
@@ -1008,7 +1008,7 @@ impl StepFinder {
             Language::Odbc => self.find_odbc_test_methods_with_lines(&content, scenario_name),
             Language::Jdbc => self.find_jdbc_test_methods_with_lines(&content, scenario_name),
             Language::Python => self.find_python_test_methods_with_lines(&content, scenario_name),
-            Language::CSharp => self.find_csharp_test_methods_with_lines(&content, scenario_name),
+            Language::Dotnet => self.find_dotnet_test_methods_with_lines(&content, scenario_name),
             Language::JavaScript => {
                 self.find_javascript_test_methods_with_lines(&content, scenario_name)
             }
@@ -1102,12 +1102,12 @@ impl StepFinder {
         Ok(matching_methods)
     }
 
-    fn find_csharp_test_methods_with_lines(
+    fn find_dotnet_test_methods_with_lines(
         &self,
         content: &str,
         scenario_name: &str,
     ) -> Result<Vec<(String, usize)>> {
-        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::csharp());
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::dotnet());
         let all_methods = boundary_finder.find_all_test_methods_with_lines(content)?;
 
         let pascal_scenario = to_pascal_case(scenario_name);
