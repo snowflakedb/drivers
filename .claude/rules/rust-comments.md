@@ -16,12 +16,6 @@ already does (`std`, `core`, `chrono`, `rand`, and the like). Callers can read
 the name and the docs; restating `year()`, `nanosecond()`, or `gen_range` is
 noise.
 
-Module-level docs (`//!` at the top of a file) are allowed when the module is
-hard to take in from names alone — for example it wraps or copies something
-external, omits a large surface, or has a non-obvious split of responsibility.
-Keep that in the module header. Do not repeat it on every type, function, or
-call site.
-
 ## Do
 
 `unsafe` — `SAFETY` names the contract:
@@ -29,14 +23,6 @@ call site.
 ```rust
 // SAFETY: `ptr` is non-null and this function takes ownership of the C object.
 unsafe { take_owned(ptr) }
-```
-
-Module header when the file is not self-explanatory:
-
-```rust
-//! Decode-only reader for this wire format.
-//! Bind and write paths are omitted. Language-specific materialization
-//! stays in the caller.
 ```
 
 Ordinary logic — no comments; names and types carry the contract:
@@ -70,8 +56,6 @@ let microsecond = value.nanosecond() / 1000;
 `SAFETY` on safe code, or `unsafe` without `SAFETY`.
 
 A doc comment that only restates the name (`/// Converts a timestamp.`).
-
-A `//!` on every small, obvious module (`//! Boolean converter.`).
 
 <!-- sync-target: .cursor/rules/rust-comments.mdc carries an identical body
      (the full content of this file) plus Cursor-specific frontmatter.

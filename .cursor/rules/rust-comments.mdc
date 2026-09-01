@@ -1,5 +1,5 @@
 ---
-description: Rust comment discipline — no comments unless asked; SAFETY on unsafe only; module docs only when the file is not self-explanatory.
+description: Rust comment discipline — no comments unless asked; SAFETY on unsafe only.
 alwaysApply: true
 exception: "alwaysApply rule — the full body must exist in both engines; a generated pointer would place it in tool-call history where compaction can drop it mid-session. Canonical source is .claude/rules/<name>.md, kept in sync by the ai-rules-sync hook."
 # DERIVED FROM .claude/rules/rust-comments.md (canonical source).
@@ -28,12 +28,6 @@ already does (`std`, `core`, `chrono`, `rand`, and the like). Callers can read
 the name and the docs; restating `year()`, `nanosecond()`, or `gen_range` is
 noise.
 
-Module-level docs (`//!` at the top of a file) are allowed when the module is
-hard to take in from names alone — for example it wraps or copies something
-external, omits a large surface, or has a non-obvious split of responsibility.
-Keep that in the module header. Do not repeat it on every type, function, or
-call site.
-
 ## Do
 
 `unsafe` — `SAFETY` names the contract:
@@ -41,14 +35,6 @@ call site.
 ```rust
 // SAFETY: `ptr` is non-null and this function takes ownership of the C object.
 unsafe { take_owned(ptr) }
-```
-
-Module header when the file is not self-explanatory:
-
-```rust
-//! Decode-only reader for this wire format.
-//! Bind and write paths are omitted. Language-specific materialization
-//! stays in the caller.
 ```
 
 Ordinary logic — no comments; names and types carry the contract:
@@ -82,8 +68,6 @@ let microsecond = value.nanosecond() / 1000;
 `SAFETY` on safe code, or `unsafe` without `SAFETY`.
 
 A doc comment that only restates the name (`/// Converts a timestamp.`).
-
-A `//!` on every small, obvious module (`//! Boolean converter.`).
 
 <!-- sync-target: .cursor/rules/rust-comments.mdc carries an identical body
      (the full content of this file) plus Cursor-specific frontmatter.
