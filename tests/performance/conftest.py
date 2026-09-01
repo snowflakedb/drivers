@@ -418,7 +418,11 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
 
         final_setup_queries = _prepare_setup_queries(test_type, parameters_json, setup_queries)
         s3_files_dir = _download_s3_files_if_needed(s3_download_url, s3_download_dir)
-        is_comparison = _should_run_comparison(driver, driver_type)
+        universal_only = request.node.get_closest_marker("universal_only") is not None
+        effective_driver_type = (
+            "universal" if universal_only and driver_type == "both" else driver_type
+        )
+        is_comparison = _should_run_comparison(driver, driver_type) and not universal_only
 
         if test_type in (PerfTestType.SELECT_RECORDED_HTTP, PerfTestType.COLD_START_RECORDED_HTTP):
             _regression_test_params[test_name] = {
@@ -451,10 +455,13 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
                 worker_count=worker_count,
+                effective_driver_type=effective_driver_type,
             )
 
         # Performance history comparison
-        _compare_local_results(result, test_name, driver, driver_type, is_comparison, results_dir)
+        _compare_local_results(
+            result, test_name, driver, effective_driver_type, is_comparison, results_dir
+        )
 
         return result
     
@@ -530,8 +537,10 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         fetch_mode: str = "fetchmany",
         bind_mode: str = "char",
         worker_count: int = 1,
+        effective_driver_type: str | None = None,
     ):
         """Run E2E test (real Snowflake connection)."""
+        run_driver_type = effective_driver_type if effective_driver_type is not None else driver_type
         if is_comparison:
             return run_comparison_test(
                 test_name=test_name,
@@ -559,7 +568,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 iterations=iterations,
                 warmup_iterations=warmup_iterations,
                 driver=driver,
-                driver_type=_normalize_driver_type(driver, driver_type),
+                driver_type=_normalize_driver_type(driver, run_driver_type),
                 use_local_binary=use_local_binary,
                 s3_files_dir=s3_files_dir,
                 fetch_mode=fetch_mode,
@@ -639,9 +648,19 @@ def _skip_unsupported_driver(item):
         )
 
 
+def _skip_universal_only(item):
+    """Skip tests marked universal_only when --driver-type=old."""
+    if item.get_closest_marker("universal_only") is None:
+        return
+    driver_type = item.config.getoption("--driver-type") or os.getenv("DRIVER_TYPE", "universal")
+    if driver_type == "old":
+        pytest.skip("'universal_only' test; skipping for --driver-type=old")
+
+
 def pytest_runtest_setup(item):
     """Hook called before each test starts - gate by driver, add visual separation."""
     _skip_unsupported_driver(item)
+    _skip_universal_only(item)
     logger.info("")
     logger.info("=" * 80)
     logger.info(f">>> TEST: {item.name}")
