@@ -1,0 +1,353 @@
+id: universal-driver-dependencies
+friendly_name: "Universal Driver Dependencies"
+status: enabled
+# Category: Dependencies
+#
+# Review NEW / CHANGED crates, npm packages, Maven/Gradle artifacts, and pip
+# packages on lockfile and manifest diffs. Prefer facilities already in
+# `sf_core` over a parallel stack in a wrapper.
+#
+# Out of scope (owned elsewhere — do not re-flag here):
+#   - Environment-variable registry (`ud-env-vars-registry` in
+#     universal-driver-rust-sf-core.yaml / `sf_core/src/env_vars.rs`)
+#   - Connection-parameter registry (`sf_params_spec` / generated
+#     `connection_config.py`)
+allowed_folders:
+  - "."
+  - "sf_core"
+  - "odbc"
+  - "jdbc_bridge"
+  - "nodejs_bridge"
+  - "python_bridge"
+  - "python"
+  - "nodejs"
+  - "jdbc"
+  - "proto_generator"
+  - "proto_utils"
+  - "error_trace"
+  - "error_trace_derive"
+  - "sf_params_spec"
+  - "sf_params_codegen"
+  - "sf_mini_core"
+  - "sf_mini_core_static"
+  - "odbc_trace_tool"
+  - "tests"
+excluded_folders:
+  - "nodejs/node_modules"
+  - "nodejs/dist"
+  - "python/src/snowflake/connector/_internal/nanoarrow_cpp"
+allowed_file_extensions:
+  # Only extensions / lockfile suffixes that exist in this repo today.
+  # There is no pom.xml, *.kts, poetry.lock, requirements*.txt, yarn.lock,
+  # or pnpm-lock.yaml; do not claim those surfaces.
+  - ".toml"
+  - ".lock"
+  - ".json"
+  - ".gradle"
+rules:
+  - id: ud-dep-no-extra-http-client
+    rule: |
+      **OBJECTIVE**: Keep a single HTTP *client* stack per language surface so TLS,
+      proxies, CRL, retries, and telemetry stay on the path `sf_core` already owns.
+
+      **EXISTING STACKS** (do not treat these as violations):
+      - Rust / `sf_core`: **`reqwest` 0.12** (rustls-only; `default-features = false`)
+        plus `http` / `http-body` / `http-body-util`. AWS S3/STS use
+        `aws-smithy-runtime-api` **without** a second HTTP client —
+        `tls::aws_http_client` adapts the shared reqwest transport (see comments
+        in `sf_core/Cargo.toml`). **`axum`** is the local OAuth-browser callback
+        *server*, not a second client. **`wiremock`** is test-only.
+      - JDBC production: HTTP goes through `jdbc_bridge` → `sf_core`. Jackson is
+        JSON, not HTTP. **`httpclient5`** is already `testImplementation` only.
+      - Python production (`python/pyproject.toml` `[project].dependencies`): no
+        HTTP client (`cryptography`, `protobuf`, `pytz`, `tomlkit`). **`requests`**
+        is test-extra only.
+      - Node.js (`nodejs/package.json`): no JS HTTP client; traffic is native
+        (`nodejs_bridge` → `sf_core`).
+
+      **REQUIREMENT**: On a manifest/lockfile diff, flag a **new** HTTP client
+      library in a crate/package that already has one (or that should call
+      `sf_core` instead):
+      - Rust: `ureq`, `hyper` used as a client, `isahc`, `surf`, `attohttpc`,
+        `curl` / `curl-sys` as a request stack, a second `reqwest` with
+        `default-tls` / `native-tls`, or a new AWS/GCP/Azure SDK HTTP runtime
+        that does **not** reuse the reqwest adapter.
+      - Java: OkHttp, Apache HttpClient (production `implementation`),
+        `java.net.http` wrappers pulled in as a library, Jersey client, etc.
+      - Python: `httpx`, `aiohttp`, `urllib3` as a direct prod dep, `requests`
+        promoted from test extra into `[project].dependencies`.
+      - Node: `axios`, `node-fetch`, `got`, `undici` as a prod dependency for
+        Snowflake/cloud HTTP.
+
+      **EXEMPTIONS**:
+      - Test-only / `dev-dependencies` / `testImplementation` / optional-dev
+        extras, unless feature unification would pull them into the shipped
+        library (the reqwest `default-tls` pitfall in `sf_core/Cargo.toml`).
+      - Transitive `hyper`/`h2` under existing `reqwest` — only flag a **new
+        direct** client crate.
+      - Keeping `axum` for the existing local callback server, or adding
+        server-side test fixtures that are not used to talk to Snowflake.
+
+      **CONSOLIDATION**: One comment per new HTTP client crate/artifact per PR.
+
+      ❌ **BAD:** adding `ureq` to `odbc/Cargo.toml` while `sf_core` already
+      speaks HTTP via reqwest; adding `okhttp` as JDBC `implementation`;
+      adding `httpx` to Python `[project].dependencies`.
+
+      ✅ **GOOD:** new Snowflake/cloud calls go through existing `sf_core` rest
+      + reqwest (or the wrapper FFI); AWS continues to use the smithy
+      `HttpClient` adapter over reqwest; JDBC tests may keep `httpclient5`.
+
+  - id: ud-dep-no-duplicate-parser
+    rule: |
+      **OBJECTIVE**: A second parser for a format this surface already handles
+      is not forbidden — it is a review question. The bot should ask *why*,
+      and whether the work belongs in `sf_core`, not treat the first library
+      as a permanent exclusive lock.
+
+      **WHY THIS RULE EXISTS**: Wrappers share `sf_core`. An engineer on one
+      wrapper often does not see the full product dependency tree, so a
+      second JSON/XML/YAML stack is an easy accidental duplicate (size,
+      CVE surface, two places to configure). The review comment is the
+      prompt to justify it or hoist it. It is **not** a ban on adding a
+      parser the current one cannot serve.
+
+      **PUBLIC API IS NOT AN EXCLUSIVE LOCK**: A library that is part of the
+      *customer-visible* driver API must stay (dropping it is a breaking
+      change). That does **not** mean internal code may only use that
+      library. Example: Node's **`fast-xml-parser`** is a public-API
+      dependency in `nodejs/package.json` — keep it for the public surface;
+      do **not** flag a different XML parser used only internally, and do
+      **not** demand that all future XML go through `fast-xml-parser`.
+
+      **EXISTING STACKS** (inventory, not an allow-list of the only legal
+      parsers):
+      - Rust production (`sf_core`): **`serde` + `serde_json`** (with
+        `raw_value`); optional **`sonic-rs`** behind `sonic-json` (the
+        existing fast path — a *third* JSON crate still needs a reason).
+        Config: **`toml`**, **`rust-ini`**. No production XML crate in `sf_core`.
+      - Tooling YAML: `odbc_trace_tool` and `tests/tests_format_validator`
+        use **`serde_yaml`**. That does not put YAML into shipped `sf_core`.
+      - JDBC: **Jackson** (`jackson-databind` / `jackson-core` /
+        `jackson-annotations`, pinned in `jdbc/build.gradle`).
+      - Node.js: std JSON; **`fast-xml-parser`** on the public API (see
+        above — not a lock for internal parsing).
+      - Python: std `json`; TOML via **`tomlkit`**.
+
+      **REQUIREMENT**: When a manifest/lockfile diff **adds** a parser for a
+      format the same language surface already parses, post **one** Low/Medium
+      comment that:
+      1. Names the new package and the existing one for that format.
+      2. Asks for a one-line reason in the PR (capability the current stack
+         lacks, documented perf path like `sonic-json`, streaming, or a
+         public-API vs internal split).
+      3. Asks whether Snowflake-protocol parsing should live in `sf_core`
+         instead of a wrapper-only crate (see `ud-dep-prefer-sf-core-facilities`).
+
+      Stay silent when the PR already answers those questions. Do **not**
+      tell the author to delete the new parser solely because another
+      parser exists.
+
+      Flag *without* a stated reason (the comment is still a question, not
+      a merge block by itself):
+      - Rust: `simd-json` / `miniserde` next to `serde_json` + `sonic-rs`
+        with no perf/feature note; extra TOML crates when `toml` already
+        covers read-only config (`toml_edit` is fine when the job is
+        *editing*).
+      - Java: Gson / Moshi / `org.json` next to Jackson with no stated
+        gap.
+      - Python: `orjson` / `ujson` / extra TOML libs as prod deps with no
+        stated gap.
+      - Node: a second JSON parser (`json5`, …) with no stated gap.
+        **Do not** auto-flag a second XML parser as a duplicate of
+        `fast-xml-parser`.
+
+      **EXEMPTIONS** — do not comment:
+      - Public-API parsers kept for compatibility (`fast-xml-parser`).
+      - A new *internal* parser when the PR says it is not replacing the
+        public API and why the existing internal/core path is insufficient.
+      - Lockfile churn; Jackson modules that share `jacksonVersion`;
+        enabling existing `sonic-json` rather than a new crate.
+
+      **CONSOLIDATION**: One comment per new parser family per PR. Do not
+      also fire `ud-dep-prefer-sf-core-facilities` for the same add unless
+      the library is specifically reimplementing Snowflake REST/auth I/O.
+
+      **SEVERITY**: Low unless the new parser is on the Snowflake wire path
+      (then Medium — likely belongs in `sf_core`). Never High for "we
+      already have a parser for this format."
+
+      ❌ **BAD (reviewer behavior):** "Node already has `fast-xml-parser`,
+      so this internal XML library must not be added."
+
+      ❌ **BAD (author, no reason):** adding `gson` next to Jackson with no
+      PR note; adding `simd-json` next to `serde_json` + `sonic-rs` with no
+      feature discussion.
+
+      ✅ **GOOD:** keep `fast-xml-parser` on the Node public API; add a
+      different XML library for internal use with a sentence on why; keep
+      Snowflake JSON on `serde_json` / Jackson / std `json`; extend
+      `sonic-json` if JSON speed is the Rust goal.
+
+  - id: ud-dep-tls-via-sf-core
+    rule: |
+      **OBJECTIVE**: Do not introduce a crypto/TLS stack that bypasses the
+      `sf_core` TLS path (rustls + connection `TlsConfig`, CRL, custom roots).
+
+      **EXISTING STACK** (`sf_core/Cargo.toml`):
+      - HTTP TLS: **`rustls`** (`aws_lc_rs`) with **`rustls-pemfile`**,
+        **`rustls-webpki`**, **`rustls-native-certs`**. reqwest is
+        `rustls-tls` + `rustls-tls-native-roots`; comments forbid
+        `default-tls` / native-tls / OpenSSL / SChannel as the HTTP backend.
+      - **`openssl`** is already a **direct** dependency for **JWT**
+        (`jwt` crate `features = ["openssl"]`), not as reqwest's TLS backend.
+        Do not treat existing `openssl` / `vendored-openssl` as a new HTTP TLS
+        stack.
+      - Python wrapper crypto at the language layer: **`cryptography`**.
+      - JDBC tests: BouncyCastle `bcpkix-jdk18on` is test-only.
+
+      **REQUIREMENT**: Flag new or re-enabled TLS/crypto backends that would
+      take HTTP (or equivalent driver I/O) off rustls/`TlsConfig`:
+      - Rust: `native-tls`, reqwest `default-tls` / `native-tls` features,
+        `tokio-native-tls`, `openssl-sys` as an HTTP TLS backend, `rustls`
+        with a different crypto provider pulled in *instead of* `aws_lc_rs`
+        without a FIPS/`fips` feature discussion, `ring` as a parallel TLS
+        crypto provider, a second rustls major, or an AWS smithy HTTP client
+        with its own TLS (the Cargo.toml comment says smithy's TLS API cannot
+        honour `TlsConfig`).
+      - Wrappers: adding JS/Java/Python TLS or HTTP libraries so the wrapper
+        opens its own TLS sockets to Snowflake or cloud storage instead of
+        `sf_core`.
+      - Replacing OS trust-store roots (`rustls-tls-native-roots`) with
+        webpki-only roots without documenting the trust-store change.
+
+      **EXEMPTIONS**: Test cert generation (`rcgen`, `tokio-rustls` in
+      `dev-dependencies`); `fips` feature on existing `rustls`; JWT remaining
+      on `openssl`; Python `cryptography` upgrades.
+
+      **CONSOLIDATION**: One comment per new TLS/crypto backend per PR.
+
+      ❌ **BAD:** `reqwest` with `default-features` re-enabled; `native-tls`
+      in a wrapper crate; OkHttp with a custom `SSLSocketFactory` for
+      Snowflake login.
+
+      ✅ **GOOD:** all session and stage HTTP stays on rustls reqwest /
+      `tls::aws_http_client`; wrappers only FFI into `sf_core`.
+
+  - id: ud-dep-license-owners-review
+    rule: |
+      **OBJECTIVE**: Every newly added third-party dependency should be called
+      out so owners can check license and supportability. This ruleset does
+      **not** give legal advice or a pass/fail SPDX ruling.
+
+      **IN-REPO FACTS ONLY**: The project declares **Apache-2.0** in
+      `README.md`, `python/pyproject.toml`, `nodejs/package.json`, and the
+      JDBC POM license block. There is **no** checked-in deny-list of SPDX
+      identifiers. Do not invent org policy (e.g. "GPL is forbidden") as a
+      finding. Do flag that a **new** dependency **needs license/owners
+      review**.
+
+      **REQUIREMENT**: When the diff adds a new crate, npm package, Gradle
+      coordinate, or pip distribution (including a new transitive that appears
+      as a direct pin):
+      1. Note the new name/version in the review comment.
+      2. State that it **needs license/owners review** before merge.
+      3. If the package's advertised license is commonly copyleft or
+         source-available (GPL, AGPL, LGPL, SSPL, BUSL, Commons Clause,
+         or "UNLICENSED" / missing license in the manifest), mention that
+         as a **reason to escalate** — not as a legal conclusion.
+      4. Test-only additions still need a one-line owners check, but keep
+         severity lower than production/runtime deps.
+
+      **EXEMPTIONS**: Version bumps of an already-present package; lockfile
+      regeneration with no new package names; path/workspace crates
+      (`sf_core`, `proto_utils`, `error_trace`, …).
+
+      **CONSOLIDATION**: Group all new packages in **one** comment per PR
+      rather than one comment per line of `Cargo.toml`.
+
+      ❌ **BAD (reviewer behavior):** "This GPL crate is illegal" / "Apache
+      is always fine, skip review."
+
+      ✅ **GOOD:** "New runtime crate `foo 1.2` — new dependency needs
+      license/owners review (advertised license X; confirm it is acceptable
+      for the Apache-2.0 driver)."
+
+  - id: ud-dep-prefer-shared-versions
+    rule: |
+      **OBJECTIVE**: Prefer versions already used in this workspace over a
+      parallel pin. Shared versions keep feature unification, MSRV, and
+      security bumps coherent.
+
+      **EXISTING PRACTICE**: The root `Cargo.toml` is a workspace member list
+      only — there is **no** `[workspace.dependencies]` table today. Crates
+      repeat pins (e.g. `tracing` 0.1.41, `snafu` 0.8.7, `serde` 1.x,
+      `arrow` `>=54,<59`, `reqwest` 0.12.23). Wrapper crates sometimes drift
+      (`tokio` 1.47.1 in `sf_core` vs 1.50.x in `odbc` / `jdbc_bridge` /
+      `python_bridge`). JDBC pins Jackson/Arrow/SLF4J in `jdbc/build.gradle`
+      locals (`jacksonVersion`, `arrowVersion`, `slf4jVersion`).
+
+      **REQUIREMENT**:
+      1. A new Rust dependency SHOULD use the same version (or compatible
+         semver range) as an existing member if that crate is already in the
+         workspace. Flag a new *major* or a clearly older minor than siblings.
+      2. Prefer adding `[workspace.dependencies]` and `{ workspace = true }`
+         when introducing a crate that several members will share — do not
+         require a full workspace-deps migration in an unrelated PR.
+      3. JDBC: new Jackson/Arrow/SLF4J coordinates MUST use the existing
+         `*Version` extras, not a one-off version string.
+      4. Python: new runtime deps belong in `[project].dependencies` (or the
+         appropriate extra) with the same lower-bound style as neighbors;
+         keep Hatch env lists in sync when they duplicate those pins
+         (see `hatch.envs.precommit` comments in `pyproject.toml`).
+      5. Node: add to the existing `nodejs/package.json` / `package-lock.json`
+         pair; do not introduce a second package manager lockfile.
+
+      **EXEMPTIONS**: A crate that is genuinely unique to one tool
+      (`cbindgen` in `sf_mini_core`, `napi` in `nodejs_bridge`, `jni` in
+      `jdbc_bridge`, `pyo3` in `python_bridge`). Patch-level differences
+      already present on `eng/main` are not this PR's job unless the diff
+      widens the spread.
+
+      **CONSOLIDATION**: One version-alignment comment per PR listing the
+      mismatched pins.
+
+      ❌ **BAD:** `tokio = "1.20"` in a new member while others are on 1.47+;
+      `jackson-databind:2.17.0` beside `jacksonVersion = '2.22.1'`.
+
+      ✅ **GOOD:** match `reqwest`/`serde`/`snafu`/`arrow` pins already in
+      `sf_core`; JDBC uses `${jacksonVersion}`; Python optional extras stay
+      out of the default runtime set unless required at import.
+
+  - id: ud-dep-prefer-sf-core-facilities
+    rule: |
+      **OBJECTIVE**: Language wrappers and satellite crates should reuse
+      `sf_core` (HTTP, TLS, JSON for Snowflake protocol, auth, file transfer)
+      instead of taking a new dependency that reimplements that layer.
+
+      **REQUIREMENT**: When a wrapper manifest (`odbc`, `jdbc` /
+      `jdbc_bridge`, `python` / `python_bridge`, `nodejs` / `nodejs_bridge`)
+      adds a library whose role is already provided by `sf_core` — HTTP
+      client, Snowflake REST JSON, TLS, cloud storage SDK, JWT/OAuth —
+      flag it and ask whether the work belongs in `sf_core` (or as a
+      `sf_core` feature) rather than a wrapper-only crate.
+
+      JDBC/Python/Node **may** keep language-idiomatic libraries for the
+      *public API surface* (Arrow C Data, protobuf stubs, `pyarrow`,
+      `big-integer`, Node `fast-xml-parser`, Jackson for tests parsing
+      JSON). That is not a duplicate of `sf_core` REST, and it is not a
+      ban on a different *internal* library (see `ud-dep-no-duplicate-parser`).
+
+      **EXEMPTIONS**: FFI/bridge crates (`jni`, `napi`, `pyo3`, `odbc-sys`);
+      logging facades (`tracing` vs `slf4j-api`); test harnesses.
+
+      **CONSOLIDATION**: Combine with `ud-dep-no-extra-http-client` /
+      `ud-dep-tls-via-sf-core` when the new dep is specifically HTTP or TLS
+      — do not post three comments for one OkHttp add.
+
+      ❌ **BAD:** `python_bridge` adding `reqwest` or `aws-sdk-s3` for PUT/GET
+      that `sf_core` already implements; Node adding `axios` to call
+      `login-request`.
+
+      ✅ **GOOD:** wrappers depend on `sf_core` and only add bindings +
+      language types.
