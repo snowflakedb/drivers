@@ -18,7 +18,6 @@ use result::{ResultData, StatementResult};
 use sf_core::apis::database_driver_v1::{ApiError, ExecuteQueryResult};
 use sf_core::apis::operation_ctx::OperationCtx;
 use sf_core::handle_manager::Handle;
-use snafu::location;
 use std::future::Future;
 use std::sync::Arc;
 use stream_state::StreamState;
@@ -185,10 +184,9 @@ async fn result_data_from(
     let (result_set_handle, result_set_descriptor) = match result {
         ExecuteQueryResult::Single { info, .. } => (info.handle, info.descriptor),
         ExecuteQueryResult::Multi { .. } => {
-            return Err(ApiError::InvalidArgument {
-                argument: "multi-statement results are not supported yet".to_string(),
-                location: location!(),
-            });
+            return Err(ApiError::invalid_argument(
+                "multi-statement results are not supported yet",
+            ));
         }
     };
 

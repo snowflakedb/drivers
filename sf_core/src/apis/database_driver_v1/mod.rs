@@ -4,6 +4,7 @@ pub mod async_query_registry;
 pub mod connection;
 mod database;
 pub(crate) mod error;
+mod error_kind;
 pub mod final_session_names;
 pub(crate) mod get_objects;
 mod global_state;
@@ -35,6 +36,7 @@ pub use crate::handle_manager::Handle;
 pub use async_query_registry::AsyncQueryRegistry;
 pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
 pub use error::{ApiError, CancellationAbortResult};
+pub use error_kind::ErrorKind;
 pub use get_objects::{
     ColumnDescriptor, DEPTH_CATALOGS, DEPTH_COLUMNS, DEPTH_DB_SCHEMAS, DEPTH_TABLES,
     FIELD_CATALOG_DB_SCHEMAS, FIELD_CATALOG_NAME, FIELD_COLUMN_BYTE_LENGTH,

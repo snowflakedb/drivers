@@ -2215,10 +2215,9 @@ pub enum FileManagerError {
 
 impl FileManagerError {
     /// Whether this is a "file/object exceeds the cloud's max-object ceiling"
-    /// error — an input error the proto boundary routes to `InvalidArgument`
-    /// rather than `InternalError`. Defined here because the cloud `*FileError`
+    /// error — an input error `ApiError::kind()` maps to `InvalidArgument`
+    /// rather than `Io`. Defined here because the cloud `*FileError`
     /// enums are private to this module.
-    #[cfg(any(test, feature = "protobuf"))]
     pub(crate) fn is_file_too_large(&self) -> bool {
         matches!(
             self,
