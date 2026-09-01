@@ -43,8 +43,8 @@ impl Connection {
                     conn_handle,
                     WrapperIdentity {
                         // TODO: pass this from nodejs (function arguments)
-                        driver_name: "nodejs".to_string(),
-                        driver_version: "0.1.0".to_string(),
+                        driver_name: "JavaScript".to_string(),
+                        driver_version: "4.0.0-beta.0".to_string(),
                         language_runtime: "nodejs".to_string(),
                         language_version: "24.0.0".to_string(),
                         language_compiler: None,
