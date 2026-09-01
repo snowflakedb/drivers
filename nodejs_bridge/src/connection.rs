@@ -29,10 +29,22 @@ impl Connection {
         let conn_handle = DRIVER.connection_new();
 
         // TODO: temporary conversion, proper options mapping will be done later
-        let converted_options = options
+        let mut converted_options: HashMap<String, Setting> = options
             .iter()
             .map(|(k, v)| (k.clone(), Setting::String(v.clone())))
             .collect();
+        if std::env::var("NODE_TLS_REJECT_UNAUTHORIZED").as_deref() == Ok("0") {
+            converted_options
+                .entry("tls_skip_verify".to_string())
+                .or_insert_with(|| Setting::String("true".to_string()));
+        }
+        if let Ok(ca_path) = std::env::var("NODE_EXTRA_CA_CERTS")
+            && !ca_path.is_empty()
+        {
+            converted_options
+                .entry("custom_root_store_path".to_string())
+                .or_insert_with(|| Setting::String(ca_path));
+        }
 
         block_on(async {
             DRIVER
