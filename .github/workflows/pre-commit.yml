@@ -8,9 +8,11 @@ on:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs; fall back to github.ref for push/merge_group
-  # (refs/heads/main for main pushes — cancels superseded runs, keeps latest).
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Group by PR number for PRs; fall back to the run ID for push/merge_group,
+  # which is unique per run. github.ref would be refs/heads/main for every main
+  # push, so consecutive commits would share a group and the older commit's run
+  # would be cancelled before it reports a verdict.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 env:

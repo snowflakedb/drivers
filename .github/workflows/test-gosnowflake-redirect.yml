@@ -21,7 +21,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Group by PR number for PRs; fall back to the run ID everywhere else, which
+  # is unique per run. github.ref would be refs/heads/main for every main push,
+  # so consecutive commits would share a group and the older commit's run would
+  # be cancelled before it reports a verdict.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 env:
