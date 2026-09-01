@@ -11,41 +11,6 @@ mod tests {
     use odbc_sys as sql;
 
     // ========================================================================
-    // ReadArrowType — reading from BooleanArray
-    // ========================================================================
-
-    #[test]
-    fn read_arrow_true() {
-        use crate::conversion::ReadArrowType;
-        use arrow::array::BooleanArray;
-        let sn = SnowflakeBoolean;
-        let array = BooleanArray::from(vec![Some(true)]);
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert!(value);
-    }
-
-    #[test]
-    fn read_arrow_false() {
-        use crate::conversion::ReadArrowType;
-        use arrow::array::BooleanArray;
-        let sn = SnowflakeBoolean;
-        let array = BooleanArray::from(vec![Some(false)]);
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert!(!value);
-    }
-
-    #[test]
-    fn read_arrow_null_returns_error() {
-        use crate::conversion::ReadArrowType;
-        use crate::conversion::error::ReadArrowError;
-        use arrow::array::BooleanArray;
-        let sn = SnowflakeBoolean;
-        let array = BooleanArray::from(vec![None::<bool>]);
-        let result = sn.read_arrow_type(&array, 0);
-        assert!(matches!(result, Err(ReadArrowError::NullValue { .. })));
-    }
-
-    // ========================================================================
     // SQL_C_BIT (default)
     // ========================================================================
 

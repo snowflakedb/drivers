@@ -1,4 +1,4 @@
-use arrow::array::{Array, BooleanArray};
+use arrow::array::BooleanArray;
 use odbc_sys as sql;
 
 use crate::api::CDataType;
@@ -19,7 +19,7 @@ use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
-pub(crate) struct SnowflakeBoolean;
+pub(crate) use sf_types::SnowflakeBoolean;
 
 impl SnowflakeType for SnowflakeBoolean {
     type Representation<'a> = bool;
@@ -31,12 +31,9 @@ impl ReadArrowType<BooleanArray> for SnowflakeBoolean {
         array: &'a BooleanArray,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        if array.is_null(row_idx) {
-            return Err(ReadArrowError::NullValue {
-                location: snafu::location!(),
-            });
-        }
-        Ok(array.value(row_idx))
+        Ok(sf_types::ReadArrowType::read_arrow_type(
+            self, array, row_idx,
+        )?)
     }
 }
 
