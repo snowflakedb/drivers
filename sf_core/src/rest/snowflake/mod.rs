@@ -390,17 +390,22 @@ pub fn user_agent(client_info: &ClientInfo) -> String {
 /// Strip non-numeric suffixes from a version string so the server accepts it.
 ///
 /// `CLIENT_APP_VERSION` must be a dotted numeric version for feature gates to
-/// remain enabled, so this helper truncates each dot-separated segment at its
-/// first non-digit and drops everything from the first segment that has no
-/// leading digit at all. That last part keeps PEP 440 dev/post releases, where
-/// the suffix is its own segment, from turning into a bogus extra component
-/// (`"5.0.0.dev0"` must not become `"5.0.0.0"`). Examples: `"5.0.0dev"` →
-/// `"5.0.0"`, `"5.0.0.dev0"` → `"5.0.0"`, `"2.21.8.1"` → `"2.21.8.1"`.
+/// remain enabled, so this helper keeps only the leading run of digits and dots
+/// and then drops any trailing empty component. Everything from the first
+/// character that is neither a digit nor a dot is a suffix, including dots
+/// inside it, so a semver pre-release with its own dotted counter does not leak
+/// an extra component (`"4.0.0-beta.0"` must not become `"4.0.0.0"`), and a
+/// PEP 440 suffix in its own segment does not leave a trailing dot
+/// (`"5.0.0.dev0"` → `"5.0.0"`). Examples: `"5.0.0dev"` → `"5.0.0"`,
+/// `"2.21.8.1"` → `"2.21.8.1"`.
 fn strip_version_suffix(version: &str) -> String {
-    let stripped = version
+    let numeric_prefix_end = version
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(version.len());
+
+    let stripped = version[..numeric_prefix_end]
         .split('.')
-        .map(|seg| -> String { seg.chars().take_while(|c| c.is_ascii_digit()).collect() })
-        .take_while(|numeric| !numeric.is_empty())
+        .take_while(|segment| !segment.is_empty())
         .collect::<Vec<_>>()
         .join(".");
 
@@ -3922,6 +3927,16 @@ mod tests {
         #[test]
         fn hyphenated_prerelease_stripped() {
             assert_eq!(strip_version_suffix("4.0.0-rc1"), "4.0.0");
+        }
+
+        #[test]
+        fn suffix_with_dots() {
+            assert_eq!(strip_version_suffix("4.0.0-beta.0"), "4.0.0");
+        }
+
+        #[test]
+        fn four_segment_suffix_with_dots() {
+            assert_eq!(strip_version_suffix("4.0.0.0-beta.0"), "4.0.0.0");
         }
 
         #[test]
