@@ -1,0 +1,31 @@
+{
+  "name": "Query response with 4 entries at priority=5 and QUERY_CONTEXT_CACHE_SIZE=3 (duplicate priority eviction test)",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "qid-dup-evict",
+        "queryResultFormat": "json",
+        "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+        "rowset": [["OK"]],
+        "total": 1,
+        "returned": 1,
+        "parameters": [{"name": "QUERY_CONTEXT_CACHE_SIZE", "value": 3}],
+        "queryContext": {
+          "entries": [
+            {"id": 1, "timestamp": 100, "priority": 5, "context": "a"},
+            {"id": 2, "timestamp": 200, "priority": 5, "context": "b"},
+            {"id": 3, "timestamp": 300, "priority": 5, "context": "c"},
+            {"id": 4, "timestamp": 400, "priority": 5, "context": "d"}
+          ]
+        }
+      }
+    }
+  }
+}

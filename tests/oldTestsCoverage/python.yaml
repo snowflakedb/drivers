@@ -397,7 +397,9 @@ tests:
   - test_name: test_default_connection_name_loading
     ud_tests: []
   - test_name: test_disable_query_context_cache
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_send_cached_query_context_in_subsequent_requests
+    notes: Disable flag tested via sf_core unit test (test_disabled_cache_does_not_update); integration validates cache works when enabled
   - test_name: test_disable_request_pooling
     ud_tests:
       - python/tests/unit/test_connection.py::TestDisableRequestPoolingRemoved
@@ -1506,7 +1508,9 @@ tests:
   - test_name: test_default_connection_name_loading
     ud_tests: []
   - test_name: test_disable_query_context_cache
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_send_cached_query_context_in_subsequent_requests
+    notes: Disable flag tested via sf_core unit test (test_disabled_cache_does_not_update); integration validates cache works when enabled
   - test_name: test_disable_request_pooling
     ud_tests:
       - python/tests/unit/test_connection.py::TestDisableRequestPoolingRemoved
@@ -2674,7 +2678,10 @@ tests:
   - test_name: test_retry_connection_reset_error
     ud_tests: []
   - test_name: test_retry_reason
-    ud_tests: []
+    ud_tests:
+    - sf_core/tests/integration/http/sync_retry.rs - should_include_retry_reason_on_503
+    - sf_core/tests/integration/http/sync_retry.rs - should_update_retry_reason_on_subsequent_retries
+    - sf_core/tests/integration/http/sync_retry.rs - should_suppress_retry_reason_when_disabled
   - test_name: test_retry_request_timeout
     ud_tests: []
   - test_name: test_secret_masking
@@ -3911,35 +3918,50 @@ tests:
     ud_tests: []
   unit/test_query_context_cache.py:
   - test_name: test_add_same_priority
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_allow_duplicate_priorities_to_coexist_in_cache
   - test_name: test_deserialize_type_error
     ud_tests: []
+    notes: Legacy test feeds malformed-type payloads and asserts TypeError. No UD test sends malformed queryContextDTO; Rust serde rejects bad types at deserialization but this is not explicitly tested at the Python layer.
   - test_name: test_empty_cache_with_empty_response_data
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_clear_cache_when_response_has_null_entries
   - test_name: test_empty_cache_with_null_data
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_clear_cache_when_response_has_null_entries
   - test_name: test_eviction_order
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_evict_highest_priority_number_when_cache_exceeds_capacity
   - test_name: test_is_empty
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_send_cached_query_context_in_subsequent_requests
   - test_name: test_priority_switch_randomized
     ud_tests: []
+    notes: Legacy test is a MAX_CAPACITY*5-iteration randomized fuzz asserting _priority_map/_id_map invariants. No UD test replicates this fuzz coverage; deterministic scenarios cover the same cache operations but not the randomized invariant guarantee.
   - test_name: test_same_id_with_stale_timestamp
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_send_cached_query_context_in_subsequent_requests
   - test_name: test_serialization_deserialization
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_send_cached_query_context_in_subsequent_requests
   - test_name: test_serialization_deserialization_with_null_context
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_clear_cache_when_response_has_null_entries
   - test_name: test_trim_cache
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_respect_cache_size_parameter
   - test_name: test_update_priority
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_re_index_entry_when_priority_changes_with_same_timestamp
   - test_name: test_update_timestamp
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_merge_entries_when_response_ids_overlap
   - test_name: test_with_data
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_send_cached_query_context_in_subsequent_requests
   - test_name: test_with_data_in_random_order
-    ud_tests: []
+    ud_tests:
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_send_cached_query_context_in_subsequent_requests
   unit/test_renew_session.py:
   - test_name: test_mask_token_when_renew_session
     ud_tests: []
@@ -3966,7 +3988,10 @@ tests:
   - test_name: test_retry_connection_reset_error
     ud_tests: []
   - test_name: test_retry_reason
-    ud_tests: []
+    ud_tests:
+    - sf_core/tests/integration/http/sync_retry.rs - should_include_retry_reason_on_503
+    - sf_core/tests/integration/http/sync_retry.rs - should_update_retry_reason_on_subsequent_retries
+    - sf_core/tests/integration/http/sync_retry.rs - should_suppress_retry_reason_when_disabled
   - test_name: test_retry_request_timeout
     ud_tests: []
   - test_name: test_secret_masking

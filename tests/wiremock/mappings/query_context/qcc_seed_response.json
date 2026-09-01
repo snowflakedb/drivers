@@ -1,0 +1,28 @@
+{
+  "name": "Query response with queryContext seed (id=1, priority=4, timestamp=100)",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "qid-001",
+        "queryResultFormat": "json",
+        "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+        "rowset": [["Statement executed successfully."]],
+        "total": 1,
+        "returned": 1,
+        "parameters": [],
+        "queryContext": {
+          "entries": [
+            {"id": 1, "timestamp": 100, "priority": 4, "context": "base64data1"}
+          ]
+        }
+      }
+    }
+  }
+}
