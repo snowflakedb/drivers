@@ -72,6 +72,13 @@ impl Default for WrapperPresets {
     /// Hand-written rather than derived: `#[derive(Default)]` would give
     /// `put_get_fastfail_default` `bool::default() == false`, flipping every
     /// wrapper but ODBC to collect-all by accident.
+    ///
+    /// `configuration_flavor` is `Wrapper::Python`, so any wrapper without its
+    /// own constructor here — today the Node.js bridge and .NET — resolves
+    /// aliases under the Python flavor, and a `NodeJs`- or `DotNet`-scoped alias
+    /// in `sf_params_spec` is inert until that wrapper gets a
+    /// `WrapperPresets::…()` beside [`Self::python`], [`Self::odbc`] and
+    /// [`Self::jdbc`].
     fn default() -> Self {
         Self {
             configuration_flavor: Wrapper::Python,

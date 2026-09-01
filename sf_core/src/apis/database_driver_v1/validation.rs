@@ -512,7 +512,7 @@ mod tests {
             Setting::String("myhost.example.com".to_string()),
         );
 
-        let (resolved, issues) = resolve_options(Wrapper::Python, options);
+        let (resolved, issues) = resolve_options(Wrapper::Odbc, options);
 
         let errors: Vec<_> = issues
             .iter()
@@ -521,6 +521,30 @@ mod tests {
         assert!(errors.is_empty());
         assert!(resolved.contains_key("host"));
         assert!(!resolved.contains_key("SERVER"));
+    }
+
+    #[test]
+    fn alias_does_not_resolve_for_a_wrapper_whose_old_driver_lacked_it() {
+        // `SERVER` is a legacy ODBC DSN key with no counterpart in
+        // snowflake-connector-python, so the Python flavor must treat it as an
+        // unknown parameter rather than silently setting `host`.
+        let mut options = HashMap::new();
+        options.insert(
+            "SERVER".to_string(),
+            Setting::String("myhost.example.com".to_string()),
+        );
+
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
+
+        assert!(!resolved.contains_key("host"));
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.severity == ValidationSeverity::Warning
+                    && i.code == ValidationCode::UnknownParameter
+                    && i.parameter == "SERVER"),
+            "expected an unknown-parameter warning for SERVER, got: {issues:?}"
+        );
     }
 
     #[test]
@@ -732,6 +756,8 @@ mod tests {
 
     #[test]
     fn duplicate_alias_and_canonical_key_is_error() {
+        // `PRIV_KEY_BASE64` is an ODBC-scoped alias for `private_key`, so this
+        // duplicate-detection case is exercised under the ODBC flavor.
         let mut options = HashMap::new();
         options.insert(
             "PRIV_KEY_BASE64".to_string(),
@@ -742,7 +768,7 @@ mod tests {
             Setting::String("attr-key".to_string()),
         );
 
-        let (_resolved, issues) = resolve_options(Wrapper::Python, options);
+        let (_resolved, issues) = resolve_options(Wrapper::Odbc, options);
 
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, ValidationSeverity::Error);

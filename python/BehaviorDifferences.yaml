@@ -410,8 +410,7 @@ behavior_differences:
       1. Default-deny env detection. The new `use_proxy_env` parameter
          (default: `false`) gates whether `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`
          are consulted at all. Customers who relied on env-var auto-pickup
-         must set `use_proxy_env=True` (or pass the env-equivalent ODBC alias
-         `PROXYWITHENV=true`).
+         must set `use_proxy_env=True`.
 
       2. Explicit params win. When both `use_proxy_env=True` AND an explicit
          `proxy_host`/`proxy_port` (or legacy `PROXY` URL) are set, the

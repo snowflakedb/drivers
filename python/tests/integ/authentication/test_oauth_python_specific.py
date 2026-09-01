@@ -8,9 +8,10 @@ orphan check while still being picked up by ``pytest python/tests/integ``.
 
 Covered behaviours:
 
-* Rewriting the legacy ``oauth_token_url`` alias to the canonical
-  ``oauth_token_request_url`` before forwarding (Python-only API
-  surface — Python column of the cross-driver configuration matrix).
+* Rejecting the UD-only ``oauth_token_url`` shorthand: neither the legacy
+  connector nor legacy ODBC accepted it, so the universal driver requires the
+  canonical ``oauth_token_request_url`` (Python column of the cross-driver
+  configuration matrix).
 * Rewriting the legacy ``oauth_socket_uri`` alias to the canonical
   ``oauth_redirect_uri`` while emitting a ``DeprecationWarning``: the
   universal driver always binds the loopback listener to
@@ -66,15 +67,15 @@ class TestOAuthLegacyTokenRedaction:
 
 
 # ---------------------------------------------------------------------------
-# Python-only alias rewriting (`oauth_token_url` → `oauth_token_request_url`)
+# `oauth_token_url` is NOT accepted (parity with the legacy connector)
 # ---------------------------------------------------------------------------
 
 
-class TestOAuthLegacyAliasRewrite:
-    """``oauth_token_url`` is accepted as an alias for ``oauth_token_request_url``."""
+class TestOAuthTokenUrlIsNotAnAlias:
+    """``oauth_token_url`` is not a kwarg of any old driver, so UD rejects it too."""
 
-    def test_should_not_reject_oauth_token_url_as_unknown_kwarg(self, int_test_connection_factory):
-        """Python-only: snowflake-connector-python users historically passed `oauth_token_url=`."""
+    def test_should_reject_oauth_token_url_as_unknown_kwarg(self, int_test_connection_factory):
+        """The legacy connector's kwarg is `oauth_token_request_url`; the short form never existed."""
         kwargs = {
             "authenticator": "OAUTH_CLIENT_CREDENTIALS",
             "private_key_file": None,
@@ -84,11 +85,23 @@ class TestOAuthLegacyAliasRewrite:
         }
         exception = _attempt_oauth_connect(int_test_connection_factory, **kwargs)
 
-        # sf_core must NOT raise "Missing required parameter ...
-        # oauth_token_request_url" — the wrapper rewrote the alias
-        # before forwarding (Python legacy alias rewriting). The connect
-        # still fails because no real IdP is reachable, but for a
-        # *different* reason than missing-param.
+        # The short spelling is an unknown parameter, so the token URL is never
+        # set and sf_core fails the connect on the missing required parameter.
+        text = _full_error_text(exception)
+        assert "oauth_token_request_url" in text
+
+    def test_should_accept_canonical_oauth_token_request_url(self, int_test_connection_factory):
+        """The spelling both old drivers used must still resolve."""
+        kwargs = {
+            "authenticator": "OAUTH_CLIENT_CREDENTIALS",
+            "private_key_file": None,
+            "oauth_client_id": "test-client-id",
+            "oauth_client_secret": "test-client-secret",
+            "oauth_token_request_url": "https://idp.example.com/oauth/token",
+        }
+        exception = _attempt_oauth_connect(int_test_connection_factory, **kwargs)
+
+        # Connect still fails (no reachable IdP), but not for a missing param.
         text = _full_error_text(exception)
         assert "Missing required parameter" not in text or "oauth_token_request_url" not in text
 

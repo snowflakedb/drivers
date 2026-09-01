@@ -414,38 +414,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     """Default warehouse to use"""
 
     _ALIAS_MAP: ClassVar[dict[str, str]] = {
-        "allowemptyproxy": "allow_empty_proxy",
-        "allowunderscoresinhost": "preserve_underscores_in_hostname",
-        "clientstoretemporarycredential": "client_store_temporary_credential",
-        "crl_enabled": "crl_check_mode",
-        "crl_mode": "crl_check_mode",
-        "disablequerycontextcache": "disable_query_context_cache",
         "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
-        "noproxy": "no_proxy",
-        "oauth_token_url": "oauth_token_request_url",
-        "oauthauthorizationurl": "oauth_authorization_url",
-        "oauthclientid": "oauth_client_id",
-        "oauthclientsecret": "oauth_client_secret",
-        "oauthenablesingleuserefreshtokens": "oauth_enable_single_use_refresh_tokens",
-        "oauthredirecturi": "oauth_redirect_uri",
-        "oauthscope": "oauth_scope",
-        "oauthtokenrequesturl": "oauth_token_request_url",
         "passcodeinpassword": "passcode_in_password",
-        "priv_key_base64": "private_key",
-        "priv_key_file": "private_key_file",
-        "priv_key_file_pwd": "private_key_password",
-        "priv_key_pwd": "private_key_password",
-        "private_key_base64": "private_key",
         "private_key_file_pwd": "private_key_password",
-        "private_key_pwd": "private_key_password",
-        "proxywithenv": "use_proxy_env",
-        "pwd": "password",
-        "server": "host",
-        "tls_custom_root_store_path": "custom_root_store_path",
-        "tls_verify_certificates": "verify_certificates",
-        "tls_verify_hostname": "verify_hostname",
-        "tokenfilepath": "token_file_path",
-        "uid": "user",
     }
     """Lowercased alias -> Python field name."""
 
