@@ -387,41 +387,11 @@ pub fn user_agent(client_info: &ClientInfo) -> String {
     }
 }
 
-/// Strip non-numeric suffixes from a version string so the server accepts it.
-///
-/// `CLIENT_APP_VERSION` must be a dotted numeric version for feature gates to
-/// remain enabled, so this helper keeps only the leading run of digits and dots
-/// and then drops any trailing empty component. Everything from the first
-/// character that is neither a digit nor a dot is a suffix, including dots
-/// inside it, so a semver pre-release with its own dotted counter does not leak
-/// an extra component (`"4.0.0-beta.0"` must not become `"4.0.0.0"`), and a
-/// PEP 440 suffix in its own segment does not leave a trailing dot
-/// (`"5.0.0.dev0"` → `"5.0.0"`). Examples: `"5.0.0dev"` → `"5.0.0"`,
-/// `"2.21.8.1"` → `"2.21.8.1"`.
-fn strip_version_suffix(version: &str) -> String {
-    let numeric_prefix_end = version
-        .find(|c: char| !c.is_ascii_digit() && c != '.')
-        .unwrap_or(version.len());
-
-    let stripped = version[..numeric_prefix_end]
-        .split('.')
-        .take_while(|segment| !segment.is_empty())
-        .collect::<Vec<_>>()
-        .join(".");
-
-    if stripped.is_empty() {
-        "0".to_owned()
-    } else {
-        stripped
-    }
-}
-
 fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
     AuthRequestData {
         account_name: login_parameters.account_name.clone(),
         client_app_id: login_parameters.client_info.client_app_id.clone(),
-        client_app_version: strip_version_suffix(&login_parameters.client_info.version),
-        client_app_version_full: login_parameters.client_info.version.clone(),
+        client_app_version: login_parameters.client_info.version.clone(),
         client_capabilities: AuthRequestClientCapabilities {
             smk_id_as_string: true,
         },
@@ -3366,6 +3336,32 @@ mod tests {
     }
 
     #[test]
+    fn auth_request_sends_client_app_version_without_stripping_suffix() {
+        let login_params = LoginParameters {
+            client_info: ClientInfo {
+                client_app_id: "PythonConnector".to_string(),
+                version: "5.0.0dev".to_string(),
+                ..test_client_info()
+            },
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
+            .unwrap();
+
+        assert_eq!(data.client_app_version, "5.0.0dev");
+    }
+
+    #[test]
     fn pat_auth_payload_includes_authenticator() {
         let login_params = LoginParameters {
             login_method: LoginMethod::Pat {
@@ -3888,60 +3884,6 @@ mod tests {
                 user_agent(&info),
                 format!("JDBC/4.0.2 (Linux-{ARCH}) OpenJDK_64-Bit_Server_VM/17.0.6")
             );
-        }
-    }
-
-    mod strip_version_suffix_tests {
-        use super::*;
-
-        #[test]
-        fn clean_version_unchanged() {
-            assert_eq!(strip_version_suffix("5.0.0"), "5.0.0");
-        }
-
-        #[test]
-        fn dev_suffix_stripped() {
-            assert_eq!(strip_version_suffix("5.0.0dev"), "5.0.0");
-        }
-
-        #[test]
-        fn rc_suffix_stripped() {
-            assert_eq!(strip_version_suffix("3.12.1rc2"), "3.12.1");
-        }
-
-        #[test]
-        fn four_segment_preserved() {
-            assert_eq!(strip_version_suffix("2.21.8.1"), "2.21.8.1");
-        }
-
-        #[test]
-        fn dotted_dev_segment_dropped_not_zeroed() {
-            assert_eq!(strip_version_suffix("5.0.0.dev0"), "5.0.0");
-        }
-
-        #[test]
-        fn dotted_post_segment_dropped_not_zeroed() {
-            assert_eq!(strip_version_suffix("5.0.0.post1"), "5.0.0");
-        }
-
-        #[test]
-        fn hyphenated_prerelease_stripped() {
-            assert_eq!(strip_version_suffix("4.0.0-rc1"), "4.0.0");
-        }
-
-        #[test]
-        fn suffix_with_dots() {
-            assert_eq!(strip_version_suffix("4.0.0-beta.0"), "4.0.0");
-        }
-
-        #[test]
-        fn four_segment_suffix_with_dots() {
-            assert_eq!(strip_version_suffix("4.0.0.0-beta.0"), "4.0.0.0");
-        }
-
-        #[test]
-        fn fully_non_numeric_falls_back_to_zero() {
-            assert_eq!(strip_version_suffix("dev"), "0");
         }
     }
 

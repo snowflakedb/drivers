@@ -39,14 +39,10 @@ def test_login_request_contains_correct_client_identity(
     # CLIENT_APP_ID must match the legacy Python connector value
     assert data["CLIENT_APP_ID"] == "PythonConnector"
 
-    # CLIENT_APP_VERSION is stripped to digits-only for server compat;
-    # CLIENT_APP_VERSION_FULL preserves the original (e.g. "5.0.0b1").
-    from snowflake.connector.version import VERSION, __version__
+    # CLIENT_APP_VERSION is sent as-is from wrapper identity (no suffix stripping).
+    from snowflake.connector.version import __version__
 
-    assert data["CLIENT_APP_VERSION_FULL"] == __version__
-    # Stripped version must match the release components (no "dev", "rc", etc.)
-    stripped = data["CLIENT_APP_VERSION"]
-    assert stripped == ".".join(str(c) for c in VERSION[:-1])
+    assert data["CLIENT_APP_VERSION"] == __version__
 
     # CLIENT_ENVIRONMENT must contain correct OS and runtime fields
     env = data["CLIENT_ENVIRONMENT"]
