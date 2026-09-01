@@ -3,6 +3,7 @@ import os
 
 from config import TestConfig
 from connection import create_connection, get_server_version, execute_setup_queries
+from concurrent_execution import execute_concurrent_test
 from put_execution import execute_put_get_test
 from query_execution import execute_fetch_test
 from results import write_csv_results, write_memory_timeline, write_run_metadata
@@ -93,15 +94,15 @@ def main():
 
     conn_params = config.parse_connection_params()
     setup_queries = config.get_setup_queries()
-    
+
     try:
         conn, driver_version = create_connection(config.driver_type, conn_params)
     except Exception as e:
         print(f"❌ Connection failed: {e}")
         sys.exit(1)
-    
+
     cursor = conn.cursor()
-    
+
     try:
         execute_setup_queries(cursor, setup_queries)
     except Exception as e:
@@ -109,35 +110,44 @@ def main():
         cursor.close()
         conn.close()
         sys.exit(1)
-    
+
     try:
-        results, memory_timeline = execute_test(
-            config.test_type,
-            cursor,
-            config.sql_command,
-            config.warmup_iterations,
-            config.iterations,
-            config.fetch_mode,
-        )
+        if config.test_type == TestType.CONCURRENT:
+            results, memory_timeline = execute_concurrent_test(
+                conn,
+                config.sql_command,
+                config.warmup_iterations,
+                config.iterations,
+                config.worker_count,
+                config.fetch_mode,
+            )
+        else:
+            results, memory_timeline = execute_test(
+                config.test_type,
+                cursor,
+                config.sql_command,
+                config.warmup_iterations,
+                config.iterations,
+                config.fetch_mode,
+            )
     except Exception as e:
         print(f"❌ Test execution failed: {e}")
         cursor.close()
         conn.close()
         sys.exit(1)
-    
-    # In replay mode, skip server version query and use N/A
+
     if os.getenv("WIREMOCK_REPLAY") == "true":
         server_version = "N/A"
     else:
         server_version = get_server_version(cursor)
-    write_run_metadata(config.driver_type, driver_version, server_version or "UNKNOWN")
-        
     cursor.close()
     conn.close()
 
+    write_run_metadata(config.driver_type, driver_version, server_version or "UNKNOWN")
+
     filename = write_csv_results(results, config.test_name, config.driver_type, config.test_type)
     timeline_filename = write_memory_timeline(memory_timeline, config.test_name, config.driver_type)
-    
+
     print(f"\n✓ Complete → {filename}")
     if timeline_filename:
         print(f"✓ Memory timeline → {timeline_filename}")

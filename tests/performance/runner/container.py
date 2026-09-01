@@ -85,6 +85,12 @@ def create_perf_container(
         .with_volume_mapping(str(results_dir), "/results", mode="rw")
         .with_kwargs(**container_kwargs)
     )
+
+    # Overlay the host test app so local executor changes run without a full
+    # image rebuild (Artifactory pulls are not always available).
+    if driver == "python":
+        app_dir = Path(__file__).resolve().parents[1] / "drivers" / "python" / "app"
+        container = container.with_volume_mapping(str(app_dir), "/workdir", mode="ro")
     
     if setup_queries:
         container = container.with_env("SETUP_QUERIES", json.dumps(setup_queries))

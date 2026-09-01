@@ -18,7 +18,10 @@ class TestConfig:
         try:
             self.test_type = TestType(test_type_str)
         except ValueError:
-            print(f"ERROR: Invalid test type '{test_type_str}'. Supported types: select, put_get, cold_start")
+            print(
+                f"ERROR: Invalid test type '{test_type_str}'. "
+                "Supported types: select, put_get, cold_start, concurrent"
+            )
             sys.exit(1)
         
         self.sql_command = os.getenv("SQL_COMMAND")
@@ -34,6 +37,15 @@ class TestConfig:
                 f"ERROR: Invalid fetch mode '{self.fetch_mode}'. "
                 "Supported: fetchmany, fetchone, fetchall, pandas, arrow_batches"
             )
+            sys.exit(1)
+
+        try:
+            self.worker_count = int(os.getenv("WORKER_COUNT", "1"))
+        except ValueError:
+            print(f"ERROR: Invalid WORKER_COUNT '{os.getenv('WORKER_COUNT')}'. Must be an integer.")
+            sys.exit(1)
+        if self.worker_count < 1:
+            print(f"ERROR: WORKER_COUNT must be >= 1, got {self.worker_count}")
             sys.exit(1)
 
         if not all([self.sql_command, self.test_name, self.params_json]):
