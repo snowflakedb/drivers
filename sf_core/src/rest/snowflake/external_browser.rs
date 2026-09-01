@@ -129,6 +129,14 @@ pub enum ExternalBrowserError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display(
+        "Browser callback headers exceed the maximum allowed size of {max_bytes} bytes"
+    ))]
+    CallbackHeadersTooLarge {
+        max_bytes: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 // ─── Main entry point ────────────────────────────────────────────────────────
@@ -368,26 +376,88 @@ async fn accept_token_from_callback(
 
 // ─── HTTP request reading ────────────────────────────────────────────────────
 
+/// Maximum total size of the request header section (all lines up to and
+/// including the blank-line separator). Header parsing is bounded so a callback
+/// connection uses a fixed amount of memory; the request body is separately
+/// bounded by `MAX_CALLBACK_BODY_BYTES`.
+const MAX_CALLBACK_HEADER_BYTES: usize = 64 * 1024;
+/// Maximum size of a single header line. Bounds memory even when a line arrives
+/// without its newline terminator.
+const MAX_CALLBACK_HEADER_LINE_BYTES: usize = 8 * 1024;
+
+/// Read one `\n`-terminated line from `reader`, appending at most `max_line`
+/// bytes. Returns `Ok(None)` at end of input with no pending bytes. Returns
+/// [`ExternalBrowserError::CallbackHeadersTooLarge`] if a line reaches
+/// `max_line` bytes before a newline, so a single unterminated line cannot grow
+/// memory without bound.
+async fn read_header_line(
+    reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
+    max_line: usize,
+) -> Result<Option<String>, ExternalBrowserError> {
+    let mut line: Vec<u8> = Vec::new();
+    loop {
+        let available = reader.fill_buf().await.context(CallbackIoSnafu)?;
+        if available.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        match available.iter().position(|&b| b == b'\n') {
+            Some(pos) => {
+                let take = pos + 1;
+                ensure!(
+                    line.len() + take <= max_line,
+                    CallbackHeadersTooLargeSnafu {
+                        max_bytes: MAX_CALLBACK_HEADER_BYTES,
+                    }
+                );
+                line.extend_from_slice(&available[..take]);
+                reader.consume(take);
+                break;
+            }
+            None => {
+                ensure!(
+                    line.len() + available.len() <= max_line,
+                    CallbackHeadersTooLargeSnafu {
+                        max_bytes: MAX_CALLBACK_HEADER_BYTES,
+                    }
+                );
+                let consumed = available.len();
+                line.extend_from_slice(available);
+                reader.consume(consumed);
+            }
+        }
+    }
+    Ok(Some(String::from_utf8_lossy(&line).into_owned()))
+}
+
 /// Read a full HTTP request: headers + body (using Content-Length).
 ///
 /// Reads line-by-line until the blank line separator, then reads exactly
-/// Content-Length bytes for the body.
+/// Content-Length bytes for the body. Both the header section and the body are
+/// size-bounded so a callback connection uses a fixed amount of memory.
 async fn read_http_request(
     stream: &mut (impl tokio::io::AsyncRead + Unpin),
 ) -> Result<String, ExternalBrowserError> {
     let mut reader = BufReader::new(stream);
     let mut raw_request = String::new();
     let mut content_length: usize = 0;
+    let mut header_bytes: usize = 0;
 
-    // TODO: SNOW-3965609 — add a size cap on accumulated header bytes (and a
-    // per-line length limit) for the header-parsing loop below. The body read is
-    // already bounded by `MAX_CALLBACK_BODY_BYTES`.
     loop {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).await.context(CallbackIoSnafu)?;
-        if n == 0 {
-            break;
-        }
+        let line = match read_header_line(&mut reader, MAX_CALLBACK_HEADER_LINE_BYTES).await? {
+            Some(line) => line,
+            None => break,
+        };
+        // Cap the cumulative header bytes across all lines.
+        header_bytes = header_bytes.saturating_add(line.len());
+        ensure!(
+            header_bytes <= MAX_CALLBACK_HEADER_BYTES,
+            CallbackHeadersTooLargeSnafu {
+                max_bytes: MAX_CALLBACK_HEADER_BYTES,
+            }
+        );
         if line.trim().is_empty() {
             raw_request.push_str(&line);
             break;
@@ -821,6 +891,61 @@ mod tests {
                 Err(ExternalBrowserError::CallbackBodyTooLarge { .. })
             ),
             "expected CallbackBodyTooLarge, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_reject_callback_headers_exceeding_total_size_cap() {
+        // Many small header lines that never terminate with a blank line,
+        // together exceeding the 64 KiB header cap.
+        let mut request = String::from("POST / HTTP/1.1\r\n");
+        let filler = format!("X-Filler: {}\r\n", "a".repeat(80));
+        while request.len() <= 64 * 1024 {
+            request.push_str(&filler);
+        }
+        let mut stream = std::io::Cursor::new(request.into_bytes());
+        let result = read_http_request(&mut stream).await;
+        assert!(
+            matches!(
+                result,
+                Err(ExternalBrowserError::CallbackHeadersTooLarge { .. })
+            ),
+            "expected CallbackHeadersTooLarge, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_reject_callback_header_line_exceeding_line_cap() {
+        // A single header line longer than the 8 KiB per-line limit.
+        let long_value = "a".repeat(8 * 1024 + 1);
+        let request = format!("POST / HTTP/1.1\r\nX-Long: {long_value}\r\n\r\n");
+        let mut stream = std::io::Cursor::new(request.into_bytes());
+        let result = read_http_request(&mut stream).await;
+        assert!(
+            matches!(
+                result,
+                Err(ExternalBrowserError::CallbackHeadersTooLarge { .. })
+            ),
+            "expected CallbackHeadersTooLarge, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_parse_request_with_headers_and_body_within_caps() {
+        // Headers and body both within their caps parse successfully.
+        let body = r#"{"token":"abc123"}"#;
+        let request = format!(
+            "POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let mut stream = std::io::Cursor::new(request.into_bytes());
+        let parsed = read_http_request(&mut stream)
+            .await
+            .expect("request within caps must parse");
+        assert!(
+            parsed.contains("abc123"),
+            "body should be included, got: {parsed:?}"
         );
     }
 }
