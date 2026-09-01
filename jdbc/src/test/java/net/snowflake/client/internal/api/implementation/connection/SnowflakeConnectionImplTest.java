@@ -1618,6 +1618,7 @@ class SnowflakeConnectionImplTest {
 
       assertEquals("JDBC", identity.getDriverName());
       assertEquals(SnowflakeDriver.CLIENT_APP_VERSION, identity.getDriverVersion());
+      assertFalse(identity.hasReleaseType());
     }
 
     @Test
