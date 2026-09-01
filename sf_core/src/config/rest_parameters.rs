@@ -1477,6 +1477,10 @@ mod tests {
             release_type_from_version("1!5.0.0.dev0"),
             Some("dev0".to_owned())
         );
+        assert_eq!(
+            release_type_from_version("4.0.0-beta.0"),
+            Some("beta.0".to_owned())
+        );
     }
 
     #[test]
