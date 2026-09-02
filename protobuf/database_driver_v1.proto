@@ -463,7 +463,10 @@ message ConnectionGetParameterRequest {
 }
 
 message ConnectionGetParameterResponse {
-  optional string value = 1;
+  // Superseded by typed_value, which carries the server's native type. Removed
+  // once every wrapper reads typed_value; both fields are populated until then.
+  optional string value = 1 [deprecated = true];
+  optional ConfigSetting typed_value = 2;
 }
 
 message ConnectionGetAllParametersRequest {
@@ -471,7 +474,9 @@ message ConnectionGetAllParametersRequest {
 }
 
 message ConnectionGetAllParametersResponse {
-  map<string, string> parameters = 1;
+  // Superseded by typed_parameters. See ConnectionGetParameterResponse.value.
+  map<string, string> parameters = 1 [deprecated = true];
+  map<string, ConfigSetting> typed_parameters = 2;
 }
 
 // Reads the Snowflake server version cached from the login response.

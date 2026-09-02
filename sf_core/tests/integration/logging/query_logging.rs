@@ -210,8 +210,8 @@ async fn ini_default_seeds_log_query_text_when_no_dsn_setting() {
         .await
         .unwrap();
     assert_eq!(
-        value.as_deref(),
-        Some("true"),
+        value,
+        Some(Setting::String("true".into())),
         "ini default should be visible on the seed when no DSN value is set"
     );
 
@@ -227,7 +227,7 @@ async fn ini_default_seeds_log_query_parameters_when_no_dsn_setting() {
         .connection_get_parameter(handle, "log_query_parameters".into())
         .await
         .unwrap();
-    assert_eq!(value.as_deref(), Some("true"));
+    assert_eq!(value, Some(Setting::String("true".into())));
     let unset = driver
         .connection_get_parameter(handle, "log_query_text".into())
         .await
@@ -255,8 +255,8 @@ async fn dsn_setting_overrides_ini_default_for_log_query_text() {
         .await
         .unwrap();
     assert_eq!(
-        text.as_deref(),
-        Some("false"),
+        text,
+        Some(Setting::String("false".into())),
         "explicit DSN setting must win over the ini-derived default"
     );
 
@@ -265,8 +265,8 @@ async fn dsn_setting_overrides_ini_default_for_log_query_text() {
         .await
         .unwrap();
     assert_eq!(
-        parameters.as_deref(),
-        Some("true"),
+        parameters,
+        Some(Setting::String("true".into())),
         "ini default should still apply for the flag the user did not touch"
     );
 

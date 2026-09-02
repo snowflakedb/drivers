@@ -33,6 +33,7 @@ use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::like_pattern;
 use crate::chunks::PrefetchConfig;
+use crate::config::settings::Settings;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::query_request::QueryContext;
 use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
@@ -279,10 +280,7 @@ async fn apply_connection_context(
 ) -> (Option<String>, Option<String>) {
     let use_ctx = {
         let cache = conn.session_parameters.read().await;
-        cache
-            .get("CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX")
-            .map(|v| v.to_uppercase() == "TRUE")
-            .unwrap_or(false)
+        cache.get_bool_or("CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", false)
     };
 
     if !use_ctx {
