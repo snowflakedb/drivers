@@ -137,7 +137,19 @@ fn normalize_connection_string_option(
         "DISABLE_PARALLEL_USER_PROMPT" => {
             Some(("disable_parallel_user_prompt".to_owned(), value.into()))
         }
-        "LOGIN_TIMEOUT" => Some(("authentication_timeout".to_owned(), value.into())),
+        // `AUTHENTICATION_TIMEOUT` is the canonical spelling rather than an
+        // alias, so the catch-all below would forward it uppercased and let the
+        // registry match it case-insensitively. It needs the same
+        // pre-canonicalization as `LOGIN_TIMEOUT` for the reason above: the
+        // caller's DSN value would otherwise sit under `AUTHENTICATION_TIMEOUT`
+        // while `apply_pre_connection_overrides` and the default-timeout
+        // follow-up in `connect_with_params` write `authentication_timeout`,
+        // so those writes would land beside the caller's value and the
+        // last-writer-wins insert in `connection_set_options` would silently
+        // discard it.
+        "AUTHENTICATION_TIMEOUT" | "LOGIN_TIMEOUT" => {
+            Some(("authentication_timeout".to_owned(), value.into()))
+        }
         "PASSCODEINPASSWORD" => Some(("passcodeInPassword".to_owned(), value.into())),
         "PRIV_KEY_FILE" => Some(("private_key_file".to_owned(), value.into())),
         "PRIV_KEY_BASE64" => Some(("private_key".to_owned(), value.into())),
@@ -2592,6 +2604,27 @@ mod tests {
             Some("42")
         );
         assert!(!options.contains_key("LOGIN_TIMEOUT"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_authentication_timeout() {
+        // The caller's own spelling has to reach sf_core under the canonical
+        // key. Left uppercased, the default-timeout follow-up in
+        // `connect_with_params` writes `authentication_timeout` beside it and
+        // overwrites the caller's value once both canonicalize.
+        for spelling in ["AUTHENTICATION_TIMEOUT", "authentication_timeout"] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                spelling.to_owned(),
+                "42".to_owned(),
+            )]));
+
+            assert_eq!(
+                config_string(&options, "authentication_timeout"),
+                Some("42"),
+                "{spelling} should normalize to the canonical key"
+            );
+            assert!(!options.contains_key("AUTHENTICATION_TIMEOUT"));
+        }
     }
 
     #[test]
