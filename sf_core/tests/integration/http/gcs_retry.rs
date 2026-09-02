@@ -1283,38 +1283,28 @@ async fn gcs_download_401_with_unchanged_token_returns_token_expired() {
 //  libsfclient: renewToken at FileTransferAgent.cpp:400)
 // ---------------------------------------------------------------
 
-/// Gap 2.4 upload: first 401 triggers coalesced `refresh()`; the rotated
-/// bearer token from the cache is used on the retry. Mirrors
-/// `gcs_download_401_triggers_token_refresh_and_succeeds` for the PUT path.
-#[tokio::test]
-async fn gcs_upload_401_then_refresh_then_200() {
+/// Runs the upload-side token refresh scenario for either overwrite mode.
+async fn assert_gcs_upload_401_then_refresh_then_200(overwrite: bool) {
     let server = MockServer::start().await;
     let attempt = Arc::new(AtomicU32::new(0));
     let attempt_clone = attempt.clone();
+
+    Mock::given(method("HEAD"))
+        .and(path("/test-bucket/prefix/file.csv"))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(u64::from(!overwrite) * 2)
+        .mount(&server)
+        .await;
 
     // The upload URL in token mode: {endpoint}/{bucket}/{key_prefix}{filename}
     // = {server.uri()}/test-bucket/prefix/file.csv
     Mock::given(method("PUT"))
         .and(path("/test-bucket/prefix/file.csv"))
-        .respond_with(move |req: &Request| {
+        .respond_with(move |_req: &Request| {
             let n = attempt_clone.fetch_add(1, Ordering::SeqCst);
-            let auth = req
-                .headers
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or_default()
-                .to_string();
             if n == 0 {
-                assert!(
-                    auth.ends_with("stale-token"),
-                    "first PUT should use stale bearer; got auth={auth}"
-                );
                 ResponseTemplate::new(401).set_body_string("Unauthenticated")
             } else {
-                assert!(
-                    auth.ends_with("fresh-token"),
-                    "retry PUT should use rotated bearer; got auth={auth}"
-                );
                 ResponseTemplate::new(200)
             }
         })
@@ -1350,11 +1340,14 @@ async fn gcs_upload_401_then_refresh_then_200() {
         prepared,
         &stage,
         "file.csv",
-        true,
-        false,
+        /* overwrite */ overwrite,
+        /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        TransferCtx::new(refresher_opt, None),
+        &test_policy(
+            /* using_presigned_url */ false,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        ),
+        TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
     )
     .await;
 
@@ -1367,6 +1360,37 @@ async fn gcs_upload_401_then_refresh_then_200() {
         2,
         "should hit GCS twice (stale, then fresh)"
     );
+    let received = server
+        .received_requests()
+        .await
+        .expect("wiremock should retain received requests");
+    let puts: Vec<&Request> = received
+        .iter()
+        .filter(|request| request.method.as_str() == "PUT")
+        .collect();
+    assert_eq!(puts.len(), 2, "the upload should issue two PUT attempts");
+    assert!(
+        puts.iter().all(|request| {
+            request.headers.contains_key("x-goog-if-generation-match") != overwrite
+        }),
+        "the generation-zero precondition must match overwrite mode on every attempt"
+    );
+    let authorization = |request: &Request| {
+        request
+            .headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert!(
+        authorization(puts[0]).ends_with("stale-token"),
+        "the first PUT should use the stale bearer token"
+    );
+    assert!(
+        authorization(puts[1]).ends_with("fresh-token"),
+        "the retry PUT should use the rotated bearer token"
+    );
     assert_eq!(
         fake.refresh_calls.load(Ordering::SeqCst),
         1,
@@ -1377,6 +1401,20 @@ async fn gcs_upload_401_then_refresh_then_200() {
         0,
         "non-coalesced refresh_url() must NOT fire on 401"
     );
+}
+
+/// The unconditional overwrite path must retain token-refresh behavior and
+/// omit the generation precondition on both the stale- and fresh-token PUTs.
+#[tokio::test]
+async fn gcs_overwrite_upload_401_then_refresh_then_200() {
+    assert_gcs_upload_401_then_refresh_then_200(/* overwrite */ true).await;
+}
+
+/// The conditional path must retain token-refresh behavior and preserve the
+/// generation-zero precondition on both the stale- and fresh-token PUTs.
+#[tokio::test]
+async fn gcs_conditional_upload_401_then_refresh_then_200() {
+    assert_gcs_upload_401_then_refresh_then_200(/* overwrite */ false).await;
 }
 
 // ---------------------------------------------------------------
@@ -1440,11 +1478,14 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         prepared,
         &stage,
         "file.csv",
-        true,
-        false,
+        /* overwrite */ true,
+        /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        TransferCtx::new(refresher_opt, None),
+        &test_policy(
+            /* using_presigned_url */ true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        ),
+        TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
     )
     .await;
 
@@ -1521,11 +1562,14 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         prepared,
         &stage,
         "part-01.csv.gz",
-        true,
-        false,
+        /* overwrite */ true,
+        /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        TransferCtx::new(refresher_opt, None),
+        &test_policy(
+            /* using_presigned_url */ true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        ),
+        TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
     )
     .await;
 
@@ -1596,11 +1640,14 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         prepared,
         &stage,
         "file.csv",
-        true,
-        false,
+        /* overwrite */ true,
+        /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        TransferCtx::new(refresher_opt, None),
+        &test_policy(
+            /* using_presigned_url */ true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        ),
+        TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
     )
     .await
     .expect_err("two consecutive 400s on PUT must fail fast");
@@ -1911,10 +1958,13 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         prepared,
         &gcs_stage_with_token(&server.uri()),
         "file.bin",
-        true,
-        false,
+        /* overwrite */ true,
+        /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &test_policy(
+            /* using_presigned_url */ false,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        ),
         TransferCtx::default(),
     )
     .await;

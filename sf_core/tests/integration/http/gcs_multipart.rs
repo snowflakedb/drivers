@@ -320,7 +320,7 @@ async fn should_upload_and_download_via_gcs_multipart_roundtrip() {
     download_single_file(
         download,
         &RetryPolicy::put_get(&ParamStore::new()),
-        0,
+        /* per_file_index */ 0,
         TransferCtx::default(),
     )
     .await
@@ -388,7 +388,10 @@ async fn should_retry_gcs_resumable_initiation_on_transient_5xx() {
     };
     let upload_result = upload_single_file(
         upload,
-        &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &test_policy(
+            /* using_presigned_url */ false,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        ),
         TransferCtx::default(),
     )
     .await
@@ -458,13 +461,8 @@ impl StageInfoRefresher for GcsChunkFakeRefresher {
     }
 }
 
-/// Gap: a 401 partway through the resumable chunk PUTs triggers a full
-/// session re-initiate via the token-refresh loop (`run_gcs_with_token_refresh`
-/// re-runs the *entire* attempt closure on `TokenExpired` — pre-upload HEAD
-/// included — not just a resume of the half-finished session), then the
-/// second, fully-fresh attempt commits on a terminal 2xx.
-#[tokio::test(flavor = "multi_thread")]
-async fn should_reinitiate_gcs_resumable_session_after_401_mid_chunk() {
+/// Runs the resumable mid-chunk token-refresh scenario for either overwrite mode.
+async fn assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(overwrite: bool) {
     let payload = make_payload(PAYLOAD_LEN);
     let digest =
         compute_sha256_digest(&ByteSource::Bytes(payload.clone().into())).expect("compute digest");
@@ -504,7 +502,7 @@ async fn should_reinitiate_gcs_resumable_session_after_401_mid_chunk() {
         encryption_material: None,
         auto_compress: false,
         source_compression: SourceCompressionParam::None,
-        overwrite: true,
+        overwrite,
         flavor: PutGetResultsetFlavor::Python,
         legacy_odbc_compression_autodetect: false,
         skip_upload_on_content_match: false,
@@ -513,8 +511,11 @@ async fn should_reinitiate_gcs_resumable_session_after_401_mid_chunk() {
     let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let upload_result = upload_single_file(
         upload,
-        &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        TransferCtx::new(refresher_opt, None),
+        &test_policy(
+            /* using_presigned_url */ false,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        ),
+        TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
     )
     .await
     .expect("401 mid-chunk should trigger a full re-initiate via token refresh and then succeed");
@@ -531,6 +532,11 @@ async fn should_reinitiate_gcs_resumable_session_after_401_mid_chunk() {
         "one aborted session (first attempt) plus one fresh session (second, successful attempt)"
     );
     assert_eq!(
+        state.head_calls.load(Ordering::Relaxed),
+        usize::from(!overwrite) * 2,
+        "only conditional-upload attempts repeat the 404 HEAD probe"
+    );
+    assert_eq!(
         state.put_chunk_calls.load(Ordering::Relaxed),
         1 + expected_chunks,
         "one chunk PUT from the aborted first attempt (the one that got 401'd) \
@@ -545,6 +551,17 @@ async fn should_reinitiate_gcs_resumable_session_after_401_mid_chunk() {
         .received_requests()
         .await
         .expect("wiremock request log should be enabled");
+    let initiations: Vec<&Request> = received
+        .iter()
+        .filter(|request| request.method.as_str() == "POST")
+        .collect();
+    assert_eq!(initiations.len(), 2);
+    assert!(
+        initiations.iter().all(|request| {
+            request.headers.contains_key("x-goog-if-generation-match") != overwrite
+        }),
+        "both stale- and fresh-token session initiations must match overwrite mode"
+    );
     let chunk_put_auth_headers: Vec<String> = received
         .iter()
         .filter(|r| r.method.as_str() == "PUT" && r.url.path().starts_with("/upload/"))
@@ -567,4 +584,18 @@ async fn should_reinitiate_gcs_resumable_session_after_401_mid_chunk() {
             .all(|auth| auth.ends_with("fresh-token")),
         "every chunk PUT after the refresh should carry the rotated bearer token"
     );
+}
+
+/// The unconditional resumable path must retain token-refresh behavior and
+/// omit the generation precondition on both session initiations.
+#[tokio::test(flavor = "multi_thread")]
+async fn should_reinitiate_overwrite_gcs_resumable_session_after_401_mid_chunk() {
+    assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(/* overwrite */ true).await;
+}
+
+/// The conditional resumable path must retain token-refresh behavior and
+/// preserve the generation-zero precondition on both session initiations.
+#[tokio::test(flavor = "multi_thread")]
+async fn should_reinitiate_conditional_gcs_resumable_session_after_401_mid_chunk() {
+    assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(/* overwrite */ false).await;
 }
