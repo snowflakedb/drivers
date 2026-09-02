@@ -318,22 +318,7 @@ TEST_CASE("SQL_SF_TIMESTAMP_TZ binds SQL_C_CHAR with offset suffix and round-tri
   CHECK(get_data<SQL_C_CHAR>(str_stmt, 1) == "2024-03-15 14:30:45 +05:30");
 }
 
-TEST_CASE("SQLDescribeParam returns SQL_TYPE_TIMESTAMP (93) after binding with vendor codes",
-          "[timestamp_vendor_codes][describe_param]") {
-  // The Snowflake vendor codes 2000/2001/2002 are an *input-only* aliasing
-  // that lets the application pick the wire-format Snowflake logical type at
-  // SQLBindParameter time. The MS ODBC spec for SQLDescribeParam describes
-  // returning standard SQL type codes (1..=12, 91..=95, 101..=113), so the
-  // vendor codes must be normalised to SQL_TYPE_TIMESTAMP (93) on the IPD
-  // before any introspection call observes them. Otherwise an application
-  // that switches on 93 in describe-param would silently fall through to an
-  // unknown-type branch when the upstream code happens to bind via the
-  // vendor opt-in. See PR #1004 review (odbc_types.rs:631).
-  SKIP_OLD_DRIVER("BD#50",
-                  "Old driver leaks the raw vendor code (2000/2001/2002) through SQLDescribeParam and "
-                  "SQLGetDescField(IPD, SQL_DESC_TYPE); new driver normalises to SQL_TYPE_TIMESTAMP (93) "
-                  "per MS ODBC spec.");
-
+TEST_CASE("SQLDescribeParam returns bound vendor TIMESTAMP codes", "[timestamp_vendor_codes][describe_param]") {
   // Given Snowflake client is logged in and a prepared two-parameter INSERT
   Connection conn;
   Schema::use_temp_session_schema(conn);
@@ -352,16 +337,12 @@ TEST_CASE("SQLDescribeParam returns SQL_TYPE_TIMESTAMP (93) after binding with v
   SQLLEN ts_ind = 0;
 
   // When parameter #2 is bound in turn with each Snowflake vendor TIMESTAMP code
-  // Then SQLDescribeParam reports the standard SQL_TYPE_TIMESTAMP (93) -- never
-  // the raw vendor code -- proving the vendor opt-in is input-only.
-  //
-  // We also cross-check via `SQLGetDescField(IPD, SQL_DESC_TYPE)` because
-  // `SQLDescribeParam` goes through the unixODBC Driver Manager (which can
-  // post-process the driver's response via `__map_type(MAP_SQL_D2DM)`) while
-  // `SQLGetDescField` on a descriptor handle obtained from `SQL_ATTR_IMP_PARAM_DESC`
-  // is forwarded to the driver verbatim. If the two routes disagree, the
-  // discrepancy pinpoints DM remapping; if they agree, the value is what the
-  // driver actually stored.
+  // Then SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE) report that
+  // vendor code verbatim. SQLDescribeParam goes through the unixODBC Driver
+  // Manager (which can post-process the driver's response via
+  // `__map_type(MAP_SQL_D2DM)`); SQLGetDescField on a descriptor handle from
+  // `SQL_ATTR_IMP_PARAM_DESC` is forwarded to the driver. Agreement of the two
+  // routes is the value the driver stored on the IPD.
   SQLHDESC ipd = nullptr;
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_PARAM_DESC, &ipd, 0, nullptr);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -386,7 +367,7 @@ TEST_CASE("SQLDescribeParam returns SQL_TYPE_TIMESTAMP (93) after binding with v
 
     INFO("SQLDescribeParam returned data_type = " << data_type
                                                   << "; SQLGetDescField(IPD, SQL_DESC_TYPE) returned = " << ipd_type);
-    CHECK(data_type == SQL_TYPE_TIMESTAMP);  // 93, not the 2000/2001/2002 we bound with
-    CHECK(ipd_type == SQL_TYPE_TIMESTAMP);   // verifies the driver actually stored 93 in the IPD
+    CHECK(data_type == vendor_code);
+    CHECK(ipd_type == vendor_code);
   }
 }

@@ -127,11 +127,21 @@ pub unsafe extern "system" fn SQLExecDirect(
     set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLExecDirect");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result =
-        api::statement::exec_direct::<Narrow>(statement_handle, statement_text, text_length);
+    let mut warnings = vec![];
+    let result = api::statement::exec_direct::<Narrow>(
+        statement_handle,
+        statement_text,
+        text_length,
+        &mut warnings,
+    );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Stmt, statement_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -145,10 +155,21 @@ pub unsafe extern "system" fn SQLExecDirectW(
     set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLExecDirect");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::exec_direct::<Wide>(statement_handle, statement_text, text_length);
+    let mut warnings = vec![];
+    let result = api::statement::exec_direct::<Wide>(
+        statement_handle,
+        statement_text,
+        text_length,
+        &mut warnings,
+    );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Stmt, statement_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// ODBC catalog function: list tables matching pattern arguments.
@@ -2342,10 +2363,16 @@ pub unsafe extern "system" fn SQLExecute(statement_handle: sql::Handle) -> sql::
     set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLExecute");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::execute(statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::execute(statement_handle, &mut warnings);
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Stmt, statement_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety

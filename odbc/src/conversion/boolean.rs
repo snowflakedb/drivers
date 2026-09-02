@@ -12,11 +12,11 @@ use crate::conversion::numeric_helpers::{
     reject_multi_field_interval, write_interval_second, write_single_field_interval,
 };
 use crate::conversion::param_binding::{
-    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+    buffer_data_len, read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
-use crate::conversion::warning::Warnings;
+use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub(crate) use sf_types::SnowflakeBoolean;
@@ -153,30 +153,131 @@ impl WriteODBCType for SnowflakeBoolean {
     }
 }
 
-/// Parse a string value to a boolean per ODBC spec: the string is first
-/// converted to a numeric value, then 0 → false, nonzero → true.
-/// Also accepts "true"/"false" literals for Snowflake compatibility.
-fn parse_str_to_bool(s: &str) -> Result<bool, BindingError> {
-    let trimmed = s.trim();
-    if let Ok(i) = trimmed.parse::<i64>() {
-        return Ok(i != 0);
-    }
-    if let Ok(f) = trimmed.parse::<f64>() {
-        return match f.is_finite() {
-            true => Ok(f != 0.0),
-            false => InvalidBooleanValueSnafu {
-                value: trimmed.to_string(),
-            }
-            .fail(),
-        };
-    }
-    match trimmed.to_ascii_lowercase().as_str() {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => InvalidBooleanValueSnafu {
-            value: trimmed.to_string(),
+fn bit_from_i128(value: i128) -> Result<bool, BindingError> {
+    match value {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => NumericMagnitudeOverflowSnafu {
+            reason: format!("SQL_BIT accepts only 0 or 1, got {value}"),
         }
         .fail(),
+    }
+}
+
+fn bit_from_f64(value: f64) -> Result<(bool, Warnings), BindingError> {
+    if value.is_nan() {
+        return Ok((true, vec![]));
+    }
+    if value.is_infinite() || !(0.0..2.0).contains(&value) {
+        return NumericMagnitudeOverflowSnafu {
+            reason: format!("SQL_BIT accepts only 0 or 1, got {value}"),
+        }
+        .fail();
+    }
+    if value == 0.0 {
+        return Ok((false, vec![]));
+    }
+    if value == 1.0 {
+        return Ok((true, vec![]));
+    }
+    Ok((value.trunc() != 0.0, vec![Warning::NumericValueTruncated]))
+}
+
+fn bit_from_numeric(binding: &ParameterBinding) -> Result<bool, BindingError> {
+    let (signed, scale) = read_numeric_struct(binding)?;
+    if signed == 0 {
+        return Ok(false);
+    }
+    let is_one = if scale == 0 {
+        signed == 1
+    } else if scale > 0 {
+        10i128
+            .checked_pow(scale as u32)
+            .is_some_and(|factor| signed == factor)
+    } else {
+        false
+    };
+    if is_one {
+        Ok(true)
+    } else {
+        NumericMagnitudeOverflowSnafu {
+            reason: format!(
+                "SQL_BIT accepts only 0 or 1, got numeric mantissa {signed} scale {scale}"
+            ),
+        }
+        .fail()
+    }
+}
+
+fn parse_str_to_bool(s: &str) -> Result<(bool, Warnings), BindingError> {
+    let trimmed = s.trim();
+    if let Ok(i) = trimmed.parse::<i128>() {
+        return bit_from_i128(i).map(|b| (b, vec![]));
+    }
+    if let Ok(f) = trimmed.parse::<f64>()
+        && f.is_finite()
+    {
+        return bit_from_f64(f);
+    }
+    InvalidBooleanValueSnafu {
+        value: trimmed.to_string(),
+    }
+    .fail()
+}
+
+pub(crate) fn read_boolean_param(
+    binding: &ParameterBinding,
+) -> Result<(bool, Warnings), BindingError> {
+    match binding.value_type {
+        CDataType::Default | CDataType::Bit => Ok((read_unaligned::<u8>(binding) != 0, vec![])),
+        CDataType::UTinyInt => {
+            bit_from_i128(i128::from(read_unaligned::<u8>(binding))).map(|b| (b, vec![]))
+        }
+        CDataType::TinyInt | CDataType::STinyInt => {
+            bit_from_i128(i128::from(read_unaligned::<i8>(binding))).map(|b| (b, vec![]))
+        }
+        CDataType::Long | CDataType::SLong => {
+            bit_from_i128(i128::from(read_unaligned::<i32>(binding))).map(|b| (b, vec![]))
+        }
+        CDataType::ULong => {
+            bit_from_i128(i128::from(read_unaligned::<u32>(binding))).map(|b| (b, vec![]))
+        }
+        CDataType::Short | CDataType::SShort => {
+            bit_from_i128(i128::from(read_unaligned::<i16>(binding))).map(|b| (b, vec![]))
+        }
+        CDataType::UShort => {
+            bit_from_i128(i128::from(read_unaligned::<u16>(binding))).map(|b| (b, vec![]))
+        }
+        CDataType::SBigInt => {
+            bit_from_i128(i128::from(read_unaligned::<i64>(binding))).map(|b| (b, vec![]))
+        }
+        CDataType::UBigInt => {
+            bit_from_i128(i128::from(read_unaligned::<u64>(binding))).map(|b| (b, vec![]))
+        }
+        CDataType::Float => bit_from_f64(f64::from(read_unaligned::<f32>(binding))),
+        CDataType::Double => bit_from_f64(read_unaligned::<f64>(binding)),
+        CDataType::Char => {
+            let s = read_char_str(binding)?;
+            parse_str_to_bool(&s)
+        }
+        CDataType::WChar => {
+            let s = read_wchar_str(binding)?;
+            parse_str_to_bool(&s)
+        }
+        CDataType::Numeric => bit_from_numeric(binding).map(|b| (b, vec![])),
+        CDataType::Binary => {
+            let len = buffer_data_len(binding);
+            if len != 1 {
+                return NumericMagnitudeOverflowSnafu {
+                    reason: format!("SQL_C_BINARY to SQL_BIT requires exactly 1 byte, got {len}"),
+                }
+                .fail();
+            }
+            // SAFETY: `len == 1` was checked and the bind buffer is a single byte.
+            let byte = unsafe { *(binding.parameter_value_ptr as *const u8) };
+            Ok((byte != 0, vec![]))
+        }
+        other => UnsupportedCDataTypeSnafu { c_type: other }.fail(),
     }
 }
 
@@ -185,67 +286,8 @@ impl ReadODBC for SnowflakeBoolean {
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        match binding.value_type {
-            CDataType::Default | CDataType::Bit | CDataType::UTinyInt => {
-                Ok(read_unaligned::<u8>(binding) != 0)
-            }
-            CDataType::TinyInt | CDataType::STinyInt => Ok(read_unaligned::<i8>(binding) != 0),
-            CDataType::Long | CDataType::SLong => Ok(read_unaligned::<i32>(binding) != 0),
-            CDataType::ULong => Ok(read_unaligned::<u32>(binding) != 0),
-            CDataType::Short | CDataType::SShort => Ok(read_unaligned::<i16>(binding) != 0),
-            CDataType::UShort => Ok(read_unaligned::<u16>(binding) != 0),
-            CDataType::SBigInt => Ok(read_unaligned::<i64>(binding) != 0),
-            CDataType::UBigInt => Ok(read_unaligned::<u64>(binding) != 0),
-            CDataType::Float => {
-                let v = read_unaligned::<f32>(binding);
-                if !v.is_finite() {
-                    return InvalidBooleanValueSnafu {
-                        value: v.to_string(),
-                    }
-                    .fail();
-                }
-                Ok(v != 0.0)
-            }
-            CDataType::Double => {
-                let v = read_unaligned::<f64>(binding);
-                if !v.is_finite() {
-                    return InvalidBooleanValueSnafu {
-                        value: v.to_string(),
-                    }
-                    .fail();
-                }
-                Ok(v != 0.0)
-            }
-            CDataType::Char => {
-                let s = read_char_str(binding)?;
-                parse_str_to_bool(&s)
-            }
-            CDataType::WChar => {
-                let s = read_wchar_str(binding)?;
-                parse_str_to_bool(&s)
-            }
-            CDataType::Numeric => {
-                let n = read_unaligned::<sql::Numeric>(binding);
-                Ok(u128::from_le_bytes(n.val) != 0)
-            }
-            CDataType::Binary => {
-                let len = buffer_data_len(binding);
-                if len != 1 {
-                    return NumericMagnitudeOverflowSnafu {
-                        reason: format!(
-                            "SQL_C_BINARY to SQL_BIT requires exactly 1 byte, got {len}"
-                        ),
-                    }
-                    .fail();
-                }
-                let byte = unsafe { *(binding.parameter_value_ptr as *const u8) };
-                Ok(byte != 0)
-            }
-            _ => UnsupportedCDataTypeSnafu {
-                c_type: binding.value_type,
-            }
-            .fail(),
-        }
+        let (value, _) = read_boolean_param(binding)?;
+        Ok(value)
     }
 }
 

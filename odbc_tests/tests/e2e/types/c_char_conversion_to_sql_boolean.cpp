@@ -1,9 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 
 TEST_CASE("should bind SQL_C_CHAR '1' to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
   // Given Snowflake client is logged in
@@ -77,8 +77,7 @@ TEST_CASE("should bind SQL_C_WCHAR '0' to SQL_BIT.", "[query][bind_parameter][c_
   CHECK(get_data<SQL_C_BIT>(stmt, 1) == 0);
 }
 
-TEST_CASE("should bind SQL_C_CHAR 'true' to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-35", "Old driver only accepts '0'/'1' strings for SQL_BIT");
+TEST_CASE("should reject SQL_C_CHAR 'true' bound to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -89,15 +88,11 @@ TEST_CASE("should bind SQL_C_CHAR 'true' to SQL_BIT.", "[query][bind_parameter][
                                    sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  // Then the result should be TRUE
-  CHECK(get_data<SQL_C_BIT>(stmt, 1) == 1);
+  // Then only "0" and "1" are accepted
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
 
-TEST_CASE("should bind SQL_C_CHAR 'false' to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-35", "Old driver only accepts '0'/'1' strings for SQL_BIT");
+TEST_CASE("should reject SQL_C_CHAR 'false' bound to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -108,15 +103,11 @@ TEST_CASE("should bind SQL_C_CHAR 'false' to SQL_BIT.", "[query][bind_parameter]
                                    sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  // Then the result should be FALSE
-  CHECK(get_data<SQL_C_BIT>(stmt, 1) == 0);
+  // Then only "0" and "1" are accepted
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
 
-TEST_CASE("should bind SQL_C_CHAR numeric '42' to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-35", "Old driver only accepts '0'/'1' strings for SQL_BIT");
+TEST_CASE("should reject SQL_C_CHAR numeric '42' bound to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -127,11 +118,8 @@ TEST_CASE("should bind SQL_C_CHAR numeric '42' to SQL_BIT.", "[query][bind_param
                                    sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  // Then the result should be TRUE (nonzero numeric string)
-  CHECK(get_data<SQL_C_BIT>(stmt, 1) == 1);
+  // Then integer strings other than 0 or 1 return 22003
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22003"));
 }
 
 TEST_CASE("should bind SQL_C_WCHAR with SQL_NTS to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {

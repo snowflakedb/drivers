@@ -648,12 +648,6 @@ mod tests {
     /// Build a `ParameterBinding` over a borrowed byte buffer + indicator slot,
     /// suitable for exercising the `read_odbc` path on string inputs.
     fn tz_param_binding(s: &mut [u8], str_len: &mut sql::Len) -> ParameterBinding {
-        // Restack note: the NTZ/LTZ/TZ vendor-code normalisation in
-        // `bind_parameter` (PR #1004) flattens the on-record
-        // `sql_data_type` to the standard `SQL_TYPE_TIMESTAMP` and
-        // stashes the actual subtype on `sf_subtype`. Mirror that
-        // contract in the helper so the readback path under test sees
-        // the same shape it would in production.
         ParameterBinding {
             sql_data_type: sql::SqlDataType::TIMESTAMP,
             value_type: CDataType::Char,

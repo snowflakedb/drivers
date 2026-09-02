@@ -56,30 +56,18 @@ fn hex_digit_to_ascii(nibble: u8) -> u8 {
     }
 }
 
-/// Decode an ASCII hex literal (e.g. `"DEADBEEF"`) into the raw bytes
-/// it represents. Per ODBC Appendix D ("Converting Data from C to SQL
-/// Data Types"), a `SQL_C_CHAR` / `SQL_C_WCHAR` source bound to
-/// `SQL_BINARY` / `SQL_VARBINARY` / `SQL_LONGVARBINARY` must be a
-/// hex string with each pair of characters representing one byte.
-/// Whitespace is *not* tolerated (the spec grammar admits no
-/// separators), and odd-length / non-hex input must surface as
-/// SQLSTATE 22018.
 fn hex_decode_ascii(input: &str) -> Result<Vec<u8>, BindingError> {
-    if !input.len().is_multiple_of(2) {
-        return InvalidHexLiteralSnafu {
-            reason: format!(
-                "hex literal must contain an even number of digits (got {} chars)",
-                input.len()
-            ),
-        }
-        .fail();
-    }
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
-        let hi = hex_nibble(chunk[0])?;
-        let lo = hex_nibble(chunk[1])?;
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        let hi = hex_nibble(bytes[i])?;
+        let lo = hex_nibble(bytes[i + 1])?;
         out.push((hi << 4) | lo);
+        i += 2;
+    }
+    if i < bytes.len() {
+        hex_nibble(bytes[i])?;
     }
     Ok(out)
 }
@@ -174,8 +162,7 @@ impl ReadODBC for SnowflakeBinary {
     /// Read a `SQLBindParameter` value bound against a `SQL_BINARY` /
     /// `SQL_VARBINARY` / `SQL_LONGVARBINARY` target.
     ///
-    /// Per ODBC Appendix D ("Converting Data from C to SQL Data Types",
-    /// section "Binary"), the only legal C source types here are:
+    /// Legal C source types for a binary SQL target:
     ///
     /// - `SQL_C_BINARY` (and `SQL_C_DEFAULT`, which the driver maps to
     ///   `SQL_C_BINARY` for binary targets) — bytes are taken verbatim
@@ -183,18 +170,12 @@ impl ReadODBC for SnowflakeBinary {
     /// - `SQL_C_CHAR` — the buffer is an ASCII hex literal (e.g.
     ///   `"DEADBEEF"`); the driver decodes pairs of hex digits into
     ///   raw bytes.
-    /// - `SQL_C_WCHAR` — same as `SQL_C_CHAR`, but the buffer is
-    ///   UTF-16. The driver transcodes to UTF-8 first (`read_wchar_str`)
-    ///   and then hex-decodes, so input like `"DEADBEEF"` produces the
-    ///   same 4 bytes regardless of source encoding.
+    /// - `SQL_C_WCHAR` — same as `SQL_C_CHAR` after wide → UTF-8
+    ///   transcode (`read_wchar_str`).
     ///
-    /// Every other C type — numerics, dates, intervals, GUID, …  — must
-    /// be rejected with SQLSTATE 07006 ("restricted data type
-    /// attribute violation"). The legacy 3.16.0 driver and all
-    /// well-behaved spec-conforming drivers do this; without it the
-    /// driver would silently mangle (e.g.) a `SQL_C_LONG` source's
-    /// little-endian representation into the BINARY column rather than
-    /// raise an error the application can react to.
+    /// Every other C type — numerics, dates, intervals, GUID, …  — is
+    /// rejected with SQLSTATE 07006 ("restricted data type attribute
+    /// violation").
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
@@ -208,13 +189,11 @@ impl ReadODBC for SnowflakeBinary {
             }
             CDataType::Char => {
                 let s = read_char_str(binding)?;
-                let bytes = hex_decode_ascii(&s)?;
-                Ok(Cow::Owned(bytes))
+                Ok(Cow::Owned(hex_decode_ascii(&s)?))
             }
             CDataType::WChar => {
                 let s = read_wchar_str(binding)?;
-                let bytes = hex_decode_ascii(&s)?;
-                Ok(Cow::Owned(bytes))
+                Ok(Cow::Owned(hex_decode_ascii(&s)?))
             }
             other => UnsupportedCDataTypeSnafu { c_type: other }.fail(),
         }
