@@ -52,7 +52,7 @@ class ClientIdentityTests extends BaseWiremockTest {
     assertFalse(env.get("OS_VERSION").asText().isEmpty(), "OS_VERSION must not be empty");
     assertEquals(System.getProperty("java.vm.name").trim(), env.get("RUNTIME_NAME").asText());
     assertEquals(System.getProperty("java.version").trim(), env.get("RUNTIME_VERSION").asText());
-    assertEquals("prpr2", env.get("RELEASE_TYPE").asText());
+    assertEquals("prpr3", env.get("RELEASE_TYPE").asText());
   }
 
   private Properties connectionProps() {
