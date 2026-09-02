@@ -285,6 +285,43 @@ mod tests {
         );
     }
 
+    /// `wif_create_attestation` observes its ctx, proven without a network mock.
+    ///
+    /// The other `async_first` RPCs are covered in
+    /// `tests/integration/query/operation_cancellation.rs` against a local mock
+    /// server, but this one cannot be: its providers call cloud metadata hosts
+    /// (`169.254.169.254`, the GCP metadata server) that are not derived from any
+    /// configurable base URL, so there is nothing to point at a mock.
+    ///
+    /// A pre-cancelled handle covers it instead. `CancellationToken::run_until_cancelled`
+    /// does not poll its future when the token is already cancelled, so a marked
+    /// RPC that observes its ctx returns `CANCELLED` having touched no network.
+    /// Were the ctx ignored, the AWS provider below would instead reach for IMDS
+    /// and this would fail on the resulting error rather than the assertion.
+    #[tokio::test]
+    async fn cancelling_wif_create_attestation_is_observed_before_any_request() {
+        use crate::protobuf::generated::database_driver_v1::WifCreateAttestationRequest;
+
+        let transport = RustTransport::new();
+        let (handle, _token) = transport.register();
+        transport.cancel(handle);
+
+        assert_cancelled(
+            transport
+                .handle_message_cancellable(
+                    "DatabaseDriver",
+                    "wif_create_attestation",
+                    WifCreateAttestationRequest {
+                        provider: "AWS".to_string(),
+                        ..Default::default()
+                    }
+                    .encode_to_vec(),
+                    handle,
+                )
+                .await,
+        );
+    }
+
     /// An unknown handle means the operation was cancelled (or already
     /// completed) before dispatch could resolve it, so it must not silently run
     /// uncancellably.
@@ -398,6 +435,14 @@ mod tests {
         assert!(
             observes_cancellation("connection_send_http"),
             "connection_send_http is marked async_first in the proto"
+        );
+        assert!(
+            observes_cancellation("connection_request_token"),
+            "connection_request_token is marked async_first in the proto"
+        );
+        assert!(
+            observes_cancellation("wif_create_attestation"),
+            "wif_create_attestation is marked async_first in the proto"
         );
         assert!(
             !observes_cancellation("connection_new"),

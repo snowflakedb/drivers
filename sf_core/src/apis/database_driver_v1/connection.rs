@@ -2480,64 +2480,72 @@ impl DatabaseDriverV1 {
     }
 
     /// Execute a token request (ISSUE/RENEW) using the connection's master token.
+    ///
+    /// Cancelling drops the request without invalidating anything: the master
+    /// token this authenticates with is unaffected, and a session token the
+    /// server may have minted for a dropped ISSUE is simply never used.
     pub async fn connection_token_request(
         &self,
+        ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         request_type: String,
     ) -> Result<snowflake::TokenRequestResult, ApiError> {
-        if request_type != "ISSUE" && request_type != "RENEW" {
-            return InvalidArgumentSnafu {
-                argument: format!(
-                    "Invalid request_type '{request_type}', must be 'ISSUE' or 'RENEW'"
-                ),
+        let token = async {
+            if request_type != "ISSUE" && request_type != "RENEW" {
+                return InvalidArgumentSnafu {
+                    argument: format!(
+                        "Invalid request_type '{request_type}', must be 'ISSUE' or 'RENEW'"
+                    ),
+                }
+                .fail();
             }
-            .fail();
-        }
 
-        let conn_ptr = self
-            .connections
-            .get_obj(conn_handle)
-            .context(InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            })?;
+            let conn_ptr = self
+                .connections
+                .get_obj(conn_handle)
+                .context(InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                })?;
 
-        // Extract needed fields under the lock, then release before network I/O
-        let (http_client, server_url, client_info, tokens) = {
-            let conn = conn_ptr.lock().await;
+            // Extract needed fields under the lock, then release before network I/O
+            let (http_client, server_url, client_info, tokens) = {
+                let conn = conn_ptr.lock().await;
 
-            let http_client = conn
-                .http_client
-                .clone()
-                .context(ConnectionNotInitializedSnafu)?;
+                let http_client = conn
+                    .http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?;
 
-            let server_url = conn
-                .server_url
-                .clone()
-                .context(ConnectionNotInitializedSnafu)?;
+                let server_url = conn
+                    .server_url
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?;
 
-            let client_info = conn
-                .client_info
-                .clone()
-                .context(ConnectionNotInitializedSnafu)?;
+                let client_info = conn
+                    .client_info
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?;
 
-            let tokens_guard = conn.tokens.read().await;
-            let tokens = tokens_guard
-                .as_ref()
-                .context(ConnectionNotInitializedSnafu)?
-                .clone();
+                let tokens_guard = conn.tokens.read().await;
+                let tokens = tokens_guard
+                    .as_ref()
+                    .context(ConnectionNotInitializedSnafu)?
+                    .clone();
 
-            (http_client, server_url, client_info, tokens)
+                (http_client, server_url, client_info, tokens)
+            };
+
+            snowflake::token_request(
+                &http_client,
+                &server_url,
+                &client_info,
+                &tokens,
+                &request_type,
+            )
+            .await
+            .context(TokenRequestSnafu)
         };
-
-        snowflake::token_request(
-            &http_client,
-            &server_url,
-            &client_info,
-            &tokens,
-            &request_type,
-        )
-        .await
-        .context(TokenRequestSnafu)
+        crate::apis::operation_ctx::run_opt(ctx, "connection_request_token", token).await
     }
 }
 
@@ -3616,7 +3624,7 @@ mod tests {
         let ds = DatabaseDriverV1::new();
         let handle = setup_connection_for_http_tests(&ds).await;
         let err = ds
-            .connection_token_request(handle, "INVALID".into())
+            .connection_token_request(None, handle, "INVALID".into())
             .await
             .unwrap_err();
         assert!(

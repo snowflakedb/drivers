@@ -837,9 +837,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_request_token", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_request_token",
+        skip(self, ctx, input)
+    )]
     async fn connection_request_token(
         &self,
+        ctx: Option<&OperationCtx>,
         input: ConnectionTokenRequest,
     ) -> Result<ConnectionTokenResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -858,7 +862,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .connection_token_request(conn_handle.into(), request_type.to_string())
+            .connection_token_request(ctx, conn_handle.into(), request_type.to_string())
             .await
             .to_protobuf()?;
 
@@ -1202,9 +1206,16 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     // -- Workload Identity Federation (WIF) operations --
 
-    #[instrument(name = "DatabaseDriverV1::wif_create_attestation", skip(self, input))]
+    /// Unlike every other `async_first` RPC, cancellation is observed here in the
+    /// dispatch rather than in an `apis::` impl: this operation has no driver-level
+    /// counterpart to observe it in — the whole of it lives in this function.
+    #[instrument(
+        name = "DatabaseDriverV1::wif_create_attestation",
+        skip(self, ctx, input)
+    )]
     async fn wif_create_attestation(
         &self,
+        ctx: Option<&OperationCtx>,
         input: WifCreateAttestationRequest,
     ) -> Result<WifCreateAttestationResponse, DriverException> {
         let provider = WifProvider::parse_str(&input.provider)
@@ -1242,10 +1253,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
         // plumbing independent of any connection handle. Tracked under
         // SNOW-2912540.
         let client = reqwest::Client::new();
-        let attestation = workload_identity::create_attestation(&client, &config)
-            .await
-            .context(WorkloadIdentityAttestationSnafu)
-            .to_protobuf()?;
+        // This client has no request timeout, so for the AWS/Azure/GCP providers
+        // — which each await a cloud metadata or IdP endpoint — `ctx` is the only
+        // thing that can end the call short of the endpoint answering. The OIDC
+        // provider makes no request and so has nothing to observe.
+        let create = async {
+            workload_identity::create_attestation(&client, &config)
+                .await
+                .context(WorkloadIdentityAttestationSnafu)
+        };
+        let attestation =
+            crate::apis::operation_ctx::run_opt(ctx, "wif_create_attestation", create)
+                .await
+                .to_protobuf()?;
 
         Ok(WifCreateAttestationResponse {
             provider: attestation.provider.to_string(),
