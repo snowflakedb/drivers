@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from snowflake.connector._internal.arrow_context import PARAMETER_TIMEZONE
+from snowflake.connector._internal.connection.freezable_proxy import SessionParametersProxy
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ResultChunk
 from snowflake.connector.errors import Error, InterfaceError
 from snowflake.connector.result_batch import (
@@ -29,9 +30,13 @@ def _make_description(*names: str) -> list:
 
 def _make_batch(connection=None, description=None) -> ResultBatch:
     if isinstance(connection, MagicMock):
-        if not isinstance(connection._session_parameters, dict):
-            connection._session_parameters = {}
-        connection._session_parameters.setdefault(PARAMETER_TIMEZONE, "UTC")
+        parameters = connection._session_parameters
+        if not isinstance(parameters, dict):
+            parameters = {}
+        parameters.setdefault(PARAMETER_TIMEZONE, "UTC")
+        session_parameters = SessionParametersProxy(conn_handle=None)
+        session_parameters._cache = parameters
+        connection._session_parameters = session_parameters
         connection.config.numpy = False
     return ResultBatch(
         chunk=ResultChunk(),
