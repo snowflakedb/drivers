@@ -1217,29 +1217,15 @@ pub fn foreign_keys<E: OdbcEncoding>(
     let stmt_handle = guard.stmt_handle;
     drop(conn);
 
-    if metadata_id {
-        // Only the side whose table was supplied carries required identifier
-        // args; a single-sided query intentionally leaves the other side NULL.
-        // A zero-length catalog/schema is treated as *absent* (not HY090),
-        // matching the legacy driver and SQLPrimaryKeys: `build_show_in_scope`
-        // filters empty strings out, so an empty identifier widens the SHOW
-        // scope. NULL still returns HY009.
-        if pk_table_raw.is_some() {
-            if pk_catalog_raw.is_none() {
-                return NullPointerSnafu.fail();
-            }
-            if pk_schema_raw.is_none() {
-                return NullPointerSnafu.fail();
-            }
-        }
-        if fk_table_raw.is_some() {
-            if fk_catalog_raw.is_none() {
-                return NullPointerSnafu.fail();
-            }
-            if fk_schema_raw.is_none() {
-                return NullPointerSnafu.fail();
-            }
-        }
+    if metadata_id
+        && (pk_catalog_raw.is_none()
+            || pk_schema_raw.is_none()
+            || pk_table_raw.is_none()
+            || fk_catalog_raw.is_none()
+            || fk_schema_raw.is_none()
+            || fk_table_raw.is_none())
+    {
+        return NullPointerSnafu.fail();
     }
 
     // In identifier mode, fold each argument to its canonical Snowflake form so

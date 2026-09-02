@@ -513,45 +513,14 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: metadata_id=TRUE with N
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
-                 "SQLForeignKeys: metadata_id=TRUE single-sided PK query with NULL FK side succeeds",
-                 "[odbc-api][foreignkeys][catalog]") {
+                 "SQLForeignKeys: metadata_id=TRUE single-sided PK query with NULL FK side returns HY009",
+                 "[odbc-api][foreignkeys][catalog][error]") {
   SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLForeignKeys(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                        sqlchar(readonly_db::FK_PARENT), SQL_NTS, nullptr, 0, nullptr, 0, nullptr, 0);
-
-  NEW_DRIVER_ONLY("BD#89") {
-    WINDOWS_ONLY {
-      // With SQL_ATTR_METADATA_ID=SQL_TRUE the Windows Driver Manager validates the
-      // identifier arguments itself and rejects the NULL FK-side pointers with HY009
-      // before the call reaches the driver (the MS ODBC reference marks this HY009 as
-      // posted by the "(DM)"). The single-sided query therefore cannot succeed on
-      // Windows regardless of driver behavior. unixODBC and iODBC do not perform this
-      // check, so the driver runs and the query succeeds (asserted below).
-      REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
-    }
-    else {
-      REQUIRE(ret == SQL_SUCCESS);
-
-      ret = SQLFetch(stmt_handle());
-      REQUIRE(ret == SQL_SUCCESS);
-
-      char pkTableName[256];
-      char fkTableName[256];
-      SQLLEN pkTableNameInd = 0;
-      require_sqlgetdata_char(stmt_handle(), 3, pkTableName, sizeof(pkTableName), &pkTableNameInd);
-      SQLLEN fkTableNameInd = 0;
-      require_sqlgetdata_char(stmt_handle(), 7, fkTableName, sizeof(fkTableName), &fkTableNameInd);
-
-      REQUIRE(std::string(pkTableName) == readonly_db::FK_PARENT);
-      REQUIRE(std::string(fkTableName) == readonly_db::FK_CHILD);
-
-      ret = SQLFetch(stmt_handle());
-      REQUIRE(ret == SQL_NO_DATA);
-    }
-  }
-  OLD_DRIVER_ONLY("BD#89") { REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT); }
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative PKCatalogName length",
@@ -616,9 +585,9 @@ TEST_CASE_METHOD(DbcFixture, "SQLForeignKeys: Requires active connection", "[odb
 
 // Identifier mode folds unquoted identifiers to uppercase, so lowercase PK/FK
 // identifiers must still match the uppercase names Snowflake stores. Both sides
-// are supplied (all six args non-NULL) so the Windows DM NULL check does not
-// fire. The new driver folds unquoted identifiers (ODBC-spec) and matches; the
-// legacy driver re-filters case-sensitively and returns nothing (BD#89).
+// are supplied (all six args non-NULL) so the identifier-mode NULL check does
+// not fire. The new driver folds unquoted identifiers (ODBC-spec) and matches;
+// the old driver re-filters case-sensitively and returns nothing.
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
                  "SQLForeignKeys: metadata_id=TRUE matches unquoted identifiers case-insensitively",
                  "[odbc-api][foreignkeys][catalog]") {
@@ -636,7 +605,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  NEW_DRIVER_ONLY("BD#89") {
+  NEW_DRIVER_ONLY("BD#87") {
     REQUIRE(ret == SQL_SUCCESS);
 
     char pkTableName[256];
@@ -650,7 +619,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
     ret = SQLFetch(stmt_handle());
     REQUIRE(ret == SQL_NO_DATA);
   }
-  OLD_DRIVER_ONLY("BD#89") { REQUIRE(ret == SQL_NO_DATA); }
+  OLD_DRIVER_ONLY("BD#87") { REQUIRE(ret == SQL_NO_DATA); }
 }
 
 // Pattern mode (default) is case-sensitive: a lowercase table name must not
@@ -740,38 +709,15 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: FK table with PK catalo
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-// CC4: metadata_id=TRUE single-sided FK query (mirror of the PK-side BD#88 case).
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
-                 "SQLForeignKeys: metadata_id=TRUE single-sided FK query with NULL PK side succeeds",
-                 "[odbc-api][foreignkeys][catalog]") {
+                 "SQLForeignKeys: metadata_id=TRUE single-sided FK query with NULL PK side returns HY009",
+                 "[odbc-api][foreignkeys][catalog][error]") {
   SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLForeignKeys(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, sqlchar(database_name()), SQL_NTS,
                        sqlchar(schema_name()), SQL_NTS, sqlchar(readonly_db::FK_CHILD), SQL_NTS);
-  NEW_DRIVER_ONLY("BD#88") {
-    WINDOWS_ONLY {
-      // The Windows Driver Manager rejects the NULL PK-side identifier pointers
-      // with HY009 before the driver runs (see BD#88); the single-sided query
-      // cannot succeed on Windows.
-      REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
-    }
-    else {
-      REQUIRE(ret == SQL_SUCCESS);
-      ret = SQLFetch(stmt_handle());
-      REQUIRE(ret == SQL_SUCCESS);
-      char pkTableName[256];
-      char fkTableName[256];
-      SQLLEN ind = 0;
-      require_sqlgetdata_char(stmt_handle(), 3, pkTableName, sizeof(pkTableName), &ind);
-      require_sqlgetdata_char(stmt_handle(), 7, fkTableName, sizeof(fkTableName), &ind);
-      REQUIRE(std::string(pkTableName) == readonly_db::FK_PARENT);
-      REQUIRE(std::string(fkTableName) == readonly_db::FK_CHILD);
-      ret = SQLFetch(stmt_handle());
-      REQUIRE(ret == SQL_NO_DATA);
-    }
-  }
-  OLD_DRIVER_ONLY("BD#88") { REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT); }
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 // ============================================================================
