@@ -53,3 +53,4 @@ Internal improvements:
 Test improvements:
 
 - `SnowflakeTestClient` now automatically releases statement handles and result set handles via Drop, eliminating manual `release_statement()` and `result_set_release()` calls in tests and preventing resource leaks when tests panic.
+- Fixed the flaky `remove_partial_after_cancel_removes_a_staging_file_that_appears_late` test by injecting the removal syscall so the staging file appears on a fixed attempt instead of racing a 60ms sleep against the poll window; the test no longer needs its `flaky_` prefix or its macOS skip. (snowflakedb/drivers#TBD)

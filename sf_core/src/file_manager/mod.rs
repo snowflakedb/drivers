@@ -1919,6 +1919,16 @@ impl Drop for ProducerAbortGuard {
 /// Bounded well inside `OperationCtx`'s cleanup wait, so a cancelled caller never
 /// blocks noticeably on it.
 async fn remove_partial_after_cancel(partial_path: PathBuf) {
+    remove_partial_after_cancel_with(partial_path, |path: &Path| std::fs::remove_file(path)).await;
+}
+
+/// [`remove_partial_after_cancel`] with the removal syscall injected, which lets a
+/// test create the staging file from inside a chosen attempt rather than racing the
+/// poll window against a sleep.
+async fn remove_partial_after_cancel_with<R>(partial_path: PathBuf, remove: R)
+where
+    R: Fn(&Path) -> io::Result<()> + Clone + Send + 'static,
+{
     /// Long enough to outlast blocking-pool scheduling of the writer task and a
     /// short positioned-write on Windows, while staying far inside the
     /// operation-level cleanup budget. Note the cost of polling: a cancelled
@@ -1929,7 +1939,8 @@ async fn remove_partial_after_cancel(partial_path: PathBuf) {
 
     for attempt in 1..=ATTEMPTS {
         let path = partial_path.clone();
-        let removed = tokio::task::spawn_blocking(move || std::fs::remove_file(&path)).await;
+        let remove = remove.clone();
+        let removed = tokio::task::spawn_blocking(move || remove(&path)).await;
 
         match removed {
             // Removed it — done.
@@ -2242,6 +2253,7 @@ impl FileManagerError {
 mod tests {
     use super::*;
     use bytes::Bytes;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     // ---------------------------------------------------------------
     // classify_pre_upload_skip — pure decision tests, shared by all three
@@ -3902,22 +3914,32 @@ mod tests {
     /// as "already removed" orphaned the file created a moment later — and for a ranged
     /// download that file has already been pre-allocated to the object's full length.
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg_attr(target_os = "macos", ignore)]
-    async fn flaky_remove_partial_after_cancel_removes_a_staging_file_that_appears_late() {
+    async fn remove_partial_after_cancel_removes_a_staging_file_that_appears_late() {
         let dir = tempfile::tempdir().expect("tempdir");
         let partial = dir.path().join("late-arrival.part");
 
-        // Appears well after the first poll, standing in for a writer task that had
-        // not yet been scheduled when the cancel landed.
+        let attempts = Arc::new(AtomicU32::new(0));
+        let observed = attempts.clone();
         let late = partial.clone();
-        let writer = tokio::task::spawn_blocking(move || {
-            std::thread::sleep(std::time::Duration::from_millis(60));
-            std::fs::write(&late, b"partially written bytes").expect("create staging file");
-        });
+        // The staging file appears once the first attempt has already seen `NotFound`,
+        // standing in for a writer task the blocking pool scheduled only after the
+        // cancel landed. Creating it here rather than on a timer is what keeps the
+        // ordering fixed: the second attempt always finds a file to remove.
+        let remove = move |path: &Path| {
+            let removed = std::fs::remove_file(path);
+            if observed.fetch_add(1, Ordering::Relaxed) == 0 {
+                std::fs::write(&late, b"partially written bytes").expect("create staging file");
+            }
+            removed
+        };
 
-        remove_partial_after_cancel(partial.clone()).await;
-        writer.await.expect("writer task panicked");
+        remove_partial_after_cancel_with(partial.clone(), remove).await;
 
+        assert_eq!(
+            attempts.load(Ordering::Relaxed),
+            2,
+            "cleanup must poll again after the first `NotFound`, and stop once it removes the file"
+        );
         assert!(
             !partial.exists(),
             "a staging file created after the cleanup started must still be removed"
