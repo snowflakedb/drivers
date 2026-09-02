@@ -332,7 +332,7 @@ unsafe extern "system" fn config_dialog_proc(
 ) -> INT_PTR {
     match msg {
         WM_INITDIALOG => {
-            let ctx = unsafe { &mut *(lparam as *mut DialogContext) };
+            let dialog_ctx = unsafe { &mut *(lparam as *mut DialogContext) };
             #[cfg(target_pointer_width = "64")]
             unsafe {
                 SetWindowLongPtrW(dlg, GWLP_USERDATA, lparam);
@@ -347,17 +347,17 @@ unsafe extern "system" fn config_dialog_proc(
             let title = to_wide("Snowflake ODBC Driver Configuration");
             unsafe { SetWindowTextW(dlg, title.as_ptr()) };
 
-            unsafe { set_dlg_text(dlg, IDC_DSNEDIT, &ctx.dsn) };
+            unsafe { set_dlg_text(dlg, IDC_DSNEDIT, &dialog_ctx.dsn) };
 
-            if !ctx.is_new && !ctx.dsn.is_empty() {
+            if !dialog_ctx.is_new && !dialog_ctx.dsn.is_empty() {
                 for &(ctl_id, key) in FIELD_MAP {
-                    let val = unsafe { read_dsn_value(&ctx.dsn, key) };
+                    let val = unsafe { read_dsn_value(&dialog_ctx.dsn, key) };
                     if !val.is_empty() {
                         unsafe { set_dlg_text(dlg, ctl_id, &val) };
                     }
                 }
             }
-            for (key, value) in &ctx.attrs {
+            for (key, value) in &dialog_ctx.attrs {
                 if key.eq_ignore_ascii_case("DSN") {
                     continue;
                 }
@@ -384,7 +384,7 @@ unsafe extern "system" fn config_dialog_proc(
             match ctl {
                 IDOK => {
                     if !ctx_ptr.is_null() {
-                        let ctx = unsafe { &mut *ctx_ptr };
+                        let dialog_ctx = unsafe { &mut *ctx_ptr };
                         let dsn = unsafe { get_dlg_text(dlg, IDC_DSNEDIT) };
                         let dsn_w = to_wide(&dsn);
                         let valid = unsafe { SQLValidDSNW(dsn_w.as_ptr()) } != 0;
@@ -408,9 +408,9 @@ unsafe extern "system" fn config_dialog_proc(
                             fields.push((key.to_string(), val));
                         }
 
-                        if unsafe { write_dsn_values(&dsn, &ctx.driver, &fields) } {
-                            ctx.dsn = dsn;
-                            ctx.ok_pressed = true;
+                        if unsafe { write_dsn_values(&dsn, &dialog_ctx.driver, &fields) } {
+                            dialog_ctx.dsn = dsn;
+                            dialog_ctx.ok_pressed = true;
                             unsafe { EndDialog(dlg, 1) };
                         } else {
                             let msg = to_wide("Failed to save DSN configuration.");
@@ -665,7 +665,7 @@ pub(crate) unsafe fn show_config_dialog(
         IDD_CONFIG_DSN_EDIT
     };
 
-    let mut ctx = DialogContext {
+    let mut dialog_ctx = DialogContext {
         driver: driver.to_string(),
         dsn: dsn.to_string(),
         is_new: is_add,
@@ -679,9 +679,9 @@ pub(crate) unsafe fn show_config_dialog(
             make_int_resource(dialog_id),
             hwnd_parent,
             Some(config_dialog_proc),
-            &mut ctx as *mut DialogContext as LPARAM,
+            &mut dialog_ctx as *mut DialogContext as LPARAM,
         );
     }
 
-    ctx.ok_pressed
+    dialog_ctx.ok_pressed
 }

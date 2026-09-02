@@ -837,7 +837,7 @@ struct S3MultipartCtx<'a> {
 /// as well as running it on `Err`. One closure covers both, so a failure path added
 /// here cannot leave the upload un-aborted.
 async fn s3_multipart_upload(
-    ctx: S3MultipartCtx<'_>,
+    multipart_ctx: S3MultipartCtx<'_>,
     prepared: PreparedUpload,
     body_len: u64,
     concurrency: usize,
@@ -848,7 +848,7 @@ async fn s3_multipart_upload(
         key: s3_key,
         overwrite,
         cleanup,
-    } = ctx;
+    } = multipart_ctx;
 
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::S3)
         .context(upload_file_error::FileTooLargeSnafu)

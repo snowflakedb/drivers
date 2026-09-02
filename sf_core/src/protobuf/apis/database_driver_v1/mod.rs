@@ -215,10 +215,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_init", skip(self, ctx, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_init",
+        skip(self, operation_ctx, input)
+    )]
     async fn connection_init(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionInitRequest,
     ) -> Result<ConnectionInitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -254,7 +257,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         }
 
         self.driver
-            .connection_init(ctx, conn_handle.into(), db_handle.into())
+            .connection_init(operation_ctx, conn_handle.into(), db_handle.into())
             .await
             .to_protobuf()?;
         Ok(ConnectionInitResponse {})
@@ -599,18 +602,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_get_query_result",
-        skip(self, ctx, input)
+        skip(self, operation_ctx, input)
     )]
     async fn connection_get_query_result(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionGetQueryResultRequest,
     ) -> Result<ExecuteQueryResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let result = self
             .driver
-            .connection_get_query_result(ctx, conn_handle.into(), input.query_id)
+            .connection_get_query_result(operation_ctx, conn_handle.into(), input.query_id)
             .await
             .to_protobuf()?;
 
@@ -619,18 +622,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_get_result_set",
-        skip(self, ctx, input)
+        skip(self, operation_ctx, input)
     )]
     async fn connection_get_result_set(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionGetResultSetRequest,
     ) -> Result<ResultSetResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let result = self
             .driver
-            .create_result_set_from_sfqid(ctx, conn_handle.into(), input.query_id)
+            .create_result_set_from_sfqid(operation_ctx, conn_handle.into(), input.query_id)
             .await
             .to_protobuf()?;
 
@@ -770,18 +773,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_get_query_status",
-        skip(self, ctx, input)
+        skip(self, operation_ctx, input)
     )]
     async fn connection_get_query_status(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionGetQueryStatusRequest,
     ) -> Result<ConnectionGetQueryStatusResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let result = self
             .driver
-            .connection_get_query_status(ctx, conn_handle.into(), &input.query_id)
+            .connection_get_query_status(operation_ctx, conn_handle.into(), &input.query_id)
             .await
             .to_protobuf()?;
 
@@ -808,11 +811,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_send_http",
-        skip(self, ctx, input)
+        skip(self, operation_ctx, input)
     )]
     async fn connection_send_http(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionSendHttpRequest,
     ) -> Result<ConnectionSendHttpResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -820,7 +823,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let result = self
             .driver
             .connection_send_http_request(
-                ctx,
+                operation_ctx,
                 conn_handle.into(),
                 input.method,
                 input.url,
@@ -839,11 +842,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_request_token",
-        skip(self, ctx, input)
+        skip(self, operation_ctx, input)
     )]
     async fn connection_request_token(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionTokenRequest,
     ) -> Result<ConnectionTokenResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -862,7 +865,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .connection_token_request(ctx, conn_handle.into(), request_type.to_string())
+            .connection_token_request(operation_ctx, conn_handle.into(), request_type.to_string())
             .await
             .to_protobuf()?;
 
@@ -946,16 +949,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_prepare", skip(self, ctx, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_prepare",
+        skip(self, operation_ctx, input)
+    )]
     async fn statement_prepare(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: StatementPrepareRequest,
     ) -> Result<StatementPrepareResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
         let result = self
             .driver
-            .statement_prepare(ctx, stmt_handle.into())
+            .statement_prepare(operation_ctx, stmt_handle.into())
             .await
             .to_protobuf()?;
         let result_ptr = reader_to_arrow_stream_ptr(result.stream);
@@ -1011,11 +1017,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::statement_execute_query",
-        skip(self, ctx, input)
+        skip(self, operation_ctx, input)
     )]
     async fn statement_execute_query(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: StatementExecuteQueryRequest,
     ) -> Result<ExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
@@ -1035,7 +1041,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .statement_execute_query(ctx, stmt_handle.into(), bindings_opt, timeout_seconds)
+            .statement_execute_query(
+                operation_ctx,
+                stmt_handle.into(),
+                bindings_opt,
+                timeout_seconds,
+            )
             .await
             .to_protobuf()?;
 
@@ -1044,11 +1055,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::statement_execute_async",
-        skip(self, ctx, input)
+        skip(self, operation_ctx, input)
     )]
     async fn statement_execute_async(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: StatementExecuteAsyncRequest,
     ) -> Result<StatementExecuteAsyncResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
@@ -1066,7 +1077,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .statement_execute_async(ctx, stmt_handle.into(), bindings_opt)
+            .statement_execute_async(operation_ctx, stmt_handle.into(), bindings_opt)
             .await
             .to_protobuf()?;
 
@@ -1215,11 +1226,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
     /// counterpart to observe it in — the whole of it lives in this function.
     #[instrument(
         name = "DatabaseDriverV1::wif_create_attestation",
-        skip(self, ctx, input)
+        skip(self, operation_ctx, input)
     )]
     async fn wif_create_attestation(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         input: WifCreateAttestationRequest,
     ) -> Result<WifCreateAttestationResponse, DriverException> {
         let provider = WifProvider::parse_str(&input.provider)
@@ -1258,7 +1269,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         // SNOW-2912540.
         let client = reqwest::Client::new();
         // This client has no request timeout, so for the AWS/Azure/GCP providers
-        // — which each await a cloud metadata or IdP endpoint — `ctx` is the only
+        // — which each await a cloud metadata or IdP endpoint — `operation_ctx` is the only
         // thing that can end the call short of the endpoint answering. The OIDC
         // provider makes no request and so has nothing to observe.
         let create = async {
@@ -1267,7 +1278,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 .context(WorkloadIdentityAttestationSnafu)
         };
         let attestation =
-            crate::apis::operation_ctx::run_opt(ctx, "wif_create_attestation", create)
+            crate::apis::operation_ctx::run_opt(operation_ctx, "wif_create_attestation", create)
                 .await
                 .to_protobuf()?;
 

@@ -110,17 +110,17 @@ impl QueryContextCache {
 
     pub fn update(
         &mut self,
-        ctx: Option<&query_response::QueryContext>,
+        query_ctx: Option<&query_response::QueryContext>,
         clear_query_context_on_null_entries: bool,
     ) {
-        let Some(ctx) = ctx else {
+        let Some(query_ctx) = query_ctx else {
             tracing::debug!(
                 "query_context_cache: no queryContext in response, keeping cache unchanged"
             );
             return;
         };
 
-        let Some(entries) = ctx.entries.as_deref() else {
+        let Some(entries) = query_ctx.entries.as_deref() else {
             if clear_query_context_on_null_entries {
                 tracing::debug!("query_context_cache: entries is null, clearing cache");
                 self.clear();
@@ -295,12 +295,12 @@ mod tests {
         }
     }
 
-    fn make_entry_with_ctx(id: i64, priority: i64, timestamp: i64, ctx: &str) -> RespEntry {
+    fn make_entry_with_ctx(id: i64, priority: i64, timestamp: i64, query_ctx: &str) -> RespEntry {
         RespEntry {
             id,
             priority,
             timestamp,
-            context: Some(ctx.to_owned()),
+            context: Some(query_ctx.to_owned()),
         }
     }
 
@@ -687,7 +687,7 @@ mod tests {
     fn test_fill_to_capacity() {
         let mut cache = QueryContextCache::new();
         let entries: Vec<_> = (0..5i64)
-            .map(|i| make_entry_with_ctx(i, i * 10, 1000 + i, &format!("ctx{i}")))
+            .map(|i| make_entry_with_ctx(i, i * 10, 1000 + i, &format!("query_ctx{i}")))
             .collect();
         let context = resp_ctx(entries);
         cache.update(Some(&context), true);
@@ -700,7 +700,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("id={i} missing"));
             assert_eq!(entry.priority, i * 10);
             assert_eq!(entry.timestamp, 1000 + i);
-            assert_eq!(entry.context.as_deref(), Some(format!("ctx{i}").as_str()));
+            assert_eq!(
+                entry.context.as_deref(),
+                Some(format!("query_ctx{i}").as_str())
+            );
         }
     }
 
@@ -1006,7 +1009,7 @@ mod tests {
         id: i64,
         priority: i64,
         timestamp: i64,
-        ctx: Option<String>,
+        query_ctx: Option<String>,
     }
 
     fn seed_cache() -> QueryContextCache {
@@ -1047,19 +1050,19 @@ mod tests {
                 exp.id
             );
             assert_eq!(
-                entry.context, exp.ctx,
+                entry.context, exp.query_ctx,
                 "{label}: id={} context mismatch",
                 exp.id
             );
         }
     }
 
-    fn e(id: i64, priority: i64, timestamp: i64, ctx: &str) -> ExpectedEntry {
+    fn e(id: i64, priority: i64, timestamp: i64, query_ctx: &str) -> ExpectedEntry {
         ExpectedEntry {
             id,
             priority,
             timestamp,
-            ctx: Some(ctx.to_owned()),
+            query_ctx: Some(query_ctx.to_owned()),
         }
     }
 

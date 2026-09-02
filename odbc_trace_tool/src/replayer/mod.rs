@@ -176,8 +176,8 @@ extern "C" {
 }
 
 pub fn replay(trace: &TraceLog, config: &ReplayConfig) -> Result<ReplaySummary> {
-    let mut ctx = ReplayContext::new(config);
-    ctx.replay(trace)
+    let mut replay_ctx = ReplayContext::new(config);
+    replay_ctx.replay(trace)
 }
 
 struct ReplayContext<'a> {
@@ -654,58 +654,58 @@ mod tests {
 
     #[test]
     fn test_return_codes_match_exact() {
-        let ctx = make_context(false);
-        assert!(ctx.return_codes_match(ReturnCode::Success, 0, false));
-        assert!(ctx.return_codes_match(ReturnCode::SuccessWithInfo, 1, false));
-        assert!(ctx.return_codes_match(ReturnCode::Error, -1, false));
-        assert!(ctx.return_codes_match(ReturnCode::InvalidHandle, -2, false));
-        assert!(ctx.return_codes_match(ReturnCode::NoData, 100, false));
-        assert!(ctx.return_codes_match(ReturnCode::NeedData, 99, false));
-        assert!(ctx.return_codes_match(ReturnCode::StillExecuting, 2, false));
+        let replay_ctx = make_context(false);
+        assert!(replay_ctx.return_codes_match(ReturnCode::Success, 0, false));
+        assert!(replay_ctx.return_codes_match(ReturnCode::SuccessWithInfo, 1, false));
+        assert!(replay_ctx.return_codes_match(ReturnCode::Error, -1, false));
+        assert!(replay_ctx.return_codes_match(ReturnCode::InvalidHandle, -2, false));
+        assert!(replay_ctx.return_codes_match(ReturnCode::NoData, 100, false));
+        assert!(replay_ctx.return_codes_match(ReturnCode::NeedData, 99, false));
+        assert!(replay_ctx.return_codes_match(ReturnCode::StillExecuting, 2, false));
     }
 
     #[test]
     fn test_return_codes_match_exact_mismatch() {
-        let ctx = make_context(false);
-        assert!(!ctx.return_codes_match(ReturnCode::Success, 1, false));
-        assert!(!ctx.return_codes_match(ReturnCode::SuccessWithInfo, 0, false));
-        assert!(!ctx.return_codes_match(ReturnCode::NoData, 0, false));
+        let replay_ctx = make_context(false);
+        assert!(!replay_ctx.return_codes_match(ReturnCode::Success, 1, false));
+        assert!(!replay_ctx.return_codes_match(ReturnCode::SuccessWithInfo, 0, false));
+        assert!(!replay_ctx.return_codes_match(ReturnCode::NoData, 0, false));
     }
 
     #[test]
     fn test_return_codes_match_relaxed_success_interchangeable() {
-        let ctx = make_context(false);
-        assert!(ctx.return_codes_match(ReturnCode::Success, 0, true));
-        assert!(ctx.return_codes_match(ReturnCode::Success, 1, true));
-        assert!(ctx.return_codes_match(ReturnCode::SuccessWithInfo, 0, true));
-        assert!(ctx.return_codes_match(ReturnCode::SuccessWithInfo, 1, true));
+        let replay_ctx = make_context(false);
+        assert!(replay_ctx.return_codes_match(ReturnCode::Success, 0, true));
+        assert!(replay_ctx.return_codes_match(ReturnCode::Success, 1, true));
+        assert!(replay_ctx.return_codes_match(ReturnCode::SuccessWithInfo, 0, true));
+        assert!(replay_ctx.return_codes_match(ReturnCode::SuccessWithInfo, 1, true));
     }
 
     #[test]
     fn test_return_codes_match_relaxed_no_data_strict() {
-        let ctx = make_context(false);
-        assert!(ctx.return_codes_match(ReturnCode::NoData, 100, true));
-        assert!(!ctx.return_codes_match(ReturnCode::NoData, 0, true));
+        let replay_ctx = make_context(false);
+        assert!(replay_ctx.return_codes_match(ReturnCode::NoData, 100, true));
+        assert!(!replay_ctx.return_codes_match(ReturnCode::NoData, 0, true));
     }
 
     #[test]
     fn test_return_codes_match_config_relaxed() {
-        let ctx = make_context(true);
-        assert!(ctx.return_codes_match(ReturnCode::Success, 1, false));
-        assert!(ctx.return_codes_match(ReturnCode::SuccessWithInfo, 0, false));
+        let replay_ctx = make_context(true);
+        assert!(replay_ctx.return_codes_match(ReturnCode::Success, 1, false));
+        assert!(replay_ctx.return_codes_match(ReturnCode::SuccessWithInfo, 0, false));
     }
 
     #[test]
     fn test_return_codes_match_need_data_exact() {
-        let ctx = make_context(false);
-        assert!(ctx.return_codes_match(ReturnCode::NeedData, 99, true));
-        assert!(!ctx.return_codes_match(ReturnCode::NeedData, 0, true));
+        let replay_ctx = make_context(false);
+        assert!(replay_ctx.return_codes_match(ReturnCode::NeedData, 99, true));
+        assert!(!replay_ctx.return_codes_match(ReturnCode::NeedData, 0, true));
     }
 
     #[test]
     fn test_return_codes_match_still_executing_exact() {
-        let ctx = make_context(false);
-        assert!(ctx.return_codes_match(ReturnCode::StillExecuting, 2, true));
-        assert!(!ctx.return_codes_match(ReturnCode::StillExecuting, 0, true));
+        let replay_ctx = make_context(false);
+        assert!(replay_ctx.return_codes_match(ReturnCode::StillExecuting, 2, true));
+        assert!(!replay_ctx.return_codes_match(ReturnCode::StillExecuting, 0, true));
     }
 }

@@ -547,7 +547,7 @@ impl SnowflakeTestClient {
     /// assert on `DriverException.kind`.
     ///
     /// The plain [`Self::connection_get_query_result`] passes no operation handle,
-    /// so the core sees `ctx: None` and nothing downstream — including the PUT/GET
+    /// so the core sees `operation_ctx: None` and nothing downstream — including the PUT/GET
     /// transfer — has a token to observe.
     #[allow(clippy::result_large_err)]
     pub fn connection_get_query_result_cancellable_raw(

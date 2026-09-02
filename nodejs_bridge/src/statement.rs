@@ -25,7 +25,7 @@ use stream_state::StreamState;
 #[napi]
 pub struct Statement {
     result: StatementResult,
-    ctx: Option<Arc<OperationCtx>>,
+    operation_ctx: Option<Arc<OperationCtx>>,
 }
 
 enum FetchBatchError {
@@ -46,7 +46,7 @@ impl ToJsError for FetchBatchError {
 impl Statement {
     pub(crate) fn from_pending(
         conn_handle: Handle,
-        ctx: Option<Arc<OperationCtx>>,
+        operation_ctx: Option<Arc<OperationCtx>>,
         result_future: impl Future<Output = std::result::Result<ExecuteQueryResult, ApiError>>
         + Send
         + 'static,
@@ -55,7 +55,7 @@ impl Statement {
             result: StatementResult::from_future(async move {
                 result_data_from(result_future.await?, conn_handle).await
             }),
-            ctx,
+            operation_ctx,
         }
     }
 
@@ -170,8 +170,8 @@ impl Statement {
     // swallowing the outcome.
     #[napi]
     pub async fn cancel(&self) -> Result<()> {
-        if let Some(ctx) = &self.ctx {
-            ctx.cancel();
+        if let Some(operation_ctx) = &self.operation_ctx {
+            operation_ctx.cancel();
         }
         Ok(())
     }

@@ -612,10 +612,10 @@ async fn run_sql_against_gs(
 ) -> Result<query_response::Response, ApiError> {
     let query_input = QueryInput::new(sql);
 
-    let mut ctx = RefreshContext::from_arc(conn_ptr).await?;
+    let mut refresh_ctx = RefreshContext::from_arc(conn_ptr).await?;
     let mut last_error: Option<RestError> = None;
     loop {
-        let session_token = ctx.refresh_token(last_error).await?;
+        let session_token = refresh_ctx.refresh_token(last_error).await?;
         match snowflake_query_with_client(
             http_client,
             query_parameters.clone(),

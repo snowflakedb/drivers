@@ -148,10 +148,10 @@ mod tests {
             ],
             location: loc(),
         };
-        let ctx = err.exception_context();
-        assert_eq!(ctx.parameter.as_deref(), Some("account"));
-        assert_eq!(ctx.validation_code, None);
-        assert_eq!(ctx.class, ConfigErrorClass::MissingParameter);
+        let error_ctx = err.exception_context();
+        assert_eq!(error_ctx.parameter.as_deref(), Some("account"));
+        assert_eq!(error_ctx.validation_code, None);
+        assert_eq!(error_ctx.class, ConfigErrorClass::MissingParameter);
     }
 
     #[test]
@@ -166,13 +166,16 @@ mod tests {
             ],
             location: loc(),
         };
-        let ctx = err.exception_context();
-        assert_eq!(ctx.parameter.as_deref(), Some("workload_identity_provider"));
+        let error_ctx = err.exception_context();
         assert_eq!(
-            ctx.validation_code,
+            error_ctx.parameter.as_deref(),
+            Some("workload_identity_provider")
+        );
+        assert_eq!(
+            error_ctx.validation_code,
             Some(ValidationCode::ConflictingWifParameters)
         );
-        assert_eq!(ctx.class, ConfigErrorClass::InvalidParameterValue);
+        assert_eq!(error_ctx.class, ConfigErrorClass::InvalidParameterValue);
     }
 
     #[test]
@@ -181,9 +184,9 @@ mod tests {
             name: "prod".to_owned(),
             location: loc(),
         };
-        let ctx = err.exception_context();
-        assert_eq!(ctx.parameter.as_deref(), Some("connection: prod"));
-        assert_eq!(ctx.class, ConfigErrorClass::MissingParameter);
+        let error_ctx = err.exception_context();
+        assert_eq!(error_ctx.parameter.as_deref(), Some("connection: prod"));
+        assert_eq!(error_ctx.class, ConfigErrorClass::MissingParameter);
     }
 
     #[test]

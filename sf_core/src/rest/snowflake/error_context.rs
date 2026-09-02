@@ -72,7 +72,7 @@ impl RestError {
     /// sent a non-numeric code; no vendor_code is surfaced. Message text is
     /// never inspected — classification belongs to the server.
     pub(crate) fn snowflake_context(&self) -> SnowflakeErrorContext {
-        let ctx = match self {
+        let snowflake_ctx = match self {
             RestError::QueryFailed {
                 code,
                 sql_state,
@@ -150,7 +150,7 @@ impl RestError {
             | RestError::InvalidUrl { .. }
             | RestError::PayloadEncode { .. } => SnowflakeErrorContext::default(),
         };
-        ctx.with_sql_state_fallback()
+        snowflake_ctx.with_sql_state_fallback()
     }
 }
 
@@ -198,9 +198,9 @@ mod tests {
             location: loc(),
             query_context: None,
         };
-        let ctx = err.snowflake_context();
-        assert_eq!(ctx.vendor_code, Some(100038));
-        assert_eq!(ctx.sql_state.as_deref(), Some("22003"));
+        let snowflake_ctx = err.snowflake_context();
+        assert_eq!(snowflake_ctx.vendor_code, Some(100038));
+        assert_eq!(snowflake_ctx.sql_state.as_deref(), Some("22003"));
     }
 
     #[test]
@@ -211,11 +211,11 @@ mod tests {
             reauthentication_required: false,
             location: loc(),
         };
-        let ctx = err.snowflake_context();
-        assert_eq!(ctx.vendor_code, Some(390100));
-        assert_eq!(ctx.sql_state.as_deref(), Some("28000"));
-        assert_eq!(ctx.query_id, None);
-        assert_eq!(ctx.request_id, None);
+        let snowflake_ctx = err.snowflake_context();
+        assert_eq!(snowflake_ctx.vendor_code, Some(390100));
+        assert_eq!(snowflake_ctx.sql_state.as_deref(), Some("28000"));
+        assert_eq!(snowflake_ctx.query_id, None);
+        assert_eq!(snowflake_ctx.request_id, None);
     }
 
     #[test]
@@ -226,9 +226,9 @@ mod tests {
             reauthentication_required: true,
             location: loc(),
         };
-        let ctx = err.snowflake_context();
-        assert_eq!(ctx.vendor_code, Some(390195));
-        assert_eq!(ctx.sql_state.as_deref(), Some("08001"));
+        let snowflake_ctx = err.snowflake_context();
+        assert_eq!(snowflake_ctx.vendor_code, Some(390195));
+        assert_eq!(snowflake_ctx.sql_state.as_deref(), Some("08001"));
     }
 
     #[test]
@@ -239,9 +239,9 @@ mod tests {
             reauthentication_required: false,
             location: loc(),
         };
-        let ctx = err.snowflake_context();
-        assert_eq!(ctx.vendor_code, Some(390111));
-        assert_eq!(ctx.sql_state, None);
+        let snowflake_ctx = err.snowflake_context();
+        assert_eq!(snowflake_ctx.vendor_code, Some(390111));
+        assert_eq!(snowflake_ctx.sql_state, None);
     }
 
     #[test]

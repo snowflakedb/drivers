@@ -117,12 +117,12 @@ impl DPoPKey {
 
     fn public_xy_b64(&self) -> Result<(String, String), OAuthError> {
         let group = self.key.group();
-        let mut ctx = BigNumContext::new().context(DPoPProofGenerationSnafu)?;
+        let mut bn_ctx = BigNumContext::new().context(DPoPProofGenerationSnafu)?;
         let mut x = BigNum::new().context(DPoPProofGenerationSnafu)?;
         let mut y = BigNum::new().context(DPoPProofGenerationSnafu)?;
         self.key
             .public_key()
-            .affine_coordinates_gfp(group, &mut x, &mut y, &mut ctx)
+            .affine_coordinates_gfp(group, &mut x, &mut y, &mut bn_ctx)
             .context(DPoPProofGenerationSnafu)?;
         Ok((bn_to_b64url(&x)?, bn_to_b64url(&y)?))
     }

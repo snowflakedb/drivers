@@ -136,7 +136,7 @@ impl AbortReport {
     }
 }
 
-/// Run a query-submitting operation under `ctx`, attaching to a resulting
+/// Run a query-submitting operation under `operation_ctx`, attaching to a resulting
 /// cancellation whatever its abort-cleanup reported.
 ///
 /// Shared by both entry points into `execute_query_internal` so the
@@ -145,7 +145,7 @@ impl AbortReport {
 /// awaits registered cleanup before reporting, so in the healthy case the report
 /// is already final by the time this reads it.
 async fn run_reporting_abort<T, F>(
-    ctx: Option<&OperationCtx>,
+    operation_ctx: Option<&OperationCtx>,
     method: &str,
     report: &AbortReport,
     fut: F,
@@ -153,7 +153,7 @@ async fn run_reporting_abort<T, F>(
 where
     F: Future<Output = Result<T, ApiError>>,
 {
-    run_opt(ctx, method, fut)
+    run_opt(operation_ctx, method, fut)
         .await
         .map_err(|e| report.attach(e))
 }
@@ -288,7 +288,7 @@ impl DatabaseDriverV1 {
     /// the column and bind metadata.
     pub async fn statement_prepare(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         stmt_handle: Handle,
     ) -> Result<PrepareResult, ApiError> {
         let stmt_ptr =
@@ -311,7 +311,7 @@ impl DatabaseDriverV1 {
                 info: rs_info,
                 request_id: Some(request_id),
             } = self
-                .execute_query_internal(ctx, &report, &mut stmt, None, Some(true), None)
+                .execute_query_internal(operation_ctx, &report, &mut stmt, None, Some(true), None)
                 .await?
             else {
                 return InvalidArgumentSnafu {
@@ -335,7 +335,7 @@ impl DatabaseDriverV1 {
                 request_id,
             })
         });
-        run_reporting_abort(ctx, "statement_prepare", &report, prepare)
+        run_reporting_abort(operation_ctx, "statement_prepare", &report, prepare)
             .instrument(crate::snowflake_op_span!("statement_prepare", session_id))
             .await
     }
@@ -344,7 +344,7 @@ impl DatabaseDriverV1 {
 impl DatabaseDriverV1 {
     pub async fn statement_execute_query<'a>(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
         timeout_seconds: Option<u32>,
@@ -361,11 +361,11 @@ impl DatabaseDriverV1 {
         let session_id = stmt.conn.lock().await.session_id;
         let report = AbortReport::default();
         run_reporting_abort(
-            ctx,
+            operation_ctx,
             "statement_execute_query",
             &report,
             Box::pin(self.execute_query_internal(
-                ctx,
+                operation_ctx,
                 &report,
                 &mut stmt,
                 bindings,
@@ -381,11 +381,11 @@ impl DatabaseDriverV1 {
     }
 
     /// Uploads a large-bind CSV payload to the bind stage, returning its stage
-    /// path. `ctx` matters only for a payload large enough to take the multipart
+    /// path. `operation_ctx` matters only for a payload large enough to take the multipart
     /// path, which has an abort to register.
     async fn upload_csv_bindings_to_stage(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         conn_arc: &Arc<Mutex<super::connection::Connection>>,
         http_client: &reqwest::Client,
         query_parameters: &QueryParameters,
@@ -413,7 +413,7 @@ impl DatabaseDriverV1 {
             put_get_policy: &put_get_policy,
             use_s3_regional_url_session_param,
             crl_worker: self.crl_worker.clone(),
-            cleanup: ctx.map(OperationCtx::cleanup_scope),
+            cleanup: operation_ctx.map(OperationCtx::cleanup_scope),
         };
         let request_id = uuid::Uuid::new_v4();
         crate::stage_binding::upload_csv_bindings(&stage_ctx, &flags, request_id, csv_bytes)
@@ -442,7 +442,7 @@ impl DatabaseDriverV1 {
 
     async fn execute_query_internal<'a>(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         report: &AbortReport,
         stmt: &mut Statement,
         bindings: Option<BindingType<'a>>,
@@ -473,7 +473,7 @@ impl DatabaseDriverV1 {
         let bind_stage_path = if let Some(bytes) = csv_bytes {
             let path = self
                 .upload_csv_bindings_to_stage(
-                    ctx,
+                    operation_ctx,
                     &conn_arc,
                     &http_client,
                     &query_parameters,
@@ -544,10 +544,10 @@ impl DatabaseDriverV1 {
 
         // Boxed for the same reason as the outer `run_opt` call — see clippy.toml.
         let response = with_cleanup_opt(
-            ctx,
+            operation_ctx,
             abort_cleanup,
             Box::pin(async {
-                // Named `refresh_ctx`, not `ctx`: shadowing the operation ctx here
+                // Named `refresh_ctx`, not `operation_ctx`: shadowing the operation operation_ctx here
                 // would silently hide it from anything added inside this loop.
                 let mut refresh_ctx = RefreshContext::from_arc(&conn_arc).await?;
                 let mut last_error = None;
@@ -572,7 +572,7 @@ impl DatabaseDriverV1 {
                                 // the caller still gets `QueryTimeout` (distinct from
                                 // `Cancelled`; ODBC maps them to different SQLSTATEs),
                                 // and so it also works on the sync paths that have no
-                                // ctx.
+                                // operation_ctx.
                                 // Fire-and-forget the abort to avoid blocking the timeout error
                                 // return on slow/hung abort requests. Spawn it rather than awaiting
                                 // inline so the test can observe a timeout at the configured
@@ -671,7 +671,7 @@ impl DatabaseDriverV1 {
         }
         let rowset_data = self
             .extract_rowset_data(
-                ctx,
+                operation_ctx,
                 &conn_arc,
                 data,
                 Some((query, query_parameters)),
@@ -692,14 +692,14 @@ impl DatabaseDriverV1 {
     /// result-fetch path only when the response carries `sqlText`) and `None`
     /// otherwise, which disables stage-info refresh for that transfer.
     ///
-    /// `ctx` is forwarded to the PUT/GET transfer so a cancel aborts the in-flight
+    /// `operation_ctx` is forwarded to the PUT/GET transfer so a cancel aborts the in-flight
     /// cloud transfer rather than only dropping it locally.
-    // One arg over the 7-arg clippy threshold, since `ctx` joined the three
+    // One arg over the 7-arg clippy threshold, since `operation_ctx` joined the three
     // statement-level PUT/GET overrides; mirrors `upload_to_gcs_or_skip`.
     #[allow(clippy::too_many_arguments)]
     async fn extract_rowset_data(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         conn: &Arc<Mutex<Connection>>,
         data: query_response::Data,
         refresh_sql: Option<(String, QueryParameters)>,
@@ -745,7 +745,7 @@ impl DatabaseDriverV1 {
                     )
                 };
                 perform_put_get_transfer(
-                    ctx,
+                    operation_ctx,
                     command,
                     &data,
                     &self.wrapper_presets,
@@ -776,7 +776,7 @@ impl DatabaseDriverV1 {
     /// a cancel during the bind-stage upload issues none — nothing was sent yet.
     pub async fn statement_execute_async<'a>(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
     ) -> Result<AsyncExecuteResult, ApiError> {
@@ -810,7 +810,7 @@ impl DatabaseDriverV1 {
             let bind_stage_path = if let Some(bytes) = csv_bytes {
                 let path = self
                     .upload_csv_bindings_to_stage(
-                        ctx,
+                        operation_ctx,
                         &conn_arc,
                         &http_client,
                         &query_parameters,
@@ -871,10 +871,10 @@ impl DatabaseDriverV1 {
             };
 
             let result = with_cleanup_opt(
-                ctx,
+                operation_ctx,
                 abort_cleanup,
                 Box::pin(async {
-                    // Named `refresh_ctx`, not `ctx`: shadowing the operation ctx
+                    // Named `refresh_ctx`, not `operation_ctx`: shadowing the operation operation_ctx
                     // here would silently hide it from anything added inside this
                     // loop.
                     let mut refresh_ctx = RefreshContext::from_arc(&conn_arc).await?;
@@ -942,16 +942,16 @@ impl DatabaseDriverV1 {
                 request_id,
             })
         });
-        run_reporting_abort(ctx, "statement_execute_async", &report, submit).await
+        run_reporting_abort(operation_ctx, "statement_execute_async", &report, submit).await
     }
 
     /// Cancelling abandons the fetch and, on the PUT/GET branch, aborts the
-    /// in-flight cloud transfer through `ctx`. Nothing is aborted server-side:
+    /// in-flight cloud transfer through `operation_ctx`. Nothing is aborted server-side:
     /// the query this reads has already finished, so there is no running query
     /// left to abort as there is for `statement_execute_query`.
     pub async fn connection_get_query_result(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         query_id: String,
     ) -> Result<ExecuteQueryResult, ApiError> {
@@ -995,14 +995,14 @@ impl DatabaseDriverV1 {
                 None => None,
             };
             // This is the path a PUT/GET submitted earlier is retrieved on, so
-            // `ctx` is forwarded: a cancel here tears down the cloud transfer
+            // `operation_ctx` is forwarded: a cancel here tears down the cloud transfer
             // rather than only abandoning this request. The three `None`s that
             // follow `data` are unrelated to it — there is no `Statement` on this
             // path to carry per-statement PUT/GET overrides, so
             // `extract_rowset_data` falls back to connection/session and then the
             // wrapper preset. `skip_upload_on_content_match` is defensively false.
             let rowset_data = self
-                .extract_rowset_data(ctx, &conn_ptr, data, refresh_sql, false, None, None)
+                .extract_rowset_data(operation_ctx, &conn_ptr, data, refresh_sql, false, None, None)
                 .await?;
             let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
             Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, None))
@@ -1011,7 +1011,7 @@ impl DatabaseDriverV1 {
             "connection_get_query_result",
             session_id
         )));
-        run_opt(ctx, "connection_get_query_result", fetch).await
+        run_opt(operation_ctx, "connection_get_query_result", fetch).await
     }
 
     pub async fn connection_abort_query(

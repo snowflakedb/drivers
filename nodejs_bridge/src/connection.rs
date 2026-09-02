@@ -100,15 +100,15 @@ impl Connection {
         let stmt_handle = DRIVER
             .statement_new(self.handle)
             .map_err(|e| e.to_js_error(*env))?;
-        let ctx = Arc::new(OperationCtx::with_own_token());
+        let operation_ctx = Arc::new(OperationCtx::with_own_token());
         Ok(Statement::from_pending(
             self.handle,
-            Some(ctx.clone()),
+            Some(operation_ctx.clone()),
             async move {
                 let result = async {
                     DRIVER.statement_set_sql_query(stmt_handle, query).await?;
                     DRIVER
-                        .statement_execute_query(Some(&ctx), stmt_handle, None, None)
+                        .statement_execute_query(Some(&operation_ctx), stmt_handle, None, None)
                         .await
                 }
                 .await;
@@ -122,10 +122,10 @@ impl Connection {
     pub fn get_query_result(&self, query_id: String) -> Statement {
         let conn_handle = self.handle;
         // Shared with the `Statement` handed back, whose `cancel()` triggers it.
-        let ctx = Arc::new(OperationCtx::with_own_token());
-        Statement::from_pending(conn_handle, Some(ctx.clone()), async move {
+        let operation_ctx = Arc::new(OperationCtx::with_own_token());
+        Statement::from_pending(conn_handle, Some(operation_ctx.clone()), async move {
             DRIVER
-                .connection_get_query_result(Some(&ctx), conn_handle, query_id)
+                .connection_get_query_result(Some(&operation_ctx), conn_handle, query_id)
                 .await
         })
     }

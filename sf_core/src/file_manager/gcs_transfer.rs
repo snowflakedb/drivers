@@ -854,7 +854,7 @@ struct GcsResumableUploadCtx<'a> {
 /// `uploadFileResumable` (snowflake-connector-nodejs#1427) and the
 /// Python/JDBC resumable upload model.
 async fn gcs_resumable_upload(
-    ctx: GcsResumableUploadCtx<'_>,
+    upload_ctx: GcsResumableUploadCtx<'_>,
     prepared: PreparedUpload,
     body_len: u64,
 ) -> Result<(), GcsRequestError> {
@@ -865,7 +865,7 @@ async fn gcs_resumable_upload(
         policy,
         conditional_create,
         cleanup,
-    } = ctx;
+    } = upload_ctx;
     let chunk_size =
         multipart::compute_part_size(body_len, &MultipartConfig::GCS).map_err(|e| {
             GcsRequestError::FileTooLarge {
@@ -1184,11 +1184,12 @@ where
     // here rather than have every caller remember it — the resumable-session
     // initiation POST (the only POST/PATCH caller today) needs its transient
     // failures retried like every other GCS request.
-    let ctx = HttpContext::new(method, "gcs-transfer").allow_post_retry();
+    let http_ctx = HttpContext::new(method, "gcs-transfer").allow_post_retry();
 
-    let response = http_execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .map_err(map_http_error)?;
+    let response =
+        http_execute_with_retry(build_request, &http_ctx, policy, |r| async move { Ok(r) })
+            .await
+            .map_err(map_http_error)?;
 
     if response.status().is_success() {
         return Ok(response);

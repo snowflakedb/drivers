@@ -135,7 +135,7 @@ pub struct StageBindingFlags {
 }
 
 pub async fn upload_csv_bindings(
-    ctx: &StageBindingContext<'_>,
+    stage_binding_ctx: &StageBindingContext<'_>,
     flags: &StageBindingFlags,
     request_id: Uuid,
     csv_bytes: &[u8],
@@ -144,15 +144,15 @@ pub async fn upload_csv_bindings(
         return DisabledSnafu.fail();
     }
 
-    ensure_stage(ctx, flags).await?;
-    let put_response = issue_put_query(ctx, request_id).await?;
-    upload_blob(ctx, csv_bytes, &put_response.data).await?;
+    ensure_stage(stage_binding_ctx, flags).await?;
+    let put_response = issue_put_query(stage_binding_ctx, request_id).await?;
+    upload_blob(stage_binding_ctx, csv_bytes, &put_response.data).await?;
 
     Ok(format!("@{BIND_STAGE_NAME}/{request_id}"))
 }
 
 async fn ensure_stage(
-    ctx: &StageBindingContext<'_>,
+    stage_binding_ctx: &StageBindingContext<'_>,
     flags: &StageBindingFlags,
 ) -> Result<(), StageBindingError> {
     if flags.stage_state.load(Ordering::Relaxed) == StageState::Created {
@@ -162,12 +162,12 @@ async fn ensure_stage(
     let query_input = QueryInput::new(CREATE_STAGE_SQL);
 
     let response = snowflake_query_with_client(
-        ctx.client,
-        ctx.query_parameters.clone(),
-        ctx.session_token.reveal(),
+        stage_binding_ctx.client,
+        stage_binding_ctx.query_parameters.clone(),
+        stage_binding_ctx.session_token.reveal(),
         query_input,
         QueryOptions {
-            retry_policy: ctx.retry_policy.clone(),
+            retry_policy: stage_binding_ctx.retry_policy.clone(),
             ..Default::default()
         },
     )
@@ -190,7 +190,7 @@ async fn ensure_stage(
 }
 
 async fn issue_put_query(
-    ctx: &StageBindingContext<'_>,
+    stage_binding_ctx: &StageBindingContext<'_>,
     request_id: Uuid,
 ) -> Result<Response, StageBindingError> {
     let put_sql = format!(
@@ -200,12 +200,12 @@ async fn issue_put_query(
     let query_input = QueryInput::new(&put_sql);
 
     snowflake_query_with_client(
-        ctx.client,
-        ctx.query_parameters.clone(),
-        ctx.session_token.reveal(),
+        stage_binding_ctx.client,
+        stage_binding_ctx.query_parameters.clone(),
+        stage_binding_ctx.session_token.reveal(),
         query_input,
         QueryOptions {
-            retry_policy: ctx.retry_policy.clone(),
+            retry_policy: stage_binding_ctx.retry_policy.clone(),
             ..Default::default()
         },
     )
@@ -214,7 +214,7 @@ async fn issue_put_query(
 }
 
 async fn upload_blob(
-    ctx: &StageBindingContext<'_>,
+    stage_binding_ctx: &StageBindingContext<'_>,
     csv_bytes: &[u8],
     data: &Data,
 ) -> Result<(), StageBindingError> {
@@ -222,12 +222,23 @@ async fn upload_blob(
     // connection's TLS, proxy, and CRL settings are threaded here via
     // `StageTransport` — the same three the file-path path threads.
     let transport = file_manager::StageTransport {
-        tls_config: ctx.query_parameters.client_info.tls_config.clone(),
-        proxy_config: ctx.query_parameters.client_info.proxy_config.clone(),
-        crl_worker: ctx.crl_worker.clone(),
+        tls_config: stage_binding_ctx
+            .query_parameters
+            .client_info
+            .tls_config
+            .clone(),
+        proxy_config: stage_binding_ctx
+            .query_parameters
+            .client_info
+            .proxy_config
+            .clone(),
+        crl_worker: stage_binding_ctx.crl_worker.clone(),
     };
     let single = data
-        .to_bind_stage_upload_data(ctx.use_s3_regional_url_session_param, &transport)
+        .to_bind_stage_upload_data(
+            stage_binding_ctx.use_s3_regional_url_session_param,
+            &transport,
+        )
         .context(MalformedPutResponseSnafu)?;
 
     // No `StageInfoRefresher` is needed here: CSV binding payloads are small
@@ -243,8 +254,8 @@ async fn upload_blob(
     upload_in_memory_file(
         csv_bytes.to_vec(),
         single,
-        ctx.put_get_policy,
-        file_manager::TransferCtx::new(None, ctx.cleanup),
+        stage_binding_ctx.put_get_policy,
+        file_manager::TransferCtx::new(None, stage_binding_ctx.cleanup),
     )
     .await
     .context(UploadSnafu)?;

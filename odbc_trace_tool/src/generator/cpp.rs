@@ -67,8 +67,8 @@ pub fn generate_with_lines(
     entry_lines: &[Option<usize>],
     config: &GeneratorConfig,
 ) -> Result<String, GenerateError> {
-    let mut ctx = GenContext::new(calls, entry_lines, config);
-    ctx.generate()
+    let mut gen_ctx = GenContext::new(calls, entry_lines, config);
+    gen_ctx.generate()
 }
 
 fn escape_cpp_string_literal(s: &str) -> String {

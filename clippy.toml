@@ -14,3 +14,31 @@
 #
 # Ratchet this down as the pre-existing sites get boxed.
 future-size-threshold = 40000
+
+# Bindings `clippy::disallowed_names` rejects. `..` keeps clippy's defaults
+# (`foo`, `baz`, `quux`); `ctx` is this repo's addition.
+#
+# `ctx` is banned because several unrelated context types are routinely in scope
+# together — `OperationCtx`, `RefreshContext`, `HttpContext`,
+# `StageInfoRefreshContext`, `TransferCtx` — so the name says nothing about which
+# one a binding holds. The failure it prevents is silent: adding an
+# `operation_ctx: Option<&OperationCtx>` parameter to a function that already
+# binds a `RefreshContext` as `ctx` shadows one with the other, and for an
+# `async_first` RPC that means cancellation stops being observed while the code
+# still compiles. `perform_put_get_transfer` had a closure binding a
+# `StageInfoRefreshContext` as `ctx` inside a function whose own parameter was an
+# `OperationCtx`.
+#
+# The lint covers function parameters, `let` bindings, and closure parameters,
+# and `.pre-commit-config.yaml` runs clippy with `-Dclippy::all`, so this is a
+# hard error rather than a warning. Name bindings after the type they hold:
+# `operation_ctx`, `refresh_ctx`, `http_ctx`, `stage_refresh_ctx`.
+#
+# Rust only, and deliberately not a repo-wide convention. This file is read by
+# `cargo clippy` alone, and the reasoning does not carry to the wrappers: Go has
+# a single context type, so `ctx` is unambiguous there and is what the standard
+# library and the `database/sql` driver interfaces
+# (`QueryContext(ctx context.Context, …)`) expect as the first parameter. Go code
+# under `gosnowflake/` should use `ctx`; only Rust, where several unrelated
+# context types coexist, has the collision this guards against.
+disallowed-names = ["..", "ctx"]

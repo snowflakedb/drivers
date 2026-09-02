@@ -70,10 +70,10 @@ const TOKEN_REQUEST_PATH: &str = "/session/token-request";
 /// Shared by `native_okta` and `external_browser` authentication flows.
 async fn request_text_with_retry(
     build: impl Fn() -> reqwest::RequestBuilder,
-    ctx: &HttpContext,
+    http_ctx: &HttpContext,
     policy: &RetryPolicy,
 ) -> Result<(StatusCode, String), HttpError> {
-    execute_with_retry(build, ctx, policy, |resp| async move {
+    execute_with_retry(build, http_ctx, policy, |resp| async move {
         let status = resp.status();
         let text = resp.text().await.context(TransportSnafu)?;
         Ok((status, text))
@@ -952,9 +952,9 @@ async fn send_login_request(
         builder
     };
 
-    let ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
+    let http_ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
 
-    let response = execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
+    let response = execute_with_retry(build_request, &http_ctx, policy, |r| async move { Ok(r) })
         .await
         .context(HttpRetrySnafu {
             context: "login request",
@@ -1898,17 +1898,22 @@ async fn execute_sync_query<'a>(
         .json(&query_request)
     };
 
-    let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
+    let http_ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
 
-    let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
-        .await
-        .context(HttpRetrySnafu {
-            context: "query request",
-            ids: QueryIds {
-                request_id: Some(request_id),
-                query_id: None,
-            },
-        })?;
+    let response = execute_with_retry(
+        build_request,
+        &http_ctx,
+        retry_policy,
+        |r| async move { Ok(r) },
+    )
+    .await
+    .context(HttpRetrySnafu {
+        context: "query request",
+        ids: QueryIds {
+            request_id: Some(request_id),
+            query_id: None,
+        },
+    })?;
 
     let query_response = read_response_json::<query_response::Data>(response).await?;
 
@@ -2056,17 +2061,22 @@ pub async fn get_query_status(
         ])
     };
 
-    let ctx = HttpContext::new(Method::GET, MONITORING_QUERIES_PATH);
+    let http_ctx = HttpContext::new(Method::GET, MONITORING_QUERIES_PATH);
     let ids = QueryIds {
         request_id: None,
         query_id: Some(query_id.to_owned()),
     };
-    let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
-        .await
-        .with_context(|_| HttpRetrySnafu {
-            context: "query status",
-            ids: ids.clone(),
-        })?;
+    let response = execute_with_retry(
+        build_request,
+        &http_ctx,
+        retry_policy,
+        |r| async move { Ok(r) },
+    )
+    .await
+    .with_context(|_| HttpRetrySnafu {
+        context: "query status",
+        ids: ids.clone(),
+    })?;
 
     let body: QueryStatusResponse =
         read_response_json::<Option<QueryStatusResponseData>>(response).await?;

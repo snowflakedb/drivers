@@ -222,9 +222,9 @@ pub(super) fn prepare_logout_from_conn(
 /// Calls `execute_with_refresh` directly (not `with_valid_session`) because logout
 /// uses `RefreshContext::new()` (no `is_closed` check — logout runs after close).
 pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError> {
-    let mut ctx = data.refresh_ctx;
+    let mut refresh_ctx = data.refresh_ctx;
 
-    let result = ctx
+    let result = refresh_ctx
         .execute_with_refresh(|token| {
             let client = &data.client;
             let url = &data.url;

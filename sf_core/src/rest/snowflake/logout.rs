@@ -64,7 +64,7 @@ pub async fn logout_session(
     let user_agent = user_agent(client_info);
 
     // Logout is POST but idempotent server-side (safe to retry)
-    let ctx = HttpContext::new(Method::POST, "/session")
+    let http_ctx = HttpContext::new(Method::POST, "/session")
         .with_idempotent(true)
         .allow_post_retry();
 
@@ -90,7 +90,7 @@ pub async fn logout_session(
         // NO .timeout() - execute_with_retry applies it dynamically
     };
 
-    let response = execute_with_retry(&build_request, &ctx, retry_policy, |resp| async move {
+    let response = execute_with_retry(&build_request, &http_ctx, retry_policy, |resp| async move {
         Ok(resp)
     })
     .await

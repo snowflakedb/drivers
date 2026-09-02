@@ -98,7 +98,7 @@ fn calculate_request_timeout(
 
 pub async fn execute_with_retry<T, B, F, H>(
     build_request: B,
-    ctx: &HttpContext,
+    http_ctx: &HttpContext,
     policy: &RetryPolicy,
     on_response: H,
 ) -> Result<T, HttpError>
@@ -145,13 +145,13 @@ where
         }
 
         // Every outbound HTTP call is logged at INFO so driver-generated traffic
-        // is always visible (ud-log-every-http-call-at-info). `ctx.path` may be a
+        // is always visible (ud-log-every-http-call-at-info). `http_ctx.path` may be a
         // full URL for some callers (e.g. chunk downloads), so strip any query
         // string / fragment — those can carry presigned auth tokens and the rule
         // permits only host + path.
-        let log_path = ctx.path.split(['?', '#']).next().unwrap_or("");
+        let log_path = http_ctx.path.split(['?', '#']).next().unwrap_or("");
         tracing::info!(
-            method = %ctx.method,
+            method = %http_ctx.method,
             path = %log_path,
             attempt,
             "outbound HTTP call"
@@ -165,7 +165,7 @@ where
                     return on_response(resp).await;
                 }
                 if !should_retry_status(resp.status(), &policy.extra_retryable_statuses)
-                    || !allow_retry(ctx, &policy.http)
+                    || !allow_retry(http_ctx, &policy.http)
                 {
                     return on_response(resp).await;
                 }
@@ -194,7 +194,7 @@ where
                 continue;
             }
             Err(e) => {
-                if !is_retryable_transport(&e) || !allow_retry(ctx, &policy.http) {
+                if !is_retryable_transport(&e) || !allow_retry(http_ctx, &policy.http) {
                     return Err(TransportSnafu.into_error(e));
                 }
                 if attempt >= max_attempts {
@@ -227,11 +227,11 @@ fn should_retry_status(status: StatusCode, extra: &BTreeSet<u16>) -> bool {
         || status.is_server_error()
 }
 
-fn allow_retry(ctx: &HttpContext, http: &HttpPolicy) -> bool {
-    match ctx.method {
+fn allow_retry(http_ctx: &HttpContext, http: &HttpPolicy) -> bool {
+    match http_ctx.method {
         Method::GET | Method::HEAD | Method::OPTIONS => http.retry_safe_reads,
-        Method::PUT | Method::DELETE => http.retry_idempotent_writes || ctx.idempotent,
-        Method::POST | Method::PATCH => http.retry_post_patch || ctx.allow_post_retry,
+        Method::PUT | Method::DELETE => http.retry_idempotent_writes || http_ctx.idempotent,
+        Method::POST | Method::PATCH => http.retry_post_patch || http_ctx.allow_post_retry,
         _ => false,
     }
 }
@@ -271,13 +271,13 @@ fn is_retryable_transport(e: &reqwest::Error) -> bool {
 /// Status is validated; non-2xx statuses surface as `HttpError::Transport`.
 pub async fn execute_bytes_with_retry<B>(
     build: B,
-    ctx: &HttpContext,
+    http_ctx: &HttpContext,
     policy: &RetryPolicy,
 ) -> Result<Vec<u8>, HttpError>
 where
     B: Fn() -> reqwest::RequestBuilder,
 {
-    let resp = execute_with_retry(build, ctx, policy, |r| async move { Ok(r) }).await?;
+    let resp = execute_with_retry(build, http_ctx, policy, |r| async move { Ok(r) }).await?;
     match resp.error_for_status() {
         Ok(ok) => {
             let bytes = ok.bytes().await.context(TransportSnafu)?;
@@ -339,14 +339,14 @@ pub async fn read_body_capped(resp: Response, max_size: usize) -> Result<Vec<u8>
 /// failures still flow through the normal retry path.
 pub async fn execute_bytes_with_retry_capped<B>(
     build: B,
-    ctx: &HttpContext,
+    http_ctx: &HttpContext,
     policy: &RetryPolicy,
     max_size: usize,
 ) -> Result<Vec<u8>, HttpError>
 where
     B: Fn() -> reqwest::RequestBuilder,
 {
-    execute_with_retry(build, ctx, policy, |resp| async move {
+    execute_with_retry(build, http_ctx, policy, |resp| async move {
         let resp = resp.error_for_status().context(TransportSnafu)?;
         read_body_capped(resp, max_size).await.map_err(|e| match e {
             CappedBodyError::TooLarge { size, max_size } => {

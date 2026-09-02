@@ -26,10 +26,10 @@ async fn should_retry_get_after_transient_failure() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{}", addr);
-    let ctx = HttpContext::new(Method::GET, url.clone());
+    let http_ctx = HttpContext::new(Method::GET, url.clone());
 
     // When the helper executes the request
-    let body = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default())
+    let body = execute_bytes_with_retry(|| client.get(&url), &http_ctx, &RetryPolicy::default())
         .await
         .expect("retry to succeed");
 
@@ -50,7 +50,7 @@ async fn should_fail_when_retry_after_exceeds_deadline() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{}", addr);
-    let ctx = HttpContext::new(Method::GET, url.clone());
+    let http_ctx = HttpContext::new(Method::GET, url.clone());
     let policy = RetryPolicy {
         http: HttpPolicy {
             retry_safe_reads: true,
@@ -72,7 +72,7 @@ async fn should_fail_when_retry_after_exceeds_deadline() {
     };
 
     // When the helper executes the request
-    let err = execute_bytes_with_retry(|| client.get(&url), &ctx, &policy)
+    let err = execute_bytes_with_retry(|| client.get(&url), &http_ctx, &policy)
         .await
         .expect_err("should exceed retry-after budget");
 
@@ -99,12 +99,12 @@ async fn should_retry_idempotent_put_after_transient_failure() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{}", addr);
-    let ctx = HttpContext::new(Method::PUT, url.clone()).with_idempotent(true);
+    let http_ctx = HttpContext::new(Method::PUT, url.clone()).with_idempotent(true);
 
     // When the helper executes the request
     let body = execute_bytes_with_retry(
         || client.put(&url).body("payload"),
-        &ctx,
+        &http_ctx,
         &RetryPolicy::default(),
     )
     .await
@@ -127,7 +127,7 @@ async fn should_fail_after_reaching_max_attempts() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{}", addr);
-    let ctx = HttpContext::new(Method::GET, url.clone()).with_idempotent(true);
+    let http_ctx = HttpContext::new(Method::GET, url.clone()).with_idempotent(true);
     let policy = RetryPolicy {
         http: HttpPolicy {
             retry_safe_reads: true,
@@ -147,7 +147,7 @@ async fn should_fail_after_reaching_max_attempts() {
     };
 
     // When the helper executes the request
-    let err = execute_bytes_with_retry(|| client.get(&url), &ctx, &policy)
+    let err = execute_bytes_with_retry(|| client.get(&url), &http_ctx, &policy)
         .await
         .expect_err("should stop after max attempts");
 
@@ -209,10 +209,10 @@ async fn async_style_retries_transient_error() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{}", addr);
-    let ctx = HttpContext::new(Method::GET, url.clone());
+    let http_ctx = HttpContext::new(Method::GET, url.clone());
 
     // When using execute_with_retry (async-style)
-    let body = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default())
+    let body = execute_bytes_with_retry(|| client.get(&url), &http_ctx, &RetryPolicy::default())
         .await
         .expect("retry to succeed");
 
@@ -253,10 +253,10 @@ async fn should_retry_after_connection_reset() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{}", addr);
-    let ctx = HttpContext::new(Method::GET, url.clone());
+    let http_ctx = HttpContext::new(Method::GET, url.clone());
 
     // When the helper executes the request
-    let body = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default())
+    let body = execute_bytes_with_retry(|| client.get(&url), &http_ctx, &RetryPolicy::default())
         .await
         .expect("should retry after connection reset");
 
@@ -276,10 +276,11 @@ async fn should_not_retry_401_unauthorized() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{}", addr);
-    let ctx = HttpContext::new(Method::GET, url.clone());
+    let http_ctx = HttpContext::new(Method::GET, url.clone());
 
     // When the helper executes the request
-    let result = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default()).await;
+    let result =
+        execute_bytes_with_retry(|| client.get(&url), &http_ctx, &RetryPolicy::default()).await;
 
     // Then it should NOT retry (401 is not retryable) and return the response
     // The caller is responsible for handling 401 as session expired

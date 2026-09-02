@@ -420,11 +420,11 @@ pub async fn get_chunk_data(
     use reqwest::Method;
 
     let policy = RetryPolicy::default();
-    let ctx = HttpContext::new(Method::GET, url.clone()).with_idempotent(true);
+    let http_ctx = HttpContext::new(Method::GET, url.clone()).with_idempotent(true);
 
     let response = match execute_with_retry(
         || client.get(url.clone()).headers(headers.clone()),
-        &ctx,
+        &http_ctx,
         &policy,
         |r| async move { Ok(r) },
     )
