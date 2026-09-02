@@ -5,7 +5,7 @@ import java.sql.Connection;
 import java.util.List;
 import java.util.Properties;
 
-/** Runs the configured SELECT or PUT/GET test against Snowflake and writes metrics to /results. */
+/** Runs the configured SELECT, PUT/GET, or concurrent test and writes metrics to /results. */
 public final class Main {
 
   private Main() {}
@@ -20,10 +20,14 @@ public final class Main {
       return;
     }
 
-    // Phase 3: select + put_get. recorded-HTTP (select_recorded_http) reuses the select path.
-    if (!"select".equals(config.testType) && !"put_get".equals(config.testType)) {
+    // recorded-HTTP (select_recorded_http) reuses the select path.
+    if (!"select".equals(config.testType)
+        && !"put_get".equals(config.testType)
+        && !"concurrent".equals(config.testType)) {
       System.out.println(
-          "ERROR: jdbc perf supports test_type=select or put_get (got " + config.testType + ")");
+          "ERROR: jdbc perf supports test_type=select, put_get, or concurrent (got "
+              + config.testType
+              + ")");
       System.exit(1);
     }
 
@@ -43,6 +47,19 @@ public final class Main {
             PutExecution.execute(
                 conn, config.sqlCommand, config.warmupIterations, config.iterations);
         csv = Results.writePutGetCsvResults(output.results, config.testName, config.driverType);
+        memoryTimeline = output.memoryTimeline;
+      } else if ("concurrent".equals(config.testType)) {
+        QueryExecution.FetchTestOutput output =
+            ConcurrentExecution.execute(
+                config.driverType,
+                url,
+                props,
+                config.setupQueries(),
+                config.sqlCommand,
+                config.warmupIterations,
+                config.iterations,
+                config.workerCount);
+        csv = Results.writeCsvResults(output.results, config.testName, config.driverType);
         memoryTimeline = output.memoryTimeline;
       } else {
         QueryExecution.FetchTestOutput output =

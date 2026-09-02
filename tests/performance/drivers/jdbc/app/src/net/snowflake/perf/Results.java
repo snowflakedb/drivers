@@ -25,11 +25,20 @@ final class Results {
     Path dir = testDir(testName, driverType);
     Files.createDirectories(dir);
     Path file = dir.resolve(testName + "_jdbc_" + driverType + "_" + epochSeconds() + ".csv");
+    boolean hasConcurrent = !results.isEmpty() && results.get(0).workerCount > 0;
     try (Writer w = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
-      w.write("timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb\n");
+      w.write("timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb");
+      if (hasConcurrent) {
+        w.write(",worker_count,throughput_rows_s");
+      }
+      w.write("\n");
       for (QueryExecution.IterationResult r : results) {
-        w.write(String.format("%d,%.6f,%.6f,%d,%.6f,%.1f%n",
+        w.write(String.format("%d,%.6f,%.6f,%d,%.6f,%.1f",
             r.timestampMs, r.queryTimeS, r.fetchTimeS, r.rowCount, r.cpuTimeS, r.peakRssMb));
+        if (hasConcurrent) {
+          w.write(String.format(",%d,%.1f", r.workerCount, r.throughputRowsS));
+        }
+        w.write("\n");
       }
     }
     return file;
