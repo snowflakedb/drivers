@@ -240,20 +240,6 @@ impl DatabaseDriverV1 {
         (conn.session_id, conn.wrapper_identity.clone())
     }
 
-    /// Resolve the Snowflake session id for a statement handle by traversing
-    /// to its owning connection. Acquires the statement mutex to read the
-    /// `Arc<Mutex<Connection>>`, then the connection mutex to read its
-    /// cached `session_id`.
-    pub(crate) async fn session_id_for_stmt(&self, stmt_handle: Handle) -> Option<i64> {
-        let stmt_ptr = self.statements.get_obj(stmt_handle)?;
-        let conn_arc = {
-            let stmt = stmt_ptr.lock().await;
-            stmt.conn.clone()
-        };
-        let conn = conn_arc.lock().await;
-        conn.session_id
-    }
-
     /// Flush buffered telemetry spans for a specific session.
     pub(super) async fn flush_telemetry_session(&self, session_id: i64) {
         if let Some(ref lm) = self.log_manager {

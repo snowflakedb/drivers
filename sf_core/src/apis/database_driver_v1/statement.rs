@@ -290,7 +290,16 @@ impl DatabaseDriverV1 {
         ctx: Option<&OperationCtx>,
         stmt_handle: Handle,
     ) -> Result<PrepareResult, ApiError> {
-        let session_id = self.session_id_for_stmt(stmt_handle).await;
+        let stmt_ptr =
+            self.statements
+                .get_obj(stmt_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Statement handle not found".to_string(),
+                })?;
+        // keep the lock for the whole execution
+        let mut stmt = stmt_ptr.lock().await;
+
+        let session_id = stmt.conn.lock().await.session_id;
         let report = AbortReport::default();
         let prepare = Box::pin(async {
             // Multi-statement query prepare is not supported. `request_id` is
@@ -301,7 +310,7 @@ impl DatabaseDriverV1 {
                 info: rs_info,
                 request_id: Some(request_id),
             } = self
-                .execute_query_internal(ctx, &report, stmt_handle, None, Some(true), None)
+                .execute_query_internal(ctx, &report, &mut stmt, None, Some(true), None)
                 .await?
             else {
                 return InvalidArgumentSnafu {
@@ -311,16 +320,6 @@ impl DatabaseDriverV1 {
             };
             let stream = self.result_set_get_stream(rs_info.handle).await?;
             self.result_set_release(rs_info.handle)?;
-
-            let stmt_ptr =
-                self.statements
-                    .get_obj(stmt_handle)
-                    .with_context(|| InvalidArgumentSnafu {
-                        argument: "Statement handle not found".to_string(),
-                    })?;
-            // TODO: re-lock the statement to just copy the query
-            //       consider to carry query text in ExecuteQueryResult to avoid the re-lock
-            let stmt = stmt_ptr.lock().await;
             let query = stmt.query.clone().unwrap_or_default();
 
             Ok(PrepareResult {
@@ -349,17 +348,25 @@ impl DatabaseDriverV1 {
         bindings: Option<BindingType<'a>>,
         timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
-        let session_id = self.session_id_for_stmt(stmt_handle).await;
+        let stmt_ptr =
+            self.statements
+                .get_obj(stmt_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Statement handle not found".to_string(),
+                })?;
+        // keep the lock for the whole execution
+        let mut stmt = stmt_ptr.lock().await;
+
+        let session_id = stmt.conn.lock().await.session_id;
         let report = AbortReport::default();
         run_reporting_abort(
             ctx,
             "statement_execute_query",
             &report,
-            // Boxed to keep this large future off the frame — see clippy.toml.
             Box::pin(self.execute_query_internal(
                 ctx,
                 &report,
-                stmt_handle,
+                &mut stmt,
                 bindings,
                 None,
                 timeout_seconds,
@@ -436,21 +443,12 @@ impl DatabaseDriverV1 {
         &self,
         ctx: Option<&OperationCtx>,
         report: &AbortReport,
-        stmt_handle: Handle,
+        stmt: &mut Statement,
         bindings: Option<BindingType<'a>>,
         describe_only: Option<bool>,
         timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
-        let stmt_ptr =
-            self.statements
-                .get_obj(stmt_handle)
-                .with_context(|| InvalidArgumentSnafu {
-                    argument: "Statement handle not found".to_string(),
-                })?;
-
-        let stmt = stmt_ptr.lock().await;
-
-        let query = extract_query(&stmt)?;
+        let query = extract_query(stmt)?;
 
         self.ensure_file_transfer_allowed(&query, &stmt.conn)
             .await?;
@@ -464,14 +462,10 @@ impl DatabaseDriverV1 {
 
         let conn_arc = stmt.conn.clone();
 
-        // Mint the requestId now (while the statement is locked) so the whole
-        // function shares one identity for the query: the submission below, the
-        // abort fired on cancellation, and the abort fired on client-side
-        // timeout all key on this one value. It stays a plain local — the only
-        // code that needs it is in this function.
+        // Mint the requestId, the whole function shares one identity for the query:
+        // the submission below, the abort fired on cancellation, and the abort fired on client-side
+        // timeout all key on this one value. It stays a plain local.
         let request_id = uuid::Uuid::new_v4();
-
-        drop(stmt);
 
         let (query_bindings, csv_bytes) = split_bindings(&bindings)?;
 
@@ -656,8 +650,6 @@ impl DatabaseDriverV1 {
                 .await;
         }
 
-        // Re-acquire lock to set the state
-        let mut stmt = stmt_ptr.lock().await;
         stmt.state = StatementState::Executed;
         let skip_upload_on_content_match = stmt
             .settings
@@ -668,7 +660,6 @@ impl DatabaseDriverV1 {
         // preset are applied later in `extract_rowset_data`, once `conn` is locked.
         let put_fastfail = stmt.settings.get_bool(param_names::PUT_FASTFAIL);
         let get_fastfail = stmt.settings.get_bool(param_names::GET_FASTFAIL);
-        drop(stmt);
 
         let data = response.data;
         let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
