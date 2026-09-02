@@ -30,6 +30,7 @@ use sf_core::protobuf::apis::database_driver_v1::{DriverProviders, WrapperPreset
 use sf_core::telemetry::snowflake_exporter::SessionRegistry;
 use sf_core::utils::sync::MutexRecoverExt;
 use sf_core::wrapper_event;
+use tracing::instrument::WithSubscriber;
 
 static JDBC_LOG_MANAGER: Mutex<Option<LogManager>> = Mutex::new(None);
 
@@ -73,7 +74,6 @@ impl JdbcBridge {
         };
         Self {
             runtime: tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
                 .enable_all()
                 .build()
                 .expect("Failed to create tokio runtime"),
@@ -106,14 +106,16 @@ impl JdbcBridge {
     fn submit(&self, service_name: String, method_name: String, request_bytes: Vec<u8>) -> u64 {
         let (handle, _token) = self.transport.register();
         let dispatch = self.dispatch.clone();
-        let join = self.runtime.spawn(async move {
-            let _guard = tracing::dispatcher::set_default(&dispatch);
-            let result = JDBC_BRIDGE
-                .transport
-                .handle_message_cancellable(&service_name, &method_name, request_bytes, handle)
-                .await;
-            encode_result(result)
-        });
+        let join = self.runtime.spawn(
+            async move {
+                let result = JDBC_BRIDGE
+                    .transport
+                    .handle_message_cancellable(&service_name, &method_name, request_bytes, handle)
+                    .await;
+                encode_result(result)
+            }
+            .with_subscriber(dispatch),
+        );
         self.results().insert(handle, join);
         handle
     }
@@ -401,5 +403,63 @@ mod tests {
     #[test]
     fn await_unknown_handle_returns_none() {
         assert!(JDBC_BRIDGE.await_result(u64::MAX).is_none());
+    }
+
+    struct CaptureLayer {
+        messages: std::sync::Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CaptureLayer {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let normalized = sf_core::logging::normalize_event(event);
+            self.messages
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(normalized.message);
+        }
+    }
+
+    #[test]
+    fn spawned_task_keeps_events_after_await_on_multi_worker_runtime() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let dispatch =
+            tracing::dispatcher::Dispatch::new(tracing_subscriber::registry().with(CaptureLayer {
+                messages: Arc::clone(&messages),
+            }));
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("test runtime");
+
+        let join = runtime.spawn(
+            async {
+                tracing::debug!("before_await");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                tracing::debug!("Login successful, extracting session tokens");
+            }
+            .with_subscriber(dispatch),
+        );
+        runtime.block_on(join).expect("spawned task");
+
+        let captured = messages.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert!(
+            captured.iter().any(|m| m.contains("before_await")),
+            "pre-await event must reach the dispatch; captured = {captured:?}"
+        );
+        assert!(
+            captured
+                .iter()
+                .any(|m| m.contains("Login successful, extracting session tokens")),
+            "post-await event must reach the dispatch after a worker hop; captured = {captured:?}"
+        );
     }
 }
