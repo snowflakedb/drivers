@@ -1,0 +1,490 @@
+id: universal-driver-generated-code
+friendly_name: "Universal Driver Generated Code Rules"
+status: enabled
+# Category: Surface / tooling
+#
+# ArcticOwl rules for machine-generated code: a fix belongs in the *input*
+# (`protobuf/database_driver_v1.proto`, a generator crate, `PARAM_DEFS`), never
+# in the output. A hand-edit to generated output is erased by the next build,
+# or — worse — survives long enough that the output and its input disagree and
+# nobody can tell which one is authoritative.
+#
+# Folder scope note (why this ruleset ALLOWS what others EXCLUDE):
+#   Other rulesets exclude generated trees (`protobuf_gen`, `nanoarrow_cpp`,
+#   …) so their language rules never fire on machine output. ArcticOwl only
+#   reviews files under `allowed_folders` + `allowed_file_extensions`.
+#   `scope: full-pr` does NOT bypass that filter — it only means the bot
+#   sees the whole PR *among matching files*, plus the PR description.
+#   Evidence in this repo (not a platform lab): changelog / BD use
+#   `allowed_folders: []` for whole-tree + description; this file and
+#   `universal-driver-excluded-path-leak.yaml` keep non-empty folders with
+#   `scope: full-pr`. If full-pr ignored the folder filter, those rulesets
+#   would already be reviewing every path. We match that production pattern.
+#   Empty `allowed_folders` is the "entire tree" pattern; this ruleset must
+#   not use that, or every language file would be in scope.
+#   `"."` is root-level files only (same convention as
+#   `universal-driver-mirror-privacy.yaml`) so `.pre-commit-config.yaml` and
+#   `Cargo.lock` are visible. `.github` is listed separately.
+#   `.gitignore` has no suffix, so it cannot be listed in
+#   `allowed_file_extensions`. Classification MUST NOT depend on the bot
+#   seeing that file: the generated-path table in
+#   `ud-no-hand-edits-to-generated-code` is the detector. Treat `.gitignore`
+#   as corroboration only when it is actually in the filtered diff.
+#
+# Scope note (avoid duplicate review comments):
+#   - Whether protobuf/JNI/ctypes conversions live at the FFI boundary rather
+#     than in core logic is owned by `ud-ffi-boundary-separation` in
+#     `universal-driver-rust-sf-core.yaml` — do NOT re-flag it here. This
+#     ruleset only cares whether a file is generator *output*, not where
+#     conversion code sits.
+#   - Rust/Python/Java style rules for generated files: not applicable. Those
+#     rulesets deliberately exclude generated trees; do not import their
+#     findings into a generated file under the guise of this ruleset.
+allowed_folders:
+  # Root-level files only (not a recursive "whole repo" prefix):
+  # `.pre-commit-config.yaml`, `Cargo.lock`, root `Cargo.toml`.
+  - "."
+  # CI drift-check workflows referenced by the committed-output rules.
+  - ".github"
+  # --- Generated output: committed, and the committed copy is what ships ---
+  # Connector root is a prefix: it already covers `_core/sf_core_python.pyi`,
+  # `_internal/protobuf_gen/**`, and `_internal/nanoarrow_cpp/**` (the last is
+  # vendored C++ except the Cython `arrow_stream_iterator.cpp` — see the
+  # exemption in `ud-no-hand-edits-to-generated-code`). Do not re-list those
+  # children; a narrower entry would imply a narrower scope than the prefix
+  # actually grants.
+  - "python/src/snowflake/connector"
+  # Node wrapper prefix: covers `nodejs/src/core/binary-types.generated.ts`,
+  # `nodejs/scripts/**` (napi build), and `nodejs/package.json` (toolchain bump
+  # as a justifying input). Do not re-list those children.
+  - "nodejs"
+  # --- Committed shim (not generator output; include! of OUT_DIR) ---
+  - "sf_core/src/protobuf"
+  # --- Generated output: build-time, gitignored (listed so a PR that commits
+  #     one anyway is visible to the bot) ---
+  # `sf_core/src/protobuf_gen` is NOT the cargo path (`build.rs` writes
+  # `$OUT_DIR`). Keep it so a `git add -f` / README `--output` dump of the
+  # stale gitignore path is still visible. Do not treat it as live output
+  # in the rule tables.
+  - "sf_core/src/protobuf_gen"
+  - "jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen"
+  - "dotnet/src/Snowflake.Data.Proto"
+  - "odbc"
+  - "ci/test_matrix"
+  # --- Generator inputs (the place a fix is supposed to land) ---
+  # Crate roots (not `/src`) so `Cargo.toml` toolchain bumps are in scope.
+  - "protobuf"
+  - "proto_generator"
+  - "sf_params_spec"
+  - "sf_params_codegen"
+  - "python_bridge"
+  - "sf_mini_core"
+  - "scripts"
+excluded_folders:
+  # Dependency and build trees: full of third-party generated code that this
+  # repo neither generates nor owns.
+  - "nodejs/node_modules"
+  - "nodejs/dist"
+  - "jdbc/build"
+  - "jdbc/bin"
+  - "python/src/snowflake/connector/__pycache__"
+allowed_file_extensions:
+  # Generator inputs and outputs across every surface.
+  # `.json` is required for `ci/test_matrix/generated/{driver}-gha.json` and
+  # for `package.json` when a toolchain bump is the justifying input.
+  # `.lock` is required for root `Cargo.lock` (`.` is root-level files).
+  # `.gitignore` has no suffix and cannot be listed — do not make any rule
+  # fail closed if it is missing from context.
+  - ".proto"
+  - ".rs"
+  - ".py"
+  - ".pyi"
+  - ".pyx"
+  - ".java"
+  - ".ts"
+  - ".mjs"
+  - ".json"
+  - ".cs"
+  - ".h"
+  - ".hpp"
+  - ".cpp"
+  - ".toml"
+  - ".lock"
+  - ".yaml"
+  - ".yml"
+  - ".md"
+rules:
+  - id: ud-no-hand-edits-to-generated-code
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: Generated files are build artifacts, not source. A hand-edit
+      to one is either silently overwritten by the next build (so the "fix" never
+      shipped) or it survives and the output now disagrees with the input that
+      claims to produce it. Every change to generated content MUST come from a
+      change to the generator input, followed by regeneration.
+
+      **REQUIREMENT**: If the PR diff modifies a generated file, the change MUST
+      be reproducible by re-running its generator. Flag any diff to a generated
+      file whose content could not have come out of the generator — new logic,
+      renamed fields, added helpers, tweaked types, "just this one" behavioral
+      patches, comment edits, reformatting.
+
+      **GENERATED FILES AND THEIR INPUTS** (all documented in
+      `proto_generator/README.md`, `.pre-commit-config.yaml`, and `.gitignore`):
+
+      | Generated output | Change this instead |
+      | --- | --- |
+      | `python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.py{,i}`, `…_services.py` | the `.proto` or `proto_generator/src/generators/python_generator.rs` |
+      | `jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriver*.java` | the `.proto` or `proto_generator/src/generators/java_generator.rs` |
+      | `dotnet/src/Snowflake.Data.Proto/DatabaseDriverV1.cs` and siblings | the `.proto` or `proto_generator/src/generators/csharp_generator.rs` |
+      | `python/src/snowflake/connector/connection_config.py` | `PARAM_DEFS` in `sf_params_spec/src/lib.rs`, or `sf_params_codegen/src/main.rs` |
+      | `python/src/snowflake/connector/_core/sf_core_python.pyi` | the `#[pyfunction]` signatures in `python_bridge/src/lib.rs` (hook `files:` — details only in `ud-generated-output-requires-input-change-in-same-pr`) |
+      | `nodejs/src/core/binary-types.generated.ts` | the `napi` bindings in the Rust core, or `nodejs/scripts/build-snowflake-sdk-core.mjs` (a `nodejs/package.json` / lockfile toolchain bump also counts — see `ud-generated-output-requires-input-change-in-same-pr`) |
+      | `odbc/src/setup/version_generated.h` | `odbc/build.rs` |
+      | `python/…/nanoarrow_cpp/ArrowIterator/arrow_stream_iterator.cpp` | `arrow_stream_iterator.pyx` (Cython input) |
+      | `ci/test_matrix/generated/**` | `ci/test_matrix/generate_matrix.py` |
+
+      Rust protobuf is **not** in this table: `sf_core/build.rs` writes
+      `$OUT_DIR/database_driver_v1.rs`, included from
+      `sf_core/src/protobuf/generated.rs`. There is no in-tree file to
+      hand-edit (rule 4 carve-out). Do not treat
+      `sf_core/src/protobuf_gen/database_driver_v1.rs` as live output —
+      that path is leftover `.gitignore` / README CLI `--output` only.
+
+      Mini-core cbindgen is **not** in this table either: packaging writes
+      `build/sf_mini_core.h` via `scripts/package_minicore.sh` (gitignored
+      with `/build`), not `OUT_DIR` and not a source-tree header. Change
+      `sf_mini_core/cbindgen.toml` / `pub extern "C"`; a new committed
+      `sf_mini_core.h` under the crate or repo root is a *new* output and
+      must get marker + hook + drift check.
+
+      **HOW TO TELL A FILE IS GENERATED** (use in this order; do not stop at
+      the gitignore-comment heuristic):
+      1. It is named in the table above — that table is the **only** required
+         detector, including `arrow_stream_iterator.cpp` and
+         `ci/test_matrix/generated/**`. Apply it even when `.gitignore` is
+         absent from the filtered file list.
+      2. The file itself carries a do-not-edit header (`AUTO-GENERATED - DO
+         NOT EDIT`, `DO NOT EDIT`, `auto-generated`, cbindgen's
+         `Warning, this file is autogenerated`).
+      3. **Optional corroboration:** `.gitignore` lists the path. That file
+         has no suffix, so ArcticOwl may drop it. If it is in the diff, use
+         it; a `# Generated …` comment is extra signal, not the test
+         (Cython output sits under `# Python/Cython build artifacts`).
+         Never skip a table-path finding because `.gitignore` was filtered
+         out.
+
+      Always read `.pre-commit-config.yaml` and `.github/workflows/**` from
+      the PR when those files match the filter.
+
+      **HOW TO FLAG**: Name the generated file, name the input that should have
+      changed, and say the output must be regenerated rather than edited. Do not
+      review the *content* of the hand-edit as if it were source code — the
+      review comment is "this belongs in `<input>`", not "this line is wrong".
+
+      **NOT A VIOLATION**:
+      - Diffs to generated output that are exactly the regenerator's product,
+        landed together with the input change (see
+        `ud-generated-output-requires-input-change-in-same-pr`).
+      - Hand-written code that merely *lives beside* generated code:
+        `sf_core/src/protobuf/generated.rs` (an `include!` shim, not output),
+        `python/src/snowflake/connector/_internal/protobuf_gen/__init__.py` and
+        `proto_exception.py`, `python/src/snowflake/connector/_internal/connection_config_mixin.py`
+        (all behaviour deliberately kept out of the generated dataclass), and
+        `odbc/include/sf_odbc.h` (hand-maintained public header).
+      - `python/…/_internal/nanoarrow_cpp/**` **except** `arrow_stream_iterator.cpp`:
+        that tree is *vendored* upstream C++, not generated here (it is even
+        excluded from `clang-format` to keep upgrade diffs readable). Do not
+        demand a generator change for it. If a vendored file is patched locally,
+        that is a vendoring question, not a generator question — and outside
+        this ruleset.
+
+      ❌ **BAD** — patching generated Python protobuf so one field decodes
+      differently (edit the `.proto`, then regenerate):
+      ```python
+      # python/.../protobuf_gen/database_driver_v1_pb2.py  (generated)
+      - warehouse = _descriptor.FieldDescriptor(..., label=OPTIONAL, ...)
+      + warehouse = _descriptor.FieldDescriptor(..., label=REQUIRED, ...)
+      ```
+
+      ✅ **GOOD** — change the schema, let every language's generator follow:
+      ```proto
+      // protobuf/database_driver_v1.proto
+      message LoginRequest {
+        string account = 1;
+        string warehouse = 2;  // required: always sent by every wrapper
+      }
+      ```
+
+      ❌ **BAD** — hand-adding a connection parameter to the generated dataclass:
+      ```python
+      # python/src/snowflake/connector/connection_config.py
+      # "Auto-generated from PARAM_DEFS in sf_params_spec. DO NOT EDIT."
+      @dataclass
+      class ConnectionConfig(ConnectionConfigMixin):
+          account: str | None = None
+      +    disable_ocsp_checks: bool = False  # added by hand
+      ```
+
+      ✅ **GOOD** — add it to the registry the generator reads:
+      ```rust
+      // sf_params_spec/src/lib.rs
+      ParamDef {
+          canonical: "disable_ocsp_checks",
+          value_type: ValueType::Bool,
+          default: DefaultValue::Bool(false),
+          // …
+      },
+      ```
+      then run the `generate-connection-config` pre-commit hook and commit the
+      regenerated `connection_config.py` alongside the registry change.
+
+  - id: ud-generated-output-requires-input-change-in-same-pr
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: Three generated files are committed to the tree and are the
+      copy that ships — the build does not regenerate them for consumers. Their
+      being committed is a convenience, NOT a licence to edit them: an
+      output-only diff has no input to justify it, so the next hook run or CI
+      drift check reverts it (or fails the build).
+
+      **REQUIREMENT**: When a PR touches one of the committed generated outputs
+      below, the same PR MUST also change the input that produces it. An
+      output-only diff is a finding.
+
+      | Committed generated output | Regenerated by | Required input change in the same PR |
+      | --- | --- | --- |
+      | `python/src/snowflake/connector/connection_config.py` | `generate-connection-config` pre-commit hook (`cargo run -p sf_params_codegen --bin param_defs_export`), verified in CI by the "Verify ConnectionConfig is up to date" `git diff --exit-code` step in `.github/workflows/pre-commit.yml` | `sf_params_spec/src/**.rs` (the `PARAM_DEFS` registry) or `sf_params_codegen/src/**.rs` |
+      | `python/src/snowflake/connector/_core/sf_core_python.pyi` | `generate-python-stubs` pre-commit hook (`cargo run -p python_stub_gen`) | **`python_bridge/src/lib.rs` only** — that is the hook's `files:` pattern (`^python_bridge/src/lib\.rs$`). A change to `python_bridge/stub_gen/src/**` does **not** satisfy this row by itself. |
+      | `nodejs/src/core/binary-types.generated.ts` | `napi build` via `nodejs/scripts/build-snowflake-sdk-core.mjs`, which moves the emitted `.d.ts` into the committed source tree | the Rust `napi` bindings, or `nodejs/scripts/build-snowflake-sdk-core.mjs` |
+
+      **STUB GENERATOR vs HOOK `files:`**: `generate-python-stubs` currently
+      matches only `python_bridge/src/lib.rs`. Compare `generate-connection-config`,
+      whose `files:` is `^(sf_params_spec|sf_params_codegen)/src/.*\.rs$` so
+      both the registry *and* the generator retrigger it. A PR that edits
+      `python_bridge/stub_gen/src/**` and regenerates `sf_core_python.pyi`
+      without also touching `lib.rs` is a finding: the hook will not run on
+      the next stub_gen-only change, and there is no CI `.pyi` drift check.
+      The correct shape is one of:
+      1. Also change `python_bridge/src/lib.rs` (the surface the stub describes), or
+      2. Widen the hook in the same PR to
+         `^(python_bridge/src/lib\.rs|python_bridge/stub_gen/src/.*\.rs)$`
+         (mirroring the connection-config pattern). Option 2 is the durable
+         fix; do not treat stub_gen-only as a complete input change until
+         the pattern covers it.
+
+      **WHY THE COMMITTED COPY DOES NOT MAKE IT SOURCE**: `connection_config.py`
+      is byte-compared against a fresh regeneration in CI, so an output-only
+      edit fails the build outright. The `.pyi` stub and the Node `.d.ts` have no
+      drift gate — an output-only edit there lands quietly and then vanishes the
+      next time the hook or `napi build` runs, taking the intended fix with it.
+      Silent loss is the worse of the two outcomes, so hold all three to the
+      same standard.
+
+      **HOW TO FLAG**: State that the output is generated, name the missing
+      input, and name the regeneration command. Example: "`connection_config.py`
+      is generated from `PARAM_DEFS`, but this PR changes only the generated
+      file. Add the parameter to `sf_params_spec/src/lib.rs` and re-run the
+      `generate-connection-config` pre-commit hook; otherwise the CI drift check
+      will fail."
+
+      **NOT A VIOLATION**:
+      - Output diff **plus** the matching input diff — that is the correct shape,
+        even when the output diff is large or churns unrelated-looking lines
+        (generators reorder and reformat).
+      - A regeneration-only PR whose input change is a dependency or toolchain
+        bump — the version bump *is* the input change. The PR description
+        should say so. The bot MUST look for these even when they are the
+        only extra files:
+        - root `Cargo.lock` (`.` + `.lock`)
+        - `Cargo.toml` under generator crate roots listed in `allowed_folders`
+          (`sf_params_spec`, `sf_params_codegen`, `python_bridge`,
+          `proto_generator`, `odbc`, `sf_mini_core`)
+        - `nodejs/package.json` / `package-lock.json`
+        If those files are in the PR and name a `protoc` / `napi` / `prost`
+        (or equivalent) bump, do **not** treat the regenerated output as
+        output-only.
+      - Behavioural changes made in the hand-written companions the generators
+        deliberately leave alone: `connection_config_mixin.py` for the Python
+        dataclass, `nodejs/src/core/index.ts` for the Node bindings.
+
+      ❌ **BAD** — output-only PR:
+      ```
+      Files changed:
+        python/src/snowflake/connector/_core/sf_core_python.pyi   (+4)
+      ```
+      ```python
+      # sf_core_python.pyi — "auto-generated"
+      +def cancel_query(query_id: str) -> bool:
+      +    """Cancel a running query."""
+      ```
+      The stub now advertises a function the native module may not export, and
+      the next `generate-python-stubs` run deletes it.
+
+      ✅ **GOOD** — input and regenerated output together:
+      ```
+      Files changed:
+        python_bridge/src/lib.rs                                  (+18)
+        python/src/snowflake/connector/_core/sf_core_python.pyi    (+4)
+      ```
+      ```rust
+      // python_bridge/src/lib.rs
+      #[pyfunction]
+      fn cancel_query(query_id: &str) -> PyResult<bool> { /* … */ }
+      ```
+
+  - id: ud-no-committing-build-time-generated-artifacts
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: Generated files that `.gitignore` lists are produced on the
+      fly by `build.rs` / `hatch_build.py` / Gradle / MSBuild, and are ignored on
+      purpose: a committed copy immediately starts drifting from the `.proto`
+      and gives reviewers two candidate truths for the same wire format.
+
+      **REQUIREMENT**: Do not add a gitignored generated artifact to the repo,
+      and do not remove or narrow its `.gitignore` entry to make room for one.
+
+      **CANONICAL PATHS**: Do not maintain a second enumerated table. Flag a
+      commit of any **gitignored** output named in `ud-no-hand-edits-to-generated-code`
+      (Python/Java/C# protobuf, `version_generated.h`,
+      `arrow_stream_iterator.cpp`, `ci/test_matrix/generated/**`). Detect
+      those files by path in the diff, not by reading `.gitignore`. If
+      `.gitignore` is in the filtered diff, also flag deleting/narrowing the
+      matching ignore line. If `.gitignore` was dropped by the extension
+      filter, still flag the force-added artifact; skip ignore-line-only
+      findings.
+
+      Do **not** treat `sf_core/src/protobuf_gen/database_driver_v1.rs` as
+      cargo output (`build.rs` writes `$OUT_DIR`). If a PR still force-adds
+      that leftover gitignore path (or un-ignores it), flag it as committing
+      a stale dump, not as the Rust protobuf source of truth.
+
+      Committing one is usually a workaround: the generator is slow, or fails on
+      a platform, or a build step is missing from CI. Fix the build. If the
+      artifact genuinely needs to become committed source of truth, that is a
+      deliberate process change — it needs the regeneration hook plus a CI drift
+      check described in `ud-new-generated-output-needs-marker-and-regen-path`,
+      argued in the PR description, not a `git add -f`.
+
+      **HOW TO FLAG**: Name the generated path in the diff. If `.gitignore`
+      is in context, point at the ignore line too. Ask what build problem
+      the commit is working around.
+
+      **NOT A VIOLATION**: Adding, tightening, or re-commenting a `.gitignore`
+      entry for a newly generated artifact — that is exactly the right direction.
+
+      ❌ **BAD:**
+      ```
+      Files changed:
+        .gitignore                                                  (-1)
+        python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.py  (+…)
+      ```
+      ```diff
+       # Generated protobuf Python code (built on the fly via hatch_build.py)
+      -python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.py
+      ```
+
+      ✅ **GOOD** — fix the generation step instead:
+      ```yaml
+      # .github/workflows/pre-commit.yml — make the generator run where it was missing
+      - run: |
+          cargo run -p proto_generator --bin proto_generator -- \
+            --generator python \
+            --input protobuf/database_driver_v1.proto \
+            --output python/src/snowflake/connector/_internal/protobuf_gen
+      ```
+
+  - id: ud-new-generated-output-needs-marker-and-regen-path
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: A generated file that does not announce itself is a trap —
+      the next contributor edits it in good faith and loses the work. Every new
+      generator output must be self-identifying and must have exactly one
+      documented way to be reproduced.
+
+      **REQUIREMENT**: When a PR introduces a new generator (or a new output
+      from an existing one), the output MUST have all three of:
+
+      1. **A do-not-edit header** in the output's own comment syntax, naming the
+         generator and its input — matching the existing wording:
+         - `"""Auto-generated from PARAM_DEFS in sf_params_spec. DO NOT EDIT."""`
+         - `/** AUTO-GENERATED - DO NOT EDIT. … Generated by scripts/build-snowflake-sdk-core.mjs */`
+         - cbindgen's `autogen_warning` in `sf_mini_core/cbindgen.toml`
+      2. **A reproduction path**, one of:
+         - *build-time output* — generated by `build.rs` / `hatch_build.py` /
+           Gradle / MSBuild **and** listed in `.gitignore` under a
+           `# Generated … (built on the fly via …)` comment; or
+         - *committed output* — a `.pre-commit-config.yaml` hook that
+           regenerates and `git add`s it, with a `files:` pattern covering
+           **every** input (note how `generate-connection-config` matches
+           `^(sf_params_spec|sf_params_codegen)/src/.*\.rs$`, both the registry
+           and the generator, so a future module split does not silently stop
+           triggering it). **Counter-example:** `generate-python-stubs` — do
+           not restate its `files:` regex here; follow
+           `ud-generated-output-requires-input-change-in-same-pr`. A new
+           committed output whose hook misses a generator crate is incomplete
+           — widen the pattern before treating that crate as a satisfying
+           input. **Plus** a CI drift check that regenerates and asserts
+           `git diff --exit-code`.
+      3. **Documentation** of the manual invocation, next to the sibling
+         generators — `proto_generator/README.md` for anything driven off
+         `protobuf/database_driver_v1.proto`, or the generator crate's own
+         README / module docs otherwise.
+
+      A committed output with a regeneration hook but no drift check is the
+      specific gap worth flagging: nothing then stops a contributor who skips
+      pre-commit from landing a stale or hand-edited copy.
+
+      **HOW TO FLAG**: Say which of the three is missing and point at the closest
+      existing example to copy.
+
+      **NOT A VIOLATION**:
+      - A generator whose output is written to a temp dir or `OUT_DIR` and
+        never lands in the source tree — the Rust protobuf output consumed
+        through `include!(concat!(env!("OUT_DIR"), …))` in
+        `sf_core/src/protobuf/generated.rs`. There is no file for anyone to
+        hand-edit, so only the documentation requirement applies. Leftover
+        `.gitignore` / README `--output sf_core/src/protobuf_gen/` is **not**
+        the build path; do not treat it as generated source.
+      - Packaging-only cbindgen: `scripts/package_minicore.sh` writes
+        `build/sf_mini_core.h` (gitignored with `/build`). That is not
+        `OUT_DIR` and not a crate-tree header. A PR that adds
+        `sf_mini_core.h` under the crate or repo root is a **new committed
+        output** and must satisfy the three requirements above.
+
+      ❌ **BAD** — new committed output, no marker, no hook, no drift check:
+      ```python
+      # python/src/snowflake/connector/_internal/error_codes.py
+      ERROR_CODES = {
+          251001: "Failed to convert current row",
+      }
+      ```
+
+      ✅ **GOOD** — marker, hook, drift check, docs:
+      ```python
+      # python/src/snowflake/connector/_internal/error_codes.py
+      """Auto-generated from ERROR_DEFS in sf_error_spec. DO NOT EDIT.
+
+      Regenerated by the generate-error-codes pre-commit hook.
+      """
+      ```
+      ```yaml
+      # .pre-commit-config.yaml
+      -   id: generate-error-codes
+          entry: bash -c 'set -euo pipefail; cargo run -p sf_error_codegen > python/src/snowflake/connector/_internal/error_codes.py && git add python/src/snowflake/connector/_internal/error_codes.py'
+          pass_filenames: false
+          files: ^(sf_error_spec|sf_error_codegen)/src/.*\.rs$
+          language: system
+      ```
+      ```yaml
+      # .github/workflows/pre-commit.yml
+      - name: Verify error_codes.py is up to date
+        run: |
+          set -euo pipefail
+          target=python/src/snowflake/connector/_internal/error_codes.py
+          cargo run -p sf_error_codegen > "$target"
+          if ! git diff --exit-code -- "$target"; then
+            echo "::error::error_codes.py is out of date. Run the 'generate-error-codes' pre-commit hook and commit the result."
+            exit 1
+          fi
+      ```
