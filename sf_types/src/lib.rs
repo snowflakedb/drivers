@@ -7,30 +7,35 @@
 //! crates, so `odbc`, `nodejs_bridge`, and `python_bridge` can share this one
 //! decode step instead of each maintaining their own.
 //!
-//! DATE and BOOLEAN were the first types moved here. TIMESTAMP_TZ follows the
-//! same READ seam (`SnowflakeTimestampTz`); NTZ/LTZ still use the Level-2 epoch
-//! helpers from this crate without their own materializer types yet.
+//! DATE, BOOLEAN, TIME, and TIMESTAMP_TZ are here now. NTZ/LTZ still use the
+//! Level-2 epoch helpers from this crate without their own materializer types
+//! yet.
 //!
 //! A reader has two layers worth naming. The *materializer*
 //! ([`ReadArrowType::read_arrow_type`]) produces a checked chrono value and is
-//! what most front ends want. Below it sit pure integer *primitives* (see
-//! [`civil`]) that a front end with a materialization-free hot path can call
-//! directly. Sharing the primitive — not just the materializer — keeps the
-//! calendar/clock math in one place across every driver.
+//! what most front ends want. Below it sit pure integer *primitives* — the
+//! calendar kernel in [`civil`] and the clock kernel in [`clock`] — that a
+//! front end with a materialization-free hot path can call directly. Sharing
+//! the primitive — not just the materializer — keeps the calendar/clock math in
+//! one place across every driver.
 
 mod boolean;
 mod civil;
+mod clock;
 mod date;
 mod error;
 mod nullable;
+mod time;
 mod timestamp;
 mod traits;
 
 pub use boolean::SnowflakeBoolean;
 pub use civil::civil_from_unix_days;
+pub use clock::split_time_raw;
 pub use date::SnowflakeDate;
 pub use error::{InvalidArrowValueSnafu, NullValueSnafu, ReadArrowError};
 pub use nullable::Nullable;
+pub use time::SnowflakeTime;
 pub use timestamp::{
     SnowflakeTimestampTz, TZ_OFFSET_BIAS_MINUTES, TZ_OFFSET_MAX_RAW, TzInstant,
     read_scaled_timestamp, read_struct_timestamp, split_scaled_epoch,

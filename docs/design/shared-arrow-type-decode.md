@@ -12,9 +12,9 @@ because — unlike DATE — it needs metadata to decode and it collides with the
 in-flight ODBC CHAR-fetch performance stack (#1206 → #1422).
 
 This note captures the seam, the metadata model, the two levels of sharing,
-the interaction with the performance work, and the sequencing choices. It is
-descriptive of a direction, not a committed plan — no TIME code has been
-written.
+the interaction with the performance work, and the sequencing choices. DATE and
+TIME are both now implemented in `sf_types`; the sections below describe the
+seam they share and record the decisions that shaped it.
 
 ## The READ / WRITE seam
 
@@ -109,9 +109,11 @@ its **stacked follow-up shares Level 2 for DATE** — it lifts
 `civil_from_unix_days` (the `Date32` days → `(y, m, d)` kernel, Howard Hinnant's
 `civil_from_days` shifted to the Unix epoch) into `sf_types::civil` and rebuilds
 `SnowflakeDate::read_arrow_type` on top of it, so the materializer and the ODBC
-hot path share one implementation of the calendar math rather than two. The
-TIME primitive (`split_time_raw`) still lives in ODBC and follows the same shape
-when TIME is done.
+hot path share one implementation of the calendar math rather than two. TIME
+follows the identical shape: its Level-2 primitive `split_time_raw` lives in
+`sf_types::clock` and the `SnowflakeTime { scale }` materializer in
+`sf_types::time` sits on top of it, so when the ODBC CHAR kernel for TIME lands
+it reads the same `(secs, nanos)` parts the materializer does.
 
 Observation worth keeping: almost no FFI boundary's *final* product is a chrono
 value — each wants integer parts, an epoch scalar, or a string. So the Level-2
@@ -260,13 +262,17 @@ drivers.
 
 ## Status
 
-- DATE: Level 1 shared (`sf_types::SnowflakeDate`, PR #1438, draft). Level-2
+- DATE: Level 1 shared (`sf_types::SnowflakeDate`, PR #1438). Level-2
   primitive (`sf_types::civil_from_unix_days`) shared in the stacked follow-up
   #1468; `read_arrow_type` now sits on it. The ODBC perf stack drops its local
   copy on rebase.
-- TIME: analyzed here; not implemented. Blocked on the sequencing decision above.
-  Follows DATE's shape — share `split_time_raw` (Level 2) plus the
-  `SnowflakeTime { scale }` materializer (Level 1).
+- TIME: **implemented**, same shape as DATE — Level-2 `split_time_raw` in
+  `sf_types::clock` (widens the raw fraction to nanoseconds so the
+  `(secs, nanos)` parts feed the `NaiveTime` materializer and a parts-only
+  consumer like JDBC's `LocalTime::ofNanoOfDay` alike), plus the
+  `SnowflakeTime { scale }` materializer in `sf_types::time` (Level 1). `scale`
+  is carried on the reader as Kind-1 metadata, parsed once per column. ODBC is
+  re-pointed at the shared reader with its C-buffer/wire writers kept local.
 - TIMESTAMP_TZ: Level 1 (`sf_types::SnowflakeTimestampTz`) plus Level-2 epoch
   split (`split_scaled_epoch`, `read_struct_timestamp`, `read_scaled_timestamp`).
   Biased offsets outside `0..=2880` are decode errors. ODBC WRITE/policy and
