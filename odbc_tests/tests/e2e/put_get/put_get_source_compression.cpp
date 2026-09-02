@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -21,10 +20,10 @@ static fs::path compression_tests_dir() { return test_utils::shared_test_data_di
 
 static std::pair<std::string, fs::path> test_file(const std::string& compression_type) {
   static const std::map<std::string, std::string> compression_map = {
-      {"GZIP", "test_data.csv.gz"},         {"BZIP2", "test_data.csv.bz2"},
-      {"BROTLI", "test_data.csv.br"},       {"ZSTD", "test_data.csv.zst"},
-      {"DEFLATE", "test_data.csv.deflate"}, {"RAW_DEFLATE", "test_data.csv.raw_deflate"},
-      {"LZMA", "test_data.csv.xz"},         {"NONE", "test_data.csv"}};
+      {"gzip", "test_data.csv.gz"},         {"bzip2", "test_data.csv.bz2"},
+      {"brotli", "test_data.csv.br"},       {"zstd", "test_data.csv.zst"},
+      {"deflate", "test_data.csv.deflate"}, {"raw_deflate", "test_data.csv.raw_deflate"},
+      {"lzma", "test_data.csv.xz"},         {"none", "test_data.csv"}};
 
   auto it = compression_map.find(compression_type);
   if (it == compression_map.end()) {
@@ -41,7 +40,7 @@ TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_AUTO"));
 
   // And File with standard type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE)
-  const std::vector<std::string> types = {"GZIP", "BZIP2", "BROTLI", "ZSTD", "DEFLATE"};
+  const std::vector<std::string> types = {"gzip", "bzip2", "brotli", "zstd", "deflate"};
 
   for (const auto& comp : types) {
     auto [filename, file] = test_file(comp);
@@ -53,15 +52,9 @@ TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION
     // Then Target compression has correct type and all PUT results are correct
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == expected_put_source(file));
 
-    if (comp == "DEFLATE") {
-      CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
-      compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "DEFLATE");
-      compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "DEFLATE");
-    } else {
-      CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
-      compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), comp);
-      compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), comp);
-    }
+    CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
+    CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX) == comp);
+    CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX) == comp);
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
   }
 }
@@ -72,7 +65,7 @@ TEST_CASE("should upload compressed files with SOURCE_COMPRESSION set to explici
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_EXPLICIT"));
 
   // And File with standard type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE)
-  const std::vector<std::string> types = {"GZIP", "BZIP2", "BROTLI", "ZSTD", "DEFLATE", "RAW_DEFLATE"};
+  const std::vector<std::string> types = {"gzip", "bzip2", "brotli", "zstd", "deflate", "raw_deflate"};
 
   for (const auto& comp : types) {
     auto [filename, file] = test_file(comp);
@@ -84,8 +77,8 @@ TEST_CASE("should upload compressed files with SOURCE_COMPRESSION set to explici
     // Then Target compression has correct type and all PUT results are correct
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == expected_put_source(file));
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
-    compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), comp);
-    compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), comp);
+    CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX) == comp);
+    CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX) == comp);
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
   }
 }
@@ -97,7 +90,7 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to AUTO_DETECT a
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_AUTO_NO_AC"));
 
   // And Uncompressed file
-  auto [filename, file] = test_file("NONE");
+  auto [filename, file] = test_file("none");
 
   // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to FALSE
   auto stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage +
@@ -106,8 +99,8 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to AUTO_DETECT a
   // Then File is not compressed
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == expected_put_source(file));
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "NONE");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX) == "none");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX) == "none");
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
 }
 
@@ -117,7 +110,7 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to NONE and AUTO
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_NONE_NO_AC"));
 
   // And Uncompressed file
-  auto [filename, file] = test_file("NONE");
+  auto [filename, file] = test_file("none");
 
   // When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to FALSE
   auto stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage +
@@ -126,8 +119,8 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to NONE and AUTO
   // Then File is not compressed
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == expected_put_source(file));
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "NONE");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX) == "none");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX) == "none");
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
 }
 
@@ -138,7 +131,7 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to AUTO
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_AUTO_AC"));
 
   // And Uncompressed file
-  auto [filename, file] = test_file("NONE");
+  auto [filename, file] = test_file("none");
 
   // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to TRUE
   auto stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage +
@@ -147,8 +140,8 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to AUTO
   // Then Target compression has GZIP type and all PUT results are correct
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == expected_put_source(file));
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename + ".gz");
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX) == "none");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX) == "gzip");
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
 }
 
@@ -159,7 +152,7 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_NONE_AC"));
 
   // And Uncompressed file
-  auto [filename, file] = test_file("NONE");
+  auto [filename, file] = test_file("none");
 
   // When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to TRUE
   auto stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage +
@@ -168,8 +161,8 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE
   // Then Target compression has GZIP type and all PUT results are correct
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == expected_put_source(file));
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename + ".gz");
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX) == "none");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX) == "gzip");
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
 }
 
@@ -179,7 +172,7 @@ TEST_CASE("should silently upload file with unsupported compression type as unco
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_UNSUPPORTED"));
 
   // And File compressed with unsupported format
-  auto [filename, file] = test_file("LZMA");
+  auto [filename, file] = test_file("lzma");
 
   // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT
   auto put_stmt =
@@ -188,8 +181,8 @@ TEST_CASE("should silently upload file with unsupported compression type as unco
   // Then Upload succeeds and the file is treated as uncompressed source
   CHECK(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_SOURCE_IDX) == expected_put_source(file));
   CHECK(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_TARGET_IDX) == filename + ".gz");
-  compare_compression_type(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
-  compare_compression_type(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");
+  CHECK(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_SOURCE_COMPRESSION_IDX) == "none");
+  CHECK(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_TARGET_COMPRESSION_IDX) == "gzip");
   CHECK(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
 
   // And Downloaded payload decompresses to the original file bytes
