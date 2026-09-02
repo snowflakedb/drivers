@@ -255,7 +255,7 @@ class PoolDataSourceConfigurationTests {
             "false",
             (Consumer<SnowflakePooledConnectionDataSource>) ds -> ds.setEnablePatternSearch(false)),
         Arguments.of(
-            "JDBC_TREAT_DECIMAL_AS_INT",
+            "JDBC_ARROW_TREAT_DECIMAL_AS_INT",
             "false",
             (Consumer<SnowflakePooledConnectionDataSource>)
                 ds -> ds.setArrowTreatDecimalAsInt(false)),

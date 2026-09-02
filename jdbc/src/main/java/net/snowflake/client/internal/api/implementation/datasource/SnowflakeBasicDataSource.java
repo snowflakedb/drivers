@@ -429,7 +429,7 @@ public class SnowflakeBasicDataSource
 
   @Override
   public void setArrowTreatDecimalAsInt(boolean treatDecimalAsInt) {
-    setProperty(Parameter.JDBC_TREAT_DECIMAL_AS_INT, treatDecimalAsInt);
+    setProperty(Parameter.JDBC_ARROW_TREAT_DECIMAL_AS_INT, treatDecimalAsInt);
   }
 
   @Override

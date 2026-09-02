@@ -165,7 +165,7 @@ abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
   }
 
   protected boolean shouldTreatDecimalAsInt() {
-    return context == null || context.isTreatDecimalAsInt();
+    return context == null || context.isTreatDecimalAsInt() || context.isArrowTreatDecimalAsInt();
   }
 
   @Override

@@ -107,33 +107,60 @@ public class IntToFixedConverterTest extends BaseConverterTest {
   }
 
   /**
-   * With {@code JDBC_TREAT_DECIMAL_AS_INT=false}, getObject on a scale-0 FIXED column returns a
-   * {@code BigDecimal} (scale 0) rather than a {@code long}, matching legacy snowflake-jdbc and the
-   * {@code DECIMAL} column type the metadata then reports. Regression guard for the previously
-   * inconsistent state where the value was always a {@code long} while metadata said {@code
-   * DECIMAL}.
+   * With both decimal knobs off, getObject on a scale-0 FIXED column returns a {@code BigDecimal}
+   * (scale 0) rather than a {@code long}, matching legacy snowflake-jdbc and the {@code DECIMAL}
+   * column type the metadata then reports. Regression guard for the previously inconsistent state
+   * where the value was always a {@code long} while metadata said {@code DECIMAL}.
    */
   @Test
-  public void shouldReturnBigDecimalFromToObjectForScaleZeroFixedWhenTreatDecimalAsIntFalse()
+  public void shouldReturnBigDecimalFromToObjectForScaleZeroFixedWhenBothDecimalFlagsAreFalse()
       throws Exception {
     IntVector vector = scaleZeroVectorWithSingleValue(42);
-    DataConversionContext treatDecimalAsIntFalse =
-        new DataConversionContext() {
-          @Override
-          public boolean isTreatDecimalAsInt() {
-            return false;
-          }
-        };
 
-    ArrowVectorConverter converter = new IntToFixedConverter(vector, 0, treatDecimalAsIntFalse);
+    ArrowVectorConverter converter = new IntToFixedConverter(vector, 0, decimalFlags(false, false));
     Object value = converter.toObject(0);
 
     assertInstanceOf(
         BigDecimal.class,
         value,
-        "JDBC_TREAT_DECIMAL_AS_INT=false must materialize a BigDecimal, matching legacy snowflake-jdbc");
+        "both decimal flags false must materialize a BigDecimal, matching legacy snowflake-jdbc");
     assertEquals(BigDecimal.valueOf(42L, 0), value);
     vector.clear();
+  }
+
+  /**
+   * snowflake-jdbc's Arrow converters OR {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT} with {@code
+   * JDBC_TREAT_DECIMAL_AS_INT}, so the Arrow-only property alone is enough to keep values integral.
+   */
+  @Test
+  public void shouldReturnLongFromToObjectForScaleZeroFixedWhenOnlyArrowDecimalFlagIsTrue()
+      throws Exception {
+    IntVector vector = scaleZeroVectorWithSingleValue(42);
+
+    ArrowVectorConverter converter = new IntToFixedConverter(vector, 0, decimalFlags(false, true));
+    Object value = converter.toObject(0);
+
+    assertInstanceOf(
+        Long.class,
+        value,
+        "JDBC_ARROW_TREAT_DECIMAL_AS_INT=true must materialize a long even when JDBC_TREAT_DECIMAL_AS_INT=false");
+    assertEquals(42L, value);
+    vector.clear();
+  }
+
+  private static DataConversionContext decimalFlags(
+      boolean treatDecimalAsInt, boolean arrowTreatDecimalAsInt) {
+    return new DataConversionContext() {
+      @Override
+      public boolean isTreatDecimalAsInt() {
+        return treatDecimalAsInt;
+      }
+
+      @Override
+      public boolean isArrowTreatDecimalAsInt() {
+        return arrowTreatDecimalAsInt;
+      }
+    };
   }
 
   private IntVector scaleZeroVectorWithSingleValue(int val) {

@@ -31,8 +31,8 @@ class SnowflakeDataSourceReferenceParityTest {
    * setEnableClientRequestMfaToken}, and {@code setEnableClientStoreTemporaryCredential} (see BD#5;
    * replaced by {@code setClientStoreTemporaryCredential}).
    *
-   * <p>{@code setArrowTreatDecimalAsInt} stores {@code JDBC_TREAT_DECIMAL_AS_INT} rather than
-   * legacy {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT}.
+   * <p>{@code setArrowTreatDecimalAsInt} stores {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT}, matching
+   * snowflake-jdbc.
    */
   private static final Set<String> REFERENCE_SETTERS =
       Collections.unmodifiableSet(
