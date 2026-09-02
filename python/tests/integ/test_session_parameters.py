@@ -190,8 +190,8 @@ class TestSessionParametersMultistatement:
         cursor.execute(sql)
 
         # All ALTER SESSION parameters should be updated
-        assert connection._session_parameters["AUTOCOMMIT"] == "false"
-        assert connection._session_parameters["JSON_INDENT"] == "4"
+        assert connection._session_parameters["AUTOCOMMIT"] is False
+        assert connection._session_parameters["JSON_INDENT"] == 4
         assert connection._session_parameters["CLIENT_TIMESTAMP_TYPE_MAPPING"] == "TIMESTAMP_TZ"
 
     def test_same_parameter_set_multiple_times(self, connection):
@@ -219,5 +219,5 @@ class TestSessionParametersMultistatement:
         )
 
         assert connection._session_parameters["QUERY_TAG"] == "quoted value"
-        assert connection._session_parameters["JSON_INDENT"] == "4"
-        assert connection._session_parameters["AUTOCOMMIT"] in ("true", "True", "TRUE")
+        assert connection._session_parameters["JSON_INDENT"] == 4
+        assert connection._session_parameters["AUTOCOMMIT"] is True

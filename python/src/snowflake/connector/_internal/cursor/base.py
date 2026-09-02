@@ -584,7 +584,7 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     def timestamp_output_format(self) -> str | None:
         """The session's ``TIMESTAMP_OUTPUT_FORMAT`` parameter value."""
-        return self._connection._session_parameters["TIMESTAMP_OUTPUT_FORMAT"]
+        return self._connection._session_parameters._get_string("TIMESTAMP_OUTPUT_FORMAT")
 
     @property
     @api_telemetry
@@ -593,7 +593,10 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
 
         Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
         """
-        return self._connection._session_parameters["TIMESTAMP_LTZ_OUTPUT_FORMAT"] or self.timestamp_output_format
+        return (
+            self._connection._session_parameters._get_string("TIMESTAMP_LTZ_OUTPUT_FORMAT")
+            or self.timestamp_output_format
+        )
 
     @property
     @api_telemetry
@@ -602,7 +605,10 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
 
         Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
         """
-        return self._connection._session_parameters["TIMESTAMP_TZ_OUTPUT_FORMAT"] or self.timestamp_output_format
+        return (
+            self._connection._session_parameters._get_string("TIMESTAMP_TZ_OUTPUT_FORMAT")
+            or self.timestamp_output_format
+        )
 
     @property
     @api_telemetry
@@ -611,31 +617,34 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
 
         Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
         """
-        return self._connection._session_parameters["TIMESTAMP_NTZ_OUTPUT_FORMAT"] or self.timestamp_output_format
+        return (
+            self._connection._session_parameters._get_string("TIMESTAMP_NTZ_OUTPUT_FORMAT")
+            or self.timestamp_output_format
+        )
 
     @property
     @api_telemetry
     def date_output_format(self) -> str | None:
         """The session's ``DATE_OUTPUT_FORMAT`` parameter value."""
-        return self._connection._session_parameters["DATE_OUTPUT_FORMAT"]
+        return self._connection._session_parameters._get_string("DATE_OUTPUT_FORMAT")
 
     @property
     @api_telemetry
     def time_output_format(self) -> str | None:
         """The session's ``TIME_OUTPUT_FORMAT`` parameter value."""
-        return self._connection._session_parameters["TIME_OUTPUT_FORMAT"]
+        return self._connection._session_parameters._get_string("TIME_OUTPUT_FORMAT")
 
     @property
     @api_telemetry
     def timezone(self) -> str | None:
         """The session's ``TIMEZONE`` parameter value."""
-        return self._connection._session_parameters["TIMEZONE"]
+        return self._connection._session_parameters._get_string("TIMEZONE")
 
     @property
     @api_telemetry
     def binary_output_format(self) -> str | None:
         """The session's ``BINARY_OUTPUT_FORMAT`` parameter value (``HEX`` or ``BASE64``)."""
-        return self._connection._session_parameters["BINARY_OUTPUT_FORMAT"]
+        return self._connection._session_parameters._get_string("BINARY_OUTPUT_FORMAT")
 
     # ------------------------------------------------------------------
     # Error handling

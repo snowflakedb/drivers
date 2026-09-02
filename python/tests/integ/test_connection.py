@@ -535,13 +535,13 @@ class TestAutocommitAlterSession:
     def test_set_autocommit_true_updates_session_parameter(self, connection):
         """Test that set_autocommit(True) sets the AUTOCOMMIT session parameter."""
         connection.set_autocommit(True)
-        assert connection._session_parameters["AUTOCOMMIT"] == "true"
+        assert connection._session_parameters["AUTOCOMMIT"] is True
 
     @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/_session_parameters proxys")
     def test_set_autocommit_false_updates_session_parameter(self, connection):
         """Test that set_autocommit(False) sets the AUTOCOMMIT session parameter."""
         connection.set_autocommit(False)
-        assert connection._session_parameters["AUTOCOMMIT"] == "false"
+        assert connection._session_parameters["AUTOCOMMIT"] is False
 
     def test_autocommit_on_persists_without_explicit_commit(self, connection, tmp_schema):
         """Test that with autocommit ON, each statement is committed automatically."""

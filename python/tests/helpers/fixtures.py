@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,6 +10,8 @@ import pytest
 
 if TYPE_CHECKING:
     from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+        ConnectionGetAllParametersResponse,
+        ConnectionGetParameterResponse,
         ExecuteQueryResponse,
     )
 
@@ -28,6 +30,32 @@ def _make_execute_response(query_id: str = "fake-qid") -> ExecuteQueryResponse:
             result_set_handle=ResultSetHandle(id=1),
             result_descriptor=ResultSetDescriptor(query_id=query_id),
         )
+    )
+
+
+def make_parameter_response(value: Any = None) -> ConnectionGetParameterResponse:
+    """Build a ConnectionGetParameterResponse. ``value=None`` means the parameter is
+    unset (matches a server that never sent it), not a typed null.
+    """
+    from snowflake.connector._internal.config_utils import create_config_setting
+    from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+        ConnectionGetParameterResponse,
+    )
+
+    if value is None:
+        return ConnectionGetParameterResponse()
+    return ConnectionGetParameterResponse(typed_value=create_config_setting(value, allow_none=False))
+
+
+def make_all_parameters_response(parameters: dict[str, Any]) -> ConnectionGetAllParametersResponse:
+    """Build a ConnectionGetAllParametersResponse from a dict of native Python values."""
+    from snowflake.connector._internal.config_utils import create_config_setting
+    from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+        ConnectionGetAllParametersResponse,
+    )
+
+    return ConnectionGetAllParametersResponse(
+        typed_parameters={k: create_config_setting(v, allow_none=False) for k, v in parameters.items()}
     )
 
 
@@ -50,7 +78,7 @@ def mock_db_api():
     db_api = MagicMock()
     db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
     db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
-    db_api.connection_get_parameter.return_value = MagicMock(value="")
+    db_api.connection_get_parameter.return_value = make_parameter_response()
     db_api.connection_is_closed.return_value = ConnectionIsClosedResponse(is_closed=False)
     db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=False)
     db_api.connection_set_options.return_value = ConnectionSetOptionsResponse(warnings=[])
@@ -86,7 +114,7 @@ def mock_async_db_api():
     db_api.connection_set_options = AsyncMock(return_value=MagicMock(warnings=[]))
     db_api.connection_set_session_parameters = AsyncMock()
     db_api.connection_init = AsyncMock()
-    db_api.connection_get_parameter = AsyncMock(return_value=MagicMock(value=""))
+    db_api.connection_get_parameter = AsyncMock(return_value=make_parameter_response())
 
     def _connection_is_closed(request):
         return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
@@ -96,7 +124,7 @@ def mock_async_db_api():
     db_api.connection_close = AsyncMock()
     db_api.connection_release = AsyncMock()
     db_api.database_release = AsyncMock()
-    db_api.connection_get_all_parameters = AsyncMock(return_value=MagicMock(parameters={}))
+    db_api.connection_get_all_parameters = AsyncMock(return_value=make_all_parameters_response({}))
     db_api.connection_get_info = AsyncMock(return_value=MagicMock(ListFields=lambda: []))
     db_api.statement_new = AsyncMock(return_value=MagicMock(stmt_handle=StatementHandle(id=1)))
     db_api.statement_set_sql_query = AsyncMock()
@@ -120,9 +148,9 @@ def mock_async_db_api():
 
     sync_db_api.connection_is_closed = MagicMock(side_effect=_sync_connection_is_closed)
     sync_db_api.connection_is_expired = MagicMock(return_value=ConnectionIsExpiredResponse(is_expired=False))
-    sync_db_api.connection_get_all_parameters = MagicMock(return_value=MagicMock(parameters={}))
+    sync_db_api.connection_get_all_parameters = MagicMock(return_value=make_all_parameters_response({}))
     sync_db_api.connection_get_info = MagicMock(return_value=MagicMock(ListFields=lambda: []))
-    sync_db_api.connection_get_parameter = MagicMock(return_value=MagicMock(value=""))
+    sync_db_api.connection_get_parameter = MagicMock(return_value=make_parameter_response())
 
     old_sync_client = core_driver._client
     core_driver.client = sync_db_api

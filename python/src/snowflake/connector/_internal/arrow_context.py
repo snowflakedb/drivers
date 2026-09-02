@@ -83,7 +83,7 @@ class ArrowConverterContext:
     def create(cls, connection: Connection | AsyncConnection) -> ArrowConverterContext:
         """Create a context whose timezone resolves lazily from the session."""
         return cls(
-            timezone_supplier=lambda: connection._session_parameters[PARAMETER_TIMEZONE],
+            timezone_supplier=lambda: connection._session_parameters._get_string(PARAMETER_TIMEZONE),
         )
 
     @property

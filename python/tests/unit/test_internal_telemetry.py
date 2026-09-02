@@ -12,6 +12,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from snowflake.connector.version import __version__
 from tests.compatibility import is_new_driver
+from tests.helpers.fixtures import make_parameter_response
 
 
 pytestmark = pytest.mark.skipif(not is_new_driver(), reason="Requires universal driver")
@@ -29,7 +30,7 @@ class TestConnectionInitIdentity:
         db_api = MagicMock()
         db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
         db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
-        db_api.connection_get_parameter.return_value = MagicMock(value="")
+        db_api.connection_get_parameter.return_value = make_parameter_response()
 
         old_client = core_driver._client
         core_driver.client = db_api

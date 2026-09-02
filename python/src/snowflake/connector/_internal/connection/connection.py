@@ -48,6 +48,21 @@ def clamp_client_prefetch_threads(value: int) -> int:
     return value
 
 
+def _session_param_is_true(value: bool | str | None) -> bool:
+    """Return True for a native ``True`` or the string ``"true"`` (case-insensitive).
+
+    A session-parameter value is a native bool once read through
+    ``SessionParametersProxy``, or a plain string when supplied via a
+    caller-side override; both spellings of ``"true"``/``"false"`` are
+    accepted case-insensitively.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() == "true"
+    return False
+
+
 class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
     """Connection members shared by sync and async connection classes.
 
@@ -385,7 +400,7 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
         except Exception:
             logger.debug("Failed to read CLIENT_TELEMETRY_ENABLED session parameter")
             return False
-        return value is not None and value.lower() == "true"
+        return _session_param_is_true(value)
 
     @property
     @api_telemetry
@@ -488,7 +503,7 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
 
     def _autocommit_enabled(self) -> bool:
         value = self._session_parameters["AUTOCOMMIT"]
-        return value is not None and value.lower() == "true"
+        return _session_param_is_true(value)
 
     @property
     def _autocommit(self) -> bool:
