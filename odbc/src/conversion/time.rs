@@ -1,4 +1,4 @@
-use arrow::array::{Array, PrimitiveArray};
+use arrow::array::PrimitiveArray;
 use arrow::datatypes::ArrowPrimitiveType;
 use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
 use odbc_sys as sql;
@@ -8,7 +8,7 @@ use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
     BindingError, BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu,
-    InvalidArrowValueSnafu, InvalidDatetimeValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    InvalidDatetimeValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::int_fmt;
@@ -49,9 +49,7 @@ fn format_time_ascii<'a>(time: &NaiveTime, buf: &'a mut [u8; 32]) -> &'a str {
     unsafe { std::str::from_utf8_unchecked(&buf[..p]) }
 }
 
-pub(crate) struct SnowflakeTime {
-    pub(crate) scale: u32,
-}
+pub(crate) use sf_types::SnowflakeTime;
 
 impl SnowflakeType for SnowflakeTime {
     type Representation<'a> = NaiveTime;
@@ -66,40 +64,9 @@ where
         array: &'a PrimitiveArray<T>,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        if array.is_null(row_idx) {
-            return Err(ReadArrowError::NullValue {
-                location: snafu::location!(),
-            });
-        }
-        if self.scale > 9 {
-            return InvalidArrowValueSnafu {
-                reason: format!("TIME scale {} exceeds maximum of 9", self.scale),
-            }
-            .fail();
-        }
-        let raw: i64 = array.value(row_idx).into();
-        if raw < 0 {
-            return InvalidArrowValueSnafu {
-                reason: format!("negative TIME value: {raw}"),
-            }
-            .fail();
-        }
-        let divisor = 10i64.pow(self.scale);
-        let secs_i64 = raw / divisor;
-        if !(0..86_400).contains(&secs_i64) {
-            return InvalidArrowValueSnafu {
-                reason: format!("TIME seconds {secs_i64} out of range 0..86399"),
-            }
-            .fail();
-        }
-        let secs = secs_i64 as u32;
-        let frac = (raw % divisor) as u32;
-        let nanos = frac * 10u32.pow(9 - self.scale);
-        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).with_context(|| {
-            InvalidArrowValueSnafu {
-                reason: format!("out-of-range TIME: secs={secs}, nanos={nanos}"),
-            }
-        })
+        Ok(sf_types::ReadArrowType::read_arrow_type(
+            self, array, row_idx,
+        )?)
     }
 }
 
