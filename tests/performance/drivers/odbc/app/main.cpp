@@ -1,11 +1,11 @@
 #include <ctime>
-#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <map>
-#include <sstream>
+#include <stdexcept>
 #include <string>
 
+#include "concurrent_execution.h"
 #include "config.h"
 #include "connection.h"
 #include "put_execution.h"
@@ -31,37 +31,49 @@ int main() {
   int iterations = get_env_int("PERF_ITERATIONS", 1);
   int warmup_iterations = get_env_int("PERF_WARMUP_ITERATIONS", 0);
 
-  auto params = parse_parameters_json();
   auto setup_queries = parse_setup_queries();
 
-  SQLHENV env = create_environment();
-  SQLHDBC dbc = create_connection(env);
+  SQLHENV env = SQL_NULL_HENV;
+  SQLHDBC dbc = SQL_NULL_HDBC;
+  try {
+    env = create_environment();
+    std::string driver_type_str = get_driver_type();
+    time_t now = time(nullptr);
 
-  std::string driver_version_str = get_driver_version(dbc);
-  std::string driver_type_str = get_driver_type();
+    dbc = create_connection(env);
+    std::string driver_version_str = get_driver_version(dbc);
+    execute_setup_queries(dbc, setup_queries);
 
-  execute_setup_queries(dbc, setup_queries);
+    if (test_type == TestType::Concurrent) {
+      int worker_count = get_env_int("WORKER_COUNT", 1);
+      execute_concurrent_test(env, dbc, sql_command, warmup_iterations, iterations, worker_count, setup_queries,
+                              test_name, driver_type_str, driver_version_str, now);
+    } else {
+      auto executor_it = TEST_EXECUTORS.find(test_type);
+      if (executor_it == TEST_EXECUTORS.end()) {
+        std::cerr << "ERROR: Unknown test type: " << test_type_to_string(test_type) << "\n";
+        std::cerr << "Supported types: select, put_get, concurrent\n";
+        SQLDisconnect(dbc);
+        SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+        SQLFreeHandle(SQL_HANDLE_ENV, env);
+        return 1;
+      }
+      executor_it->second(dbc, sql_command, warmup_iterations, iterations, test_name, driver_type_str,
+                          driver_version_str, now);
+    }
 
-  time_t now = time(nullptr);
-
-  // Use appropriate test executor
-  auto executor_it = TEST_EXECUTORS.find(test_type);
-  if (executor_it != TEST_EXECUTORS.end()) {
-    executor_it->second(dbc, sql_command, warmup_iterations, iterations, test_name, driver_type_str, driver_version_str,
-                        now);
-  } else {
-    std::cerr << "ERROR: Unknown test type: " << test_type_to_string(test_type) << "\n";
-    std::cerr << "Supported types: select, put_get\n";
     SQLDisconnect(dbc);
     SQLFreeHandle(SQL_HANDLE_DBC, dbc);
     SQLFreeHandle(SQL_HANDLE_ENV, env);
+    return 0;
+  } catch (const std::exception&) {
+    if (dbc != SQL_NULL_HDBC) {
+      SQLDisconnect(dbc);
+      SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+    }
+    if (env != SQL_NULL_HENV) {
+      SQLFreeHandle(SQL_HANDLE_ENV, env);
+    }
     return 1;
   }
-
-  // Cleanup
-  SQLDisconnect(dbc);
-  SQLFreeHandle(SQL_HANDLE_DBC, dbc);
-  SQLFreeHandle(SQL_HANDLE_ENV, env);
-
-  return 0;
 }

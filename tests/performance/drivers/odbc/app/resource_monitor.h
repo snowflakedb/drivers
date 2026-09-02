@@ -25,6 +25,8 @@ class ResourceMonitor {
   explicit ResourceMonitor(std::chrono::milliseconds interval = std::chrono::milliseconds(100))
       : interval_(interval), stop_(false) {}
 
+  ~ResourceMonitor() { stop_thread(); }
+
   void start() {
 #ifdef __linux__
     stop_.store(false, std::memory_order_relaxed);
@@ -41,8 +43,7 @@ class ResourceMonitor {
 
   std::vector<MemorySample> stop() {
 #ifdef __linux__
-    stop_.store(true, std::memory_order_relaxed);
-    if (thread_.joinable()) thread_.join();
+    stop_thread();
     return std::move(samples_);
 #else
     return {};
@@ -50,6 +51,13 @@ class ResourceMonitor {
   }
 
  private:
+  void stop_thread() {
+#ifdef __linux__
+    stop_.store(true, std::memory_order_relaxed);
+    if (thread_.joinable()) thread_.join();
+#endif
+  }
+
 #ifdef __linux__
   void take_sample() {
     auto [rss, vm] = read_statm();

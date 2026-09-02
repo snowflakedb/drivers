@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 
 #include "config.h"
 
@@ -29,9 +30,14 @@ SQLHDBC create_connection(SQLHENV env) {
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
   check_odbc_error(ret, SQL_HANDLE_ENV, env, "SQLAllocHandle DBC");
 
-  std::string conn_string = get_connection_string();
-  ret = SQLDriverConnect(dbc, NULL, (SQLCHAR*)conn_string.c_str(), SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
-  check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLDriverConnect");
+  try {
+    std::string conn_string = get_connection_string();
+    ret = SQLDriverConnect(dbc, NULL, (SQLCHAR*)conn_string.c_str(), SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
+    check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLDriverConnect");
+  } catch (...) {
+    SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+    throw;
+  }
 
   return dbc;
 }
@@ -89,26 +95,37 @@ std::string get_server_version(SQLHDBC dbc) {
   return "UNKNOWN";
 }
 
-void execute_setup_queries(SQLHDBC dbc, const std::vector<std::string>& setup_queries) {
+void execute_setup_queries(SQLHDBC dbc, const std::vector<std::string>& setup_queries, bool verbose) {
   if (setup_queries.empty()) {
     return;
   }
 
-  std::cout << "\n=== Executing Setup Queries (" << setup_queries.size() << " queries) ===\n";
+  if (verbose) {
+    std::cout << "\n=== Executing Setup Queries (" << setup_queries.size() << " queries) ===\n";
+  }
   for (size_t i = 0; i < setup_queries.size(); i++) {
-    std::cout << "  Setup query " << (i + 1) << ": " << setup_queries[i] << "\n";
+    if (verbose) {
+      std::cout << "  Setup query " << (i + 1) << ": " << setup_queries[i] << "\n";
+    }
 
     SQLHSTMT stmt;
     SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
     check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLAllocHandle STMT");
 
-    ret = SQLExecDirect(stmt, (SQLCHAR*)setup_queries[i].c_str(), SQL_NTS);
-    check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "Setup query execution");
+    try {
+      ret = SQLExecDirect(stmt, (SQLCHAR*)setup_queries[i].c_str(), SQL_NTS);
+      check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "Setup query execution");
+    } catch (...) {
+      SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+      throw;
+    }
 
     SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   }
 
-  std::cout << "✓ Setup queries completed\n";
+  if (verbose) {
+    std::cout << "✓ Setup queries completed\n";
+  }
 }
 
 void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle, const std::string& context) {
@@ -143,7 +160,7 @@ void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle, 
       }
     }
 
-    exit(1);
+    throw std::runtime_error(context);
   }
 }
 

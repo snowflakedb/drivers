@@ -255,9 +255,12 @@ def test_put_files_12mx100(perf_test):
   `_default` suffix so BenchDash charts them separately. Invalid `BIND_MODE` values fail fast.
   CHAR baselines keep historical bind-then-`ROW_ARRAY_SIZE` order; default mode sets
   bulk-fetch attrs before `SQLBindCol`.
-- **Concurrent tests (Python)**: pass `test_type=PerfTestType.CONCURRENT` and
-  `worker_count=N`. Sync tests use `fetch_mode="fetchmany"` (thread pool on one
-  connection). UD-only aio tests use `fetch_mode="aio"` (`snowflake.connector.aio`
+- **Concurrent tests (Python, ODBC)**: pass `test_type=PerfTestType.CONCURRENT` and
+  `worker_count=N`. Python sync tests use `fetch_mode="fetchmany"` (thread pool on one
+  connection). ODBC opens one connection per worker before timing and runs `SETUP_QUERIES`
+  (including Arrow) on each worker session; burst wall time covers query and fetch only
+  (connection setup is excluded). UD-only Python aio tests use
+  `fetch_mode="aio"` (`snowflake.connector.aio`
   with `asyncio.gather` on one connection); mark them `@pytest.mark.universal_only`.
   Burst wall time is written as `query_s` / `fetch_s`.
   `throughput_rows_s` is total rows divided by burst wall.
@@ -389,7 +392,7 @@ All drivers receive their configuration through **environment variables**. The r
 | `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, ARROW format is prepended. For PUT/GET tests, `USE DATABASE` is prepended.             | `[]`          |
 | `FETCH_MODE`    | String     | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, `"pandas"`, `"arrow_batches"`, or `"aio"` (concurrent UD only) | `"fetchmany"` |
 | `BIND_MODE`     | String     | ODBC column bind target: `"char"` (`SQL_C_CHAR`) or `"default"` (`SQL_C_DEFAULT`). Ignored by other drivers.                             | `"char"`      |
-| `WORKER_COUNT`  | Integer    | Concurrent workers for `TEST_TYPE=concurrent`. One shared connection, one statement & resultset per thread.                              | `"1"`         |
+| `WORKER_COUNT`  | Integer    | Concurrent workers for `TEST_TYPE=concurrent`. Python: one shared connection, one statement per thread. ODBC: one connection per worker (opened before burst timing; setup queries run on each). | `"1"`         |
 
 ### PARAMETERS_JSON Format
 

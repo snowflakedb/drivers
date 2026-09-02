@@ -24,20 +24,31 @@ void write_csv_results(const std::vector<TestResult>& results, const std::string
   auto csv = open_csv_file(filename);
   if (!csv) return;
 
+  const bool has_concurrent = !results.empty() && results[0].worker_count > 0;
+
   *csv << "timestamp_ms,query_s,fetch_s";
   if (has_perf) {
     *csv << ",core_batch_wait_s,core_chunk_download_s,core_arrow_decode_s,wrapper_time_s";
   }
-  *csv << ",row_count,cpu_time_s,peak_rss_mb\n";
+  *csv << ",row_count,cpu_time_s,peak_rss_mb";
+  if (has_concurrent) {
+    *csv << ",worker_count,throughput_rows_s";
+  }
+  *csv << "\n";
 
   for (const auto& r : results) {
-    *csv << r.timestamp_ms << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.fetch_time_s;
+    *csv << r.timestamp_ms << "," << std::fixed << std::setprecision(6) << r.fetch.query_time_s << ","
+         << r.fetch.fetch_time_s;
     if (has_perf) {
-      *csv << "," << std::setprecision(9) << r.core_batch_wait_s << "," << r.core_chunk_download_s << ","
-           << r.core_arrow_decode_s << "," << r.wrapper_time_s;
+      *csv << "," << std::setprecision(9) << r.fetch.core_batch_wait_s << "," << r.fetch.core_chunk_download_s << ","
+           << r.fetch.core_arrow_decode_s << "," << r.fetch.wrapper_time_s;
     }
-    *csv << "," << r.row_count << "," << std::setprecision(6) << r.cpu_time_s << "," << std::setprecision(1)
-         << r.peak_rss_mb << "\n";
+    *csv << "," << r.fetch.row_count << "," << std::setprecision(6) << r.fetch.cpu_time_s << "," << std::setprecision(1)
+         << r.peak_rss_mb;
+    if (has_concurrent) {
+      *csv << "," << r.worker_count << "," << std::setprecision(1) << r.throughput_rows_s;
+    }
+    *csv << "\n";
   }
   csv->close();
 }
