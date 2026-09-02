@@ -277,11 +277,13 @@ async fn spawn_hanging_server(
                     LOGIN_OK.to_string()
                 } else if target.contains("/queries/v1/query-request") {
                     *state.query_request_id.lock().unwrap() = query_param(&target, "requestId");
+                    if hang_on == HangOn::QueryRequest {
+                        *state.hung_target.lock().unwrap() = Some(target.clone());
+                    }
                     // A full/closed channel just means the canceller already has
                     // its signal.
                     let _ = state.request_received.lock().unwrap().try_send(());
                     if hang_on == HangOn::QueryRequest {
-                        *state.hung_target.lock().unwrap() = Some(target.clone());
                         // Hold the query open, writing nothing: the only way out
                         // is cancellation.
                         std::future::pending::<()>().await;
@@ -295,30 +297,35 @@ async fn spawn_hanging_server(
                     state.abort_bodies.lock().unwrap().push(body);
                     ABORT_OK.to_string()
                 } else if is_finished_query_lookup(&target) {
-                    let _ = state.request_received.lock().unwrap().try_send(());
                     if hang_on == HangOn::FinishedQueryLookup {
                         *state.hung_target.lock().unwrap() = Some(target.clone());
+                    }
+                    let _ = state.request_received.lock().unwrap().try_send(());
+                    if hang_on == HangOn::FinishedQueryLookup {
                         std::future::pending::<()>().await;
                     }
                     // Same body the catch-all served before this branch existed,
                     // so no pre-existing test changes behaviour.
                     CATCH_ALL_OK.to_string()
                 } else if target.starts_with(SEND_HTTP_PROBE_PATH) {
+                    if hang_on == HangOn::SendHttpRequest || hang_on == HangOn::SendHttpBody {
+                        *state.hung_target.lock().unwrap() = Some(target.clone());
+                    }
                     let _ = state.request_received.lock().unwrap().try_send(());
                     if hang_on == HangOn::SendHttpRequest {
-                        *state.hung_target.lock().unwrap() = Some(target.clone());
                         std::future::pending::<()>().await;
                     }
                     if hang_on == HangOn::SendHttpBody {
-                        *state.hung_target.lock().unwrap() = Some(target.clone());
                         write_headers_only(&mut stream, CATCH_ALL_OK.len()).await;
                         std::future::pending::<()>().await;
                     }
                     CATCH_ALL_OK.to_string()
                 } else if target.starts_with("/session/token-request") {
-                    let _ = state.request_received.lock().unwrap().try_send(());
                     if hang_on == HangOn::TokenRequest {
                         *state.hung_target.lock().unwrap() = Some(target.clone());
+                    }
+                    let _ = state.request_received.lock().unwrap().try_send(());
+                    if hang_on == HangOn::TokenRequest {
                         std::future::pending::<()>().await;
                     }
                     CATCH_ALL_OK.to_string()
