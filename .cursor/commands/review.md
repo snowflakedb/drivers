@@ -24,7 +24,7 @@ Output findings grouped by severity (High / Medium / Low) using the review outpu
 
 When JDBC test files are in the diff, review each changed file under `jdbc/src/test/java/` for test quality, correctness, and flakiness.
 
-Systematically check all categories in `.cursor/rules/jdbc-test-reviewer.mdc` (resource management, test structure, JDBC call validation, assertions, data retrieval, behavior differences, code style/DRY, isolation/flakiness, WireMock, and coverage gaps). Flakiness checks map to `.ai/review/universal-driver-flaky-tests.yaml` (`jdbc-*` rules and universal `ud-*` patterns).
+Systematically check all categories from the `jdbc-test-reviewer` skill (resource management, test structure, JDBC call validation, assertions, data retrieval, behavior differences, code style/DRY, isolation/flakiness, WireMock, and coverage gaps). Flakiness checks map to `.ai/review/universal-driver-flaky-tests.yaml` (`jdbc-*` rules and universal `ud-*` patterns).
 
 Prioritize known hotspots: resource cleanup (try-with-resources), multistatement SQL object names, shared `getDefaultConnection()` session mutations, error-path assertions (SQLException + state/code), bare `Thread.sleep`, and WireMock port/reset setup.
 

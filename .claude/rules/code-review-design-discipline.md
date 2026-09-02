@@ -1,6 +1,6 @@
 # Code Review Design Discipline
 
-Six principles that came up repeatedly during cross-driver review.
+Six design principles for cross-driver code.
 Apply them while writing the change, not after.
 
 ## 1. Don't ship test seams as global mutable state
