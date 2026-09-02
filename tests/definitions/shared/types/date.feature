@@ -1,11 +1,11 @@
-@python @jdbc @core_not_needed
+@python @jdbc @nodejs @core_not_needed
 Feature: DATE type support
 
   # =========================================================================== #
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should cast date values to appropriate type
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15'::DATE, '1970-01-01'::DATE, '1999-12-31'::DATE" is executed
@@ -16,25 +16,25 @@ Feature: DATE type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select date literals
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15'::DATE, '1970-01-01'::DATE, '1999-12-31'::DATE" is executed
     Then Result should contain dates [2024-01-15, 1970-01-01, 1999-12-31]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select epoch and pre-epoch dates
     Given Snowflake client is logged in
     When Query "SELECT '1970-01-01'::DATE, '1969-12-31'::DATE, '1900-01-01'::DATE" is executed
     Then Result should contain dates [1970-01-01, 1969-12-31, 1900-01-01]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select historical and boundary dates
     Given Snowflake client is logged in
     When Query "SELECT '0001-01-01'::DATE, '1582-10-15'::DATE, '9999-12-31'::DATE" is executed
     Then Result should contain dates [0001-01-01, 1582-10-15, 9999-12-31]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should handle NULL values for date
     Given Snowflake client is logged in
     When Query "SELECT NULL::DATE, '2024-01-15'::DATE, NULL::DATE" is executed

@@ -65,9 +65,7 @@ impl TestDiscovery {
                 "dotnet" | "dotnet_e2e" | "dotnet_int" => {
                     languages.push(Language::Dotnet)
                 }
-                "javascript" | "javascript_e2e" | "javascript_int" | "nodejs" | "js" => {
-                    languages.push(Language::JavaScript)
-                }
+                "nodejs" | "nodejs_e2e" | "nodejs_int" => languages.push(Language::JavaScript),
                 // Note: _not_needed tags are NOT included here - they explicitly exclude tests
                 _ => {} // Unknown tag, ignore
             }
@@ -92,7 +90,7 @@ impl TestDiscovery {
                 "jdbc" => languages.push(Language::Jdbc),
                 "python" | "pep249" => languages.push(Language::Python),
                 "dotnet" => languages.push(Language::Dotnet),
-                "javascript" | "nodejs" | "js" => languages.push(Language::JavaScript),
+                "nodejs" => languages.push(Language::JavaScript),
                 _ => {} // Ignore level-specific tags and unknown tags
             }
         }
@@ -114,7 +112,7 @@ impl TestDiscovery {
                 "jdbc_not_needed" => excluded.push(Language::Jdbc),
                 "python_not_needed" => excluded.push(Language::Python),
                 "dotnet_not_needed" => excluded.push(Language::Dotnet),
-                "javascript_not_needed" | "js_not_needed" => excluded.push(Language::JavaScript),
+                "nodejs_not_needed" => excluded.push(Language::JavaScript),
                 _ => {}
             }
         }
@@ -162,7 +160,7 @@ impl TestDiscovery {
             Language::Jdbc => "jdbc",
             Language::Python => "python",
             Language::Dotnet => "dotnet",
-            Language::JavaScript => "javascript",
+            Language::JavaScript => "nodejs",
         };
 
         // First, check for language-specific level tags
@@ -410,12 +408,19 @@ impl TestDiscovery {
                     .join("dotnet/tests/Snowflake.Data.Tests")
                     .join(format!("{}Test.cs", pascal_name)),
             ],
-            Language::JavaScript => vec![
-                // Add JavaScript test paths when needed
-                self.workspace_root
-                    .join("nodejs/tests")
-                    .join(format!("{}.test.js", snake_name)),
-            ],
+            Language::JavaScript => {
+                // Gherkin-tracked Node.js tests live in their own flat directory,
+                // separate from the general nodejs/tests/e2e/ suite (no category
+                // subdirectories, unlike Python/JDBC/ODBC/Rust) — see
+                // .ai/commands/kb/references/architecture/best-practices/adding-tests.md
+                // Step 1's directory table.
+                vec![
+                    // nodejs/tests/gherkin/feature_name.test.ts
+                    self.workspace_root
+                        .join("nodejs/tests/gherkin")
+                        .join(format!("{}.test.ts", snake_name)),
+                ]
+            }
         }
     }
 }
