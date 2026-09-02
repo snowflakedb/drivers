@@ -9,10 +9,11 @@ find_library(ODBC_LIBRARY NAMES odbc REQUIRED)
 find_path(ODBC_INCLUDE_DIR sql.h REQUIRED)
 
 # Create executable with all source files
-add_executable(odbc-perf-driver 
+add_executable(odbc-perf-driver
     main.cpp
     config.cpp
     connection.cpp
+    concurrent_execution.cpp
     perf_metrics.cpp
     put_execution.cpp
     query_execution.cpp

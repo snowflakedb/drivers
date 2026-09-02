@@ -1,4 +1,7 @@
-"""Concurrent fetch on one connection: sync threads or UD aio tasks.
+"""Concurrent SELECT bursts.
+
+Python sync/aio: N workers on one connection. ODBC: one connection per worker
+(opened before timing; setup queries including Arrow run on each worker session).
 
 Burst wall time is written as fetch_s, throughput_rows_s is the extra series (total rows / burst wall).
 """
@@ -13,7 +16,7 @@ SIZES = (
 WORKERS = (2, 4, 8, 64)
 
 
-@pytest.mark.supported_drivers("python")
+@pytest.mark.supported_drivers("python", "odbc")
 @pytest.mark.iterations(5)
 @pytest.mark.warmup_iterations(1)
 @pytest.mark.parametrize("row_count,size", SIZES)

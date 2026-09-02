@@ -11,4 +11,4 @@ SQLHENV create_environment();
 SQLHDBC create_connection(SQLHENV env);
 std::string get_driver_version(SQLHDBC dbc);
 std::string get_server_version(SQLHDBC dbc);
-void execute_setup_queries(SQLHDBC dbc, const std::vector<std::string>& setup_queries);
+void execute_setup_queries(SQLHDBC dbc, const std::vector<std::string>& setup_queries, bool verbose = true);
