@@ -55,8 +55,13 @@ def execute_concurrent_test(
     return results, memory_timeline
 
 
+def _barrier_timeout_s(worker_count: int) -> float:
+    return min(900.0, max(120.0, worker_count * 0.5))
+
+
 def _run_burst(conn, sql, worker_count, fetch_fn):
     burst_start = {"t": None}
+    barrier_timeout = _barrier_timeout_s(worker_count)
 
     def mark_start():
         burst_start["t"] = time.perf_counter()
@@ -65,14 +70,14 @@ def _run_burst(conn, sql, worker_count, fetch_fn):
     cpu_start = time.process_time()
 
     def worker():
-        barrier.wait(timeout=120)
+        barrier.wait(timeout=barrier_timeout)
         with conn.cursor() as cursor:
             cursor.execute(sql)
             return fetch_fn(cursor)
 
     with ThreadPoolExecutor(max_workers=worker_count) as pool:
         futures = [pool.submit(worker) for _ in range(worker_count)]
-        barrier.wait(timeout=120)
+        barrier.wait(timeout=barrier_timeout)
         worker_results = []
         for future in as_completed(futures):
             worker_results.append(future.result())
