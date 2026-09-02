@@ -10,10 +10,6 @@ import {
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
-function dateAtUtcMidnight(dateLiteral: string): Date {
-  return new Date(`${dateLiteral}T00:00:00.000Z`);
-}
-
 describe('Query returning data types', () => {
   const snowflake = getSnowflakeSDK();
   let connection: Connection;
@@ -134,69 +130,10 @@ describe('Query returning data types', () => {
     expect(selectedValue.toISOString()).toEqual('2026-01-01T00:00:00.000Z');
   });
 
+  // The "cast/select/NULL date literals" describe block that used to live here has been
+  // migrated to tests/gherkin/date.test.ts (Gherkin-tracked coverage for date.feature) and
+  // removed from this file.
   describe('DATE', () => {
-    it('casts date values to appropriate type', async () => {
-      const { statement, rows } = await executeAsync(
-        connection,
-        `SELECT
-          '2024-01-15'::DATE AS DATE_2024_01_15,
-          '1970-01-01'::DATE AS EPOCH_DATE,
-          '1999-12-31'::DATE AS DATE_1999_12_31`,
-      );
-      for (const columnName of ['DATE_2024_01_15', 'EPOCH_DATE', 'DATE_1999_12_31']) {
-        const column = getStatementColumn(statement, columnName);
-        expect(column.getType()).toBe('date');
-        expect(column.isDate()).toBe(true);
-        expect(rows![0][columnName]).toBeInstanceOf(Date);
-      }
-    });
-
-    it('selects date literals', async () => {
-      const { rows } = await executeAsync(
-        connection,
-        `SELECT '2024-01-15'::DATE, '1970-01-01'::DATE, '1999-12-31'::DATE`,
-      );
-      expect(Object.values(rows![0])).toEqual([
-        dateAtUtcMidnight('2024-01-15'),
-        dateAtUtcMidnight('1970-01-01'),
-        dateAtUtcMidnight('1999-12-31'),
-      ]);
-    });
-
-    it('selects epoch and pre-epoch dates', async () => {
-      const { rows } = await executeAsync(
-        connection,
-        `SELECT '1970-01-01'::DATE, '1969-12-31'::DATE, '1900-01-01'::DATE`,
-      );
-      expect(Object.values(rows![0])).toEqual([
-        dateAtUtcMidnight('1970-01-01'),
-        dateAtUtcMidnight('1969-12-31'),
-        dateAtUtcMidnight('1900-01-01'),
-      ]);
-    });
-
-    it('selects historical and boundary dates', async () => {
-      const { rows } = await executeAsync(
-        connection,
-        // CUTOVER_DATE (1582-10-15) is the Julian-to-Gregorian cutover date, so
-        // it pins the decoder to a proleptic Gregorian calendar.
-        `SELECT '0001-01-01'::DATE, '1582-10-15'::DATE, '9999-12-31'::DATE`,
-      );
-      expect(Object.values(rows![0])).toEqual([
-        dateAtUtcMidnight('0001-01-01'),
-        dateAtUtcMidnight('1582-10-15'),
-        dateAtUtcMidnight('9999-12-31'),
-      ]);
-    });
-
-    it('handles NULL values for date', async () => {
-      const { rows } = await executeAsync(
-        connection,
-        `SELECT NULL::DATE, '2024-01-15'::DATE, NULL::DATE as null_column2`,
-      );
-      expect(Object.values(rows![0])).toEqual([null, dateAtUtcMidnight('2024-01-15'), null]);
-    });
-
     it("renders dates as DATE_OUTPUT_FORMAT's default when fetchAsString is set", async () => {
       const { rows } = await executeAsync(
         connection,

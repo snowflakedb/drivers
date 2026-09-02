@@ -1,4 +1,4 @@
-@python @jdbc @core_not_needed
+@python @jdbc @nodejs @core_not_needed
 Feature: TIME type support
   # Snowflake TIME stores wallclock time in the form HH:MI:SS with optional fractional seconds.
   # Precision parameter: TIME(0) to TIME(9); default precision is 9 (nanoseconds).
@@ -10,7 +10,7 @@ Feature: TIME type support
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should cast time values to appropriate type
     # Python: Values should be cast to 'datetime.time' type
     Given Snowflake client is logged in
@@ -54,7 +54,7 @@ Feature: TIME type support
     When Query "SELECT '10:30:00.123456789'::TIME" is executed
     Then Result should contain [10:30:00.123456789]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should handle NULL values for time
     Given Snowflake client is logged in
     When Query "SELECT '10:30:00'::TIME, NULL::TIME, '23:59:59'::TIME" is executed

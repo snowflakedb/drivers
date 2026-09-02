@@ -951,7 +951,7 @@ impl GherkinValidator {
                         Language::Jdbc => "jdbc",
                         Language::Odbc => "odbc",
                         Language::Dotnet => "dotnet",
-                        _ => "language",
+                        Language::JavaScript => "nodejs",
                     };
                     tag_errors.push(format!(
                         "VALIDATION ERROR: Scenario '{}' has @{} tags but feature has @{}_not_needed. Remove scenario-level tags for excluded languages.",
@@ -984,7 +984,7 @@ impl GherkinValidator {
                         Language::Jdbc => "jdbc",
                         Language::Odbc => "odbc",
                         Language::Dotnet => "dotnet",
-                        _ => "language",
+                        Language::JavaScript => "nodejs",
                     };
                     missing_scenario_tags_errors.push(format!(
                         "VALIDATION ERROR: Feature has @{} tag but no scenarios have @{}_e2e or @{}_int tags. Add scenario-level tags to specify which test level to use.",

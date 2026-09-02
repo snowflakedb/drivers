@@ -121,9 +121,12 @@ impl LanguageConfig {
 
     fn javascript() -> Self {
         Self {
-            test_annotation: "test(", // Jest/Mocha style
+            test_annotation: "test(", // Marker value; matches it(...) and test(...) calls (Vitest/Jest/Mocha)
             method_pattern: |method_name| {
-                format!(r"test\s*\(\s*['\x22]{}['\x22]", regex::escape(method_name))
+                format!(
+                    r"(?:it|test)\s*\(\s*['\x22]{}['\x22]",
+                    regex::escape(method_name)
+                )
             },
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for JavaScript
@@ -287,7 +290,7 @@ impl MethodBoundaryFinder {
         // instead of per scanned line. Java matches the pattern literally via `contains`.
         let pattern = (self.config.method_pattern)(method_name);
         let method_regex = match self.config.test_annotation {
-            "def test_" | "TEST_CASE(" | "#[test]" => Some(Regex::new(&pattern)?),
+            "def test_" | "TEST_CASE(" | "#[test]" | "test(" => Some(Regex::new(&pattern)?),
             _ => None,
         };
 
@@ -295,8 +298,10 @@ impl MethodBoundaryFinder {
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
 
-            // Special handling for Python - method declaration is the annotation
-            if self.config.test_annotation == "def test_" {
+            // Special handling for Python and JavaScript - the declaration line
+            // (def test_foo(...): / it('name', ...) or test('name', ...)) is itself
+            // the match, unlike Java/C#/C++ where a separate annotation line precedes it.
+            if self.config.test_annotation == "def test_" || self.config.test_annotation == "test(" {
                 if method_regex.as_ref().is_some_and(|re| re.is_match(trimmed)) {
                     method_start_line = Some(i);
                     break;
@@ -425,7 +430,7 @@ impl MethodBoundaryFinder {
                     '\\' if in_string => {
                         escaped = true;
                     }
-                    '"' | '\'' => {
+                    '"' | '\'' | '`' => {
                         if !in_string {
                             in_string = true;
                             string_delimiter = ch;
@@ -479,7 +484,7 @@ impl MethodBoundaryFinder {
                             '\\' if in_string => {
                                 escaped = true;
                             }
-                            '"' | '\'' => {
+                            '"' | '\'' | '`' => {
                                 if !in_string {
                                     in_string = true;
                                     string_delimiter = ch;
@@ -676,7 +681,7 @@ impl MethodBoundaryFinder {
                 }
                 match ch {
                     '\\' if in_string => escaped = true,
-                    '"' | '\'' => {
+                    '"' | '\'' | '`' => {
                         if !in_string {
                             in_string = true;
                             string_delimiter = ch;
@@ -721,7 +726,7 @@ impl MethodBoundaryFinder {
                     }
                     match ch {
                         '\\' if in_string => escaped = true,
-                        '"' | '\'' => {
+                        '"' | '\'' | '`' => {
                             if !in_string {
                                 in_string = true;
                                 string_delimiter = ch;
