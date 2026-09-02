@@ -1,5 +1,5 @@
 use crate::DRIVER;
-use sf_core::apis::database_driver_v1::ApiError;
+use sf_core::apis::database_driver_v1::{ApiError, Setting};
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,14 +29,17 @@ impl SessionParams {
 /// Upper-cased because the format renderers match tokens like `"HH24"`
 /// case-sensitively, and nothing upstream normalizes value case.
 fn get_uppercase_or_default(
-    params: &HashMap<String, String>,
+    params: &HashMap<String, Setting>,
     key: &str,
     default: &str,
 ) -> Arc<str> {
     Arc::from(
         params
             .get(key)
-            .map(String::as_str)
+            .and_then(|setting| match setting {
+                Setting::String(value) => Some(value.as_str()),
+                _ => None,
+            })
             .unwrap_or(default)
             .to_uppercase(),
     )

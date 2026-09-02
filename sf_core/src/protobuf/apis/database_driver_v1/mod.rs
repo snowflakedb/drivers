@@ -3,6 +3,7 @@ mod converter;
 use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
+use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::{
     ConfigurationSnafu, InvalidWifProviderSnafu, WorkloadIdentityAttestationSnafu,
 };
@@ -505,6 +506,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionSetSessionParametersResponse {})
     }
 
+    #[allow(deprecated)]
     #[instrument(name = "DatabaseDriverV1::connection_get_parameter", skip(self, input))]
     async fn connection_get_parameter(
         &self,
@@ -512,13 +514,16 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionGetParameterResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let value = self
+        let setting = self
             .driver
             .connection_get_parameter(conn_handle.into(), input.key)
             .await
             .to_protobuf()?;
 
-        Ok(ConnectionGetParameterResponse { value })
+        Ok(ConnectionGetParameterResponse {
+            value: setting.as_ref().map(Setting::to_wire_string),
+            typed_value: setting.map(Into::into),
+        })
     }
 
     #[instrument(
@@ -550,13 +555,22 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionGetAllParametersResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let parameters = self
+        let settings = self
             .driver
             .connection_get_all_parameters(conn_handle.into())
             .await
             .to_protobuf()?;
 
-        Ok(ConnectionGetAllParametersResponse { parameters })
+        let parameters = settings
+            .iter()
+            .map(|(k, v)| (k.clone(), v.to_wire_string()))
+            .collect();
+        let typed_parameters = settings.into_iter().map(|(k, v)| (k, v.into())).collect();
+
+        Ok(ConnectionGetAllParametersResponse {
+            parameters,
+            typed_parameters,
+        })
     }
 
     #[instrument(

@@ -1,4 +1,5 @@
 use super::generated::database_driver_v1::{ConfigSetting, config_setting};
+use crate::apis::database_driver_v1::Setting;
 
 impl From<&str> for ConfigSetting {
     fn from(s: &str) -> Self {
@@ -44,6 +45,18 @@ impl From<Vec<u8>> for ConfigSetting {
     fn from(v: Vec<u8>) -> Self {
         ConfigSetting {
             value: Some(config_setting::Value::BytesValue(v)),
+        }
+    }
+}
+
+impl From<Setting> for ConfigSetting {
+    fn from(setting: Setting) -> Self {
+        match setting {
+            Setting::String(s) => s.into(),
+            Setting::Bytes(b) => b.into(),
+            Setting::Int(i) => i.into(),
+            Setting::Double(d) => d.into(),
+            Setting::Bool(b) => b.into(),
         }
     }
 }

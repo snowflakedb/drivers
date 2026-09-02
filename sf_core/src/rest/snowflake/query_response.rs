@@ -1,4 +1,4 @@
-use crate::apis::database_driver_v1::PutGetResultsetFlavor;
+use crate::apis::database_driver_v1::{PutGetResultsetFlavor, Setting};
 use crate::chunks::ChunkDownloadData;
 use crate::file_manager::SourceCompressionParam;
 use crate::sensitive::SensitiveString;
@@ -1119,23 +1119,24 @@ const ENABLE_STAGE_S3_PRIVATELINK_SERVER_KEY: &str = "ENABLE_STAGE_S3_PRIVATELIN
 /// do a direct `HashMap::get` on the canonical uppercase form rather than
 /// scanning the map.
 ///
-/// Accepted value forms: `"true"` (case-insensitive) and `"1"`. JSON `true`
-/// and JSON `1` from GS land here as those exact strings after the
-/// post-response stringification at `apis::database_driver_v1::connection`.
-/// JDBC additionally accepts `"on"`; we don't currently, since GS doesn't
-/// emit that form.
+/// Accepted value forms: native `true`/`1` for whichever typed shape the JSON
+/// carried, or the equivalent strings `"true"` (case-insensitive) and `"1"` for
+/// any caller-supplied override. JDBC additionally accepts `"on"`; this reader
+/// does not, as GS is not observed to send that form today.
 ///
 /// Called at the PUT/GET dispatch site rather than passing the whole
 /// session-parameter map down: PUT/GET only needs this one key, and reading
-/// it eagerly avoids cloning the entire `HashMap<String, String>` on every
+/// it eagerly avoids cloning the entire `HashMap<String, Setting>` on every
 /// transfer.
 pub fn read_use_s3_regional_url_session_param(
-    session_parameters: &HashMap<String, String>,
+    session_parameters: &HashMap<String, Setting>,
 ) -> bool {
-    session_parameters
-        .get(ENABLE_STAGE_S3_PRIVATELINK_SERVER_KEY)
-        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        .unwrap_or(false)
+    match session_parameters.get(ENABLE_STAGE_S3_PRIVATELINK_SERVER_KEY) {
+        Some(Setting::Bool(b)) => *b,
+        Some(Setting::Int(i)) => *i == 1,
+        Some(Setting::String(s)) => s.eq_ignore_ascii_case("true") || s == "1",
+        _ => false,
+    }
 }
 
 impl TryFrom<&StageInfo> for file_manager::StageInfo {
@@ -2707,10 +2708,10 @@ mod tests {
     // Mirrors the OR-with-session-parameter semantics implemented in the
     // Python connector, JDBC, and libsnowflakeclient.
 
-    fn build_session_params(entries: &[(&str, &str)]) -> HashMap<String, String> {
+    fn build_session_params(entries: &[(&str, &str)]) -> HashMap<String, Setting> {
         entries
             .iter()
-            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .map(|(k, v)| ((*k).to_string(), Setting::String((*v).to_string())))
             .collect()
     }
 
@@ -2745,6 +2746,36 @@ mod tests {
     fn read_session_param_accepts_numeric_one() {
         let params = build_session_params(&[("ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1", "1")]);
         assert!(read_use_s3_regional_url_session_param(&params));
+    }
+
+    #[test]
+    fn read_session_param_accepts_native_bool() {
+        let mut params = HashMap::new();
+        params.insert(
+            "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1".to_string(),
+            Setting::Bool(true),
+        );
+        assert!(read_use_s3_regional_url_session_param(&params));
+    }
+
+    #[test]
+    fn read_session_param_accepts_native_int_one() {
+        let mut params = HashMap::new();
+        params.insert(
+            "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1".to_string(),
+            Setting::Int(1),
+        );
+        assert!(read_use_s3_regional_url_session_param(&params));
+    }
+
+    #[test]
+    fn read_session_param_rejects_native_int_other_than_one() {
+        let mut params = HashMap::new();
+        params.insert(
+            "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1".to_string(),
+            Setting::Int(2),
+        );
+        assert!(!read_use_s3_regional_url_session_param(&params));
     }
 
     #[test]

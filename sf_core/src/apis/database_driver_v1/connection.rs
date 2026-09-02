@@ -544,7 +544,11 @@ impl DatabaseDriverV1 {
                 // The server returns system-level parameters but may not echo back
                 // user-set parameters (e.g. QUERY_TAG), so we merge in the
                 // init_session_parameters the caller explicitly requested.
-                let mut merged_params = init_params.unwrap_or_default();
+                let mut merged_params: HashMap<String, Setting> = init_params
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(k, v)| (k, Setting::String(v)))
+                    .collect();
                 merged_params.extend(login_result.session_parameters.unwrap_or_default());
 
                 let login_final_names = FinalSessionNames {
@@ -562,12 +566,9 @@ impl DatabaseDriverV1 {
                 // explicitly. The client-mirrored values are already merged in
                 // above (init_params + login_result.session_parameters).
                 let keep_alive = merged_params
-                    .get(param_names::CLIENT_SESSION_KEEP_ALIVE.as_str())
-                    .map(|v| v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
+                    .get_bool_or(param_names::CLIENT_SESSION_KEEP_ALIVE.as_str(), false);
                 let heartbeat_frequency_secs = merged_params
-                    .get(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str())
-                    .and_then(|v| v.parse::<u64>().ok());
+                    .get_u64(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str());
 
                 {
                     let logout_config = LogoutConfig::from_settings(&resolved_snapshot)
@@ -608,7 +609,7 @@ impl DatabaseDriverV1 {
                             .read()
                             .await
                             .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
-                            .map(|v| v.eq_ignore_ascii_case("true"))
+                            .map(|v| v.coerce_bool().unwrap_or(false))
                             .unwrap_or(true);
 
                     if telemetry_enabled {
@@ -1069,7 +1070,7 @@ pub struct Connection {
     /// Client info for refresh requests
     pub client_info: Option<ClientInfo>,
     /// Session parameters cache (populated after login)
-    pub session_parameters: Arc<AsyncRwLock<HashMap<String, String>>>,
+    pub session_parameters: Arc<AsyncRwLock<HashMap<String, Setting>>>,
     /// Query context cache (HTAP support)
     pub query_context_cache: QueryContextCacheAdapter,
     /// Session parameters to send during initialization (set before connection_init)
@@ -1209,9 +1210,13 @@ impl Connection {
             .read()
             .await
             .get(JDBC_ENABLE_PUT_GET_SERVER_KEY)
-            .map(|v| {
-                let v = v.trim();
-                v.is_empty() || v.eq_ignore_ascii_case("true") || v == "1"
+            .map(|value| {
+                if let Setting::String(value) = value
+                    && value.trim().is_empty()
+                {
+                    return true;
+                }
+                value.coerce_bool().unwrap_or(false)
             })
             .unwrap_or(true);
 
@@ -1302,7 +1307,7 @@ impl Connection {
         port: Option<i64>,
         server_url: String,
         client_info: ClientInfo,
-        session_params: HashMap<String, String>,
+        session_params: HashMap<String, Setting>,
         final_names: FinalSessionNames,
         server_version: Option<String>,
         resolved_connect: ParamStore,
@@ -1360,33 +1365,16 @@ impl Connection {
                         param_value = %p.value,
                         "Detected ALTER SESSION SET, updating cache optimistically"
                     );
-                    (p.name.clone(), p.value.clone())
+                    (p.name.clone(), Setting::String(p.value.clone()))
                 }),
         );
 
         // 2. Response parameters: merge any server-returned session parameters into the cache.
         if let Some(parameters) = response_parameters {
-            cache.extend(
-                parameters
-                    .iter()
-                    .map(|param| {
-                        let value_str = match &param.value {
-                            serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Number(n) => n.to_string(),
-                            serde_json::Value::Bool(b) => b.to_string(),
-                            other => {
-                                tracing::debug!(
-                                    param_name = %param.name,
-                                    param_value = ?other,
-                                    "Unexpected JSON type for session parameter, skipping"
-                                );
-                                return (String::new(), String::new());
-                            }
-                        };
-                        (param.name.to_uppercase(), value_str)
-                    })
-                    .filter(|(k, _)| !k.is_empty()),
-            );
+            cache.extend(parameters.iter().filter_map(|param| {
+                Setting::from_session_parameter_json(&param.value)
+                    .map(|setting| (param.name.to_uppercase(), setting))
+            }));
         }
 
         // 3. Server-echoed final names are stored separately in `final_session_names`
@@ -1870,6 +1858,10 @@ fn setting_as_display_string(setting: &Setting) -> Option<String> {
     }
 }
 
+fn is_empty_string_setting(setting: &Setting) -> bool {
+    matches!(setting, Setting::String(s) if s.is_empty())
+}
+
 fn resolved_or_seed_string(conn: &Connection, key: ParamKey) -> Option<String> {
     if let Some(resolved) = &conn.resolved_connect
         && let Some(s) = resolved.get_string(key)
@@ -1898,9 +1890,9 @@ fn get_session_or_setting(
 ) -> Option<String> {
     if let Ok(cache) = conn.session_parameters.try_read()
         && let Some(v) = cache.get(param_name)
-        && !v.is_empty()
+        && !is_empty_string_setting(v)
     {
-        return Some(v.clone());
+        return setting_as_display_string(v);
     }
     if let Some(s) = conn
         .session_overrides
@@ -2113,7 +2105,7 @@ impl DatabaseDriverV1 {
     pub async fn connection_get_all_parameters(
         &self,
         conn_handle: Handle,
-    ) -> Result<HashMap<String, String>, ApiError> {
+    ) -> Result<HashMap<String, Setting>, ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let conn = conn_ptr.lock().await;
@@ -2121,25 +2113,25 @@ impl DatabaseDriverV1 {
 
                 for (k, v) in conn.connection_seed.iter() {
                     if let Some(s) = setting_as_display_string(v) {
-                        result.insert(k.to_uppercase(), s);
+                        result.insert(k.to_uppercase(), Setting::String(s));
                     }
                 }
                 if let Some(resolved) = &conn.resolved_connect {
                     for (k, v) in resolved.iter() {
                         if let Some(s) = setting_as_display_string(v) {
-                            result.insert(k.to_uppercase(), s);
+                            result.insert(k.to_uppercase(), Setting::String(s));
                         }
                     }
                 }
                 for (k, v) in conn.session_overrides.iter() {
                     if let Some(s) = setting_as_display_string(v) {
-                        result.insert(k.to_uppercase(), s);
+                        result.insert(k.to_uppercase(), Setting::String(s));
                     }
                 }
 
                 let cache = conn.session_parameters.read().await;
                 for (k, v) in cache.iter() {
-                    if !v.is_empty() {
+                    if !is_empty_string_setting(v) {
                         result.insert(k.clone(), v.clone());
                     }
                 }
@@ -2192,7 +2184,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         key: String,
-    ) -> Result<Option<String>, ApiError> {
+    ) -> Result<Option<Setting>, ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let conn = conn_ptr.lock().await;
@@ -2200,7 +2192,10 @@ impl DatabaseDriverV1 {
                 let cache = conn.session_parameters.read().await;
 
                 let normalized_key = key.to_uppercase();
-                if let Some(v) = cache.get(&normalized_key).filter(|s| !s.is_empty()) {
+                if let Some(v) = cache
+                    .get(&normalized_key)
+                    .filter(|s| !is_empty_string_setting(s))
+                {
                     return Ok(Some(v.clone()));
                 }
                 drop(cache);
@@ -2215,12 +2210,12 @@ impl DatabaseDriverV1 {
                         .get_any(&canonical)
                         .and_then(setting_as_display_string)
                     {
-                        return Ok(Some(s));
+                        return Ok(Some(Setting::String(s)));
                     }
-                    return Ok(resolved_or_seed_string(
-                        &conn,
-                        ParamKey::new(d.canonical_name),
-                    ));
+                    return Ok(
+                        resolved_or_seed_string(&conn, ParamKey::new(d.canonical_name))
+                            .map(Setting::String),
+                    );
                 }
 
                 if let Some(s) = conn
@@ -2228,7 +2223,7 @@ impl DatabaseDriverV1 {
                     .get_any(&canonical)
                     .and_then(setting_as_display_string)
                 {
-                    return Ok(Some(s));
+                    return Ok(Some(Setting::String(s)));
                 }
 
                 Ok(conn
@@ -2240,7 +2235,8 @@ impl DatabaseDriverV1 {
                         conn.connection_seed
                             .get_any(&canonical)
                             .and_then(setting_as_display_string)
-                    }))
+                    })
+                    .map(Setting::String))
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -2737,10 +2733,10 @@ mod tests {
     async fn enable_put_get_false_when_server_session_param_disables() {
         // Server `JDBC_ENABLE_PUT_GET=false` disables even with the client seed absent/true.
         let conn = Connection::new();
-        conn.session_parameters
-            .try_write()
-            .unwrap()
-            .insert("JDBC_ENABLE_PUT_GET".into(), "false".into());
+        conn.session_parameters.try_write().unwrap().insert(
+            "JDBC_ENABLE_PUT_GET".into(),
+            Setting::String("false".into()),
+        );
         assert!(!conn.enable_put_get().await);
     }
 
@@ -2751,7 +2747,7 @@ mod tests {
         conn.session_parameters
             .try_write()
             .unwrap()
-            .insert("JDBC_ENABLE_PUT_GET".into(), "".into());
+            .insert("JDBC_ENABLE_PUT_GET".into(), Setting::String("".into()));
         assert!(conn.enable_put_get().await);
     }
 
@@ -2764,7 +2760,7 @@ mod tests {
         conn.session_parameters
             .try_write()
             .unwrap()
-            .insert("JDBC_ENABLE_PUT_GET".into(), "true".into());
+            .insert("JDBC_ENABLE_PUT_GET".into(), Setting::String("true".into()));
         assert!(conn.enable_put_get().await);
     }
 
@@ -2799,7 +2795,7 @@ mod tests {
         conn.session_parameters
             .try_write()
             .unwrap()
-            .insert("DATABASE".into(), "session_db".into());
+            .insert("DATABASE".into(), Setting::String("session_db".into()));
 
         assert_eq!(
             get_session_or_setting(&conn, "DATABASE", param_names::DATABASE),
@@ -2825,7 +2821,7 @@ mod tests {
         conn.session_parameters
             .try_write()
             .unwrap()
-            .insert("ROLE".into(), String::new());
+            .insert("ROLE".into(), Setting::String(String::new()));
 
         assert_eq!(
             get_session_or_setting(&conn, "ROLE", param_names::ROLE),
@@ -3360,11 +3356,11 @@ mod tests {
             conn.session_parameters
                 .write()
                 .await
-                .insert("DATABASE".into(), "session_db".into());
+                .insert("DATABASE".into(), Setting::String("session_db".into()));
             conn.session_parameters
                 .write()
                 .await
-                .insert("ROLE".into(), "session_role".into());
+                .insert("ROLE".into(), Setting::String("session_role".into()));
         }
 
         let info = ds.connection_get_info(handle).await.unwrap();
@@ -3392,7 +3388,7 @@ mod tests {
             conn.session_parameters
                 .write()
                 .await
-                .insert("DATABASE".into(), "session_db".into());
+                .insert("DATABASE".into(), Setting::String("session_db".into()));
             conn.final_session_names.write().unwrap().database = Some("final_db".into());
         }
 
@@ -3729,13 +3725,22 @@ mod tests {
         if let Some(c) = ds.connections.get_obj(handle) {
             let conn = c.lock().await;
             let mut cache = conn.session_parameters.write().await;
-            cache.insert("TIMEZONE".into(), "America/Los_Angeles".into());
-            cache.insert("QUERY_TAG".into(), "test_tag".into());
+            cache.insert(
+                "TIMEZONE".into(),
+                Setting::String("America/Los_Angeles".into()),
+            );
+            cache.insert("QUERY_TAG".into(), Setting::String("test_tag".into()));
         }
 
         let params = ds.connection_get_all_parameters(handle).await.unwrap();
-        assert_eq!(params.get("TIMEZONE").unwrap(), "America/Los_Angeles");
-        assert_eq!(params.get("QUERY_TAG").unwrap(), "test_tag");
+        assert_eq!(
+            params.get("TIMEZONE").unwrap(),
+            &Setting::String("America/Los_Angeles".into())
+        );
+        assert_eq!(
+            params.get("QUERY_TAG").unwrap(),
+            &Setting::String("test_tag".into())
+        );
         assert_eq!(params.len(), 2);
 
         ds.connection_release(handle).unwrap();

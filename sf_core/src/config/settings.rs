@@ -82,6 +82,35 @@ impl Setting {
             _ => None,
         }
     }
+
+    /// Renders the value as a string for the deprecated string-typed wire
+    /// fields, which stay populated until every wrapper reads `ConfigSetting`.
+    pub(crate) fn to_wire_string(&self) -> String {
+        match self {
+            Setting::String(s) => s.clone(),
+            Setting::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+            Setting::Int(i) => i.to_string(),
+            Setting::Double(d) => d.to_string(),
+            Setting::Bool(b) => b.to_string(),
+        }
+    }
+
+    /// Maps a server-supplied JSON session-parameter value to a typed
+    /// `Setting`, keeping the JSON discriminant rather than collapsing it to a
+    /// display string. Whole numbers become `Setting::Int`; fractional numbers
+    /// become `Setting::Double`. `Null` and unsupported JSON types
+    /// (arrays/objects) return `None`, and callers skip those parameters.
+    pub fn from_session_parameter_json(value: &serde_json::Value) -> Option<Setting> {
+        match value {
+            serde_json::Value::String(s) => Some(Setting::String(s.clone())),
+            serde_json::Value::Bool(b) => Some(Setting::Bool(*b)),
+            serde_json::Value::Number(n) => match n.as_i64() {
+                Some(i) => Some(Setting::Int(i)),
+                None => n.as_f64().map(Setting::Double),
+            },
+            _ => None,
+        }
+    }
 }
 
 pub trait Settings {
