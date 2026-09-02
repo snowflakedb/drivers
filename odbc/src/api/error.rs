@@ -1574,7 +1574,7 @@ mod tests {
     #[test]
     fn invalid_numeric_literal_maps_to_22018() {
         let json_err = InvalidNumericLiteralSnafu {
-            reason: "non-finite literal \"Infinity\"".to_string(),
+            reason: "literal \"hello\" is not a valid ODBC numeric literal".to_string(),
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {

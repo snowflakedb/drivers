@@ -2,7 +2,6 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
-#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -49,9 +48,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG zero to SQL_BIT via
   CHECK(get_data<SQL_C_BIT>(fetch_stmt, 1) == 0);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG nonzero >1 to SQL_BIT via integer",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_SLONG other than 0 or 1 bound to SQL_BIT",
                  "[c_integer][conversion][sql_boolean]") {
-  SKIP_OLD_DRIVER("BD-35", "Old driver rejects integer values other than 0/1 for SQL_BIT");
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col BOOLEAN)");
 
@@ -64,16 +62,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG nonzero >1 to SQL_B
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_BIT, 1, 0, &val, 0, &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
 
-  // Then the value is read back as SQL_C_BIT 1
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_BIT>(fetch_stmt, 1) == 1);
+  // Then the driver rejects values other than 0 or 1 with 22003
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22003"));
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG negative to SQL_BIT via integer",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_SLONG negative bound to SQL_BIT via integer",
                  "[c_integer][conversion][sql_boolean]") {
-  SKIP_OLD_DRIVER("BD-35", "Old driver rejects negative integers for SQL_BIT");
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col BOOLEAN)");
 
@@ -86,11 +81,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG negative to SQL_BIT
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_BIT, 1, 0, &val, 0, &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
 
-  // Then the value is read back as SQL_C_BIT 1
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_BIT>(fetch_stmt, 1) == 1);
+  // Then the driver rejects values other than 0 or 1 with 22003
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22003"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SBIGINT to SQL_BIT", "[c_integer][conversion][sql_boolean]") {

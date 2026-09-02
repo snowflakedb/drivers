@@ -1378,14 +1378,14 @@ pub const SQL_SF_TIMESTAMP_LTZ: sql::SqlDataType = sql::SqlDataType(2000);
 pub const SQL_SF_TIMESTAMP_TZ: sql::SqlDataType = sql::SqlDataType(2001);
 pub const SQL_SF_TIMESTAMP_NTZ: sql::SqlDataType = sql::SqlDataType(2002);
 
-/// Snowflake-specific timestamp subtype carried alongside the standard ODBC
-/// `SQL_TYPE_TIMESTAMP` (93) on the IPD. Set by `SQLBindParameter` when the
-/// application uses one of the vendor codes `SQL_SF_TIMESTAMP_{LTZ,TZ,NTZ}`,
-/// so the binding pipeline knows which Snowflake logical type to emit on the
-/// wire while `SQLDescribeParam` and `SQLGetDescField(IPD, SQL_DESC_TYPE)`
-/// keep returning the spec-mandated 93. `None` means "no vendor opt-in";
-/// the converter dispatch falls back to the default for the SQL type
-/// (which for `SQL_TYPE_TIMESTAMP` is NTZ, mirroring the legacy driver).
+/// Snowflake-specific timestamp subtype carried on the IPD. Set by
+/// `SQLBindParameter` when the application uses one of the vendor codes
+/// `SQL_SF_TIMESTAMP_{LTZ,TZ,NTZ}`, so the binding pipeline emits the matching
+/// Snowflake logical type on the wire. The vendor code itself is also stored
+/// on `IpdRecord::sql_data_type` and returned verbatim from
+/// `SQLDescribeParam` and `SQLGetDescField(IPD, SQL_DESC_TYPE)`. `None` means
+/// "no vendor opt-in"; the converter dispatch falls back to the default for
+/// the SQL type (which for `SQL_TYPE_TIMESTAMP` is NTZ).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampSubtype {
     /// Vendor code 2002: explicit opt-in to TIMESTAMP_NTZ on the wire.
@@ -1864,14 +1864,11 @@ pub(crate) fn binding_from_apd_record(record: &ApdRecord) -> Binding {
 /// column size, decimal digits, and parameter direction. Populated by
 /// `SQLBindParameter` or `SQLSetDescField` on the IPD handle.
 ///
-/// `sql_data_type` always holds a *standard* ODBC SQL type code (1..=12,
-/// 91..=95, 101..=113, etc.) so that `SQLDescribeParam` and
-/// `SQLGetDescField(IPD, SQL_DESC_TYPE)` echo spec-conformant values back
-/// to the application. When `SQLBindParameter` is called with one of the
-/// Snowflake vendor codes (`SQL_SF_TIMESTAMP_LTZ` / `_TZ` / `_NTZ`), the
-/// vendor opt-in is normalised: `sql_data_type` becomes
-/// `SQL_TYPE_TIMESTAMP` (93) and the chosen subtype is stashed on
-/// `sf_subtype` for the bind-time converter dispatch.
+/// `sql_data_type` holds the `ParameterType` passed to `SQLBindParameter`,
+/// including Snowflake vendor codes (`SQL_SF_TIMESTAMP_LTZ` / `_TZ` / `_NTZ`).
+/// `SQLDescribeParam` and `SQLGetDescField(IPD, SQL_DESC_TYPE)` return that
+/// code verbatim. Vendor-code binds also set `sf_subtype` so execute-time
+/// converter dispatch still routes to the matching Snowflake logical type.
 #[derive(Debug)]
 pub struct IpdRecord {
     pub sql_data_type: sql::SqlDataType,
@@ -1921,8 +1918,8 @@ pub struct ParameterBinding {
     pub buffer_length: sql::Len,
     pub str_len_or_ind_ptr: *mut sql::Len,
     /// Mirrors `IpdRecord::sf_subtype`. Lets the converter dispatch route a
-    /// `SQL_TYPE_TIMESTAMP` bind to the right Snowflake logical type
-    /// (NTZ / LTZ / TZ) when the application opted in via a vendor code.
+    /// timestamp bind to the right Snowflake logical type (NTZ / LTZ / TZ)
+    /// when the application opted in via a vendor code.
     pub sf_subtype: Option<TimestampSubtype>,
 }
 
@@ -2599,9 +2596,6 @@ pub fn desc_from_handle(desc_handle: sql::Handle) -> OdbcResult<DescriptorAccess
 mod tests {
     use super::*;
 
-    /// Pins the Snowflake-vendor-code → standard-ODBC-type normalisation that
-    /// `bind_parameter` relies on to keep `SQLDescribeParam` and
-    /// `SQLGetDescField(IPD, SQL_DESC_TYPE)` returning spec-mandated codes.
     #[test]
     fn from_parameter_type_recognises_vendor_codes() {
         assert_eq!(

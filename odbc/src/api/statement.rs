@@ -26,7 +26,8 @@ use crate::api::{
     stmt_from_handle,
 };
 use crate::conversion::Binding;
-use crate::conversion::param_binding::{odbc_bindings_to_csv, odbc_bindings_to_json};
+use crate::conversion::param_binding::{odbc_bindings_to_csv_into, odbc_bindings_to_json_into};
+use crate::conversion::warning::Warnings;
 use arrow::array::RecordBatch;
 use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
@@ -69,12 +70,17 @@ pub fn exec_direct<E: OdbcEncoding>(
     statement_handle: sql::Handle,
     statement_text: *const E::Char,
     text_length: sql::Integer,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let query = E::read_string(statement_text, text_length)?;
-    exec_direct_impl(statement_handle, &query)
+    exec_direct_impl(statement_handle, &query, warnings)
 }
 
-fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
+fn exec_direct_impl(
+    statement_handle: sql::Handle,
+    statement_text: &str,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
     use crate::api::ExecDirectOutcome;
 
     let guard = stmt_from_handle(statement_handle)?;
@@ -161,9 +167,10 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             // which falls through to the threshold check.
             None,
         )?;
-        let (bindings, bindings_owner) = inner.with_effective_apd(|apd| {
+        let (bindings, bindings_owner, bind_warnings) = inner.with_effective_apd(|apd| {
             apply_parameter_bindings(apd, &inner.ipd, false, None, binding_mode)
         })?;
+        warnings.extend(bind_warnings);
         let stmt_handle = guard.stmt_handle;
         let query_timeout = inner.query_timeout;
         let effective_query = statement_text.to_string();
@@ -947,7 +954,7 @@ fn apply_prepare_outcome(
 }
 
 /// Execute a prepared statement
-pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
+pub fn execute(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
     use crate::api::ExecuteOutcome;
 
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
@@ -1049,7 +1056,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             effective_cells,
             inner.prepared_array_bind_supported,
         )?;
-        let (bindings, bindings_owner) = inner.with_effective_apd(|apd| {
+        let (bindings, bindings_owner, bind_warnings) = inner.with_effective_apd(|apd| {
             apply_parameter_bindings(
                 apd,
                 &inner.ipd,
@@ -1058,6 +1065,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                 binding_mode,
             )
         })?;
+        warnings.extend(bind_warnings);
 
         let stmt_handle = guard.stmt_handle;
         let query_timeout = inner.query_timeout;
@@ -1408,7 +1416,7 @@ fn apply_parameter_bindings(
     prepared: bool,
     prepared_param_count: Option<u16>,
     mode: BindingMode,
-) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
+) -> OdbcResult<(Option<QueryBindings>, Option<String>, Warnings)> {
     let effective_count: u16 = if prepared {
         prepared_param_count.with_context(|| crate::api::error::CountFieldIncorrectSnafu {
             reason: "prepared statement is missing prepared_param_count".to_string(),
@@ -1418,7 +1426,7 @@ fn apply_parameter_bindings(
     };
 
     if effective_count == 0 {
-        return Ok((None, None));
+        return Ok((None, None, vec![]));
     }
 
     if apd.records.is_empty() {
@@ -1430,7 +1438,7 @@ fn apply_parameter_bindings(
             }
             .fail();
         }
-        return Ok((None, None));
+        return Ok((None, None, vec![]));
     }
 
     if prepared {
@@ -1452,9 +1460,11 @@ fn apply_parameter_bindings(
         mode,
     );
 
+    let mut bind_warnings = Vec::new();
     let (owner, binding_type) = match mode {
         BindingMode::Json => {
-            let s = odbc_bindings_to_json(apd, ipd, effective_count).context(JsonBindingSnafu)?;
+            let s = odbc_bindings_to_json_into(apd, ipd, effective_count, &mut bind_warnings)
+                .context(JsonBindingSnafu)?;
             let ptr = BinaryDataPtr {
                 value: (s.as_bytes().as_ptr() as u64).to_le_bytes().to_vec(),
                 length: s.len() as i64,
@@ -1462,7 +1472,8 @@ fn apply_parameter_bindings(
             (s, query_bindings::BindingType::Json(ptr))
         }
         BindingMode::Csv => {
-            let s = odbc_bindings_to_csv(apd, ipd, effective_count).context(CsvBindingSnafu)?;
+            let s = odbc_bindings_to_csv_into(apd, ipd, effective_count, &mut bind_warnings)
+                .context(CsvBindingSnafu)?;
             let ptr = BinaryDataPtr {
                 value: (s.as_bytes().as_ptr() as u64).to_le_bytes().to_vec(),
                 length: s.len() as i64,
@@ -1477,7 +1488,7 @@ fn apply_parameter_bindings(
 
     tracing::info!("apply_parameter_bindings: Successfully bound parameters");
 
-    Ok((Some(bindings), Some(owner)))
+    Ok((Some(bindings), Some(owner), bind_warnings))
 }
 
 /// Decide whether to use JSON or CSV (stage) binding.
@@ -1606,25 +1617,14 @@ pub fn bind_parameter(
     let sql_type = SqlType::try_from(raw_parameter_type)?;
     let parameter_type: sql::SqlDataType = sql_type.into();
 
-    // Normalise Snowflake vendor timestamp codes (2000/2001/2002) to the
-    // standard SQL_TYPE_TIMESTAMP (93) on the IPD, while remembering the
-    // chosen subtype on `sf_subtype`. Keeps `SQLDescribeParam` and
-    // `SQLGetDescField(IPD, SQL_DESC_TYPE)` returning spec-mandated codes
-    // while still letting the bind pipeline route to the right Snowflake
-    // logical type.
     let sf_subtype = TimestampSubtype::from_parameter_type(parameter_type);
-    let stored_sql_data_type = if sf_subtype.is_some() {
-        sql::SqlDataType::TIMESTAMP
-    } else {
-        parameter_type
-    };
 
     // For fixed-size SQL types the application may legitimately pass
     // `ColumnSize` 0 (it is ignored for those types); `SQLDescribeParam` must
     // still report the type's natural precision rather than 0. Variable-length
     // types keep the caller-supplied size.
     let column_size = if column_size == 0 {
-        default_param_column_size(stored_sql_data_type).unwrap_or(column_size)
+        default_param_column_size(parameter_type).unwrap_or(column_size)
     } else {
         column_size
     };
@@ -1674,7 +1674,7 @@ pub fn bind_parameter(
     inner.ipd.records.insert(
         parameter_number,
         IpdRecord {
-            sql_data_type: stored_sql_data_type,
+            sql_data_type: parameter_type,
             column_size,
             decimal_digits,
             direction: raw_input_output_type,
@@ -2451,7 +2451,14 @@ pub fn set_stmt_attr(
         StmtAttr::RowsetSize => {
             let val = value_ptr as sql::ULen;
             tracing::debug!("set_stmt_attr: RowsetSize (SQL_ROWSET_SIZE) = {}", val);
-            inner.rowset_size = val.max(1);
+            if val == 0 {
+                return InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail();
+            }
+            inner.rowset_size = val;
             Ok(())
         }
         StmtAttr::SimulateCursor => {
@@ -3520,7 +3527,7 @@ fn execute_dae(
             return Err(e);
         }
     };
-    let (bindings, _bindings_owner) = match apply_parameter_bindings(
+    let (bindings, _bindings_owner, _bind_warnings) = match apply_parameter_bindings(
         &temp_apd,
         &inner.ipd,
         is_prepared,
