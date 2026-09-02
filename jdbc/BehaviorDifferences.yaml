@@ -564,11 +564,11 @@ behavior_differences:
       SnowflakeConnectionPoolDataSource, including client-side JDBC knobs that sf_core does not
       consume. The universal driver keeps setters whose values are either understood by sf_core
       at connect time or honored by the JDBC wrapper (e.g. tracing, enablePatternSearch,
-      JDBC_TREAT_DECIMAL_AS_INT via setArrowTreatDecimalAsInt, JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE,
+      JDBC_ARROW_TREAT_DECIMAL_AS_INT via setArrowTreatDecimalAsInt, JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE,
       JDBC_GET_DATE_USE_NULL_TIMEZONE) and drops the rest rather than storing silent no-ops.
       Wired setters are normalized and forwarded at connect time. OCSP and HttpHeadersCustomizer
-      are covered by BD#46 and BD#43. Note setArrowTreatDecimalAsInt writes JDBC_TREAT_DECIMAL_AS_INT
-      (not legacy JDBC_ARROW_TREAT_DECIMAL_AS_INT).
+      are covered by BD#46 and BD#43. setArrowTreatDecimalAsInt writes JDBC_ARROW_TREAT_DECIMAL_AS_INT
+      (legacy parity); Arrow-format getObject ORs that flag with JDBC_TREAT_DECIMAL_AS_INT.
   32:
     name: "setClientInfo failures no longer fire connectionErrorOccurred"
     status: allowed
@@ -1103,3 +1103,20 @@ behavior_differences:
       an already-occupied priority and the cache is at capacity: JDBC evicts the same-priority
       incumbent, while the UD evicts the entry with the highest priority number (lowest
       importance) regardless of which priority the new entry occupies.
+  60:
+    name: "JDBC_ARROW_TREAT_DECIMAL_AS_INT applies when the backend returns JSON"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      With JDBC_QUERY_RESULT_FORMAT=JSON, JDBC_TREAT_DECIMAL_AS_INT=false, and
+      JDBC_ARROW_TREAT_DECIMAL_AS_INT=true, getObject() returns BigDecimal for a scale-0 number.
+    new_driver_behavior: |
+      With the same settings, getObject() returns Long. Setting
+      JDBC_ARROW_TREAT_DECIMAL_AS_INT=false makes getObject() return BigDecimal.
+    description: |
+      The new driver converts backend JSON results to Arrow before exposing them through JDBC.
+      It therefore applies the Arrow conversion property to every result, regardless of the
+      backend result format.

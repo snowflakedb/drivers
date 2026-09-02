@@ -179,4 +179,28 @@ public class SessionDataConversionContextTest {
     assertFalse(ctx.isHonorClientTZForTimestampNTZ());
     assertEquals("TIMESTAMP_NTZ", ctx.getTimestampMappedType());
   }
+
+  @Test
+  public void shouldTreatDecimalAsIntByDefault() throws Exception {
+    DataConversionContext ctx = contextFrom(Collections.emptyMap());
+    assertTrue(ctx.isTreatDecimalAsInt());
+    assertTrue(ctx.isArrowTreatDecimalAsInt());
+  }
+
+  @Test
+  public void shouldKeepArrowDecimalFlagIndependentOfJdbcTreatDecimalAsInt() throws Exception {
+    Map<String, String> params = new HashMap<>();
+    params.put("JDBC_TREAT_DECIMAL_AS_INT", "false");
+    DataConversionContext ctx = contextFrom(params);
+    assertFalse(
+        ctx.isTreatDecimalAsInt(), "the metadata knob must not be widened by the Arrow override");
+    assertTrue(ctx.isArrowTreatDecimalAsInt(), "JDBC_ARROW_TREAT_DECIMAL_AS_INT defaults to true");
+  }
+
+  @Test
+  public void shouldClearArrowDecimalFlagWhenPropertyIsFalse() throws Exception {
+    Map<String, String> params = new HashMap<>();
+    params.put("JDBC_ARROW_TREAT_DECIMAL_AS_INT", "false");
+    assertFalse(contextFrom(params).isArrowTreatDecimalAsInt());
+  }
 }

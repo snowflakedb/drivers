@@ -49,12 +49,30 @@ public interface DataConversionContext {
   /**
    * Whether scale-0 {@code FIXED}/{@code NUMBER} columns are surfaced as integers ({@code long}
    * from {@code getObject}, {@code BIGINT} from the result-set metadata) rather than as {@code
-   * BigDecimal}/{@code DECIMAL}. Mirrors snowflake-jdbc's {@code JDBC_TREAT_DECIMAL_AS_INT} session
-   * parameter, which defaults to {@code true}. The value converters and {@code
-   * SnowflakeResultSetMetaDataImpl} both read this single flag so the reported column type and the
-   * materialized object stay consistent.
+   * BigDecimal}/{@code DECIMAL}. Mirrors the {@code JDBC_TREAT_DECIMAL_AS_INT} session parameter
+   * (default true in snowflake-jdbc).
+   *
+   * <p>This is the only decimal knob the result-set metadata reads, matching snowflake-jdbc's
+   * {@code SnowflakeColumnMetadata}. The value converters additionally honor {@link
+   * #isArrowTreatDecimalAsInt()}.
    */
   default boolean isTreatDecimalAsInt() {
+    return true;
+  }
+
+  /**
+   * Whether the Arrow-only override forces scale-0 {@code FIXED}/{@code NUMBER} <em>values</em> to
+   * integers even when {@link #isTreatDecimalAsInt()} is false. Mirrors snowflake-jdbc's
+   * client-only {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT} connection property (default true), which
+   * its Arrow converters OR with {@code JDBC_TREAT_DECIMAL_AS_INT} while its JSON converters ignore
+   * entirely.
+   *
+   * <p>The universal driver always materializes through Arrow vectors, including when the backend
+   * returns JSON, so this override applies regardless of the backend result format. Unlike {@link
+   * #isTreatDecimalAsInt()} this does not affect the reported column type, so a result under {@code
+   * JDBC_TREAT_DECIMAL_AS_INT=false} reports {@code DECIMAL} while returning {@code Long}.
+   */
+  default boolean isArrowTreatDecimalAsInt() {
     return true;
   }
 
