@@ -2640,6 +2640,9 @@ pub enum RestError {
         location: Location,
     },
     #[snafu(display("Async query did not report a queryId"))]
+    // Raised from `apis::database_driver_v1::statement` too, when a 200 comes back
+    // with no usable id, so the selector has to be reachable outside this module.
+    #[snafu(visibility(pub(crate)))]
     MissingQueryId {
         ids: QueryIds,
         #[snafu(implicit)]

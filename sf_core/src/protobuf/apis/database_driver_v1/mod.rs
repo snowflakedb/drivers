@@ -1042,9 +1042,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(result.into())
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_execute_async", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_execute_async",
+        skip(self, ctx, input)
+    )]
     async fn statement_execute_async(
         &self,
+        ctx: Option<&OperationCtx>,
         input: StatementExecuteAsyncRequest,
     ) -> Result<StatementExecuteAsyncResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
@@ -1062,7 +1066,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .statement_execute_async(stmt_handle.into(), bindings_opt)
+            .statement_execute_async(ctx, stmt_handle.into(), bindings_opt)
             .await
             .to_protobuf()?;
 

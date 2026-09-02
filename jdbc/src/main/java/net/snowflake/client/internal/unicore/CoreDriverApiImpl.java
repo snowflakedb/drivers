@@ -384,7 +384,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
       builder.setBindings(bindings);
     }
     StatementExecuteAsyncRequest request = builder.build();
-    return invoke(() -> client.statementExecuteAsync(request));
+    return await(client.statementExecuteAsync(request));
   }
 
   public StatementReleaseResponse statementRelease(StatementHandle stmtHandle) {

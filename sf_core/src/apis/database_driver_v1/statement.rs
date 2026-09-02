@@ -22,8 +22,9 @@ use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    AbortOutcome, QueryExecutionMode, QueryInput, QueryOptions, query_request, query_response,
-    snowflake_abort_query, snowflake_cancel_query, snowflake_query_with_client,
+    AbortOutcome, MissingQueryIdSnafu, QueryExecutionMode, QueryIds, QueryInput, QueryOptions,
+    query_request, query_response, snowflake_abort_query, snowflake_cancel_query,
+    snowflake_query_with_client,
 };
 use crate::utils::sync::MutexRecoverExt;
 
@@ -767,108 +768,181 @@ impl DatabaseDriverV1 {
     }
 
     /// Execute query asynchronously (non-blocking) — returns immediately with query_id.
+    ///
+    /// Cancelling aborts the submitted query server-side, for the same reason
+    /// `statement_execute_query` does, and one specific to this path: the caller
+    /// never receives the `query_id`, so a query left running is one they cannot
+    /// poll, abort, or even name. The abort is armed only around the submission, so
+    /// a cancel during the bind-stage upload issues none — nothing was sent yet.
     pub async fn statement_execute_async<'a>(
         &self,
+        ctx: Option<&OperationCtx>,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
     ) -> Result<AsyncExecuteResult, ApiError> {
-        let stmt_ptr =
-            self.statements
-                .get_obj(stmt_handle)
-                .with_context(|| InvalidArgumentSnafu {
-                    argument: "Statement handle not found".to_string(),
-                })?;
+        let report = AbortReport::default();
+        // `async move`, so `bindings` is owned by this future rather than borrowed
+        // from the frame: `BindingType` wraps a raw pointer and is `Send` but not
+        // `Sync`, and the generated server trait requires a `Send` future — which a
+        // borrow of a non-`Sync` value would not satisfy.
+        let cleanup_report = report.clone();
+        let submit = Box::pin(async move {
+            let stmt_ptr =
+                self.statements
+                    .get_obj(stmt_handle)
+                    .with_context(|| InvalidArgumentSnafu {
+                        argument: "Statement handle not found".to_string(),
+                    })?;
 
-        let mut stmt = stmt_ptr.lock().await;
+            let mut stmt = stmt_ptr.lock().await;
 
-        let query = extract_query(&stmt)?;
+            let query = extract_query(&stmt)?;
 
-        self.ensure_file_transfer_allowed(&query, &stmt.conn)
-            .await?;
-
-        let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
-        let mut query_parameter_map = build_query_parameters(&stmt.settings);
-        let conn_arc = stmt.conn.clone();
-
-        let (query_bindings, csv_bytes) = split_bindings(&bindings)?;
-
-        let bind_stage_path = if let Some(bytes) = csv_bytes {
-            let path = self
-                // No ctx: `StatementExecuteAsync` is not marked `async_first`, so
-                // no operation token reaches this RPC.
-                .upload_csv_bindings_to_stage(
-                    None,
-                    &conn_arc,
-                    &http_client,
-                    &query_parameters,
-                    &retry_policy,
-                    bytes,
-                )
+            self.ensure_file_transfer_allowed(&query, &stmt.conn)
                 .await?;
-            inject_timestamp_input_format_auto(&mut query_parameter_map);
-            Some(path)
-        } else {
-            None
-        };
 
-        let query_context = {
-            let conn = stmt.conn.lock().await;
-            conn.query_context_cache.get_query_context_snapshot().await
-        };
+            let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
+            let mut query_parameter_map = build_query_parameters(&stmt.settings);
+            let conn_arc = stmt.conn.clone();
 
-        let query_input = QueryInput {
-            sql: query.clone(),
-            bindings: query_bindings,
-            bind_stage: bind_stage_path,
-            describe_only: None,
-            query_parameters: query_parameter_map,
-            query_context,
-        };
-        let request_id = uuid::Uuid::new_v4();
+            let (query_bindings, csv_bytes) = split_bindings(&bindings)?;
 
-        let result = {
-            let mut ctx = RefreshContext::from_arc(&stmt.conn).await?;
-            let mut last_error = None;
-            loop {
-                let session_token = ctx.refresh_token(last_error).await?;
-                match submit_statement_async(
-                    &http_client,
-                    &query_parameters,
-                    session_token.reveal(),
-                    &query_input,
-                    request_id,
-                    &retry_policy,
-                )
-                .await
-                {
-                    Ok(submit_result) => break Ok(submit_result),
-                    Err(e) => {
-                        last_error = Some(e);
+            let bind_stage_path = if let Some(bytes) = csv_bytes {
+                let path = self
+                    .upload_csv_bindings_to_stage(
+                        ctx,
+                        &conn_arc,
+                        &http_client,
+                        &query_parameters,
+                        &retry_policy,
+                        bytes,
+                    )
+                    .await?;
+                inject_timestamp_input_format_auto(&mut query_parameter_map);
+                Some(path)
+            } else {
+                None
+            };
+
+            let query_context = {
+                let conn = stmt.conn.lock().await;
+                conn.query_context_cache.get_query_context_snapshot().await
+            };
+            let query_input = QueryInput {
+                sql: query.clone(),
+                bindings: query_bindings,
+                bind_stage: bind_stage_path,
+                describe_only: None,
+                query_parameters: query_parameter_map,
+                query_context,
+            };
+            let request_id = uuid::Uuid::new_v4();
+
+            // Same shape as `execute_query_internal`'s: the identity is moved in
+            // rather than looked up when it runs, because the cleanup task
+            // outlives this future by design.
+            let abort_cleanup = {
+                let (conn_arc, req, sql) =
+                    (conn_arc.clone(), request_id.to_string(), query.clone());
+                let report = cleanup_report;
+                async move {
+                    // Recorded before awaiting so a cleanup that never finishes is
+                    // still distinguishable from one that was never armed.
+                    report.set(CancellationAbortResult::NotConfirmed);
+                    match abort_query_by_request_id(&conn_arc, req, sql).await {
+                        Ok(outcome) => {
+                            report.set(match outcome {
+                                AbortOutcome::Aborted => CancellationAbortResult::Aborted,
+                                AbortOutcome::NotRunning => CancellationAbortResult::NotRunning,
+                            });
+                            tracing::debug!(
+                                ?outcome,
+                                "aborted async submission after cancellation"
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                %error,
+                                "failed to abort async submission after cancellation"
+                            )
+                        }
                     }
                 }
+            };
+
+            let result = with_cleanup_opt(
+                ctx,
+                abort_cleanup,
+                Box::pin(async {
+                    // Named `refresh_ctx`, not `ctx`: shadowing the operation ctx
+                    // here would silently hide it from anything added inside this
+                    // loop.
+                    let mut refresh_ctx = RefreshContext::from_arc(&conn_arc).await?;
+                    let mut last_error = None;
+                    loop {
+                        let session_token = refresh_ctx.refresh_token(last_error).await?;
+                        match submit_statement_async(
+                            &http_client,
+                            &query_parameters,
+                            session_token.reveal(),
+                            &query_input,
+                            request_id,
+                            &retry_policy,
+                        )
+                        .await
+                        {
+                            Ok(submit_result) => break Ok(submit_result),
+                            Err(e) => {
+                                last_error = Some(e);
+                            }
+                        }
+                    }
+                }),
+            )
+            .await?;
+
+            // A 200 that carries no usable id means GS accepted the submission but
+            // the caller cannot name the query it created. `with_cleanup_opt`'s
+            // cleanup covers cancellation only and is already disarmed by the time
+            // the submit future returns, so the abort has to be fired here or the
+            // query is orphaned — the same leak a cancelled submit would cause,
+            // reached without any cancellation.
+            //
+            // `filter` rather than a bare `None` check: an empty string is not a
+            // usable id either, and would otherwise be handed back as a valid one.
+            let query_id = match result.query_id.clone().filter(|id| !id.is_empty()) {
+                Some(id) => id,
+                None => {
+                    abort_unnameable_submission(&conn_arc, request_id, &query).await;
+                    return MissingQueryIdSnafu {
+                        ids: QueryIds {
+                            request_id: Some(request_id),
+                            query_id: result.query_id,
+                        },
+                    }
+                    .fail()
+                    .context(QuerySnafu);
+                }
+            };
+
+            {
+                let mut conn = stmt.conn.lock().await;
+                conn.query_context_cache
+                    .update_query_context_cache(
+                        result.response.data.query_context.as_ref(),
+                        result.response.data.parameters.as_ref(),
+                    )
+                    .await;
             }
-        }?;
 
-        let query_id = result.query_id.with_context(|| InvalidArgumentSnafu {
-            argument: "No query_id returned from async submission".to_string(),
-        })?;
+            stmt.state = StatementState::Executed;
 
-        {
-            let mut conn = stmt.conn.lock().await;
-            conn.query_context_cache
-                .update_query_context_cache(
-                    result.response.data.query_context.as_ref(),
-                    result.response.data.parameters.as_ref(),
-                )
-                .await;
-        }
-
-        stmt.state = StatementState::Executed;
-
-        Ok(AsyncExecuteResult {
-            query_id,
-            request_id,
-        })
+            Ok(AsyncExecuteResult {
+                query_id,
+                request_id,
+            })
+        });
+        run_reporting_abort(ctx, "statement_execute_async", &report, submit).await
     }
 
     /// Cancelling abandons the fetch and, on the PUT/GET branch, aborts the
@@ -989,6 +1063,33 @@ impl DatabaseDriverV1 {
 /// Aborts are idempotent server-side anyway — a repeat for the same `requestId`
 /// comes back `000605`/not-executing — so a retry costs a round trip, not
 /// correctness.
+/// Abort a submission GS accepted but whose `query_id` never reached the caller.
+///
+/// Distinct from the cancellation cleanup: that one is armed against the operation
+/// token and disarmed as soon as the submit future returns, so it cannot cover a
+/// submit that *succeeded* at the HTTP level while yielding nothing the caller can
+/// abort with. Best-effort and bounded by [`ABORT_REQUEST_TIMEOUT`]; the outcome is
+/// logged rather than returned, because the error the caller receives is not a
+/// cancellation and has nowhere to carry an abort acknowledgement.
+async fn abort_unnameable_submission(
+    conn_arc: &Arc<Mutex<Connection>>,
+    request_id: uuid::Uuid,
+    sql: &str,
+) {
+    match abort_query_by_request_id(conn_arc, request_id.to_string(), sql.to_string()).await {
+        Ok(outcome) => tracing::warn!(
+            ?outcome,
+            %request_id,
+            "aborted an async submission that returned no query id"
+        ),
+        Err(error) => tracing::warn!(
+            %error,
+            %request_id,
+            "failed to abort an async submission that returned no query id"
+        ),
+    }
+}
+
 async fn abort_query_by_request_id(
     conn_arc: &Arc<Mutex<Connection>>,
     request_id: String,

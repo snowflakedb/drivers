@@ -23,12 +23,14 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionInitRequest, ConnectionInitResponse, ConnectionNewRequest, ConnectionNewResponse,
     ConnectionSendHttpRequest, ConnectionSetOptionsRequest, ConnectionSetOptionsResponse,
     ConnectionTokenRequest, DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest,
-    DatabaseNewResponse, DriverException, ErrorKind, StatementExecuteQueryRequest, StatementHandle,
-    StatementNewRequest, StatementNewResponse, StatementPrepareRequest,
-    StatementSetSqlQueryRequest, StatementSetSqlQueryResponse, TokenRequestType, config_setting,
+    DatabaseNewResponse, DriverException, ErrorKind, StatementExecuteAsyncRequest,
+    StatementExecuteQueryRequest, StatementHandle, StatementNewRequest, StatementNewResponse,
+    StatementPrepareRequest, StatementSetSqlQueryRequest, StatementSetSqlQueryResponse,
+    TokenRequestType, config_setting,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -113,6 +115,10 @@ const SLOW_QUERY: &str = "SELECT COUNT(*) FROM huge_table";
 const LOGIN_OK: &str = r#"{"success":true,"data":{"token":"mock_token","masterToken":"mock_master_token","sessionId":12345}}"#;
 const ABORT_OK: &str = r#"{"success":true,"data":{}}"#;
 const EMPTY_RESULT: &str = r#"{"success":true,"data":{"rowtype":[],"rowset":[],"total":0,"queryId":"01b2-cancel-test","queryResultFormat":"json"}}"#;
+/// A query-request answer that GS accepted but which carries no `queryId`, so the
+/// caller has nothing to name the query it created with.
+const RESULT_WITHOUT_QUERY_ID: &str =
+    r#"{"success":true,"data":{"rowtype":[],"rowset":[],"total":0,"queryResultFormat":"json"}}"#;
 const CATCH_ALL_OK: &str = r#"{"success":true,"data":{}}"#;
 /// Query id for the finished-query lookups (`connection_get_result_set`,
 /// `connection_get_query_status`, `connection_get_query_result`). Must be a
@@ -178,6 +184,10 @@ struct HangingServer {
     /// Bodies of every `POST /queries/v1/abort-request` received. Asserting on
     /// the count is what pins "exactly one abort per cancelled query".
     abort_bodies: Mutex<Vec<String>>,
+    /// Answer the query-request with [`RESULT_WITHOUT_QUERY_ID`] instead of
+    /// [`EMPTY_RESULT`]. Orthogonal to [`HangOn`]: this is about *what* is answered,
+    /// not where the mock parks.
+    omit_query_id: AtomicBool,
     /// Request target the mock actually parked on. `HangOn::FinishedQueryLookup`
     /// matches two different endpoints, so without recording this a test could
     /// pass having hung the wrong one.
@@ -276,7 +286,11 @@ async fn spawn_hanging_server(
                         // is cancellation.
                         std::future::pending::<()>().await;
                     }
-                    EMPTY_RESULT.to_string()
+                    if state.omit_query_id.load(Ordering::SeqCst) {
+                        RESULT_WITHOUT_QUERY_ID.to_string()
+                    } else {
+                        EMPTY_RESULT.to_string()
+                    }
                 } else if target.contains("/queries/v1/abort-request") {
                     state.abort_bodies.lock().unwrap().push(body);
                     ABORT_OK.to_string()
@@ -549,6 +563,7 @@ fn hanging_server_state() -> (Arc<HangingServer>, Receiver<()>) {
             request_received: Mutex::new(tx),
             query_request_id: Mutex::new(None),
             abort_bodies: Mutex::new(Vec::new()),
+            omit_query_id: AtomicBool::new(false),
             hung_target: Mutex::new(None),
             connections: Mutex::new(Vec::new()),
         }),
@@ -928,6 +943,44 @@ async fn a_query_that_completes_emits_no_abort_request() {
     );
 }
 
+/// The same guarantee for `statement_execute_async`: an uncancelled submission
+/// must not emit an abort-request.
+///
+/// The execute path has this above; the async path did not, and it is the one
+/// where an accidental abort would be hardest to notice — the caller receives a
+/// `query_id` and a success, so a spurious abort of that very query would only
+/// show up later as a query that mysteriously stopped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_completed_async_submission_emits_no_abort_request() {
+    let (state, _request_received) = hanging_server_state();
+    let (addr, _server) = spawn_answering_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let stmt = statement_with_slow_query(&transport, addr).await;
+
+    let (operation, _token) = transport.register();
+    let _ = tokio::time::timeout(
+        BOUND,
+        transport.handle_message_cancellable(
+            "DatabaseDriver",
+            "statement_execute_async",
+            StatementExecuteAsyncRequest {
+                stmt_handle: Some(stmt),
+                bindings: None,
+            }
+            .encode_to_vec(),
+            operation,
+        ),
+    )
+    .await
+    .expect("an answered submission must return inside the bound");
+
+    assert!(
+        state.abort_bodies.lock().unwrap().is_empty(),
+        "an async submission that was never cancelled must not be aborted"
+    );
+}
+
 /// The same call with a handle that is never cancelled must not be short
 /// circuited by the new observation point — it stays parked on the server.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1070,6 +1123,39 @@ async fn cancelling_an_in_flight_query_result_fetch_reports_cancelled_without_ab
     assert_no_abort_requests(&state);
 }
 
+/// Cancelling an async *submission* aborts the query server-side, like the
+/// execute and prepare paths — not drop-only like the finished-query lookups.
+///
+/// The reason is specific to this RPC: a cancelled submission never returns its
+/// `query_id`, so a query left running is one the caller cannot poll, abort, or
+/// even name. `assert_aborted_the_submitted_query` matches the abort against the
+/// `requestId` the mock actually saw, which is what makes this an abort *of this
+/// submission* rather than of something.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_async_submission_aborts_it_server_side() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let stmt = statement_with_slow_query(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "statement_execute_async",
+        "query-request",
+        StatementExecuteAsyncRequest {
+            stmt_handle: Some(stmt),
+            bindings: None,
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
+    assert_aborted_the_submitted_query(&state);
+}
+
 /// `connection_request_token` exchanges the master token for a session token on
 /// the same untimed client, so an unanswered `POST /session/token-request`
 /// blocked the caller indefinitely before it was marked.
@@ -1176,4 +1262,57 @@ async fn cancelling_send_http_while_reading_the_body_reports_cancelled() {
     assert_cancelled(result);
     assert_hung_on(&state, SEND_HTTP_PROBE_PATH);
     assert_no_abort_requests(&state);
+}
+
+/// A submission GS accepted but which came back without a usable `query_id` must
+/// abort the query it cannot name, and report an internal error rather than
+/// blaming the caller.
+///
+/// This is the same orphan a cancelled submission would leave, reached without any
+/// cancellation: `with_cleanup_opt`'s cleanup is armed against the operation token
+/// and is already disarmed by the time the submit future returns `Ok`, so nothing
+/// covers a 200 that yields no id. Without the explicit abort the query keeps
+/// running and the caller has no id to stop it with.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_async_submission_without_a_query_id_aborts_the_query_it_cannot_name() {
+    let (state, _request_received) = hanging_server_state();
+    state.omit_query_id.store(true, Ordering::SeqCst);
+    let (addr, _server) = spawn_answering_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let stmt = statement_with_slow_query(&transport, addr).await;
+
+    let (operation, _token) = transport.register();
+    let result = tokio::time::timeout(
+        BOUND,
+        transport.handle_message_cancellable(
+            "DatabaseDriver",
+            "statement_execute_async",
+            StatementExecuteAsyncRequest {
+                stmt_handle: Some(stmt),
+                bindings: None,
+            }
+            .encode_to_vec(),
+            operation,
+        ),
+    )
+    .await
+    .expect("an answered submission must return inside the bound");
+
+    let ex = match result {
+        Err(ProtoError::Application(bytes)) => {
+            DriverException::decode(&bytes[..]).expect("decodes as DriverException")
+        }
+        other => panic!("a submission with no query id must fail, got {other:?}"),
+    };
+    assert_eq!(
+        ex.kind,
+        ErrorKind::InternalError as i32,
+        "a missing query id is a driver/server fault, not the caller's: {ex:?}"
+    );
+
+    // The abort is the whole point: it names the query by the `requestId` the
+    // submission was sent with, which is the only handle left once GS has
+    // withheld the id.
+    assert_aborted_the_submitted_query(&state);
 }
