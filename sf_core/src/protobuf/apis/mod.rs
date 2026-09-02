@@ -445,6 +445,10 @@ mod tests {
             "wif_create_attestation is marked async_first in the proto"
         );
         assert!(
+            observes_cancellation("statement_execute_async"),
+            "statement_execute_async is marked async_first in the proto"
+        );
+        assert!(
             !observes_cancellation("connection_new"),
             "unmarked RPCs must not claim to observe cancellation themselves"
         );
