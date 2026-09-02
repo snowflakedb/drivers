@@ -47,8 +47,15 @@ final class ConnectionFactory {
   }
 
   static void executeSetupQueries(Connection conn, List<String> setupQueries) throws SQLException {
+    executeSetupQueries(conn, setupQueries, true);
+  }
+
+  static void executeSetupQueries(Connection conn, List<String> setupQueries, boolean logEach)
+      throws SQLException {
     for (String query : setupQueries) {
-      System.out.println("Setup query: " + query);
+      if (logEach) {
+        System.out.println("Setup query: " + query);
+      }
       try (Statement stmt = conn.createStatement()) {
         stmt.execute(query);
       }

@@ -24,6 +24,7 @@ final class Config {
   final String testName;
   final int iterations;
   final int warmupIterations;
+  final int workerCount;
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -37,6 +38,10 @@ final class Config {
     this.testName = System.getenv("TEST_NAME");
     this.iterations = Integer.parseInt(envOrDefault("PERF_ITERATIONS", "1"));
     this.warmupIterations = Integer.parseInt(envOrDefault("PERF_WARMUP_ITERATIONS", "0"));
+    this.workerCount = Integer.parseInt(envOrDefault("WORKER_COUNT", "1"));
+    if (this.workerCount < 1) {
+      throw new IllegalStateException("WORKER_COUNT must be >= 1, got " + this.workerCount);
+    }
     this.setupQueriesJson = System.getenv("SETUP_QUERIES");
 
     String paramsJson = System.getenv("PARAMETERS_JSON");

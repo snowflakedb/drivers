@@ -16,15 +16,24 @@ final class QueryExecution {
     final long rowCount;
     final double cpuTimeS;
     final double peakRssMb;
+    final int workerCount;
+    final double throughputRowsS;
 
     IterationResult(long timestampMs, double queryTimeS, double fetchTimeS, long rowCount,
         double cpuTimeS, double peakRssMb) {
+      this(timestampMs, queryTimeS, fetchTimeS, rowCount, cpuTimeS, peakRssMb, 0, 0.0);
+    }
+
+    IterationResult(long timestampMs, double queryTimeS, double fetchTimeS, long rowCount,
+        double cpuTimeS, double peakRssMb, int workerCount, double throughputRowsS) {
       this.timestampMs = timestampMs;
       this.queryTimeS = queryTimeS;
       this.fetchTimeS = fetchTimeS;
       this.rowCount = rowCount;
       this.cpuTimeS = cpuTimeS;
       this.peakRssMb = peakRssMb;
+      this.workerCount = workerCount;
+      this.throughputRowsS = throughputRowsS;
     }
   }
 
@@ -61,6 +70,13 @@ final class QueryExecution {
     }
   }
 
+  static long fetchAllRows(Connection conn, String sql) throws SQLException {
+    try (Statement stmt = conn.createStatement();
+        ResultSet rs = stmt.executeQuery(sql)) {
+      return consumeResultSet(rs);
+    }
+  }
+
   private static IterationResult executeQuery(Statement stmt, String sql) throws SQLException {
     long queryStart = System.nanoTime();
     try (ResultSet rs = stmt.executeQuery(sql)) {
@@ -68,19 +84,24 @@ final class QueryExecution {
 
       double cpuStart = Common.processCpuSeconds();
       long fetchStart = System.nanoTime();
-      int columnCount = rs.getMetaData().getColumnCount();
-      long rowCount = 0;
-      while (rs.next()) {
-        for (int c = 1; c <= columnCount; c++) {
-          rs.getObject(c); // materialize every column
-        }
-        rowCount++;
-      }
+      long rowCount = consumeResultSet(rs);
       double fetchTimeS = (System.nanoTime() - fetchStart) / 1_000_000_000.0;
       double cpuTimeS = Common.processCpuSeconds() - cpuStart;
       return new IterationResult(System.currentTimeMillis(), queryTimeS, fetchTimeS, rowCount,
           cpuTimeS, Common.peakRssMb());
     }
+  }
+
+  private static long consumeResultSet(ResultSet rs) throws SQLException {
+    int columnCount = rs.getMetaData().getColumnCount();
+    long rowCount = 0;
+    while (rs.next()) {
+      for (int c = 1; c <= columnCount; c++) {
+        rs.getObject(c);
+      }
+      rowCount++;
+    }
+    return rowCount;
   }
 
   private static void validateRowCounts(List<IterationResult> results) {
