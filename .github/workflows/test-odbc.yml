@@ -118,7 +118,7 @@ jobs:
   # label re-runs the workflow — see Driver CI's labeled-event allowlist)
   # and on the nightly schedule. Single Linux x64 / AWS lane. Intentionally NOT a
   # dependency of `odbc-status`, so it never blocks a merge — it is an on-demand
-  # diagnostic lane, mirroring the label-gated `run_full_put_get_tests` workflow.
+  # diagnostic lane, mirroring the label-gated `full_put_get_tests` workflow.
   odbc_long_running:
     if: >-
       github.event_name == 'schedule'

@@ -1,16 +1,19 @@
-name: temporary put get
+name: full_put_get_tests
 
-# TEMPORARY workflow. Remove this file once the AWS / GCP / Azure put-get
-# changes are delivered and the standard CI matrix exercises put/get against
-# all three clouds on every PR — at that point this label-gated runner has
-# no remaining purpose.
+# On-demand full put/get sweep across all three clouds. The standard CI
+# matrix doesn't exercise put/get against aws/gcp/azure on every PR, so this
+# workflow is the process's way of covering that combination when a PR
+# touches stage file transfer or otherwise warrants the full sweep.
 #
-# Until then: spawned only when the `run_full_put_get_tests` label is added
-# to a PR. Runs the put/get test subset across python, sf_core, and odbc on
-# Linux x64, fanned out across aws/gcp/azure (3 jobs per driver). Cargo + uv
-# cache shared-keys mirror the main test pipelines so when this workflow
-# fires after the regular CI runs, the registry/target/uv caches are already
-# warm and rebuild cost is near-zero.
+# Spawned when either the `transport` or `run_full_put_get_tests` label is on
+# a PR — `transport` is auto-applied by .github/labeler.yml for stage
+# file-transfer changes, `run_full_put_get_tests` is available to apply
+# manually for any other PR that warrants the full put/get sweep. Runs the
+# put/get test subset across python, sf_core, and odbc on Linux x64, fanned
+# out across aws/gcp/azure (3 jobs per driver). Cargo + uv cache shared-keys
+# mirror the main test pipelines so when this workflow fires after the
+# regular CI runs, the registry/target/uv caches are already warm and
+# rebuild cost is near-zero.
 #
 # Build-once / test-many pattern (mirrors main pipelines):
 #   build_python_wheel  → uploads wheel, downloaded by the 3 cloud entries
@@ -36,20 +39,20 @@ on:
     types: [opened, synchronize, reopened, labeled]
 
 concurrency:
-  # One temporary run per PR; re-applying the run-full-put-get-tests label
-  # replaces any in-flight run, as does a new push (synchronize) while the
-  # label is on the PR. Other label events still enter this workflow but
-  # are filtered to a no-op by `gate`, and we don't want those no-op runs
-  # to cancel a real put/get run that's already executing.
+  # One run per PR; re-applying either gating label replaces any in-flight
+  # run, as does a new push (synchronize) while one of the labels is on the
+  # PR. Other label events still enter this workflow but are filtered to a
+  # no-op by `gate`, and we don't want those no-op runs to cancel a real
+  # put/get run that's already executing.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: ${{ github.event.action != 'labeled' || github.event.label.name == 'run_full_put_get_tests' }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["transport", "run_full_put_get_tests"]'), github.event.label.name) }}
 
 jobs:
   # Single label gate — every downstream job depends on it (directly or via
   # a build job). Two acceptance paths:
-  #   - the triggering event is the matching label being added
+  #   - the triggering event is one of the gating labels being added
   #   - the triggering event is something else (synchronize/opened/...)
-  #     and the matching label is currently on the PR
+  #     and one of the gating labels is currently on the PR
   gate:
     # Public-side gate: on the mirror (snowflakedb) this never runs — it's an
     # internal label-gated workflow. Internal repo (repository_owner !=
@@ -58,8 +61,8 @@ jobs:
       (github.repository_owner != 'snowflakedb'
        || github.event_name == 'workflow_dispatch'
        || startsWith(github.ref, 'refs/heads/release/'))
-      && ((github.event.action == 'labeled' && github.event.label.name == 'run_full_put_get_tests')
-          || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run_full_put_get_tests')))
+      && ((github.event.action == 'labeled' && contains(fromJSON('["transport", "run_full_put_get_tests"]'), github.event.label.name))
+          || (github.event.action != 'labeled' && (contains(github.event.pull_request.labels.*.name, 'transport') || contains(github.event.pull_request.labels.*.name, 'run_full_put_get_tests'))))
     runs-on: ubuntu-latest
     steps:
       - run: 'true'
@@ -120,7 +123,7 @@ jobs:
       - name: Upload wheel
         uses: actions/upload-artifact@v7
         with:
-          name: python-wheel-temporary
+          name: python-wheel-full-put-get-tests
           path: python/dist/*.whl
           if-no-files-found: error
 
@@ -183,7 +186,7 @@ jobs:
       - name: Upload driver
         uses: actions/upload-artifact@v7
         with:
-          name: odbc-driver-temporary
+          name: odbc-driver-full-put-get-tests
           path: target/debug/libsfodbc.so
           if-no-files-found: error
 
@@ -239,7 +242,7 @@ jobs:
       - name: Download wheel
         uses: actions/download-artifact@v8
         with:
-          name: python-wheel-temporary
+          name: python-wheel-full-put-get-tests
           path: python/dist
 
       - name: Decode secrets
@@ -379,7 +382,7 @@ jobs:
       - name: Download ODBC driver
         uses: actions/download-artifact@v8
         with:
-          name: odbc-driver-temporary
+          name: odbc-driver-full-put-get-tests
           path: target/debug
 
       - name: Make driver executable
