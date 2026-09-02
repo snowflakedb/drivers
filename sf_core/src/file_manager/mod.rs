@@ -560,17 +560,28 @@ pub(crate) async fn upload_prepared_source(
         target: file_metadata.target,
         source_size: file_metadata.source_size,
         target_size: file_metadata.target_size,
-        source_compression: file_metadata
-            .source_compression
-            .get_snowflake_representation()
-            .to_string(),
-        target_compression: file_metadata
-            .target_compression
-            .get_snowflake_representation()
-            .to_string(),
+        source_compression: upload_result_compression_token(
+            &file_metadata.source_compression,
+            &data.flavor,
+        ),
+        target_compression: upload_result_compression_token(
+            &file_metadata.target_compression,
+            &data.flavor,
+        ),
         message: upload_result_message(status, &data.flavor).to_string(),
         status: status.to_string(),
     })
+}
+
+fn upload_result_compression_token(
+    kind: &CompressionType,
+    flavor: &PutGetResultsetFlavor,
+) -> String {
+    let token = kind.get_snowflake_representation();
+    match flavor {
+        PutGetResultsetFlavor::Odbc => token.to_ascii_lowercase(),
+        _ => token.to_string(),
+    }
 }
 
 /// Returns the `message` column value for a completed upload, gated on the
@@ -2408,6 +2419,41 @@ mod tests {
     }
 
     #[test]
+    fn upload_result_compression_token_odbc_is_lowercase() {
+        assert_eq!(
+            upload_result_compression_token(&CompressionType::Gzip, &PutGetResultsetFlavor::Odbc),
+            "gzip",
+        );
+        assert_eq!(
+            upload_result_compression_token(&CompressionType::None, &PutGetResultsetFlavor::Odbc),
+            "none",
+        );
+        assert_eq!(
+            upload_result_compression_token(
+                &CompressionType::RawDeflate,
+                &PutGetResultsetFlavor::Odbc
+            ),
+            "raw_deflate",
+        );
+    }
+
+    #[test]
+    fn upload_result_compression_token_python_and_jdbc_stay_uppercase() {
+        for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Jdbc] {
+            assert_eq!(
+                upload_result_compression_token(&CompressionType::Gzip, &flavor),
+                "GZIP",
+                "{flavor:?}",
+            );
+            assert_eq!(
+                upload_result_compression_token(&CompressionType::None, &flavor),
+                "NONE",
+                "{flavor:?}",
+            );
+        }
+    }
+
+    #[test]
     fn upload_result_message_odbc_skipped_uses_legacy_literal() {
         assert_eq!(
             upload_result_message(UploadStatus::Skipped, &PutGetResultsetFlavor::Odbc),
@@ -3507,6 +3553,40 @@ mod tests {
             "sanity: compressed bytes should differ from the raw payload (this test would be \
              vacuous on a passthrough path)"
         );
+    }
+
+    fn gzip_header_filename(compressed: &[u8]) -> Option<&str> {
+        const FLG_FNAME: u8 = 0x08;
+        const FLG_FEXTRA: u8 = 0x04;
+        if compressed.len() < 10 {
+            return None;
+        }
+        let flg = compressed[3];
+        let mut i = 10usize;
+        if flg & FLG_FEXTRA != 0 {
+            if i + 2 > compressed.len() {
+                return None;
+            }
+            let extra_len = u16::from_le_bytes([compressed[i], compressed[i + 1]]) as usize;
+            i += 2 + extra_len;
+        }
+        if flg & FLG_FNAME == 0 {
+            return None;
+        }
+        let rest = compressed.get(i..)?;
+        let nul = rest.iter().position(|&b| b == 0)?;
+        std::str::from_utf8(&rest[..nul]).ok()
+    }
+
+    #[test]
+    fn preprocess_auto_compress_omits_gzip_header_filename() {
+        let payload = b"payload for gzip header".to_vec();
+        let data = passthrough_upload_data("data.csv", PutGetResultsetFlavor::Odbc, true);
+        let (prepared, _) =
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone().into()), &data)
+                .unwrap();
+        let bytes = prepared.source.byte_source().into_bytes().unwrap();
+        assert_eq!(gzip_header_filename(&bytes), None);
     }
 
     fn passthrough_upload_data(

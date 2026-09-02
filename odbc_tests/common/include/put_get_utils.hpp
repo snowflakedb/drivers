@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -229,19 +228,6 @@ inline std::string decompress_gzip_file(const std::filesystem::path& gz_path) {
 
   inflateEnd(&strm);
   return out;
-}
-
-inline void compare_compression_type(const std::string& compression_type,
-                                     const std::string& expected_compression_type) {
-  NEW_DRIVER_ONLY("BD#2: Compression type is now returned in uppercase") {
-    CHECK(compression_type == expected_compression_type);
-  }
-  OLD_DRIVER_ONLY("BD#2: Compression type is now returned in uppercase") {
-    std::string exp_comp_type_lower = expected_compression_type;
-    std::transform(exp_comp_type_lower.begin(), exp_comp_type_lower.end(), exp_comp_type_lower.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    CHECK(compression_type == exp_comp_type_lower);
-  }
 }
 
 }  // namespace pg_utils

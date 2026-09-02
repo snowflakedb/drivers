@@ -110,8 +110,8 @@ TEST_CASE("should return correct rowset for PUT", "[put_get]") {
 
   CHECK(get_data<SQL_C_LONG>(stmt, PUT_ROW_TARGET_SIZE_IDX) == 32);
 
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
-  compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX) == "none");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX) == "gzip");
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == "UPLOADED");
 
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_ENCRYPTION_IDX) == "ENCRYPTED");

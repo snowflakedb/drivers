@@ -38,17 +38,23 @@ behavior_differences:
 
   2:
     name: "Compression type is now returned in uppercase"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      Changing the returned compression token casing may break tooling that depended on lowercase.
+      4.x emits lowercase compression tokens in the PUT result, matching 3.x.
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
       The old driver returns the compression type in lowercase.
     new_driver_behavior: |
-      The driver returns the compression type in uppercase.
+      The PUT result source_compression and target_compression columns
+      return lowercase tokens (gzip, none, deflate, and the other
+      supported types).
+    description: |
+      Regression fixed. Applications that inspect the PUT compression columns
+      again see lowercase tokens, matching 3.x. GET has no
+      compression columns.
 
   3:
     name: "Encryption field is no longer included in the result"
@@ -82,19 +88,23 @@ behavior_differences:
       Regression fixed. The GET size column again matches the legacy driver's pre-decryption byte count.
   5:
     name: "Header of a gzip-compressed file does not contain filename"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      Omitting gzip FNAME and zeroing mtime improves determinism (good for byte-identical reproducibility tests) but breaks consumers that scraped the embedded filename back out of the gzip header.
+      Both drivers omit FNAME from the PUT AUTO_COMPRESS gzip header.
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
-      When AUTO_COMPRESS=TRUE, the PUT-uploaded gzip file contains the original filename in the FNAME field of the gzip header, making the byte stream non-deterministic for identical content.
+      When AUTO_COMPRESS=TRUE, the PUT-uploaded gzip header omits FNAME.
+      Gzip mtime is zeroed, so identical content produces the same bytes.
     new_driver_behavior: |
-      The uploaded gzip file is produced via `GzBuilder::new().mtime(0)` without a filename, so the header omits FNAME and the mtime is zeroed. The resulting bytes are deterministic and match a locally-compressed reference file.
+      When AUTO_COMPRESS=TRUE, the PUT-uploaded gzip header omits FNAME.
+      Gzip mtime is zeroed, so identical content produces the same bytes.
     description: |
-      Applications that compare gzip byte streams (e.g. for deduplication or caching) will see identical bytes across uploads of the same content. Applications that relied on reading the filename back out of the gzip header will no longer find it.
+      Applications that read the source filename back out of the gzip
+      header of an AUTO_COMPRESS upload find no FNAME field on either
+      driver. Byte streams for identical content stay comparable.
   6:
     name: "Unsupported compression type returns error instead of being silently ignored"
     status: fixed
