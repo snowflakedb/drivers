@@ -1128,7 +1128,9 @@ service DatabaseDriver {
     option (async_first) = true;
   }
   // Token request (ISSUE/RENEW) executed with master token in sf_core
-  rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse);
+  rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse) {
+    option (async_first) = true;
+  }
   // Heartbeat to validate connection and session are still alive
   rpc ConnectionHeartbeat(ConnectionHeartbeatRequest) returns (ConnectionHeartbeatResponse);
 
@@ -1159,7 +1161,9 @@ service DatabaseDriver {
   rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
 
   // Workload Identity Federation (WIF) operations
-  rpc WifCreateAttestation(WifCreateAttestationRequest) returns (WifCreateAttestationResponse);
+  rpc WifCreateAttestation(WifCreateAttestationRequest) returns (WifCreateAttestationResponse) {
+    option (async_first) = true;
+  }
 
   // Telemetry operations
   rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendResponse);

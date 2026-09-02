@@ -316,7 +316,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setConnHandle(connHandle)
             .setRequestType(requestType)
             .build();
-    return invoke(() -> client.connectionRequestToken(request));
+    return await(client.connectionRequestToken(request));
   }
 
   public ConnectionGetParameterResponse connectionGetParameter(

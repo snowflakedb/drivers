@@ -22,10 +22,10 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionGetQueryStatusRequest, ConnectionGetResultSetRequest, ConnectionHandle,
     ConnectionInitRequest, ConnectionInitResponse, ConnectionNewRequest, ConnectionNewResponse,
     ConnectionSendHttpRequest, ConnectionSetOptionsRequest, ConnectionSetOptionsResponse,
-    DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest, DatabaseNewResponse,
-    DriverException, ErrorKind, StatementExecuteQueryRequest, StatementHandle, StatementNewRequest,
-    StatementNewResponse, StatementPrepareRequest, StatementSetSqlQueryRequest,
-    StatementSetSqlQueryResponse, config_setting,
+    ConnectionTokenRequest, DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest,
+    DatabaseNewResponse, DriverException, ErrorKind, StatementExecuteQueryRequest, StatementHandle,
+    StatementNewRequest, StatementNewResponse, StatementPrepareRequest,
+    StatementSetSqlQueryRequest, StatementSetSqlQueryResponse, TokenRequestType, config_setting,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -141,6 +141,8 @@ enum HangOn {
     /// [`SEND_HTTP_PROBE_PATH`] — the caller-directed request `connection_send_http`
     /// forwards.
     SendHttpRequest,
+    /// `POST /session/token-request` — `connection_request_token`.
+    TokenRequest,
     /// [`SEND_HTTP_PROBE_PATH`], parked *after* the response headers are written,
     /// so the caller's `send()` resolves and it blocks reading the body instead.
     /// That is the shape a server which accepted the request and then went quiet
@@ -226,6 +228,14 @@ async fn spawn_hanging_send_http_body(
     spawn_hanging_server(state, HangOn::SendHttpBody).await
 }
 
+/// Spawn a mock that logs in, then never answers `POST /session/token-request`,
+/// so only cancellation can end `connection_request_token`.
+async fn spawn_hanging_token_request(
+    state: Arc<HangingServer>,
+) -> (SocketAddr, HangingServerHandle) {
+    spawn_hanging_server(state, HangOn::TokenRequest).await
+}
+
 /// Spawn a mock that answers the query-request immediately, for the
 /// no-cancellation control case.
 async fn spawn_answering_query(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
@@ -288,6 +298,13 @@ async fn spawn_hanging_server(
                     if hang_on == HangOn::SendHttpBody {
                         *state.hung_target.lock().unwrap() = Some(target.clone());
                         write_headers_only(&mut stream, CATCH_ALL_OK.len()).await;
+                        std::future::pending::<()>().await;
+                    }
+                    CATCH_ALL_OK.to_string()
+                } else if target.starts_with("/session/token-request") {
+                    let _ = state.request_received.lock().unwrap().try_send(());
+                    if hang_on == HangOn::TokenRequest {
+                        *state.hung_target.lock().unwrap() = Some(target.clone());
                         std::future::pending::<()>().await;
                     }
                     CATCH_ALL_OK.to_string()
@@ -1050,6 +1067,39 @@ async fn cancelling_an_in_flight_query_result_fetch_reports_cancelled_without_ab
 
     assert_cancelled(result);
     assert_hung_on(&state, &format!("/queries/{FINISHED_QUERY_ID}/result"));
+    assert_no_abort_requests(&state);
+}
+
+/// `connection_request_token` exchanges the master token for a session token on
+/// the same untimed client, so an unanswered `POST /session/token-request`
+/// blocked the caller indefinitely before it was marked.
+///
+/// No abort is asserted because this is not a query: cancelling drops the
+/// exchange, leaving the master token untouched and any session token the server
+/// minted simply unused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_token_request_reports_cancelled() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_token_request(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_request_token",
+        "token-request",
+        ConnectionTokenRequest {
+            conn_handle: Some(conn),
+            request_type: TokenRequestType::Issue as i32,
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled(result);
+    assert_hung_on(&state, "/session/token-request");
     assert_no_abort_requests(&state);
 }
 
