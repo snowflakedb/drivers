@@ -2251,155 +2251,166 @@ impl DatabaseDriverV1 {
     /// It is resolved against the connection's `server_url`. Absolute URLs
     /// are rejected so requests stay on the configured host.
     /// Auth is always the current session token managed by sf_core.
+    ///
+    /// The connection's client carries no request timeout, so without a `ctx`
+    /// this call is bounded only by the server. Cancelling drops the request;
+    /// what the server does with an already-received one is its own business,
+    /// which is why the caller chooses the path and the method.
     pub async fn connection_send_http_request(
         &self,
+        ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         method: String,
         url: String,
         headers: HashMap<String, String>,
         body: Option<Vec<u8>>,
     ) -> Result<HttpResponse, ApiError> {
-        if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("//") {
-            return InvalidArgumentSnafu {
-                argument: format!(
-                    "Absolute URLs are not allowed; pass a relative path instead: {url}"
-                ),
-            }
-            .fail();
-        }
-        if reqwest::Url::parse(&url).is_ok() {
-            return InvalidArgumentSnafu {
-                argument: format!(
-                    "Absolute URLs are not allowed; pass a relative path instead: {url}"
-                ),
-            }
-            .fail();
-        }
-
-        let conn_ptr = self
-            .connections
-            .get_obj(conn_handle)
-            .context(InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            })?;
-
-        // Extract needed fields under the lock, then release before network I/O
-        let (http_client, server_url, token) = {
-            let conn = conn_ptr.lock().await;
-
-            let http_client = conn
-                .http_client
-                .clone()
-                .context(ConnectionNotInitializedSnafu)?;
-
-            let server_url = conn
-                .server_url
-                .clone()
-                .context(ConnectionNotInitializedSnafu)?;
-
-            let tokens_guard = conn.tokens.read().await;
-            let token = tokens_guard
-                .as_ref()
-                .context(ConnectionNotInitializedSnafu)?
-                .session_token
-                .reveal()
-                .to_string();
-
-            (http_client, server_url, token)
-        };
-
-        let full_url = reqwest::Url::parse(&server_url)
-            .and_then(|base| base.join(&url))
-            .map(|u| u.to_string())
-            .map_err(|_| {
-                InvalidArgumentSnafu {
-                    argument: format!("Failed to resolve URL '{url}' against '{server_url}'"),
-                }
-                .build()
-            })?;
-
-        let method = method.to_uppercase();
-        let reqwest_method = match method.as_str() {
-            "GET" => reqwest::Method::GET,
-            "POST" => reqwest::Method::POST,
-            "PUT" => reqwest::Method::PUT,
-            "DELETE" => reqwest::Method::DELETE,
-            "PATCH" => reqwest::Method::PATCH,
-            other => {
+        let send = async {
+            if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("//") {
                 return InvalidArgumentSnafu {
-                    argument: format!("Unsupported HTTP method: {other}"),
+                    argument: format!(
+                        "Absolute URLs are not allowed; pass a relative path instead: {url}"
+                    ),
                 }
                 .fail();
             }
-        };
+            if reqwest::Url::parse(&url).is_ok() {
+                return InvalidArgumentSnafu {
+                    argument: format!(
+                        "Absolute URLs are not allowed; pass a relative path instead: {url}"
+                    ),
+                }
+                .fail();
+            }
 
-        let auth_value =
-            reqwest::header::HeaderValue::from_str(&format!("Snowflake Token=\"{token}\""))
+            let conn_ptr = self
+                .connections
+                .get_obj(conn_handle)
+                .context(InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                })?;
+
+            // Extract needed fields under the lock, then release before network I/O
+            let (http_client, server_url, token) = {
+                let conn = conn_ptr.lock().await;
+
+                let http_client = conn
+                    .http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?;
+
+                let server_url = conn
+                    .server_url
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?;
+
+                let tokens_guard = conn.tokens.read().await;
+                let token = tokens_guard
+                    .as_ref()
+                    .context(ConnectionNotInitializedSnafu)?
+                    .session_token
+                    .reveal()
+                    .to_string();
+
+                (http_client, server_url, token)
+            };
+
+            let full_url = reqwest::Url::parse(&server_url)
+                .and_then(|base| base.join(&url))
+                .map(|u| u.to_string())
                 .map_err(|_| {
                     InvalidArgumentSnafu {
-                        argument: "Session token contains invalid header characters".to_string(),
+                        argument: format!("Failed to resolve URL '{url}' against '{server_url}'"),
                     }
                     .build()
                 })?;
 
-        let mut builder = http_client
-            .request(reqwest_method, &full_url)
-            .header(reqwest::header::AUTHORIZATION, auth_value);
-
-        for (key, value) in &headers {
-            let header_name =
-                reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|_| {
-                    InvalidArgumentSnafu {
-                        argument: format!("Invalid header name: {key}"),
+            let method = method.to_uppercase();
+            let reqwest_method = match method.as_str() {
+                "GET" => reqwest::Method::GET,
+                "POST" => reqwest::Method::POST,
+                "PUT" => reqwest::Method::PUT,
+                "DELETE" => reqwest::Method::DELETE,
+                "PATCH" => reqwest::Method::PATCH,
+                other => {
+                    return InvalidArgumentSnafu {
+                        argument: format!("Unsupported HTTP method: {other}"),
                     }
-                    .build()
-                })?;
-            if header_name == reqwest::header::AUTHORIZATION || header_name == reqwest::header::HOST
-            {
-                tracing::warn!(
-                    header = %header_name,
-                    "Ignoring caller-supplied security-sensitive header; managed by sf_core"
-                );
-                continue;
-            }
-            let header_value = reqwest::header::HeaderValue::from_str(value).map_err(|_| {
-                InvalidArgumentSnafu {
-                    argument: format!("Invalid header value for '{key}'"),
+                    .fail();
                 }
-                .build()
+            };
+
+            let auth_value =
+                reqwest::header::HeaderValue::from_str(&format!("Snowflake Token=\"{token}\""))
+                    .map_err(|_| {
+                        InvalidArgumentSnafu {
+                            argument: "Session token contains invalid header characters"
+                                .to_string(),
+                        }
+                        .build()
+                    })?;
+
+            let mut builder = http_client
+                .request(reqwest_method, &full_url)
+                .header(reqwest::header::AUTHORIZATION, auth_value);
+
+            for (key, value) in &headers {
+                let header_name =
+                    reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|_| {
+                        InvalidArgumentSnafu {
+                            argument: format!("Invalid header name: {key}"),
+                        }
+                        .build()
+                    })?;
+                if header_name == reqwest::header::AUTHORIZATION
+                    || header_name == reqwest::header::HOST
+                {
+                    tracing::warn!(
+                        header = %header_name,
+                        "Ignoring caller-supplied security-sensitive header; managed by sf_core"
+                    );
+                    continue;
+                }
+                let header_value = reqwest::header::HeaderValue::from_str(value).map_err(|_| {
+                    InvalidArgumentSnafu {
+                        argument: format!("Invalid header value for '{key}'"),
+                    }
+                    .build()
+                })?;
+                builder = builder.header(header_name, header_value);
+            }
+
+            if let Some(body_bytes) = body {
+                builder = builder.body(body_bytes);
+            }
+
+            let response = builder.send().await.context(HttpRequestSnafu {
+                context: format!("Failed to send {method} {full_url}"),
             })?;
-            builder = builder.header(header_name, header_value);
-        }
 
-        if let Some(body_bytes) = body {
-            builder = builder.body(body_bytes);
-        }
+            let status_code = response.status().as_u16() as i32;
+            let response_headers: HashMap<String, String> = response
+                .headers()
+                .iter()
+                .map(|(k, v)| {
+                    let value = match v.to_str() {
+                        Ok(s) => s.to_string(),
+                        Err(_) => String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                    };
+                    (k.to_string(), value)
+                })
+                .collect();
+            let response_body = response.bytes().await.context(HttpRequestSnafu {
+                context: "Failed to read response body".to_string(),
+            })?;
 
-        let response = builder.send().await.context(HttpRequestSnafu {
-            context: format!("Failed to send {method} {full_url}"),
-        })?;
-
-        let status_code = response.status().as_u16() as i32;
-        let response_headers: HashMap<String, String> = response
-            .headers()
-            .iter()
-            .map(|(k, v)| {
-                let value = match v.to_str() {
-                    Ok(s) => s.to_string(),
-                    Err(_) => String::from_utf8_lossy(v.as_bytes()).into_owned(),
-                };
-                (k.to_string(), value)
+            Ok(HttpResponse {
+                status_code,
+                headers: response_headers,
+                body: response_body.to_vec(),
             })
-            .collect();
-        let response_body = response.bytes().await.context(HttpRequestSnafu {
-            context: "Failed to read response body".to_string(),
-        })?;
-
-        Ok(HttpResponse {
-            status_code,
-            headers: response_headers,
-            body: response_body.to_vec(),
-        })
+        };
+        crate::apis::operation_ctx::run_opt(ctx, "connection_send_http", send).await
     }
 
     /// Send a heartbeat to validate that the connection and session are still alive.
@@ -3456,6 +3467,7 @@ mod tests {
         let handle = setup_connection_for_http_tests(&ds).await;
         let err = ds
             .connection_send_http_request(
+                None,
                 handle,
                 "GET".into(),
                 "https://evil.com/steal".into(),
@@ -3477,6 +3489,7 @@ mod tests {
         let handle = setup_connection_for_http_tests(&ds).await;
         let err = ds
             .connection_send_http_request(
+                None,
                 handle,
                 "GET".into(),
                 "http://evil.com/steal".into(),
@@ -3498,6 +3511,7 @@ mod tests {
         let handle = setup_connection_for_http_tests(&ds).await;
         let err = ds
             .connection_send_http_request(
+                None,
                 handle,
                 "GET".into(),
                 "//evil.com/path".into(),
@@ -3519,6 +3533,7 @@ mod tests {
         let handle = setup_connection_for_http_tests(&ds).await;
         let err = ds
             .connection_send_http_request(
+                None,
                 handle,
                 "TRACE".into(),
                 "/session/token-request".into(),
@@ -3548,6 +3563,7 @@ mod tests {
         // is silently stripped, not rejected.
         let result = ds
             .connection_send_http_request(
+                None,
                 handle,
                 "POST".into(),
                 "/session/token-request".into(),
@@ -3578,7 +3594,14 @@ mod tests {
         headers.insert("Invalid Header\nName".into(), "value".into());
 
         let err = ds
-            .connection_send_http_request(handle, "GET".into(), "/api/test".into(), headers, None)
+            .connection_send_http_request(
+                None,
+                handle,
+                "GET".into(),
+                "/api/test".into(),
+                headers,
+                None,
+            )
             .await
             .unwrap_err();
         assert!(

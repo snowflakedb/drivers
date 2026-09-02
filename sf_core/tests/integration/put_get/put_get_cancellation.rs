@@ -354,3 +354,100 @@ async fn should_keep_completed_files_and_skip_the_rest_when_a_batch_is_cancelled
         "files after the cancelled one must never be requested"
     );
 }
+
+/// The `connection_get_query_result` entry point must forward its operation ctx
+/// into the PUT/GET transfer, not just observe cancellation at the RPC boundary.
+///
+/// The distinction matters because `run_opt` at the boundary returns `Cancelled`
+/// whether or not the ctx reached `TransferCtx`, so the *outcome* of the call
+/// proves nothing. Two other candidate signals are equally useless here:
+/// `ProducerAbortGuard` is `Drop`-based, so the socket closes even with no ctx;
+/// and on a client-side-encrypted object the digest check removes `.part` on its
+/// own. This asserts on the one effect only the ctx-registered cleanup produces —
+/// `remove_partial_after_cancel` deleting `<dst>.part` after a cancelled
+/// *server-side-encrypted* download, which is why [`StallingBodyServer`] sends no
+/// encryption metadata.
+///
+/// Unlike the tests above, which hand `download_single_file` a synthetic
+/// `TransferCtx`, this drives the real RPC: GS answers the fetch-by-query-id with
+/// a `command: DOWNLOAD` body, so the request travels
+/// dispatch → `connection_get_query_result` → `extract_rowset_data`
+/// → `perform_put_get_transfer` → `TransferCtx`. Reverting that call site to
+/// `extract_rowset_data(None, …)` fails this test and nothing else.
+#[tokio::test(flavor = "multi_thread")]
+async fn should_remove_the_partial_file_when_a_fetch_by_query_id_is_cancelled_mid_transfer() {
+    const QUERY_ID: &str = "00000000-0000-0000-0000-000000000009";
+
+    let cloud = StallingBodyServer::spawn().await;
+    let sf_server = MockServer::start().await;
+    crate::common::mocks::auth::mount_jwt_login_success(&sf_server).await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().to_path_buf();
+    let local_location = dir.to_string_lossy().to_string();
+
+    crate::common::mocks::put_get::mount_gcs_download_result_with_sql_text(
+        &sf_server,
+        QUERY_ID,
+        &cloud.url,
+        &local_location,
+    )
+    .await;
+
+    let sf_uri = sf_server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        Arc::new(
+            crate::common::snowflake_test_client::SnowflakeTestClient::connect_integration_test(
+                Some(&sf_uri),
+            ),
+        )
+    })
+    .await
+    .expect("connect");
+
+    // Minted before dispatch so the cancel below can name the operation while the
+    // blocking thread is still inside it.
+    let operation = client.register_operation();
+    let partial = partial_path(&dir, "file.csv");
+    let (reached_mid_body, mid_body) = once_partial_file_exists(partial.clone());
+
+    let fetch = tokio::task::spawn_blocking({
+        let client = client.clone();
+        move || client.connection_get_query_result_cancellable_raw(QUERY_ID, operation)
+    });
+
+    mid_body.await;
+    assert!(
+        reached_mid_body.load(Ordering::SeqCst),
+        "precondition: the transfer never reached mid-body, so this cancelled \
+         something other than an in-flight PUT/GET"
+    );
+    client.cancel_operation(operation);
+
+    let result = fetch.await.expect("fetch task");
+
+    // `SnowflakeTestClient::drop` releases handles through the *blocking* client,
+    // which `block_on`s — dropping it on this runtime's thread panics with
+    // "Cannot start a runtime from within a runtime". Retire it on a blocking
+    // thread while the assertions below still have everything they need.
+    tokio::task::spawn_blocking(move || drop(client))
+        .await
+        .expect("client teardown");
+
+    let err = result.expect_err("a cancelled fetch must not succeed");
+    assert!(
+        format!("{err:?}").contains("Cancelled"),
+        "expected a cancelled DriverException, got {err:?}"
+    );
+
+    assert!(
+        !partial.exists(),
+        "cancelling the fetch must remove {} — its survival means the operation \
+         ctx never reached the transfer's TransferCtx",
+        partial.display()
+    );
+    assert!(
+        cloud.saw_client_disconnect().await,
+        "the cancelled transfer must let go of the socket"
+    );
+}

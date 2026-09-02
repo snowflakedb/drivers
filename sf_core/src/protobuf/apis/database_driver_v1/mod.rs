@@ -599,17 +599,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_get_query_result",
-        skip(self, input)
+        skip(self, ctx, input)
     )]
     async fn connection_get_query_result(
         &self,
+        ctx: Option<&OperationCtx>,
         input: ConnectionGetQueryResultRequest,
     ) -> Result<ExecuteQueryResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let result = self
             .driver
-            .connection_get_query_result(conn_handle.into(), input.query_id)
+            .connection_get_query_result(ctx, conn_handle.into(), input.query_id)
             .await
             .to_protobuf()?;
 
@@ -805,9 +806,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_send_http", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_send_http",
+        skip(self, ctx, input)
+    )]
     async fn connection_send_http(
         &self,
+        ctx: Option<&OperationCtx>,
         input: ConnectionSendHttpRequest,
     ) -> Result<ConnectionSendHttpResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -815,6 +820,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let result = self
             .driver
             .connection_send_http_request(
+                ctx,
                 conn_handle.into(),
                 input.method,
                 input.url,
@@ -1483,6 +1489,14 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse>;
+    /// Blocking fetch-by-query-id dispatched under `operation`, so another thread
+    /// can `cancel_operation(operation)` while this one is blocked — including
+    /// while it is inside the PUT/GET transfer this RPC dispatches to.
+    fn connection_get_query_result_cancellable_blocking(
+        &self,
+        operation: u64,
+        input: ConnectionGetQueryResultRequest,
+    ) -> BlockingProtoResult<ExecuteQueryResponse>;
     fn connection_upload_stream_begin_blocking(
         &self,
         input: ConnectionUploadStreamBeginRequest,
@@ -1714,6 +1728,14 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse> {
         block_on_client_call(self.connection_get_query_result(input))
+    }
+
+    fn connection_get_query_result_cancellable_blocking(
+        &self,
+        operation: u64,
+        input: ConnectionGetQueryResultRequest,
+    ) -> BlockingProtoResult<ExecuteQueryResponse> {
+        block_on_client_call(self.connection_get_query_result_cancellable(operation, input))
     }
 
     fn connection_upload_stream_begin_blocking(

@@ -880,13 +880,18 @@ impl DatabaseDriverV1 {
         })
     }
 
+    /// Cancelling abandons the fetch and, on the PUT/GET branch, aborts the
+    /// in-flight cloud transfer through `ctx`. Nothing is aborted server-side:
+    /// the query this reads has already finished, so there is no running query
+    /// left to abort as there is for `statement_execute_query`.
     pub async fn connection_get_query_result(
         &self,
+        ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         query_id: String,
     ) -> Result<ExecuteQueryResult, ApiError> {
         let session_id = self.session_id_for_conn(conn_handle).await;
-        async {
+        let fetch = Box::pin(async {
             let conn_ptr = self.connections.get_obj(conn_handle).with_context(|| {
                 InvalidArgumentSnafu {
                     argument: "Connection handle not found".to_string(),
@@ -924,12 +929,15 @@ impl DatabaseDriverV1 {
                 }
                 None => None,
             };
-            // PUT/GET routes to Blocking dispatch (`is_file_transfer`), so this async
-            // path rarely runs for file transfers; skip_upload_on_content_match is
-            // defensively false. No `Statement` here for a per-statement override, so
-            // pass `None` — `extract_rowset_data` falls back to connection/session, then wrapper preset.
+            // This is the path a PUT/GET submitted earlier is retrieved on, so
+            // `ctx` is forwarded: a cancel here tears down the cloud transfer
+            // rather than only abandoning this request. The three `None`s that
+            // follow `data` are unrelated to it — there is no `Statement` on this
+            // path to carry per-statement PUT/GET overrides, so
+            // `extract_rowset_data` falls back to connection/session and then the
+            // wrapper preset. `skip_upload_on_content_match` is defensively false.
             let rowset_data = self
-                .extract_rowset_data(None, &conn_ptr, data, refresh_sql, false, None, None)
+                .extract_rowset_data(ctx, &conn_ptr, data, refresh_sql, false, None, None)
                 .await?;
             let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
             Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, None))
@@ -937,8 +945,8 @@ impl DatabaseDriverV1 {
         .instrument(crate::snowflake_op_span!(
             "connection_get_query_result",
             session_id
-        ))
-        .await
+        )));
+        run_opt(ctx, "connection_get_query_result", fetch).await
     }
 
     pub async fn connection_abort_query(

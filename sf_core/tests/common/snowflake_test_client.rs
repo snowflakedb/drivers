@@ -542,6 +542,29 @@ impl SnowflakeTestClient {
             .map_err(|e| format!("{e:?}"))
     }
 
+    /// Retrieve an async PUT/GET result under `operation`, so another thread can
+    /// cancel it mid-transfer. Returns the raw protobuf result so the test can
+    /// assert on `DriverException.kind`.
+    ///
+    /// The plain [`Self::connection_get_query_result`] passes no operation handle,
+    /// so the core sees `ctx: None` and nothing downstream — including the PUT/GET
+    /// transfer — has a token to observe.
+    #[allow(clippy::result_large_err)]
+    pub fn connection_get_query_result_cancellable_raw(
+        &self,
+        query_id: &str,
+        operation: u64,
+    ) -> Result<ExecuteQueryResponse, Box<ProtoError<DriverException>>> {
+        self.client
+            .connection_get_query_result_cancellable_blocking(
+                operation,
+                ConnectionGetQueryResultRequest {
+                    conn_handle: Some(self.conn_handle),
+                    query_id: query_id.to_string(),
+                },
+            )
+    }
+
     /// Get a ResultSetResponse (handle + descriptor) by query_id via the connection.
     pub fn connection_get_result_set(&self, query_id: &str) -> ResultSetResponse {
         let response = self

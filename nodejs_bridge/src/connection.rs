@@ -121,10 +121,11 @@ impl Connection {
     #[napi]
     pub fn get_query_result(&self, query_id: String) -> Statement {
         let conn_handle = self.handle;
-        // No ctx: `connection_get_query_result` is not `async_first`.
-        Statement::from_pending(conn_handle, None, async move {
+        // Shared with the `Statement` handed back, whose `cancel()` triggers it.
+        let ctx = Arc::new(OperationCtx::with_own_token());
+        Statement::from_pending(conn_handle, Some(ctx.clone()), async move {
             DRIVER
-                .connection_get_query_result(conn_handle, query_id)
+                .connection_get_query_result(Some(&ctx), conn_handle, query_id)
                 .await
         })
     }
