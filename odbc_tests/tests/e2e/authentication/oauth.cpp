@@ -295,8 +295,7 @@ TEST_CASE("oauth should fail authorization code flow with bad client secret", "[
   ss << "OAUTH_CLIENT_ID=" << client_id << ";";
   ss << "OAUTH_CLIENT_SECRET=invalid_client_secret_12345;";  // pragma: allowlist secret
   ss << "OAUTH_REDIRECT_URI=" << redirect_uri << ";";
-  // BD#85: pin caching off so the legacy driver can't replay a cached AC token and mask the failure.
-  OLD_DRIVER_ONLY("BD#85") { ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;"; }
+  ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;";
   std::string connection_string = ss.str();
 
   auto env = setup_oauth_environment();

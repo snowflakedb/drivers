@@ -320,6 +320,11 @@ impl DatabaseDriverV1 {
                     // connection mutex critical section and can block the async runtime thread.
                     let mut resolved = conn.resolved_settings().context(ConfigurationSnafu)?;
                     normalize_host_underscores(&mut resolved);
+                    self.wrapper_presets
+                        .apply_oauth_authorization_code_cache_default(
+                            &mut resolved,
+                            &conn.connection_seed,
+                        );
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
                     let port = resolved.get_int(param_names::PORT);

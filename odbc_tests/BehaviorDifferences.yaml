@@ -1503,42 +1503,25 @@ behavior_differences:
       failed on the legacy driver. Tests use the value "on", which both drivers accept, to keep
       the shared e2e flow running against either driver.
   85:
-    #TODO: Align with other wrappers to set it true by default (?)
     name: "OAuth Authorization Code token caching default differs from legacy ODBC (platform-dependent across reference drivers)"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      OAuth token caching for the Authorization Code flow is gated by
-      CLIENT_STORE_TEMPORARY_CREDENTIAL, but the default varies by driver and platform. Legacy
-      ODBC force-enables it for OAUTH_AUTHORIZATION_CODE on all platforms
-      (SFConnection::Connect sets m_clientStoreTemporaryCredential = true in the AC authenticator
-      branch). JDBC and Go enable it by default only on macOS and Windows; on Linux they default
-      off unless explicitly configured. Python defaults off on all platforms. The new driver defaults
-      off on all platforms (client_store_temporary_credential=false when unset) and only caches
-      when the caller opts in — aligning with Python and with JDBC/Go on Linux, but diverging from
-      legacy ODBC everywhere and from JDBC/Go on macOS/Windows. Explicit opt-in is the safer
-      behavior; the difference is accepted pending review.
+      Both drivers cache the OAUTH_AUTHORIZATION_CODE access / refresh token
+      by default when the caller leaves CLIENT_STORE_TEMPORARY_CREDENTIAL
+      unset.
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Legacy ODBC OAUTH_AUTHORIZATION_CODE connections cache the access / refresh token by default
-      on all platforms. A later connection for the same host + user can short-circuit the
-      interactive + token-exchange legs by replaying the cached token, even when other credentials
-      (e.g. the client secret) have changed. Other reference drivers are platform-dependent: JDBC
-      and Go default caching on for OAuth flows on macOS/Windows only; Python requires an explicit
-      client_store_temporary_credential=true on every platform.
+      OAUTH_AUTHORIZATION_CODE connections cache the access / refresh token by default
+      on all platforms.
     new_driver_behavior: |
-      On all platforms, OAUTH_AUTHORIZATION_CODE connections do not cache the token unless
-      CLIENT_STORE_TEMPORARY_CREDENTIAL is explicitly set to true; every connect performs a fresh
-      authorization + token exchange unless the caller opts in.
+      OAUTH_AUTHORIZATION_CODE connections cache the access / refresh token by
+      default when CLIENT_STORE_TEMPORARY_CREDENTIAL is unset.
     description: |
-      Applications relying on legacy ODBC's implicit AC token caching on any platform must set
-      CLIENT_STORE_TEMPORARY_CREDENTIAL=true on the new driver to keep that behavior. macOS/Windows
-      users accustomed to JDBC or Go (where OAuth caching defaults on) also need the explicit flag
-      on the new driver. The e2e bad-client-secret test pins CLIENT_STORE_TEMPORARY_CREDENTIAL=false
-      on the legacy driver so a token cached by the preceding happy-path test cannot mask the
-      expected token-exchange failure.
+      ODBC applications that relied on implicit AC token caching keep that behavior
+      without setting CLIENT_STORE_TEMPORARY_CREDENTIAL.
 
   86:
     name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
@@ -1611,27 +1594,22 @@ behavior_differences:
 
   89:
     name: "SQLForeignKeys metadata_id=TRUE allows NULL identifiers on the unspecified side"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     is_breaking_change: true
     status_rationale: |
-      According to the ODBC specification, it is in DM's role to verify the provided null pointers, but unixODBC nor iODBC does that. We should readd the check to have the consistency.
+      Both drivers return HY009 for a NULL catalog, schema, or table pointer on
+      either side in identifier mode.
     impact: low
     old_driver_behavior: |
-      With SQL_ATTR_METADATA_ID=SQL_TRUE, a single-sided PK-table query that leaves the entire FK
-      side NULL returns HY009 even though FKTableName was not supplied.
+      With SQL_ATTR_METADATA_ID=SQL_TRUE, a single-sided query that leaves the
+      unspecified side NULL returns HY009.
     new_driver_behavior: |
-      Catalog/schema null-pointer validation applies only to the side whose table name was supplied,
-      so a PK-only query with metadata_id=TRUE succeeds when PK catalog and schema are provided. This
-      applies under unixODBC and iODBC; the Windows Driver Manager performs its own identifier
-      null-pointer check and returns HY009 for the NULL FK-side arguments before the driver is
-      invoked, so the query still fails with HY009 on Windows regardless of the driver.
+      With SQL_ATTR_METADATA_ID=SQL_TRUE, null-pointer validation applies to
+      every catalog, schema, and table argument.
     description: |
-      Per ODBC HY009 diagnostics, identifier-mode null checks apply to supplied table sides only.
-      The reference driver over-validates the unspecified FK side. On Windows the Driver Manager
-      enforces the identifier null check itself (documented as a "(DM)" diagnostic in the MS ODBC
-      reference), so the improvement is observable only on unixODBC/iODBC.
+      Both drivers now return HY009.
 
   90:
     name: "SQLForeignKeys treats an empty-string PK/FK table as absent for SHOW side selection"
