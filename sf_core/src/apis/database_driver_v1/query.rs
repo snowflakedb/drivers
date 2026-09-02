@@ -67,11 +67,11 @@ pub struct StageInfoRefreshContext {
 /// errors re-issue the original PUT/GET SQL for a fresh `StageInfoSnapshot` and
 /// retry the operation; non-PUT/GET callers pass `None`.
 ///
-/// `ctx` is what the transfer registers its cancellation cleanup against; `None`
+/// `operation_ctx` is what the transfer registers its cancellation cleanup against; `None`
 /// makes it uncancellable.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn perform_put_get_transfer(
-    ctx: Option<&OperationCtx>,
+    operation_ctx: Option<&OperationCtx>,
     command: &str,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
@@ -90,14 +90,19 @@ pub(super) async fn perform_put_get_transfer(
     let initial_snapshot = data
         .stage_info_snapshot()
         .context(FileTransferPreparationSnafu)?;
-    let refresher = stage_info_refresh_context
-        .zip(initial_snapshot)
-        .map(|(ctx, initial)| SnowflakeStageInfoRefresher::new(ctx, initial));
+    let refresher =
+        stage_info_refresh_context
+            .zip(initial_snapshot)
+            .map(|(stage_refresh_ctx, initial)| {
+                SnowflakeStageInfoRefresher::new(stage_refresh_ctx, initial)
+            });
     let refresher_handle = refresher
         .as_ref()
         .map(|r| r as &dyn file_manager::StageInfoRefresher);
-    let transfer_ctx =
-        file_manager::TransferCtx::new(refresher_handle, ctx.map(OperationCtx::cleanup_scope));
+    let transfer_ctx = file_manager::TransferCtx::new(
+        refresher_handle,
+        operation_ctx.map(OperationCtx::cleanup_scope),
+    );
     // Bundled once and threaded into whichever converter the running arm
     // calls below — see `file_manager::StageTransport`.
     let transport = file_manager::StageTransport {
@@ -206,9 +211,12 @@ pub(super) async fn build_and_upload_stream(
     let initial_snapshot = data
         .stage_info_snapshot()
         .context(FileTransferPreparationSnafu)?;
-    let refresher = stage_info_refresh_context
-        .zip(initial_snapshot)
-        .map(|(ctx, initial)| SnowflakeStageInfoRefresher::new(ctx, initial));
+    let refresher =
+        stage_info_refresh_context
+            .zip(initial_snapshot)
+            .map(|(stage_refresh_ctx, initial)| {
+                SnowflakeStageInfoRefresher::new(stage_refresh_ctx, initial)
+            });
     let refresher_handle = refresher
         .as_ref()
         .map(|r| r as &dyn file_manager::StageInfoRefresher);
@@ -247,7 +255,7 @@ pub(super) async fn build_and_upload_stream(
     //
     // So a cancelled *streaming* PUT can still orphan the S3/GCS debris that the
     // file-path PUT now aborts. Deliberately out of scope here; closing it means
-    // marking those RPCs `async_first` and threading `ctx` through them.
+    // marking those RPCs `async_first` and threading `operation_ctx` through them.
     // TODO: needs a tracking ticket before this PR merges — see the PR discussion.
     let transfer_ctx = match refresher_handle {
         Some(refresher) => file_manager::TransferCtx::with_refresher(refresher),
@@ -265,10 +273,10 @@ pub(super) async fn build_and_upload_stream(
 /// cred/URL-refresh machinery as the file-path path, without re-exposing the
 /// private `SnowflakeStageInfoRefresher` type.
 pub(super) fn stream_stage_info_refresher(
-    ctx: StageInfoRefreshContext,
+    stage_refresh_ctx: StageInfoRefreshContext,
     initial: StageInfoSnapshot,
 ) -> impl file_manager::StageInfoRefresher {
-    SnowflakeStageInfoRefresher::new(ctx, initial)
+    SnowflakeStageInfoRefresher::new(stage_refresh_ctx, initial)
 }
 
 /// Window during which repeated `refresh()` calls return without hitting GS.
@@ -304,7 +312,7 @@ type StageInfoFetchFn = Arc<
 /// coordinator: N concurrent 403 callers on the same generation share one GS
 /// fetch. (`refresh_url` bypasses the window for GCS per-file URL expiry.)
 struct SnowflakeStageInfoRefresher {
-    ctx: StageInfoRefreshContext,
+    stage_refresh_ctx: StageInfoRefreshContext,
     cache: StageInfoCache,
     last_refresh_at: std::sync::Mutex<Option<Instant>>,
     /// In-flight fetch shared across concurrent 403/STS-expiry callers. Only
@@ -318,13 +326,15 @@ struct SnowflakeStageInfoRefresher {
 }
 
 impl SnowflakeStageInfoRefresher {
-    fn new(ctx: StageInfoRefreshContext, initial: StageInfoSnapshot) -> Self {
+    fn new(stage_refresh_ctx: StageInfoRefreshContext, initial: StageInfoSnapshot) -> Self {
         Self {
-            ctx,
+            stage_refresh_ctx,
             cache: StageInfoCache::new(initial),
             last_refresh_at: std::sync::Mutex::new(None),
             inflight: tokio::sync::Mutex::new(None),
-            fetch_fn: Arc::new(|ctx, cache| fetch_and_store(ctx, cache).boxed()),
+            fetch_fn: Arc::new(|stage_refresh_ctx, cache| {
+                fetch_and_store(stage_refresh_ctx, cache).boxed()
+            }),
         }
     }
 
@@ -332,7 +342,7 @@ impl SnowflakeStageInfoRefresher {
     /// calling the real GS endpoint.
     #[cfg(test)]
     fn new_with_fetch_fn(
-        ctx: StageInfoRefreshContext,
+        stage_refresh_ctx: StageInfoRefreshContext,
         initial: StageInfoSnapshot,
         fetch_fn: impl Fn(
             StageInfoRefreshContext,
@@ -343,7 +353,7 @@ impl SnowflakeStageInfoRefresher {
         + 'static,
     ) -> Self {
         Self {
-            ctx,
+            stage_refresh_ctx,
             cache: StageInfoCache::new(initial),
             last_refresh_at: std::sync::Mutex::new(None),
             inflight: tokio::sync::Mutex::new(None),
@@ -363,10 +373,10 @@ fn within_coalesce_window(last: Option<Instant>, now: Instant) -> bool {
 /// `cache.cached_at()` generation. Used as the leader's work unit in the
 /// single-flight coordinator.
 async fn fetch_and_store(
-    ctx: StageInfoRefreshContext,
+    stage_refresh_ctx: StageInfoRefreshContext,
     cache: StageInfoCache,
 ) -> Result<Instant, StageInfoRefreshError> {
-    let snapshot = fetch_fresh_stage_info(&ctx).await?;
+    let snapshot = fetch_fresh_stage_info(&stage_refresh_ctx).await?;
     cache.store(snapshot);
     Ok(cache.cached_at())
 }
@@ -415,7 +425,9 @@ impl file_manager::StageInfoRefresher for SnowflakeStageInfoRefresher {
                             return Ok(observed);
                         }
                         tracing::info!("Refreshing stage info by re-executing PUT/GET SQL");
-                        let shared = (self.fetch_fn)(self.ctx.clone(), self.cache.clone()).shared();
+                        let shared =
+                            (self.fetch_fn)(self.stage_refresh_ctx.clone(), self.cache.clone())
+                                .shared();
                         *inflight_slot = Some(shared.clone());
                         shared
                     }
@@ -459,7 +471,7 @@ impl file_manager::StageInfoRefresher for SnowflakeStageInfoRefresher {
             // file's URL and misroute the upload. For a GET, the call site
             // re-picks `presignedUrls[per_file_index]`, so re-issue unchanged.
             let sql = match current_upload_file.as_deref() {
-                Some(dst) => match rewrite_put_command_for_file(&self.ctx.sql, dst) {
+                Some(dst) => match rewrite_put_command_for_file(&self.stage_refresh_ctx.sql, dst) {
                     Some(rewritten) => rewritten,
                     // PUT command with no parseable `file://` token: refuse to
                     // re-issue the unchanged SQL (it would misroute) and let
@@ -469,7 +481,7 @@ impl file_manager::StageInfoRefresher for SnowflakeStageInfoRefresher {
                         return PresignedUrlRefreshSkippedSnafu.fail();
                     }
                 },
-                None => self.ctx.sql.clone(),
+                None => self.stage_refresh_ctx.sql.clone(),
             };
             // Per-file URL refresh: bypass the coalescing window and the
             // single-flight gate. Each file may carry a distinct per-object
@@ -479,7 +491,7 @@ impl file_manager::StageInfoRefresher for SnowflakeStageInfoRefresher {
                 "Refreshing stage info (presigned URLs) by re-executing PUT/GET SQL — \
                  bypassing 10-min coalesce window for per-file URL expiry"
             );
-            let snapshot = fetch_fresh_stage_info_with_sql(&self.ctx, &sql).await?;
+            let snapshot = fetch_fresh_stage_info_with_sql(&self.stage_refresh_ctx, &sql).await?;
             self.cache.store(snapshot);
             // Stamp last_refresh_at so a subsequent token-style refresh honors
             // the window — the snapshot we just wrote carries fresh creds too.
@@ -519,31 +531,31 @@ fn rewrite_put_command_for_file(sql: &str, dst_file_name: &str) -> Option<String
     Some(sql.replace(local_path, dst_file_name))
 }
 
-/// Re-issues the original PUT/GET SQL (`ctx.sql`) and extracts the fresh
+/// Re-issues the original PUT/GET SQL (`stage_refresh_ctx.sql`) and extracts the fresh
 /// `stageInfo` snapshot. See [`fetch_fresh_stage_info_with_sql`].
 async fn fetch_fresh_stage_info(
-    ctx: &StageInfoRefreshContext,
+    stage_refresh_ctx: &StageInfoRefreshContext,
 ) -> Result<StageInfoSnapshot, StageInfoRefreshError> {
-    fetch_fresh_stage_info_with_sql(ctx, &ctx.sql).await
+    fetch_fresh_stage_info_with_sql(stage_refresh_ctx, &stage_refresh_ctx.sql).await
 }
 
 /// Re-issues `sql` via `RefreshContext::execute_with_refresh` and extracts the
-/// fresh `stageInfo` snapshot from the response. `sql` is usually `ctx.sql`; the
+/// fresh `stageInfo` snapshot from the response. `sql` is usually `stage_refresh_ctx.sql`; the
 /// per-file URL-refresh path passes a command rewritten for one destination file.
 async fn fetch_fresh_stage_info_with_sql(
-    ctx: &StageInfoRefreshContext,
+    stage_refresh_ctx: &StageInfoRefreshContext,
     sql: &str,
 ) -> Result<StageInfoSnapshot, StageInfoRefreshError> {
     use crate::file_manager::types::stage_info_refresh_error::*;
 
     // `from_arc` is used (not `new`) so that a `close()` raced against an
     // in-flight refresh is rejected, consistent with the original query path.
-    let mut refresh_ctx = RefreshContext::from_arc(&ctx.conn)
+    let mut refresh_ctx = RefreshContext::from_arc(&stage_refresh_ctx.conn)
         .await
         .context(QueryFailedSnafu)?;
     // `from_arc` already validates that `http_client` is present (via the
     // is_closed check + `RefreshContext::new`), so this lookup just clones it.
-    let http_client = ctx
+    let http_client = stage_refresh_ctx
         .conn
         .lock()
         .await
@@ -555,7 +567,7 @@ async fn fetch_fresh_stage_info_with_sql(
     let response = refresh_ctx
         .execute_with_refresh(|session_token| {
             let http_client = http_client.clone();
-            let query_parameters = ctx.query_parameters.clone();
+            let query_parameters = stage_refresh_ctx.query_parameters.clone();
             let query_input = query_input.clone();
             async move {
                 rest::snowflake::snowflake_query_with_client(

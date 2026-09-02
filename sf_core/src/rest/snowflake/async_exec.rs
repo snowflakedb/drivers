@@ -206,8 +206,8 @@ pub async fn submit_statement_async<'a>(
         )
     };
 
-    let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
-    let response = execute_with_retry(submit_request, &ctx, policy, |r| async move { Ok(r) })
+    let http_ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
+    let response = execute_with_retry(submit_request, &http_ctx, policy, |r| async move { Ok(r) })
         .await
         .context(HttpRetrySnafu {
             context: "async submit",
@@ -231,8 +231,8 @@ pub(super) async fn poll_query_status(
     let result_url = get_result_url.to_string();
     let poll_request =
         move || apply_query_headers(client.get(result_url.clone()), client_info, session_token);
-    let ctx = HttpContext::new(Method::GET, get_result_url.to_string());
-    let response = execute_with_retry(poll_request, &ctx, policy, |r| async move { Ok(r) })
+    let http_ctx = HttpContext::new(Method::GET, get_result_url.to_string());
+    let response = execute_with_retry(poll_request, &http_ctx, policy, |r| async move { Ok(r) })
         .await
         .with_context(|_| HttpRetrySnafu {
             context: "async poll",

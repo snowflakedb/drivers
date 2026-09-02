@@ -423,12 +423,12 @@ async fn azure_get_attempt(
     full_url: &str,
     base: &RetryPolicy,
 ) -> Result<reqwest::Response, AzureAttemptError<AzureRequestError>> {
-    let ctx = HttpContext::new(Method::GET, "azure-transfer");
+    let http_ctx = HttpContext::new(Method::GET, "azure-transfer");
     let policy = azure_403_fastfail_policy(base);
 
     let response = http_execute_with_retry(
         || client.get(full_url),
-        &ctx,
+        &http_ctx,
         &policy,
         |r| async move { Ok(r) },
     )
@@ -778,7 +778,7 @@ struct AzureMultipartCtx<'a> {
 
 /// Uploads `prepared` as an Azure block blob: `Put Block` ×N then `Put Block List`.
 /// Per-block SAS-refresh resume: a 403 on one block/commit rotates the SAS
-/// (coalesced) and retries just that request; `ctx.url` is unsigned and signed
+/// (coalesced) and retries just that request; `multipart_ctx.url` is unsigned and signed
 /// per attempt from the current creds.
 ///
 /// No abort step, on either the failure or the cancellation path — unlike S3 and
@@ -789,7 +789,7 @@ struct AzureMultipartCtx<'a> {
 /// `azure_multipart_upload_registers_no_abort_on_cancel` pins it.
 /// <https://learn.microsoft.com/en-us/rest/api/storageservices/put-block>
 async fn azure_multipart_upload(
-    ctx: AzureMultipartCtx<'_>,
+    multipart_ctx: AzureMultipartCtx<'_>,
     prepared: PreparedUpload,
     body_len: u64,
     concurrency: usize,
@@ -819,7 +819,7 @@ async fn azure_multipart_upload(
         .map(|part| async move {
             let part = part.context(azure_upload_error::SourceIoSnafu)?;
             let number = part.number;
-            azure_put_block_with_refresh(ctx, part).await?;
+            azure_put_block_with_refresh(multipart_ctx, part).await?;
             Ok::<i32, AzureUploadError>(number)
         })
         .buffer_unordered(concurrency)
@@ -844,7 +844,7 @@ async fn azure_multipart_upload(
     block_numbers.sort_unstable();
 
     azure_put_block_list_with_refresh(
-        ctx,
+        multipart_ctx,
         &block_numbers,
         &digest,
         encryption_data_str.as_deref(),
@@ -911,18 +911,18 @@ fn azure_sas_from_creds(creds: &CloudCredentials) -> Result<&SensitiveString, Az
     }
 }
 
-/// Stages one block under the SAS-refresh layer: signs `ctx.url` per attempt and
+/// Stages one block under the SAS-refresh layer: signs `multipart_ctx.url` per attempt and
 /// on a 403 rotates the SAS (coalesced) and retries *this block only*. No
 /// refresher → the block runs once and a 403 is terminal.
 async fn azure_put_block_with_refresh(
-    ctx: AzureMultipartCtx<'_>,
+    multipart_ctx: AzureMultipartCtx<'_>,
     part: multipart::UploadPart,
 ) -> Result<(), AzureUploadError> {
     let number = part.number;
     let body = part.body;
     run_azure_with_sas_refresh(
-        ctx.refresher,
-        ctx.initial_creds,
+        multipart_ctx.refresher,
+        multipart_ctx.initial_creds,
         "PUT block",
         |e| azure_upload_error::StageInfoRefreshSnafu.into_error(e),
         |status_code, body| AzureUploadError::AzureHttp {
@@ -931,9 +931,9 @@ async fn azure_put_block_with_refresh(
             location: Location::default(),
         },
         |creds| {
-            let client = ctx.client.clone();
-            let policy = ctx.policy.clone();
-            let url = ctx.url.to_string();
+            let client = multipart_ctx.client.clone();
+            let policy = multipart_ctx.policy.clone();
+            let url = multipart_ctx.url.to_string();
             let body = body.clone();
             async move {
                 let sas = azure_sas_from_creds(&creds).map_err(AzureAttemptError::Other)?;
@@ -963,15 +963,15 @@ async fn azure_put_block_with_refresh(
 /// the same rejected SAS would spin a GS-refresh loop. This matches the old
 /// whole-file restart, which would also re-stage under the same coalesced creds.
 async fn azure_put_block_list_with_refresh(
-    ctx: AzureMultipartCtx<'_>,
+    multipart_ctx: AzureMultipartCtx<'_>,
     block_numbers: &[i32],
     digest: &str,
     encryption_data_str: Option<&str>,
     mat_desc_str: Option<&str>,
 ) -> Result<(), AzureUploadError> {
     run_azure_with_sas_refresh(
-        ctx.refresher,
-        ctx.initial_creds,
+        multipart_ctx.refresher,
+        multipart_ctx.initial_creds,
         "PUT block list",
         |e| azure_upload_error::StageInfoRefreshSnafu.into_error(e),
         |status_code, body| AzureUploadError::AzureHttp {
@@ -980,9 +980,9 @@ async fn azure_put_block_list_with_refresh(
             location: Location::default(),
         },
         |creds| {
-            let client = ctx.client.clone();
-            let policy = ctx.policy.clone();
-            let url = ctx.url.to_string();
+            let client = multipart_ctx.client.clone();
+            let policy = multipart_ctx.policy.clone();
+            let url = multipart_ctx.url.to_string();
             let block_numbers = block_numbers.to_vec();
             let digest = digest.to_string();
             let encryption_data_str = encryption_data_str.map(str::to_string);
@@ -998,7 +998,7 @@ async fn azure_put_block_list_with_refresh(
                         digest: &digest,
                         encryption_data: encryption_data_str.as_deref(),
                         material_description: mat_desc_str.as_deref(),
-                        overwrite: ctx.overwrite,
+                        overwrite: multipart_ctx.overwrite,
                     },
                     &policy,
                 )
@@ -1113,11 +1113,12 @@ async fn azure_request_with_retry<F>(
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
-    let ctx = HttpContext::new(method, "azure-transfer");
+    let http_ctx = HttpContext::new(method, "azure-transfer");
 
-    let response = http_execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .map_err(map_http_error)?;
+    let response =
+        http_execute_with_retry(build_request, &http_ctx, policy, |r| async move { Ok(r) })
+            .await
+            .map_err(map_http_error)?;
 
     tracing::info!(status = response.status().as_u16(), "HTTP response");
 
@@ -3538,7 +3539,7 @@ mod tests {
                     always_multipart(),
                     &policy,
                     // The refresher — this function takes no cleanup scope, because
-                    // Azure has no abort to register. The ctx is still real
+                    // Azure has no abort to register. The operation context is still real
                     // (`cancelled_by` owns it), so the cancel itself is live.
                     None,
                 )

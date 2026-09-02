@@ -842,9 +842,9 @@ async fn cancelling_an_in_flight_query_aborts_it_server_side() {
 ///
 /// Worth its own test rather than trusting the execute coverage: `statement_prepare`
 /// reaches the wire through its own entry point, and it was the last query-submitting
-/// RPC left unmarked — it passed `None` for the ctx, so a cancel could only drop the
+/// RPC left unmarked — it passed `None` for the operation context, so a cancel could only drop the
 /// local future and the described query kept running server-side. This pins that the
-/// marker is wired all the way through: ctx observed at the prepare boundary *and*
+/// marker is wired all the way through: the context observed at the prepare boundary *and*
 /// handed down so the abort is registered.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancelling_an_in_flight_prepare_aborts_it_server_side() {
@@ -1031,7 +1031,7 @@ async fn an_uncancelled_handle_does_not_short_circuit_the_operation() {
 /// What makes this worth an integration test even though cancellation already
 /// worked before the RPC was marked: marking flips `observes_cancellation`, which
 /// turns **off** the transport-level race. If the impl were marked without also
-/// observing the ctx, nothing would watch the token and this call would park on
+/// observing the operation context, nothing would watch the token and this call would park on
 /// the mock forever — so the bounded wait below is what catches that trap.
 /// Verified by removing the impl's `run_opt`: this test then fails on the bound
 /// instead of passing.
@@ -1101,7 +1101,7 @@ async fn cancelling_an_in_flight_query_status_poll_reports_cancelled_without_abo
 /// Worth its own test despite sharing that endpoint: it is a different entry
 /// point that returns a full result rather than a result-set handle, and it is
 /// the one of the three that reaches `extract_rowset_data` — so it is the only
-/// finished-query lookup where the ctx it observes is also forwarded onward, to
+/// finished-query lookup where the context it observes is also forwarded onward, to
 /// abort an in-flight PUT/GET transfer. Catches the same
 /// marked-but-not-observing trap described on the result-set test above.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

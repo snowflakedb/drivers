@@ -758,8 +758,8 @@ mod tests {
     }
 
     fn vendor_pair(err: &ApiError) -> (Option<i32>, Option<String>) {
-        let ctx = err.snowflake_context();
-        (ctx.vendor_code, ctx.sql_state)
+        let snowflake_ctx = err.snowflake_context();
+        (snowflake_ctx.vendor_code, snowflake_ctx.sql_state)
     }
 
     fn query_failed(code: Option<i32>, sql_state: Option<&str>) -> ApiError {
@@ -1207,9 +1207,9 @@ mod tests {
         // When the server omits the query_id and no request_id was recorded,
         // both fields stay None on DriverException.
         let err = query_failed(Some(1003), Some("42000"));
-        let ctx = err.snowflake_context();
-        assert_eq!(ctx.query_id, None);
-        assert_eq!(ctx.request_id, None);
+        let snowflake_ctx = err.snowflake_context();
+        assert_eq!(snowflake_ctx.query_id, None);
+        assert_eq!(snowflake_ctx.request_id, None);
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, None);
@@ -1433,9 +1433,9 @@ mod tests {
             argument: "bad".to_owned(),
         }
         .build();
-        let ctx = err.snowflake_context();
-        assert_eq!(ctx.query_id, None);
-        assert_eq!(ctx.request_id, None);
+        let snowflake_ctx = err.snowflake_context();
+        assert_eq!(snowflake_ctx.query_id, None);
+        assert_eq!(snowflake_ctx.request_id, None);
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, None);

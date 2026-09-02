@@ -139,7 +139,7 @@ async fn heartbeat_loop(
             }
         }
 
-        let mut ctx = RefreshContext::from_parts(
+        let mut refresh_ctx = RefreshContext::from_parts(
             tokens.clone(),
             http_client.clone(),
             server_url.to_string(),
@@ -149,7 +149,7 @@ async fn heartbeat_loop(
         let mut last_error: Option<RestError> = None;
         loop {
             let token = tokio::select! {
-                result = ctx.refresh_token(last_error.take()) => match result {
+                result = refresh_ctx.refresh_token(last_error.take()) => match result {
                     Ok(t) => t,
                     Err(ApiError::MasterTokenTerminal { .. }) => {
                         tracing::error!("Master token can never be renewed, heartbeat task exiting");

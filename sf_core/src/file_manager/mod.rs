@@ -1862,7 +1862,7 @@ fn warn_remove_partial(partial_path: &Path) {
 ///
 /// `Drop`-based rather than registered as cleanup: the abort is synchronous, so
 /// there is nothing to await, and a guard fires even when the caller had no
-/// operation ctx — an internal caller, or a wrapper racing its own token above the
+/// operation context — an internal caller, or a wrapper racing its own token above the
 /// core.
 struct ProducerAbortGuard(Option<tokio::task::AbortHandle>);
 

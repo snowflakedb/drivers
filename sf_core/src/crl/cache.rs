@@ -1197,13 +1197,13 @@ impl CrlCache {
         let start = std::time::Instant::now();
         self.maybe_sleep_backoff(url).await?;
 
-        let ctx = HttpContext::new(Method::GET, url.to_string());
+        let http_ctx = HttpContext::new(Method::GET, url.to_string());
         let req_builder = || self.http_client.get(url);
         // Stream the body against a fixed size limit so an oversized CRL
         // response is bounded.
         let bytes = match execute_bytes_with_retry_capped(
             req_builder,
-            &ctx,
+            &http_ctx,
             &RetryPolicy::default(),
             self.config.max_download_size,
         )

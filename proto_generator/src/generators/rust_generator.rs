@@ -178,10 +178,10 @@ use crate::apis::operation_ctx::OperationCtx;
 
         // Only `async_first` (slow, cancellable) RPCs receive an `OperationCtx`.
         // The proto is the single source of truth: marking an RPC changes this
-        // signature, so the corresponding impl must accept the ctx or the build
+        // signature, so the corresponding impl must accept the operation_ctx or the build
         // fails, and an unmarked RPC cannot accidentally take one.
         let ctx_param = if Self::is_async_first(method) {
-            ", ctx: Option<&OperationCtx>"
+            ", operation_ctx: Option<&OperationCtx>"
         } else {
             ""
         };
@@ -212,7 +212,7 @@ use crate::apis::operation_ctx::OperationCtx;
 
         let mut content = format!(
             r#"pub trait {service_name}Server : {service_name} {{
-	fn handle_message(&self, ctx: Option<&OperationCtx>, method: &str, message: Vec<u8>) -> impl std::future::Future<Output = Result<Vec<u8>, ProtoError<Vec<u8>>>> + Send where Self: Sync {{ async move {{
+	fn handle_message(&self, operation_ctx: Option<&OperationCtx>, method: &str, message: Vec<u8>) -> impl std::future::Future<Output = Result<Vec<u8>, ProtoError<Vec<u8>>>> + Send where Self: Sync {{ async move {{
 		match method {{
 "#
         );
@@ -228,7 +228,7 @@ use crate::apis::operation_ctx::OperationCtx;
 "#;
 
         // Lets the transport tell whether an operation observes cancellation
-        // itself. Generated from the same `async_first` marker as the ctx
+        // itself. Generated from the same `async_first` marker as the operation_ctx
         // parameter, so the two can never disagree: an unmarked RPC keeps the
         // transport-level race, a marked one is left alone to unwind itself.
         content += &format!(
@@ -275,12 +275,12 @@ pub fn observes_cancellation(method: &str) -> bool {{
         );
         let name = camel_to_snake_case(method.name.as_ref().unwrap_or(&String::new()));
 
-        // Marked RPCs get the ctx and observe cancellation themselves, inside
+        // Marked RPCs get the operation_ctx and observe cancellation themselves, inside
         // the operation, where they still have the state needed to unwind
         // cleanly. Deliberately no race here: one at this layer would drop the
         // operation before any such cleanup could finish.
         let call_args = if Self::is_async_first(method) {
-            "ctx, input"
+            "operation_ctx, input"
         } else {
             "input"
         };

@@ -259,7 +259,7 @@ async fn request_authenticator_endpoints(
     );
 
     let body_string = serde_json::to_string(&authn_req).context(JsonSerializeSnafu)?;
-    let ctx = HttpContext::new(Method::POST, SF_AUTHENTICATOR_REQUEST_PATH).allow_post_retry();
+    let http_ctx = HttpContext::new(Method::POST, SF_AUTHENTICATOR_REQUEST_PATH).allow_post_retry();
     let (status, text) = super::request_text_with_retry(
         || {
             client
@@ -272,7 +272,7 @@ async fn request_authenticator_endpoints(
                 )
                 .body(body_string.clone())
         },
-        &ctx,
+        &http_ctx,
         &policy,
     )
     .await

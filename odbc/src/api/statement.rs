@@ -3201,13 +3201,13 @@ fn put_data_inner(
 
 /// Accumulate a single `SQLPutData` chunk into the DAE context.
 fn accumulate_put_data(
-    ctx: &mut DaeContext,
+    dae_ctx: &mut DaeContext,
     param_num: u16,
     data_ptr: sql::Pointer,
     str_len_or_ind: sql::Len,
     c_type: CDataType,
 ) -> OdbcResult<()> {
-    let entry = ctx.pushed_data.get_mut(&param_num).with_context(|| {
+    let entry = dae_ctx.pushed_data.get_mut(&param_num).with_context(|| {
         crate::api::error::CountFieldIncorrectSnafu {
             reason: format!("DAE param {param_num} not found in pushed_data"),
         }

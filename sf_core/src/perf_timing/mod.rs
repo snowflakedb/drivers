@@ -83,17 +83,19 @@ mod inner {
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
     {
-        fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, layer_ctx: Context<'_, S>) {
             if attrs.metadata().target() != super::PERF_TARGET {
                 return;
             }
-            if let Some(span) = ctx.span(id) {
+            if let Some(span) = layer_ctx.span(id) {
                 span.extensions_mut().insert(SpanCreatedAt(Instant::now()));
             }
         }
 
-        fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-            let Some(span) = ctx.span(&id) else { return };
+        fn on_close(&self, id: Id, layer_ctx: Context<'_, S>) {
+            let Some(span) = layer_ctx.span(&id) else {
+                return;
+            };
             let ext = span.extensions();
             let Some(created) = ext.get::<SpanCreatedAt>() else {
                 return;

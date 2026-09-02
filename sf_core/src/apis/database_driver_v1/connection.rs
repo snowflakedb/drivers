@@ -239,10 +239,10 @@ impl DatabaseDriverV1 {
             .context(ConnectionNotInitializedSnafu)?;
         let retry_policy = conn.retry_policy.clone();
 
-        let mut ctx = RefreshContext::new(conn)?;
+        let mut refresh_ctx = RefreshContext::new(conn)?;
         let mut last_error = None;
         let response = loop {
-            let session_token = ctx.refresh_token(last_error).await?;
+            let session_token = refresh_ctx.refresh_token(last_error).await?;
             match snowflake_query_with_client(
                 &http_client,
                 query_parameters.clone(),
@@ -286,19 +286,19 @@ impl DatabaseDriverV1 {
 
     /// Establish the session for `conn_handle`.
     ///
-    /// `ctx` is the operation's cancellation context, or `None` when the caller
+    /// `operation_ctx` is the operation's cancellation context, or `None` when the caller
     /// reached core without an operation handle (a blocking FFI entry, an
     /// internal caller, a test) and therefore has no way to cancel. This is the
     /// single observation point for the operation: cancellation surfaces as
     /// [`ApiError::Cancelled`] and propagates like any other error.
     pub async fn connection_init(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         _db_handle: Handle,
     ) -> Result<(), ApiError> {
         crate::apis::operation_ctx::run_opt(
-            ctx,
+            operation_ctx,
             "connection_init",
             Box::pin(self.connection_init_inner(conn_handle, _db_handle)),
         )
@@ -1416,8 +1416,8 @@ where
     F: Fn(SensitiveString) -> Fut,
     Fut: Future<Output = Result<T, RestError>>,
 {
-    let mut ctx = RefreshContext::from_arc(conn).await?;
-    ctx.execute_with_refresh(f).await
+    let mut refresh_ctx = RefreshContext::from_arc(conn).await?;
+    refresh_ctx.execute_with_refresh(f).await
 }
 
 /// Context for automatic session token refresh.
@@ -1426,10 +1426,10 @@ where
 /// a loop-based API:
 ///
 /// ```ignore
-/// let mut ctx = RefreshContext::new(&conn)?;
+/// let mut refresh_ctx = RefreshContext::new(&conn)?;
 /// let mut last_error: Option<RestError> = None;
 /// loop {
-///     let token = ctx.refresh_token(last_error).await?;
+///     let token = refresh_ctx.refresh_token(last_error).await?;
 ///     match do_something(token).await {
 ///         Ok(result) => return Ok(result),
 ///         Err(e) => last_error = Some(e),
@@ -2045,7 +2045,7 @@ impl DatabaseDriverV1 {
 
     pub async fn connection_get_query_status(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         query_id: &str,
     ) -> Result<snowflake::QueryStatusResult, ApiError> {
@@ -2099,7 +2099,8 @@ impl DatabaseDriverV1 {
             })
             .await
         };
-        crate::apis::operation_ctx::run_opt(ctx, "connection_get_query_status", status).await
+        crate::apis::operation_ctx::run_opt(operation_ctx, "connection_get_query_status", status)
+            .await
     }
 
     pub async fn connection_get_all_parameters(
@@ -2252,13 +2253,13 @@ impl DatabaseDriverV1 {
     /// are rejected so requests stay on the configured host.
     /// Auth is always the current session token managed by sf_core.
     ///
-    /// The connection's client carries no request timeout, so without a `ctx`
+    /// The connection's client carries no request timeout, so without a `operation_ctx`
     /// this call is bounded only by the server. Cancelling drops the request;
     /// what the server does with an already-received one is its own business,
     /// which is why the caller chooses the path and the method.
     pub async fn connection_send_http_request(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         method: String,
         url: String,
@@ -2410,7 +2411,7 @@ impl DatabaseDriverV1 {
                 body: response_body.to_vec(),
             })
         };
-        crate::apis::operation_ctx::run_opt(ctx, "connection_send_http", send).await
+        crate::apis::operation_ctx::run_opt(operation_ctx, "connection_send_http", send).await
     }
 
     /// Send a heartbeat to validate that the connection and session are still alive.
@@ -2437,12 +2438,12 @@ impl DatabaseDriverV1 {
                     argument: "Connection handle not found".to_string(),
                 })?;
 
-            let mut ctx = match RefreshContext::from_arc(&conn_ptr).await {
-                Ok(ctx) => ctx,
+            let mut refresh_ctx = match RefreshContext::from_arc(&conn_ptr).await {
+                Ok(refresh_ctx) => refresh_ctx,
                 Err(_) => return Ok(false),
             };
 
-            let server_url = match url::Url::parse(&ctx.server_url) {
+            let server_url = match url::Url::parse(&refresh_ctx.server_url) {
                 Ok(u) => u,
                 Err(_) => return Ok(false),
             };
@@ -2450,15 +2451,15 @@ impl DatabaseDriverV1 {
             let mut last_error: Option<RestError> = None;
 
             loop {
-                let token = match ctx.refresh_token(last_error.take()).await {
+                let token = match refresh_ctx.refresh_token(last_error.take()).await {
                     Ok(t) => t,
                     Err(_) => return Ok(false),
                 };
 
                 match heartbeat::send_heartbeat_with_timeout(
-                    &ctx.http_client,
+                    &refresh_ctx.http_client,
                     &server_url,
-                    &ctx.client_info,
+                    &refresh_ctx.client_info,
                     token.reveal(),
                     timeout,
                 )
@@ -2486,7 +2487,7 @@ impl DatabaseDriverV1 {
     /// server may have minted for a dropped ISSUE is simply never used.
     pub async fn connection_token_request(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         request_type: String,
     ) -> Result<snowflake::TokenRequestResult, ApiError> {
@@ -2545,7 +2546,7 @@ impl DatabaseDriverV1 {
             .await
             .context(TokenRequestSnafu)
         };
-        crate::apis::operation_ctx::run_opt(ctx, "connection_request_token", token).await
+        crate::apis::operation_ctx::run_opt(operation_ctx, "connection_request_token", token).await
     }
 }
 

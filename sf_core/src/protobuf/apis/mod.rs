@@ -44,13 +44,17 @@ impl RustTransport {
     /// points so they cannot diverge in how they dispatch.
     async fn dispatch(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         service: &str,
         method: &str,
         message: Vec<u8>,
     ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
         match service {
-            "DatabaseDriver" => self.driver.handle_message(ctx, method, message).await,
+            "DatabaseDriver" => {
+                self.driver
+                    .handle_message(operation_ctx, method, message)
+                    .await
+            }
             _ => Err(ProtoError::Transport(format!("Unknown API: {}", service))),
         }
     }
@@ -87,7 +91,7 @@ impl RustTransport {
 /// observes its token returns `ApiError::Cancelled`, which the regular
 /// `ApiError → DriverException` converter maps to `ERROR_KIND_CANCELLED`. This
 /// covers only the pre-dispatch race where the handle was cancelled (or had
-/// already completed) before the ctx could be built, plus the unmarked-RPC
+/// already completed) before the operation_ctx could be built, plus the unmarked-RPC
 /// fallback above.
 ///
 /// TODO(SNOW-3675196): goes away with that fallback, leaving the pre-dispatch
@@ -175,7 +179,7 @@ impl Drop for DeregisterGuard<'_> {
 }
 
 impl Transport for RustTransport {
-    /// Dispatch without a cancellation trigger: the operation gets no ctx, so
+    /// Dispatch without a cancellation trigger: the operation gets no operation_ctx, so
     /// nothing can cancel it.
     async fn handle_message(
         &self,
@@ -205,7 +209,7 @@ impl CancellableTransport for RustTransport {
     /// Two shapes, picked by the proto's `async_first` marker via the generated
     /// [`observes_cancellation`]:
     ///
-    /// * **Marked** — the ctx is handed down and the operation
+    /// * **Marked** — the operation_ctx is handed down and the operation
     ///   observes the token itself, where it still has the state to unwind
     ///   cleanly. Deliberately *not* raced here as well: this layer would resolve
     ///   in nanoseconds and drop the operation before any cleanup could finish.
@@ -230,11 +234,11 @@ impl CancellableTransport for RustTransport {
         };
 
         let marked = observes_cancellation(method);
-        let ctx = marked.then(|| OperationCtx::from_registered(operation, token.clone()));
+        let operation_ctx = marked.then(|| OperationCtx::from_registered(operation, token.clone()));
 
         // One instantiation of the dispatch future, awaited by whichever branch
         // below applies.
-        let dispatched = self.dispatch(ctx.as_ref(), service, method, message);
+        let dispatched = self.dispatch(operation_ctx.as_ref(), service, method, message);
 
         if marked {
             return dispatched.await;
@@ -285,7 +289,7 @@ mod tests {
         );
     }
 
-    /// `wif_create_attestation` observes its ctx, proven without a network mock.
+    /// `wif_create_attestation` observes its operation_ctx, proven without a network mock.
     ///
     /// The other `async_first` RPCs are covered in
     /// `tests/integration/query/operation_cancellation.rs` against a local mock
@@ -295,8 +299,8 @@ mod tests {
     ///
     /// A pre-cancelled handle covers it instead. `CancellationToken::run_until_cancelled`
     /// does not poll its future when the token is already cancelled, so a marked
-    /// RPC that observes its ctx returns `CANCELLED` having touched no network.
-    /// Were the ctx ignored, the AWS provider below would instead reach for IMDS
+    /// RPC that observes its operation_ctx returns `CANCELLED` having touched no network.
+    /// Were the operation_ctx ignored, the AWS provider below would instead reach for IMDS
     /// and this would fail on the resulting error rather than the assertion.
     #[tokio::test]
     async fn cancelling_wif_create_attestation_is_observed_before_any_request() {
@@ -355,7 +359,7 @@ mod tests {
     async fn plain_handle_message_is_never_cancellable() {
         let transport = RustTransport::new();
 
-        // No handle, so nothing can cancel it: the detached ctx's token has no
+        // No handle, so nothing can cancel it: the detached operation_ctx's token has no
         // canceller and the call must dispatch normally.
         let result = transport
             .handle_message("UnknownService", "whatever", vec![])
@@ -405,7 +409,7 @@ mod tests {
 
     /// The proto's `async_first` marker is the single source of truth for which
     /// operations observe cancellation themselves. If this drifts, an operation
-    /// either loses its ctx or gets raced at two layers at once.
+    /// either loses its operation_ctx or gets raced at two layers at once.
     #[test]
     fn marked_set_follows_the_proto_marker() {
         assert!(

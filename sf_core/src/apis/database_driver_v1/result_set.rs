@@ -379,10 +379,10 @@ pub(super) async fn fetch_query_response_data(
     };
 
     let response = {
-        let mut ctx = RefreshContext::from_arc(conn_ptr).await?;
+        let mut refresh_ctx = RefreshContext::from_arc(conn_ptr).await?;
         let mut last_error = None;
         loop {
-            let session_token = ctx.refresh_token(last_error).await?;
+            let session_token = refresh_ctx.refresh_token(last_error).await?;
             match snowflake_get_query_result(
                 &http_client,
                 &query_parameters,
@@ -604,7 +604,7 @@ impl DatabaseDriverV1 {
     /// retrieval — neither of which involves PUT/GET file transfers.
     pub async fn create_result_set_from_sfqid(
         &self,
-        ctx: Option<&OperationCtx>,
+        operation_ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         query_id: String,
     ) -> Result<ResultSetInfo, ApiError> {
@@ -626,7 +626,7 @@ impl DatabaseDriverV1 {
         };
         // Labelled with the RPC name, not this function's, so the operation is
         // named the same way in logs as it is in the proto.
-        run_opt(ctx, "connection_get_result_set", fetch).await
+        run_opt(operation_ctx, "connection_get_result_set", fetch).await
     }
 }
 
