@@ -22,7 +22,7 @@ use std::sync::Arc;
 const MAX_TIME_SCALE: u32 = 9;
 /// Seconds in a day — the exclusive upper bound for a valid
 /// `secs_since_midnight` component of the `secs * 10^scale + frac` TIME
-/// encoding (see [`validate_time_range`]/[`decode_time`]).
+/// encoding (see [`validate_time_range`]).
 const SECONDS_PER_DAY: i64 = 86_400;
 
 /// Per-column state a `TIME` decoder needs beyond the raw Arrow array:
@@ -274,10 +274,10 @@ impl ColumnReader {
                 JsCell::Date(date.and_time(NaiveTime::MIN))
             }),
             Self::TimeI32(array, meta) => read_cell(array, row_index, || {
-                JsCell::Str(Cow::Owned(decode_time(array.value(row_index) as i64, meta)))
+                JsCell::Str(Cow::Owned(render_time(array, row_index, meta)))
             }),
             Self::TimeI64(array, meta) => read_cell(array, row_index, || {
-                JsCell::Str(Cow::Owned(decode_time(array.value(row_index), meta)))
+                JsCell::Str(Cow::Owned(render_time(array, row_index, meta)))
             }),
             Self::Variant(array) => read_cell(array, row_index, || {
                 JsCell::Str(Cow::Borrowed(array.value(row_index)))
@@ -341,27 +341,16 @@ where
     ))
 }
 
-/// Decodes a raw `secs_since_midnight * 10^scale + frac` cell into the
-/// column's `TIME_OUTPUT_FORMAT`-rendered string. Infallible: `for_field`
-/// already validated every cell in this array via [`validate_time_range`],
-/// so the arithmetic below provably cannot produce an out-of-range
-/// `NaiveTime`.
-fn decode_time(raw: i64, meta: &TimeMeta) -> String {
-    let divisor = 10i64.pow(meta.scale);
-    let secs = (raw / divisor) as u32;
-    let frac = (raw % divisor) as u32;
-    let nanos = frac * 10u32.pow(MAX_TIME_SCALE - meta.scale);
-    debug_assert!(
-        secs < SECONDS_PER_DAY as u32,
-        "for_field's validation should already guarantee secs is in range, got {secs}"
-    );
-    let time = match NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos) {
-        Some(time) => time,
-        // Unreachable in practice (see debug_assert above — for_field
-        // already validated every raw cell in this column); fall back to
-        // midnight rather than panicking on a decode path.
-        None => NaiveTime::MIN,
-    };
+fn render_time<T>(array: &PrimitiveArray<T>, row_index: usize, meta: &TimeMeta) -> String
+where
+    T: ArrowNumericType,
+    T::Native: Into<i64>,
+{
+    let time = sf_types::SnowflakeTime { scale: meta.scale }
+        .read_arrow_type(array, row_index)
+        .unwrap_or_else(|_| {
+            unreachable!("non-null, range-validated TIME cell always decodes to a NaiveTime")
+        });
     time_format::render(time, meta.scale, &meta.format)
 }
 
