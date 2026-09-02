@@ -25,6 +25,68 @@ const REQUEST_TIMEOUT_SECS: u64 = 300;
 const GCS_META_SFC_DIGEST: &str = "x-goog-meta-sfc-digest";
 const GCS_META_ENCRYPTIONDATA: &str = "x-goog-meta-encryptiondata";
 const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
+/// XML-API create-only precondition: generation 0 means "no live generation",
+/// so the write succeeds only if the object does not already exist.
+const GCS_IF_GENERATION_MATCH: &str = "x-goog-if-generation-match";
+
+#[derive(Clone, Copy)]
+enum GcsUploadHeader {
+    GenerationMatch,
+    Digest,
+    EncryptionData,
+    MaterialDescription,
+}
+
+impl GcsUploadHeader {
+    fn name(self) -> &'static str {
+        match self {
+            Self::GenerationMatch => GCS_IF_GENERATION_MATCH,
+            Self::Digest => GCS_META_SFC_DIGEST,
+            Self::EncryptionData => GCS_META_ENCRYPTIONDATA,
+            Self::MaterialDescription => GCS_META_MATDESC,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct GcsCseUploadMetadata<'a> {
+    encryption_data: &'a str,
+    material_description: &'a str,
+}
+
+#[derive(Clone, Copy)]
+struct GcsUploadHeaders<'a> {
+    conditional_create: bool,
+    digest: &'a str,
+    cse: Option<GcsCseUploadMetadata<'a>>,
+}
+
+impl<'a> GcsUploadHeaders<'a> {
+    fn emitted(self) -> impl Iterator<Item = (&'static str, &'a str)> {
+        let generation = self
+            .conditional_create
+            .then_some((GcsUploadHeader::GenerationMatch.name(), "0"));
+        let digest = std::iter::once((GcsUploadHeader::Digest.name(), self.digest));
+        let cse = self.cse.into_iter().flat_map(|cse| {
+            [
+                (GcsUploadHeader::EncryptionData.name(), cse.encryption_data),
+                (
+                    GcsUploadHeader::MaterialDescription.name(),
+                    cse.material_description,
+                ),
+            ]
+        });
+
+        generation.into_iter().chain(digest).chain(cse)
+    }
+
+    fn apply_to(self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (name, value) in self.emitted() {
+            request = request.header(name, value);
+        }
+        request
+    }
+}
 
 /// Uploads a file to GCS, skipping when either:
 ///   * the object already exists and `overwrite` is false (existence skip), or
@@ -79,11 +141,14 @@ pub async fn upload_to_gcs_or_skip(
     // With a refresher, 400 is removed from the wire-level retry list — we
     // handle it reactively here by rotating the URL. Without a refresher,
     // the injected policy keeps the legacy 400-retry-with-same-URL fallback.
-    let wire_policy = if has_refresher {
+    let mut wire_policy = if has_refresher {
         without_400(policy)
     } else {
         policy.clone()
     };
+    // A 412 means an unchanged request's precondition is false. Retrying is
+    // never useful, including for an unexpected 412 on an unconditional PUT.
+    wire_policy.extra_retryable_statuses.remove(&412);
 
     // Two-strike URL-refresh model. `make_attempt` is a factory that captures
     // `base` (the stage-info for this strike) so the attempt body is written
@@ -103,6 +168,7 @@ pub async fn upload_to_gcs_or_skip(
             async move {
                 let (url, token) = resolve_url_and_token(&stage_info, &key, None)
                     .map_err(map_gcs_request_error_for_attempt)?;
+                let conditional_create = !overwrite;
 
                 // Elide the HEAD when neither skip branch could fire (mirrors
                 // Azure/S3): with overwrite=true and the flag off there is
@@ -144,26 +210,47 @@ pub async fn upload_to_gcs_or_skip(
                     .await
                     .map_err(|e| GcsRequestError::SourceIo { source: e })
                     .map_err(map_gcs_request_error_for_attempt)?;
-                if let Some(tok) = token
+                let upload = if let Some(tok) = token
                     && multipart.should_chunk(body_len)
                 {
                     gcs_resumable_upload(
-                        &client,
-                        &url,
-                        tok,
+                        GcsResumableUploadCtx {
+                            client: &client,
+                            object_url: &url,
+                            token: tok,
+                            policy: &wire_policy,
+                            conditional_create,
+                            cleanup: tx.cleanup,
+                        },
                         prepared,
                         body_len,
-                        &wire_policy,
-                        tx.cleanup,
                     )
                     .await
-                    .map_err(map_gcs_request_error_for_attempt)?;
                 } else {
-                    upload_to_gcs(&client, &url, token, prepared, &wire_policy)
-                        .await
-                        .map_err(map_gcs_request_error_for_attempt)?;
+                    upload_to_gcs(
+                        &client,
+                        &url,
+                        token,
+                        prepared,
+                        &wire_policy,
+                        conditional_create,
+                    )
+                    .await
+                };
+
+                match upload {
+                    Ok(()) => Ok(UploadStatus::Uploaded),
+                    Err(GcsRequestError::GcsHttp {
+                        status_code: 412, ..
+                    }) if conditional_create => {
+                        tracing::info!(
+                            "GCS conditional upload for {key} returned 412 Precondition Failed; \
+                             treating as Skipped"
+                        );
+                        Ok(UploadStatus::Skipped)
+                    }
+                    Err(e) => Err(map_gcs_request_error_for_attempt(e)),
                 }
-                Ok(UploadStatus::Uploaded)
             }
         }
     };
@@ -610,6 +697,7 @@ async fn upload_to_gcs(
     token: Option<&str>,
     prepared: PreparedUpload,
     policy: &RetryPolicy,
+    conditional_create: bool,
 ) -> Result<(), GcsRequestError> {
     // `body_for` re-opens the source per retry (a `Path` re-open or an O(1)
     // `Bytes` refcount clone). `prepared` is held until this fn returns, so a
@@ -634,6 +722,27 @@ async fn upload_to_gcs(
         .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
         .transpose()
         .context(SerializationSnafu)?;
+
+    let cse_headers = encryption_data_str
+        .as_deref()
+        .zip(mat_desc_str.as_deref())
+        .map(
+            |(encryption_data, material_description)| GcsCseUploadMetadata {
+                encryption_data,
+                material_description,
+            },
+        );
+    let upload_headers = GcsUploadHeaders {
+        conditional_create,
+        digest: &digest,
+        cse: cse_headers,
+    };
+    if conditional_create
+        && token.is_none()
+        && !presigned_url_signs_required_upload_headers(url, upload_headers)
+    {
+        return Err(GcsRequestError::ConditionalCreateUnsupported);
+    }
 
     // Set Content-Length explicitly on every GCS upload, mirroring Azure: a
     // streaming `reqwest::Body` (a wrapped CSE stream, or a `tokio::fs::File`
@@ -670,19 +779,27 @@ async fn upload_to_gcs(
             // `x-goog-hash: crc32c=<base64>` on upload, 400 on mismatch) to match the
             // S3 PUT path. Today this relies only on TLS + the GET-time `sfc-digest`
             // (verified over plaintext, on read), so corruption isn't caught at PUT.
-            let mut req = client
-                .put(&url_owned)
-                .header(GCS_META_SFC_DIGEST, &digest)
-                .header("content-encoding", "")
-                .header(reqwest::header::CONTENT_LENGTH, content_length)
-                .body(body);
-
-            if let Some(ref enc_str) = encryption_data_str {
-                req = req.header(GCS_META_ENCRYPTIONDATA, enc_str);
+            let cse = encryption_data_str
+                .as_deref()
+                .zip(mat_desc_str.as_deref())
+                .map(
+                    |(encryption_data, material_description)| GcsCseUploadMetadata {
+                        encryption_data,
+                        material_description,
+                    },
+                );
+            let mut req = GcsUploadHeaders {
+                conditional_create,
+                digest: &digest,
+                cse,
             }
-            if let Some(ref md_str) = mat_desc_str {
-                req = req.header(GCS_META_MATDESC, md_str);
-            }
+            .apply_to(
+                client
+                    .put(&url_owned)
+                    .header("content-encoding", "")
+                    .header(reqwest::header::CONTENT_LENGTH, content_length)
+                    .body(body),
+            );
             if let Some(t) = &token {
                 req = req.bearer_auth(t);
             }
@@ -696,6 +813,21 @@ async fn upload_to_gcs(
 
     tracing::debug!("GCS upload successful");
     Ok(())
+}
+
+/// Shared request and lifecycle state for one resumable upload.
+///
+/// Keeping authentication, conditional-create policy, retry policy, and
+/// cancellation cleanup together ensures every resumed-session entry point
+/// applies the same publication and cleanup behavior.
+#[derive(Clone, Copy)]
+struct GcsResumableUploadCtx<'a> {
+    client: &'a reqwest::Client,
+    object_url: &'a str,
+    token: &'a str,
+    policy: &'a RetryPolicy,
+    conditional_create: bool,
+    cleanup: Option<&'a CleanupScope>,
 }
 
 /// Uploads `prepared` to GCS via the XML-API **resumable** protocol: a single
@@ -722,14 +854,18 @@ async fn upload_to_gcs(
 /// `uploadFileResumable` (snowflake-connector-nodejs#1427) and the
 /// Python/JDBC resumable upload model.
 async fn gcs_resumable_upload(
-    client: &reqwest::Client,
-    object_url: &str,
-    token: &str,
+    ctx: GcsResumableUploadCtx<'_>,
     prepared: PreparedUpload,
     body_len: u64,
-    policy: &RetryPolicy,
-    cleanup: Option<&CleanupScope>,
 ) -> Result<(), GcsRequestError> {
+    let GcsResumableUploadCtx {
+        client,
+        object_url,
+        token,
+        policy,
+        conditional_create,
+        cleanup,
+    } = ctx;
     let chunk_size =
         multipart::compute_part_size(body_len, &MultipartConfig::GCS).map_err(|e| {
             GcsRequestError::FileTooLarge {
@@ -757,17 +893,22 @@ async fn gcs_resumable_upload(
         .transpose()
         .context(SerializationSnafu)?;
 
-    let session_url = gcs_resumable_initiate(
-        client,
-        object_url,
-        token,
-        body_len,
-        &digest,
-        encryption_data_str.as_deref(),
-        mat_desc_str.as_deref(),
-        policy,
-    )
-    .await?;
+    let cse_headers = encryption_data_str
+        .as_deref()
+        .zip(mat_desc_str.as_deref())
+        .map(
+            |(encryption_data, material_description)| GcsCseUploadMetadata {
+                encryption_data,
+                material_description,
+            },
+        );
+    let headers = GcsUploadHeaders {
+        conditional_create,
+        digest: &digest,
+        cse: cse_headers,
+    };
+    let session_url =
+        gcs_resumable_initiate(client, object_url, token, body_len, headers, policy).await?;
 
     // Built after `gcs_resumable_initiate`: until it returns there is no session to
     // delete. When the failure is a token expiry this delete uses the same expired
@@ -835,38 +976,26 @@ async fn gcs_resumable_upload(
 /// the `Location` response header. 401 maps to `TokenExpired` so the outer
 /// refresh loop can rotate creds and retry.
 ///
-/// Every argument is a distinct input (client, target URL, auth token, body
-/// length, digest, encryption metadata, retry policy) needed to build and
-/// retry the initiation request.
-#[allow(clippy::too_many_arguments)]
 async fn gcs_resumable_initiate(
     client: &reqwest::Client,
     object_url: &str,
     token: &str,
     body_len: u64,
-    digest: &str,
-    encryption_data_str: Option<&str>,
-    mat_desc_str: Option<&str>,
+    headers: GcsUploadHeaders<'_>,
     policy: &RetryPolicy,
 ) -> Result<String, GcsRequestError> {
     let resp = gcs_request_with_retry(
         || {
-            let mut req = client
-                .post(object_url)
-                .bearer_auth(token)
-                .header(reqwest::header::CONTENT_LENGTH, 0)
-                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-                .header("x-goog-resumable", "start")
-                .header("x-upload-content-length", body_len)
-                .header("content-encoding", "")
-                .header(GCS_META_SFC_DIGEST, digest);
-            if let Some(enc) = encryption_data_str {
-                req = req.header(GCS_META_ENCRYPTIONDATA, enc);
-            }
-            if let Some(md) = mat_desc_str {
-                req = req.header(GCS_META_MATDESC, md);
-            }
-            req
+            headers.apply_to(
+                client
+                    .post(object_url)
+                    .bearer_auth(token)
+                    .header(reqwest::header::CONTENT_LENGTH, 0)
+                    .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                    .header("x-goog-resumable", "start")
+                    .header("x-upload-content-length", body_len)
+                    .header("content-encoding", ""),
+            )
         },
         Method::POST,
         policy,
@@ -1225,6 +1354,34 @@ fn resolve_url_and_token<'a>(
 
     let url = build_gcs_url(stage_info, key);
     Ok((url, token))
+}
+
+/// Whether a GCS V4 signed URL authorizes every `x-goog-*` header emitted by
+/// a conditional upload.
+///
+/// A DRV-22 live probe against an internal temporary stage in GCP us-central1
+/// received a V4 URL with only `host` in `X-Goog-SignedHeaders`. On that URL,
+/// adding either `x-goog-meta-sfc-digest` or `x-goog-if-generation-match`
+/// returned `400 MalformedSecurityHeader`; a bare PUT and a non-`x-goog`
+/// unsigned header succeeded. The probe used an `OVERWRITE=TRUE` command and
+/// did not cover external stages, other regions, or overwrite-specific GS URL
+/// generation, so this function checks each actual URL instead of assuming all
+/// GS URLs have the observed shape. A V2 URL has no signed-header list and
+/// therefore also fails this check.
+fn presigned_url_signs_required_upload_headers(url: &str, headers: GcsUploadHeaders<'_>) -> bool {
+    url::Url::parse(url).is_ok_and(|parsed| {
+        parsed
+            .query_pairs()
+            .find(|(name, _)| name.eq_ignore_ascii_case("X-Goog-SignedHeaders"))
+            .is_some_and(|(_, value)| {
+                let signs = |required: &str| {
+                    value
+                        .split(';')
+                        .any(|header| header.eq_ignore_ascii_case(required))
+                };
+                headers.emitted().all(|(required, _value)| signs(required))
+            })
+    })
 }
 
 /// Builds the GCS URL based on endpoint/virtual/regional flags.
@@ -1819,6 +1976,10 @@ enum GcsRequestError {
     PresignedUrlExpired,
     #[snafu(display("Missing GCS credentials"))]
     MissingGcsCredentials,
+    #[snafu(display(
+        "GCS presigned URL does not authorize every x-goog-* header required by a conditional OVERWRITE=FALSE upload"
+    ))]
+    ConditionalCreateUnsupported,
     #[snafu(display("GCS retry exhausted: {detail}"))]
     RetryExhausted { detail: String },
     #[snafu(display("GCS client setup failed: {detail}"))]
@@ -1851,6 +2012,9 @@ impl From<GcsRequestError> for GcsUploadError {
             }
             GcsRequestError::MissingGcsCredentials => {
                 gcs_upload_error::MissingGcsCredentialsSnafu.build()
+            }
+            GcsRequestError::ConditionalCreateUnsupported => {
+                gcs_upload_error::ConditionalCreateUnsupportedSnafu.build()
             }
             GcsRequestError::RetryExhausted { detail } => {
                 gcs_upload_error::RetryExhaustedSnafu { detail }.build()
@@ -1900,6 +2064,18 @@ impl From<GcsRequestError> for GcsDownloadError {
             }
             GcsRequestError::MissingGcsCredentials => {
                 gcs_download_error::MissingGcsCredentialsSnafu.build()
+            }
+            // Only the upload path requests conditional creation, so this arm is
+            // unreachable. The shared `GcsRequestError` still forces a download
+            // mapping, and no download variant describes it, so the detail names
+            // it as an internal invariant instead of a retry that never happened.
+            GcsRequestError::ConditionalCreateUnsupported => {
+                gcs_download_error::RetryExhaustedSnafu {
+                    detail: "internal: upload-only ConditionalCreateUnsupported reached the \
+                             download error mapping"
+                        .to_string(),
+                }
+                .build()
             }
             GcsRequestError::RetryExhausted { detail } => {
                 gcs_download_error::RetryExhaustedSnafu { detail }.build()
@@ -1973,6 +2149,13 @@ pub enum GcsUploadError {
     },
     #[snafu(display("Missing GCS credentials"))]
     MissingGcsCredentials {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "GCS presigned URL does not authorize every x-goog-* header required by a conditional OVERWRITE=FALSE upload"
+    ))]
+    ConditionalCreateUnsupported {
         #[snafu(implicit)]
         location: Location,
     },
@@ -2815,7 +2998,7 @@ mod tests {
     // `storage_client.py:213-220`.
     // ---------------------------------------------------------------
 
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
     /// Builds a `StageInfo` whose URL strategy routes through the given
@@ -2829,6 +3012,12 @@ mod tests {
             endpoint: Some(endpoint.to_string()),
             ..Default::default()
         })
+    }
+
+    fn policy_with_retryable_412(using_presigned_url: bool) -> RetryPolicy {
+        let mut policy = test_policy(using_presigned_url, DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        policy.extra_retryable_statuses.insert(412);
+        policy
     }
 
     #[tokio::test]
@@ -3071,10 +3260,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            false,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
             always_multipart(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3094,6 +3286,10 @@ mod tests {
             init.headers.get(GCS_META_SFC_DIGEST).is_some(),
             "digest metadata must ride on the initiation POST"
         );
+        assert!(
+            !init.headers.contains_key("x-goog-if-generation-match"),
+            "overwrite=true must leave resumable initiation unconditional"
+        );
         let chunk_puts: Vec<_> = received
             .iter()
             .filter(|r| r.method.as_str() == "PUT")
@@ -3105,6 +3301,203 @@ mod tests {
                 "every chunk PUT must carry a Content-Range header"
             );
         }
+    }
+
+    /// The precondition header rides on the initiation POST, so Cloud Storage
+    /// *may* reject there and this pins that mapping. It is not the shape to
+    /// expect in production — see
+    /// [`gcs_resumable_final_chunk_maps_toctou_412_to_skipped`].
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_resumable_initiation_maps_toctou_412_to_skipped() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .and(header("x-goog-if-generation-match", "0"))
+            .respond_with(ResponseTemplate::new(412).set_body_string("precondition failed"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let policy = policy_with_retryable_412(/* using_presigned_url */ false);
+        let status = upload_to_gcs_or_skip(
+            PreparedUpload {
+                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(b"x")),
+                digest: "local-digest".to_string(),
+                cse: None,
+            },
+            &stage,
+            "file.csv",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &policy,
+            TransferCtx::default(),
+        )
+        .await
+        .expect("a failed conditional resumable initiation is a normal skip");
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// Cloud Storage defers a resumable upload's precondition to the request
+    /// that actually creates the object, so a lost race surfaces as 412 on the
+    /// *final* chunk PUT — after the whole body is on the wire — rather than on
+    /// the initiation POST that carried the header. This is the production
+    /// shape: it must still read as `Skipped` and still clean up the session.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_resumable_final_chunk_maps_toctou_412_to_skipped() {
+        let server = MockServer::start().await;
+        let session_path = "/resumable-session/final-412";
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(header("x-goog-if-generation-match", "0"))
+            .respond_with(ResponseTemplate::new(201).insert_header(
+                "location",
+                format!("{}{session_path}", server.uri()).as_str(),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // 9 MiB over the 8 MiB GCS chunk size: the first PUT resumes, the second
+        // is the committing request where the precondition is evaluated.
+        let chunks = Arc::new(AtomicU64::new(0));
+        let chunks_for_response = chunks.clone();
+        Mock::given(method("PUT"))
+            .and(path(session_path))
+            .respond_with(move |_req: &Request| {
+                if chunks_for_response.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607")
+                } else {
+                    ResponseTemplate::new(412).set_body_string("precondition failed")
+                }
+            })
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(session_path))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let policy = policy_with_retryable_412(/* using_presigned_url */ false);
+        let status = upload_to_gcs_or_skip(
+            PreparedUpload {
+                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                    7u8;
+                    9 << 20
+                ])),
+                digest: "local-digest".to_string(),
+                cse: None,
+            },
+            &stage,
+            "file.csv",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &policy,
+            TransferCtx::default(),
+        )
+        .await
+        .expect("a 412 on the committing chunk is a normal skip outcome");
+
+        assert_eq!(status, UploadStatus::Skipped);
+        assert_eq!(
+            chunks.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "the conflict is only observable after the entire body is uploaded"
+        );
+    }
+
+    /// A resumable overwrite remains unconditional. An unexpected 412 on its
+    /// committing chunk is terminal and must not be converted to `Skipped`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_resumable_overwrite_final_chunk_412_is_error() {
+        let server = MockServer::start().await;
+        let session_path = "/resumable-session/overwrite-final-412";
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(/* expected_request_count */ 0)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(201).insert_header(
+                "location",
+                format!("{}{session_path}", server.uri()).as_str(),
+            ))
+            .expect(/* expected_request_count */ 1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path(session_path))
+            .respond_with(ResponseTemplate::new(412).set_body_string("precondition failed"))
+            .expect(/* expected_request_count */ 1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(session_path))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(/* expected_request_count */ 1)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let policy = policy_with_retryable_412(/* using_presigned_url */ false);
+        let error = upload_to_gcs_or_skip(
+            PreparedUpload {
+                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(b"x")),
+                digest: "local-digest".to_string(),
+                cse: None,
+            },
+            &stage,
+            "file.csv",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &policy,
+            TransferCtx::default(),
+        )
+        .await
+        .expect_err("an unconditional resumable 412 must surface as an error");
+
+        assert!(matches!(
+            error,
+            GcsUploadError::GcsHttp {
+                status_code: 412,
+                ..
+            }
+        ));
+        let requests = server
+            .received_requests()
+            .await
+            .expect("wiremock should retain received requests");
+        let initiation = requests
+            .iter()
+            .find(|request| request.method.as_str() == "POST")
+            .expect("the resumable upload should issue an initiation POST");
+        assert!(
+            !initiation.headers.contains_key(GCS_IF_GENERATION_MATCH),
+            "overwrite resumable initiation must remain unconditional"
+        );
     }
 
     /// A failed chunk PUT triggers a best-effort `DELETE` of the session URL.
@@ -3150,10 +3543,12 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            false,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
             always_multipart(),
-            &test_policy(false, 1),
+            &test_policy(
+                /* using_presigned_url */ false, /* max_attempts */ 1,
+            ),
             TransferCtx::default(),
         )
         .await;
@@ -3202,7 +3597,9 @@ mod tests {
             .await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let policy = test_policy(false, 1);
+        let policy = test_policy(
+            /* using_presigned_url */ false, /* max_attempts */ 1,
+        );
         let trigger = {
             let chunk_started = chunk_started.clone();
             async move { chunk_started.notified().await }
@@ -3223,11 +3620,11 @@ mod tests {
                     prepared,
                     &stage,
                     "file.csv",
-                    true,
-                    false,
+                    /* overwrite */ true,
+                    /* skip_upload_on_content_match */ false,
                     always_multipart(),
                     &policy,
-                    TransferCtx::new(None, Some(&scope)),
+                    TransferCtx::new(/* refresher */ None, /* cleanup */ Some(&scope)),
                 )
                 .await
             })
@@ -3268,12 +3665,15 @@ mod tests {
         let dl = download_from_gcs_streaming(
             &stage,
             "file.csv",
-            None,
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            0,
+            /* per_file_presigned_url */ None,
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
+            /* per_file_index */ 0,
             always_multipart(),
-            None,
-            false,
+            /* refresher */ None,
+            /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Temp {
                 dir: spill.path(),
                 cleanup: None,
@@ -3316,12 +3716,15 @@ mod tests {
         let dl = download_from_gcs_streaming(
             &stage,
             "file.csv",
-            None,
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            0,
+            /* per_file_presigned_url */ None,
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
+            /* per_file_index */ 0,
             always_multipart(),
-            None,
-            false,
+            /* refresher */ None,
+            /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await
@@ -3368,12 +3771,15 @@ mod tests {
         let result = download_from_gcs_streaming(
             &stage,
             "file.csv",
-            None,
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            0,
+            /* per_file_presigned_url */ None,
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
+            /* per_file_index */ 0,
             always_multipart(),
-            None,
-            false,
+            /* refresher */ None,
+            /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await;
@@ -3396,7 +3802,7 @@ mod tests {
         mount_head_and_put(
             &server,
             ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, digest),
-            0,
+            /* expected_puts */ 0,
         )
         .await;
 
@@ -3406,10 +3812,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            true,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3429,7 +3838,7 @@ mod tests {
         mount_head_and_put(
             &server,
             ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, digest),
-            0,
+            /* expected_puts */ 0,
         )
         .await;
 
@@ -3439,10 +3848,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            false,
-            false,
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3457,7 +3869,7 @@ mod tests {
         mount_head_and_put(
             &server,
             ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, "remote-digest-differs"),
-            1,
+            /* expected_puts */ 1,
         )
         .await;
 
@@ -3467,10 +3879,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            true,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3486,7 +3901,12 @@ mod tests {
         // to `Some(_) == None == false`, so the skip does not fire and
         // the upload proceeds.
         let server = MockServer::start().await;
-        mount_head_and_put(&server, ResponseTemplate::new(200), 1).await;
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200),
+            /* expected_puts */ 1,
+        )
+        .await;
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = prepared_upload_with_digest("local-digest-value");
@@ -3494,10 +3914,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            true,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3513,7 +3936,12 @@ mod tests {
         // existence-skip when `overwrite=false`. Locks in that the digest
         // branch does not displace the existence branch.
         let server = MockServer::start().await;
-        mount_head_and_put(&server, ResponseTemplate::new(200), 0).await;
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200),
+            /* expected_puts */ 0,
+        )
+        .await;
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = prepared_upload_with_digest("local-digest-value");
@@ -3521,10 +3949,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            false,
-            false,
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3536,7 +3967,12 @@ mod tests {
     #[tokio::test]
     async fn upload_to_gcs_or_skip_uploads_on_404_under_overwrite_false() {
         let server = MockServer::start().await;
-        mount_head_and_put(&server, ResponseTemplate::new(404), 1).await;
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(404),
+            /* expected_puts */ 1,
+        )
+        .await;
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = prepared_upload_with_digest("local-digest-value");
@@ -3544,14 +3980,295 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            false,
-            false,
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
         .unwrap();
+
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// A 412 is terminal even when caller configuration marks it retryable.
+    /// The overwrite request remains unconditional and surfaces the response.
+    #[tokio::test]
+    async fn overwrite_single_put_does_not_retry_412() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(/* expected_request_count */ 0)
+            .mount(&server)
+            .await;
+
+        let attempts = Arc::new(AtomicU64::new(0));
+        let attempts_for_response = Arc::clone(&attempts);
+        Mock::given(method("PUT"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(move |_request: &Request| {
+                attempts_for_response.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(412).set_body_string("terminal precondition failure")
+            })
+            .expect(/* expected_request_count */ 1)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let policy = policy_with_retryable_412(/* using_presigned_url */ false);
+        let error = upload_to_gcs_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &stage,
+            "file.csv",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &policy,
+            TransferCtx::default(),
+        )
+        .await
+        .expect_err("an unconditional 412 should surface without retry");
+
+        assert!(matches!(
+            error,
+            GcsUploadError::GcsHttp {
+                status_code: 412,
+                ..
+            }
+        ));
+        assert_eq!(
+            attempts.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the overwrite PUT must not retry a terminal 412"
+        );
+        let requests = server
+            .received_requests()
+            .await
+            .expect("wiremock should retain received requests");
+        assert!(
+            requests
+                .iter()
+                .filter(|request| request.method.as_str() == "PUT")
+                .all(|request| !request.headers.contains_key(GCS_IF_GENERATION_MATCH)),
+            "overwrite PUTs must remain unconditional"
+        );
+    }
+
+    /// HEAD remains a bandwidth optimization. The XML generation precondition
+    /// closes the race when another writer creates the object after the 404.
+    #[tokio::test]
+    async fn conditional_single_put_maps_toctou_412_to_skipped() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .and(header("x-goog-if-generation-match", "0"))
+            .respond_with(ResponseTemplate::new(412).set_body_string("precondition failed"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let policy = policy_with_retryable_412(/* using_presigned_url */ false);
+        let status = upload_to_gcs_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &stage,
+            "file.csv",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &policy,
+            TransferCtx::default(),
+        )
+        .await
+        .expect("a failed conditional XML PUT is a normal skip");
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// A presigned request that does not authorize all required upload headers
+    /// cannot satisfy OVERWRITE=FALSE, so a missing object errors before PUT.
+    /// The HEAD optimization still runs first so an existing object can skip.
+    #[tokio::test]
+    async fn presigned_put_without_signed_generation_header_fails_closed() {
+        let server = MockServer::start().await;
+        let object_url = format!("{}/signed-object", server.uri());
+        Mock::given(method("HEAD"))
+            .and(path("/signed-object"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(/* expected_request_count */ 1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/signed-object"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let mut stage = make_stage_for_mock(&server.uri());
+        stage.presigned_url = Some(object_url);
+        let result = upload_to_gcs_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &stage,
+            "file.csv",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &test_policy(
+                /* using_presigned_url */ true,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
+            TransferCtx::default(),
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(GcsUploadError::ConditionalCreateUnsupported { .. })
+            ),
+            "unsigned presigned conditional create must fail closed, got {result:?}"
+        );
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn presigned_put_without_required_headers_still_skips_existing_object() {
+        let server = MockServer::start().await;
+        let object_url = format!("{}/signed-object", server.uri());
+        Mock::given(method("HEAD"))
+            .and(path("/signed-object"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(/* expected_request_count */ 1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/signed-object"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(/* expected_request_count */ 0)
+            .mount(&server)
+            .await;
+
+        let mut stage = make_stage_for_mock(&server.uri());
+        stage.presigned_url = Some(object_url);
+        let status = upload_to_gcs_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &stage,
+            "file.csv",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &test_policy(
+                /* using_presigned_url */ true,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
+            TransferCtx::default(),
+        )
+        .await
+        .expect("an existing object should skip before signed-header validation");
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    fn upload_headers_for_signature_test(uses_cse: bool) -> GcsUploadHeaders<'static> {
+        GcsUploadHeaders {
+            conditional_create: true,
+            digest: "digest",
+            cse: uses_cse.then_some(GcsCseUploadMetadata {
+                encryption_data: "encryption-data",
+                material_description: "material-description",
+            }),
+        }
+    }
+
+    #[test]
+    fn presigned_upload_header_contract_covers_sse_and_cse_metadata() {
+        let generation_only =
+            "https://example.test/object?X-Goog-SignedHeaders=host%3Bx-goog-if-generation-match";
+        assert!(
+            !presigned_url_signs_required_upload_headers(
+                generation_only,
+                upload_headers_for_signature_test(/* uses_cse */ false),
+            ),
+            "the always-emitted digest header must also be signed"
+        );
+
+        let sse = "https://example.test/object?X-Goog-SignedHeaders=host%3B\
+                   x-goog-if-generation-match%3Bx-goog-meta-sfc-digest";
+        assert!(presigned_url_signs_required_upload_headers(
+            sse,
+            upload_headers_for_signature_test(/* uses_cse */ false),
+        ));
+        assert!(
+            !presigned_url_signs_required_upload_headers(
+                sse,
+                upload_headers_for_signature_test(/* uses_cse */ true),
+            ),
+            "CSE uploads must also sign both encryption metadata headers"
+        );
+
+        let cse = "https://example.test/object?X-Goog-SignedHeaders=host%3B\
+                   x-goog-if-generation-match%3Bx-goog-meta-encryptiondata%3B\
+                   x-goog-meta-matdesc%3Bx-goog-meta-sfc-digest";
+        assert!(presigned_url_signs_required_upload_headers(
+            cse,
+            upload_headers_for_signature_test(/* uses_cse */ true),
+        ));
+    }
+
+    /// A presigned URL whose `X-Goog-SignedHeaders` covers every emitted
+    /// `x-goog-*` header gets the same conditional-create semantics as the
+    /// token path. No URL GS mints today has that shape.
+    #[tokio::test]
+    async fn presigned_put_with_all_signed_sse_headers_is_conditional() {
+        let server = MockServer::start().await;
+        let object_url = format!(
+            "{}/signed-object?X-Goog-SignedHeaders=host%3B\
+             x-goog-if-generation-match%3Bx-goog-meta-sfc-digest",
+            server.uri()
+        );
+        Mock::given(method("HEAD"))
+            .and(path("/signed-object"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/signed-object"))
+            .and(header("x-goog-if-generation-match", "0"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut stage = make_stage_for_mock(&server.uri());
+        stage.presigned_url = Some(object_url);
+        let status = upload_to_gcs_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &stage,
+            "file.csv",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &test_policy(
+                /* using_presigned_url */ true,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
+            TransferCtx::default(),
+        )
+        .await
+        .expect("signed conditional-create header should permit the upload");
 
         assert_eq!(status, UploadStatus::Uploaded);
     }
@@ -3567,7 +4284,7 @@ mod tests {
         mount_head_and_put(
             &server,
             ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, digest),
-            0,
+            /* expected_puts */ 0,
         )
         .await;
 
@@ -3577,10 +4294,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            true,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3598,7 +4318,7 @@ mod tests {
             &server,
             ResponseTemplate::new(200)
                 .insert_header(GCS_META_SFC_DIGEST, "remote-plaintext-sha256"),
-            1,
+            /* expected_puts */ 1,
         )
         .await;
 
@@ -3608,10 +4328,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            true,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3632,7 +4355,7 @@ mod tests {
         mount_head_and_put(
             &server,
             ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, EMPTY_SHA256_B64),
-            0,
+            /* expected_puts */ 0,
         )
         .await;
 
@@ -3646,10 +4369,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            true,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3677,7 +4403,7 @@ mod tests {
         mount_head_and_put(
             &server,
             ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, digest),
-            1,
+            /* expected_puts */ 1,
         )
         .await;
 
@@ -3687,10 +4413,13 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            false,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
@@ -3724,15 +4453,30 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
-            true,
-            false,
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             TransferCtx::default(),
         )
         .await
         .unwrap();
 
         assert_eq!(status, UploadStatus::Uploaded);
+        let requests = server
+            .received_requests()
+            .await
+            .expect("wiremock should retain received requests");
+        let put = requests
+            .iter()
+            .find(|request| request.method.as_str() == "PUT")
+            .expect("the upload should issue one PUT");
+        assert!(
+            !put.headers.contains_key("x-goog-if-generation-match"),
+            "overwrite=true must not attach a generation precondition"
+        );
     }
 }
