@@ -1,6 +1,6 @@
 use std::io::{Cursor, Write as _};
 
-use arrow::array::{Array, Float64Array};
+use arrow::array::Float64Array;
 use odbc_sys as sql;
 
 use crate::api::CDataType;
@@ -27,9 +27,7 @@ use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
-/// Handles Snowflake's "REAL" logical type (FLOAT, DOUBLE, REAL).
-/// The old driver maps "real" → SQL_DOUBLE; the default C type is SQL_C_DOUBLE.
-pub(crate) struct SnowflakeReal;
+pub(crate) use sf_types::SnowflakeReal;
 
 impl SnowflakeType for SnowflakeReal {
     type Representation<'a> = f64;
@@ -41,12 +39,9 @@ impl ReadArrowType<Float64Array> for SnowflakeReal {
         array: &'a Float64Array,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        if array.is_null(row_idx) {
-            return Err(ReadArrowError::NullValue {
-                location: snafu::location!(),
-            });
-        }
-        Ok(array.value(row_idx))
+        Ok(sf_types::ReadArrowType::read_arrow_type(
+            self, array, row_idx,
+        )?)
     }
 }
 

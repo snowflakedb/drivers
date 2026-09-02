@@ -285,9 +285,14 @@ impl ColumnReader {
             Self::Text(array) => read_cell(array, row_index, || {
                 JsCell::Str(Cow::Borrowed(array.value(row_index)))
             }),
-            Self::Real(array) => {
-                read_cell(array, row_index, || JsCell::Number(array.value(row_index)))
-            }
+            Self::Real(array) => read_cell(array, row_index, || {
+                let value = sf_types::SnowflakeReal
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!("non-null Float64 cell always decodes to an f64")
+                    });
+                JsCell::Number(value)
+            }),
             Self::Decfloat(array) => read_cell(array, row_index, || {
                 JsCell::Str(Cow::Borrowed(array.value(row_index)))
             }),
