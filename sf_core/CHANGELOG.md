@@ -16,7 +16,9 @@ New features:
 - `StatementPrepare` is now `async_first` as well, so cancelling a prepare aborts its `describe_only` query on the server instead of only dropping the request locally — previously a cancelled prepare left the described query running. (snowflakedb/drivers#1463)
 - A cancellation error now reports what its abort-request achieved: `DriverException.cancellation_abort_outcome` is `ABORTED` (server acknowledged), `NOT_RUNNING` (nothing was running), or `NOT_CONFIRMED` (issued, outcome unknown), and is left unset when no abort was issued at all — the operation was cancelled before its query reached the server. This is the acknowledgement `StatementCancel` used to return to the canceller, delivered instead to the caller whose query was cancelled. (snowflakedb/drivers#1491)
 - Changed query context cache support in sent queries.
-- `ConnectionGetResultSet` and `ConnectionGetQueryStatus` are now `async_first`, so a wrapper can cancel an in-flight fetch-by-query-id or status poll from another thread instead of blocking until the server answers — with no abort-request, since both read a query that has already finished. (snowflakedb/drivers#TBD)
+- `ConnectionGetResultSet` and `ConnectionGetQueryStatus` are now `async_first`, so a wrapper can cancel an in-flight fetch-by-query-id or status poll from another thread instead of blocking until the server answers — with no abort-request, since both read a query that has already finished. (snowflakedb/drivers#1512)
+- `ConnectionGetQueryResult` is now `async_first`. Cancelling a fetch-by-query-id that is retrieving a PUT/GET result now also stops the cloud transfer and removes its partial download, instead of letting the transfer continue after the caller was told the operation was cancelled. Node.js wires this to the returned statement's `cancel()`. (snowflakedb/drivers#1538)
+- `ConnectionSendHttp` is now `async_first`. The connection's HTTP client carries no request timeout, so a server that accepted the request and never answered previously blocked the calling wrapper thread with no way out. (snowflakedb/drivers#1538)
 
 Bug fixes:
 
