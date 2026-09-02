@@ -1,7 +1,7 @@
 """Verify that committed mirror configuration matches the generator.
 
 Run with:
-    python3 -m unittest ci/mirroring/scripts/test_generate_mirror_config.py
+    python3 ci/mirroring/scripts/test_generate_mirror_config.py
 """
 
 from __future__ import annotations
