@@ -419,11 +419,10 @@ class TestConvertProtoError:
             ProtoApplicationException,
         )
 
-        driver_exc = MagicMock()
-        driver_exc.message = "Feature X not implemented"
-        driver_exc.kind = ERROR_KIND_NOT_IMPLEMENTED
-        driver_exc.report = ""
-        driver_exc.HasField.return_value = False
+        driver_exc = ProtoDriverException(
+            message="Feature X not implemented",
+            kind=ERROR_KIND_NOT_IMPLEMENTED,
+        )
         proto_exc = ProtoApplicationException(driver_exc)
 
         result = _proto_to_public_error(proto_exc)
@@ -448,11 +447,10 @@ class TestConvertProtoError:
             ProtoApplicationException,
         )
 
-        driver_exc = MagicMock()
-        driver_exc.message = "Internal"
-        driver_exc.kind = ERROR_KIND_INTERNAL_ERROR
-        driver_exc.report = ""
-        driver_exc.HasField.return_value = False
+        driver_exc = ProtoDriverException(
+            message="Internal",
+            kind=ERROR_KIND_INTERNAL_ERROR,
+        )
         proto_exc = ProtoApplicationException(driver_exc)
 
         result = _proto_to_public_error(proto_exc)

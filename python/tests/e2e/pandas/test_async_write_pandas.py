@@ -13,10 +13,16 @@ from uuid import uuid4
 import pandas as pd
 import pytest
 
-from snowflake.connector import aio
-from snowflake.connector.aio.pandas_tools import write_pandas
-from tests._async_bridge import _LoopRunner
 from tests.connector_factory import create_connection_with_adapter
+
+
+@pytest.fixture
+def aio_dependencies():
+    from snowflake.connector import aio
+    from snowflake.connector.aio.pandas_tools import write_pandas
+    from tests._async_bridge import _LoopRunner
+
+    return aio, write_pandas, _LoopRunner
 
 
 SAMPLE_DATA = [
@@ -37,8 +43,11 @@ def _table(prefix: str) -> str:
 class TestAsyncWritePandas:
     """Tests for async_write_pandas."""
 
-    def test_should_write_a_dataframe_to_a_pre_created_table_and_read_it_back(self, connector_adapter, tmp_schema):
-        loop = _LoopRunner.instance()
+    def test_should_write_a_dataframe_to_a_pre_created_table_and_read_it_back(
+        self, connector_adapter, tmp_schema, aio_dependencies
+    ):
+        aio, write_pandas, loop_runner = aio_dependencies
+        loop = loop_runner.instance()
         table_name = _table("AIO_WP_BASIC")
         fq_table = f"{tmp_schema}.{table_name}"
 
@@ -82,8 +91,9 @@ class TestAsyncWritePandas:
         # And SELECT from the table should return all original rows
         assert set(rows) == set(SAMPLE_DATA)
 
-    def test_should_auto_create_table_from_dataframe_schema(self, connector_adapter, tmp_schema):
-        loop = _LoopRunner.instance()
+    def test_should_auto_create_table_from_dataframe_schema(self, connector_adapter, tmp_schema, aio_dependencies):
+        aio, write_pandas, loop_runner = aio_dependencies
+        loop = loop_runner.instance()
         table_name = _table("AIO_WP_AUTOCREATE")
         fq_table = f"{tmp_schema}.{table_name}"
 
@@ -122,8 +132,9 @@ class TestAsyncWritePandas:
         assert nrows == len(SAMPLE_DATA)
         assert set(rows) == set(SAMPLE_DATA)
 
-    def test_should_write_dataframe_in_multiple_chunks(self, connector_adapter, tmp_schema):
-        loop = _LoopRunner.instance()
+    def test_should_write_dataframe_in_multiple_chunks(self, connector_adapter, tmp_schema, aio_dependencies):
+        aio, write_pandas, loop_runner = aio_dependencies
+        loop = loop_runner.instance()
         chunk_size = 2
         expected_chunks = math.ceil(len(SAMPLE_DATA) / chunk_size)
         table_name = _table("AIO_WP_CHUNKED")

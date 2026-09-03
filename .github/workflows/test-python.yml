@@ -787,15 +787,21 @@ jobs:
         # downloads in python_compare_results line up with python_tests.
         # macOS reference comparison was removed when the macOS PR cell
         # was deferred to merge-queue scope (limited macOS runner
-        # availability). Pandas reference coverage runs only on Ubuntu now.
+        # availability). reference-pandas shares this job's os/py/cloud with
+        # `reference`; it is not paired in python_compare_results because
+        # PR_CELLS has no test-pandas cell to download artifacts from.
         include:
           - hatch_env: reference
             os: ubuntu-latest
             py: "3.13"
             cloud_provider: aws
+          - hatch_env: reference-pandas
+            os: ubuntu-latest
+            py: "3.13"
+            cloud_provider: aws
     runs-on: ${{ matrix.os }}
     name: python_tests_reference (${{ matrix.hatch_env }})
-    timeout-minutes: 15
+    timeout-minutes: 25
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
     env:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}
@@ -968,13 +974,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Each row must mirror a python_tests_reference row's
-        # (os, py, cloud_provider) so artifact downloads pair up; keep this
-        # block in sync with the matrix above. Cloud is constrained to
-        # aws/gcp — Azure is excluded for reference stability. The macOS
-        # comparison row was removed when the macOS PR cell was deferred
-        # to merge-queue scope; pandas reference coverage now runs only
-        # on Ubuntu.
+        # Each row must mirror a python_tests_reference row that has a
+        # matching python_tests PR cell so artifact downloads pair up.
+        # Cloud is constrained to aws/gcp — Azure is excluded for
+        # reference stability. The macOS comparison row was removed when
+        # the macOS PR cell was deferred to merge-queue scope.
+        # reference-pandas is omitted here: PR_CELLS has no test-pandas cell.
         include:
           - hatch_env: test
             ref_hatch_env: reference

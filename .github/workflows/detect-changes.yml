@@ -136,7 +136,7 @@ jobs:
 
       - name: Detect changed files
         id: filter
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
+        uses: dorny/paths-filter@v3
         with:
           # On push, `base` must name the branch that was pushed to for the
           # action to diff against the commit immediately before the push;

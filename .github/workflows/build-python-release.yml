@@ -1,20 +1,11 @@
 name: Python Release Build
 
-# Release-branch wheels and their cloud test matrix. On snowflake-eng this is
-# superseded by test-python.yml, which Driver CI runs at nightly scope on
-# release branches. The mirror cannot reach those jobs: Driver CI calls
-# detect-changes, whose paths-filter action the snowflakedb allowlist rejects,
-# so every release/python-* push there fails at workflow startup. This
-# workflow depends on no third-party action and runs in its place.
+# DISABLED: superseded by test-python.yml which now runs on push to main
+# (merge scope) and release branches (nightly scope). Kept for reference
+# until test-python.yml is confirmed stable on those triggers.
+# To re-enable, restore the `on:` triggers below.
 on:
-  push:
-    branches:
-      - 'release/python-**'
   workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,12 +13,6 @@ env:
 jobs:
   # ── Build wheels (shared reusable workflow) ────────────────────────
   build_wheels:
-    # Push runs on the mirror only; a release push to snowflake-eng already
-    # gets this matrix from Driver CI. Dispatch works on both repos. The
-    # downstream jobs need build_wheels, so they follow this gate.
-    if: >-
-      github.repository_owner == 'snowflakedb'
-      || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
       targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "macos_x86": ["3.11","3.12","3.13","3.14"], "macos_arm": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
