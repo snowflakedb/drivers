@@ -70,7 +70,7 @@ WORKDIR /workdir/nodejs
 # 4. build:link-local npm-links both built packages into this package's own
 #    node_modules (see scripts/build-link-local.mjs), so require('snowflake-sdk')
 #    resolves here without any manual node_modules assembly
-RUN npm install --include=dev
+RUN npm install -g npm@11 && npm install --include=dev
 RUN npm run build:core
 RUN npm run build:sdk
 RUN npm run build:link-local

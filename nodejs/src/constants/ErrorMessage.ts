@@ -174,6 +174,7 @@ const ErrorMessage: { [code: number]: string } = {
   412012: 'Timeout OCSP responder.',
   412013: 'Timeout OCSP Cache server.',
   412014: 'Failed to obtain OCSP response: %s',
+  412015: 'The OCSP response does not correspond to the certificate being checked.',
 
   413001: 'CRL validation failed.',
 

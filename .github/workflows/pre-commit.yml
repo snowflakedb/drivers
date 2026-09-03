@@ -79,6 +79,9 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Upgrade npm
+        run: npm install -g npm@11
+
       - name: Install Node.js dependencies
         run: cd nodejs && npm install
 
