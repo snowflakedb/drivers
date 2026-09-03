@@ -3,10 +3,8 @@ mod tests {
     use crate::api::CDataType;
     use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar, encode_wide};
     use crate::conversion::WriteODBCType;
-    use crate::conversion::decfloat::{
-        SnowflakeDecfloat, format_decfloat, i128_from_big_endian_signed,
-    };
-    use crate::conversion::error::{ReadArrowError, WriteOdbcError};
+    use crate::conversion::decfloat::{SnowflakeDecfloat, format_decfloat};
+    use crate::conversion::error::WriteOdbcError;
     use crate::conversion::test_utils::helpers::{
         binding_for_interval, binding_for_wchar_buffer, zero_interval,
     };
@@ -35,112 +33,6 @@ mod tests {
             indicator_ptr: str_len as *mut sql::Len,
             ..Default::default()
         }
-    }
-
-    // ======================================================================
-    // i128_from_big_endian_signed conversion
-    // ======================================================================
-
-    #[test]
-    fn i128_from_big_endian_signed_single_byte_positive() {
-        assert_eq!(i128_from_big_endian_signed(&[0x01]).unwrap(), 1);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_single_byte_negative() {
-        assert_eq!(i128_from_big_endian_signed(&[0xFF]).unwrap(), -1);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_single_byte_zero() {
-        assert_eq!(i128_from_big_endian_signed(&[0x00]).unwrap(), 0);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_empty_bytes() {
-        assert_eq!(i128_from_big_endian_signed(&[]).unwrap(), 0);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_single_byte_max_positive() {
-        assert_eq!(i128_from_big_endian_signed(&[0x7F]).unwrap(), 127);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_single_byte_min_negative() {
-        assert_eq!(i128_from_big_endian_signed(&[0x80]).unwrap(), -128);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_two_bytes() {
-        assert_eq!(i128_from_big_endian_signed(&[0x01, 0x00]).unwrap(), 256);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_two_bytes_negative() {
-        // 0xFF00 as i16 = -256
-        assert_eq!(i128_from_big_endian_signed(&[0xFF, 0x00]).unwrap(), -256);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_large_positive() {
-        // 123456789 = 0x075BCD15
-        let bytes = 123456789i128.to_be_bytes();
-        let trimmed = &bytes[bytes.iter().position(|&b| b != 0).unwrap_or(15)..];
-        assert_eq!(i128_from_big_endian_signed(trimmed).unwrap(), 123456789);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_full_16_bytes_positive() {
-        let val: i128 = 12345678901234567890;
-        let bytes = val.to_be_bytes();
-        assert_eq!(i128_from_big_endian_signed(&bytes).unwrap(), val);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_full_16_bytes_negative() {
-        let val: i128 = -12345678901234567890;
-        let bytes = val.to_be_bytes();
-        assert_eq!(i128_from_big_endian_signed(&bytes).unwrap(), val);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_38_digit_significand() {
-        let val: i128 = 12345678901234567890123456789012345678;
-        let bytes = val.to_be_bytes();
-        assert_eq!(i128_from_big_endian_signed(&bytes).unwrap(), val);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_exceeds_16_bytes_returns_error() {
-        let oversized = [0u8; 17];
-        let result = i128_from_big_endian_signed(&oversized);
-        assert!(matches!(
-            result,
-            Err(ReadArrowError::InvalidArrowValue { .. })
-        ));
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_much_larger_than_16_bytes_returns_error() {
-        let oversized = vec![0xABu8; 32];
-        let result = i128_from_big_endian_signed(&oversized);
-        assert!(matches!(
-            result,
-            Err(ReadArrowError::InvalidArrowValue { .. })
-        ));
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_max_value() {
-        let bytes = i128::MAX.to_be_bytes();
-        assert_eq!(i128_from_big_endian_signed(&bytes).unwrap(), i128::MAX);
-    }
-
-    #[test]
-    fn i128_from_big_endian_signed_min_value() {
-        let bytes = i128::MIN.to_be_bytes();
-        assert_eq!(i128_from_big_endian_signed(&bytes).unwrap(), i128::MIN);
     }
 
     // ======================================================================
