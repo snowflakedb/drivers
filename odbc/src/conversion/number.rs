@@ -165,13 +165,16 @@ where
         array: &'a PrimitiveArray<T>,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        if array.is_null(row_idx) {
-            return Err(ReadArrowError::NullValue {
-                location: snafu::location!(),
-            });
-        }
-        let v: i128 = array.value(row_idx).into();
-        Ok(v)
+        // The unscaled-mantissa decode (every integer width and `Decimal128`
+        // into an `i128`) now lives in `sf_types`; this crate keeps only the
+        // scale-aware reporting (`NumericSqlType`, `format_decimal_into`) below.
+        // `?` translates the shared error into this crate's `ReadArrowError`
+        // via the `From` impl in `error.rs`.
+        Ok(sf_types::ReadArrowType::read_arrow_type(
+            &sf_types::SnowflakeFixed,
+            array,
+            row_idx,
+        )?)
     }
 }
 

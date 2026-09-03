@@ -256,13 +256,24 @@ impl ColumnReader {
                 JsCell::Buffer(value)
             }),
             Self::FixedInt { array, scale } => read_cell(array, row_index, || {
-                JsCell::Str(Cow::Owned(decimal_string(
-                    array.value(row_index) as i128,
-                    *scale,
-                )))
+                let mantissa = sf_types::SnowflakeFixed
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!(
+                            "non-null integer FIXED cell always decodes to an i128 mantissa"
+                        )
+                    });
+                JsCell::Str(Cow::Owned(decimal_string(mantissa, *scale)))
             }),
             Self::FixedDecimal { array, scale } => read_cell(array, row_index, || {
-                JsCell::Str(Cow::Owned(decimal_string(array.value(row_index), *scale)))
+                let mantissa = sf_types::SnowflakeFixed
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!(
+                            "non-null Decimal128 FIXED cell always decodes to an i128 mantissa"
+                        )
+                    });
+                JsCell::Str(Cow::Owned(decimal_string(mantissa, *scale)))
             }),
             Self::Date(array) => read_cell(array, row_index, || {
                 // The Arrow `Date32` → `NaiveDate` decode is shared with the
