@@ -10,7 +10,7 @@ mod time_format;
 pub use column::Column;
 
 use crate::DRIVER;
-use crate::error::{ToJsError, async_to_js};
+use crate::error::{BridgeError, ToJsError, UnusableConnection, async_to_js};
 use crate::session_params::SessionParams;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -28,22 +28,15 @@ pub struct Statement {
     operation_ctx: Option<Arc<OperationCtx>>,
 }
 
-enum FetchBatchError {
-    Api(Arc<ApiError>),
-    Plain(String),
-}
-
-impl ToJsError for FetchBatchError {
-    fn to_js_error(&self, env: Env) -> napi::Error {
-        match self {
-            FetchBatchError::Api(e) => e.to_js_error(env),
-            FetchBatchError::Plain(message) => napi::Error::from_reason(message.clone()),
-        }
-    }
-}
-
 #[napi]
 impl Statement {
+    pub(crate) fn refused(connection: UnusableConnection) -> Self {
+        Self {
+            result: StatementResult::from_error(BridgeError::UnusableConnection(connection)),
+            operation_ctx: None,
+        }
+    }
+
     pub(crate) fn from_pending(
         conn_handle: Handle,
         operation_ctx: Option<Arc<OperationCtx>>,
@@ -72,7 +65,7 @@ impl Statement {
     pub fn fetch_next_batch(&self, env: &Env) -> Result<AsyncBlock<bool>> {
         let result = self.result.clone();
         async_to_js(env, async move {
-            let data = result.ready().await.map_err(FetchBatchError::Api)?;
+            let data = result.ready().await?;
             let stream_state = Arc::clone(&data.stream_state);
             let session_params = Arc::clone(&data.session_params);
             // `fetch_next_batch` may block on a chunk download; run it on the
@@ -80,8 +73,8 @@ impl Statement {
             // threads.
             spawn_blocking(move || stream_state.fetch_next_batch(&session_params))
                 .await
-                .map_err(|e| FetchBatchError::Plain(e.to_string()))?
-                .map_err(|e| FetchBatchError::Plain(e.to_string()))
+                .map_err(|e| BridgeError::Message(e.to_string()))?
+                .map_err(|e| BridgeError::Message(e.to_string()))
         })
     }
 

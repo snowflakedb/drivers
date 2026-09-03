@@ -1,4 +1,5 @@
 use super::stream_state::StreamState;
+use crate::error::BridgeError;
 use crate::session_params::SessionParams;
 use napi::bindgen_prelude::spawn;
 use napi::tokio::sync::{Notify, OnceCell};
@@ -23,7 +24,7 @@ pub(super) struct ResultData {
 /// [`Self::ready`] the moment the cell is filled.
 #[derive(Clone)]
 pub(super) struct StatementResult {
-    cell: Arc<OnceCell<Result<ResultData, Arc<ApiError>>>>,
+    cell: Arc<OnceCell<Result<ResultData, BridgeError>>>,
     ready: Arc<Notify>,
 }
 
@@ -38,7 +39,7 @@ impl StatementResult {
             let cell = Arc::clone(&cell);
             let ready = Arc::clone(&ready);
             async move {
-                let _ = cell.set(future.await.map_err(Arc::new));
+                let _ = cell.set(future.await.map_err(BridgeError::from));
                 ready.notify_waiters();
             }
         });
@@ -46,19 +47,26 @@ impl StatementResult {
         Self { cell, ready }
     }
 
-    pub(super) async fn ready(&self) -> Result<&ResultData, Arc<ApiError>> {
+    pub(super) fn from_error(error: BridgeError) -> Self {
+        Self {
+            cell: Arc::new(OnceCell::new_with(Some(Err(error)))),
+            ready: Arc::new(Notify::new()),
+        }
+    }
+
+    pub(super) async fn ready(&self) -> Result<&ResultData, BridgeError> {
         loop {
             let notified = self.ready.notified();
             if let Some(result) = self.cell.get() {
-                return result.as_ref().map_err(Arc::clone);
+                return result.as_ref().map_err(BridgeError::clone);
             }
             notified.await;
         }
     }
 
-    pub(super) fn get(&self) -> Option<Result<&ResultData, Arc<ApiError>>> {
+    pub(super) fn get(&self) -> Option<Result<&ResultData, BridgeError>> {
         self.cell
             .get()
-            .map(|result| result.as_ref().map_err(Arc::clone))
+            .map(|result| result.as_ref().map_err(BridgeError::clone))
     }
 }

@@ -7,12 +7,32 @@ pub trait ToJsError {
     fn to_js_error(&self, env: Env) -> napi::Error;
 }
 
+#[derive(Clone)]
+pub(crate) enum BridgeError {
+    Core(Arc<ApiError>),
+    UnusableConnection(UnusableConnection),
+    Message(String),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum UnusableConnection {
+    NeverEstablished,
+    Terminated,
+}
+
+enum ErrorCode {
+    /// Snowflake error codes are six digits wide; the core parses them to integers.
+    Server(i32),
+    Driver(i32),
+}
+
 struct ClientError {
     name: Option<&'static str>,
     message: String,
-    code: Option<String>,
+    code: Option<ErrorCode>,
     sql_state: Option<String>,
     cause: Option<String>,
+    is_fatal: bool,
 }
 
 impl ClientError {
@@ -20,9 +40,33 @@ impl ClientError {
         Self {
             name: error_name(error.kind()),
             message: error.to_string(),
-            code: error.vendor_code().map(server_code),
+            code: error.vendor_code().map(ErrorCode::Server),
             sql_state: error.sql_state(),
             cause: error.root_cause(),
+            is_fatal: false,
+        }
+    }
+
+    fn of_unusable_connection(connection: UnusableConnection) -> Self {
+        let (code, message, is_fatal) = match connection {
+            UnusableConnection::NeverEstablished => (
+                407001,
+                "Unable to perform operation because a connection was never established.",
+                false,
+            ),
+            UnusableConnection::Terminated => (
+                407002,
+                "Unable to perform operation using terminated connection.",
+                true,
+            ),
+        };
+        Self {
+            name: Some("ClientError"),
+            message: message.to_string(),
+            code: Some(ErrorCode::Driver(code)),
+            sql_state: Some("08003".to_string()),
+            cause: None,
+            is_fatal,
         }
     }
 
@@ -31,8 +75,12 @@ impl ClientError {
         if let Some(name) = self.name {
             error.set_named_property("name", name)?;
         }
-        if let Some(code) = &self.code {
-            error.set_named_property("code", code.as_str())?;
+        match &self.code {
+            Some(ErrorCode::Server(code)) => {
+                error.set_named_property("code", format!("{code:06}"))?;
+            }
+            Some(ErrorCode::Driver(code)) => error.set_named_property("code", code)?,
+            None => {}
         }
         if let Some(sql_state) = &self.sql_state {
             error.set_named_property("sqlState", sql_state.as_str())?;
@@ -40,6 +88,9 @@ impl ClientError {
         if let Some(cause) = &self.cause {
             let cause = env.create_error(napi::Error::from_reason(cause.clone()))?;
             error.set_named_property("cause", cause)?;
+        }
+        if self.is_fatal {
+            error.set_named_property("isFatal", true)?;
         }
         Ok(napi::Error::from(error.to_unknown()))
     }
@@ -52,16 +103,33 @@ fn error_name(kind: ErrorKind) -> Option<&'static str> {
     }
 }
 
-/// Snowflake error codes are six digits wide; the core parses them to integers.
-fn server_code(vendor_code: i32) -> String {
-    format!("{vendor_code:06}")
-}
-
 impl ToJsError for ApiError {
     fn to_js_error(&self, env: Env) -> napi::Error {
         ClientError::of(self).build(env).unwrap_or_else(|err| {
             napi::Error::from_reason(format!("failed to construct JS error for {self}: {err}"))
         })
+    }
+}
+
+impl ToJsError for BridgeError {
+    fn to_js_error(&self, env: Env) -> napi::Error {
+        match self {
+            BridgeError::Core(error) => error.to_js_error(env),
+            BridgeError::UnusableConnection(connection) => {
+                ClientError::of_unusable_connection(*connection)
+                    .build(env)
+                    .unwrap_or_else(|err| {
+                        napi::Error::from_reason(format!("failed to construct JS error: {err}"))
+                    })
+            }
+            BridgeError::Message(message) => napi::Error::from_reason(message.clone()),
+        }
+    }
+}
+
+impl From<ApiError> for BridgeError {
+    fn from(error: ApiError) -> Self {
+        BridgeError::Core(Arc::new(error))
     }
 }
 
@@ -94,10 +162,12 @@ where
 mod tests {
     use super::*;
 
-    #[test]
-    fn server_codes_keep_their_six_digit_form() {
-        assert_eq!(server_code(605), "000605");
-        assert_eq!(server_code(390100), "390100");
+    fn code_of(error: &ClientError) -> Option<String> {
+        match error.code {
+            Some(ErrorCode::Server(code)) => Some(format!("{code:06}")),
+            Some(ErrorCode::Driver(code)) => Some(code.to_string()),
+            None => None,
+        }
     }
 
     #[test]
@@ -106,8 +176,29 @@ mod tests {
 
         assert_eq!(error.name, None);
         assert_eq!(error.message, "Invalid argument: row mode");
-        assert_eq!(error.code, None);
+        assert_eq!(code_of(&error), None);
         assert_eq!(error.sql_state, None);
         assert_eq!(error.cause, None);
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn a_connection_that_was_never_established_is_not_fatal() {
+        let error = ClientError::of_unusable_connection(UnusableConnection::NeverEstablished);
+
+        assert_eq!(error.name, Some("ClientError"));
+        assert_eq!(code_of(&error), Some("407001".to_string()));
+        assert_eq!(error.sql_state.as_deref(), Some("08003"));
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn a_terminated_connection_is_fatal() {
+        let error = ClientError::of_unusable_connection(UnusableConnection::Terminated);
+
+        assert_eq!(error.name, Some("ClientError"));
+        assert_eq!(code_of(&error), Some("407002".to_string()));
+        assert_eq!(error.sql_state.as_deref(), Some("08003"));
+        assert!(error.is_fatal);
     }
 }
