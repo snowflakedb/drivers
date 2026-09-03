@@ -324,9 +324,12 @@ impl DatabaseDriverV1 {
                     // synchronous disk I/O and private-key parsing, which currently extends the
                     // connection mutex critical section and can block the async runtime thread.
                     let effective_seed = conn.effective_seed(&database_seed);
-                    let mut resolved =
-                        resolver::resolve(&effective_seed, conn.no_connection_details)
-                            .context(ConfigurationSnafu)?;
+                    let mut resolved = resolver::resolve_for_wrapper(
+                        &effective_seed,
+                        conn.no_connection_details,
+                        self.wrapper_presets.configuration_flavor,
+                    )
+                    .context(ConfigurationSnafu)?;
                     normalize_host_underscores(&mut resolved);
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
