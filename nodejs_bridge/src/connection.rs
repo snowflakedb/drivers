@@ -249,10 +249,17 @@ impl Connection {
         let handles = self.handles.clone();
         async_to_js(env, async move {
             let close = DRIVER.connection_close(handles.connection).await;
-            // Eager, rather than waiting for the last holder: the caller asked
-            // for teardown, so free the core resources now instead of at GC.
-            handles.release();
-            state.mark_terminated();
+            if close.is_ok() {
+                // Only once core confirms the session is gone. A failed close is
+                // settled back to `Open` there precisely so a later `destroy()`
+                // can retry it; releasing regardless would strand a live session
+                // on handles nobody can reach again. Releasing eagerly on success
+                // still frees core resources when the caller asked rather than at
+                // the next GC — and on failure the `Arc` this connection holds
+                // keeps them alive for the retry, so nothing leaks either way.
+                handles.release();
+                state.mark_terminated();
+            }
             close
         })
     }
