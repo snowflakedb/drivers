@@ -917,72 +917,69 @@ mod tests {
         }
     }
 
+    fn read_binary_f64(buffer: &[u8]) -> f64 {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&buffer[..8]);
+        f64::from_ne_bytes(bytes)
+    }
+
     #[test]
     fn real_binary_positive_integer() {
         let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut buffer = vec![0u8; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
         let warnings = sr.write_odbc_type(42.0, &binding, &mut None).unwrap();
 
         assert!(warnings.is_empty());
-        assert_eq!(str_len, std::mem::size_of::<sql::Numeric>() as sql::Len);
-
-        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(numeric.sign, 1);
-        assert_eq!(u128::from_le_bytes(numeric.val), 42);
+        assert_eq!(str_len, 8);
+        assert_eq!(read_binary_f64(&buffer), 42.0);
     }
 
     #[test]
     fn real_binary_negative_integer() {
         let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut buffer = vec![0u8; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
         let warnings = sr.write_odbc_type(-7.0, &binding, &mut None).unwrap();
 
         assert!(warnings.is_empty());
-        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(numeric.sign, 0);
-        assert_eq!(u128::from_le_bytes(numeric.val), 7);
+        assert_eq!(read_binary_f64(&buffer), -7.0);
     }
 
     #[test]
     fn real_binary_zero() {
         let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut buffer = vec![0u8; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
         let warnings = sr.write_odbc_type(0.0, &binding, &mut None).unwrap();
 
         assert!(warnings.is_empty());
-        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(numeric.sign, 1);
-        assert_eq!(u128::from_le_bytes(numeric.val), 0);
+        assert_eq!(read_binary_f64(&buffer).to_bits(), 0.0f64.to_bits());
     }
 
     #[test]
-    fn real_binary_fractional_truncates() {
+    fn real_binary_fractional_preserves_ieee() {
         let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut buffer = vec![0u8; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
         let warnings = sr.write_odbc_type(42.9, &binding, &mut None).unwrap();
 
-        assert!(warnings.contains(&Warning::NumericValueTruncated));
-        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(numeric.sign, 1);
-        assert_eq!(u128::from_le_bytes(numeric.val), 42);
+        assert!(warnings.is_empty());
+        assert_eq!(read_binary_f64(&buffer), 42.9);
     }
 
     #[test]
     fn real_binary_buffer_too_small_returns_error() {
         let sr = make_real();
-        let mut buffer = vec![0u8; 4]; // too small for SQL_NUMERIC_STRUCT
+        let mut buffer = vec![0u8; 4];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
@@ -992,23 +989,23 @@ mod tests {
     #[test]
     fn real_binary_exact_size_succeeds() {
         let sr = make_real();
-        let numeric_size = std::mem::size_of::<sql::Numeric>();
-        let mut buffer = vec![0u8; numeric_size];
+        let mut buffer = vec![0u8; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
-        let warnings = sr.write_odbc_type(1000000.0, &binding, &mut None).unwrap();
+        let warnings = sr
+            .write_odbc_type(1_000_000.0, &binding, &mut None)
+            .unwrap();
 
         assert!(warnings.is_empty());
-        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(numeric.sign, 1);
-        assert_eq!(u128::from_le_bytes(numeric.val), 1000000);
+        assert_eq!(str_len, 8);
+        assert_eq!(read_binary_f64(&buffer), 1_000_000.0);
     }
 
     #[test]
     fn real_binary_large_positive_beyond_i64() {
         let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut buffer = vec![0u8; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
@@ -1016,15 +1013,13 @@ mod tests {
         let warnings = sr.write_odbc_type(large, &binding, &mut None).unwrap();
 
         assert!(warnings.is_empty());
-        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(numeric.sign, 1);
-        assert_eq!(u128::from_le_bytes(numeric.val), large as u128);
+        assert_eq!(read_binary_f64(&buffer), large);
     }
 
     #[test]
     fn real_binary_large_negative_beyond_i64() {
         let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut buffer = vec![0u8; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
@@ -1032,24 +1027,33 @@ mod tests {
         let warnings = sr.write_odbc_type(large_neg, &binding, &mut None).unwrap();
 
         assert!(warnings.is_empty());
-        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(numeric.sign, 0);
-        assert_eq!(u128::from_le_bytes(numeric.val), large_neg.abs() as u128);
+        assert_eq!(read_binary_f64(&buffer), large_neg);
     }
 
     #[test]
-    fn real_binary_overflow_returns_error() {
-        use crate::conversion::error::WriteOdbcError;
+    fn real_binary_max_finite_succeeds() {
         let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut buffer = vec![0u8; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
-        let result = sr.write_odbc_type(f64::MAX, &binding, &mut None);
-        assert!(matches!(
-            result.unwrap_err(),
-            WriteOdbcError::NumericValueOutOfRange { .. }
-        ));
+        let warnings = sr.write_odbc_type(f64::MAX, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(read_binary_f64(&buffer), f64::MAX);
+    }
+
+    #[test]
+    fn real_binary_nan_writes_ieee_bits() {
+        let sr = make_real();
+        let mut buffer = vec![0u8; 8];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_binary(&mut buffer, &mut str_len);
+
+        let warnings = sr.write_odbc_type(f64::NAN, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert!(read_binary_f64(&buffer).is_nan());
     }
 
     // ======================================================================
@@ -1170,7 +1174,7 @@ mod tests {
     }
 
     // ======================================================================
-    // NaN — must error for Numeric and Binary (22003)
+    // NaN — must error for Numeric (22003)
     // ======================================================================
 
     #[test]
@@ -1194,18 +1198,27 @@ mod tests {
     }
 
     #[test]
-    fn nan_to_binary_errors() {
-        use crate::conversion::error::WriteOdbcError;
+    fn binary_negative_fraction_preserves_ieee() {
         let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut buffer = vec![0u8; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_binary(&mut buffer, &mut str_len);
 
-        let result = sr.write_odbc_type(f64::NAN, &binding, &mut None);
-        assert!(matches!(
-            result.unwrap_err(),
-            WriteOdbcError::NumericValueOutOfRange { .. }
-        ));
+        let warnings = sr.write_odbc_type(-0.5, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(read_binary_f64(&buffer), -0.5);
+    }
+
+    #[test]
+    fn binary_negative_tiny_fraction_preserves_ieee() {
+        let sr = make_real();
+        let mut buffer = vec![0u8; 8];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_binary(&mut buffer, &mut str_len);
+
+        let warnings = sr.write_odbc_type(-0.001, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(read_binary_f64(&buffer), -0.001);
     }
 
     // ======================================================================
@@ -1247,34 +1260,6 @@ mod tests {
         assert!(warnings.contains(&Warning::NumericValueTruncated));
         assert_eq!(value.sign, 0, "sign preserves source negativity");
         assert_eq!(u128::from_le_bytes(value.val), 0);
-    }
-
-    #[test]
-    fn binary_negative_fraction_produces_negative_zero() {
-        let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
-        let mut str_len: sql::Len = 0;
-        let binding = binding_for_binary(&mut buffer, &mut str_len);
-
-        let warnings = sr.write_odbc_type(-0.5, &binding, &mut None).unwrap();
-        assert!(warnings.contains(&Warning::NumericValueTruncated));
-        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(numeric.sign, 0, "sign preserves source negativity");
-        assert_eq!(u128::from_le_bytes(numeric.val), 0);
-    }
-
-    #[test]
-    fn binary_negative_tiny_fraction_produces_negative_zero() {
-        let sr = make_real();
-        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
-        let mut str_len: sql::Len = 0;
-        let binding = binding_for_binary(&mut buffer, &mut str_len);
-
-        let warnings = sr.write_odbc_type(-0.001, &binding, &mut None).unwrap();
-        assert!(warnings.contains(&Warning::NumericValueTruncated));
-        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(numeric.sign, 0, "sign preserves source negativity");
-        assert_eq!(u128::from_le_bytes(numeric.val), 0);
     }
 
     // ======================================================================
