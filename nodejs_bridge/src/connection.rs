@@ -11,6 +11,7 @@ use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use tokio::sync::Mutex;
 
 #[napi]
 pub struct Connection {
@@ -18,6 +19,16 @@ pub struct Connection {
     /// for as long as any of them still needs them.
     handles: Arc<Handles>,
     state: ConnectionState,
+    /// Serializes the lifecycle transitions so `destroy()` cannot close and
+    /// release while `connect()` is still initializing.
+    ///
+    /// Nothing stops JS from calling both without awaiting the first, and core
+    /// reports a *successful* close for a connection that was never
+    /// initialized. Unserialized, a `destroy()` could therefore close, release
+    /// the handles and return while the concurrent `connection_init` went on to
+    /// establish a real session — one now sitting behind handles that no longer
+    /// exist, so it could never be reached again, let alone logged out.
+    lifecycle: Arc<Mutex<()>>,
     /// TEMPORARY: Copied onto every [`Statement`] this connection creates.\
     session_parameters: HashMap<String, String>,
 }
@@ -166,6 +177,7 @@ impl Connection {
         Ok(Self {
             handles: Handles::new(conn_handle, database_handle),
             state: ConnectionState::pristine(),
+            lifecycle: Arc::new(Mutex::new(())),
             session_parameters,
         })
     }
@@ -178,7 +190,11 @@ impl Connection {
         // here would either fail the init or strand a live server session on a
         // handle that no longer exists.
         let handles = self.handles.clone();
+        let lifecycle = self.lifecycle.clone();
         async_to_js(env, async move {
+            // Held across the init so a concurrent `destroy()` cannot release
+            // the handles midway and orphan the session this is establishing.
+            let _lifecycle = lifecycle.lock().await;
             let result = DRIVER
                 .connection_init(None, handles.connection, handles.database)
                 .await;
@@ -247,7 +263,15 @@ impl Connection {
         // `Drop` or anything else — before `connection_close` has used them.
         // Releasing early would leave the session logged in server-side.
         let handles = self.handles.clone();
+        let lifecycle = self.lifecycle.clone();
         async_to_js(env, async move {
+            // Waits out an in-flight `connect()`. Core reports a successful
+            // close for a connection that was never initialized, so without
+            // this the close could "succeed" and release the handles while the
+            // init it raced went on to establish a session nobody could reach.
+            // Teardown now always runs against a settled connection: either
+            // fully established, or one that never came up.
+            let _lifecycle = lifecycle.lock().await;
             let close = DRIVER.connection_close(handles.connection).await;
             if close.is_ok() {
                 // Only once core confirms the session is gone. A failed close is
