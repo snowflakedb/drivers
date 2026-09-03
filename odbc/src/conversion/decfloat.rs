@@ -1,11 +1,9 @@
-use arrow::array::{Array, GenericByteArray, StructArray};
-use arrow::datatypes::{GenericBinaryType, Int16Type};
+use arrow::array::StructArray;
 use odbc_sys as sql;
 
 use crate::api::CDataType;
 use crate::conversion::error::{
-    InvalidArrowValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu,
-    WriteOdbcError,
+    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::numeric_helpers::{
     check_integer_range, fractional_warning, reject_multi_field_interval, write_interval_second,
@@ -23,70 +21,17 @@ impl SnowflakeType for SnowflakeDecfloat {
     type Representation<'a> = (i128, i16);
 }
 
-/// Converts a big-endian two's complement byte slice (1–16 bytes) into an i128.
-/// The Arrow wire format trims leading bytes, so we sign-extend to 16 bytes
-/// before calling `i128::from_be_bytes`. Empty input is treated as zero.
-pub(crate) fn i128_from_big_endian_signed(bytes: &[u8]) -> Result<i128, ReadArrowError> {
-    if bytes.is_empty() {
-        return Ok(0);
-    }
-    if bytes.len() > 16 {
-        return InvalidArrowValueSnafu {
-            reason: format!(
-                "significand byte length {} exceeds maximum of 16",
-                bytes.len()
-            ),
-        }
-        .fail();
-    }
-    let sign_bytes = if bytes[0] & 0x80 != 0 { 0xFF } else { 0x00 };
-    let mut buf = [sign_bytes; 16];
-    buf[16 - bytes.len()..].copy_from_slice(bytes);
-    Ok(i128::from_be_bytes(buf))
-}
-
 impl ReadArrowType<StructArray> for SnowflakeDecfloat {
     fn read_arrow_type<'a>(
         &self,
         array: &'a StructArray,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        if array.is_null(row_idx) {
-            return Err(ReadArrowError::NullValue {
-                location: snafu::location!(),
-            });
-        }
-
-        let exponent_array = array
-            .column_by_name("exponent")
-            .ok_or_else(|| ReadArrowError::InvalidArrowValue {
-                reason: "DECFLOAT struct missing 'exponent' field".to_string(),
-                location: snafu::location!(),
-            })?
-            .as_any()
-            .downcast_ref::<arrow::array::PrimitiveArray<Int16Type>>()
-            .ok_or_else(|| ReadArrowError::InvalidArrowValue {
-                reason: "DECFLOAT 'exponent' field is not Int16".to_string(),
-                location: snafu::location!(),
-            })?;
-
-        let significand_array = array
-            .column_by_name("significand")
-            .ok_or_else(|| ReadArrowError::InvalidArrowValue {
-                reason: "DECFLOAT struct missing 'significand' field".to_string(),
-                location: snafu::location!(),
-            })?
-            .as_any()
-            .downcast_ref::<GenericByteArray<GenericBinaryType<i32>>>()
-            .ok_or_else(|| ReadArrowError::InvalidArrowValue {
-                reason: "DECFLOAT 'significand' field is not Binary".to_string(),
-                location: snafu::location!(),
-            })?;
-
-        let exponent = exponent_array.value(row_idx);
-        let significand = i128_from_big_endian_signed(significand_array.value(row_idx))?;
-
-        Ok((significand, exponent))
+        Ok(sf_types::ReadArrowType::read_arrow_type(
+            &sf_types::SnowflakeDecfloat,
+            array,
+            row_idx,
+        )?)
     }
 }
 
