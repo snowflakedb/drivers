@@ -10,16 +10,15 @@ use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 #[napi]
 pub struct Connection {
     handle: Handle,
     database_handle: Handle,
     state: ConnectionState,
-    /// Guards the one-time release of `handle` and `database_handle`, claimed by
-    /// whichever of `destroy()` or [`Drop`] runs first.
-    released: Arc<AtomicBool>,
+    /// Decides which of `destroy()` and [`Drop`] releases the two handles.
+    cleanup: Cleanup,
     /// TEMPORARY: Copied onto every [`Statement`] this connection creates.\
     session_parameters: HashMap<String, String>,
 }
@@ -53,6 +52,53 @@ impl ConnectionState {
             Self::TERMINATED => Some(UnusableConnection::Terminated),
             _ => Some(UnusableConnection::NeverEstablished),
         }
+    }
+}
+
+/// Decides which of `destroy()` and [`Drop`] gets to release the connection and
+/// database handles, so exactly one of them does.
+///
+/// A plain "already released" flag is not enough. `destroy()` closes the session
+/// asynchronously, and the async block captures only the raw handles — nothing
+/// keeps the JS object alive meanwhile. If `Drop` ran first and released, the
+/// pending `connection_close` would find no connection and skip the logout,
+/// stranding the session server-side. So `destroy()` claims ownership
+/// *synchronously*, and `Drop` releases only what nobody claimed.
+#[derive(Clone)]
+struct Cleanup(Arc<AtomicU8>);
+
+impl Cleanup {
+    /// Nobody has taken responsibility for the handles yet.
+    const IDLE: u8 = 0;
+    /// A `destroy()` call owns the close and will release once it finishes.
+    const OWNED: u8 = 1;
+    /// The handles have been released.
+    const RELEASED: u8 = 2;
+
+    fn idle() -> Self {
+        Self(Arc::new(AtomicU8::new(Self::IDLE)))
+    }
+
+    /// Take responsibility for closing and then releasing. Only the first
+    /// `destroy()` succeeds; a later one still closes, but must not release
+    /// handles the first call is already accounting for.
+    fn claim_for_close(&self) -> bool {
+        self.claim(Self::OWNED)
+    }
+
+    /// Take responsibility for handles no `destroy()` ever claimed.
+    fn claim_abandoned(&self) -> bool {
+        self.claim(Self::RELEASED)
+    }
+
+    fn claim(&self, to: u8) -> bool {
+        self.0
+            .compare_exchange(Self::IDLE, to, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn mark_released(&self) {
+        self.0.store(Self::RELEASED, Ordering::Release);
     }
 }
 
@@ -120,7 +166,7 @@ impl Connection {
             handle: conn_handle,
             database_handle,
             state: ConnectionState::pristine(),
-            released: Arc::new(AtomicBool::new(false)),
+            cleanup: Cleanup::idle(),
             session_parameters,
         })
     }
@@ -191,27 +237,27 @@ impl Connection {
         let handle = self.handle;
         let database_handle = self.database_handle;
         let state = self.state.clone();
-        let released = self.released.clone();
+        let cleanup = self.cleanup.clone();
+        // Claimed here, synchronously, rather than inside the async block: a
+        // `Drop` landing between this call and the close below must not release
+        // the handles, or `connection_close` would find no connection and skip
+        // the logout. Safe to claim before the work runs because the async block
+        // is scheduled on the runtime by `async_to_js`, so it completes whether
+        // or not the caller awaits the promise.
+        let owns_release = cleanup.claim_for_close();
         async_to_js(env, async move {
             let close = DRIVER.connection_close(handle).await;
-            release_handles(handle, database_handle, &released);
+            if owns_release {
+                release_handles(handle, database_handle);
+                cleanup.mark_released();
+            }
             state.mark_terminated();
             close
         })
     }
 }
 
-/// Release both handles, but only for the first caller to claim them.
-///
-/// `destroy()` and [`Drop`] can both reach here, in either order: a JS caller
-/// that never awaits the `destroy()` promise can have the object collected
-/// while the close is still in flight. The swap makes the release idempotent,
-/// which matters because the handle managers log an error on a magic mismatch —
-/// a second release would be harmless but noisy.
-fn release_handles(handle: Handle, database_handle: Handle, released: &AtomicBool) {
-    if released.swap(true, Ordering::AcqRel) {
-        return;
-    }
+fn release_handles(handle: Handle, database_handle: Handle) {
     let _ = DRIVER.connection_release(handle);
     let _ = DRIVER.database_release(database_handle);
 }
@@ -223,11 +269,17 @@ fn release_handles(handle: Handle, database_handle: Handle, released: &AtomicBoo
 /// `Connection` that is simply dropped would strand both its connection and
 /// database handle for the life of the process.
 ///
+/// Only handles no `destroy()` ever claimed are released here. Yanking them out
+/// from under an in-flight close would leave the server-side session logged in,
+/// which is a worse leak than the one this exists to prevent.
+///
 /// This deliberately does not log out: that is network I/O and cannot be run
 /// from a finalizer. Callers who need a graceful logout must still call
 /// `destroy()`; this only stops the handles from leaking.
 impl Drop for Connection {
     fn drop(&mut self) {
-        release_handles(self.handle, self.database_handle, &self.released);
+        if self.cleanup.claim_abandoned() {
+            release_handles(self.handle, self.database_handle);
+        }
     }
 }
