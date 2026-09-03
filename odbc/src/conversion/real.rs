@@ -15,8 +15,7 @@ use crate::conversion::error::{
 };
 use crate::conversion::numeric_helpers::{
     build_and_write_interval_second, check_leading_precision, checked_u32,
-    reject_multi_field_interval, whole_digits_len, write_numeric_as_binary,
-    write_single_field_interval,
+    reject_multi_field_interval, whole_digits_len, write_single_field_interval,
 };
 use crate::conversion::param_binding::{
     buffer_data_len, format_numeric_value, read_char_str, read_numeric_struct, read_unaligned,
@@ -360,33 +359,18 @@ impl WriteODBCType for SnowflakeReal {
                 Ok(warnings)
             }
             CDataType::Binary => {
-                if snowflake_value.is_nan() {
+                let ieee_len = std::mem::size_of::<f64>();
+                if (binding.buffer_length as usize) < ieee_len {
                     return NumericValueOutOfRangeSnafu {
-                        reason: "NaN cannot be converted to SQL_C_BINARY".to_string(),
+                        reason: format!(
+                            "Buffer size {} is too small for SQL_C_BINARY (need {ieee_len} bytes)",
+                            binding.buffer_length
+                        ),
                     }
                     .fail();
                 }
-                let truncated = snowflake_value.trunc();
-                let abs_val = truncated.abs();
-                if abs_val > u128::MAX as f64 {
-                    return NumericValueOutOfRangeSnafu {
-                        reason: format!("Value {snowflake_value} is out of range for SQL_C_BINARY"),
-                    }
-                    .fail();
-                }
-                let magnitude = abs_val as u128;
-                let numeric = sql::Numeric {
-                    precision: 38,
-                    scale: 0,
-                    sign: if snowflake_value.is_sign_negative() {
-                        0
-                    } else {
-                        1
-                    },
-                    val: magnitude.to_le_bytes(),
-                };
-                write_numeric_as_binary(&numeric, binding)?;
-                Ok(fractional_warning(snowflake_value))
+                binding.write_fixed(snowflake_value);
+                Ok(vec![])
             }
             CDataType::IntervalYear
             | CDataType::IntervalMonth

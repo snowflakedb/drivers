@@ -230,22 +230,22 @@ behavior_differences:
       Applications that set descriptor fields for SQL_C_NUMERIC will now see the correct precision and scale in the output struct, matching the ODBC specification behavior.
   14:
     name: "SQL_C_BINARY on FLOAT/DOUBLE/REAL columns returns raw f64 bytes instead of SQL_NUMERIC_STRUCT"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      3.x returns the raw 8-byte IEEE value, while 4.x writes an
-      SQL_NUMERIC_STRUCT with scale=0 and reports 01S07 when fractional digits
-      are discarded. The ODBC SQL-to-C numeric conversion table supports
-      SQL_C_BINARY for approximate numeric types.
+      Both drivers return the raw 8-byte IEEE 754 value. The ODBC SQL-to-C
+      numeric conversion table supports SQL_C_BINARY for approximate numeric
+      types. The SQL_NUMERIC_STRUCT path for SQL_C_BINARY on FLOAT/DOUBLE/REAL
+      was removed along with its 01S07 truncation warning.
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
       When SQLGetData is called with SQL_C_BINARY on a SQL_DOUBLE (FLOAT/DOUBLE/REAL) column, 3.x returns the raw 8-byte IEEE 754 double representation. The indicator is set to 8 and the buffer contents are not interpretable as an SQL_NUMERIC_STRUCT.
     new_driver_behavior: |
-      Returns a 19-byte SQL_NUMERIC_STRUCT with precision=38, scale=0 (integer part after truncation), sign (1 positive, 0 negative), and val[16] containing the unsigned magnitude in little-endian 128-bit format. The indicator is set to sizeof(SQL_NUMERIC_STRUCT). Fractional values produce SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07.
+      Returns the raw 8-byte IEEE 754 double representation. The indicator is set to 8.
     description: |
-      Applications requesting SQL_C_BINARY for floating-point columns receive an SQL_NUMERIC_STRUCT instead of raw double bytes, and lose the fractional part.
+      Applications requesting SQL_C_BINARY for floating-point columns receive the native double bytes.
   15:
     name: "SQL_C_CHAR with small buffer on FLOAT columns returns SQL_SUCCESS_WITH_INFO 01004; old driver may omit the SQLSTATE"
     status: allowed
