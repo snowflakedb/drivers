@@ -60,7 +60,8 @@ def detectChanges() {
     }
     // Job definition or the shared container scripts affect all wrappers.
     if (file == 'ci/Jenkinsfile.auth-browser-tests' ||
-        file.startsWith('tests/auth/')) {
+        file.startsWith('tests/auth/') ||
+        file.startsWith('tests/docker/external-browser/')) {
       runPython = true
       runOdbc = true
       runJdbc = true
@@ -104,7 +105,13 @@ pipeline {
     // (see the lock() below) even after a newer push has made its result moot.
     disableConcurrentBuilds(abortPrevious: true)
     buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50'))
-    timeout(time: 1, unit: 'HOURS')
+    // Build timeout includes lock() wait. GitHub check output with no
+    // Python/ODBC/JDBC children means the build died waiting for
+    // drivers-auth-browser-shared-mfa-accounts, not running tests (PR-1499
+    // #3/#4 aborted at the old 1h cap; #5 waited 1h57m and never entered a
+    // language stage). inversePrecedence lets newer PRs jump the queue, so
+    // raising this further does not fix starvation.
+    timeout(time: 2, unit: 'HOURS')
   }
   triggers {
     cron(env.BRANCH_NAME == 'main' ? 'H H/6 * * *' : '')
@@ -120,7 +127,7 @@ pipeline {
 
     stage('Auth Browser Tests') {
       when {
-        expression { !isMergeQueue() }
+        expression { !isMergeQueue() && (runPython || runOdbc || runJdbc) }
       }
       options {
         // This is a multibranch job: disableConcurrentBuilds() above only serializes builds
