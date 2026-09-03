@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use arrow::array::{Array, GenericByteArray};
+use arrow::array::GenericByteArray;
 use arrow::datatypes::Utf8Type;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
@@ -41,12 +41,13 @@ impl ReadArrowType<GenericByteArray<Utf8Type>> for SnowflakeVarchar {
         array: &'a GenericByteArray<Utf8Type>,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        if array.is_null(row_idx) {
-            return Err(ReadArrowError::NullValue {
-                location: snafu::location!(),
-            });
-        }
-        let v = array.value(row_idx);
+        // The `Utf8` → `&str` decode lives in the front-end-agnostic `sf_types`
+        // crate so ODBC, the Node.js bridge, and Python share one reader; `?`
+        // translates its error into this crate's `ReadArrowError` via the `From`
+        // impl in `error.rs`. Only the ODBC-specific pieces stay here: the
+        // string/numeric/date/interval bind coercions in `write_odbc_type` and
+        // the `Cow` the rest of the conversion machinery expects.
+        let v = sf_types::ReadArrowType::read_arrow_type(&sf_types::SnowflakeText, array, row_idx)?;
         Ok(Cow::Borrowed(v))
     }
 }
