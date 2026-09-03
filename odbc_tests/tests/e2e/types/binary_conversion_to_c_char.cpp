@@ -228,41 +228,61 @@ TEST_CASE("should retrieve large binary as hex in chunks via SQLGetData with SQL
 
 TEST_CASE("should retrieve large binary as hex in chunks via SQLGetData with SQL_C_WCHAR",
           "[datatype][binary][conversion][char]") {
-  SKIP_OLD_DRIVER("BD#22",
-                  "Simba SDK uses sizeof(wchar_t)=4 for WCHAR buffer capacity on Linux, "
-                  "fitting fewer characters per call than the ODBC spec expects with 2-byte SQLWCHAR");
+  PinDriverManagerEncoding pin_encoding;
   // Given Snowflake client is logged in
   Connection conn;
 
   // When Query selecting a binary value whose hex representation exceeds wide buffer size is executed
   const auto stmt = conn.execute_fetch("SELECT X'ABCDEF'::BINARY");
 
-  SQLWCHAR wbuffer[4] = {};
+  // Then First SQLGetData call with SQL_C_WCHAR returns SQL_SUCCESS_WITH_INFO and hex chunks
+  //      (4.x writes 3 chars per call; 3.x BINARY-to-hex WCHAR path writes 2 — BD#22)
+
+  // 4 SQLWCHAR units: 4.x fits 3 hex chars + NUL; 3.x BINARY-to-hex
+  // WCHAR path fits 2 (BD#22). On unixODBC this buffer is 8 bytes.
+  SQLWCHAR wbuffer[4];
   SQLLEN indicator = 0;
 
-  // Then First SQLGetData call with SQL_C_WCHAR should return SQL_SUCCESS_WITH_INFO with truncated data.
-  // The indicator reports the *remaining* payload length in DM-side bytes:
-  // 6 hex chars total * `sizeof(SQLWCHAR)`.
+  std::memset(wbuffer, 0xFF, sizeof(wbuffer));
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, wbuffer, sizeof(wbuffer), &indicator);
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   REQUIRE(get_sqlstate(stmt) == "01004");
-  REQUIRE(indicator == 6 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
   REQUIRE(wbuffer[0] == static_cast<SQLWCHAR>('A'));
   REQUIRE(wbuffer[1] == static_cast<SQLWCHAR>('B'));
-  REQUIRE(wbuffer[2] == static_cast<SQLWCHAR>('C'));
-  REQUIRE(wbuffer[3] == 0);
 
-  // And Second SQLGetData call with SQL_C_WCHAR should return SQL_SUCCESS with remaining wide hex.
-  // 3 remaining hex chars * `sizeof(SQLWCHAR)`.
-  memset(wbuffer, 0, sizeof(wbuffer));
+  NEW_DRIVER_ONLY("BD#22") {
+    REQUIRE(indicator == 6 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
+    REQUIRE(wbuffer[2] == static_cast<SQLWCHAR>('C'));
+    REQUIRE(wbuffer[3] == 0);
+  }
+  OLD_DRIVER_ONLY("BD#22") { REQUIRE(wbuffer[2] == 0); }
+
+  std::memset(wbuffer, 0xFF, sizeof(wbuffer));
   indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, wbuffer, sizeof(wbuffer), &indicator);
-  REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(indicator == 3 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
-  REQUIRE(wbuffer[0] == static_cast<SQLWCHAR>('D'));
-  REQUIRE(wbuffer[1] == static_cast<SQLWCHAR>('E'));
-  REQUIRE(wbuffer[2] == static_cast<SQLWCHAR>('F'));
-  REQUIRE(wbuffer[3] == 0);
+  NEW_DRIVER_ONLY("BD#22") {
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(indicator == 3 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
+    REQUIRE(wbuffer[0] == static_cast<SQLWCHAR>('D'));
+    REQUIRE(wbuffer[1] == static_cast<SQLWCHAR>('E'));
+    REQUIRE(wbuffer[2] == static_cast<SQLWCHAR>('F'));
+    REQUIRE(wbuffer[3] == 0);
+  }
+  OLD_DRIVER_ONLY("BD#22") {
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+    REQUIRE(get_sqlstate(stmt) == "01004");
+    REQUIRE(wbuffer[0] == static_cast<SQLWCHAR>('C'));
+    REQUIRE(wbuffer[1] == static_cast<SQLWCHAR>('D'));
+    REQUIRE(wbuffer[2] == 0);
+
+    std::memset(wbuffer, 0xFF, sizeof(wbuffer));
+    indicator = 0;
+    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, wbuffer, sizeof(wbuffer), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(wbuffer[0] == static_cast<SQLWCHAR>('E'));
+    REQUIRE(wbuffer[1] == static_cast<SQLWCHAR>('F'));
+    REQUIRE(wbuffer[2] == 0);
+  }
 }
 
 // ============================================================================
@@ -291,18 +311,15 @@ TEST_CASE("should succeed with exact-fit buffer for SQL_C_CHAR", "[datatype][bin
 // ============================================================================
 
 TEST_CASE("should succeed with exact-fit buffer for SQL_C_WCHAR", "[datatype][binary][conversion][char]") {
-  SKIP_OLD_DRIVER("BD#22",
-                  "Simba SDK uses sizeof(wchar_t)=4 for WCHAR buffer capacity on Linux, "
-                  "fitting fewer characters per call than the ODBC spec expects with 2-byte SQLWCHAR");
+  PinDriverManagerEncoding pin_encoding;
   // Given Snowflake client is logged in
   Connection conn;
 
   // When Query "SELECT X'CAFE'::BINARY" is executed (2 bytes -> hex "CAFE" = 4 wide chars)
   const auto stmt = conn.execute_fetch("SELECT X'CAFE'::BINARY");
 
-  // Then SQL_C_WCHAR with buffer = 5 * sizeof(SQLWCHAR) (4 chars + null) should return SQL_SUCCESS.
-  // The indicator reports the payload length in DM-side bytes
-  // (4 hex chars * `sizeof(SQLWCHAR)`, NUL excluded).
+  // Then SQL_C_WCHAR with an exact-fit buffer succeeds on both 3.x and 4.x
+
   SQLWCHAR wbuffer[5] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, wbuffer, 5 * sizeof(SQLWCHAR), &indicator);

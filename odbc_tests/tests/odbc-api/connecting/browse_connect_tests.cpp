@@ -363,27 +363,22 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Driver support with co
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Iterative browse with incomplete connection string",
                  "[odbc-api][browse_connect][connecting][integration][iterative]") {
-  // Provide ONLY the driver path (no server, no credentials)
-  // True iterative browsing would return SQL_NEED_DATA with required attributes
   const std::string driverPath = DriverConfig::get_driver_path();
   const std::string connStr = "DRIVER=" + driverPath;
-  SQLCHAR outConnStr[2048] = {};
+  SQLCHAR outConnStr[8192];
+  std::memset(outConnStr, 0xFF, sizeof(outConnStr));
   SQLSMALLINT outLen = 0;
 
   const SQLRETURN ret =
       SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   OLD_IODBC_ONLY("BD#63") {
-    // The old driver under iODBC actually implements the iterative SQLBrowseConnect
-    //   protocol: when handed only DRIVER=... it returns SQL_NEED_DATA and writes the
-    //   prompt for the next required attribute into outConnStr. unixODBC + new and
-    //   iODBC + new short-circuit with SQL_ERROR because Snowflake's connection
-    //   model expects a complete connection string up front.
     REQUIRE(ret == SQL_NEED_DATA);
+    REQUIRE(outLen > 0);
+    REQUIRE(static_cast<size_t>(outLen) < sizeof(outConnStr));
+    REQUIRE(static_cast<int>(outConnStr[0]) == 0xFF);
   }
   else {
-    // Note: Snowflake driver does NOT support iterative browsing.
-    // It requires a complete connection string and returns SQL_ERROR when given incomplete info.
     REQUIRE(ret == SQL_ERROR);
 
     auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());

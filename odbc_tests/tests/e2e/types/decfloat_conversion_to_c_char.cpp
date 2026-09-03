@@ -2,6 +2,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstring>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -47,20 +48,29 @@ TEST_CASE("DECFLOAT full precision to SQL_C_CHAR", "[decfloat][conversion][c_cha
 // ============================================================================
 
 TEST_CASE("DECFLOAT to SQL_C_WCHAR", "[decfloat][conversion][c_char]") {
-  SKIP_OLD_IODBC("BD#67",
-                 "old driver DECFLOAT->SQL_C_WCHAR path is unimplemented under iODBC: the call returns "
-                 "SQL_SUCCESS but writes SQL_NULL_DATA (-1) into the length indicator and leaves the "
-                 "output buffer untouched, so no scalar value can be observed");
+  PinDriverManagerEncoding pin_encoding;
   // Given Snowflake client is logged in
   Connection conn;
 
   // When DECFLOAT values are fetched as SQL_C_WCHAR
   auto stmt = conn.execute_fetch("SELECT 0::DECFLOAT, 123.456::DECFLOAT, -789.012::DECFLOAT");
 
-  // Then SQL_C_WCHAR returns correct wide string representations
-  CHECK(check_wchar_success(stmt, 1) == U"0");
-  CHECK(check_wchar_success(stmt, 2) == U"123.456");
-  CHECK(check_wchar_success(stmt, 3) == U"-789.012");
+  OLD_IODBC_ONLY("BD#67") {
+    // Then 3.x under iODBC writes the first character and a UTF-16 byte-length indicator
+    SQLWCHAR buffer[16];
+    std::memset(buffer, 0xFF, sizeof(buffer));
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+    CHECK(ret == SQL_SUCCESS);
+    CHECK(indicator == 2);
+    CHECK(buffer[0] == static_cast<SQLWCHAR>('0'));
+  }
+  else {
+    // Then SQL_C_WCHAR returns correct wide string representations
+    CHECK(check_wchar_success(stmt, 1) == U"0");
+    CHECK(check_wchar_success(stmt, 2) == U"123.456");
+    CHECK(check_wchar_success(stmt, 3) == U"-789.012");
+  }
 }
 
 // ============================================================================
@@ -104,27 +114,34 @@ TEST_CASE("DECFLOAT SQL_C_CHAR exact-fit buffer", "[decfloat][conversion][c_char
 }
 
 TEST_CASE("DECFLOAT SQL_C_WCHAR truncation with small buffer", "[decfloat][conversion][c_char][truncation]") {
-  SKIP_OLD_IODBC("BD#67",
-                 "old driver DECFLOAT->SQL_C_WCHAR path is unimplemented under iODBC (see 'DECFLOAT to "
-                 "SQL_C_WCHAR'); the call returns SQL_SUCCESS+SQL_NULL_DATA instead of "
-                 "SQL_SUCCESS_WITH_INFO+01004 so no truncation can be observed");
+  PinDriverManagerEncoding pin_encoding;
   // Given Snowflake client is logged in
   Connection conn;
 
   // When A 38-digit DECFLOAT value is fetched as SQL_C_WCHAR into a buffer too small
   auto stmt = conn.execute_fetch("SELECT '12345678901234567890123456789012345678'::DECFLOAT");
 
-  SQLWCHAR buffer[10] = {};
+  SQLWCHAR buffer[10];
+  std::memset(buffer, 0xFF, sizeof(buffer));
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 
-  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  CHECK(indicator == 38 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
-  CHECK(get_sqlstate(stmt) == "01004");
-  auto truncated = sf::wide::decode_wide_cstr(buffer);
-  CHECK(truncated.length() >= 8);
-  CHECK(truncated.substr(0, 8) == U"12345678");
+  OLD_IODBC_ONLY("BD#67") {
+    // Then 3.x under iODBC reports truncation with a UTF-16 byte-length indicator
+    CHECK(ret == SQL_SUCCESS_WITH_INFO);
+    CHECK(indicator == 76);
+    const unsigned char expected_prefix[] = {'1', 0, '2', 0, '3', 0, '4', 0, '5', 0, '6', 0, '7', 0, '8', 0};
+    CHECK(std::memcmp(buffer, expected_prefix, sizeof(expected_prefix)) == 0);
+  }
+  else {
+    // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
+    CHECK(ret == SQL_SUCCESS_WITH_INFO);
+    CHECK(indicator == 38 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
+    CHECK(get_sqlstate(stmt) == "01004");
+    auto truncated = sf::wide::decode_wide_cstr(buffer);
+    CHECK(truncated.length() >= 8);
+    CHECK(truncated.substr(0, 8) == U"12345678");
+  }
 }
 
 // ============================================================================

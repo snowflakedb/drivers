@@ -172,18 +172,14 @@ TEST_CASE_METHOD(ConnSchemaFixture,
       {SQL_BIGINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(1234567890), static_cast<SQLUINTEGER>(0)},
       {SQL_DECIMAL, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(1234567890),
        static_cast<SQLUINTEGER>(500'000'000)},
+      {SQL_NUMERIC, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(1234567890),
+       static_cast<SQLUINTEGER>(500'000'000)},
       {SQL_NUMERIC, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(1234567890), static_cast<SQLUINTEGER>(0)},
   }));
   CAPTURE(sql_type, column_size, seconds, fraction);
 
-  // The reference driver rejects a fractional SQL_C_INTERVAL_SECOND bound to a
-  // variable-precision exact-numeric target (SQL_DECIMAL/SQL_NUMERIC) with
-  // SQLSTATE 22015 ("Interval field overflow") instead of truncating the
-  // fraction, so this spec-compliant truncate-and-store contract is pinned on
-  // the new driver only.
-  SKIP_OLD_DRIVER("BD#60",
-                  "Reference driver overflows (22015) on fractional SQL_C_INTERVAL_SECOND bound to DECIMAL/NUMERIC "
-                  "instead of truncating per ODBC Appendix D");
+  const bool variable_precision = (sql_type == SQL_DECIMAL || sql_type == SQL_NUMERIC);
+  const bool has_fraction = fraction != 0;
 
   // Given a NUMBER column
   conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
@@ -194,7 +190,27 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   REQUIRE_ODBC(ret, stmt);
   SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 0, 0, seconds, fraction);
   SQLLEN ind = sizeof(val);
-  bind_interval_and_execute(stmt, SQL_C_INTERVAL_SECOND, sql_type, val, ind, column_size, 0);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_INTERVAL_SECOND, sql_type, column_size, 0, &val,
+                         sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+
+  // BD#60: the old driver rejects a non-zero seconds fraction bound to
+  // SQL_DECIMAL / SQL_NUMERIC with 22015 (NativeError 40530). Integer SQL
+  // targets, and variable-precision targets with a zero fraction, truncate
+  // and store on both drivers.
+  if (variable_precision && has_fraction) {
+    OLD_DRIVER_ONLY("BD#60") {
+      CHECK(ret == SQL_ERROR);
+      auto records = get_diag_rec(stmt);
+      REQUIRE_FALSE(records.empty());
+      CHECK(records[0].sqlState == "22015");
+      CHECK(records[0].nativeError == 40530);
+      return;
+    }
+  }
+
+  REQUIRE_ODBC(ret, stmt);
 
   // Then only the integral seconds magnitude is stored (fraction is dropped)
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");

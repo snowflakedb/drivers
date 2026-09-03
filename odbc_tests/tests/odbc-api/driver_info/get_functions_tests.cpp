@@ -127,11 +127,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
     WINDOWS_ONLY {
       if (func.functionId == SQL_API_SQLSETSCROLLOPTIONS) continue;
     }
-    // BD#45: Reference driver's SQLGetFunctions bitmap omits SQL_API_SQLCANCELHANDLE
-    // even though the reference driver exports and handles the function.
-    OLD_DRIVER_ONLY("BD#45") {
-      if (func.functionId == SQL_API_SQLCANCELHANDLE) continue;
-    }
     // The old driver under iODBC also omits SQL_API_SQLSETSCROLLOPTIONS and
     //   SQL_API_SQLPARAMOPTIONS from its bitmap (the entry points aren't
     //   exported via iODBC's dispatch), matching the Windows DM exclusion
@@ -410,6 +405,24 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Reports SQLCloseCursor 
   REQUIRE(ret == SQL_SUCCESS);
 }
 
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: ODBC3 bitmap reports SQLCancelHandle",
+                 "[odbc-api][getfunctions][driver_info]") {
+  SKIP_IODBC("iODBC DM answers SQLGetFunctions from its static table regardless of the driver's bitmap");
+
+  const std::string dsn = dsn_name();
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLUSMALLINT supported[SQL_API_ODBC3_ALL_FUNCTIONS_SIZE] = {};
+  ret = SQLGetFunctions(dbc_handle(), SQL_API_ODBC3_ALL_FUNCTIONS, supported);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  REQUIRE(SQL_FUNC_EXISTS(supported, SQL_API_SQLCANCELHANDLE));
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
 // ============================================================================
 // SQLGetFunctions - Comprehensive Function Coverage Test
 // ============================================================================
@@ -424,10 +437,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: All known supported fun
     WINDOWS_ONLY {
       if (func.functionId == SQL_API_SQLSETSCROLLOPTIONS) continue;
     }
-    // BD#45: Reference driver's SQLGetFunctions bitmap omits SQL_API_SQLCANCELHANDLE
-    OLD_DRIVER_ONLY("BD#45") {
-      if (func.functionId == SQL_API_SQLCANCELHANDLE) continue;
-    }
     // The old driver under iODBC also omits SQL_API_SQLSETSCROLLOPTIONS from
     //   its per-function inventory (matches the bitmap exclusion in the
     //   ODBC3_ALL_FUNCTIONS / ALL_FUNCTIONS tests above).
@@ -436,12 +445,14 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: All known supported fun
     }
     // BD#120: unixODBC range-rejects the per-function SQLGetFunctions(id) probe of
     //   SQL_API_SQLCANCELHANDLE (id 1022, past the DM's SQL_API_SQLFETCHSCROLL/1021
-    //   guard) with SQL_ERROR on the new driver, even though the ODBC3 bitmap reports
-    //   it supported. iODBC is unaffected (answers from its own static table).
+    //   guard) with SQL_ERROR, even though the ODBC3 bitmap reports it supported.
+    //   iODBC and Windows still answer the per-function probe.
     //   SQL_API_SQLCLOSECURSOR (1003) is in range and returns SQL_SUCCESS on both
-    //   drivers (confirmed in CI), so it is asserted normally here.
-    NEW_DRIVER_ONLY("BD#120") {
-      if (func.functionId == SQL_API_SQLCANCELHANDLE) continue;
+    //   drivers, so it is asserted normally here.
+    UNIX_ONLY {
+      NON_IODBC {
+        if (func.functionId == SQL_API_SQLCANCELHANDLE) continue;
+      }
     }
     INFO("Testing function: " << func.name << " (ID=" << func.functionId << ")");
     SQLUSMALLINT supported = SQL_FALSE;

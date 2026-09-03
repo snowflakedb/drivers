@@ -917,11 +917,6 @@ mod tests {
         }
     }
 
-    // ======================================================================
-    // SQL_C_BINARY — new conversion (per ODBC matrix)
-    // Writes SQL_NUMERIC_STRUCT into the binary buffer, same pattern as NUMBER.
-    // ======================================================================
-
     #[test]
     fn real_binary_positive_integer() {
         let sr = make_real();

@@ -12,18 +12,12 @@
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 
-// ============================================================================
-// SQL_C_BINARY conversion from REAL
-// Per ODBC spec, SQL_C_BINARY for SQL_REAL/SQL_FLOAT/SQL_DOUBLE writes the
-// value as SQL_NUMERIC_STRUCT into the buffer.
-// ============================================================================
-
 TEST_CASE_METHOD(ConnSchemaFixture, "REAL to SQL_C_BINARY", "[e2e][types][real][binary]") {
   // Given A Snowflake connection is established
-  // BD#14: old driver returns raw 8-byte IEEE 754 double; new driver returns SQL_NUMERIC_STRUCT.
+  // BD#14: 3.x returns raw 8-byte IEEE 754 double; 4.x returns SQL_NUMERIC_STRUCT.
 
   OLD_DRIVER_ONLY("BD#14") {
-    // Old returns the raw double bytes; read back into a double to verify the value.
+    // 3.x returns the raw double bytes; read back into a double to verify the value.
     auto stmt = conn.execute_fetch("SELECT 42.0::FLOAT");
     double val;
     std::memset(&val, 0xFF, sizeof(val));
@@ -128,7 +122,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_BINARY negative zero", "[e2e][ty
   char buffer[100] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  // Then The result differs between old and new driver (BD#14)
+  // Then The result differs between 3.x and 4.x (BD#14)
   OLD_DRIVER_ONLY("BD#14") {
     CHECK(ret == SQL_SUCCESS);
     CHECK(indicator == sizeof(double));
@@ -153,4 +147,51 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL NULL to SQL_C_BINARY", "[real][convers
   auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");
   // Then NULL FLOAT values return SQL_NULL_DATA
   check_null_via_get_data(stmt, 1, SQL_C_BINARY);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_DOUBLE and SQL_C_NUMERIC paths agree; SQL_C_BINARY diverges",
+                 "[e2e][types][real][binary]") {
+  // Given A Snowflake connection is established
+  // When A FLOAT value is fetched as SQL_C_DOUBLE, SQL_C_NUMERIC, and SQL_C_BINARY
+  // Then DOUBLE and NUMERIC agree on both drivers; SQL_C_BINARY still diverges (BD#14)
+  {
+    auto stmt = conn.execute_fetch("SELECT 42.5::FLOAT");
+    double val = 0;
+    std::memset(&val, 0xFF, sizeof(val));
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &val, sizeof(val), &indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(indicator == sizeof(double));
+    CHECK(val == 42.5);
+  }
+
+  {
+    auto numeric = check_fractional_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 42.5::FLOAT"), 1);
+    CHECK(numeric.sign == 1);
+    CHECK(numeric.val[0] == 42);
+  }
+
+  {
+    auto stmt = conn.execute_fetch("SELECT 42.5::FLOAT");
+    char buffer[100];
+    std::memset(buffer, 0xFF, sizeof(buffer));
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    OLD_DRIVER_ONLY("BD#14") {
+      CHECK(ret == SQL_SUCCESS);
+      CHECK(indicator == sizeof(double));
+      double val;
+      std::memcpy(&val, buffer, sizeof(double));
+      CHECK(val == 42.5);
+    }
+    NEW_DRIVER_ONLY("BD#14") {
+      REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+      CHECK(get_sqlstate(stmt) == "01S07");
+      REQUIRE(indicator == sizeof(SQL_NUMERIC_STRUCT));
+      SQL_NUMERIC_STRUCT numeric;
+      std::memcpy(&numeric, buffer, sizeof(SQL_NUMERIC_STRUCT));
+      CHECK(numeric.sign == 1);
+      CHECK(numeric.val[0] == 42);
+    }
+  }
 }

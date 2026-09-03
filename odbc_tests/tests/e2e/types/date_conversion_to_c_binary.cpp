@@ -7,7 +7,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 
@@ -139,7 +138,8 @@ TEST_CASE("DATE to SQL_C_BINARY buffer too small", "[date][conversion][c_binary]
 
   // When A DATE value is fetched into a buffer smaller than sizeof(SQL_DATE_STRUCT)
   auto stmt = conn.execute_fetch("SELECT '2024-01-15'::DATE");
-  SQLCHAR buffer[2] = {};
+  SQLCHAR buffer[2];
+  std::memset(buffer, 0xFF, sizeof(buffer));
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
 
