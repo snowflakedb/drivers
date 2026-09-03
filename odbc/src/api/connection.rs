@@ -62,9 +62,12 @@ const ODBC_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const ODBC_API_VERSION: &str = env!("SF_ODBC_API_VER");
 
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
-/// Used as the Okta SAML retry budget when neither the connection string nor
-/// SQLSetConnectAttr provides a value.
-const DEFAULT_LOGIN_TIMEOUT_SECS: sql::UInteger = 300;
+/// Reported by `SQLGetConnectAttr(SQL_ATTR_LOGIN_TIMEOUT)` when the caller has
+/// not set one. `sf_core` applies the same value as this wrapper's
+/// `authentication_timeout` default during config resolution, so both sides
+/// read it from one constant.
+const DEFAULT_LOGIN_TIMEOUT_SECS: sql::UInteger =
+    sf_core::config::param_registry::ODBC_DEFAULT_AUTHENTICATION_TIMEOUT_SECS as sql::UInteger;
 
 /// Normalizes `CRL_ENABLED` values to the uppercase mode strings `sf_core` accepts for
 /// `crl_check_mode` (see `build_crl_config` in `connection_config.rs`).
@@ -528,19 +531,10 @@ fn connect_with_params(
 
     let dbc = conn_from_handle(connection_handle)?;
     // Read pre-connection data under lock, then release before the async call.
-    let (pre_connection_attrs, login_timeout_in_options, login_timeout_in_attrs) = {
+    let pre_connection_attrs = {
         let connection = dbc.connection.lock();
         apply_pre_connection_overrides(&connection.pre_connection_attrs, &mut options);
-        let login_timeout_in_options = options.contains_key("authentication_timeout");
-        let login_timeout_in_attrs = connection
-            .pre_connection_attrs
-            .contains_key(&ConnectionAttribute::LoginTimeout);
-        let pre_connection_attrs = connection.pre_connection_attrs.clone();
-        (
-            pre_connection_attrs,
-            login_timeout_in_options,
-            login_timeout_in_attrs,
-        )
+        connection.pre_connection_attrs.clone()
     };
 
     let (db_handle, conn_handle) = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
@@ -569,23 +563,13 @@ fn connect_with_params(
             tracing::warn!("connection option warning: {}", warning.message);
         }
 
-        // Optional default login timeout (Okta SAML budget).
-        if !login_timeout_in_options && !login_timeout_in_attrs {
-            let follow_up = HashMap::from([(
-                "authentication_timeout".to_owned(),
-                DEFAULT_LOGIN_TIMEOUT_SECS.to_string().into(),
-            )]);
-            let response = c
-                .connection_set_options(ConnectionSetOptionsRequest {
-                    conn_handle: Some(conn_handle),
-                    options: follow_up,
-                    no_connection_details: false,
-                })
-                .await?;
-            for warning in &response.warnings {
-                tracing::warn!("connection option warning: {}", warning.message);
-            }
-        }
+        // The default Okta SAML budget (`DEFAULT_LOGIN_TIMEOUT_SECS`) is applied
+        // by `sf_core`'s resolver for this wrapper rather than injected here.
+        // Sent from this side it would land in the caller's options layer, where
+        // a driver-side default would outrank a `connections.toml` profile — and
+        // it also feeds the outer login-flow timeout, which `sf_core` mirrors
+        // from `authentication_timeout` because ODBC cannot address
+        // `login_timeout` directly.
 
         apply_pre_connection_runtime_attrs_async(c, &pre_connection_attrs, conn_handle).await?;
 

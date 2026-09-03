@@ -284,6 +284,12 @@ pub const DEFAULT_PUT_GET_MAX_ATTEMPTS: u32 = 6;
 /// Default `login_timeout` in seconds (mirrors the `ParamDef`).
 pub const DEFAULT_LOGIN_TIMEOUT_SECS: u64 = 120;
 
+/// ODBC's default `authentication_timeout` in seconds, matching the old
+/// snowflake-odbc driver's `S_DEFAULT_LOGIN_TIMEOUT`. It replaces the registry
+/// default for that wrapper only, and is applied underneath `connections.toml`
+/// so a profile can still lower it.
+pub const ODBC_DEFAULT_AUTHENTICATION_TIMEOUT_SECS: i64 = 300;
+
 /// Default `query_timeout` in seconds. 0 = no timeout (queries can be long-running).
 pub const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 0;
 

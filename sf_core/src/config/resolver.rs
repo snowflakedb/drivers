@@ -3,7 +3,7 @@ use crate::config::ParamStore;
 use crate::config::config_manager;
 use crate::config::param_names;
 use crate::config::param_registry;
-use crate::config::param_registry::Wrapper;
+use crate::config::param_registry::{ODBC_DEFAULT_AUTHENTICATION_TIMEOUT_SECS, Wrapper};
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::settings::Setting;
 use crate::config::toml_loader::FilePermissionCheck;
@@ -214,16 +214,21 @@ pub fn resolve_with_paths_for_wrapper(
             None
         };
 
-    // Whether a layer the user controls supplied `login_timeout`. Tracked
-    // because the ODBC fixup below must not override it (see
-    // `apply_wrapper_layer_fixups`); once merged, a config-file value is
-    // indistinguishable from the registry default that always populates it.
+    // Which layer supplied each timeout. Once merged, a config-file value is
+    // indistinguishable from the registry default that always populates it, but
+    // the ODBC fixup below has to tell them apart. `_from_explicit` means the
+    // caller passed it programmatically (for ODBC: a DSN key or
+    // `SQLSetConnectAttr`), `_from_user` also counts a `connections.toml`
+    // profile.
+    let auth_timeout_from_explicit = explicit.get(param_names::AUTHENTICATION_TIMEOUT).is_some();
+    let mut auth_timeout_from_user = auth_timeout_from_explicit;
     let mut login_timeout_from_user = explicit.get(param_names::LOGIN_TIMEOUT).is_some();
 
     if let Some(name) = &connection_name {
         let file_settings =
             config_manager::load_connection_config_with_paths(name, paths, permission_check)?;
         for (k, v) in file_settings {
+            auth_timeout_from_user |= k == param_names::AUTHENTICATION_TIMEOUT.as_str();
             login_timeout_from_user |= k == param_names::LOGIN_TIMEOUT.as_str();
             merged.insert(k, v);
         }
@@ -232,12 +237,30 @@ pub fn resolve_with_paths_for_wrapper(
     // Layer 1: Explicit programmatic settings (highest priority)
     merged.extend_from(explicit);
 
-    apply_wrapper_layer_fixups(&mut merged, wrapper, login_timeout_from_user);
+    apply_wrapper_layer_fixups(
+        &mut merged,
+        wrapper,
+        TimeoutProvenance {
+            auth_timeout_from_explicit,
+            auth_timeout_from_user,
+            login_timeout_from_user,
+        },
+    );
 
     derive_account_from_host(&mut merged);
     derive_host_from_account(&mut merged);
 
     Ok(merged)
+}
+
+/// Which layer supplied each of the two timeouts ODBC has to reconcile.
+struct TimeoutProvenance {
+    /// `authentication_timeout` came from the caller's own options.
+    auth_timeout_from_explicit: bool,
+    /// `authentication_timeout` came from the caller or a config profile.
+    auth_timeout_from_user: bool,
+    /// `login_timeout` came from the caller or a config profile.
+    login_timeout_from_user: bool,
 }
 
 /// Wrapper-specific corrections that can only be applied once every layer has
@@ -250,28 +273,42 @@ pub fn resolve_with_paths_for_wrapper(
 /// there. `TimeoutConfig` reads the outer login-flow wrap from `login_timeout`,
 /// which would otherwise sit at the registry default (120 s) and cap an ODBC
 /// caller who asked for more — a ceiling they have no way to raise, unlike old
-/// ODBC's 300 s `LOGIN_TIMEOUT` connect budget. Mirror `authentication_timeout`
-/// onto it so the outer wrap tracks the caller's value.
+/// ODBC's 300 s `LOGIN_TIMEOUT` connect budget. So `authentication_timeout` is
+/// mirrored onto `login_timeout` for that wrapper.
 ///
-/// `login_timeout_from_user` guards the one path that *can* reach the canonical
-/// name under ODBC: a `connections.toml` profile, whose keys resolve under the
-/// Python flavor. The ODBC driver injects a synthetic 300 s
-/// `authentication_timeout` whenever the caller sets no timeout, and that
-/// injection arrives in the explicit layer; mirroring it unconditionally would
-/// let a driver-side default outrank a profile the user wrote by hand.
+/// A `connections.toml` profile is the one path that *does* reach the canonical
+/// name under ODBC, because profile keys resolve under the Python flavor. That
+/// makes precedence matter: a caller's DSN value outranks a profile, but the
+/// wrapper's own default must not. Hence ODBC's 300 s default for
+/// `authentication_timeout` is applied here, below the config file, rather than
+/// being injected into the caller's options by the ODBC crate.
 fn apply_wrapper_layer_fixups(
     merged: &mut ParamStore,
     wrapper: Option<Wrapper>,
-    login_timeout_from_user: bool,
+    provenance: TimeoutProvenance,
 ) {
-    if wrapper != Some(Wrapper::Odbc) || login_timeout_from_user {
+    if wrapper != Some(Wrapper::Odbc) {
         return;
     }
-    if let Some(auth_timeout) = merged.get(param_names::AUTHENTICATION_TIMEOUT).cloned() {
+
+    // ODBC's own default for the Okta auth budget, replacing the registry
+    // default for this wrapper. Sits below `connections.toml`.
+    if !provenance.auth_timeout_from_user {
         merged.insert(
-            param_names::LOGIN_TIMEOUT.as_str().to_owned(),
-            auth_timeout,
+            param_names::AUTHENTICATION_TIMEOUT.as_str().to_owned(),
+            Setting::Int(ODBC_DEFAULT_AUTHENTICATION_TIMEOUT_SECS),
         );
+    }
+
+    // Mirror onto the outer login wrap. A caller-supplied value always wins, so
+    // a DSN `AUTHENTICATION_TIMEOUT` still beats a profile `login_timeout`;
+    // otherwise the profile keeps control, and the mirror only fills in for the
+    // registry default.
+    let mirror_wins = provenance.auth_timeout_from_explicit || !provenance.login_timeout_from_user;
+    if mirror_wins
+        && let Some(auth_timeout) = merged.get(param_names::AUTHENTICATION_TIMEOUT).cloned()
+    {
+        merged.insert(param_names::LOGIN_TIMEOUT.as_str().to_owned(), auth_timeout);
     }
 }
 
@@ -1156,12 +1193,30 @@ password = "mypassword"
         assert!(matches!(config.diagnostic, DiagnosticConfig::Disabled));
     }
 
+    /// `connections.toml` with a `[testconn]` profile carrying `extra`.
+    fn write_profile(temp_dir: &TempDir, extra: &str) {
+        write_config(
+            temp_dir,
+            "connections.toml",
+            &format!("[testconn]\naccount = \"file_account\"\n{extra}\n"),
+        );
+    }
+
+    fn odbc_profile_explicit() -> ParamStore {
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            param_names::CONNECTION_NAME.into(),
+            Setting::String("testconn".to_owned()),
+        );
+        explicit
+    }
+
     #[test]
-    fn odbc_mirrors_authentication_timeout_onto_login_timeout() {
+    fn odbc_mirrors_a_caller_authentication_timeout_onto_login_timeout() {
         // ODBC has no way to address `login_timeout`, so without the mirror the
         // outer login wrap would stay at the registry default (120 s) and cap a
-        // caller who asked for 300 s via `AUTHENTICATION_TIMEOUT` /
-        // `SQL_ATTR_LOGIN_TIMEOUT` / the driver's default follow-up.
+        // caller who asked for 300 s via `AUTHENTICATION_TIMEOUT` or
+        // `SQL_ATTR_LOGIN_TIMEOUT`.
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
 
@@ -1178,10 +1233,32 @@ password = "mypassword"
     }
 
     #[test]
+    fn odbc_defaults_both_timeouts_to_the_legacy_driver_budget() {
+        // With no timeout anywhere, ODBC gets its own 300 s default rather than
+        // the registry's 120 s — matching old ODBC's `LOGIN_TIMEOUT` connect
+        // budget — and the outer wrap tracks it instead of capping at 120.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+
+        let resolved =
+            resolve_with_paths_for_wrapper(&ParamStore::new(), &paths, false, Some(Wrapper::Odbc))
+                .unwrap();
+
+        assert_eq!(
+            resolved.get_int(param_names::AUTHENTICATION_TIMEOUT),
+            Some(ODBC_DEFAULT_AUTHENTICATION_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            resolved.get_int(param_names::LOGIN_TIMEOUT),
+            Some(ODBC_DEFAULT_AUTHENTICATION_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
     fn non_odbc_wrappers_keep_login_timeout_independent() {
         // Every other wrapper can set `login_timeout` directly, so an
         // `authentication_timeout` (the Okta budget) must not leak into the
-        // outer login wrap.
+        // outer login wrap, and the ODBC-only default must not apply.
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
 
@@ -1204,30 +1281,41 @@ password = "mypassword"
     }
 
     #[test]
-    fn odbc_mirror_does_not_override_a_login_timeout_from_a_config_profile() {
+    fn odbc_config_profile_outranks_the_wrapper_default_timeout() {
         // A `connections.toml` profile is the one path that reaches the
         // canonical `login_timeout` under ODBC (profile keys resolve under the
-        // Python flavor). The ODBC driver injects a synthetic 300 s
-        // `authentication_timeout` whenever the caller sets no timeout, and it
-        // arrives in the explicit layer — so mirroring it unconditionally would
-        // let that driver-side default outrank the user's own profile.
+        // Python flavor). With no caller timeout, ODBC's own 300 s default must
+        // not outrank the profile — it is a driver default, not user intent.
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
-        write_config(
-            &temp_dir,
-            "connections.toml",
-            r#"
-[testconn]
-account = "file_account"
-login_timeout = 30
-"#,
-        );
+        write_profile(&temp_dir, "login_timeout = 30\nauthentication_timeout = 45");
 
-        let mut explicit = ParamStore::new();
-        explicit.insert(
-            param_names::CONNECTION_NAME.into(),
-            Setting::String("testconn".to_owned()),
+        let resolved = resolve_with_paths_for_wrapper(
+            &odbc_profile_explicit(),
+            &paths,
+            false,
+            Some(Wrapper::Odbc),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.get_int(param_names::LOGIN_TIMEOUT), Some(30));
+        assert_eq!(
+            resolved.get_int(param_names::AUTHENTICATION_TIMEOUT),
+            Some(45)
         );
+    }
+
+    #[test]
+    fn odbc_caller_timeout_outranks_a_config_profile_login_timeout() {
+        // A DSN `AUTHENTICATION_TIMEOUT` / `SQL_ATTR_LOGIN_TIMEOUT` is the
+        // caller's own value, so normal explicit-over-profile precedence applies
+        // and it drives the outer wrap too. Otherwise the profile's 30 s would
+        // kill a login the caller explicitly budgeted 300 s for.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_profile(&temp_dir, "login_timeout = 30");
+
+        let mut explicit = odbc_profile_explicit();
         explicit.insert(
             param_names::AUTHENTICATION_TIMEOUT.into(),
             Setting::Int(300),
@@ -1236,11 +1324,26 @@ login_timeout = 30
         let resolved =
             resolve_with_paths_for_wrapper(&explicit, &paths, false, Some(Wrapper::Odbc)).unwrap();
 
-        assert_eq!(resolved.get_int(param_names::LOGIN_TIMEOUT), Some(30));
+        assert_eq!(resolved.get_int(param_names::LOGIN_TIMEOUT), Some(300));
         assert_eq!(
             resolved.get_int(param_names::AUTHENTICATION_TIMEOUT),
-            Some(300),
-            "the Okta budget still takes the caller's value"
+            Some(300)
         );
+    }
+
+    #[test]
+    fn odbc_explicit_login_timeout_is_left_alone() {
+        // Nothing in ODBC can set this today, but the guard keeps the mirror
+        // from clobbering a programmatic `login_timeout` if that changes.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+
+        let mut explicit = ParamStore::new();
+        explicit.insert(param_names::LOGIN_TIMEOUT.into(), Setting::Int(30));
+
+        let resolved =
+            resolve_with_paths_for_wrapper(&explicit, &paths, false, Some(Wrapper::Odbc)).unwrap();
+
+        assert_eq!(resolved.get_int(param_names::LOGIN_TIMEOUT), Some(30));
     }
 }
