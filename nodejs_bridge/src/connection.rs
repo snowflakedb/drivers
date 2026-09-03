@@ -10,13 +10,16 @@ use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 #[napi]
 pub struct Connection {
     handle: Handle,
     database_handle: Handle,
     state: ConnectionState,
+    /// Guards the one-time release of `handle` and `database_handle`, claimed by
+    /// whichever of `destroy()` or [`Drop`] runs first.
+    released: Arc<AtomicBool>,
     /// TEMPORARY: Copied onto every [`Statement`] this connection creates.\
     session_parameters: HashMap<String, String>,
 }
@@ -117,6 +120,7 @@ impl Connection {
             handle: conn_handle,
             database_handle,
             state: ConnectionState::pristine(),
+            released: Arc::new(AtomicBool::new(false)),
             session_parameters,
         })
     }
@@ -187,12 +191,43 @@ impl Connection {
         let handle = self.handle;
         let database_handle = self.database_handle;
         let state = self.state.clone();
+        let released = self.released.clone();
         async_to_js(env, async move {
             let close = DRIVER.connection_close(handle).await;
-            let _ = DRIVER.connection_release(handle);
-            let _ = DRIVER.database_release(database_handle);
+            release_handles(handle, database_handle, &released);
             state.mark_terminated();
             close
         })
+    }
+}
+
+/// Release both handles, but only for the first caller to claim them.
+///
+/// `destroy()` and [`Drop`] can both reach here, in either order: a JS caller
+/// that never awaits the `destroy()` promise can have the object collected
+/// while the close is still in flight. The swap makes the release idempotent,
+/// which matters because the handle managers log an error on a magic mismatch —
+/// a second release would be harmless but noisy.
+fn release_handles(handle: Handle, database_handle: Handle, released: &AtomicBool) {
+    if released.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _ = DRIVER.connection_release(handle);
+    let _ = DRIVER.database_release(database_handle);
+}
+
+/// Reclaim the core handles when the JS object is garbage collected.
+///
+/// `destroy()` is the documented cleanup path, but nothing obliges a JS caller
+/// to invoke it, and `sf_core`'s handle managers never reuse ids — so a
+/// `Connection` that is simply dropped would strand both its connection and
+/// database handle for the life of the process.
+///
+/// This deliberately does not log out: that is network I/O and cannot be run
+/// from a finalizer. Callers who need a graceful logout must still call
+/// `destroy()`; this only stops the handles from leaking.
+impl Drop for Connection {
+    fn drop(&mut self) {
+        release_handles(self.handle, self.database_handle, &self.released);
     }
 }
