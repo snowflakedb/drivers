@@ -407,3 +407,23 @@ behavior_differences:
     status_rationale: |
       One rule for every type is easier to rely on than a rule with exceptions, and the old
       driver's exceptions came from its internals rather than from a decision.
+
+  19:
+    name: 'Statements issued while a connect is in flight are refused rather than queued'
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A connection whose login is still running is in its own connecting state, and requests
+      reaching it are put on a queue and run once the login completes
+      (StateConnecting.request -> enqueueRequest). The caller sees no error.
+    new_driver_behavior: |
+      A connection counts as never established until its connect resolves, so a statement issued
+      in that window is refused with ClientError 407001, SQL state 08003, the same error a caller
+      gets for never calling connect at all.
+    status_rationale: |
+      The window is only reachable by starting a statement without awaiting connect, which no
+      documented usage does. Queueing means holding operations and replaying them after login,
+      which is its own feature rather than an error-mapping detail.
