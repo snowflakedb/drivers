@@ -41,6 +41,9 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Upgrade npm
+        run: npm install -g npm@11
+
       # build:core compiles the nodejs_bridge crate (transitively sf_core) via
       # @napi-rs/cli -> cargo. Restore the cargo registry + target cache so the
       # build reuses artifacts instead of recompiling the dep graph every run.
@@ -99,6 +102,9 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: '22'
+
+      - name: Upgrade npm
+        run: npm install -g npm@11
 
       - name: Restore Rust cache
         id: rust-cache

@@ -54,7 +54,7 @@
     "big-integer": "^1.6.52",
     "oxfmt": "^0.48.0",
     "oxlint": "^1.43.0",
-    "snowflake-sdk-old": "npm:snowflake-sdk@^3.1.0",
+    "snowflake-sdk-old": "npm:snowflake-sdk@3.3.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
   },
