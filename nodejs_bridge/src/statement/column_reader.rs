@@ -288,7 +288,17 @@ impl ColumnReader {
                 JsCell::Str(Cow::Borrowed(array.value(row_index)))
             }),
             Self::Text(array) => read_cell(array, row_index, || {
-                JsCell::Str(Cow::Borrowed(array.value(row_index)))
+                // The Arrow `Utf8` → `&str` decode is shared with the ODBC and
+                // Python front ends via `sf_types`; only the borrow into a
+                // `JsCell` stays here. `read_cell` already excluded NULL, and a
+                // non-null `Utf8` cell always decodes, so the reader cannot
+                // error on this path.
+                let value = sf_types::SnowflakeText
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!("non-null Utf8 cell always decodes to a &str")
+                    });
+                JsCell::Str(Cow::Borrowed(value))
             }),
             Self::Real(array) => read_cell(array, row_index, || {
                 let value = sf_types::SnowflakeReal
