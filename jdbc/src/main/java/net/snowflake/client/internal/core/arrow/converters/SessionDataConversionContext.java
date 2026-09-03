@@ -27,6 +27,7 @@ public final class SessionDataConversionContext implements DataConversionContext
   private final boolean honorClientTZForTimestampNTZ;
   private final String timestampMappedType;
   private final boolean treatDecimalAsInt;
+  private final boolean arrowTreatDecimalAsInt;
 
   public static DataConversionContext from(ParametersRegistry params) {
     SnowflakeDateTimeFormat dateFormatter =
@@ -59,6 +60,7 @@ public final class SessionDataConversionContext implements DataConversionContext
     String timestampMappedType = params.get(Parameter.CLIENT_TIMESTAMP_TYPE_MAPPING);
     boolean treatNTZAsUTC = params.getBool(Parameter.JDBC_TREAT_TIMESTAMP_NTZ_AS_UTC);
     boolean treatDecimalAsInt = params.getBool(Parameter.JDBC_TREAT_DECIMAL_AS_INT);
+    boolean arrowTreatDecimalAsInt = params.getBool(Parameter.JDBC_ARROW_TREAT_DECIMAL_AS_INT);
 
     return new SessionDataConversionContext(
         dateFormatter,
@@ -75,7 +77,8 @@ public final class SessionDataConversionContext implements DataConversionContext
         treatNTZAsUTC,
         honorClientTZForTimestampNTZ,
         timestampMappedType,
-        treatDecimalAsInt);
+        treatDecimalAsInt,
+        arrowTreatDecimalAsInt);
   }
 
   static SnowflakeDateTimeFormat buildDateFormatter(String snowflakeFormat) {

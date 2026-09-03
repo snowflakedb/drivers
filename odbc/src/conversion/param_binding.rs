@@ -12,11 +12,12 @@ use snafu::{OptionExt, ResultExt};
 use crate::api::CDataType;
 use crate::api::TimestampSubtype;
 use crate::api::encoding::{OdbcEncoding, Wide, WideChar, wchar_byte_size, wide_strlen_bounded};
+use crate::api::types::{SQL_SF_TIMESTAMP_LTZ, SQL_SF_TIMESTAMP_NTZ, SQL_SF_TIMESTAMP_TZ};
 use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding, SQL_PARAM_IGNORE};
 use odbc_sys as sql;
 
 use super::binary::SnowflakeBinary;
-use super::boolean::SnowflakeBoolean;
+use super::boolean::read_boolean_param;
 use super::date::SnowflakeDate;
 #[cfg(not(windows))]
 use super::error::InvalidUtf8Snafu;
@@ -36,6 +37,7 @@ use super::time::SnowflakeTime;
 use super::timestamp::{SnowflakeTimestampLtz, SnowflakeTimestampNtz, SnowflakeTimestampTz};
 use super::traits::{ReadODBC, SnowflakeLogicalType, SnowflakeType, WriteWire};
 use super::varchar::SnowflakeVarchar;
+use super::warning::Warnings;
 
 // =============================================================================
 // ParamConverter trait (public interface)
@@ -44,7 +46,7 @@ use super::varchar::SnowflakeVarchar;
 /// Trait for converting an ODBC parameter binding into the canonical wire-text
 /// payload Snowflake's parameter-binding protocol expects.
 ///
-/// Returns `(sf_type, text)`; the format-specific encoder
+/// Returns `(sf_type, text, warnings)`; the format-specific encoder
 /// (`odbc_bindings_to_json` for inline JSON, `odbc_bindings_to_csv` for the
 /// stage-binding CSV file) supplies the envelope around the text.  Keeping
 /// converters format-agnostic means every type has a single source of truth
@@ -53,7 +55,7 @@ pub(crate) trait ParamConverter {
     fn convert(
         &self,
         binding: &ParameterBinding,
-    ) -> Result<(SnowflakeLogicalType, String), BindingError>;
+    ) -> Result<(SnowflakeLogicalType, String, Warnings), BindingError>;
 }
 
 /// Generic adapter: any type implementing `ReadODBC + WriteWire` automatically
@@ -66,10 +68,22 @@ impl<T: ReadODBC + WriteWire> ParamConverter for WireParamConverter<T> {
     fn convert(
         &self,
         binding: &ParameterBinding,
-    ) -> Result<(SnowflakeLogicalType, String), BindingError> {
+    ) -> Result<(SnowflakeLogicalType, String, Warnings), BindingError> {
         let value = self.snowflake_type.read_odbc(binding)?;
         let text = self.snowflake_type.write_wire(value)?;
-        Ok((self.snowflake_type.sf_type(), text))
+        Ok((self.snowflake_type.sf_type(), text, vec![]))
+    }
+}
+
+struct BooleanParamConverter;
+
+impl ParamConverter for BooleanParamConverter {
+    fn convert(
+        &self,
+        binding: &ParameterBinding,
+    ) -> Result<(SnowflakeLogicalType, String, Warnings), BindingError> {
+        let (value, warnings) = read_boolean_param(binding)?;
+        Ok((SnowflakeLogicalType::Boolean, value.to_string(), warnings))
     }
 }
 
@@ -180,12 +194,12 @@ impl WriteWire for SnowflakeDecimal {
 /// The SQL type determines the Snowflake logical type, which in turn knows
 /// how to read various C data types from the ODBC buffer.
 ///
-/// For `SQL_TYPE_TIMESTAMP` the dispatch additionally consults
-/// `binding.sf_subtype`: `None` (and `Some(Ntz)`) routes to TIMESTAMP_NTZ
-/// for backward compatibility with Tableau/Excel/Power BI; `Some(Ltz)` and
-/// `Some(Tz)` route to the matching Snowflake logical type. Vendor-code
-/// normalisation happens at `bind_parameter` time, so by the time we get
-/// here `sql_data_type` is always a standard ODBC code.
+/// For `SQL_TYPE_TIMESTAMP` and the Snowflake vendor codes
+/// `SQL_SF_TIMESTAMP_{NTZ,LTZ,TZ}` the dispatch consults `binding.sf_subtype`
+/// (or, if that is `None`, the vendor code on `sql_data_type`): `None` (and
+/// `Some(Ntz)`) routes to TIMESTAMP_NTZ for backward compatibility with
+/// Tableau/Excel/Power BI; `Some(Ltz)` and `Some(Tz)` route to the matching
+/// Snowflake logical type.
 fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>, BindingError> {
     let sql_type = &binding.sql_data_type;
     match *sql_type {
@@ -222,9 +236,7 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
             snowflake_type: SnowflakeDecimal,
         })),
 
-        sql::SqlDataType::EXT_BIT => Ok(Box::new(WireParamConverter {
-            snowflake_type: SnowflakeBoolean,
-        })),
+        sql::SqlDataType::EXT_BIT => Ok(Box::new(BooleanParamConverter)),
 
         sql::SqlDataType::EXT_BINARY
         | sql::SqlDataType::EXT_VAR_BINARY
@@ -253,46 +265,51 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
             }))
         }
 
-        // ODBC 3.x SQL_TYPE_TIMESTAMP (=93) and its ODBC 2.x predecessor
-        // SQL_TIMESTAMP (=11, exposed as `EXT_TIMESTAMP`) route to the same
-        // converter (already covered before this PR; documented here for
-        // symmetry with the new DATE / TIME alias arms above).
-        //
-        // SQL_TYPE_TIMESTAMP (93) routing depends on the optional Snowflake
-        // vendor opt-in. Default (no opt-in) and the explicit NTZ opt-in both
-        // map to the NTZ converter (backward compatibility with
-        // Tableau/Excel/Power BI). That converter now emits a bare wall-clock
-        // string tagged wire `type=TEXT`, so the server attaches the session
-        // `TIMEZONE` offset -- realigning NTZ binds with the legacy 3.16.0
-        // driver (see BD#74 and `write_timestamp_wire_wallclock`). Explicit LTZ
-        // and TZ opt-ins map to their own converters below.
-        sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => match binding.sf_subtype {
-            None | Some(TimestampSubtype::Ntz) => Ok(Box::new(WireParamConverter {
-                snowflake_type: SnowflakeTimestampNtz { scale: 9 },
-            })),
-            Some(TimestampSubtype::Ltz) => Ok(Box::new(WireParamConverter {
-                snowflake_type: SnowflakeTimestampLtz { scale: 9 },
-            })),
-            // TZ binding emits the legacy two-token wire format
-            // `"<epoch_nanoseconds> <offset_minutes_plus_1440>"` so the
-            // server stores the original instant *and* its timezone
-            // offset. SQL_C_TYPE_TIMESTAMP / SQL_C_BINARY binds (no
-            // offset field) are serialised as UTC + offset 0, matching
-            // the legacy Python connector's handling of naive
-            // `datetime` values bound to TIMESTAMP_TZ. SQL_C_CHAR /
-            // SQL_C_WCHAR binds parse a `+/-HH:MM` suffix from the
-            // string and preserve that offset on the wire.
-            //
-            // `tz_offset_format` is a fetch-side concern only -- the
-            // bind path's `WriteWire` always emits the offset
-            // unconditionally -- so `None` is correct here.
-            Some(TimestampSubtype::Tz) => Ok(Box::new(WireParamConverter {
-                snowflake_type: SnowflakeTimestampTz {
-                    scale: 9,
-                    tz_offset_format: None,
-                },
-            })),
-        },
+        // ODBC 3.x SQL_TYPE_TIMESTAMP (=93), its ODBC 2.x predecessor
+        // SQL_TIMESTAMP (=11, exposed as `EXT_TIMESTAMP`), and the
+        // Snowflake vendor codes 2000/2001/2002 route through the same
+        // subtype dispatch. Default (no opt-in) and the explicit NTZ
+        // opt-in both map to the NTZ converter (backward compatibility
+        // with Tableau/Excel/Power BI). That converter emits a bare
+        // wall-clock string tagged wire `type=TEXT`, so the server
+        // attaches the session `TIMEZONE` offset. Explicit LTZ and TZ
+        // opt-ins map to their own converters below.
+        sql::SqlDataType::TIMESTAMP
+        | sql::SqlDataType::EXT_TIMESTAMP
+        | SQL_SF_TIMESTAMP_NTZ
+        | SQL_SF_TIMESTAMP_LTZ
+        | SQL_SF_TIMESTAMP_TZ => {
+            let subtype = binding
+                .sf_subtype
+                .or_else(|| TimestampSubtype::from_parameter_type(*sql_type));
+            match subtype {
+                None | Some(TimestampSubtype::Ntz) => Ok(Box::new(WireParamConverter {
+                    snowflake_type: SnowflakeTimestampNtz { scale: 9 },
+                })),
+                Some(TimestampSubtype::Ltz) => Ok(Box::new(WireParamConverter {
+                    snowflake_type: SnowflakeTimestampLtz { scale: 9 },
+                })),
+                // TZ binding emits the two-token wire format
+                // `"<epoch_nanoseconds> <offset_minutes_plus_1440>"` so the
+                // server stores the original instant *and* its timezone
+                // offset. SQL_C_TYPE_TIMESTAMP / SQL_C_BINARY binds (no
+                // offset field) are serialised as UTC + offset 0, matching
+                // the Python connector's handling of naive `datetime`
+                // values bound to TIMESTAMP_TZ. SQL_C_CHAR / SQL_C_WCHAR
+                // binds parse a `+/-HH:MM` suffix from the string and
+                // preserve that offset on the wire.
+                //
+                // `tz_offset_format` is a fetch-side concern only -- the
+                // bind path's `WriteWire` always emits the offset
+                // unconditionally -- so `None` is correct here.
+                Some(TimestampSubtype::Tz) => Ok(Box::new(WireParamConverter {
+                    snowflake_type: SnowflakeTimestampTz {
+                        scale: 9,
+                        tz_offset_format: None,
+                    },
+                })),
+            }
+        }
 
         // SQL_INTERVAL_* parameter types route through dedicated
         // year-month / day-time converters that enforce the C-source
@@ -362,6 +379,15 @@ pub fn odbc_bindings_to_json(
     ipd: &IpdDescriptor,
     max_params: u16,
 ) -> Result<String, BindingError> {
+    odbc_bindings_to_json_into(apd, ipd, max_params, &mut Vec::new())
+}
+
+pub(crate) fn odbc_bindings_to_json_into(
+    apd: &ApdDescriptor,
+    ipd: &IpdDescriptor,
+    max_params: u16,
+    warnings: &mut Warnings,
+) -> Result<String, BindingError> {
     let array_size = apd.array_size.max(1);
     let bind_type = apd.bind_type;
     let bind_offset = if apd.bind_offset_ptr.is_null() {
@@ -412,7 +438,8 @@ pub fn odbc_bindings_to_json(
                 return NullPointerSnafu.fail();
             }
             let converter = make_converter(&binding)?;
-            let (sf_type, text) = converter.convert(&binding)?;
+            let (sf_type, text, convert_warnings) = converter.convert(&binding)?;
+            warnings.extend(convert_warnings);
             snowflake_type = sf_type;
             values.push(Value::String(text));
         }
@@ -440,6 +467,15 @@ pub fn odbc_bindings_to_csv(
     apd: &ApdDescriptor,
     ipd: &IpdDescriptor,
     max_params: u16,
+) -> Result<String, BindingError> {
+    odbc_bindings_to_csv_into(apd, ipd, max_params, &mut Vec::new())
+}
+
+pub(crate) fn odbc_bindings_to_csv_into(
+    apd: &ApdDescriptor,
+    ipd: &IpdDescriptor,
+    max_params: u16,
+    warnings: &mut Warnings,
 ) -> Result<String, BindingError> {
     let array_size = apd.array_size;
     let bind_type = apd.bind_type;
@@ -485,7 +521,8 @@ pub fn odbc_bindings_to_csv(
             }
 
             let converter = make_converter(&binding)?;
-            let (_, text) = converter.convert(&binding)?;
+            let (_, text, convert_warnings) = converter.convert(&binding)?;
+            warnings.extend(convert_warnings);
             append_escaped_csv_cell(&mut output, &text);
         }
         output.push('\n');
@@ -943,7 +980,8 @@ pub(crate) fn convert_for_test(
     binding: &ParameterBinding,
 ) -> Result<(SnowflakeLogicalType, String), BindingError> {
     let converter = make_converter(binding)?;
-    converter.convert(binding)
+    let (sf_type, text, _) = converter.convert(binding)?;
+    Ok((sf_type, text))
 }
 
 // =============================================================================
@@ -966,17 +1004,9 @@ mod tests {
         buffer_length: sql::Len,
         ind_ptr: *mut sql::Len,
     ) -> ParameterBinding {
-        // Mirror what `bind_parameter` does: normalise vendor codes to the
-        // standard SQL_TYPE_TIMESTAMP and stash the subtype on `sf_subtype`
-        // so converter dispatch sees the same shape it would in production.
         let sf_subtype = TimestampSubtype::from_parameter_type(parameter_type);
-        let sql_data_type = if sf_subtype.is_some() {
-            sql::SqlDataType::TIMESTAMP
-        } else {
-            parameter_type
-        };
         ParameterBinding {
-            sql_data_type,
+            sql_data_type: parameter_type,
             value_type,
             parameter_value_ptr: ptr,
             buffer_length,
@@ -1022,7 +1052,8 @@ mod tests {
         binding: &ParameterBinding,
     ) -> Result<(SnowflakeLogicalType, String), BindingError> {
         let converter = make_converter(binding)?;
-        converter.convert(binding)
+        let (sf_type, text, _) = converter.convert(binding)?;
+        Ok((sf_type, text))
     }
 
     // -- read_wchar_str tests -------------------------------------------------
@@ -1348,7 +1379,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_char_true_string_to_boolean() -> TestResult {
+    fn convert_char_true_string_to_boolean_fails() {
         let val = b"true\0";
         let binding = make_binding(
             CDataType::Char,
@@ -1357,14 +1388,14 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, "true".to_string());
-        Ok(())
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::InvalidBooleanValue { .. })
+        ));
     }
 
     #[test]
-    fn convert_char_false_string_to_boolean() -> TestResult {
+    fn convert_char_false_string_to_boolean_fails() {
         let val = b"false\0";
         let binding = make_binding(
             CDataType::Char,
@@ -1373,10 +1404,10 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, "false".to_string());
-        Ok(())
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::InvalidBooleanValue { .. })
+        ));
     }
 
     #[test]
@@ -1415,7 +1446,7 @@ mod tests {
 
     #[test]
     fn convert_slong_to_boolean_true() -> TestResult {
-        let val: i32 = 42;
+        let val: i32 = 1;
         let binding = make_binding(
             CDataType::SLong,
             sql::SqlDataType::EXT_BIT,
@@ -1447,7 +1478,7 @@ mod tests {
 
     #[test]
     fn convert_sbigint_to_boolean_true() -> TestResult {
-        let val: i64 = -1;
+        let val: i64 = 1;
         let binding = make_binding(
             CDataType::SBigInt,
             sql::SqlDataType::EXT_BIT,
@@ -1462,8 +1493,24 @@ mod tests {
     }
 
     #[test]
+    fn convert_sbigint_negative_to_boolean_fails() {
+        let val: i64 = -1;
+        let binding = make_binding(
+            CDataType::SBigInt,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const i64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
     fn convert_double_to_boolean_true() -> TestResult {
-        let val: f64 = 1.5;
+        let val: f64 = 1.0;
         let binding = make_binding(
             CDataType::Double,
             sql::SqlDataType::EXT_BIT,
@@ -1494,8 +1541,24 @@ mod tests {
     }
 
     #[test]
+    fn convert_double_1_5_to_boolean_true() -> TestResult {
+        let val: f64 = 1.5;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, "true".to_string());
+        Ok(())
+    }
+
+    #[test]
     fn convert_float_to_boolean_true() -> TestResult {
-        let val: f32 = 0.5;
+        let val: f32 = 1.0;
         let binding = make_binding(
             CDataType::Float,
             sql::SqlDataType::EXT_BIT,
@@ -1516,6 +1579,27 @@ mod tests {
             scale: 0,
             sign: 1,
             val: 1u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::EXT_BIT,
+            &n as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, "true".to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_one_via_scale_to_boolean_true() -> TestResult {
+        let n = sql::Numeric {
+            precision: 10,
+            scale: 1,
+            sign: 1,
+            val: 10u128.to_le_bytes(),
         };
         let binding = make_binding(
             CDataType::Numeric,
@@ -1587,7 +1671,7 @@ mod tests {
 
     #[test]
     fn convert_stinyint_to_boolean_true() -> TestResult {
-        let val: i8 = -1;
+        let val: i8 = 1;
         let binding = make_binding(
             CDataType::STinyInt,
             sql::SqlDataType::EXT_BIT,
@@ -1619,7 +1703,7 @@ mod tests {
 
     #[test]
     fn convert_utinyint_to_boolean_true() -> TestResult {
-        let val: u8 = 255;
+        let val: u8 = 1;
         let binding = make_binding(
             CDataType::UTinyInt,
             sql::SqlDataType::EXT_BIT,
@@ -1631,6 +1715,22 @@ mod tests {
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
         assert_eq!(v, "true".to_string());
         Ok(())
+    }
+
+    #[test]
+    fn convert_utinyint_other_than_0_or_1_to_boolean_fails() {
+        let val: u8 = 255;
+        let binding = make_binding(
+            CDataType::UTinyInt,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::NumericMagnitudeOverflow { .. })
+        ));
     }
 
     #[test]
@@ -1730,7 +1830,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_float_to_boolean_false() -> TestResult {
+    fn convert_float_zero_to_boolean_false() -> TestResult {
         let val: f32 = 0.0;
         let binding = make_binding(
             CDataType::Float,
@@ -1746,7 +1846,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_float_nan_to_boolean_fails() {
+    fn convert_float_nan_to_boolean_true() -> TestResult {
         let val: f32 = f32::NAN;
         let binding = make_binding(
             CDataType::Float,
@@ -1755,10 +1855,10 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(
-            convert_binding(&binding).is_err(),
-            "Float NaN should not convert to boolean"
-        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, "true".to_string());
+        Ok(())
     }
 
     #[test]
@@ -1778,7 +1878,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_double_nan_to_boolean_fails() {
+    fn convert_double_nan_to_boolean_true() -> TestResult {
         let val: f64 = f64::NAN;
         let binding = make_binding(
             CDataType::Double,
@@ -1787,10 +1887,10 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(
-            convert_binding(&binding).is_err(),
-            "Double NaN should not convert to boolean"
-        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, "true".to_string());
+        Ok(())
     }
 
     #[test]
@@ -1826,7 +1926,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_slong_negative_to_boolean_true() -> TestResult {
+    fn convert_slong_negative_to_boolean_fails() {
         let val: i32 = -99;
         let binding = make_binding(
             CDataType::SLong,
@@ -1835,10 +1935,26 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, "true".to_string());
-        Ok(())
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_slong_other_than_0_or_1_to_boolean_fails() {
+        let val: i32 = 42;
+        let binding = make_binding(
+            CDataType::SLong,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::NumericMagnitudeOverflow { .. })
+        ));
     }
 
     #[test]
@@ -2048,7 +2164,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_char_numeric_nonzero_to_boolean() -> TestResult {
+    fn convert_char_numeric_nonzero_to_boolean_fails() {
         let val = b"42\0";
         let binding = make_binding(
             CDataType::Char,
@@ -2057,14 +2173,14 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, "true".to_string());
-        Ok(())
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::NumericMagnitudeOverflow { .. })
+        ));
     }
 
     #[test]
-    fn convert_char_negative_to_boolean() -> TestResult {
+    fn convert_char_negative_to_boolean_fails() {
         let val = b"-1\0";
         let binding = make_binding(
             CDataType::Char,
@@ -2073,14 +2189,14 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, "true".to_string());
-        Ok(())
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::NumericMagnitudeOverflow { .. })
+        ));
     }
 
     #[test]
-    fn convert_char_float_string_to_boolean() -> TestResult {
+    fn convert_char_float_string_to_boolean_false() -> TestResult {
         let val = b"0.5\0";
         let binding = make_binding(
             CDataType::Char,
@@ -2091,12 +2207,12 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, "true".to_string());
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
     #[test]
-    fn convert_char_float_zero_string_to_boolean() -> TestResult {
+    fn convert_char_float_zero_string_to_boolean_false() -> TestResult {
         let val = b"0.0\0";
         let binding = make_binding(
             CDataType::Char,
@@ -2112,7 +2228,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_char_neg_zero_string_to_boolean() -> TestResult {
+    fn convert_char_neg_zero_string_to_boolean_false() -> TestResult {
         let val = b"-0.0\0";
         let binding = make_binding(
             CDataType::Char,
@@ -2798,16 +2914,8 @@ mod tests {
         Ok(())
     }
 
-    // Non-finite numeric-literal rejection (SQLSTATE 22018)
-    //
-    // Rust's f64::from_str accepts "Infinity", "-Infinity" and "NaN", but the
-    // ODBC "numeric-literal" grammar (MS ODBC spec, Appendix C) does not
-    // permit these tokens. The driver rejects them client-side so the caller
-    // sees InvalidCharacterValueForCast instead of a value that only works
-    // for SQL_REAL/SQL_DOUBLE targets.
-
     #[test]
-    fn convert_char_infinity_as_real_rejected() {
+    fn convert_char_infinity_as_real() -> TestResult {
         let val = b"Infinity\0";
         let binding = make_binding(
             CDataType::Char,
@@ -2816,14 +2924,14 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "Infinity".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_char_neg_infinity_as_real_rejected() {
+    fn convert_char_neg_infinity_as_real() -> TestResult {
         let val = b"-Infinity\0";
         let binding = make_binding(
             CDataType::Char,
@@ -2832,14 +2940,14 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "-Infinity".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_char_nan_as_real_rejected() {
+    fn convert_char_nan_as_real() -> TestResult {
         let val = b"NaN\0";
         let binding = make_binding(
             CDataType::Char,
@@ -2848,14 +2956,46 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "NaN".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_wchar_infinity_as_real_rejected() {
+    fn convert_char_infinity_as_sql_real() -> TestResult {
+        let val = b"Infinity\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::REAL,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "Infinity".to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn convert_char_nan_as_sql_float() -> TestResult {
+        let val = b"NaN\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::FLOAT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "NaN".to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn convert_wchar_infinity_as_real() -> TestResult {
         let val: [u16; 9] = [
             b'I' as u16,
             b'n' as u16,
@@ -2875,14 +3015,14 @@ mod tests {
             (val.len() * mem::size_of::<u16>()) as sql::Len,
             &mut ind,
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "Infinity".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_wchar_neg_infinity_as_real_rejected() {
+    fn convert_wchar_neg_infinity_as_real() -> TestResult {
         let val: [u16; 10] = [
             b'-' as u16,
             b'I' as u16,
@@ -2903,14 +3043,14 @@ mod tests {
             (val.len() * mem::size_of::<u16>()) as sql::Len,
             &mut ind,
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "-Infinity".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_wchar_nan_as_real_rejected() {
+    fn convert_wchar_nan_as_real() -> TestResult {
         let val: [u16; 4] = [b'N' as u16, b'a' as u16, b'N' as u16, 0];
         let mut ind: sql::Len = sql::NTS;
         let binding = make_binding(
@@ -2920,10 +3060,10 @@ mod tests {
             (val.len() * mem::size_of::<u16>()) as sql::Len,
             &mut ind,
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "NaN".to_string());
+        Ok(())
     }
 
     // Overflow vs. explicit-non-finite-token discrimination
@@ -2931,10 +3071,8 @@ mod tests {
     // Rust's `f64::from_str` overflows well-formed numeric literals whose
     // magnitude exceeds `f64::MAX` (e.g. "1e309") silently to +/-inf. Those
     // literals are valid ODBC numeric-literals; only the magnitude is out of
-    // range, so the spec-aligned SQLSTATE is 22003 (NumericMagnitudeOverflow),
-    // not 22018 (InvalidNumericLiteral, reserved for tokens that aren't in
-    // the ODBC numeric-literal grammar at all). The next four tests pin both
-    // halves of that contract.
+    // range, so the spec-aligned SQLSTATE is 22003 (NumericMagnitudeOverflow).
+    // Explicit non-finite tokens are accepted and serialized as Infinity/NaN.
 
     #[test]
     fn convert_char_overflow_as_real_overflows() {
@@ -2994,10 +3132,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_char_lowercase_inf_as_real_rejected() {
-        // Lock in case-insensitive token detection: a future "let's only
-        // match the canonical \"Infinity\" spelling" regression must fail
-        // this test, since "inf" is also accepted by Rust's parser.
+    fn convert_char_lowercase_inf_as_real() -> TestResult {
         let val = b"inf\0";
         let binding = make_binding(
             CDataType::Char,
@@ -3006,10 +3141,10 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "Infinity".to_string());
+        Ok(())
     }
 
     // Malformed numeric literal: SQL_C_CHAR is a supported source type for
@@ -3086,13 +3221,8 @@ mod tests {
         ));
     }
 
-    // Case-insensitive token detection: Rust's parser accepts `inf`,
-    // `infinity`, `nan` in arbitrary case, and signed prefixes. The
-    // explicit-non-finite-token detector must cover that whole surface so
-    // mixed-case spellings cannot escape the 22018 path and end up on the
-    // server (or get reclassified as 22003 overflow).
     #[test]
-    fn convert_char_mixed_case_infinity_as_real_rejected() {
+    fn convert_char_mixed_case_infinity_as_real() -> TestResult {
         let val = b"InFiNiTy\0";
         let binding = make_binding(
             CDataType::Char,
@@ -3101,14 +3231,14 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "Infinity".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_char_uppercase_inf_as_real_rejected() {
+    fn convert_char_uppercase_inf_as_real() -> TestResult {
         let val = b"INF\0";
         let binding = make_binding(
             CDataType::Char,
@@ -3117,14 +3247,14 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "Infinity".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_char_lowercase_nan_as_real_rejected() {
+    fn convert_char_lowercase_nan_as_real() -> TestResult {
         let val = b"nan\0";
         let binding = make_binding(
             CDataType::Char,
@@ -3133,16 +3263,15 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "NaN".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_char_mixed_case_nan_as_real_rejected() {
-        let val = b"NaN\0";
-        // (NaN is the canonical spelling, but we also accept arbitrary case.)
+    fn convert_char_mixed_case_nan_as_real() -> TestResult {
+        let val = b"nAn\0";
         let binding = make_binding(
             CDataType::Char,
             sql::SqlDataType::DOUBLE,
@@ -3150,28 +3279,14 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
-        // Also exercise a non-canonical case to catch any narrowing of the
-        // detector.
-        let val2 = b"nAn\0";
-        let binding2 = make_binding(
-            CDataType::Char,
-            sql::SqlDataType::DOUBLE,
-            val2.as_ptr() as sql::Pointer,
-            sql::NTS,
-            std::ptr::null_mut(),
-        );
-        assert!(matches!(
-            convert_binding(&binding2),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "NaN".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_char_signed_lowercase_infinity_as_real_rejected() {
+    fn convert_char_signed_lowercase_infinity_as_real() -> TestResult {
         let val = b"+infinity\0";
         let binding = make_binding(
             CDataType::Char,
@@ -3180,15 +3295,14 @@ mod tests {
             sql::NTS,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "Infinity".to_string());
+        Ok(())
     }
 
     #[test]
-    fn convert_wchar_mixed_case_infinity_as_real_rejected() {
-        // UTF-16 of "iNFINITY"
+    fn convert_wchar_mixed_case_infinity_as_real() -> TestResult {
         let val: [u16; 9] = [
             b'i' as u16,
             b'N' as u16,
@@ -3208,10 +3322,10 @@ mod tests {
             (val.len() * mem::size_of::<u16>()) as sql::Len,
             &mut ind,
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidNumericLiteral { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "Infinity".to_string());
+        Ok(())
     }
 
     // -- Structured C types → VARCHAR -----------------------------------------
@@ -4789,7 +4903,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_float_as_boolean() -> TestResult {
+    fn convert_float_as_boolean_true() -> TestResult {
         let val: f32 = 1.0;
         let binding = make_binding(
             CDataType::Float,
@@ -4805,7 +4919,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_float_nan_as_boolean_fails() {
+    fn convert_float_nan_as_boolean_true() -> TestResult {
         let val: f32 = f32::NAN;
         let binding = make_binding(
             CDataType::Float,
@@ -4814,10 +4928,10 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(BindingError::InvalidBooleanValue { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, "true".to_string());
+        Ok(())
     }
 
     #[test]
@@ -4832,7 +4946,28 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(BindingError::InvalidBooleanValue { .. })
+            Err(BindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_numeric_other_than_0_or_1_to_boolean_fails() {
+        let ns = sql::Numeric {
+            precision: 10,
+            scale: 0,
+            sign: 1,
+            val: 42u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::EXT_BIT,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::NumericMagnitudeOverflow { .. })
         ));
     }
 

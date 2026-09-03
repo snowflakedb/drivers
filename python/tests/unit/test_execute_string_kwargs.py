@@ -17,7 +17,10 @@ def _assert_kwargs_forwarded(execute_mock):
     ]
 
 
-def test_execute_string_forwards_kwargs_to_each_cursor(connection):
+def test_execute_string_forwards_kwargs_to_each_cursor(mock_db_api):
+    from snowflake.connector.connection import Connection
+
+    connection = Connection(user="test_user", account="test_account")
     cursor = MagicMock()
     connection.cursor = MagicMock(return_value=cursor)
 
@@ -30,7 +33,10 @@ def test_execute_string_forwards_kwargs_to_each_cursor(connection):
     _assert_kwargs_forwarded(cursor.execute)
 
 
-def test_execute_stream_forwards_kwargs_to_each_cursor(connection):
+def test_execute_stream_forwards_kwargs_to_each_cursor(mock_db_api):
+    from snowflake.connector.connection import Connection
+
+    connection = Connection(user="test_user", account="test_account")
     cursor = MagicMock()
     connection.cursor = MagicMock(return_value=cursor)
 

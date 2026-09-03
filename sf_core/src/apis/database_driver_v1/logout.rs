@@ -7,7 +7,9 @@
 //!
 //! The module exports a clean interface to connection.rs:
 //! - `prepare_logout_from_conn()`: Synchronous; called while holding the connection lock
-//! - `execute_logout_with_strategy()`: Async; called after the lock is released
+//! - `send_logout_request()`: Async; called after the lock is released. The
+//!   caller applies its `ErrorStrategy`, so it can drive close state from the raw
+//!   outcome while still honouring `best_effort` in what it returns.
 //! - `send_logout_request()`: Sends the HTTP logout request
 
 use super::async_query_registry::AsyncQueryRegistry;
@@ -244,36 +246,6 @@ pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError
         .build(),
         other => other,
     })
-}
-
-/// Execute logout with error strategy handling.
-///
-/// This helper encapsulates the pattern of:
-/// 1. Sending logout if data is available
-/// 2. Logging success
-/// 3. Applying error strategy to handle failures
-///
-/// This keeps connection_close clean and makes the logout execution flow testable.
-pub(super) async fn execute_logout_with_strategy(
-    logout_data: Option<LogoutData>,
-    error_strategy: crate::config::logout::ErrorStrategy,
-) -> Result<(), ApiError> {
-    let logout_result = match logout_data {
-        Some(data) => {
-            let result = send_logout_request(data).await;
-            if result.is_ok() {
-                tracing::info!("Logout completed successfully");
-            }
-            result
-        }
-        None => {
-            // Logout skipped (explicit config or connection not initialized)
-            // Skip reason already logged by prepare_logout
-            Ok(())
-        }
-    };
-
-    error_strategy.handle_failed_logout(logout_result)
 }
 
 #[cfg(test)]

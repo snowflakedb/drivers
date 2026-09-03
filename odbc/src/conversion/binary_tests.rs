@@ -735,18 +735,13 @@ mod tests {
     }
 
     #[test]
-    fn read_odbc_char_rejects_odd_length_hex() {
-        // SQLSTATE 22018 — ODBC Appendix D requires an even number of
-        // hex digits since each pair encodes one byte.
+    fn read_odbc_char_odd_length_hex_drops_leftover_nibble() {
         let sn = sn();
-        let buf = b"ABC"; // 3 chars
+        let buf = b"ABC";
         let mut ind: sql::Len = 3;
         let b = binding_with_indicator(CDataType::Char, buf.as_ptr() as sql::Pointer, 3, &mut ind);
-        let err = sn.read_odbc(&b).unwrap_err();
-        assert!(
-            matches!(err, BindingError::InvalidHexLiteral { .. }),
-            "expected InvalidHexLiteral, got: {err}"
-        );
+        let result = sn.read_odbc(&b).unwrap();
+        assert_eq!(result.as_ref(), &[0xAB]);
     }
 
     #[test]

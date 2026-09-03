@@ -1,5 +1,5 @@
 use crate::DRIVER;
-use crate::error::{ToJsError, async_to_js};
+use crate::error::{ToJsError, UnusableConnection, async_to_js};
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -10,13 +10,47 @@ use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 #[napi]
 pub struct Connection {
     handle: Handle,
     database_handle: Handle,
+    state: ConnectionState,
     /// TEMPORARY: Copied onto every [`Statement`] this connection creates.\
     session_parameters: HashMap<String, String>,
+}
+
+/// Tracked here because the core cannot answer for it: `destroy` releases the
+/// handle, and a failed login leaves the core reporting the same error as for a
+/// connection nobody touched.
+#[derive(Clone)]
+struct ConnectionState(Arc<AtomicU8>);
+
+impl ConnectionState {
+    const PRISTINE: u8 = 0;
+    const CONNECTED: u8 = 1;
+    const TERMINATED: u8 = 2;
+
+    fn pristine() -> Self {
+        Self(Arc::new(AtomicU8::new(Self::PRISTINE)))
+    }
+
+    fn mark_connected(&self) {
+        self.0.store(Self::CONNECTED, Ordering::Relaxed);
+    }
+
+    fn mark_terminated(&self) {
+        self.0.store(Self::TERMINATED, Ordering::Relaxed);
+    }
+
+    fn unusable(&self) -> Option<UnusableConnection> {
+        match self.0.load(Ordering::Relaxed) {
+            Self::CONNECTED => None,
+            Self::TERMINATED => Some(UnusableConnection::Terminated),
+            _ => Some(UnusableConnection::NeverEstablished),
+        }
+    }
 }
 
 #[napi]
@@ -82,6 +116,7 @@ impl Connection {
         Ok(Self {
             handle: conn_handle,
             database_handle,
+            state: ConnectionState::pristine(),
             session_parameters,
         })
     }
@@ -90,8 +125,14 @@ impl Connection {
     pub fn connect(&self, env: &Env) -> Result<AsyncBlock<()>> {
         let handle = self.handle;
         let database_handle = self.database_handle;
+        let state = self.state.clone();
         async_to_js(env, async move {
-            DRIVER.connection_init(None, handle, database_handle).await
+            let result = DRIVER.connection_init(None, handle, database_handle).await;
+            match result {
+                Ok(()) => state.mark_connected(),
+                Err(_) => state.mark_terminated(),
+            }
+            result
         })
     }
 
@@ -102,6 +143,9 @@ impl Connection {
 
     #[napi]
     pub fn execute(&self, env: &Env, query: String) -> Result<Statement> {
+        if let Some(unusable) = self.state.unusable() {
+            return Ok(Statement::refused(unusable));
+        }
         let stmt_handle = DRIVER
             .statement_new(self.handle)
             .map_err(|e| e.to_js_error(*env))?;
@@ -125,6 +169,9 @@ impl Connection {
 
     #[napi]
     pub fn get_query_result(&self, query_id: String) -> Statement {
+        if let Some(unusable) = self.state.unusable() {
+            return Statement::refused(unusable);
+        }
         let conn_handle = self.handle;
         // Shared with the `Statement` handed back, whose `cancel()` triggers it.
         let operation_ctx = Arc::new(OperationCtx::with_own_token());
@@ -139,10 +186,12 @@ impl Connection {
     pub fn destroy(&self, env: &Env) -> Result<AsyncBlock<()>> {
         let handle = self.handle;
         let database_handle = self.database_handle;
+        let state = self.state.clone();
         async_to_js(env, async move {
             let close = DRIVER.connection_close(handle).await;
             let _ = DRIVER.connection_release(handle);
             let _ = DRIVER.database_release(database_handle);
+            state.mark_terminated();
             close
         })
     }

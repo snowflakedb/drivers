@@ -574,19 +574,35 @@ behavior_differences:
 
   35:
     name: "Add cross-type conversion support for SQL_BIT parameter binding"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      Based on the ODBC API (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/c-to-sql-numeric?view=sql-server-ver17) the conversions are incorrect. To be fixed and aligned.
+      Realigned 4.x to the 3.x SQL_BIT bind matrix. Integer and
+      SQL_C_NUMERIC accept only 0 and 1 (other values return 22003).
+      SQL_C_CHAR "42" returns 22003; "true"/"false" return 22018.
+      SQL_C_DOUBLE 1.5 and SQL_C_FLOAT 0.5 return 01S07 and store the
+      truncated bit. SQL_C_FLOAT is accepted. NaN stores true.
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Has restricted value ranges for SQL_BIT parameter binding. Integer and SQL_C_DOUBLE types only accept 0 and 1; other values (negative, >1) fail with 22003. SQL_C_CHAR only accepts "0"/"1"; string literals like "true"/"false" and numeric strings are rejected. SQL_C_FLOAT is not supported at all. SQL_C_DOUBLE NaN is silently converted to false instead of failing.
+      Integer and SQL_C_NUMERIC accept only 0 and 1; other magnitudes
+      return 22003. SQL_C_CHAR integer strings use the same 0/1 rule
+      ("42" is 22003). Non-numeric strings such as "true"/"false" return
+      22018. SQL_C_DOUBLE and SQL_C_FLOAT values in (0, 1) or (1, 2)
+      return SQL_SUCCESS_WITH_INFO 01S07 and store the truncated bit
+      (1.5 → true, 0.5 → false). Negative values and infinities return
+      22003. NaN stores true.
     new_driver_behavior: |
-      Supports all numeric and string C types for SQL_BIT binding. Any nonzero value is true, zero is false. Boolean string literals ("true"/"false") and numeric strings are accepted. Non-finite float/double values (NaN/inf) are rejected with SQLSTATE 22018 (invalid character value for cast).
+      Integer and SQL_C_NUMERIC accept only 0 and 1; other magnitudes
+      return 22003. SQL_C_CHAR "42" returns 22003; "true"/"false" return
+      22018. SQL_C_DOUBLE and SQL_C_FLOAT values in (0, 1) or (1, 2)
+      return SQL_SUCCESS_WITH_INFO 01S07 and store the truncated bit
+      (1.5 → true, 0.5 → false). Negative values and infinities return
+      22003. NaN stores true. SQL_C_FLOAT is accepted.
     description: |
-      Applications using cross-type conversions to BOOLEAN columns will succeed on the new driver where the old driver returned errors.
+      Applications binding cross-type values to BOOLEAN columns see the
+      same SQL_BIT matrix on both drivers.
   36:
     name: "Preserves subnormal double (DBL_MIN) values instead of storing them as zero during parameter binding"
     status: allowed
@@ -604,19 +620,20 @@ behavior_differences:
       Applications working with extremely small floating-point values will get correct results on the new driver.
   37:
     name: "SQL_C_NUMERIC >=1 conversion converts SQL_BIT to true instead of rejecting"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      It's related to BD#35. The conversion of the old driver is correct.
+      Realigned SQL_C_NUMERIC → SQL_BIT to the 3.x conversion: only 0 and 1
+      are accepted; any other magnitude (e.g. 42) returns 22003.
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
       Returns SQL_ERROR with SQLSTATE 22003 (numeric value out of range) when binding a SQL_C_NUMERIC with a value other than 0 or 1 (e.g., 42) to SQL_BIT. The driver sends the raw numeric magnitude to the server which rejects it for a BOOLEAN column.
     new_driver_behavior: |
-      Correctly converts any nonzero SQL_C_NUMERIC mantissa to true (1) and zero to false (0) before sending to the server, matching the behavior of other numeric C types bound to SQL_BIT.
+      SQL_C_NUMERIC values other than 0 or 1 bound to SQL_BIT return SQL_ERROR with SQLSTATE 22003. Zero converts to false and one converts to true.
     description: |
-      Applications binding SQL_C_NUMERIC values to BOOLEAN columns will succeed on the new driver for any nonzero value.
+      Applications binding SQL_C_NUMERIC values other than 0 or 1 to BOOLEAN columns now receive 22003 on both drivers.
   38:
     name: "TIME to SQL_C_CHAR/WCHAR truncation and buffer-too-small handling"
     status: allowed
@@ -770,39 +787,56 @@ behavior_differences:
 
   48:
     name: "SQL_C_CHAR/WCHAR non-finite string literals rejected client-side with 22018"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      This is a bug in the new driver, even though old driver deviates from the ODBC spec.
+      4.x now forwards SQL_C_CHAR/SQL_C_WCHAR "Infinity", "-Infinity",
+      and "NaN" to the server and stores a non-finite FLOAT, matching the old
+      driver.
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
       When SQLBindParameter is called with ValueType=SQL_C_CHAR or SQL_C_WCHAR and the string value is "Infinity", "-Infinity", or "NaN" bound against a SQL_REAL / SQL_DOUBLE / SQL_FLOAT parameter, the driver forwards the string to the server and stores a non-finite FLOAT value.
     new_driver_behavior: |
-      Rejects the bind at SQLExecute time with SQL_ERROR and SQLSTATE 22018 (Invalid character value for cast specification). The MS ODBC specification (Appendix C, "numeric-literal" grammar) restricts character inputs bound to numeric SQL types to the ANSI SQL numeric literal syntax, which does not include the tokens "Infinity", "-Infinity", or "NaN".
+      Binding SQL_C_CHAR or SQL_C_WCHAR "Infinity", "-Infinity", or "NaN"
+      against SQL_REAL / SQL_DOUBLE / SQL_FLOAT forwards the value and
+      stores a non-finite FLOAT.
     description: |
-      Applications that need to insert non-finite IEEE-754 values should bind SQL_C_FLOAT or SQL_C_DOUBLE (both spec-permitted and supported) rather than passing a string representation.
+      Applications that bind non-finite IEEE-754 values as character strings store Infinity / NaN, matching 3.x.
   49:
     name: "SQL_C_CHAR/WCHAR to SQL_BINARY hex-decodes the ASCII literal instead of forwarding raw string bytes"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      This is a big difference from the ODBC spec, but as the old driver treated the chars as a separate bytes, we may need to introduce a flag for that change.
+      Both drivers hex-decode character input bound against SQL_BINARY,
+      drop an odd leftover nibble, and return 22018 for non-hex input.
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
-      When SQLBindParameter is called with ValueType=SQL_C_CHAR or SQL_C_WCHAR and a hex literal (e.g. "DEADBEEF") bound against a SQL_BINARY/SQL_VARBINARY/SQL_LONGVARBINARY parameter, the driver hex-encodes the raw string bytes and forwards them to the server. The 8-character literal "DEADBEEF" therefore lands as 8 bytes (0x44 0x45 0x41 0x44 0x42 0x45 0x45 0x46 — the ASCII representation) rather than the intended 4 bytes (0xDE 0xAD 0xBE 0xEF). Round-tripping the column back as SQL_C_BINARY returns the ASCII bytes, not the bytes the application intended.
+      When SQLBindParameter is called with ValueType=SQL_C_CHAR or
+      SQL_C_WCHAR and a hex literal (e.g. "DEADBEEF") bound against a
+      SQL_BINARY / SQL_VARBINARY / SQL_LONGVARBINARY parameter, the
+      driver decodes pairs of hex digits into raw bytes. "DEADBEEF"
+      lands as 4 bytes (0xDE 0xAD 0xBE 0xEF). An odd leftover nibble is
+      dropped ("DEADBEE" lands as 3 bytes). Non-hex strings return
+      SQL_ERROR with SQLSTATE 22018.
     new_driver_behavior: |
-      Per the MS ODBC specification ("C to SQL: Binary" appendix), character inputs bound against SQL_BINARY are interpreted as ASCII hex literals: each pair of characters decodes into one byte before being forwarded to Snowflake. "DEADBEEF" lands as the intended 4 bytes. SQL_C_WCHAR follows the same rule after UTF-16 → ASCII transcoding. Odd-length or non-hex inputs surface at SQLExecute time with SQL_ERROR and SQLSTATE 22018 (Invalid character value for cast specification).
+      Character inputs bound against SQL_BINARY are hex-decoded.
+      Odd-length literals drop the leftover nibble. Non-hex strings
+      return 22018.
     description: |
-      Spec reference: ODBC "C to SQL: Binary" conversion table lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for SQL_BINARY targets and prescribes hex-literal semantics. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
-      Applications that bind hex literals as SQL_C_CHAR/SQL_C_WCHAR to BINARY columns now store the intended bytes rather than the ASCII representation of those bytes. Applications that previously relied on the old broken behavior must re-encode their inputs (e.g. bind "44454144" instead of "DEAD" to land 0x44 0x45 0x41 0x44 in the column).
+      Spec reference: ODBC "C to SQL: Binary" conversion table lists
+      SQL_C_CHAR / SQL_C_WCHAR as legal source types for SQL_BINARY
+      targets and prescribes hex-literal semantics. The table fires
+      22018 only when the value is not hexadecimal; odd length is
+      accepted by decoding complete pairs. Plain assertions cover the
+      round-trip, the leftover-nibble case, and the 22018 reject.
 
   50:
     name: "SQLDescribeParam normalises Snowflake vendor TIMESTAMP codes (2000/2001/2002) to SQL_TYPE_TIMESTAMP (93)"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
@@ -812,10 +846,9 @@ behavior_differences:
     old_driver_behavior: |
       When SQLBindParameter is called with ParameterType set to one of the Snowflake vendor TIMESTAMP codes (SQL_SF_TIMESTAMP_LTZ=2000, SQL_SF_TIMESTAMP_TZ=2001, SQL_SF_TIMESTAMP_NTZ=2002), the old driver stores the raw vendor code on the IPD and returns it verbatim from SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE).
     new_driver_behavior: |
-      The vendor code is normalised to the standard SQL_TYPE_TIMESTAMP (93) on the IPD. SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE) return 93 for all three vendor codes; the chosen subtype (NTZ/LTZ/TZ) is remembered internally and used to dispatch the correct Snowflake logical type at SQLExecute time. Applications distinguish the three subtypes via SQLColAttribute(SQL_DESC_TYPE_NAME) on the IRD after execution.
+      After SQLBindParameter with a Snowflake vendor TIMESTAMP code, SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE) return that code (2000/2001/2002) verbatim. Execute-time dispatch uses the matching Snowflake logical type.
     description: |
-      The MS ODBC specification for SQLDescribeParam describes returning standard SQL type codes (1..=12, 91..=95, 101..=113). The vendor codes 2000/2001/2002 are an *input-only* aliasing on SQLBindParameter; leaking them through SQLDescribeParam violates the spec contract.
-      Applications that switch on SQLDescribeParam's data type code with cases for 1..=12 / 91..=95 / 101..=113 (the standard ODBC type codes) will no longer fall through to an unknown-type branch when the upstream code happens to bind via the vendor opt-in. Applications that explicitly test for the 2000/2001/2002 vendor codes after SQLBindParameter must update to test SQLColAttribute(SQL_DESC_TYPE_NAME) instead.
+      Applications that inspect SQLDescribeParam after binding with SQL_SF_TIMESTAMP_LTZ/TZ/NTZ see the vendor code they requested, matching 3.x.
 
   51:
     name: "SQL_SF_TIMESTAMP_TZ accepts SQL_C_TYPE_TIMESTAMP and SQL_C_CHAR-with-offset bindings"
@@ -1470,42 +1503,25 @@ behavior_differences:
       failed on the legacy driver. Tests use the value "on", which both drivers accept, to keep
       the shared e2e flow running against either driver.
   85:
-    #TODO: Align with other wrappers to set it true by default (?)
     name: "OAuth Authorization Code token caching default differs from legacy ODBC (platform-dependent across reference drivers)"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      OAuth token caching for the Authorization Code flow is gated by
-      CLIENT_STORE_TEMPORARY_CREDENTIAL, but the default varies by driver and platform. Legacy
-      ODBC force-enables it for OAUTH_AUTHORIZATION_CODE on all platforms
-      (SFConnection::Connect sets m_clientStoreTemporaryCredential = true in the AC authenticator
-      branch). JDBC and Go enable it by default only on macOS and Windows; on Linux they default
-      off unless explicitly configured. Python defaults off on all platforms. The new driver defaults
-      off on all platforms (client_store_temporary_credential=false when unset) and only caches
-      when the caller opts in — aligning with Python and with JDBC/Go on Linux, but diverging from
-      legacy ODBC everywhere and from JDBC/Go on macOS/Windows. Explicit opt-in is the safer
-      behavior; the difference is accepted pending review.
+      Both drivers cache the OAUTH_AUTHORIZATION_CODE access / refresh token
+      by default when the caller leaves CLIENT_STORE_TEMPORARY_CREDENTIAL
+      unset.
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Legacy ODBC OAUTH_AUTHORIZATION_CODE connections cache the access / refresh token by default
-      on all platforms. A later connection for the same host + user can short-circuit the
-      interactive + token-exchange legs by replaying the cached token, even when other credentials
-      (e.g. the client secret) have changed. Other reference drivers are platform-dependent: JDBC
-      and Go default caching on for OAuth flows on macOS/Windows only; Python requires an explicit
-      client_store_temporary_credential=true on every platform.
+      OAUTH_AUTHORIZATION_CODE connections cache the access / refresh token by default
+      on all platforms.
     new_driver_behavior: |
-      On all platforms, OAUTH_AUTHORIZATION_CODE connections do not cache the token unless
-      CLIENT_STORE_TEMPORARY_CREDENTIAL is explicitly set to true; every connect performs a fresh
-      authorization + token exchange unless the caller opts in.
+      OAUTH_AUTHORIZATION_CODE connections cache the access / refresh token by
+      default when CLIENT_STORE_TEMPORARY_CREDENTIAL is unset.
     description: |
-      Applications relying on legacy ODBC's implicit AC token caching on any platform must set
-      CLIENT_STORE_TEMPORARY_CREDENTIAL=true on the new driver to keep that behavior. macOS/Windows
-      users accustomed to JDBC or Go (where OAuth caching defaults on) also need the explicit flag
-      on the new driver. The e2e bad-client-secret test pins CLIENT_STORE_TEMPORARY_CREDENTIAL=false
-      on the legacy driver so a token cached by the preceding happy-path test cannot mask the
-      expected token-exchange failure.
+      ODBC applications that relied on implicit AC token caching keep that behavior
+      without setting CLIENT_STORE_TEMPORARY_CREDENTIAL.
 
   86:
     name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
@@ -1578,27 +1594,22 @@ behavior_differences:
 
   89:
     name: "SQLForeignKeys metadata_id=TRUE allows NULL identifiers on the unspecified side"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     is_breaking_change: true
     status_rationale: |
-      According to the ODBC specification, it is in DM's role to verify the provided null pointers, but unixODBC nor iODBC does that. We should readd the check to have the consistency.
+      Both drivers return HY009 for a NULL catalog, schema, or table pointer on
+      either side in identifier mode.
     impact: low
     old_driver_behavior: |
-      With SQL_ATTR_METADATA_ID=SQL_TRUE, a single-sided PK-table query that leaves the entire FK
-      side NULL returns HY009 even though FKTableName was not supplied.
+      With SQL_ATTR_METADATA_ID=SQL_TRUE, a single-sided query that leaves the
+      unspecified side NULL returns HY009.
     new_driver_behavior: |
-      Catalog/schema null-pointer validation applies only to the side whose table name was supplied,
-      so a PK-only query with metadata_id=TRUE succeeds when PK catalog and schema are provided. This
-      applies under unixODBC and iODBC; the Windows Driver Manager performs its own identifier
-      null-pointer check and returns HY009 for the NULL FK-side arguments before the driver is
-      invoked, so the query still fails with HY009 on Windows regardless of the driver.
+      With SQL_ATTR_METADATA_ID=SQL_TRUE, null-pointer validation applies to
+      every catalog, schema, and table argument.
     description: |
-      Per ODBC HY009 diagnostics, identifier-mode null checks apply to supplied table sides only.
-      The reference driver over-validates the unspecified FK side. On Windows the Driver Manager
-      enforces the identifier null check itself (documented as a "(DM)" diagnostic in the MS ODBC
-      reference), so the improvement is observable only on unixODBC/iODBC.
+      Both drivers now return HY009.
 
   90:
     name: "SQLForeignKeys treats an empty-string PK/FK table as absent for SHOW side selection"
@@ -1909,24 +1920,29 @@ behavior_differences:
       difference (BD#57). The e2e test query/query_tag.cpp asserts both drivers via NEW_DRIVER_ONLY("BD#101") and OLD_DRIVER_ONLY("BD#101").
   102:
     name: "SQLSetStmtAttr(SQL_ROWSET_SIZE, 0) coerces to 1 instead of storing 0"
-    # ROW_ARRAY_SIZE should also be aligned to the spec; setting 0 triggers SQL_ERROR
-    status: todo
-    type: bug
+    status: allowed
+    type: bugfix
     reviewed: true
     is_breaking_change: false
     impact: low
     status_rationale: |
-      According to ODBC spec, this should fail loudly.
+      Aligned with the ODBC specification: a rowset size of 0 is invalid and
+      must return SQL_ERROR (HY024). unixODBC already rejects the value in the
+      DM; iODBC and the Windows DM forward it, so the old-vs-new difference is
+      visible only on those managers. SQL_ATTR_ROW_ARRAY_SIZE=0 still coerces
+      to 1; that attribute is stored separately and has no test covering 0, so
+      it is out of scope for this BD.
     old_driver_behavior: |
-      SQLSetStmtAttr(SQL_ROWSET_SIZE, 0) returns SQL_SUCCESS and stores 0 unchanged; a
-      subsequent SQLGetStmtAttr(SQL_ROWSET_SIZE) returns 0.
+      When the DM forwards the call (iODBC, Windows), SQLSetStmtAttr(SQL_ROWSET_SIZE, 0)
+      returns SQL_SUCCESS and stores 0 unchanged. unixODBC rejects 0 in the DM
+      with SQL_ERROR before the driver is invoked.
     new_driver_behavior: |
-      The new driver clamps the invalid value 0 to 1 (a rowset must contain at least one row),
-      matching how it already coerces SQL_ATTR_ROW_ARRAY_SIZE = 0 to 1, so
-      SQLGetStmtAttr(SQL_ROWSET_SIZE) returns 1. The coercion is silent (no 01S02 posted).
+      SQLSetStmtAttr(SQL_ROWSET_SIZE, 0) returns SQL_ERROR with SQLSTATE HY024
+      on every DM, including those that forward the value. The stored rowset
+      size is left unchanged.
     description: |
-      SQL_ROWSET_SIZE (ODBC 2.x, attr 9) drives SQLExtendedFetch. A rowset size of 0 is invalid;
-      the new driver normalizes it to 1 for consistency with SQL_ATTR_ROW_ARRAY_SIZE.
+      SQL_ROWSET_SIZE (ODBC 2.x, attr 9) drives SQLExtendedFetch. A rowset size
+      of 0 is invalid per the ODBC spec.
 
   103:
     name: "GCS PUT OVERWRITE=TRUE on matching content re-uploads instead of skipping"

@@ -7,9 +7,9 @@
 //! crates, so `odbc`, `nodejs_bridge`, and `python_bridge` can share this one
 //! decode step instead of each maintaining their own.
 //!
-//! DATE, BOOLEAN, TIME, TIMESTAMP_TZ, and REAL are here now. NTZ/LTZ still use
-//! the Level-2 epoch helpers from this crate without their own materializer
-//! types yet.
+//! DATE, BOOLEAN, TIME, TIMESTAMP_TZ, REAL, BINARY, and TEXT are here now.
+//! NTZ/LTZ still use the Level-2 epoch helpers from this crate without their
+//! own materializer types yet.
 //!
 //! A reader has two layers worth naming. The *materializer*
 //! ([`ReadArrowType::read_arrow_type`]) produces a checked chrono value and is
@@ -19,24 +19,32 @@
 //! the primitive — not just the materializer — keeps the calendar/clock math in
 //! one place across every driver.
 
+mod binary;
 mod boolean;
 mod civil;
 mod clock;
 mod date;
+mod decfloat;
 mod error;
+mod fixed;
 mod nullable;
 mod real;
+mod text;
 mod time;
 mod timestamp;
 mod traits;
 
+pub use binary::SnowflakeBinary;
 pub use boolean::SnowflakeBoolean;
 pub use civil::civil_from_unix_days;
 pub use clock::split_time_raw;
 pub use date::SnowflakeDate;
+pub use decfloat::{DecfloatColumn, SnowflakeDecfloat};
 pub use error::{InvalidArrowValueSnafu, NullValueSnafu, ReadArrowError};
+pub use fixed::SnowflakeFixed;
 pub use nullable::Nullable;
 pub use real::SnowflakeReal;
+pub use text::SnowflakeText;
 pub use time::SnowflakeTime;
 pub use timestamp::{
     SnowflakeTimestampTz, TZ_OFFSET_BIAS_MINUTES, TZ_OFFSET_MAX_RAW, TzInstant,

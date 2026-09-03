@@ -109,10 +109,12 @@ public interface SnowflakeDataSource extends DataSource {
   void setEnablePatternSearch(boolean enablePatternSearch);
 
   /**
-   * Controls whether scale-0 FIXED/DECIMAL columns are treated as integer types.
+   * Controls whether scale-0 FIXED/DECIMAL columns on Arrow-format results are treated as integer
+   * types.
    *
-   * <p>Stores {@code JDBC_TREAT_DECIMAL_AS_INT} (the parameter the universal driver reads). Legacy
-   * snowflake-jdbc stored {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT} instead.
+   * <p>Stores {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT}, matching snowflake-jdbc. Combined with
+   * session {@code JDBC_TREAT_DECIMAL_AS_INT} when reading Arrow results (either flag true yields
+   * integers). JSON-format results ignore this property.
    */
   void setArrowTreatDecimalAsInt(boolean treatDecimalAsInt);
 

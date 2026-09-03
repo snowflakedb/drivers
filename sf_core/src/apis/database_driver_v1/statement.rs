@@ -1142,7 +1142,8 @@ pub(super) async fn query_context(
 ) -> Result<(QueryParameters, reqwest::Client, RetryPolicy), ApiError> {
     let conn = conn.lock().await;
     // Reject query execution if close() has been called
-    if conn.is_closed.load(Ordering::SeqCst) {
+    // `Closing` rejects new work too: the logout is already on its way.
+    if conn.close_state.load(Ordering::SeqCst) != super::connection::CloseState::Open {
         return ConnectionClosedSnafu {}.fail();
     }
     Ok((

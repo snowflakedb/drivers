@@ -55,10 +55,21 @@ else
     PLATFORM="linux/amd64"
 fi
 
+HELPERS="${REPO_ROOT}/tests/docker/external-browser/browser-helpers"
+# Image :4 still ships generateTotp() as { current, past, future } and
+# `const { current } = await totp.generateTotp()`. Overlay both the generator
+# (bare current-window string) and the Playwright helper that fills it, or
+# page.fill gets undefined and OAuth MFA times out.
 docker run --rm --platform "$PLATFORM" \
     -v "${REPO_ROOT}:/mnt/host" \
+    -v "${HELPERS}/totpGenerator.js:/externalbrowser/totpGenerator.js:ro" \
+    -v "${HELPERS}/totpGenerator.test.js:/externalbrowser/totpGenerator.test.js:ro" \
+    -v "${HELPERS}/provideBrowserCredentials.js:/externalbrowser/provideBrowserCredentials.js:ro" \
+    -v "${HELPERS}/getTOTP.js:/externalbrowser/getTOTP.js:ro" \
     -e WORKSPACE_ROOT=/mnt/host \
+    -e WORKSPACE=/mnt/host \
+    -e BUILD_TAG="${BUILD_TAG:-local}" \
     -e AUTH_BROWSER_MODE="${AUTH_BROWSER_MODE}" \
     ${DOCKER_RUN_EXTRA_ARGS:-} \
     "${DOCKER_IMAGE}" \
-    bash "/mnt/host/tests/auth/auth_browser_${WRAPPER}.sh"
+    bash -c "cd /externalbrowser && node --test totpGenerator.test.js && bash /mnt/host/tests/auth/auth_browser_${WRAPPER}.sh"

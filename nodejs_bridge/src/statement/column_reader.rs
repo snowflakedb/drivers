@@ -1,6 +1,6 @@
 use arrow::array::{
-    Array, ArrowNumericType, BinaryArray, BooleanArray, Decimal128Array, Float64Array, Int16Array,
-    Int64Array, PrimitiveArray, StringArray, StringBuilder, StructArray,
+    Array, ArrowNumericType, BinaryArray, BooleanArray, Decimal128Array, Float64Array, Int64Array,
+    PrimitiveArray, StringArray, StringBuilder, StructArray,
 };
 use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type};
 use chrono::NaiveTime;
@@ -8,7 +8,7 @@ use chrono::NaiveTime;
 use super::column_reader_util::{
     decimal_string, read_cell, scale_from_metadata, usize_from_metadata, widen,
 };
-use super::decfloat::{decfloat_field, format_decfloat, i128_from_big_endian_signed};
+use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
 use super::time_format;
 use crate::session_params::SessionParams;
@@ -211,18 +211,19 @@ impl ColumnReader {
                     .ok_or_else(|| {
                         "Arrow column could not be downcast to StructArray".to_string()
                     })?;
-                let exponent: Int16Array = decfloat_field(&struct_array, "exponent")?;
-                let significand: BinaryArray = decfloat_field(&struct_array, "significand")?;
                 let precision = usize_from_metadata(field, "precision")?;
+                let decfloat_column = sf_types::DecfloatColumn::try_new(&struct_array)
+                    .map_err(|e| format!("DECFLOAT column: {e}"))?;
 
                 let mut builder = StringBuilder::new();
                 for row in 0..struct_array.len() {
                     if struct_array.is_null(row) {
                         builder.append_null();
                     } else {
-                        let sig = i128_from_big_endian_signed(significand.value(row))
-                            .map_err(|e| format!("DECFLOAT significand at row {row}: {e}"))?;
-                        builder.append_value(format_decfloat(sig, exponent.value(row), precision));
+                        let (sig, exp) = decfloat_column
+                            .value(row)
+                            .map_err(|e| format!("DECFLOAT at row {row}: {e}"))?;
+                        builder.append_value(format_decfloat(sig, exp, precision));
                     }
                 }
                 Ok(Self::Decfloat(builder.finish()))
@@ -247,17 +248,33 @@ impl ColumnReader {
                     });
                 JsCell::Bool(value)
             }),
-            Self::Binary(array) => {
-                read_cell(array, row_index, || JsCell::Buffer(array.value(row_index)))
-            }
+            Self::Binary(array) => read_cell(array, row_index, || {
+                let value = sf_types::SnowflakeBinary
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!("non-null BINARY cell always decodes to bytes")
+                    });
+                JsCell::Buffer(value)
+            }),
             Self::FixedInt { array, scale } => read_cell(array, row_index, || {
-                JsCell::Str(Cow::Owned(decimal_string(
-                    array.value(row_index) as i128,
-                    *scale,
-                )))
+                let mantissa = sf_types::SnowflakeFixed
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!(
+                            "non-null integer FIXED cell always decodes to an i128 mantissa"
+                        )
+                    });
+                JsCell::Str(Cow::Owned(decimal_string(mantissa, *scale)))
             }),
             Self::FixedDecimal { array, scale } => read_cell(array, row_index, || {
-                JsCell::Str(Cow::Owned(decimal_string(array.value(row_index), *scale)))
+                let mantissa = sf_types::SnowflakeFixed
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!(
+                            "non-null Decimal128 FIXED cell always decodes to an i128 mantissa"
+                        )
+                    });
+                JsCell::Str(Cow::Owned(decimal_string(mantissa, *scale)))
             }),
             Self::Date(array) => read_cell(array, row_index, || {
                 // The Arrow `Date32` → `NaiveDate` decode is shared with the
@@ -283,7 +300,17 @@ impl ColumnReader {
                 JsCell::Str(Cow::Borrowed(array.value(row_index)))
             }),
             Self::Text(array) => read_cell(array, row_index, || {
-                JsCell::Str(Cow::Borrowed(array.value(row_index)))
+                // The Arrow `Utf8` → `&str` decode is shared with the ODBC and
+                // Python front ends via `sf_types`; only the borrow into a
+                // `JsCell` stays here. `read_cell` already excluded NULL, and a
+                // non-null `Utf8` cell always decodes, so the reader cannot
+                // error on this path.
+                let value = sf_types::SnowflakeText
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!("non-null Utf8 cell always decodes to a &str")
+                    });
+                JsCell::Str(Cow::Borrowed(value))
             }),
             Self::Real(array) => read_cell(array, row_index, || {
                 let value = sf_types::SnowflakeReal

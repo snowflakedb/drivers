@@ -1,49 +1,10 @@
-//! DECFLOAT decoding.
+//! DECFLOAT presentation.
 //!
-//! `format_decfloat` and `i128_from_big_endian_signed` started as copies of
-//! `odbc/src/conversion/decfloat.rs` but this version differs:
-//! ODBC switches to scientific notation on the rendered *length*, which emits
-//! a stray `e0` for 38-digit values and picks scientific for `1e-37` where
-//! the server sends plain. ODBC is likely affected by both.
-//!
-//! TODO: refactor into shared code.
-//!
-
-use arrow::array::{Array, StructArray};
-
-pub(super) fn decfloat_field<T: Array + Clone + 'static>(
-    array: &StructArray,
-    name: &str,
-) -> Result<T, String> {
-    let child = array
-        .column_by_name(name)
-        .ok_or_else(|| format!("DECFLOAT struct is missing the {name:?} field"))?;
-    child.as_any().downcast_ref::<T>().cloned().ok_or_else(|| {
-        format!(
-            "DECFLOAT {name:?} field could not be downcast; it is {}",
-            child.data_type()
-        )
-    })
-}
-
-/// Converts a big-endian two's complement byte slice (1–16 bytes) into an i128.
-/// The Arrow wire format trims leading bytes, so we sign-extend to 16 bytes
-/// before calling `i128::from_be_bytes`. Empty input is treated as zero.
-pub(super) fn i128_from_big_endian_signed(bytes: &[u8]) -> Result<i128, String> {
-    if bytes.is_empty() {
-        return Ok(0);
-    }
-    if bytes.len() > 16 {
-        return Err(format!(
-            "significand byte length {} exceeds maximum of 16",
-            bytes.len()
-        ));
-    }
-    let sign_bytes = if bytes[0] & 0x80 != 0 { 0xFF } else { 0x00 };
-    let mut buf = [sign_bytes; 16];
-    buf[16 - bytes.len()..].copy_from_slice(bytes);
-    Ok(i128::from_be_bytes(buf))
-}
+//! The Arrow decode — struct → `(significand, exponent)` — lives in
+//! `sf_types::SnowflakeDecfloat`. `format_decfloat` stays here because the
+//! scientific-notation threshold differs from ODBC's: this version switches on
+//! the adjusted exponent's magnitude, matching the text the old driver returns,
+//! whereas ODBC switches on the rendered plain-form *length*.
 
 /// Formats a DECFLOAT value as a string.
 ///

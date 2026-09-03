@@ -4,7 +4,6 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
-#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
@@ -144,7 +143,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BIT to SQL_BIT", "[c_nume
   CHECK(get_data<SQL_C_BIT>(sel, 1) == 1);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG negative to SQL_BIT as true",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_SLONG negative bound to SQL_BIT",
                  "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
 
@@ -161,23 +160,11 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG negative to SQL_BIT
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  OLD_DRIVER_ONLY("BD#35") {
-    // Then the old driver rejects negative values with 22003
-    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22003"));
-  }
-  NEW_DRIVER_ONLY("BD#35") {
-    // Then a nonzero value is stored as true (SQL_C_BIT 1)
-    REQUIRE_ODBC(ret, stmt);
-    auto sel = conn.createStatement();
-    ret = SQLExecDirect(sel.getHandle(), sqlchar("SELECT col FROM t_long_neg"), SQL_NTS);
-    REQUIRE_ODBC(ret, sel);
-    ret = SQLFetch(sel.getHandle());
-    REQUIRE_ODBC(ret, sel);
-    CHECK(get_data<SQL_C_BIT>(sel, 1) == 1);
-  }
+  // Then the driver rejects values other than 0 or 1 with 22003
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22003"));
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC nonzero to SQL_BIT as true",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_NUMERIC other than 0 or 1 bound to SQL_BIT",
                  "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
 
@@ -198,20 +185,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC nonzero to SQL_BI
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  OLD_DRIVER_ONLY("BD#37") {
-    // Then the old driver rejects nonzero SQL_C_NUMERIC values with 22003
-    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22003"));
-  }
-  NEW_DRIVER_ONLY("BD#37") {
-    // Then a nonzero numeric is stored as true (SQL_C_BIT 1)
-    REQUIRE_ODBC(ret, stmt);
-    auto sel = conn.createStatement();
-    ret = SQLExecDirect(sel.getHandle(), sqlchar("SELECT col FROM t_num_bool"), SQL_NTS);
-    REQUIRE_ODBC(ret, sel);
-    ret = SQLFetch(sel.getHandle());
-    REQUIRE_ODBC(ret, sel);
-    CHECK(get_data<SQL_C_BIT>(sel, 1) == 1);
-  }
+  // Then the driver rejects values other than 0 or 1 with 22003
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22003"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC zero to SQL_BIT as false",
@@ -245,7 +220,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC zero to SQL_BIT a
   CHECK(get_data<SQL_C_BIT>(sel, 1) == 0);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC negative to SQL_BIT as true",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_NUMERIC negative bound to SQL_BIT",
                  "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
 
@@ -266,19 +241,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC negative to SQL_B
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then a negative numeric is stored as true (SQL_C_BIT 1)
-  OLD_DRIVER_ONLY("BD#37") {
-    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22003"));
-  }
-  NEW_DRIVER_ONLY("BD#37") {
-    REQUIRE_ODBC(ret, stmt);
-    auto sel = conn.createStatement();
-    ret = SQLExecDirect(sel.getHandle(), sqlchar("SELECT col FROM t_num_bool_neg"), SQL_NTS);
-    REQUIRE_ODBC(ret, sel);
-    ret = SQLFetch(sel.getHandle());
-    REQUIRE_ODBC(ret, sel);
-    CHECK(get_data<SQL_C_BIT>(sel, 1) == 1);
-  }
+  // Then the driver rejects values other than 0 or 1 with 22003
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22003"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DEFAULT to SQL_BIT",

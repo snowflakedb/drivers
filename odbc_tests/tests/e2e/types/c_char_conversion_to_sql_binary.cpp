@@ -3,14 +3,8 @@
 // ("Converting Data from C to SQL Data Types", section "Binary"),
 // character inputs are interpreted as ASCII hex literals: each pair of
 // characters is decoded into one byte before forwarding to the server.
-// Odd length or non-hex characters must surface as SQLSTATE 22018
-// ("Invalid character value for cast specification").
-//
-// The old reference driver did not implement this decode and forwarded
-// the raw string bytes hex-encoded, so "DEADBEEF" (8 ASCII bytes) would
-// land on the server as 8 bytes (0x44 0x45 0x41 0x44 0x42 0x45 0x45 0x46)
-// rather than the intended 4 bytes (0xDE 0xAD 0xBE 0xEF). See
-// BehaviorDifferences.yaml #49.
+// An odd leftover nibble is dropped. Non-hex characters surface as
+// SQLSTATE 22018 ("Invalid character value for cast specification").
 
 #include <sql.h>
 #include <sqlext.h>
@@ -24,7 +18,6 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
-#include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
@@ -86,7 +79,6 @@ void check_wchar_hex_literal_round_trip(Connection& conn, const std::string& col
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR uppercase hex literal to SQL_BINARY and read back bytes",
                  "[c_char][conversion][sql_binary]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary BINARY column exists
   // When the uppercase hex literal "DEADBEEF" is bound as SQL_C_CHAR -> SQL_BINARY and executed
   // Then the driver decodes the literal and the round-trip returns 4 bytes 0xDE 0xAD 0xBE 0xEF
@@ -96,7 +88,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR uppercase hex litera
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR lowercase hex literal to SQL_BINARY and read back bytes",
                  "[c_char][conversion][sql_binary]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary BINARY column exists
   // When the lowercase hex literal "deadbeef" is bound as SQL_C_CHAR -> SQL_BINARY and executed
   // Then the driver decodes the literal case-insensitively and the round-trip returns 4 bytes 0xDE 0xAD 0xBE 0xEF
@@ -106,7 +97,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR lowercase hex litera
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR mixed-case hex literal to SQL_BINARY and read back bytes",
                  "[c_char][conversion][sql_binary]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary BINARY column exists
   // When the mixed-case hex literal "DeAdBeEf" is bound as SQL_C_CHAR -> SQL_BINARY and executed
   // Then the driver decodes the literal case-insensitively and the round-trip returns 4 bytes 0xDE 0xAD 0xBE 0xEF
@@ -116,7 +106,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR mixed-case hex liter
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR hex literal to SQL_VARBINARY and read back bytes",
                  "[c_char][conversion][sql_binary]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary VARBINARY column exists
   // When the hex literal "DEADBEEF" is bound as SQL_C_CHAR -> SQL_VARBINARY and executed
   // Then the round-trip returns 4 bytes 0xDE 0xAD 0xBE 0xEF
@@ -126,7 +115,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR hex literal to SQL_V
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR hex literal to SQL_LONGVARBINARY and read back bytes",
                  "[c_char][conversion][sql_binary]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary BINARY column exists (Snowflake exposes BINARY as the
   // single variable-length binary class for which SQL_LONGVARBINARY is the
   // ODBC alias)
@@ -137,12 +125,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR hex literal to SQL_L
 }
 
 // ----------------------------------------------------------------------------
-// SQL_C_CHAR negative paths - malformed hex must surface as SQLSTATE 22018
+// SQL_C_CHAR leftover nibble (accepted) and non-hex (22018)
 // ----------------------------------------------------------------------------
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR odd-length hex literal bound to SQL_BINARY",
-                 "[c_char][conversion][sql_binary][negative]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should bind SQL_C_CHAR odd-length hex literal to SQL_BINARY dropping the leftover nibble",
+                 "[c_char][conversion][sql_binary]") {
   // Given a temporary BINARY column exists
   conn.execute("CREATE TEMPORARY TABLE t (col BINARY)");
 
@@ -155,15 +143,22 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR odd-length hex lit
   REQUIRE_ODBC(SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_BINARY, 0, 0, literal,
                                 sizeof(literal), &ind),
                stmt);
+  REQUIRE_ODBC(SQLExecute(stmt.getHandle()), stmt);
 
-  // Then SQLExecute fails with SQLSTATE 22018 (Invalid character value for cast)
-  SQLRETURN ret = SQLExecute(stmt.getHandle());
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
+  // Then the leftover nibble is dropped and the round-trip returns 3 bytes 0xDE 0xAD 0xBE
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  std::array<SQLCHAR, 16> buffer;
+  buffer.fill(0xFF);
+  SQLLEN out_ind = 0;
+  REQUIRE_ODBC(SQLGetData(fetch_stmt.getHandle(), 1, SQL_C_BINARY, buffer.data(), buffer.size(), &out_ind), fetch_stmt);
+  CHECK(out_ind == 3);
+  CHECK(buffer[0] == 0xDE);
+  CHECK(buffer[1] == 0xAD);
+  CHECK(buffer[2] == 0xBE);
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR non-hex characters bound to SQL_BINARY",
                  "[c_char][conversion][sql_binary][negative]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary BINARY column exists
   conn.execute("CREATE TEMPORARY TABLE t (col BINARY)");
 
@@ -188,7 +183,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR non-hex characters
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR uppercase hex literal to SQL_BINARY and read back bytes",
                  "[c_char][conversion][sql_binary]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary BINARY column exists
   // When the UTF-16 uppercase hex literal L"DEADBEEF" is bound as SQL_C_WCHAR -> SQL_BINARY and executed
   // Then the driver transcodes to ASCII, decodes the literal, and the round-trip returns 4 bytes 0xDE 0xAD 0xBE 0xEF
@@ -198,7 +192,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR uppercase hex liter
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR lowercase hex literal to SQL_BINARY and read back bytes",
                  "[c_char][conversion][sql_binary]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary BINARY column exists
   // When the UTF-16 lowercase hex literal L"deadbeef" is bound as SQL_C_WCHAR -> SQL_BINARY and executed
   // Then the driver transcodes and decodes case-insensitively, returning 4 bytes 0xDE 0xAD 0xBE 0xEF on round-trip
@@ -208,7 +201,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR lowercase hex liter
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR hex literal to SQL_VARBINARY and read back bytes",
                  "[c_char][conversion][sql_binary]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary VARBINARY column exists
   // When the UTF-16 hex literal L"DEADBEEF" is bound as SQL_C_WCHAR -> SQL_VARBINARY and executed
   // Then the round-trip returns 4 bytes 0xDE 0xAD 0xBE 0xEF
@@ -218,7 +210,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR hex literal to SQL_
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR hex literal to SQL_LONGVARBINARY and read back bytes",
                  "[c_char][conversion][sql_binary]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
   // Given a temporary BINARY column exists (Snowflake exposes BINARY as the
   // single variable-length binary class for which SQL_LONGVARBINARY is the
   // ODBC alias)
@@ -229,12 +220,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR hex literal to SQL_
 }
 
 // ----------------------------------------------------------------------------
-// SQL_C_WCHAR negative path - malformed hex must surface as SQLSTATE 22018
+// SQL_C_WCHAR leftover nibble (accepted)
 // ----------------------------------------------------------------------------
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR odd-length hex literal bound to SQL_BINARY",
-                 "[c_char][conversion][sql_binary][negative]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver hex-encodes the ASCII string instead of decoding the hex literal");
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should bind SQL_C_WCHAR odd-length hex literal to SQL_BINARY dropping the leftover nibble",
+                 "[c_char][conversion][sql_binary]") {
   // Given a temporary BINARY column exists
   conn.execute("CREATE TEMPORARY TABLE t (col BINARY)");
 
@@ -247,8 +238,16 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR odd-length hex li
   REQUIRE_ODBC(SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_BINARY, 0, 0, literal,
                                 sizeof(literal), &ind),
                stmt);
+  REQUIRE_ODBC(SQLExecute(stmt.getHandle()), stmt);
 
-  // Then SQLExecute fails with SQLSTATE 22018 (Invalid character value for cast)
-  SQLRETURN ret = SQLExecute(stmt.getHandle());
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
+  // Then the leftover nibble is dropped and the round-trip returns 3 bytes 0xDE 0xAD 0xBE
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  std::array<SQLCHAR, 16> buffer;
+  buffer.fill(0xFF);
+  SQLLEN out_ind = 0;
+  REQUIRE_ODBC(SQLGetData(fetch_stmt.getHandle(), 1, SQL_C_BINARY, buffer.data(), buffer.size(), &out_ind), fetch_stmt);
+  CHECK(out_ind == 3);
+  CHECK(buffer[0] == 0xDE);
+  CHECK(buffer[1] == 0xAD);
+  CHECK(buffer[2] == 0xBE);
 }

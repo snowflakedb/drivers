@@ -10,10 +10,11 @@
 // explicitly request `TIMESTAMP_LTZ` / `_TZ` / `_NTZ` round-trip behavior
 // that the standard `SQL_TYPE_TIMESTAMP` (93) cannot distinguish.
 //
-// They are NOT returned from `SQLDescribeCol` or
-// `SQLColAttribute(SQL_DESC_CONCISE_TYPE)`; those report the spec-mandated
-// `SQL_TYPE_TIMESTAMP` (93) and applications use `SQL_DESC_TYPE_NAME` to tell
-// the three subtypes apart.
+// They are stored on the IPD and returned verbatim from `SQLDescribeParam`
+// and `SQLGetDescField(IPD, SQL_DESC_TYPE)`. They are NOT returned from
+// `SQLDescribeCol` or `SQLColAttribute(SQL_DESC_CONCISE_TYPE)` on result
+// columns; those report `SQL_TYPE_TIMESTAMP` (93) and applications use
+// `SQL_DESC_TYPE_NAME` to tell the three subtypes apart.
 constexpr SQLSMALLINT SQL_SF_TIMESTAMP_LTZ = 2000;
 constexpr SQLSMALLINT SQL_SF_TIMESTAMP_TZ = 2001;
 constexpr SQLSMALLINT SQL_SF_TIMESTAMP_NTZ = 2002;

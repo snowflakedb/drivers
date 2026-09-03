@@ -576,7 +576,7 @@ public class SnowflakeBasicDataSourceTest {
             "false",
             (DataSourceConfigurer) ds -> ds.setEnablePatternSearch(false)),
         Arguments.of(
-            "JDBC_TREAT_DECIMAL_AS_INT",
+            "JDBC_ARROW_TREAT_DECIMAL_AS_INT",
             "false",
             (DataSourceConfigurer) ds -> ds.setArrowTreatDecimalAsInt(false)),
         Arguments.of(

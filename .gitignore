@@ -80,3 +80,6 @@ ci/wif/artifacts/
 ci/wif/parameters/rsa_wif_aws_azure
 ci/wif/parameters/rsa_wif_gcp
 ci/wif/parameters/parameters_wif.json
+
+# Cross-language MFA TOTP used-code / lockout state written by auth-browser CI
+.ud-mfa-totp-state/

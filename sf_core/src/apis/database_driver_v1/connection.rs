@@ -1,13 +1,13 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crate::apis::operation_ctx::OperationCtx;
 use crate::stage_binding::{AtomicStageState, StageState};
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, RwLock as AsyncRwLock};
+use tokio::sync::{Mutex, Notify, RwLock as AsyncRwLock};
 use tracing::Instrument;
 
 use super::async_query_registry::AsyncQueryRegistry;
@@ -331,6 +331,11 @@ impl DatabaseDriverV1 {
                     )
                     .context(ConfigurationSnafu)?;
                     normalize_host_underscores(&mut resolved);
+                    self.wrapper_presets
+                        .apply_oauth_authorization_code_cache_default(
+                            &mut resolved,
+                            &conn.connection_seed,
+                        );
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
                     let port = resolved.get_int(param_names::PORT);
@@ -1088,16 +1093,18 @@ pub struct Connection {
     pub init_session_parameters: Option<HashMap<String, String>>,
     /// Registry for tracking async queries (for Fire & Forget auto-detection)
     pub async_query_registry: AsyncQueryRegistry,
-    /// Flag indicating if connection has been closed.
+    /// Where this connection is in its close lifecycle.
     ///
-    /// `Arc<AtomicBool>` is used (rather than a `Mutex<State>` state machine) because:
-    /// - `Arc` provides shared ownership across concurrent async tasks — the logout task,
-    ///   token refresh, and query cancellation all need to observe the closed state.
-    /// - `AtomicBool` allows lock-free closed-state checks without async lock acquisition.
-    ///
-    /// A state machine (`Open → Closing → Closed`) would require a single owner or
-    /// message-passing, conflicting with the parallel-task architecture.
-    pub is_closed: Arc<AtomicBool>,
+    /// Three states rather than a bool because "a close is running" and "the close
+    /// completed" are different facts, and a single flag serving both is what made a
+    /// failed logout unrecoverable: the connection was marked closed before the
+    /// request went out, so a retry short-circuited and the server session leaked.
+    /// See [`CloseState`].
+    pub close_state: Arc<AtomicCloseState>,
+    /// Woken when [`Self::close_state`] leaves `Closing`, so a concurrent closer
+    /// learns the outcome instead of being told the connection is closed while the
+    /// logout is still in flight.
+    pub close_done: Arc<Notify>,
     /// Flag indicating the master token has expired.
     ///
     /// Set to `true` when the server returns GS code 390114 (master token expired),
@@ -1167,7 +1174,8 @@ impl Connection {
             query_context_cache: QueryContextCacheAdapter::new(),
             init_session_parameters: None,
             async_query_registry: AsyncQueryRegistry::new(),
-            is_closed: Arc::new(AtomicBool::new(false)),
+            close_state: Arc::new(AtomicCloseState::new(CloseState::Open)),
+            close_done: Arc::new(Notify::new()),
             is_master_token_expired: Arc::new(AtomicBool::new(false)),
             logout_config: LogoutConfig::default(),
             timeout_config: crate::config::retry::TimeoutConfig::default(),
@@ -1518,12 +1526,14 @@ impl RefreshContext {
     ///
     /// Rejects context creation if the connection is already closed, preventing
     /// in-flight queries from performing token refreshes after `close()` is called.
-    /// This is safe because the query's early `is_closed` check already rejected
+    /// This is safe because the query's early close-state check already rejected
     /// the operation; this provides a second gate for races between that check and
     /// the token refresh setup.
     pub async fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
         let guard = conn.lock().await;
-        if guard.is_closed.load(Ordering::SeqCst) {
+        // `Closing` counts as closed here: a token refresh must not race a logout
+        // that is already in flight.
+        if guard.close_state.load(Ordering::SeqCst) != CloseState::Open {
             return ConnectionClosedSnafu {}.fail();
         }
         Self::new(&guard)
@@ -1553,9 +1563,9 @@ impl RefreshContext {
 
     /// Create a new `RefreshContext` by extracting connection info.
     ///
-    /// Does **not** check `is_closed`. Use `from_arc` for query paths (which
+    /// Does **not** check the close state. Use `from_arc` for query paths (which
     /// must reject creation on a closed connection). The logout path calls
-    /// `new` directly because logout itself runs after `is_closed` is set.
+    /// `new` directly because logout itself runs while the state is `Closing`.
     pub fn new(conn: &Connection) -> Result<Self, ApiError> {
         Ok(Self {
             tokens_lock: conn.tokens.clone(),
@@ -2604,7 +2614,9 @@ impl DatabaseDriverV1 {
             })?;
 
         let conn = conn_ptr.lock().await;
-        Ok(conn.is_closed.load(Ordering::SeqCst))
+        // Completion, not intent: a close whose logout failed reports `false`, which
+        // is what makes the retry visible to the caller.
+        Ok(conn.close_state.load(Ordering::SeqCst) == CloseState::Closed)
     }
 
     /// Check if the connection's master token has expired.
@@ -2653,45 +2665,103 @@ impl DatabaseDriverV1 {
                 argument: "Connection handle not found".to_string(),
             })?;
 
-        // Single lock acquisition for all pre-network synchronous work:
-        // atomically mark closed, capture config, and extract logout data.
-        // Holding the lock here prevents a concurrent set_option_int from racing
-        // between the "mark closed" and "read config" steps.
-        let prepare_result = {
+        let (close_state, close_done) = {
             let conn = conn_ptr.lock().await;
+            (conn.close_state.clone(), conn.close_done.clone())
+        };
 
-            // Atomic swap returns true if connection was already closed (idempotent guard)
-            let was_already_closed = conn.is_closed.swap(true, Ordering::SeqCst);
-            if was_already_closed {
-                tracing::debug!("Connection already closed, skipping duplicate close");
-                // Return None to signal early exit after the block
-                None
-            } else {
-                // Re-derive logout config from the resolved login snapshot at
-                // close-time, then apply post-init connection overrides (e.g.
-                // retry=False sets logout_max_attempts=1). Starting from the
-                // snapshot preserves config-file layers selected by database
-                // options such as connection_name.
-                let close_settings = conn.effective_settings();
-                let config =
-                    LogoutConfig::from_settings(&close_settings).unwrap_or_else(|e| {
-                        tracing::warn!(error = %e, "Failed to re-derive LogoutConfig at close-time; using init-time config");
-                        conn.logout_config.clone()
-                    });
-                let error_strategy = config.error_strategy;
+        loop {
+            // Registered before the state is read, so a wake published between the
+            // read and the await cannot be missed.
+            let notified = close_done.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
 
-                // TODO: SNOW-2912513 - Record telemetry for logout decision
+            match close_state.load(Ordering::SeqCst) {
+                CloseState::Closed => return Ok(()),
+                CloseState::Closing => {
+                    // Someone else owns the close. Wait for their outcome rather than
+                    // reporting success while their logout is still in flight.
+                    notified.await;
+                }
+                CloseState::Open => match close_state.try_begin_close() {
+                    // This caller now owns the close and must leave the state either
+                    // `Closed` or back at `Open`.
+                    Ok(()) => {
+                        return self
+                            .perform_close(conn_handle, &conn_ptr, &close_done)
+                            .await;
+                    }
+                    // Lost the race; re-read and either wait or take over.
+                    Err(_) => continue,
+                },
+            }
+        }
+    }
 
-                // Prepare logout data while holding the lock (pure reads, no network I/O)
-                let logout_data =
-                    logout::prepare_logout_from_conn(&conn, &config, &close_settings)?;
-
-                Some((logout_data, error_strategy))
+    /// Drive one close attempt, having already claimed the closer role.
+    ///
+    /// Every exit path publishes a terminal state and wakes waiters: `Closed` when
+    /// the session is gone, `Open` when it may still be alive so a later close can
+    /// reclaim it.
+    async fn perform_close(
+        &self,
+        conn_handle: Handle,
+        conn_ptr: &Arc<Mutex<Connection>>,
+        close_done: &Arc<Notify>,
+    ) -> Result<(), ApiError> {
+        let settle = |state: CloseState| {
+            let conn_ptr = conn_ptr.clone();
+            let close_done = close_done.clone();
+            async move {
+                conn_ptr
+                    .lock()
+                    .await
+                    .close_state
+                    .store(state, Ordering::SeqCst);
+                close_done.notify_waiters();
             }
         };
 
-        let Some((logout_data, error_strategy)) = prepare_result else {
-            return Ok(());
+        // Single lock acquisition for all pre-network synchronous work, so a
+        // concurrent set_option_int cannot race between reading the config and
+        // extracting the logout data from it.
+        let prepared = {
+            let conn = conn_ptr.lock().await;
+
+            // Re-derive logout config from the resolved login snapshot at
+            // close()-time, then apply post-init connection overrides (e.g.
+            // retry=False sets logout_max_attempts=1). Starting from the
+            // snapshot rather than the raw seed preserves the config-file layers
+            // selected by database options such as connection_name.
+            let close_settings = conn.effective_settings();
+            let config = LogoutConfig::from_settings(&close_settings).unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Failed to re-derive LogoutConfig at close-time; using init-time config");
+                conn.logout_config.clone()
+            });
+            let error_strategy = config.error_strategy;
+
+            // TODO: SNOW-2912513 - Record telemetry for logout decision
+
+            logout::prepare_logout_from_conn(&conn, &config, &close_settings)
+                .map(|data| (data, error_strategy))
+        };
+
+        // `logout_data` is `None` when there is nothing to log out — never
+        // initialised, or `server_session_keep_alive`. That is a *completed* close,
+        // so it deliberately flows through the success path below rather than
+        // getting its own arm: tokens still get cleared and the state still reaches
+        // `Closed`, which is what `should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent`
+        // and the `connection_is_closed` tests require.
+        let (logout_data, error_strategy) = match prepared {
+            Ok(pair) => pair,
+            // The pre-flight reads failed, so no logout was attempted and the
+            // session — if there is one — is untouched. Reopen so the caller can
+            // retry rather than leaving it unreachable.
+            Err(e) => {
+                settle(CloseState::Open).await;
+                return Err(e);
+            }
         };
 
         // Reap any upload/download stream sessions still open on this
@@ -2706,15 +2776,95 @@ impl DatabaseDriverV1 {
         self.flush_connection_telemetry(conn_handle).await;
 
         // Execute logout — network I/O, lock must not be held
-        let logout_result = logout::execute_logout_with_strategy(logout_data, error_strategy).await;
+        let raw_result = match logout_data {
+            Some(data) => logout::send_logout_request(data).await,
+            None => Ok(()),
+        };
 
-        // Cleanup connection resources (separate lock acquisition after I/O)
-        cleanup_connection(&conn_ptr).await?;
+        // The state follows the *raw* outcome while the return value follows the
+        // error strategy. `best_effort` therefore still reports success to its
+        // caller, but the connection stays reclaimable instead of leaking silently —
+        // which is the whole point of the fix.
+        let logged_out = raw_result.is_ok();
+        let returned = error_strategy.handle_failed_logout(raw_result);
 
-        if logout_result.is_ok() {
+        if logged_out {
+            tracing::info!("Logout completed successfully");
+            // Only tear down local resources once the session is actually gone; a
+            // retry needs the HTTP client this would otherwise clear.
+            cleanup_connection(conn_ptr).await?;
+            settle(CloseState::Closed).await;
             tracing::info!("Connection closed successfully");
+        } else {
+            settle(CloseState::Open).await;
         }
-        logout_result
+        returned
+    }
+}
+
+/// Where a connection is in its close lifecycle.
+///
+/// Modelled on [`crate::stage_binding::StageState`] — a `#[repr(u8)]` enum behind an
+/// `AtomicU8` — so the state is always one of the three named values.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CloseState {
+    /// No close has completed. New work is accepted, and a close may begin.
+    Open = 0,
+    /// A close is running: its pre-flight reads, or the logout request itself, are
+    /// in progress. New work is rejected, but the close has *not* completed, so
+    /// this is not what `connection_is_closed` reports.
+    Closing = 1,
+    /// The close completed — either the logout succeeded, or there was nothing to
+    /// log out (never initialised, or `server_session_keep_alive`).
+    Closed = 2,
+}
+
+impl CloseState {
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Closing,
+            2 => Self::Closed,
+            _ => Self::Open,
+        }
+    }
+}
+
+/// Atomically readable/writable [`CloseState`].
+///
+/// Unlike [`crate::stage_binding::AtomicStageState`] this exposes a
+/// compare-exchange, because claiming the closer role has to be a single atomic
+/// step: two callers racing must produce exactly one logout.
+pub struct AtomicCloseState(AtomicU8);
+
+impl AtomicCloseState {
+    pub fn new(state: CloseState) -> Self {
+        Self(AtomicU8::new(state as u8))
+    }
+
+    pub fn load(&self, order: Ordering) -> CloseState {
+        CloseState::from_u8(self.0.load(order))
+    }
+
+    pub fn store(&self, state: CloseState, order: Ordering) {
+        self.0.store(state as u8, order);
+    }
+
+    /// Claim the closer role by moving `Open → Closing`.
+    ///
+    /// `Ok(())` means this caller owns the close and must drive it to either
+    /// `Closed` or back to `Open`. `Err(state)` is whatever was found instead —
+    /// another caller is already closing, or the close is already done.
+    pub fn try_begin_close(&self) -> Result<(), CloseState> {
+        self.0
+            .compare_exchange(
+                CloseState::Open as u8,
+                CloseState::Closing as u8,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map(|_| ())
+            .map_err(CloseState::from_u8)
     }
 }
 
