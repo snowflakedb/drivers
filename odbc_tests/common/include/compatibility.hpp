@@ -2,12 +2,16 @@
 #define COMPATIBILITY_HPP
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #ifndef _WIN32
 #include <locale>
 #endif
 
 #include <catch2/catch_test_macros.hpp>
+
+#include "EnvOverride.hpp"
 
 // Cross-platform process ID
 #ifdef _WIN32
@@ -255,5 +259,34 @@ static inline SQLRETURN SQLCancelHandle(SQLSMALLINT /*handle_type*/, SQLHANDLE /
   } while (0)
 #define OLD_IODBC_ONLY(x) if (is_iodbc_test_suite() && get_driver_type() == DRIVER_TYPE::OLD)
 #define NEW_IODBC_ONLY(x) if (is_iodbc_test_suite() && get_driver_type() == DRIVER_TYPE::NEW)
+
+// Pins DriverManagerEncoding to the compiled SQLWCHAR width so unixODBC
+// tests are not affected by a machine-level sf.odbc.ini (macOS .pkg and
+// ~/.snowflake default to UTF-32). Must outlive the first driver load.
+class PinDriverManagerEncoding {
+ public:
+  PinDriverManagerEncoding()
+      : path_(std::filesystem::temp_directory_path() / ("sf_odbc_wchar_" + std::to_string(GET_PROCESS_ID()) + ".ini")),
+        env_("SF_ODBC_INI", path_.string()) {
+    std::ofstream ini(path_);
+    REQUIRE(ini.good());
+    ini << (is_iodbc_test_suite() ? "DriverManagerEncoding=UTF-32\n" : "DriverManagerEncoding=UTF-16\n");
+  }
+
+  ~PinDriverManagerEncoding() {
+    std::error_code ec;
+    std::filesystem::remove(path_, ec);
+    if (ec) {
+      WARN("PinDriverManagerEncoding cleanup failed for " << path_.string() << ": " << ec.message());
+    }
+  }
+
+  PinDriverManagerEncoding(const PinDriverManagerEncoding&) = delete;
+  PinDriverManagerEncoding& operator=(const PinDriverManagerEncoding&) = delete;
+
+ private:
+  std::filesystem::path path_;
+  EnvOverride env_;
+};
 
 #endif  // COMPATIBILITY_HPP

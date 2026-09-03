@@ -6,6 +6,7 @@
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
@@ -147,7 +148,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR decimal string to S
       CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "6.28");
     }
     else {
+      // unixODBC SQLWCHAR is 16-bit; the old driver's wide-string helper
+      // rejects the decimal literal instead of converting it.
       CHECK(ret == SQL_ERROR);
+      auto records = get_diag_rec(stmt);
+      REQUIRE_FALSE(records.empty());
+      CAPTURE(records[0].sqlState, records[0].nativeError, records[0].messageText);
+      CHECK(records[0].sqlState.size() == 5);
     }
   }
 

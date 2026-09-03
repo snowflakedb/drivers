@@ -1835,6 +1835,7 @@ TEST_CASE("SQLGetData retrieves wide string data in parts with SQL_C_WCHAR.", "[
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-variable-length-data-in-parts
 
   // Given Snowflake client is logged in
+  PinDriverManagerEncoding pin_encoding;
   Connection conn;
   auto stmt = conn.execute_fetch("SELECT 'ABCDEFGHIJ' AS value");
 
@@ -1843,9 +1844,15 @@ TEST_CASE("SQLGetData retrieves wide string data in parts with SQL_C_WCHAR.", "[
   SQLLEN indicator = 0;
   std::string result;
 
-  // Then the first call should return 3 wide chars with SQL_SUCCESS_WITH_INFO
+  // Then the first call should return 3 wide chars with SQL_SUCCESS_WITH_INFO.
+  // VARCHAR WCHAR uses the DM SQLWCHAR width on both drivers. BD#22's shorter
+  // old-driver chunk is the BINARY-to-hex WCHAR path.
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+  CHECK(buffer[0] == static_cast<SQLWCHAR>('A'));
+  CHECK(buffer[1] == static_cast<SQLWCHAR>('B'));
+  CHECK(buffer[2] == static_cast<SQLWCHAR>('C'));
+  CHECK(buffer[3] == 0);
   for (int i = 0; buffer[i] != 0; ++i) {
     result += static_cast<char>(buffer[i]);
   }
