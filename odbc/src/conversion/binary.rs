@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::slice;
 
-use arrow::array::{Array, GenericByteArray};
+use arrow::array::GenericByteArray;
 use arrow::datatypes::GenericBinaryType;
 
 use crate::api::CDataType;
@@ -37,12 +37,11 @@ impl ReadArrowType<GenericByteArray<GenericBinaryType<i32>>> for SnowflakeBinary
         array: &'a GenericByteArray<GenericBinaryType<i32>>,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        if array.is_null(row_idx) {
-            return Err(ReadArrowError::NullValue {
-                location: snafu::location!(),
-            });
-        }
-        Ok(Cow::Borrowed(array.value(row_idx)))
+        Ok(Cow::Borrowed(sf_types::ReadArrowType::read_arrow_type(
+            &sf_types::SnowflakeBinary,
+            array,
+            row_idx,
+        )?))
     }
 }
 
