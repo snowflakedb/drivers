@@ -10,6 +10,10 @@ import {
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
+function dateAtUtcMidnight(dateLiteral: string): Date {
+  return new Date(`${dateLiteral}T00:00:00.000Z`);
+}
+
 describe('Query returning data types', () => {
   const snowflake = getSnowflakeSDK();
   let connection: Connection;
@@ -130,10 +134,90 @@ describe('Query returning data types', () => {
     expect(selectedValue.toISOString()).toEqual('2026-01-01T00:00:00.000Z');
   });
 
-  // The "cast/select/NULL date literals" describe block that used to live here has been
-  // migrated to tests/gherkin/date.test.ts (Gherkin-tracked coverage for date.feature) and
-  // removed from this file.
+  // Gherkin-tracked coverage for tests/definitions/shared/types/date.feature (@nodejs_e2e).
+  // Only these 5 scenarios have a faithful nodejs equivalent; the rest of date.feature
+  // (table operations, parameter binding, large result sets) has no nodejs coverage yet.
   describe('DATE', () => {
+    it('should cast date values to appropriate type', async () => {
+      // Given Snowflake client is logged in
+      const query = `SELECT
+        '2024-01-15'::DATE AS DATE_2024_01_15,
+        '1970-01-01'::DATE AS EPOCH_DATE,
+        '1999-12-31'::DATE AS DATE_1999_12_31`;
+
+      // When Query "SELECT '2024-01-15'::DATE, '1970-01-01'::DATE, '1999-12-31'::DATE" is executed
+      const { statement, rows } = await executeAsync(connection, query);
+
+      const columnNames = ['DATE_2024_01_15', 'EPOCH_DATE', 'DATE_1999_12_31'];
+      for (const columnName of columnNames) {
+        const column = getStatementColumn(statement, columnName);
+        // Then All values should be returned as DATE type
+        expect(column.getType()).toBe('date');
+        expect(column.isDate()).toBe(true);
+        // And No precision loss should occur
+        expect(rows![0][columnName]).toBeInstanceOf(Date);
+      }
+    });
+
+    it('should select date literals', async () => {
+      // Given Snowflake client is logged in
+      const query = `SELECT '2024-01-15'::DATE, '1970-01-01'::DATE, '1999-12-31'::DATE`;
+
+      // When Query "SELECT '2024-01-15'::DATE, '1970-01-01'::DATE, '1999-12-31'::DATE" is executed
+      const { rows } = await executeAsync(connection, query);
+
+      // Then Result should contain dates [2024-01-15, 1970-01-01, 1999-12-31]
+      expect(Object.values(rows![0])).toEqual([
+        dateAtUtcMidnight('2024-01-15'),
+        dateAtUtcMidnight('1970-01-01'),
+        dateAtUtcMidnight('1999-12-31'),
+      ]);
+    });
+
+    it('should select epoch and pre-epoch dates', async () => {
+      // Given Snowflake client is logged in
+      const query = `SELECT '1970-01-01'::DATE, '1969-12-31'::DATE, '1900-01-01'::DATE`;
+
+      // When Query "SELECT '1970-01-01'::DATE, '1969-12-31'::DATE, '1900-01-01'::DATE" is executed
+      const { rows } = await executeAsync(connection, query);
+
+      // Then Result should contain dates [1970-01-01, 1969-12-31, 1900-01-01]
+      expect(Object.values(rows![0])).toEqual([
+        dateAtUtcMidnight('1970-01-01'),
+        dateAtUtcMidnight('1969-12-31'),
+        dateAtUtcMidnight('1900-01-01'),
+      ]);
+    });
+
+    it('should select historical and boundary dates', async () => {
+      // Given Snowflake client is logged in
+      //
+      // 1582-10-15 is the Julian-to-Gregorian cutover date, so it pins the decoder to a
+      // proleptic Gregorian calendar.
+      const query = `SELECT '0001-01-01'::DATE, '1582-10-15'::DATE, '9999-12-31'::DATE`;
+
+      // When Query "SELECT '0001-01-01'::DATE, '1582-10-15'::DATE, '9999-12-31'::DATE" is executed
+      const { rows } = await executeAsync(connection, query);
+
+      // Then Result should contain dates [0001-01-01, 1582-10-15, 9999-12-31]
+      expect(Object.values(rows![0])).toEqual([
+        dateAtUtcMidnight('0001-01-01'),
+        dateAtUtcMidnight('1582-10-15'),
+        dateAtUtcMidnight('9999-12-31'),
+      ]);
+    });
+
+    it('should handle NULL values for date', async () => {
+      // Given Snowflake client is logged in
+      const query = `SELECT NULL::DATE, '2024-01-15'::DATE, NULL::DATE as null_column2`;
+
+      // When Query "SELECT NULL::DATE, '2024-01-15'::DATE, NULL::DATE" is executed
+      const { rows } = await executeAsync(connection, query);
+
+      // Then Result should contain [NULL, 2024-01-15, NULL]
+      expect(Object.values(rows![0])).toEqual([null, dateAtUtcMidnight('2024-01-15'), null]);
+    });
+
     it("renders dates as DATE_OUTPUT_FORMAT's default when fetchAsString is set", async () => {
       const { rows } = await executeAsync(
         connection,
@@ -174,6 +258,25 @@ describe('Query returning data types', () => {
       }
     });
 
+    // Gherkin-tracked coverage for tests/definitions/shared/types/time.feature (@nodejs_e2e).
+    // Only these 2 of time.feature's scenarios have a nodejs equivalent — the rest need
+    // fractional-second output (nodejs's default TIME_OUTPUT_FORMAT truncates to whole
+    // seconds), CREATE TABLE test infrastructure, or parameter binding, none of which exist yet.
+    it('should cast time values to appropriate type', async () => {
+      // Given Snowflake client is logged in
+      const query = `SELECT '10:30:00'::TIME AS T1, '00:00:00'::TIME AS T2, '23:59:59'::TIME AS T3`;
+
+      // When Query "SELECT '10:30:00'::TIME, '00:00:00'::TIME, '23:59:59'::TIME" is executed
+      const { statement } = await executeAsync(connection, query);
+
+      // Then All values should be returned as appropriate type
+      for (const columnName of ['T1', 'T2', 'T3']) {
+        const column = getStatementColumn(statement, columnName);
+        expect(column.getType()).toBe('time');
+        expect(column.isTime()).toBe(true);
+      }
+    });
+
     it('selects time literals', async () => {
       const { rows } = await executeAsync(
         connection,
@@ -182,12 +285,20 @@ describe('Query returning data types', () => {
       expect(Object.values(rows![0])).toEqual(['00:00:00', '10:30:00', '14:45:30', '23:59:59']);
     });
 
-    it('handles NULL values for time', async () => {
-      const { rows } = await executeAsync(connection, `SELECT NULL::TIME, '10:30:00'::TIME`);
+    // Supersedes the old 2-column NULL test: this is the Gherkin-exact scenario (3 columns,
+    // matching time.feature verbatim) and is a superset of what the old test checked.
+    it('should handle NULL values for time', async () => {
+      // Given Snowflake client is logged in
+      const query = `SELECT '10:30:00'::TIME, NULL::TIME, '23:59:59'::TIME`;
+
+      // When Query "SELECT '10:30:00'::TIME, NULL::TIME, '23:59:59'::TIME" is executed
+      const { rows } = await executeAsync(connection, query);
+
+      // Then Result should contain [10:30:00, NULL, 23:59:59]
       if (isRunningNewDriverWithBD('BD#14')) {
-        expect(Object.values(rows![0])).toEqual([null, '10:30:00']);
+        expect(Object.values(rows![0])).toEqual(['10:30:00', null, '23:59:59']);
       } else {
-        expect(Object.values(rows![0])).toEqual(['NULL', '10:30:00']);
+        expect(Object.values(rows![0])).toEqual(['10:30:00', 'NULL', '23:59:59']);
       }
     });
 

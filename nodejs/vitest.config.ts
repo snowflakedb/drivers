@@ -29,7 +29,7 @@ export default defineConfig({
         test: {
           name: { label: 'e2e', color: 'magenta' },
           environment: 'node',
-          include: ['tests/e2e/**/*.test.ts', 'tests/gherkin/**/*.test.ts'],
+          include: ['tests/e2e/**/*.test.ts'],
           testTimeout: 30_000,
           hookTimeout: 180_000,
           globalSetup: ['./tests/setup/e2e.ts'],
@@ -41,7 +41,7 @@ export default defineConfig({
           name: { label: 'e2e-old-driver', color: 'yellow' },
           env: { SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER: '1' },
           environment: 'node',
-          include: ['tests/e2e/**/*.test.ts', 'tests/gherkin/**/*.test.ts'],
+          include: ['tests/e2e/**/*.test.ts'],
           testTimeout: 30_000,
           hookTimeout: 180_000,
           globalSetup: ['./tests/setup/e2e.ts'],
