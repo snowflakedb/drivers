@@ -1,20 +1,7 @@
 import { Readable } from 'node:stream';
 import type { CoreConnectionInstance, CoreStatementInstance } from '../core/index.js';
 import type { DataType, RowMode } from './types.js';
-import { createRowMapper } from './cell-mapping.js';
-import { resolveColumnNames } from './column-names.js';
-
-// TODO:
-// Consider combining remapRow and shapeRow into 1 util function
-function shapeRow(row: unknown[], columnNames: string[], rowMode: RowMode): unknown {
-  if (rowMode === 'array') {
-    return row;
-  }
-  return row.reduce<Record<string, unknown>>((shaped, cell, index) => {
-    shaped[columnNames[index]] = cell;
-    return shaped;
-  }, {});
-}
+import { createRowFormatter } from './cell-mapping.js';
 
 export async function collectRows(
   connection: CoreConnectionInstance,
@@ -25,15 +12,13 @@ export async function collectRows(
   try {
     await coreStatement.waitForCompletion();
     const columns = coreStatement.getColumns()!;
-    const columnNames = resolveColumnNames(columns, rowMode);
-    const remapRow = createRowMapper(columns, connection, fetchAsString);
+    const formatRow = createRowFormatter({ columns, connection, rowMode, fetchAsString });
 
     const rows: unknown[] = [];
     while (await coreStatement.fetchNextBatch()) {
       let row: unknown[] | null = null;
       while ((row = coreStatement.getNextRow()) !== null) {
-        remapRow(row);
-        rows.push(shapeRow(row, columnNames, rowMode));
+        rows.push(formatRow(row));
       }
     }
 
@@ -50,8 +35,7 @@ export function createRowStream(
   fetchAsString?: DataType[],
 ): Readable {
   const columns = coreStatement.getColumns()!;
-  const columnNames = resolveColumnNames(columns, rowMode);
-  const remapRow = createRowMapper(columns, connection, fetchAsString);
+  const formatRow = createRowFormatter({ columns, connection, rowMode, fetchAsString });
 
   // Decodes one row out of the resident batch, returning false once it is
   // drained and the stream needs a refill.
@@ -60,8 +44,7 @@ export function createRowStream(
     if (row === null) {
       return false;
     }
-    remapRow(row);
-    stream.push(shapeRow(row, columnNames, rowMode));
+    stream.push(formatRow(row));
     return true;
   };
 
