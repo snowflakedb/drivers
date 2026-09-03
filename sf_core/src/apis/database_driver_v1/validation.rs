@@ -228,6 +228,30 @@ pub fn resolve_options(
         }
     }
 
+    // ODBC cannot address the canonical `login_timeout` param at all: its
+    // `LOGIN_TIMEOUT` connection-string spelling and `SQL_ATTR_LOGIN_TIMEOUT`
+    // attribute are a scoped alias of `authentication_timeout` (the Okta auth
+    // budget), so every login-timeout value an ODBC caller can express — DSN
+    // key, `SQLSetConnectAttr`, or the driver's 300 s default follow-up — lands
+    // only in `authentication_timeout`. `TimeoutConfig` reads the outer login
+    // wrap from `login_timeout`, which would otherwise stay at the registry
+    // default (120 s) and silently cap any ODBC caller who asked for more (a
+    // ceiling they cannot raise, unlike old ODBC's 300 s `LOGIN_TIMEOUT`
+    // budget). Mirror the resolved value into `login_timeout` so the outer wrap
+    // tracks it. This must live here rather than in the ODBC crate: writing
+    // `login_timeout` into the pre-resolution options map would collide with
+    // the scoped alias above (both keys resolve to `authentication_timeout`)
+    // and fail the connect with a `ConflictingParameters` error. The guard is
+    // defensive — for ODBC the scoped alias means `login_timeout` can never
+    // already be present here.
+    if wrapper == Wrapper::Odbc
+        && let Some(value) = resolved.get(param_names::AUTHENTICATION_TIMEOUT.as_str())
+        && !resolved.contains_key(param_names::LOGIN_TIMEOUT.as_str())
+    {
+        let mirrored = value.clone();
+        resolved.insert(param_names::LOGIN_TIMEOUT.as_str().to_owned(), mirrored);
+    }
+
     (resolved, issues)
 }
 
@@ -873,8 +897,15 @@ mod tests {
                 .all(|i| i.severity != ValidationSeverity::Error),
             "{odbc_issues:?}"
         );
-        assert!(odbc_resolved.contains_key("authentication_timeout"));
-        assert!(!odbc_resolved.contains_key("login_timeout"));
+        // ODBC's `LOGIN_TIMEOUT` still resolves to the `authentication_timeout`
+        // Okta budget (the deliberate scoped-alias shadow), and is now also
+        // mirrored into the canonical `login_timeout` so `TimeoutConfig`'s outer
+        // login wrap tracks the caller's value instead of the registry default.
+        assert_eq!(
+            odbc_resolved.get("authentication_timeout"),
+            Some(&Setting::Int(30))
+        );
+        assert_eq!(odbc_resolved.get("login_timeout"), Some(&Setting::Int(30)));
 
         let mut jdbc_opts = HashMap::new();
         jdbc_opts.insert("LOGIN_TIMEOUT".to_string(), Setting::Int(30));
@@ -887,6 +918,41 @@ mod tests {
         );
         assert!(jdbc_resolved.contains_key("login_timeout"));
         assert!(!jdbc_resolved.contains_key("authentication_timeout"));
+    }
+
+    #[test]
+    fn odbc_mirrors_authentication_timeout_into_login_timeout() {
+        // The canonical `authentication_timeout` spelling covers both a DSN
+        // `AUTHENTICATION_TIMEOUT` and the ODBC driver's 300 s default
+        // follow-up, which is sent as a separate `authentication_timeout` batch.
+        // Either way ODBC must also get a canonical `login_timeout` so the outer
+        // login wrap is not pinned to the registry default.
+        let mut odbc_opts = HashMap::new();
+        odbc_opts.insert("authentication_timeout".to_string(), Setting::Int(300));
+        let (odbc_resolved, odbc_issues) = resolve_options(Wrapper::Odbc, odbc_opts);
+        assert!(
+            odbc_issues
+                .iter()
+                .all(|i| i.severity != ValidationSeverity::Error),
+            "{odbc_issues:?}"
+        );
+        assert_eq!(
+            odbc_resolved.get("authentication_timeout"),
+            Some(&Setting::Int(300))
+        );
+        assert_eq!(odbc_resolved.get("login_timeout"), Some(&Setting::Int(300)));
+
+        // The mirror is ODBC-only: other flavors expose `authentication_timeout`
+        // and `login_timeout` as independent params, so a caller's
+        // `authentication_timeout` must not leak into the outer login wrap.
+        let mut python_opts = HashMap::new();
+        python_opts.insert("authentication_timeout".to_string(), Setting::Int(300));
+        let (python_resolved, _) = resolve_options(Wrapper::Python, python_opts);
+        assert_eq!(
+            python_resolved.get("authentication_timeout"),
+            Some(&Setting::Int(300))
+        );
+        assert!(!python_resolved.contains_key("login_timeout"));
     }
 
     #[test_case("abc_test", "host", "abc_test.us-east-1.snowflakecomputing.com", "abc-test.us-east-1.snowflakecomputing.com" ; "host")]
