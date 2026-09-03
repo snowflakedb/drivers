@@ -11,3 +11,10 @@ Feature: Troubleshooting mode
     When a connection is established and a query is executed
     Then a troubleshooting log file exists in the configured directory
     And the log file contains debug-level entries below the configured log level
+
+  @python_e2e
+  Scenario: should create troubleshooting log file when async connection is enabled via environment variable
+    Given SNOWFLAKE_TROUBLESHOOTING_ENABLED is set to "true" and SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH points to a temporary directory
+    When an async connection is established and a query is executed
+    Then a troubleshooting log file exists in the configured directory
+    And the log file contains debug-level entries below the configured log level
