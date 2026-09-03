@@ -1,158 +1,116 @@
 import type { CoreConnectionInstance, CoreColumnInstance } from '../core/index.js';
-import type { DataType } from './types.js';
+import type { CellConverter, ConversionContext, DataType, RowMode } from './types.js';
 import SessionParameterName from '../constants/SessionParameterName.js';
-import { GlobalConfig } from '../global-config.js';
+import { resolveColumnNames } from './column-names.js';
+import {
+  binaryAsStringConverter,
+  booleanAsStringConverter,
+  dateAsStringConverter,
+  realAsStringConverter,
+  textAsStringConverter,
+} from './string-converters.js';
+import { fixedConverter, variantConverter } from './value-converters.js';
 
-type CellMapper = (value: unknown) => unknown;
-
-export type RowMapper = (row: unknown[]) => void;
-
-const NULL_AS_STRING = 'NULL';
-
-const toNumberMapper: CellMapper = (value) => (value === null ? null : Number(value));
-const toBigIntMapper: CellMapper = (value) => (value === null ? null : BigInt(value as string));
-
-const variantMapper: CellMapper = (value) => {
-  if (value === null || value === undefined) {
-    return value;
+const CONVERTERS_BY_COLUMN_TYPE: Record<
+  string,
+  {
+    asValue: CellConverter | null;
+    asString: CellConverter | null;
   }
-  if (value === '') {
-    return undefined;
-  }
-  const text = value as string;
-  try {
-    return GlobalConfig.jsonColumnVariantParser(text);
-  } catch {
-    return GlobalConfig.xmlColumnVariantParser(text);
-  }
+> = {
+  text: { asValue: null, asString: textAsStringConverter },
+  fixed: { asValue: fixedConverter, asString: textAsStringConverter },
+  real: { asValue: null, asString: realAsStringConverter },
+  decfloat: { asValue: null, asString: textAsStringConverter },
+  boolean: { asValue: null, asString: booleanAsStringConverter },
+  binary: { asValue: null, asString: binaryAsStringConverter },
+  date: { asValue: null, asString: dateAsStringConverter },
+  variant: { asValue: variantConverter, asString: textAsStringConverter },
+  object: { asValue: variantConverter, asString: null },
+  array: { asValue: variantConverter, asString: null },
+  map: { asValue: variantConverter, asString: null },
 };
 
-// TODO: measure building these strings in the bridge instead of here
-const textAsStringMapper: CellMapper = (value) => (value === null ? NULL_AS_STRING : value);
-
-const booleanAsStringMapper: CellMapper = (value) => {
-  if (value === null) {
-    return NULL_AS_STRING;
-  }
-  return value === true ? 'TRUE' : 'FALSE';
+const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
+  String: ['text', 'decfloat'],
+  Number: ['fixed', 'real'],
+  Boolean: ['boolean'],
+  Buffer: ['binary'],
+  Date: ['date'],
+  JSON: ['variant'],
 };
 
-const realAsStringMapper: CellMapper = (value) => {
-  switch (value) {
-    case null:
-      return NULL_AS_STRING;
-    case Infinity:
-      return 'inf';
-    case -Infinity:
-      return '-inf';
-    default:
-      return String(value);
-  }
-};
-
-// TODO: honor BINARY_OUTPUT_FORMAT=BASE64 once session parameters are read from
-// the server response; hex is the default and all that is reachable today.
-const binaryAsStringMapper: CellMapper = (value) =>
-  value === null ? NULL_AS_STRING : (value as Buffer).toString('hex').toUpperCase();
-
-// TODO: honor a non-default DATE_OUTPUT_FORMAT once session parameters are read
-// from the server response; YYYY-MM-DD is the default and all that is reachable
-// today.
-const dateAsStringMapper: CellMapper = (value) =>
-  value === null ? NULL_AS_STRING : (value as Date).toISOString().slice(0, 'YYYY-MM-DD'.length);
-
-const TOKEN_BY_COLUMN_TYPE: Record<string, DataType> = {
-  text: 'String',
-  fixed: 'Number',
-  real: 'Number',
-  boolean: 'Boolean',
-  binary: 'Buffer',
-  date: 'Date',
-  variant: 'JSON',
-  decfloat: 'String',
-};
-
-function toTokenSet(fetchAsString?: DataType[]): ReadonlySet<string> {
-  return new Set(fetchAsString?.map((token) => token.toUpperCase()));
-}
-
-/** A column type with no token has nothing to render, so it is never selected. */
-function isRequestedAsString(column: CoreColumnInstance, tokens: ReadonlySet<string>): boolean {
-  const token = TOKEN_BY_COLUMN_TYPE[column.getType()];
-  return token !== undefined && tokens.has(token.toUpperCase());
-}
-
-function selectAsStringMapper(column: CoreColumnInstance): CellMapper | null {
-  if (column.isBoolean()) {
-    return booleanAsStringMapper;
-  }
-  if (column.getType() === 'real') {
-    return realAsStringMapper;
-  }
-  if (column.isBinary()) {
-    return binaryAsStringMapper;
-  }
-  if (column.isDate()) {
-    return dateAsStringMapper;
-  }
-  return textAsStringMapper;
-}
-
-function isEnabled(connection: CoreConnectionInstance, name: string): boolean {
+function isSessionParameterEnabled(connection: CoreConnectionInstance, name: string): boolean {
   return connection.getSessionParameter(name)?.toLowerCase() === 'true';
 }
 
-function selectNormalMapper(
+function selectConverter(
   column: CoreColumnInstance,
-  connection: CoreConnectionInstance,
-): CellMapper | null {
-  if (column.isVariant()) {
-    return variantMapper;
+  asStringColumnTypes: ReadonlySet<string>,
+): CellConverter | null {
+  const columnType = column.getType();
+  const converters = CONVERTERS_BY_COLUMN_TYPE[columnType];
+  if (!converters) {
+    return null;
   }
-  if (column.getType() === 'fixed') {
-    return isEnabled(connection, SessionParameterName.JS_TREAT_INTEGER_AS_BIGINT) &&
-      column.getScale() === 0
-      ? toBigIntMapper
-      : toNumberMapper;
-  }
-  return null;
+  return asStringColumnTypes.has(columnType) ? converters.asString : converters.asValue;
 }
 
-function selectMapper(
-  column: CoreColumnInstance,
-  connection: CoreConnectionInstance,
-  asStringTokens: ReadonlySet<string>,
-): CellMapper | null {
-  return isRequestedAsString(column, asStringTokens)
-    ? selectAsStringMapper(column)
-    : selectNormalMapper(column, connection);
-}
-
-/** A column that needs conversion, paired with the mapper selected for it. */
-interface MappedColumn {
+interface ColumnConverter {
   index: number;
-  map: CellMapper;
+  convert: CellConverter;
+  context: ConversionContext;
 }
 
-export function createRowMapper(
-  columns: CoreColumnInstance[],
-  connection: CoreConnectionInstance,
-  fetchAsString?: DataType[],
-): RowMapper {
-  const asStringTokens = toTokenSet(fetchAsString);
-  const mapped: MappedColumn[] = [];
+interface RowFormatterOptions {
+  columns: CoreColumnInstance[];
+  connection: CoreConnectionInstance;
+  rowMode: RowMode;
+  fetchAsString?: DataType[];
+}
+
+type RowFormatter = (rawRow: unknown[]) => unknown[] | Record<string, unknown>;
+
+export function createRowFormatter({
+  columns,
+  connection,
+  rowMode,
+  fetchAsString,
+}: RowFormatterOptions): RowFormatter {
+  const columnNames = resolveColumnNames(columns, rowMode);
+  const asStringColumnTypes = new Set(
+    (fetchAsString ?? []).flatMap((token) => COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN[token]),
+  );
+  const treatIntegerAsBigInt = isSessionParameterEnabled(
+    connection,
+    SessionParameterName.JS_TREAT_INTEGER_AS_BIGINT,
+  );
+
+  const columnConverters: ColumnConverter[] = [];
   for (const column of columns) {
-    const map = selectMapper(column, connection, asStringTokens);
-    if (map !== null) {
-      mapped.push({ index: column.getIndex(), map });
+    const convert = selectConverter(column, asStringColumnTypes);
+    if (convert !== null) {
+      columnConverters.push({
+        index: column.getIndex(),
+        convert,
+        context: { scale: column.getScale(), treatIntegerAsBigInt },
+      });
     }
   }
 
-  // Rewrites in place, visiting only the columns that need it: the bridge builds
-  // a fresh row array per call so nothing else holds a reference
   return (row) => {
-    for (const { index, map } of mapped) {
-      row[index] = map(row[index]);
+    // The bridge builds a fresh row array per call, so converting cells in
+    // place is safe: nothing else holds a reference to this array.
+    for (const { index, convert, context } of columnConverters) {
+      row[index] = convert(row[index], context);
     }
+    if (rowMode === 'array') {
+      return row;
+    }
+    const shaped: Record<string, unknown> = {};
+    for (let index = 0; index < row.length; index++) {
+      shaped[columnNames[index]] = row[index];
+    }
+    return shaped;
   };
 }

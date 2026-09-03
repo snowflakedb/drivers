@@ -10,6 +10,13 @@ export type RowMode = 'array' | 'object' | 'object_with_renamed_duplicated_colum
 
 export type DataType = 'String' | 'Boolean' | 'Number' | 'Date' | 'JSON' | 'Buffer';
 
+export interface ConversionContext {
+  scale: number | null;
+  treatIntegerAsBigInt: boolean;
+}
+
+export type CellConverter = (value: unknown, context: ConversionContext) => unknown;
+
 export type Column = CoreColumnInstance;
 
 export interface RowOptions {
