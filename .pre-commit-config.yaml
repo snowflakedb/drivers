@@ -131,7 +131,7 @@ repos:
     -   id: mirror-config-consistency
         name: Mirror config generation consistency
         description: Ensure committed mirror infrastructure matches its generator
-        entry: python3 ci/mirroring/scripts/test_generate_mirror_config.py
+        entry: bash -c 'if [ -f ci/mirroring/scripts/test_generate_mirror_config.py ]; then python3 ci/mirroring/scripts/test_generate_mirror_config.py; else echo "ci/mirroring/ is excluded from the public mirror; skipping"; fi'
         pass_filenames: false
         files: ^(ci/mirroring/|\.github/workflows/(mirror|mirror-inbound|close-imported-pr)\.yml$)
         language: system
