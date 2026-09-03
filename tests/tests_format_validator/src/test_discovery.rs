@@ -409,17 +409,20 @@ impl TestDiscovery {
                     .join(format!("{}Test.cs", pascal_name)),
             ],
             Language::JavaScript => {
-                // Gherkin-tracked Node.js tests live in their own flat directory,
-                // separate from the general nodejs/tests/e2e/ suite (no category
-                // subdirectories, unlike Python/JDBC/ODBC/Rust) — see
-                // .ai/commands/kb/references/architecture/best-practices/adding-tests.md
-                // Step 1's directory table.
-                vec![
-                    // nodejs/tests/gherkin/feature_name.test.ts
-                    self.workspace_root
-                        .join("nodejs/tests/gherkin")
-                        .join(format!("{}.test.ts", snake_name)),
-                ]
+                // Node.js Gherkin-tracked coverage lives inline in the shared
+                // query-data-types*.test.ts e2e files, grouped by data type, rather than in
+                // a dedicated per-feature file like Python/JDBC/ODBC/Rust. Only date/time/
+                // semi_structured are mapped — each was verified scenario-by-scenario against
+                // its feature file. Adding an entry without the same verification risks the
+                // validator reporting false-positive coverage. The fallback assumes any other
+                // feature follows nodejs/tests/e2e/'s actual kebab-case naming convention (e.g.
+                // connection_pool.feature -> connection-pool.test.ts).
+                let e2e_dir = self.workspace_root.join("nodejs/tests/e2e");
+                match snake_name.as_str() {
+                    "date" | "time" => vec![e2e_dir.join("query-data-types.test.ts")],
+                    "semi_structured" => vec![e2e_dir.join("query-data-types-variant.test.ts")],
+                    _ => vec![e2e_dir.join(format!("{}.test.ts", snake_name.replace('_', "-")))],
+                }
             }
         }
     }
