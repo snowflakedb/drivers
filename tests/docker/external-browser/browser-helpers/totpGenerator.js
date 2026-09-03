@@ -1,124 +1,79 @@
 const speakeasy = require('speakeasy');
 
+const TOTP_STEP_SECONDS = 30;
+const MIN_VALIDITY_SECONDS = 8;
+const BOUNDARY_SLACK_MS = 200;
+
 class TotpGenerator {
     constructor(seed) {
         this.seed = seed || process.env.SNOWFLAKE_AUTH_MFA_SEED;
-        
+
         if (!this.seed) {
-            throw new Error('TOTP seed must be provided as parameter or set in SNOWFLAKE_AUTH_MFA_SEED environment variable');
+            throw new Error(
+                'TOTP seed must be provided as parameter or set in SNOWFLAKE_AUTH_MFA_SEED environment variable'
+            );
         }
     }
-    
+
     /**
-     * Generate a TOTP code based on the current time.
-     * If less than 5 seconds remaining, returns current + future tokens.
-     * Otherwise returns past + current + future tokens.
+     * Generate only the currently valid TOTP code.
+     *
+     * Returning adjacent-window codes encouraged callers to submit a past or
+     * not-yet-valid code immediately after a rejection. Each submission counts
+     * toward the account's MFA lockout, so wait for a safe current window
+     * instead of spraying fallback codes.
+     *
+     * Returns the bare token string. Does not write stdout — CLI main() prints
+     * so library callers (Playwright) do not leak passcodes into Jenkins logs.
      */
-        async generateTotp() {
+    async generateTotp() {
         try {
-            const currentWindow = Math.floor(Date.now() / 30000);
-            const nextWindow = currentWindow + 1;
-            const timeRemaining = this.getTimeRemaining();
-            
-            const pastToken = speakeasy.totp({
-                secret: this.seed,
-                encoding: 'base32',
-                time: (currentWindow - 1) * 30,
-                step: 30,
-                window: 1
-            });
-            
-            const currentToken = speakeasy.totp({
-                secret: this.seed,
-                encoding: 'base32',
-                time: currentWindow * 30,
-                step: 30,
-                window: 1
-            });
-            
-            const futureToken = speakeasy.totp({
-                secret: this.seed,
-                encoding: 'base32',
-                time: nextWindow * 30,
-                step: 30,
-                window: 1
-            });
-            
-            if (timeRemaining < 5) {
-                const tokens = { current: currentToken, future: futureToken };
-                console.log(`${currentToken} ${futureToken}`);
-                return tokens;
-            } else {
-                const tokens = { past: pastToken, current: currentToken, future: futureToken };
-                console.log(`${pastToken} ${currentToken} ${futureToken}`);
-                return tokens;
+            const remainingMs = this.getTimeRemainingMs();
+            if (remainingMs < MIN_VALIDITY_SECONDS * 1000) {
+                await this.sleep(remainingMs + BOUNDARY_SLACK_MS);
             }
+
+            const currentWindow = Math.floor(
+                Date.now() / (TOTP_STEP_SECONDS * 1000)
+            );
+            return speakeasy.totp({
+                secret: this.seed,
+                encoding: 'base32',
+                time: currentWindow * TOTP_STEP_SECONDS,
+                step: TOTP_STEP_SECONDS
+            });
         } catch (error) {
             throw new Error(`Failed to generate TOTP: ${error.message}`);
         }
     }
-    
-    /**
-     * Return the next timing window's token immediately.
-     */
-        async refreshToken() {
-        try {
-            const currentWindow = Math.floor(Date.now() / 30000);
-            const futureWindow = currentWindow + 1;
-            
-            const futureToken = speakeasy.totp({
-                secret: this.seed,
-                encoding: 'base32',
-                time: futureWindow * 30,
-                step: 30,
-                window: 1
-            });
-            
-            console.log(futureToken);
-            return futureToken;
-            
-        } catch (error) {
-            throw new Error(`Failed to refresh TOTP: ${error.message}`);
-        }
+
+    getTimeRemainingMs() {
+        return TOTP_STEP_SECONDS * 1000 - (Date.now() % (TOTP_STEP_SECONDS * 1000));
     }
 
-    verifyTotp(token) {
-        try {
-            const isValid = speakeasy.totp.verify({
-                secret: this.seed,
-                encoding: 'base32',
-                token: token,
-                step: 30,
-                window: 2
-            });
-            
-            console.log(`TOTP verification for ${token}: ${isValid}`);
-            return isValid;
-        } catch (error) {
-            console.error(`Failed to verify TOTP: ${error.message}`);
-            return false;
-        }
-    }
-    
+    /** Fractional seconds remaining in the current TOTP window. */
     getTimeRemaining() {
-        const step = 30;
-        const currentTime = Math.floor(Date.now() / 1000);
-        const timeRemaining = step - (currentTime % step);
-        return timeRemaining;
+        return this.getTimeRemainingMs() / 1000;
+    }
+
+    sleep(milliseconds) {
+        return new Promise((resolve) => setTimeout(resolve, milliseconds));
     }
 }
 
 async function main() {
-    const totpGen = new TotpGenerator();
-    const code = await totpGen.generateTotp();
-    return code;
+    const totpGen = new TotpGenerator(process.argv[2]);
+    console.log(await totpGen.generateTotp());
 }
 // Only run the CLI entry point when invoked directly (`node totpGenerator.js`); requiring
 // this file as a module (e.g. from provideBrowserCredentials.js) must not construct a
 // TotpGenerator with no seed, which throws and crashes the whole process as an unhandled
 // rejection under Node 20's default --unhandled-rejections=throw.
 if (require.main === module) {
-    main();
+    main().catch((error) => {
+        console.error(error.message);
+        process.exit(1);
+    });
 }
 
 module.exports = TotpGenerator;

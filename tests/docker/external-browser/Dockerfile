@@ -43,6 +43,7 @@ COPY browser-helpers/provideBrowserCredentials.js /externalbrowser/provideBrowse
 COPY browser-helpers/getOauthToken.js /externalbrowser/getOauthToken.js
 COPY browser-helpers/patHelper.js /externalbrowser/patHelper.js
 COPY browser-helpers/totpGenerator.js /externalbrowser/totpGenerator.js
+COPY browser-helpers/totpGenerator.test.js /externalbrowser/totpGenerator.test.js
 COPY browser-helpers/getTOTP.js /externalbrowser/getTOTP.js
 
 # Headless Chromium launcher

@@ -1,5 +1,7 @@
 package net.snowflake.jdbc.e2e.authentication;
 
+import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
+import static net.snowflake.jdbc.utils.DriverCompatibility.isOldDriver;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -70,7 +72,7 @@ class UserPasswordMfaTests implements WithQueryUtils, WithConnect, WithTotpCodes
     firstProps.setProperty("authenticator", "USERNAME_PASSWORD_MFA");
     firstProps.setProperty("user", USER);
     firstProps.setProperty("password", PASSWORD);
-    firstProps.setProperty("clientStoreTemporaryCredential", "true");
+    enableMfaTokenCache(firstProps);
 
     try (Connection first = connectWithTotpRetry(firstProps, TOTP_SEED, false)) {
       assertSimpleQuerySucceeds(first);
@@ -81,7 +83,7 @@ class UserPasswordMfaTests implements WithQueryUtils, WithConnect, WithTotpCodes
     secondProps.setProperty("authenticator", "USERNAME_PASSWORD_MFA");
     secondProps.setProperty("user", USER);
     secondProps.setProperty("password", PASSWORD);
-    secondProps.setProperty("clientStoreTemporaryCredential", "true");
+    enableMfaTokenCache(secondProps);
 
     try (Connection second = connect(secondProps)) {
       // Then Login is successful and simple query can be executed
@@ -134,6 +136,16 @@ class UserPasswordMfaTests implements WithQueryUtils, WithConnect, WithTotpCodes
     try (Connection conn = connect(props)) {
       // Then Login is successful and simple query can be executed
       assertSimpleQuerySucceeds(conn);
+    }
+  }
+
+  // BD#5: legacy uses clientRequestMfaToken; UD uses clientStoreTemporaryCredential only.
+  private static void enableMfaTokenCache(Properties props) {
+    if (isOldDriver()) {
+      props.setProperty("clientRequestMfaToken", "true");
+    }
+    if (isNewDriver()) {
+      props.setProperty("clientStoreTemporaryCredential", "true");
     }
   }
 }

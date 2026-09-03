@@ -11,9 +11,9 @@ async function main() {
         }
 
         const totpGen = new TotpGenerator(seed);
-        const code = await totpGen.generateTotp();
-        
-        console.log(code);
+        // generateTotp returns the bare token and does not print. CLI stdout
+        // must stay a single 6-digit line for whitespace-parsing callers.
+        console.log(await totpGen.generateTotp());
         process.exit(0);
         
     } catch (error) {
