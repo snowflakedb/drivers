@@ -13,6 +13,7 @@ use sf_core::logging::{CallbackLayer, LogManager, LoggingConfig, NormalizedEvent
 use sf_core::perf_timing;
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::telemetry::snowflake_exporter::SessionRegistry;
+use tracing::instrument::WithSubscriber;
 
 #[cfg(feature = "native-arrow")]
 use crate::arrow::ArrowStreamIterator;
@@ -198,20 +199,20 @@ fn call_proto_async<'py>(
 
     let (handle, cancel_token) = bridge.transport.register();
 
-    // Tokio worker threads do not inherit the caller's tracing dispatch.
-    // Without this, async RPC tracing events skip file/OTLP/telemetry/CallbackLayer.
     let dispatch = bridge.dispatch.clone();
-    let join_handle = bridge.runtime.spawn(async move {
-        let _logging_guard = tracing::dispatcher::set_default(&dispatch);
-        std::panic::AssertUnwindSafe(
-            bridge
-                .transport
-                .handle_message_cancellable(&api, &method, request, handle),
-        )
-        .catch_unwind()
-        .await
-        .unwrap_or_else(|_| Err(ProtoError::Transport("sf_core panic in async task".into())))
-    });
+    let join_handle = bridge.runtime.spawn(
+        async move {
+            std::panic::AssertUnwindSafe(
+                bridge
+                    .transport
+                    .handle_message_cancellable(&api, &method, request, handle),
+            )
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|_| Err(ProtoError::Transport("sf_core panic in async task".into())))
+        }
+        .with_subscriber(dispatch),
+    );
 
     // Waiter: what Python actually awaits; dropping it fires the cancel token
     future_into_py(py, async move {
@@ -269,4 +270,97 @@ fn sf_core_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "native-arrow")]
     m.add_class::<ArrowStreamIterator>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use tracing::Subscriber;
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+
+    struct CaptureLayer {
+        messages: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S: Subscriber> Layer<S> for CaptureLayer {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let normalized = sf_core::logging::normalize_event(event);
+            self.messages
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(normalized.message);
+        }
+    }
+
+    fn hop_and_capture(use_with_subscriber: bool) -> Option<Vec<String>> {
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let dispatch =
+            tracing::dispatcher::Dispatch::new(tracing_subscriber::registry().with(CaptureLayer {
+                messages: Arc::clone(&messages),
+            }));
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let task = async move {
+            let before = std::thread::current().id();
+            let _ = rx.await;
+            tracing::info!("after_await_on_possibly_other_worker");
+            (before, std::thread::current().id())
+        };
+        let join = if use_with_subscriber {
+            runtime.spawn(task.with_subscriber(dispatch))
+        } else {
+            runtime.spawn(async move {
+                let _guard = tracing::dispatcher::set_default(&dispatch);
+                task.await
+            })
+        };
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            let _ = tx.send(());
+        });
+        let (before, after) = runtime.block_on(join).expect("spawned task");
+        if before == after {
+            return None;
+        }
+        Some(messages.lock().unwrap_or_else(|e| e.into_inner()).clone())
+    }
+
+    fn capture_after_hop(use_with_subscriber: bool) -> Vec<String> {
+        for _ in 0..40 {
+            if let Some(captured) = hop_and_capture(use_with_subscriber) {
+                return captured;
+            }
+        }
+        panic!("could not force a tokio worker hop in 40 attempts");
+    }
+
+    #[test]
+    fn set_default_across_await_drops_events_after_worker_hop() {
+        let captured = capture_after_hop(false);
+        assert!(
+            !captured
+                .iter()
+                .any(|m| m.contains("after_await_on_possibly_other_worker")),
+            "set_default is thread-local; a worker hop must drop the event; captured = {captured:?}"
+        );
+    }
+
+    #[test]
+    fn with_subscriber_keeps_events_after_worker_hop() {
+        let captured = capture_after_hop(true);
+        assert!(
+            captured
+                .iter()
+                .any(|m| m.contains("after_await_on_possibly_other_worker")),
+            "with_subscriber must keep the event after a worker hop; captured = {captured:?}"
+        );
+    }
 }

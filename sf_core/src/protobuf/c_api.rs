@@ -6,6 +6,7 @@ use crate::logging::LogManager;
 use crate::protobuf::apis::RustTransport;
 use futures::FutureExt;
 use proto_utils::{CancellableTransport, ProtoError, Transport};
+use tracing::instrument::WithSubscriber;
 
 /// C callback type - fn ptr invoked when an async proto API call completes.
 ///
@@ -190,36 +191,36 @@ pub unsafe extern "C" fn sf_core_api_call_proto_async(
     // exists. The token stays in the registry — cancel by handle.
     let (async_handle, _token) = state.transport.register();
 
-    // Tokio worker threads do not inherit the caller's tracing dispatch (see the sync path's set_default above).
-    // Without this, async RPC tracing events skip file/OTLP/telemetry/CallbackLayer.
     let dispatch = state.dispatch.clone();
-    state.runtime.spawn(async move {
-        let _guard = tracing::dispatcher::set_default(&dispatch);
-        // `handle_message_cancellable` dispatches the operation under the token
-        // registered for `async_handle`; the operation observes that token and
-        // unwinds with a Cancelled `DriverException`. The completion callback
-        // fires on every outcome, including cancellation; Python guards
-        // `on_response` with `future.done()`.
-        let result = std::panic::AssertUnwindSafe(state.transport.handle_message_cancellable(
-            &api_str,
-            &method_str,
-            request_vec,
-            async_handle,
-        ))
-        .catch_unwind()
-        .await;
+    state.runtime.spawn(
+        async move {
+            // `handle_message_cancellable` dispatches the operation under the token
+            // registered for `async_handle`; the operation observes that token and
+            // unwinds with a Cancelled `DriverException`. The completion callback
+            // fires on every outcome, including cancellation; Python guards
+            // `on_response` with `future.done()`.
+            let result = std::panic::AssertUnwindSafe(state.transport.handle_message_cancellable(
+                &api_str,
+                &method_str,
+                request_vec,
+                async_handle,
+            ))
+            .catch_unwind()
+            .await;
 
-        let (status, response_vec): (usize, Vec<u8>) = match result {
-            Ok(Ok(r)) => (0, r),
-            Ok(Err(ProtoError::Application(e))) => (1, e),
-            Ok(Err(ProtoError::Transport(e))) => (2, e.as_bytes().to_vec()),
-            Err(_) => (2, b"sf_core panic in async task".to_vec()),
-        };
+            let (status, response_vec): (usize, Vec<u8>) = match result {
+                Ok(Ok(r)) => (0, r),
+                Ok(Err(ProtoError::Application(e))) => (1, e),
+                Ok(Err(ProtoError::Transport(e))) => (2, e.as_bytes().to_vec()),
+                Err(_) => (2, b"sf_core panic in async task".to_vec()),
+            };
 
-        // handle_message_cancellable deregistered async_handle on completion.
-        // SAFETY: callback contract documented on this function.
-        unsafe { fire_callback(callback, user_data, status, response_vec) };
-    });
+            // handle_message_cancellable deregistered async_handle on completion.
+            // SAFETY: callback contract documented on this function.
+            unsafe { fire_callback(callback, user_data, status, response_vec) };
+        }
+        .with_subscriber(dispatch),
+    );
 
     async_handle
 }
@@ -233,5 +234,98 @@ pub unsafe extern "C" fn sf_core_api_call_proto_async(
 pub unsafe extern "C" fn sf_core_api_cancel(async_handle: u64) {
     if let Some(state) = STATE.get() {
         state.transport.cancel(async_handle);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use tracing::Subscriber;
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+
+    struct CaptureLayer {
+        messages: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S: Subscriber> Layer<S> for CaptureLayer {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let normalized = crate::logging::normalize_event(event);
+            self.messages
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(normalized.message);
+        }
+    }
+
+    fn hop_and_capture(use_with_subscriber: bool) -> Option<Vec<String>> {
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let dispatch =
+            tracing::dispatcher::Dispatch::new(tracing_subscriber::registry().with(CaptureLayer {
+                messages: Arc::clone(&messages),
+            }));
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let task = async move {
+            let before = std::thread::current().id();
+            let _ = rx.await;
+            tracing::info!("after_await_on_possibly_other_worker");
+            (before, std::thread::current().id())
+        };
+        let join = if use_with_subscriber {
+            runtime.spawn(task.with_subscriber(dispatch))
+        } else {
+            runtime.spawn(async move {
+                let _guard = tracing::dispatcher::set_default(&dispatch);
+                task.await
+            })
+        };
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            let _ = tx.send(());
+        });
+        let (before, after) = runtime.block_on(join).expect("spawned task");
+        if before == after {
+            return None;
+        }
+        Some(messages.lock().unwrap_or_else(|e| e.into_inner()).clone())
+    }
+
+    fn capture_after_hop(use_with_subscriber: bool) -> Vec<String> {
+        for _ in 0..40 {
+            if let Some(captured) = hop_and_capture(use_with_subscriber) {
+                return captured;
+            }
+        }
+        panic!("could not force a tokio worker hop in 40 attempts");
+    }
+
+    #[test]
+    fn set_default_across_await_drops_events_after_worker_hop() {
+        let captured = capture_after_hop(false);
+        assert!(
+            !captured
+                .iter()
+                .any(|m| m.contains("after_await_on_possibly_other_worker")),
+            "set_default is thread-local; a worker hop must drop the event; captured = {captured:?}"
+        );
+    }
+
+    #[test]
+    fn with_subscriber_keeps_events_after_worker_hop() {
+        let captured = capture_after_hop(true);
+        assert!(
+            captured
+                .iter()
+                .any(|m| m.contains("after_await_on_possibly_other_worker")),
+            "with_subscriber must keep the event after a worker hop; captured = {captured:?}"
+        );
     }
 }

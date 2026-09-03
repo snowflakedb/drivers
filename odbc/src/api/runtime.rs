@@ -8,6 +8,7 @@ use sf_core::protobuf::apis::database_driver_v1::{
 use snafu::{Location, ResultExt, Snafu};
 
 use crate::api::handle_registry::{DescLookup, HandleKind, HandleManager};
+use tracing::instrument::WithSubscriber;
 
 /// Serializes "last environment freed → `OdbcGlobals` destroyed" vs "first environment of the
 /// next epoch allocates a new `OdbcGlobals`".
@@ -75,14 +76,8 @@ impl OdbcGlobals {
         F: std::future::Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        // Tokio worker threads do not inherit the caller's tracing dispatch, so
-        // (unlike `block_on`, which runs on the calling thread) a spawned task
-        // must set it on every event it emits.
         let dispatch = self.dispatch.clone();
-        self.runtime.spawn(async move {
-            let _guard = tracing::dispatcher::set_default(&dispatch);
-            f.await
-        })
+        self.runtime.spawn(f.with_subscriber(dispatch))
     }
 
     pub fn client(&self) -> Arc<DatabaseDriverClient> {
@@ -257,9 +252,16 @@ mod tests {
     }
 
     fn test_globals(dispatch: tracing::dispatcher::Dispatch) -> OdbcGlobals {
+        test_globals_with_workers(dispatch, 1)
+    }
+
+    fn test_globals_with_workers(
+        dispatch: tracing::dispatcher::Dispatch,
+        worker_threads: usize,
+    ) -> OdbcGlobals {
         OdbcGlobals {
             runtime: tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
+                .worker_threads(worker_threads)
                 .enable_all()
                 .build()
                 .expect("test runtime"),
@@ -292,5 +294,45 @@ mod tests {
             "event emitted inside OdbcGlobals::spawn must reach the globals' \
              tracing dispatch; captured = {captured:?}"
         );
+    }
+
+    #[test]
+    fn spawn_keeps_tracing_dispatch_after_await_on_other_worker() {
+        use std::time::Duration;
+
+        const AFTER: &str = "after_await_on_possibly_other_worker";
+
+        for _ in 0..40 {
+            let messages = Arc::new(StdMutex::new(Vec::new()));
+            let dispatch = tracing::dispatcher::Dispatch::new(tracing_subscriber::registry().with(
+                CaptureLayer {
+                    messages: Arc::clone(&messages),
+                },
+            ));
+            let globals = test_globals_with_workers(dispatch, 4);
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let handle = globals.spawn(async move {
+                let before = std::thread::current().id();
+                let _ = rx.await;
+                tracing::info!("after_await_on_possibly_other_worker");
+                (before, std::thread::current().id())
+            });
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                let _ = tx.send(());
+            });
+            let (before, after) =
+                globals.block_on(async move |_c| handle.await.expect("spawned task"));
+            let captured = messages.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if before == after {
+                continue;
+            }
+            assert!(
+                captured.iter().any(|m| m.contains(AFTER)),
+                "post-await event must reach the dispatch after a worker hop; captured = {captured:?}"
+            );
+            return;
+        }
+        panic!("could not force a tokio worker hop in 40 attempts");
     }
 }
