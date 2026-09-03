@@ -17,6 +17,18 @@ project.assets.json
 # IDE
 .vs/
 .idea/
+*.DotSettings.user
+*.dotCover
 
 # Test results
 TestResults/
+*.coverage
+*.coveragexml
+
+# Ignore config files
+/testEnvironments.json
+/parameters.json
+parameters*.json
+toml_config_folder/
+*.toml
+*.p8
