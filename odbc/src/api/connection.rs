@@ -145,11 +145,11 @@ fn normalize_connection_string_option(
         // registry match it case-insensitively. It needs the same
         // pre-canonicalization as `LOGIN_TIMEOUT` for the reason above: the
         // caller's DSN value would otherwise sit under `AUTHENTICATION_TIMEOUT`
-        // while `apply_pre_connection_overrides` and the default-timeout
-        // follow-up in `connect_with_params` write `authentication_timeout`,
-        // so those writes would land beside the caller's value and the
-        // last-writer-wins insert in `connection_set_options` would silently
-        // discard it.
+        // while `apply_pre_connection_overrides` writes the canonical
+        // `authentication_timeout` for `SQL_ATTR_LOGIN_TIMEOUT`. The two keys
+        // would ride into `connection_set_options` side by side and only
+        // canonicalize there, where the last-writer-wins insert would silently
+        // discard one of them.
         "AUTHENTICATION_TIMEOUT" | "LOGIN_TIMEOUT" => {
             Some(("authentication_timeout".to_owned(), value.into()))
         }
@@ -2593,9 +2593,9 @@ mod tests {
     #[test]
     fn normalize_connection_string_options_maps_authentication_timeout() {
         // The caller's own spelling has to reach sf_core under the canonical
-        // key. Left uppercased, the default-timeout follow-up in
-        // `connect_with_params` writes `authentication_timeout` beside it and
-        // overwrites the caller's value once both canonicalize.
+        // key. Left uppercased, a `SQL_ATTR_LOGIN_TIMEOUT` attribute would write
+        // `authentication_timeout` beside it and overwrite the caller's value
+        // once both canonicalize.
         for spelling in ["AUTHENTICATION_TIMEOUT", "authentication_timeout"] {
             let options = normalize_connection_string_options(HashMap::from([(
                 spelling.to_owned(),
