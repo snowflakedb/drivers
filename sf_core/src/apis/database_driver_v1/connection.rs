@@ -331,10 +331,15 @@ impl DatabaseDriverV1 {
                     )
                     .context(ConfigurationSnafu)?;
                     normalize_host_underscores(&mut resolved);
+                    // `effective_seed`, not `connection_seed`: the user can set
+                    // `client_store_temporary_credential` on the database handle
+                    // too, and that layer is absent from the connection seed.
+                    // Checking the seed alone overwrote a database-level `false`
+                    // and turned credential caching on against the caller's wish.
                     self.wrapper_presets
                         .apply_oauth_authorization_code_cache_default(
                             &mut resolved,
-                            &conn.connection_seed,
+                            &effective_seed,
                         );
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
@@ -1226,8 +1231,13 @@ impl Connection {
     /// that opt in via `WrapperPresets::honor_put_get_disable` (JDBC only), so
     /// this accessor just reads the flags and does not itself scope by driver.
     pub(crate) async fn enable_put_get(&self) -> bool {
+        // Read through the resolved snapshot with post-init connection
+        // overrides applied, not the raw connection seed: `enable_put_get=false`
+        // can arrive from the database handle or a config profile, and those
+        // layers never reach `connection_seed`. Consulting the seed alone let a
+        // database-level file-transfer disable be bypassed.
         let client_enabled = self
-            .connection_seed
+            .effective_settings()
             .get_bool(param_names::ENABLE_PUT_GET)
             .unwrap_or(true);
 
@@ -3069,6 +3079,30 @@ mod tests {
             Setting::Bool(false),
         )]);
         assert!(!conn.enable_put_get().await);
+    }
+
+    #[tokio::test]
+    async fn enable_put_get_false_when_database_option_disables() {
+        // The flag can arrive on the database handle rather than the connection
+        // string. Reading `connection_seed` alone let that disable be bypassed
+        // and PUT/GET stayed allowed.
+        let mut conn = Connection::new();
+        conn.database_seed
+            .insert(param_names::ENABLE_PUT_GET.into(), Setting::Bool(false));
+        assert!(!conn.enable_put_get().await);
+    }
+
+    #[tokio::test]
+    async fn enable_put_get_connection_option_overrides_the_database_option() {
+        // Connection options are the higher-precedence layer, so an explicit
+        // re-enable on the connection still wins over the database default.
+        let mut conn = make_connection_with_settings(vec![(
+            param_names::ENABLE_PUT_GET.as_str(),
+            Setting::Bool(true),
+        )]);
+        conn.database_seed
+            .insert(param_names::ENABLE_PUT_GET.into(), Setting::Bool(false));
+        assert!(conn.enable_put_get().await);
     }
 
     #[tokio::test]

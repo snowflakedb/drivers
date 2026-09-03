@@ -134,22 +134,31 @@ impl WrapperPresets {
         }
     }
 
+    /// Default `client_store_temporary_credential` on for the OAuth
+    /// authorization-code flow, for wrappers whose legacy driver cached those
+    /// tokens by default.
+    ///
+    /// `user_seed` must carry every layer the user can set the flag through —
+    /// the database handle as well as the connection — because this only fills
+    /// in a default and must never overwrite a value the caller chose. Passing a
+    /// narrower seed silently re-enables caching for anyone who disabled it on
+    /// the layer that was left out.
     pub fn apply_oauth_authorization_code_cache_default(
         &self,
         resolved: &mut ParamStore,
-        connection_seed: &ParamStore,
+        user_seed: &ParamStore,
     ) {
         if !self.oauth_authorization_code_cache_default {
             return;
         }
         let authenticator = resolved
             .get_string(param_names::AUTHENTICATOR)
-            .or_else(|| connection_seed.get_string(param_names::AUTHENTICATOR))
+            .or_else(|| user_seed.get_string(param_names::AUTHENTICATOR))
             .unwrap_or_default();
         if !authenticator.eq_ignore_ascii_case("OAUTH_AUTHORIZATION_CODE") {
             return;
         }
-        if connection_seed
+        if user_seed
             .get_bool(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL)
             .is_some()
         {
