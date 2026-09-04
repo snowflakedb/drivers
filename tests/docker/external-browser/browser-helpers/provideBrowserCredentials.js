@@ -207,7 +207,34 @@ const fillMfaCodeIfPresented = async (page, totpSeed) => {
   throw new Error(`MFA verification failed after ${maxAttempts} attempts`);
 };
 
+// Click through Snowflake's one-time OAuth consent screen ("<client> would like
+// access to your Snowflake Account... Allow / Cancel"), if presented. Snowflake
+// shows this the first time a given user authenticates through a given OAuth
+// client, then never again for that (user, client) pair — the long-lived shared
+// test user never sees it because it's been through this client on every prior
+// CI run. Any new MFA pool user will hit it exactly once.
+//
+// Uses a non-throwing existence check (locator.count()), not the try/catch
+// waitForSelector idiom used elsewhere in this file: that pattern throws a real
+// TimeoutError internally on every run where the screen doesn't appear (i.e.
+// nearly all of them, after a user's first use) — caught and swallowed here,
+// but still a real exception that would show up in any Playwright trace/debug
+// log a future dev inspects for an unrelated issue, misleadingly suggesting a
+// failure. count() never throws; it just polls.
+const clickOauthConsentIfPresented = async (page) => {
+  const allowButton = page.locator('button:has-text("Allow")');
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && (await allowButton.count()) === 0) {
+    await page.waitForTimeout(200);
+  }
+  if ((await allowButton.count()) > 0) {
+    await allowButton.click();
+  }
+};
+
 const checkOauthResponse = async (page) => {
+  await clickOauthConsentIfPresented(page);
+
   const jdbcConfirmationMessage = "text=Authorization completed successfully";
   const odbcConfirmationMessage =
     "text=Access to Snowflake has been granted to the ODBC driver.";

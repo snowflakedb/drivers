@@ -16,8 +16,16 @@ Or build & run locally without a pre-built image:
 @Library('pipeline-utils') _
 import groovy.transform.Field
 import com.snowflake.DevEnvUtils
+import com.snowflake.LockableResourcePoolUtils
 
 @Field String AUTH_BROWSER_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-development-docker-drivers-local/snowflakedb/snowdrivers-test-external-browser-universal-driver:4'
+
+// Label under which the 6 MFA pool users' Lockable Resources are registered
+// (mfa-pool-01 .. mfa-pool-06). Each language stage locks exactly 1 user from
+// this label; Jenkins hands out whichever is free and queues gracefully if all
+// 6 are busy, instead of one lock serializing the whole job.
+@Field String MFA_POOL_LABEL = 'drivers-auth-browser-mfa-pool'
+@Field List<String> MFA_POOL_MEMBERS = (1..6).collect { String.format('mfa-pool-%02d', it) }
 
 def isMergeQueue() {
   return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
@@ -95,13 +103,24 @@ def authenticateDocker() {
   }
 }
 
+// Idempotent: creates each mfa-pool-NN resource under MFA_POOL_LABEL if it doesn't
+// already exist yet, so the lock(label:, quantity:) steps below always have all 6
+// pool members to hand out. Safe to call on every build.
+def ensureMfaPoolResources() {
+  new LockableResourcePoolUtils().ensureResourcesWithLabel(MFA_POOL_MEMBERS, MFA_POOL_LABEL)
+}
+
+def bindPoolUser(String language) {
+  sh label: 'Bind stage to MFA pool user', script: "python3 tests/auth/bind_pool_user.py \"\$MFA_POOL_USER\" ${language}"
+}
+
 pipeline {
   agent none
   options {
     timestamps()
     disableResume()
     // Different pushes to this same PR (or branch) must not run concurrently — an older,
-    // now-superseded build would otherwise keep hammering the shared MFA test accounts
+    // now-superseded build would otherwise keep hammering the shared MFA pool users
     // (see the lock() below) even after a newer push has made its result moot.
     disableConcurrentBuilds(abortPrevious: true)
     buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50'))
@@ -121,7 +140,10 @@ pipeline {
       agent { label 'build-node-extra-large' }
       steps {
         checkout scm
-        script { detectChanges() }
+        script {
+          detectChanges()
+          ensureMfaPoolResources()
+        }
       }
     }
 
@@ -129,39 +151,29 @@ pipeline {
       when {
         expression { !isMergeQueue() && (runPython || runOdbc || runJdbc) }
       }
-      options {
-        // This is a multibranch job: disableConcurrentBuilds() above only serializes builds
-        // of the SAME branch/PR. Different PRs (and main's own cron trigger) are separate job
-        // instances and would otherwise run this stage fully concurrently, hitting the same
-        // shared, rate-limited Snowflake MFA test accounts at once - the exact class of bug
-        // this stage's own sequential stages{} already fixes within one build, just recurring
-        // across builds instead. This resource name is shared by every trigger of this
-        // Jenkinsfile (any PR, any branch, the main cron), so at most one of them is ever
-        // actually running MFA tests at a time. inversePrecedence: true means a freshly-queued
-        // build jumps ahead of older queued ones on the same resource.
-        lock(resource: 'drivers-auth-browser-shared-mfa-accounts', inversePrecedence: true)
-      }
-      // Sequential instead of parallel: Python/ODBC/JDBC all share one OAuth AC-flow test
-      // account and its one TOTP seed (SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_MFA_SEED); running their
-      // real MFA verifications concurrently lets one stage's code collide with another's
-      // still-valid one, which Snowflake's anti-replay check then rejects - the JDBC stage's
-      // oauthShouldReuseCachedAccessTokenWithoutBrowserInteraction failure in builds #7/#8
-      // traced to exactly this. Serializing removes the possibility of a collision outright.
-      // Keep sequential until a less costly mitigation exists (e.g. per-language TOTP seed).
-      stages {
+      // Each language stage locks exactly one user from the shared MFA_POOL_LABEL pool
+      // instead of the old single all-encompassing lock, so stages that draw different
+      // pool users run in genuine parallel and stages that draw the same user (pool
+      // exhausted) queue gracefully instead of the whole job serializing.
+      parallel {
         stage('Python') {
           when {
             expression { runPython }
           }
           agent { label 'build-node-extra-large' }
+          options {
+            lock(label: MFA_POOL_LABEL, quantity: 1, variable: 'MFA_POOL_USER')
+          }
           stages {
             stage('Setup') {
               steps {
                 script {
+                  echo "MFA_POOL_LOCK language=python resource=${env.MFA_POOL_USER}"
                   authenticateDocker()
                   withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                     sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
                   }
+                  bindPoolUser('python')
                 }
               }
             }
@@ -182,14 +194,19 @@ pipeline {
             expression { runOdbc }
           }
           agent { label 'build-node-extra-large' }
+          options {
+            lock(label: MFA_POOL_LABEL, quantity: 1, variable: 'MFA_POOL_USER')
+          }
           stages {
             stage('Setup') {
               steps {
                 script {
+                  echo "MFA_POOL_LOCK language=odbc resource=${env.MFA_POOL_USER}"
                   authenticateDocker()
                   withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                     sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
                   }
+                  bindPoolUser('odbc')
                 }
               }
             }
@@ -210,14 +227,19 @@ pipeline {
             expression { runJdbc }
           }
           agent { label 'build-node-extra-large' }
+          options {
+            lock(label: MFA_POOL_LABEL, quantity: 1, variable: 'MFA_POOL_USER')
+          }
           stages {
             stage('Setup') {
               steps {
                 script {
+                  echo "MFA_POOL_LOCK language=jdbc resource=${env.MFA_POOL_USER}"
                   authenticateDocker()
                   withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                     sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
                   }
+                  bindPoolUser('jdbc')
                 }
               }
             }
