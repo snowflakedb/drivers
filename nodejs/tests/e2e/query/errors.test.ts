@@ -1,11 +1,11 @@
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import type { Connection, SnowflakeError } from '../types/sdk-types.js';
+import type { Connection, SnowflakeError } from '../../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
-} from './utils/index.js';
+} from '../utils/index.js';
 
 describe('Query Errors', () => {
   const snowflake = getSnowflakeSDK();
@@ -20,7 +20,7 @@ describe('Query Errors', () => {
     await destroyConnectionAsync(connection);
   });
 
-  it('reports a statement the server rejected as an operation failure', async () => {
+  it('throws OperationFailedError for a query that fails server-side', async () => {
     const execution = executeAsync(connection, 'select * from a_table_that_does_not_exist');
 
     await expect(execution).rejects.toMatchObject({

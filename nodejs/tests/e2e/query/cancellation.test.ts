@@ -1,5 +1,5 @@
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import type { Connection, RowStatement } from '../types/sdk-types.js';
+import type { Connection, RowStatement } from '../../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
@@ -7,7 +7,7 @@ import {
   getSnowflakeSDK,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
   sleepAsync,
-} from './utils/index.js';
+} from '../utils/index.js';
 
 function cancelStatement(statement: RowStatement) {
   return new Promise<void>((resolve, reject) => {

@@ -1,6 +1,6 @@
 import { ErrorCode } from 'snowflake-sdk-old';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import type { Connection, QueryStatus, SnowflakeError } from '../types/sdk-types.js';
+import type { Connection, QueryStatus, SnowflakeError } from '../../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
@@ -8,7 +8,7 @@ import {
   executeAsync,
   getSnowflakeSDK,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
-} from './utils/index.js';
+} from '../utils/index.js';
 
 const WAIT_SECONDS = 2;
 const ASYNC_WAIT_SQL = `CALL SYSTEM$WAIT(${WAIT_SECONDS}, 'SECONDS')`;
