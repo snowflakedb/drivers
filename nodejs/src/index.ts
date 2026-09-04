@@ -99,6 +99,10 @@ export class Connection {
     return this.#core.connect();
   }
 
+  isUp(): boolean {
+    return this.#core.isUp();
+  }
+
   execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
     return this.#runStatement(this.#core.execute(options.sqlText), {
       complete: options.complete,
