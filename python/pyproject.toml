@@ -125,6 +125,9 @@ path = "hatch_build.py"
 
 [tool.hatch.build.hooks.custom]
 
+[tool.cibuildwheel.windows]
+repair-wheel-command = "delvewheel repair --namespace-pkg snowflake -w {dest_dir} -v {wheel}"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
