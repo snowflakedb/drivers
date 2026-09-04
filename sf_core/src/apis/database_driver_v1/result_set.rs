@@ -10,7 +10,7 @@ use crate::handle_manager::Handle;
 use crate::query_types::statement_type::{
     DML_AFFECTED_ROWS_COLUMN_PREFIXES, DML_AFFECTED_ROWS_COLUMNS, QueryType, ResultKind,
 };
-use crate::rest::snowflake::query_response::{Data, RowType, RowsetData, Stats};
+use crate::rest::snowflake::query_response::{Data, FieldMetadata, RowType, RowsetData, Stats};
 use crate::rest::snowflake::snowflake_get_query_result;
 use arrow::array::RecordBatchReader;
 use snafu::{OptionExt, ResultExt};
@@ -35,6 +35,7 @@ pub struct ColumnMetadata {
     pub is_auto_increment: bool,
     pub ext_col_type_name: String,
     pub udt_output_type: String,
+    pub fields: Vec<ColumnMetadata>,
 }
 
 /// Metadata for a single result set (maps to proto ResultSetDescriptor).
@@ -291,6 +292,45 @@ pub(super) fn response_to_descriptor(
     }
 }
 
+fn effective_type(ext_type_name: Option<&String>, base_type: &str) -> String {
+    ext_type_name
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .unwrap_or_else(|| base_type.to_string())
+}
+
+fn field_metadata_to_columns(fields: Option<&Vec<FieldMetadata>>) -> Vec<ColumnMetadata> {
+    fields
+        .map(|fs| {
+            fs.iter()
+                .map(|f| ColumnMetadata {
+                    name: f.name.clone().unwrap_or_default(),
+                    r#type: effective_type(f.ext_type_name.as_ref(), &f.type_),
+                    precision: f.precision.map(|v| v as i64),
+                    scale: f.scale.map(|v| v as i64),
+                    length: f.length.map(|v| v as i64),
+                    byte_length: f.byte_length.map(|v| v as i64),
+                    nullable: f.nullable,
+                    dimension: None,
+                    fixed: false,
+                    column_src_database: String::new(),
+                    column_src_schema: String::new(),
+                    column_src_table: String::new(),
+                    is_auto_increment: false,
+                    ext_col_type_name: f
+                        .ext_type_name
+                        .as_ref()
+                        .filter(|s| !s.is_empty())
+                        .cloned()
+                        .unwrap_or_default(),
+                    udt_output_type: String::new(),
+                    fields: field_metadata_to_columns(f.fields.as_ref()),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Convert Snowflake `rowType`/`metaDataOfBinds` entries into [`ColumnMetadata`].
 fn row_types_to_columns(row_types: &[RowType]) -> Vec<ColumnMetadata> {
     row_types
@@ -303,12 +343,7 @@ fn row_types_to_columns(row_types: &[RowType]) -> Vec<ColumnMetadata> {
                 .map(|v| v as i64);
             ColumnMetadata {
                 name: rt.name.clone(),
-                r#type: rt
-                    .ext_type_name
-                    .as_ref()
-                    .filter(|s| !s.is_empty())
-                    .cloned()
-                    .unwrap_or_else(|| rt.type_.clone()),
+                r#type: effective_type(rt.ext_type_name.as_ref(), &rt.type_),
                 precision: rt.precision.map(|v| v as i64),
                 scale: rt.scale.map(|v| v as i64),
                 length: rt.length.map(|v| v as i64),
@@ -327,6 +362,7 @@ fn row_types_to_columns(row_types: &[RowType]) -> Vec<ColumnMetadata> {
                     .cloned()
                     .unwrap_or_default(),
                 udt_output_type: rt.output_type.clone().unwrap_or_default(),
+                fields: field_metadata_to_columns(rt.fields.as_ref()),
             }
         })
         .collect()
@@ -858,5 +894,114 @@ mod tests {
         assert_eq!(columns[0].r#type, "GEOGRAPHY");
         assert_eq!(columns[0].ext_col_type_name, "GEOGRAPHY");
         assert_eq!(columns[0].udt_output_type, "binary");
+    }
+
+    #[test]
+    fn row_types_to_columns_populates_vector_element_field() {
+        let row_type: RowType = serde_json::from_str(
+            r#"{
+                "name": "EMBEDDING",
+                "type": "vector",
+                "nullable": false,
+                "vectorDimension": 768,
+                "fields": [
+                    {"name": null, "type": "real", "nullable": false, "scale": null, "precision": null}
+                ]
+            }"#,
+        )
+        .expect("fixture must deserialize");
+
+        let columns = row_types_to_columns(&[row_type]);
+
+        assert_eq!(columns[0].dimension, Some(768));
+        assert_eq!(columns[0].fields.len(), 1);
+        assert_eq!(columns[0].fields[0].r#type, "real");
+        assert_eq!(columns[0].fields[0].name, "");
+        assert!(!columns[0].fields[0].nullable);
+    }
+
+    #[test]
+    fn row_types_to_columns_populates_map_key_and_value_fields() {
+        let row_type: RowType = serde_json::from_str(
+            r#"{
+                "name": "M",
+                "type": "map",
+                "nullable": true,
+                "fields": [
+                    {"name": null, "type": "text", "nullable": false, "length": 16777216},
+                    {"name": null, "type": "fixed", "nullable": true, "precision": 38, "scale": 0}
+                ]
+            }"#,
+        )
+        .expect("fixture must deserialize");
+
+        let columns = row_types_to_columns(&[row_type]);
+
+        assert_eq!(columns[0].fields.len(), 2);
+        assert_eq!(columns[0].fields[0].r#type, "text");
+        assert_eq!(columns[0].fields[0].length, Some(16777216));
+        assert_eq!(columns[0].fields[1].r#type, "fixed");
+        assert_eq!(columns[0].fields[1].precision, Some(38));
+        assert_eq!(columns[0].fields[1].scale, Some(0));
+        assert!(columns[0].fields[1].nullable);
+    }
+
+    #[test]
+    fn row_types_to_columns_recurses_into_nested_structured_fields() {
+        let row_type: RowType = serde_json::from_str(
+            r#"{
+                "name": "ADDRESSES",
+                "type": "array",
+                "nullable": true,
+                "fields": [
+                    {"name": null, "type": "object", "nullable": true, "fields": [
+                        {"name": "city", "type": "text", "nullable": false, "length": 100},
+                        {"name": "zip", "type": "fixed", "nullable": true, "precision": 38, "scale": 0}
+                    ]}
+                ]
+            }"#,
+        )
+        .expect("fixture must deserialize");
+
+        let columns = row_types_to_columns(&[row_type]);
+
+        let element = &columns[0].fields[0];
+        assert_eq!(element.r#type, "object");
+        assert_eq!(element.fields.len(), 2);
+        assert_eq!(element.fields[0].name, "city");
+        assert_eq!(element.fields[0].length, Some(100));
+        assert_eq!(element.fields[1].name, "zip");
+    }
+
+    #[test]
+    fn row_types_to_columns_leaves_fields_empty_when_wire_omits_them() {
+        let row_type: RowType = serde_json::from_str(
+            r#"{"name": "C", "type": "text", "nullable": true, "length": 16777216}"#,
+        )
+        .expect("fixture must deserialize");
+
+        let columns = row_types_to_columns(&[row_type]);
+
+        assert!(columns[0].fields.is_empty());
+    }
+
+    #[test]
+    fn row_types_to_columns_prefers_ext_type_name_for_nested_field_type() {
+        let row_type: RowType = serde_json::from_str(
+            r#"{
+                "name": "ARR",
+                "type": "array",
+                "nullable": true,
+                "fields": [
+                    {"name": null, "type": "object", "nullable": true, "extTypeName": "GEOGRAPHY"}
+                ]
+            }"#,
+        )
+        .expect("fixture must deserialize");
+
+        let columns = row_types_to_columns(&[row_type]);
+
+        assert_eq!(columns[0].fields[0].r#type, "GEOGRAPHY");
+        assert_eq!(columns[0].fields[0].ext_col_type_name, "GEOGRAPHY");
     }
 }

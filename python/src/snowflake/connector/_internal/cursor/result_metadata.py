@@ -61,13 +61,6 @@ class ResultMetadata(NamedTuple):
             is_nullable=col.nullable,
         )
 
-    @classmethod
-    def create_description(cls, result: PrepareResult | ResultSetDescriptor | None) -> list[ResultMetadata] | None:
-        """Extract description from execute result column metadata."""
-        if result and result.columns:
-            return [cls.from_column(col) for col in result.columns]
-        return None
-
 
 class ResultMetadataV2:
     """New-format column description carrying ``vector_dimension`` and ``fields``.
@@ -76,10 +69,12 @@ class ResultMetadataV2:
     interface so Snowpark can read ``.name``, ``.type_code``, ``.is_nullable``,
     ``.vector_dimension``, and ``.fields`` without connector-version guards.
 
-    ``fields`` is always ``None`` — the UD proto ``ColumnMetadata`` carries no
-    nested column list for structured types (OBJECT/ARRAY/MAP). BD#54 tracks
-    that gap; ``vector_dimension`` is fully populated from the ``dimension``
-    proto field.
+    ``vector_dimension`` is populated from the proto ``dimension`` field.
+    ``fields`` carries nested metadata for structured types: the element type
+    for VECTOR and ARRAY, the key and value types for MAP, and one entry per
+    attribute for structured OBJECT. It is ``None`` for every other type, and
+    also for semi-structured ARRAY/OBJECT/MAP, which the server describes
+    without a nested field list.
 
     Note: ``_is_nullable`` is exposed both as the ``is_nullable`` public property
     and as the ``_is_nullable`` private attribute, because Snowpark accesses the
@@ -192,8 +187,14 @@ class ResultMetadataV2:
         )
 
     @classmethod
-    def from_column(cls, col: Any) -> ResultMetadataV2:
-        """Build from a proto ``ColumnMetadata`` message."""
+    def from_column(cls, col: Any, *, nested: bool = False) -> ResultMetadataV2:
+        """Build from a proto ``ColumnMetadata`` message.
+
+        ``nested`` marks a sub-field of a structured type. Those carry a name
+        only for the attributes of a structured OBJECT; the proto renders an
+        absent name as the empty string, which maps back to ``None`` here for
+        parity with the old driver.
+        """
         type_code = get_type_code(col.type)
         display_size = _column_display_size(col)
         internal_size = _column_internal_size(col)
@@ -201,7 +202,7 @@ class ResultMetadataV2:
         scale = col.scale if col.HasField("scale") else None
         vector_dimension = col.dimension if col.HasField("dimension") else None
         return cls(
-            name=col.name,
+            name=(col.name or None) if nested else col.name,
             type_code=type_code,
             is_nullable=col.nullable,
             display_size=display_size,
@@ -209,7 +210,11 @@ class ResultMetadataV2:
             precision=precision,
             scale=scale,
             vector_dimension=vector_dimension,
-            fields=None,  # proto has no nested field list — BD#54 (SNOW-3895458)
+            # For MAP, `col.fields` carries exactly two entries, key type then value
+            # type, in that order. Snowpark's structured-type inference reads them
+            # positionally as fields[0]/fields[1] today, so this recursion must
+            # preserve wire order rather than resort or drop an entry.
+            fields=[cls.from_column(f, nested=True) for f in col.fields] if col.fields else None,
         )
 
     @classmethod

@@ -36,6 +36,7 @@ from .result_metadata import QueryResultStats, ResultMetadata
 if TYPE_CHECKING:
     from ...aio.connection import Connection as AsyncConnection
     from ...connection import Connection
+    from .result_metadata import ResultMetadataV2
 
 
 class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
@@ -103,6 +104,17 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         Returns None if no query has been executed or if the query didn't produce a result set.
         """
         return self._query_result.description
+
+    @property
+    @snowpark_compat
+    @backward_compatibility
+    def _description_internal(self) -> list[ResultMetadataV2] | None:
+        """New-format column metadata for the last executed statement.
+
+        Snowpark probes for this attribute and falls back to :attr:`description`
+        when it is absent, which loses ``fields`` and ``vector_dimension``.
+        """
+        return self._query_result.description_v2
 
     @property
     @pep249

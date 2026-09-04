@@ -289,6 +289,7 @@ impl TryFrom<&ResultChunk> for FetchChunkInput {
 impl From<NativeColumnMetadata> for ColumnMetadata {
     fn from(meta: NativeColumnMetadata) -> Self {
         ColumnMetadata {
+            fields: meta.fields.into_iter().map(ColumnMetadata::from).collect(),
             name: meta.name,
             r#type: meta.r#type,
             precision: meta.precision,
@@ -311,6 +312,11 @@ impl From<NativeColumnMetadata> for ColumnMetadata {
 impl From<ColumnMetadata> for NativeColumnMetadata {
     fn from(meta: ColumnMetadata) -> Self {
         NativeColumnMetadata {
+            fields: meta
+                .fields
+                .into_iter()
+                .map(NativeColumnMetadata::from)
+                .collect(),
             name: meta.name,
             r#type: meta.r#type,
             precision: meta.precision,
