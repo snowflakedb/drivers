@@ -1,11 +1,11 @@
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import type { Connection, RowMode } from '../types/sdk-types.js';
+import type { Connection, RowMode } from '../../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
-} from './utils/index.js';
+} from '../utils/index.js';
 
 const SQL = `select 1 as id, 'name1' as name, 'name2' as name`;
 
@@ -30,7 +30,7 @@ describe('Query Row Mode', () => {
     }
   });
 
-  describe('connection rowMode', () => {
+  describe('Connection rowMode', () => {
     it.each(ROW_MODES)('shapes rows according to connection rowMode = %s', async (rowMode) => {
       const connection = createTestConnection(snowflake, { rowMode });
       try {
@@ -43,7 +43,7 @@ describe('Query Row Mode', () => {
     });
   });
 
-  describe('statement rowMode', () => {
+  describe('Statement rowMode', () => {
     let connection: Connection;
 
     beforeAll(async () => {
