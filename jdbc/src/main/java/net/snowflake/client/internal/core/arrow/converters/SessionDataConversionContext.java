@@ -7,12 +7,14 @@ import lombok.Getter;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
+import net.snowflake.client.internal.util.BinaryOutputFormat;
 
 @Getter
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public final class SessionDataConversionContext implements DataConversionContext {
 
   private final SnowflakeDateTimeFormat dateFormatter;
+  private final BinaryOutputFormat binaryOutputFormat;
   private final TimeZone sessionTimeZone;
   private final boolean formatDateWithTimezone;
   private final boolean defaultFormatDateWithTimezone;
@@ -32,6 +34,8 @@ public final class SessionDataConversionContext implements DataConversionContext
   public static DataConversionContext from(ParametersRegistry params) {
     SnowflakeDateTimeFormat dateFormatter =
         buildDateFormatter(params.get(Parameter.DATE_OUTPUT_FORMAT));
+    BinaryOutputFormat binaryOutputFormat =
+        BinaryOutputFormat.fromParameterValue(params.get(Parameter.BINARY_OUTPUT_FORMAT));
     TimeZone sessionTimeZone = buildSessionTimeZone(params.get(Parameter.TIMEZONE));
     SnowflakeDateTimeFormat timeFormatter =
         buildTimeFormatter(params.get(Parameter.TIME_OUTPUT_FORMAT));
@@ -64,6 +68,7 @@ public final class SessionDataConversionContext implements DataConversionContext
 
     return new SessionDataConversionContext(
         dateFormatter,
+        binaryOutputFormat,
         sessionTimeZone,
         formatDateWithTimezone,
         defaultFormatDateWithTimezone,
