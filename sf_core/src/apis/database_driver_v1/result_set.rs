@@ -3,7 +3,10 @@ use std::sync::Arc;
 use super::connection::{Connection, RefreshContext};
 use super::error::*;
 use super::global_state::{DatabaseDriverV1, PutGetResultsetFlavor, WrapperPresets};
-use super::query::build_reader_from_rowset_data;
+use super::query::{
+    build_async_stream, build_reader_from_rowset_data, download_column_metadata,
+    upload_column_metadata,
+};
 use crate::apis::operation_ctx::{OperationCtx, run_opt};
 use crate::chunks::{ChunkDownloadData, ChunkFormatKind, PrefetchConfig};
 use crate::handle_manager::Handle;
@@ -12,7 +15,8 @@ use crate::query_types::statement_type::{
 };
 use crate::rest::snowflake::query_response::{Data, FieldMetadata, RowType, RowsetData, Stats};
 use crate::rest::snowflake::snowflake_get_query_result;
-use arrow::array::RecordBatchReader;
+use arrow::array::{RecordBatch, RecordBatchReader};
+use arrow::datatypes::SchemaRef;
 use snafu::{OptionExt, ResultExt};
 use tokio::sync::Mutex;
 
@@ -57,6 +61,28 @@ pub struct ResultSetDescriptor {
 pub struct ResultSetInfo {
     pub handle: Handle,
     pub descriptor: ResultSetDescriptor,
+}
+
+/// Async consumer of a result set's Arrow batches.
+///
+/// Dropping the fetcher aborts in-flight chunk prefetch. Fetchers built from
+/// already-materialized batches (no prefetch coordinator) abort nothing on drop.
+pub struct AsyncArrowBatchFetcher {
+    inner: crate::chunks::AsyncArrowBatchFetcher,
+}
+
+impl AsyncArrowBatchFetcher {
+    pub(super) fn from_chunks(inner: crate::chunks::AsyncArrowBatchFetcher) -> Self {
+        Self { inner }
+    }
+
+    pub fn schema(&self) -> SchemaRef {
+        self.inner.schema()
+    }
+
+    pub async fn next_batch(&mut self) -> Result<Option<RecordBatch>, ApiError> {
+        self.inner.next_batch().await.context(ChunkFetchSnafu)
+    }
 }
 
 /// Result of executing a query (maps to proto ExecuteQueryResponse).
@@ -371,7 +397,6 @@ fn row_types_to_columns(row_types: &[RowType]) -> Vec<ColumnMetadata> {
 /// Return client-synthesized column metadata for PUT/GET commands,
 /// which don't include `rowType` in the Snowflake response.
 fn put_get_columns(command: Option<&str>, wrapper_presets: &WrapperPresets) -> Vec<ColumnMetadata> {
-    use super::query::{download_column_metadata, upload_column_metadata};
     match command {
         Some("UPLOAD") => upload_column_metadata(wrapper_presets),
         Some("DOWNLOAD") => download_column_metadata(wrapper_presets),
@@ -454,24 +479,34 @@ pub(super) async fn fetch_query_response_data(
     Ok(response.data)
 }
 
-/// Snapshots the inputs needed to lazily build a reader and releases the
-/// per-result-set lock, so the (possibly network-bound) build never holds the
-/// guard across an `.await`.
+struct ReaderInputs {
+    data: RowsetData,
+    http_client: reqwest::Client,
+    prefetch_config: PrefetchConfig,
+    nullable_flags: Option<Vec<bool>>,
+}
+
+/// Resolves `result_handle` and snapshots the inputs needed to lazily build a
+/// reader, then releases the per-result-set lock so the (possibly network-bound)
+/// build never holds the guard across an `.await`.
 async fn snapshot_reader_inputs(
-    rs_ptr: &Arc<Mutex<ResultSet>>,
-) -> (
-    RowsetData,
-    reqwest::Client,
-    PrefetchConfig,
-    Vec<ColumnMetadata>,
-) {
+    driver: &DatabaseDriverV1,
+    result_handle: Handle,
+) -> Result<ReaderInputs, ApiError> {
+    let rs_ptr = driver
+        .results
+        .get_obj(result_handle)
+        .with_context(|| InvalidArgumentSnafu {
+            argument: "result_handle: ResultSet handle not found".to_string(),
+        })?;
     let rs = rs_ptr.lock().await;
-    (
-        rs.data.clone(),
-        rs.reader_ctx.http_client.clone(),
-        rs.reader_ctx.prefetch_config.clone(),
-        rs.descriptor.columns.clone(),
-    )
+    let nullable_flags: Vec<bool> = rs.descriptor.columns.iter().map(|c| c.nullable).collect();
+    Ok(ReaderInputs {
+        data: rs.data.clone(),
+        http_client: rs.reader_ctx.http_client.clone(),
+        prefetch_config: rs.reader_ctx.prefetch_config.clone(),
+        nullable_flags: Some(nullable_flags).filter(|f| !f.is_empty()),
+    })
 }
 
 // --- DatabaseDriverV1 impl ---
@@ -491,30 +526,33 @@ impl DatabaseDriverV1 {
         &self,
         result_handle: Handle,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
-        let rs_ptr = self
-            .results
-            .get_obj(result_handle)
-            .with_context(|| InvalidArgumentSnafu {
-                argument: "result_handle: ResultSet handle not found".to_string(),
-            })?;
-        let (data, http_client, prefetch_config, columns) = snapshot_reader_inputs(&rs_ptr).await;
-
-        let nullable_flags: Vec<bool> = columns.iter().map(|c| c.nullable).collect();
-        let flags = if nullable_flags.is_empty() {
-            None
-        } else {
-            Some(nullable_flags.as_slice())
-        };
-        let reader = build_reader_from_rowset_data(
-            &data,
-            http_client,
-            &prefetch_config,
+        let inputs = snapshot_reader_inputs(self, result_handle).await?;
+        build_reader_from_rowset_data(
+            inputs.data,
+            inputs.http_client,
+            &inputs.prefetch_config,
             &self.wrapper_presets,
-            flags,
+            inputs.nullable_flags.as_deref(),
         )
         .await
-        .context(QueryResponseProcessSnafu)?;
-        Ok(reader)
+        .context(QueryResponseProcessSnafu)
+    }
+
+    /// Builds a fresh [`AsyncArrowBatchFetcher`] for this result set. Dropping
+    /// the fetcher aborts in-flight chunk prefetch.
+    pub async fn result_set_get_async_stream(
+        &self,
+        result_handle: Handle,
+    ) -> Result<AsyncArrowBatchFetcher, ApiError> {
+        let inputs = snapshot_reader_inputs(self, result_handle).await?;
+        build_async_stream(
+            inputs.data,
+            inputs.http_client,
+            &inputs.prefetch_config,
+            &self.wrapper_presets,
+            inputs.nullable_flags.as_deref(),
+        )
+        .await
     }
 
     /// Returns chunk metadata (inline data + remote chunk URLs) for this result set.
@@ -669,6 +707,8 @@ impl DatabaseDriverV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::apis::database_driver_v1::global_state::DriverProviders;
+    use crate::file_manager::UploadResult;
     use crate::rest::snowflake::query_response::Data;
     use arrow::array::{Array, Int64Array, RecordBatch, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
@@ -733,7 +773,10 @@ mod tests {
             .expect("draining the reader should not error");
 
         assert_eq!(batches.len(), 1);
-        let batch = &batches[0];
+        assert_id_name_batch(&batches[0]);
+    }
+
+    fn assert_id_name_batch(batch: &RecordBatch) {
         assert_eq!(batch.num_rows(), 2);
         let ids = batch
             .column(0)
@@ -800,6 +843,155 @@ mod tests {
 
         assert_id_name_reader(reader);
         drop(runtime);
+    }
+
+    fn descriptor_with_columns(columns: Vec<ColumnMetadata>) -> ResultSetDescriptor {
+        ResultSetDescriptor {
+            query_id: String::new(),
+            columns,
+            rows_affected: Some(-1),
+            row_count: None,
+            statement_type_id: None,
+            sql_state: None,
+            stats: None,
+            number_of_binds: 0,
+            array_bind_supported: false,
+            binds: Vec::new(),
+        }
+    }
+
+    fn sample_upload_result() -> UploadResult {
+        UploadResult {
+            source: "local.csv".to_owned(),
+            target: "@stage/local.csv.gz".to_owned(),
+            source_size: 10,
+            target_size: 4,
+            source_compression: "NONE".to_owned(),
+            target_compression: "GZIP".to_owned(),
+            status: "UPLOADED".to_owned(),
+            message: String::new(),
+        }
+    }
+
+    async fn assert_stream_matches_async_fetcher(
+        driver: &DatabaseDriverV1,
+        descriptor: ResultSetDescriptor,
+        rowset_data: RowsetData,
+        label: &str,
+    ) {
+        let reader_ctx = ReaderContext {
+            http_client: reqwest::Client::new(),
+            prefetch_config: PrefetchConfig::default(),
+        };
+        let handle = driver.create_result_set(descriptor, rowset_data, reader_ctx);
+        let stream = driver
+            .result_set_get_stream(handle)
+            .await
+            .unwrap_or_else(|err| panic!("{label}: stream should open, got {err:?}"));
+        let mut fetcher = driver
+            .result_set_get_async_stream(handle)
+            .await
+            .unwrap_or_else(|err| panic!("{label}: async fetcher should open, got {err:?}"));
+        assert_eq!(stream.schema(), fetcher.schema(), "{label} schema");
+        let stream_batches =
+            tokio::task::spawn_blocking(move || stream.collect::<Result<Vec<_>, _>>())
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("{label}: spawn_blocking for stream drain failed: {err:?}")
+                })
+                .unwrap_or_else(|err| {
+                    panic!("{label}: draining the stream should not error, got {err:?}")
+                });
+        let mut fetcher_batches = Vec::new();
+        while let Some(batch) = fetcher
+            .next_batch()
+            .await
+            .unwrap_or_else(|err| panic!("{label}: next_batch should succeed, got {err:?}"))
+        {
+            fetcher_batches.push(batch);
+        }
+        assert_eq!(stream_batches, fetcher_batches, "{label} batches");
+    }
+
+    #[tokio::test]
+    async fn async_fetcher_matches_sync_stream_for_prefetched_and_drained_rowsets() {
+        let arrow_data: Data = serde_json::from_str(ARROW_DATA)
+            .expect("fixture must deserialize into query_response::Data");
+        let cases = [
+            (
+                "ArrowMultiChunk",
+                WrapperPresets::default(),
+                response_to_descriptor(&arrow_data, &WrapperPresets::default()),
+                RowsetData::ArrowMultiChunk {
+                    initial_base64_opt: Some(arrow_ipc_rowset_base64()),
+                    chunk_download_data: Vec::new(),
+                },
+            ),
+            (
+                "NoData",
+                WrapperPresets::default(),
+                descriptor_with_columns(Vec::new()),
+                RowsetData::NoData,
+            ),
+            (
+                "jdbc PUT",
+                WrapperPresets::jdbc(),
+                descriptor_with_columns(upload_column_metadata(&WrapperPresets::jdbc())),
+                RowsetData::Upload(vec![sample_upload_result()]),
+            ),
+        ];
+
+        for (label, wrapper_presets, descriptor, rowset_data) in cases {
+            let driver = DatabaseDriverV1::with_providers(DriverProviders {
+                wrapper_presets,
+                ..Default::default()
+            });
+            assert_stream_matches_async_fetcher(&driver, descriptor, rowset_data, label).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn async_fetcher_schema_carries_descriptor_nullability() {
+        let driver = DatabaseDriverV1::new();
+        let arrow_data: Data = serde_json::from_str(ARROW_DATA)
+            .expect("fixture must deserialize into query_response::Data");
+        let reader_ctx = ReaderContext {
+            http_client: reqwest::Client::new(),
+            prefetch_config: PrefetchConfig::default(),
+        };
+        let handle = driver.create_result_set(
+            response_to_descriptor(&arrow_data, &WrapperPresets::default()),
+            RowsetData::ArrowMultiChunk {
+                initial_base64_opt: Some(arrow_ipc_rowset_base64()),
+                chunk_download_data: Vec::new(),
+            },
+            reader_ctx,
+        );
+
+        let schema = driver
+            .result_set_get_async_stream(handle)
+            .await
+            .expect("async fetcher should open for an inline Arrow rowset")
+            .schema();
+
+        let nullability: Vec<Option<&str>> = schema
+            .fields()
+            .iter()
+            .map(|field| field.metadata().get("nullable").map(String::as_str))
+            .collect();
+        assert_eq!(nullability, vec![Some("false"), Some("true")]);
+    }
+
+    #[tokio::test]
+    async fn result_set_get_async_stream_rejects_unknown_handle() {
+        let driver = DatabaseDriverV1::new();
+        let unknown = Handle { id: 999, magic: 0 };
+
+        match driver.result_set_get_async_stream(unknown).await {
+            Err(ApiError::InvalidArgument { .. }) => {}
+            Err(other) => panic!("expected InvalidArgument, got {other:?}"),
+            Ok(_) => panic!("an unregistered handle must not open a fetcher"),
+        }
     }
 
     #[test]

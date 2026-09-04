@@ -226,11 +226,13 @@ fn bench_arrow_prefetch(c: &mut Criterion) {
                         prefetch_threads: concurrency,
                         memory_limit_mb: 0,
                     };
-                    let mut reader = rt
-                        .block_on(PrefetchChunkReader::reader(
+                    let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(
+                        rt.block_on(PrefetchChunkReader::open(
                             initial, chunks, downloader, parser, &config,
                         ))
-                        .expect("failed to create prefetch reader");
+                        .expect("failed to create prefetch reader")
+                        .0,
+                    );
 
                     drain_reader(reader.as_mut())
                 });
@@ -324,11 +326,13 @@ fn bench_json_prefetch(c: &mut Criterion) {
                         prefetch_threads: concurrency,
                         memory_limit_mb: 0,
                     };
-                    let mut reader = rt
-                        .block_on(PrefetchChunkReader::reader(
+                    let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(
+                        rt.block_on(PrefetchChunkReader::open(
                             initial, chunks, downloader, parser, &config,
                         ))
-                        .expect("failed to create prefetch reader");
+                        .expect("failed to create prefetch reader")
+                        .0,
+                    );
 
                     drain_reader(reader.as_mut())
                 });

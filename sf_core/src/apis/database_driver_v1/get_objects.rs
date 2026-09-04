@@ -621,7 +621,7 @@ async fn execute_show(
     // Account-wide `SHOW OBJECTS` spills to external chunks; parsing only the
     // inline rowset here would silently drop most rows.
     let rowset_data = response.data.into_rowset_data();
-    let reader = super::query::read_batches(&rowset_data, http_client, &prefetch_config, None)
+    let reader = super::query::read_batches(rowset_data, http_client, &prefetch_config, None)
         .await
         .map_err(|e| {
             InvalidArgumentSnafu {

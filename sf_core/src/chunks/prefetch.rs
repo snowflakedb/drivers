@@ -3,15 +3,17 @@ pub use super::http_downloader::HttpChunkDownloader;
 pub use super::json_parser::JsonChunkParser;
 
 use std::collections::VecDeque;
-use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::datatypes::{Fields, Schema, SchemaRef};
 use arrow::error::ArrowError;
+use futures::Stream;
 use snafu::{OptionExt, ResultExt};
 use tokio::sync::mpsc::error::SendError;
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 use tracing::instrument::WithSubscriber;
 
 use super::memory_budget::{MemoryBudget, MemoryTicket};
@@ -44,34 +46,34 @@ struct Chunk {
 
 /// Prefetching chunk reader that downloads and parses chunks in the background.
 ///
-/// # Safety
-///
-/// This reader uses [`tokio::sync::mpsc::Receiver::blocking_recv`] in its
-/// [`Iterator`] implementation. It **must not** be iterated from within an
-/// active Tokio runtime (e.g. inside `tokio::spawn`, `block_on`, or an
-/// `async` block), as this will deadlock or panic. Consume the iterator from
-/// a synchronous context or from a dedicated blocking thread
-/// (e.g. [`tokio::task::spawn_blocking`]).
-pub struct PrefetchChunkReader<D: DownloadChunk, P: ParseChunk> {
+/// [`Iterator`] and [`RecordBatchReader`] wait on the prefetch channel with
+/// [`tokio::sync::mpsc::Receiver::blocking_recv`]. [`Stream`] waits with
+/// [`tokio::sync::mpsc::Receiver::poll_recv`] and is the in-runtime consumer
+/// used by the async Arrow batch fetcher. Both APIs drain the same channel, so
+/// a given reader is consumed through one of them.
+pub struct PrefetchChunkReader {
     schema: SchemaRef,
     batch_rx: tokio::sync::mpsc::Receiver<Result<Chunk, ArrowError>>,
     /// Buffered batches from the current chunk, paired with the ticket that
     /// keeps the memory reservation alive until all batches are yielded.
     current: Option<Chunk>,
-    phantom: PhantomData<(D, P)>,
 }
 
 type ChunkTask = JoinHandle<Result<Chunk, ArrowError>>;
-type InitialChunkTask = JoinHandle<Result<(SchemaRef, Vec<RecordBatch>), ChunkError>>;
+pub(crate) type InitialChunkTask = JoinHandle<Result<(SchemaRef, Vec<RecordBatch>), ChunkError>>;
 
-impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
-    pub async fn reader(
+impl PrefetchChunkReader {
+    /// Starts background download and parse and returns the reader plus an
+    /// [`AbortHandle`] for the coordinator task. The async batch fetcher aborts
+    /// that handle on drop; a coordinator parked in a download or memory-budget
+    /// wait is not woken by dropping the channel receiver alone.
+    pub async fn open<D: DownloadChunk, P: ParseChunk>(
         initial: Option<InitialChunkTask>,
         mut chunks: VecDeque<ChunkDownloadData>,
         downloader: D,
         parser: P,
         config: &PrefetchConfig,
-    ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
+    ) -> Result<(Self, AbortHandle), ChunkError> {
         let prefetch_concurrency = config.prefetch_threads.max(1);
         let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
         let memory_budget = MemoryBudget::new(config.memory_limit_mb);
@@ -115,48 +117,32 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
             }
         };
 
-        tokio::spawn(
-            Self::prefetch_batches(
-                downloader,
-                parser,
-                chunks,
-                head_chunk,
-                tasks,
-                tx,
-                memory_budget,
-            )
+        let join = tokio::spawn(
+            async move {
+                if let Some(chunk) = head_chunk {
+                    send_result(&tx, Ok(chunk)).await?;
+                }
+                drain_window(
+                    &downloader,
+                    &parser,
+                    &mut chunks,
+                    &mut tasks,
+                    &memory_budget,
+                    &tx,
+                )
+                .await
+            }
             .with_current_subscriber(),
         );
 
-        Ok(Box::new(Self {
-            schema,
-            batch_rx: rx,
-            current: None,
-            phantom: PhantomData,
-        }))
-    }
-
-    async fn prefetch_batches(
-        downloader: D,
-        parser: P,
-        mut chunks: VecDeque<ChunkDownloadData>,
-        head_chunk: Option<Chunk>,
-        mut tasks: VecDeque<ChunkTask>,
-        tx: tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
-        memory_budget: MemoryBudget,
-    ) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
-        if let Some(chunk) = head_chunk {
-            send_result(&tx, Ok(chunk)).await?;
-        }
-        drain_window(
-            &downloader,
-            &parser,
-            &mut chunks,
-            &mut tasks,
-            &memory_budget,
-            &tx,
-        )
-        .await
+        Ok((
+            Self {
+                schema,
+                batch_rx: rx,
+                current: None,
+            },
+            join.abort_handle(),
+        ))
     }
 }
 
@@ -238,7 +224,10 @@ async fn get_chunk(
     })
 }
 
-impl<D: DownloadChunk + 'static, P: ParseChunk + 'static> Iterator for PrefetchChunkReader<D, P> {
+/// # Panics
+///
+/// [`Iterator::next`] panics when the calling thread is inside a Tokio runtime.
+impl Iterator for PrefetchChunkReader {
     type Item = Result<RecordBatch, ArrowError>;
 
     #[tracing::instrument(
@@ -249,28 +238,58 @@ impl<D: DownloadChunk + 'static, P: ParseChunk + 'static> Iterator for PrefetchC
     )]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(ref mut chunk) = self.current {
-                if let Some(batch) = chunk.batches.pop_front() {
-                    return Some(Ok(batch));
-                }
-                self.current = None;
+            if let Some(batch) = pop_current_batch(&mut self.current) {
+                return Some(Ok(batch));
             }
-
-            match self.batch_rx.blocking_recv() {
-                Some(Ok(chunk)) => {
-                    self.current = Some(chunk);
-                }
-                Some(Err(e)) => return Some(Err(e)),
-                None => return None,
+            match take_channel_chunk(self.batch_rx.blocking_recv()) {
+                Ok(Some(chunk)) => self.current = Some(chunk),
+                Ok(None) => return None,
+                Err(e) => return Some(Err(e)),
             }
         }
     }
 }
 
-impl<D: DownloadChunk + 'static, P: ParseChunk + 'static> RecordBatchReader
-    for PrefetchChunkReader<D, P>
-{
+impl RecordBatchReader for PrefetchChunkReader {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
+    }
+}
+
+impl Stream for PrefetchChunkReader {
+    type Item = Result<RecordBatch, ArrowError>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        loop {
+            if let Some(batch) = pop_current_batch(&mut this.current) {
+                return Poll::Ready(Some(Ok(batch)));
+            }
+            match this.batch_rx.poll_recv(cx) {
+                Poll::Ready(msg) => match take_channel_chunk(msg) {
+                    Ok(Some(chunk)) => this.current = Some(chunk),
+                    Ok(None) => return Poll::Ready(None),
+                    Err(e) => return Poll::Ready(Some(Err(e))),
+                },
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+fn pop_current_batch(current: &mut Option<Chunk>) -> Option<RecordBatch> {
+    let chunk = current.as_mut()?;
+    if let Some(batch) = chunk.batches.pop_front() {
+        return Some(batch);
+    }
+    *current = None;
+    None
+}
+
+fn take_channel_chunk(msg: Option<Result<Chunk, ArrowError>>) -> Result<Option<Chunk>, ArrowError> {
+    match msg {
+        Some(Ok(chunk)) => Ok(Some(chunk)),
+        Some(Err(e)) => Err(e),
+        None => Ok(None),
     }
 }

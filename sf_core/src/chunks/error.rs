@@ -70,4 +70,9 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Chunk pipeline abandoned after an earlier chunk error"))]
+    AbandonedPipeline {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
