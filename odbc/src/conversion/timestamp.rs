@@ -699,15 +699,18 @@ fn write_timestamp_tz_wire(value: TzInstant) -> Result<String, BindingError> {
 // =============================================================================
 
 macro_rules! impl_snowflake_timestamp {
-    // NTZ + LTZ path: shared readers, with a bare wall-clock literal string as
-    // the wire payload tagged `type=TEXT` so the server coerces it under the
-    // session timezone. NTZ was realigned onto this path to match the legacy
-    // 3.16.0 driver (which tagged every `SQL_SF_TIMESTAMP_{NTZ,LTZ,TZ}` bind as
-    // TEXT and let the server attach the session offset); see BD#74. LTZ has
-    // always used it -- see `write_timestamp_wire_wallclock` for why.
+    // LTZ (and NTZ WRITE): bare wall-clock literal string tagged `type=TEXT`
+    // so the server coerces it under the session timezone. NTZ READ now
+    // delegates to `sf_types::SnowflakeTimestampNtz`; LTZ still uses the
+    // local Level-2 wrappers. See BD#74.
     ($name:ident, wallclock_string) => {
         impl_snowflake_timestamp!(@struct_array_standard $name);
         impl_snowflake_timestamp!(@common $name);
+        impl_snowflake_timestamp!(@write_wire_wallclock $name);
+    };
+
+    ($name:ident, wallclock_odbc_write) => {
+        impl_snowflake_timestamp!(@odbc_value_and_write $name);
         impl_snowflake_timestamp!(@write_wire_wallclock $name);
     };
 
@@ -724,13 +727,7 @@ macro_rules! impl_snowflake_timestamp {
     };
 
     (@common $name:ident) => {
-        impl SnowflakeType for $name {
-            type Representation<'a> = NaiveDateTime;
-
-            fn validate_value(&self, value: &NaiveDateTime) -> Result<(), ConversionError> {
-                check_sql_year(value)
-            }
-        }
+        impl_snowflake_timestamp!(@odbc_value_and_write $name);
 
         impl ReadArrowType<PrimitiveArray<Int64Type>> for $name {
             fn read_arrow_type<'a>(
@@ -739,6 +736,16 @@ macro_rules! impl_snowflake_timestamp {
                 row_idx: usize,
             ) -> Result<Self::Representation<'a>, ReadArrowError> {
                 read_scaled_timestamp(array, row_idx, self.scale)
+            }
+        }
+    };
+
+    (@odbc_value_and_write $name:ident) => {
+        impl SnowflakeType for $name {
+            type Representation<'a> = NaiveDateTime;
+
+            fn validate_value(&self, value: &NaiveDateTime) -> Result<(), ConversionError> {
+                check_sql_year(value)
             }
         }
 
@@ -806,9 +813,35 @@ pub(crate) struct SnowflakeTimestampNtz {
     pub(crate) scale: u32,
 }
 
-// NTZ binds through the wall-clock/TEXT wire path (same as LTZ), so the
-// server attaches the session `TIMEZONE` offset to the bound wall-clock.
-impl_snowflake_timestamp!(SnowflakeTimestampNtz, wallclock_string);
+impl_snowflake_timestamp!(SnowflakeTimestampNtz, wallclock_odbc_write);
+
+impl ReadArrowType<StructArray> for SnowflakeTimestampNtz {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a StructArray,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        Ok(sf_types::ReadArrowType::read_arrow_type(
+            &sf_types::SnowflakeTimestampNtz { scale: self.scale },
+            array,
+            row_idx,
+        )?)
+    }
+}
+
+impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTimestampNtz {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a PrimitiveArray<Int64Type>,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        Ok(sf_types::ReadArrowType::read_arrow_type(
+            &sf_types::SnowflakeTimestampNtz { scale: self.scale },
+            array,
+            row_idx,
+        )?)
+    }
+}
 
 pub(crate) struct SnowflakeTimestampLtz {
     pub(crate) scale: u32,

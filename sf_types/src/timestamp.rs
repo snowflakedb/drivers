@@ -46,6 +46,35 @@ impl TzInstant {
     }
 }
 
+/// Snowflake TIMESTAMP_NTZ Arrow reader (Kind-1: `scale` only).
+pub struct SnowflakeTimestampNtz {
+    pub scale: u32,
+}
+
+impl SnowflakeType for SnowflakeTimestampNtz {
+    type Representation<'a> = NaiveDateTime;
+}
+
+impl ReadArrowType<StructArray> for SnowflakeTimestampNtz {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a StructArray,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        read_struct_timestamp(array, row_idx)
+    }
+}
+
+impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTimestampNtz {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a PrimitiveArray<Int64Type>,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        read_scaled_timestamp(array, row_idx, self.scale)
+    }
+}
+
 /// Snowflake TIMESTAMP_TZ Arrow reader (Kind-1: `scale` only).
 pub struct SnowflakeTimestampTz {
     pub scale: u32,
@@ -480,5 +509,102 @@ mod tests {
             .unwrap();
         assert_eq!(value.utc.and_utc().timestamp(), -1);
         assert_eq!(value.utc.and_utc().timestamp_subsec_nanos(), 500_000_000);
+    }
+
+    fn make_ntz_struct_array(epoch: i64, fraction: i32) -> StructArray {
+        let epoch_col: ArrayRef = Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(epoch)]));
+        let frac_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(fraction)]));
+        StructArray::from(vec![
+            (
+                Arc::new(ArrowField::new("epoch", DataType::Int64, false)),
+                epoch_col,
+            ),
+            (
+                Arc::new(ArrowField::new("fraction", DataType::Int32, false)),
+                frac_col,
+            ),
+        ])
+    }
+
+    #[test]
+    fn should_read_ntz_flat_int64_at_scale_0() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(1_453_357_964)]);
+        let value = SnowflakeTimestampNtz { scale: 0 }
+            .read_arrow_type(&array, 0)
+            .unwrap();
+        assert_eq!(value.and_utc().timestamp(), 1_453_357_964);
+        assert_eq!(value.and_utc().timestamp_subsec_nanos(), 0);
+    }
+
+    #[test]
+    fn should_read_ntz_flat_int64_at_scale_3() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(1_453_357_964_123)]);
+        let value = SnowflakeTimestampNtz { scale: 3 }
+            .read_arrow_type(&array, 0)
+            .unwrap();
+        assert_eq!(value.and_utc().timestamp(), 1_453_357_964);
+        assert_eq!(value.and_utc().timestamp_subsec_nanos(), 123_000_000);
+    }
+
+    #[test]
+    fn should_read_ntz_flat_int64_at_scale_9() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(1_000_000_000_123_456_789)]);
+        let value = SnowflakeTimestampNtz { scale: 9 }
+            .read_arrow_type(&array, 0)
+            .unwrap();
+        assert_eq!(value.and_utc().timestamp(), 1_000_000_000);
+        assert_eq!(value.and_utc().timestamp_subsec_nanos(), 123_456_789);
+    }
+
+    #[test]
+    fn should_read_ntz_2col_struct() {
+        let array = make_ntz_struct_array(1_453_357_964, 0);
+        let value = SnowflakeTimestampNtz { scale: 9 }
+            .read_arrow_type(&array, 0)
+            .unwrap();
+        assert_eq!(value.and_utc().timestamp(), 1_453_357_964);
+        assert_eq!(value.and_utc().timestamp_subsec_nanos(), 0);
+    }
+
+    #[test]
+    fn should_report_ntz_null_struct_as_null_value_error() {
+        let template = make_ntz_struct_array(0, 0);
+        let array = StructArray::new(
+            template.fields().clone(),
+            template.columns().to_vec(),
+            Some(vec![false].into()),
+        );
+        let err = SnowflakeTimestampNtz { scale: 9 }
+            .read_arrow_type(&array, 0)
+            .unwrap_err();
+        assert!(matches!(err, ReadArrowError::NullValue { .. }));
+    }
+
+    #[test]
+    fn should_report_ntz_null_flat_int64_as_null_value_error() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![None::<i64>]);
+        let err = SnowflakeTimestampNtz { scale: 0 }
+            .read_arrow_type(&array, 0)
+            .unwrap_err();
+        assert!(matches!(err, ReadArrowError::NullValue { .. }));
+    }
+
+    #[test]
+    fn should_reject_ntz_flat_int64_when_scale_exceeds_9() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(0)]);
+        let err = SnowflakeTimestampNtz { scale: 15 }
+            .read_arrow_type(&array, 0)
+            .unwrap_err();
+        assert!(matches!(err, ReadArrowError::InvalidArrowValue { .. }));
+    }
+
+    #[test]
+    fn should_floor_ntz_negative_scaled_epoch() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(-500)]);
+        let value = SnowflakeTimestampNtz { scale: 3 }
+            .read_arrow_type(&array, 0)
+            .unwrap();
+        assert_eq!(value.and_utc().timestamp(), -1);
+        assert_eq!(value.and_utc().timestamp_subsec_nanos(), 500_000_000);
     }
 }
