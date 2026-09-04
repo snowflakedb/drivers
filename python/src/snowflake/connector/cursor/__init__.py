@@ -12,6 +12,7 @@ Hierarchy:
 from __future__ import annotations
 
 from .._internal.cursor import DictRow, QueryResultStats, ResultMetadata, ResultMetadataV2, Row
+from .._internal.cursor.query_result_waiter import _RETRY_PATTERN as ASYNC_RETRY_PATTERN
 from ._base import SnowflakeCursorBase
 from ._dict_cursor import DictCursor
 from ._snowflake_cursor import SnowflakeCursor
@@ -22,6 +23,7 @@ CursorInstance = SnowflakeCursor | DictCursor
 
 
 __all__ = [
+    "ASYNC_RETRY_PATTERN",  # snowpark_compat
     "CursorInstance",
     "CursorType",
     "DictCursor",

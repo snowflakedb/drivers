@@ -8,6 +8,9 @@ from ._internal.backward_compatibility import _is_caller_external
 
 
 class TelemetryData:
+    TRUE = 1  # snowpark_compat
+    FALSE = 0  # snowpark_compat
+
     def __init__(self, message: str, timestamp: int) -> None:
         self.message = message
         self.timestamp = timestamp
