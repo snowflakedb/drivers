@@ -1,18 +1,17 @@
 import { Readable } from 'node:stream';
 import type { CoreConnectionInstance, CoreStatementInstance } from '../core/index.js';
-import type { DataType, RowMode } from './types.js';
+import type { RowOptions } from './types.js';
 import { createRowFormatter } from './cell-mapping.js';
 
 export async function collectRows(
   connection: CoreConnectionInstance,
   coreStatement: CoreStatementInstance,
-  rowMode: RowMode,
-  fetchAsString?: DataType[],
+  rowOptions: RowOptions,
 ): Promise<unknown[]> {
   try {
     await coreStatement.waitForCompletion();
     const columns = coreStatement.getColumns()!;
-    const formatRow = createRowFormatter({ columns, connection, rowMode, fetchAsString });
+    const formatRow = createRowFormatter({ columns, connection, rowOptions });
 
     const rows: unknown[] = [];
     while (await coreStatement.fetchNextBatch()) {
@@ -31,11 +30,10 @@ export async function collectRows(
 export function createRowStream(
   connection: CoreConnectionInstance,
   coreStatement: CoreStatementInstance,
-  rowMode: RowMode,
-  fetchAsString?: DataType[],
+  rowOptions: RowOptions,
 ): Readable {
   const columns = coreStatement.getColumns()!;
-  const formatRow = createRowFormatter({ columns, connection, rowMode, fetchAsString });
+  const formatRow = createRowFormatter({ columns, connection, rowOptions });
 
   // Decodes one row out of the resident batch, returning false once it is
   // drained and the stream needs a refill.

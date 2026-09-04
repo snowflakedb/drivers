@@ -476,3 +476,23 @@ behavior_differences:
       This is the universal driver's model, not a Node.js decision: sf_core owns session parameters
       per connection and `ResultSetDescriptor` exposes no per-result `parameters`, so every front end
       reads the connection cache -- ODBC already does.
+
+  22:
+    name: 'representNullAsStringNull is scoped to the connection rather than leaking into module state'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      createConnection writes representNullAsStringNull into module-level state rather than onto
+      the connection, so the option outlives the connection that set it: a later connection that
+      never sets the option inherits whatever the previous one left behind, and every subsequent
+      statement in the process reads that stale value.
+    new_driver_behavior: |
+      representNullAsStringNull is resolved once per connection and held on the connection's own
+      row options, so it never leaks to another connection and no later statement inherits a
+      value the caller did not set.
+    status_rationale: |
+      A connection option that silently persists across unrelated connections in the same process
+      is a bug, not a contract worth preserving; scoping it to the connection is the fix.

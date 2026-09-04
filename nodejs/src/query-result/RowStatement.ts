@@ -3,9 +3,7 @@ import type { CoreConnectionInstance, CoreStatementInstance } from '../core/inde
 import type { SnowflakeError } from '../error.js';
 import type {
   Column,
-  DataType,
   FetchRowsOptions,
-  RowMode,
   RowOptions,
   StatementCallback,
   StreamOptions,
@@ -20,22 +18,16 @@ import { createRowStream } from './rows.js';
 export class RowStatement {
   #connection: CoreConnectionInstance;
   #core: CoreStatementInstance;
-  #rowMode: RowMode;
-  #fetchAsString?: DataType[];
+  #rowOptions: RowOptions;
 
   constructor(
     connection: CoreConnectionInstance,
     core: CoreStatementInstance,
-    rowOptions: RowOptions = {},
+    rowOptions: RowOptions,
   ) {
     this.#connection = connection;
     this.#core = core;
-    this.#rowMode = rowOptions.rowMode ?? 'object';
-    this.#fetchAsString = rowOptions.fetchAsString;
-  }
-
-  get rowMode(): RowMode {
-    return this.#rowMode;
+    this.#rowOptions = rowOptions;
   }
 
   getNumRows(): number | undefined {
@@ -58,21 +50,14 @@ export class RowStatement {
   // and the result is already drained. (would suggest a BCR with error)
   // oxlint-disable-next-line no-unused-vars
   streamRows(options?: StreamOptions): Readable {
-    return createRowStream(
-      this.#connection,
-      this.#core,
-      this.#rowMode,
-      options?.fetchAsString ?? this.#fetchAsString,
-    );
+    return createRowStream(this.#connection, this.#core, {
+      ...this.#rowOptions,
+      fetchAsString: options?.fetchAsString ?? this.#rowOptions.fetchAsString,
+    });
   }
 
   fetchRows(options: FetchRowsOptions): void {
-    const stream = createRowStream(
-      this.#connection,
-      this.#core,
-      this.#rowMode,
-      this.#fetchAsString,
-    );
+    const stream = createRowStream(this.#connection, this.#core, this.#rowOptions);
     let finished = false;
 
     const onComplete = (err: SnowflakeError | undefined) => {
@@ -109,6 +94,7 @@ export class FileAndStageBindStatement extends RowStatement {
     super(
       undefined as unknown as CoreConnectionInstance,
       undefined as unknown as CoreStatementInstance,
+      undefined as unknown as RowOptions,
     );
     throw new Error('FileAndStageBindStatement is not implemented');
   }

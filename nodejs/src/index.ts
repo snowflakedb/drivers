@@ -6,6 +6,7 @@ import type {
   FetchRowsOptions,
   Column,
   RowMode,
+  RowOptions,
 } from './query-result/types.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
 import ErrorCode from './constants/ErrorCode.js';
@@ -44,6 +45,21 @@ export type ConnectionOptions = Record<string, unknown> & {
   rowMode?: RowMode;
   fetchAsString?: DataType[];
   jsTreatIntegerAsBigInt?: boolean;
+  /**
+   * Controls how a SQL NULL is rendered for columns that {@link fetchAsString}
+   * returns as strings. A column returned as its native JavaScript type is
+   * unaffected — its NULL is always `null`.
+   *
+   * When `true`, a NULL in a string-rendered column comes back as the string
+   * `'NULL'`; when `false`, it stays `null`.
+   *
+   * TODO(BD#18): some data types do not route their NULL through this option yet
+   * (see `nodejs/BehaviorDifferences.yaml`). Document the per-type behavior here
+   * once every data type is implemented.
+   *
+   * @default true
+   */
+  representNullAsStringNull?: boolean;
 };
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
 
@@ -69,13 +85,21 @@ export interface FetchResultOptions {
 // - think how to export nicer types so we wouldnt have to use typeof
 export class Connection {
   #core: CoreConnectionInstance;
-  #defaultRowMode?: RowMode;
-  #defaultFetchAsString?: DataType[];
+  #defaultRowOptions: RowOptions;
 
   constructor(options: ConnectionOptions) {
-    const { rowMode, fetchAsString, jsTreatIntegerAsBigInt, ...coreOptions } = options;
-    this.#defaultRowMode = rowMode;
-    this.#defaultFetchAsString = fetchAsString;
+    const {
+      rowMode,
+      fetchAsString,
+      jsTreatIntegerAsBigInt,
+      representNullAsStringNull,
+      ...coreOptions
+    } = options;
+    this.#defaultRowOptions = {
+      rowMode: rowMode ?? 'object',
+      fetchAsString: fetchAsString ?? [],
+      representNullAsStringNull: representNullAsStringNull ?? true,
+    };
     this.#core = new CoreConnection(
       // Cast until options are typed across the bridge, which takes strings only.
       normalizeConnectionOptions({
@@ -110,8 +134,11 @@ export class Connection {
     return this.#runStatement(this.#core.execute(options.sqlText), {
       complete: options.complete,
       streamResult: options.streamResult,
-      rowMode: options.rowMode ?? this.#defaultRowMode,
-      fetchAsString: options.fetchAsString ?? this.#defaultFetchAsString,
+      rowOptions: {
+        ...this.#defaultRowOptions,
+        ...(options.rowMode && { rowMode: options.rowMode }),
+        ...(options.fetchAsString && { fetchAsString: options.fetchAsString }),
+      },
     });
   }
 
@@ -119,29 +146,26 @@ export class Connection {
     return this.#runStatement(this.#core.getQueryResult(options.queryId), {
       complete: options.complete,
       streamResult: options.streamResult,
-      // The old driver's fetchResult() never fell back to the connection-level
-      // rowMode default, unlike execute() -- that asymmetry is treated as a bug
-      // here, not preserved (BD#3).
-      rowMode: this.#defaultRowMode,
-      fetchAsString: options.fetchAsString ?? this.#defaultFetchAsString,
+      rowOptions: {
+        // The old driver's fetchResult() never fell back to the connection-level
+        // rowMode default, unlike execute() -- that asymmetry is treated as a bug
+        // here, not preserved (BD#3).
+        ...this.#defaultRowOptions,
+        ...(options.fetchAsString && { fetchAsString: options.fetchAsString }),
+      },
     });
   }
 
-  // TODO: options are drilled 3 levels deep here -- execute/fetchResult ->
-  // #runStatement -> RowStatement/collectRows -- threading each StatementOption
-  // field by hand; revisit once config handling is fully implemented (see the
-  // ConnectionOptions TODO above, BD#2).
   #runStatement(
     coreStatement: CoreStatementInstance,
     options: {
       complete?: StatementCallback;
       streamResult?: boolean;
-      rowMode?: RowMode;
-      fetchAsString?: DataType[];
+      rowOptions: RowOptions;
     },
   ): RowStatement | FileAndStageBindStatement {
-    const { complete, streamResult, rowMode, fetchAsString } = options;
-    const statement = new RowStatement(this.#core, coreStatement, { rowMode, fetchAsString });
+    const { complete, streamResult, rowOptions } = options;
+    const statement = new RowStatement(this.#core, coreStatement, rowOptions);
     (async () => {
       try {
         if (streamResult === true) {
@@ -151,7 +175,7 @@ export class Connection {
           complete?.(
             undefined,
             statement,
-            await collectRows(this.#core, coreStatement, statement.rowMode, fetchAsString),
+            await collectRows(this.#core, coreStatement, rowOptions),
           );
         }
       } catch (err) {

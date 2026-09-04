@@ -36,6 +36,11 @@ describe('Query Cancellation', () => {
     await cancelStatement(statement);
   });
 
+  // TODO: We need to have 2 tests
+  // 1. A wiremock that simulates network failure - it should throw
+  // 2. A BD that 000605 "Identified SQL statement is not currently executing" is a silient no-op
+  //    instead of failure
+  // Also maybe should check query status from server after the cancelation
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('throws when failing to cancel a query', async () => {
     const { statement } = await executeAsync(connection, 'select 1');
     // Query is completed = nothing to cancel
