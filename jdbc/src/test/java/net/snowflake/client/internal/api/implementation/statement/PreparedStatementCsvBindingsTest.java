@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -36,6 +37,10 @@ public class PreparedStatementCsvBindingsTest {
 
   private static ParameterValue column(String... rows) {
     return new ParameterValue(SnowflakeType.TEXT, Arrays.asList(rows));
+  }
+
+  private static ParameterValue column(SnowflakeType type, String... rows) {
+    return new ParameterValue(type, Arrays.asList(rows));
   }
 
   private static long csvLength(NativeBindings nativeBindings) {
@@ -132,5 +137,47 @@ public class PreparedStatementCsvBindingsTest {
 
     byte[] expected = "\"\"\n\n".getBytes(StandardCharsets.UTF_8);
     assertArrayEquals(expected, PreparedStatementCsvBindings.buildCsv(columns, 2));
+  }
+
+  @Test
+  public void shouldFormatDateEpochMillisForStageCsv() throws Exception {
+    Map<Integer, ParameterValue> columns = new HashMap<>();
+    columns.put(
+        1, column(SnowflakeType.DATE, "0", "86400000", "-86400000", "-62135596800000", null));
+
+    byte[] expected =
+        ("\"1970-01-01\"\n" + "\"1970-01-02\"\n" + "\"1969-12-31\"\n" + "\"0001-01-01\"\n" + "\n")
+            .getBytes(StandardCharsets.UTF_8);
+    assertArrayEquals(expected, PreparedStatementCsvBindings.buildCsv(columns, 5));
+  }
+
+  @Test
+  public void shouldFormatTimestampEpochNanosForStageCsv() throws Exception {
+    assertEquals(
+        "1969-12-31 23:59:59.000000000 Z",
+        PreparedStatementCsvBindings.formatStageValue(
+            SnowflakeType.TIMESTAMP_NTZ, "-1000000000", ZoneId.of("America/Los_Angeles")));
+    assertEquals(
+        "1899-12-31 23:59:59.900000000 Z",
+        PreparedStatementCsvBindings.formatStageValue(
+            SnowflakeType.TIMESTAMP_NTZ, "-2208988800100000000", ZoneId.of("America/Los_Angeles")));
+    assertEquals(
+        "0001-01-01 00:00:00.000000000 Z",
+        PreparedStatementCsvBindings.formatStageValue(
+            SnowflakeType.TIMESTAMP_NTZ,
+            "-62135596800000000000",
+            ZoneId.of("America/Los_Angeles")));
+    assertEquals(
+        "1969-12-31 15:59:59.000000000 -08:00",
+        PreparedStatementCsvBindings.formatStageValue(
+            SnowflakeType.TIMESTAMP_LTZ, "-1000000000", ZoneId.of("America/Los_Angeles")));
+  }
+
+  @Test
+  public void shouldLeaveTimeEpochNanosUnchangedForStageCsv() throws Exception {
+    assertEquals(
+        "86399999000000",
+        PreparedStatementCsvBindings.formatStageValue(
+            SnowflakeType.TIME, "86399999000000", ZoneId.of("UTC")));
   }
 }
