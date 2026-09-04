@@ -324,7 +324,10 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldInitializeFromServerParameterFalse() throws Exception {
       when(mockCoreApi.connectionGetParameter(any(), eq("AUTOCOMMIT")))
-          .thenReturn(ConnectionGetParameterResponse.newBuilder().setValue("false").build());
+          .thenReturn(
+              ConnectionGetParameterResponse.newBuilder()
+                  .setTypedValue(ConfigSetting.newBuilder().setBoolValue(false))
+                  .build());
       try (Connection conn = createConnection()) {
         assertFalse(conn.getAutoCommit());
       }
@@ -333,7 +336,10 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldInitializeFromServerParameterTrue() throws Exception {
       when(mockCoreApi.connectionGetParameter(any(), eq("AUTOCOMMIT")))
-          .thenReturn(ConnectionGetParameterResponse.newBuilder().setValue("true").build());
+          .thenReturn(
+              ConnectionGetParameterResponse.newBuilder()
+                  .setTypedValue(ConfigSetting.newBuilder().setBoolValue(true))
+                  .build());
       try (Connection conn = createConnection()) {
         assertTrue(conn.getAutoCommit());
       }
@@ -1618,7 +1624,6 @@ class SnowflakeConnectionImplTest {
 
       assertEquals("JDBC", identity.getDriverName());
       assertEquals(SnowflakeDriver.CLIENT_APP_VERSION, identity.getDriverVersion());
-      assertFalse(identity.hasReleaseType());
     }
 
     @Test

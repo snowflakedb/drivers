@@ -22,9 +22,11 @@ import java.util.Map;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
+import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ArrowArrayStreamPtr;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseFetchChunkResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.RemoteChunk;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultChunk;
@@ -166,9 +168,11 @@ class SnowflakeResultSetSerializableImplTest {
   @Test
   void shouldPreserveFrozenParametersThroughSplitAndSerialization() throws Exception {
     ResultChunk inline = inlineChunk("Zm9v", 1, 4, 4);
-    Map<String, String> params = new HashMap<>();
-    params.put("TIMEZONE", "Europe/Warsaw");
-    params.put("TIMESTAMP_LTZ_OUTPUT_FORMAT", "YYYY-MM-DD HH24:MI:SS.FF3 TZH:TZM");
+    Map<String, ConfigSetting> params = new HashMap<>();
+    params.put("TIMEZONE", ConfigSettingFactory.from("Europe/Warsaw"));
+    params.put(
+        "TIMESTAMP_LTZ_OUTPUT_FORMAT",
+        ConfigSettingFactory.from("YYYY-MM-DD HH24:MI:SS.FF3 TZH:TZM"));
 
     FrozenParametersRegistry frozen = new FrozenParametersRegistry(params);
     List<SnowflakeResultSetSerializable> slices =

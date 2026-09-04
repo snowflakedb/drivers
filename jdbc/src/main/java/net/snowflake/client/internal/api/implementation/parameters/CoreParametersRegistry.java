@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.parameters;
 
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
@@ -18,16 +19,15 @@ public class CoreParametersRegistry implements ParametersRegistry {
   private final ConnectionHandle handle;
 
   @Override
-  public String getRawValue(Property param, String defaultValue) {
+  public ConfigSetting getTypedValue(Property param) {
     try {
       ConnectionGetParameterResponse response =
           coreDriverApi.connectionGetParameter(handle, param.getKey());
-      if (response != null && response.hasValue()) {
-        return response.getValue();
+      if (response != null && response.hasTypedValue()) {
+        return response.getTypedValue();
       }
     } catch (RuntimeException e) {
-      logger.warn(
-          "Failed to read {} session parameter; defaulting to {}", param.getKey(), defaultValue, e);
+      logger.warn("Failed to read {} session parameter; treating as unset", param.getKey(), e);
     }
     return null;
   }
@@ -37,7 +37,7 @@ public class CoreParametersRegistry implements ParametersRegistry {
     try {
       ConnectionGetAllParametersResponse response =
           coreDriverApi.connectionGetAllParameters(handle);
-      return new FrozenParametersRegistry(response.getParametersMap());
+      return new FrozenParametersRegistry(response.getTypedParametersMap());
     } catch (RuntimeException e) {
       logger.warn("Failed to snapshot session parameters; using an empty snapshot", e);
       return ParametersRegistry.EMPTY;
