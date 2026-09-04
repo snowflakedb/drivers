@@ -2077,7 +2077,8 @@ tests:
   - test_name: test_get_file_permission
     ud_tests: []
   - test_name: test_get_multiple_files_with_same_name
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/put_get/test_put_get_duplicate_basenames.py::test_should_warn_when_get_downloads_files_that_collide_on_destination_basename
   - test_name: test_get_unsafe_file_permission_when_flag_set
     ud_tests: []
   - test_name: test_iobound_limit

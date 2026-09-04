@@ -211,6 +211,7 @@ use s3_transfer::{
     upload_to_s3_or_skip,
 };
 use snafu::{Location, ResultExt, Snafu};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -863,6 +864,10 @@ pub async fn download_files(
     policy: &RetryPolicy,
     tx: TransferCtx<'_>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
+    if let Some(message) = duplicate_download_basenames_warning(&data.src_locations) {
+        tracing::warn!("{message}");
+    }
+
     let mut results = Vec::new();
 
     // One budget for the whole batch — see the mirror comment in `upload_files`.
@@ -988,6 +993,51 @@ fn safe_download_file_name(src_location: &str) -> Result<&str, FileManagerError>
         .fail();
     }
     Ok(name)
+}
+
+/// Basenames that occur more than once among a GET batch's `src_locations`,
+/// in the order each basename first appears. `download_files` processes
+/// files sequentially and each publishes its output via an atomic rename to
+/// `local_location`/basename, so a later file with a colliding basename
+/// overwrites an earlier one's output with no indication anything was lost.
+/// An entry `safe_download_file_name` rejects is skipped: it never reaches
+/// the filesystem, so it cannot collide with anything.
+fn duplicate_download_basenames(src_locations: &[String]) -> Vec<&str> {
+    let mut counts: HashMap<&str, u32> = HashMap::new();
+    let mut first_seen_order: Vec<&str> = Vec::new();
+    for src_location in src_locations {
+        if let Ok(basename) = safe_download_file_name(src_location) {
+            let count = counts.entry(basename).or_insert(0);
+            if *count == 0 {
+                first_seen_order.push(basename);
+            }
+            *count += 1;
+        }
+    }
+    first_seen_order
+        .into_iter()
+        .filter(|basename| counts.get(basename).copied().unwrap_or(0) > 1)
+        .collect()
+}
+
+/// Builds the duplicate-basename GET warning text, or `None` when
+/// [`duplicate_download_basenames`] finds no collision. The wording,
+/// including the Python-`repr`-style basename list, matches legacy Python's
+/// `file_transfer_agent` warning exactly.
+fn duplicate_download_basenames_warning(src_locations: &[String]) -> Option<String> {
+    let duplicates = duplicate_download_basenames(src_locations);
+    if duplicates.is_empty() {
+        return None;
+    }
+    let rendered = duplicates
+        .iter()
+        .map(|basename| format!("'{basename}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "Downloading multiple files with the same name could cause failures. \
+         File names with multiple entries: [{rendered}]"
+    ))
 }
 
 /// GET path guard layer 2 (mirrors JDBC `assertWithinDirectory`): join the
@@ -3026,6 +3076,92 @@ mod tests {
                 "expected {bad:?} to be rejected",
             );
         }
+    }
+
+    // SNOW-3704981 — GET warns when two or more `src_locations` collapse to
+    // the same destination basename, since the sequential download loop
+    // would otherwise have a later file silently overwrite an earlier one.
+
+    #[test]
+    fn duplicate_download_basenames_empty_batch_has_none() {
+        assert!(duplicate_download_basenames(&[]).is_empty());
+    }
+
+    #[test]
+    fn duplicate_download_basenames_all_distinct_has_none() {
+        let src_locations = vec!["a/one.csv".to_string(), "b/two.csv".to_string()];
+        assert!(duplicate_download_basenames(&src_locations).is_empty());
+    }
+
+    #[test]
+    fn duplicate_download_basenames_finds_collision_across_directories() {
+        let src_locations = vec![
+            "dir1/report.csv".to_string(),
+            "dir2/report.csv".to_string(),
+            "dir3/other.csv".to_string(),
+        ];
+        assert_eq!(
+            duplicate_download_basenames(&src_locations),
+            vec!["report.csv"],
+        );
+    }
+
+    #[test]
+    fn duplicate_download_basenames_reports_every_colliding_name_in_first_seen_order() {
+        let src_locations = vec![
+            "dir1/b.csv".to_string(),
+            "dir2/b.csv".to_string(),
+            "dir1/a.csv".to_string(),
+            "dir2/a.csv".to_string(),
+            "dir3/unique.csv".to_string(),
+        ];
+        assert_eq!(
+            duplicate_download_basenames(&src_locations),
+            vec!["b.csv", "a.csv"],
+        );
+    }
+
+    #[test]
+    fn duplicate_download_basenames_ignores_rejected_entries() {
+        let src_locations = vec!["..".to_string(), "..".to_string()];
+        assert!(duplicate_download_basenames(&src_locations).is_empty());
+    }
+
+    #[test]
+    fn duplicate_download_basenames_ignores_rejected_entries_alongside_a_real_collision() {
+        let src_locations = vec![
+            "..".to_string(),
+            "dir1/dup.csv".to_string(),
+            "dir2/dup.csv".to_string(),
+            "..".to_string(),
+        ];
+        assert_eq!(
+            duplicate_download_basenames(&src_locations),
+            vec!["dup.csv"],
+        );
+    }
+
+    #[test]
+    fn duplicate_download_basenames_warning_is_none_without_a_collision() {
+        let src_locations = vec!["a/one.csv".to_string(), "b/two.csv".to_string()];
+        assert_eq!(duplicate_download_basenames_warning(&src_locations), None);
+    }
+
+    #[test]
+    fn duplicate_download_basenames_warning_matches_legacy_python() {
+        let src_locations = vec![
+            "dir1/b.csv".to_string(),
+            "dir2/b.csv".to_string(),
+            "dir1/a.csv".to_string(),
+            "dir2/a.csv".to_string(),
+        ];
+        let message =
+            duplicate_download_basenames_warning(&src_locations).expect("collision expected");
+        assert_eq!(
+            message,
+            "Downloading multiple files with the same name could cause failures. \
+             File names with multiple entries: ['b.csv', 'a.csv']"
+        );
     }
 
     #[test]
