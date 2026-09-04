@@ -3,6 +3,7 @@ package net.snowflake.client.internal.core.arrow.converters;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.util.BinaryOutputFormat;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
@@ -28,8 +29,9 @@ public class VarBinaryToBinaryConverter extends AbstractArrowVectorConverter {
 
   @Override
   public String toString(int index) {
-    byte[] bytes = toBytes(index);
-    return bytes == null ? null : new String(bytes);
+    BinaryOutputFormat format =
+        context == null ? BinaryOutputFormat.HEX : context.getBinaryOutputFormat();
+    return format.encode(toBytes(index));
   }
 
   @Override

@@ -4,6 +4,7 @@ import java.sql.Time;
 import java.util.TimeZone;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
+import net.snowflake.client.internal.util.BinaryOutputFormat;
 
 public interface DataConversionContext {
   /**
@@ -12,6 +13,14 @@ public interface DataConversionContext {
    */
   default SnowflakeDateTimeFormat getDateFormatter() {
     return SnowflakeDateTimeFormat.fromSqlFormat("YYYY-MM-DD");
+  }
+
+  /**
+   * The encoding applied when a BINARY value is read as a String, built from the session {@code
+   * BINARY_OUTPUT_FORMAT}. Default mirrors snowflake-jdbc's {@code HEX}.
+   */
+  default BinaryOutputFormat getBinaryOutputFormat() {
+    return BinaryOutputFormat.HEX;
   }
 
   /**

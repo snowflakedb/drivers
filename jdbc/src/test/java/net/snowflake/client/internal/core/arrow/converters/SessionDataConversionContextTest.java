@@ -2,6 +2,7 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -24,6 +25,7 @@ import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
+import net.snowflake.client.internal.util.BinaryOutputFormat;
 import org.junit.jupiter.api.Test;
 
 public class SessionDataConversionContextTest {
@@ -53,6 +55,29 @@ public class SessionDataConversionContextTest {
     ParametersRegistry registry =
         new CoreParametersRegistry(api, ConnectionHandle.getDefaultInstance());
     return SessionDataConversionContext.from(registry);
+  }
+
+  @Test
+  public void shouldReadBinaryOutputFormatFromSessionParameters() throws Exception {
+    assertEquals(
+        BinaryOutputFormat.HEX,
+        contextFrom(Collections.emptyMap()).getBinaryOutputFormat(),
+        "an unset BINARY_OUTPUT_FORMAT must fall back to HEX");
+    assertEquals(
+        BinaryOutputFormat.BASE64,
+        contextFrom(Collections.singletonMap("BINARY_OUTPUT_FORMAT", "BASE64"))
+            .getBinaryOutputFormat());
+    assertEquals(
+        BinaryOutputFormat.BASE64,
+        contextFrom(Collections.singletonMap("BINARY_OUTPUT_FORMAT", "BAse64"))
+            .getBinaryOutputFormat(),
+        "Snowflake accepts the format name case-insensitively");
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            contextFrom(Collections.singletonMap("BINARY_OUTPUT_FORMAT", "UTF8"))
+                .getBinaryOutputFormat(),
+        "an unrecognized BINARY_OUTPUT_FORMAT must be rejected");
   }
 
   @Test
