@@ -1,7 +1,7 @@
 title: Python Driver Test Coverage
 description: Mapping of old Python driver tests to new Universal Driver test suite.
 summary:
-  total_tests: 1956
+  total_tests: 1957
   total_test_files: 229
 tests:
   auth/test_external_browser.py:
@@ -1754,7 +1754,12 @@ tests:
   - test_name: test_fetchmany_size_error
     ud_tests: []
   - test_name: test_file
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/types/test_file.py::TestFileTypeCasting::test_should_cast_file_values_to_appropriate_type
+      - python/tests/e2e/types/test_file.py::TestFileMetadata::test_should_report_a_file_column_with_a_dedicated_type_code
+    notes: Mapped via shared Gherkin coverage (tests/definitions/shared/types/file.feature),
+      run by CI under both the JSON and Arrow result-format workflows; integ/aio_it/test_cursor_async.py::test_file
+      stays unmapped since it exercises _description_internal, which is sync-only.
   - test_name: test_geography
     ud_tests: []
   - test_name: test_geometry
@@ -1997,9 +2002,24 @@ tests:
     ud_tests: []
   integ/test_interval_types.py:
   - test_name: test_select_day_time_interval
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/types/test_interval.py::TestIntervalTypeCasting
+      - python/tests/e2e/types/test_interval.py::TestIntervalMetadata::test_should_report_interval_columns_with_dedicated_type_codes
+      - python/tests/e2e/types/numpy/test_interval_numpy.py::TestIntervalDayTimeNumPy
+    notes: Mapped via shared Gherkin coverage (tests/definitions/shared/types/interval.feature),
+      run by CI under both the JSON and Arrow result-format workflows.
   - test_name: test_select_year_month_interval
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/types/test_interval.py::TestIntervalTypeCasting
+      - python/tests/e2e/types/test_interval.py::TestIntervalMetadata::test_should_report_interval_columns_with_dedicated_type_codes
+      - python/tests/e2e/types/numpy/test_interval_numpy.py::TestIntervalYearMonthNumPy
+    notes: Mapped via shared Gherkin coverage (tests/definitions/shared/types/interval.feature),
+      run by CI under both the JSON and Arrow result-format workflows.
+  - test_name: test_select_year_month_interval_subtypes
+    ud_tests:
+      - python/tests/e2e/types/test_interval.py::TestIntervalLiteral
+      - python/tests/e2e/types/test_interval.py::TestIntervalMetadata::test_should_report_interval_columns_with_dedicated_type_codes
+      - python/tests/e2e/types/numpy/test_interval_numpy.py::TestIntervalYearMonthNumPy
   integ/test_key_pair_authentication.py:
   - test_name: test_bad_private_key
     ud_tests: []
