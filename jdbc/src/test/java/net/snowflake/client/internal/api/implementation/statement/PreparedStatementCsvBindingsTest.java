@@ -174,10 +174,27 @@ public class PreparedStatementCsvBindingsTest {
   }
 
   @Test
-  public void shouldLeaveTimeEpochNanosUnchangedForStageCsv() throws Exception {
-    assertEquals(
-        "86399999000000",
-        PreparedStatementCsvBindings.formatStageValue(
-            SnowflakeType.TIME, "86399999000000", ZoneId.of("UTC")));
+  public void shouldFormatTimeNanosOfDayForStageCsv() throws Exception {
+    Map<Integer, ParameterValue> columns = new HashMap<>();
+    columns.put(
+        1,
+        column(
+            SnowflakeType.TIME,
+            "0",
+            "1000000000",
+            "46800000000000",
+            "50400000000000",
+            "86399999000000",
+            null));
+
+    byte[] expected =
+        ("\"00:00:00.000000000\"\n"
+                + "\"00:00:01.000000000\"\n"
+                + "\"13:00:00.000000000\"\n"
+                + "\"14:00:00.000000000\"\n"
+                + "\"23:59:59.999000000\"\n"
+                + "\n")
+            .getBytes(StandardCharsets.UTF_8);
+    assertArrayEquals(expected, PreparedStatementCsvBindings.buildCsv(columns, 6));
   }
 }

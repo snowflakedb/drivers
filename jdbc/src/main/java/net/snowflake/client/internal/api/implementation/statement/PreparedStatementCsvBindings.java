@@ -3,6 +3,7 @@ package net.snowflake.client.internal.api.implementation.statement;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -23,6 +24,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Query
  */
 final class PreparedStatementCsvBindings {
   private static final BigInteger NANOS_PER_SECOND = BigInteger.valueOf(1_000_000_000L);
+  private static final DateTimeFormatter TIME_FORMATTER =
+      DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSSSSS");
   private static final DateTimeFormatter TIMESTAMP_FORMATTER =
       new DateTimeFormatterBuilder()
           .appendPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS ")
@@ -82,6 +85,9 @@ final class PreparedStatementCsvBindings {
           .atZone(ZoneOffset.UTC)
           .toLocalDate()
           .format(DateTimeFormatter.ISO_LOCAL_DATE);
+    }
+    if (type == SnowflakeType.TIME) {
+      return LocalTime.ofNanoOfDay(Long.parseLong(value)).format(TIME_FORMATTER);
     }
     if (type != SnowflakeType.TIMESTAMP_LTZ && type != SnowflakeType.TIMESTAMP_NTZ) {
       return value;
