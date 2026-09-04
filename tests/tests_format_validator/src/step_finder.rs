@@ -1,5 +1,8 @@
 use crate::test_discovery::Language;
-use crate::utils::{clean_method_name, strings_match_normalized, to_pascal_case, to_snake_case};
+use crate::utils::{
+    clean_method_name, line_index_at_offset, string_contains_normalized, strings_match_normalized,
+    to_pascal_case, to_snake_case,
+};
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::path::Path;
@@ -23,8 +26,12 @@ static JAVA_METHOD_DECL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// Rust test attributes like `#[test]`, `#[tokio::test]`, `#[tokio::test(...)]`
 static RUST_TEST_ATTR_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$").unwrap());
-static JS_TEST_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?:it|test)\s*\(\s*['"]([^'"]+)['"]"#).unwrap());
+/// Matches an `it`/`test` (optionally `.each([...])`) declaration and captures its title.
+/// The title is the call's first argument, so only whitespace precedes it (`\(\s*['"]…`):
+/// a greedy gap there lets one `it` reach across a later block to a distant title.
+static JS_TEST_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\b(?:it|test)(?:\.each\s*\([\s\S]*?\))?\s*\(\s*['"]([^'"]+)['"]"#).unwrap()
+});
 
 /// Returns true if the trimmed line is a recognized xUnit C# test attribute.
 fn is_dotnet_test_attribute(s: &str) -> bool {
@@ -123,8 +130,9 @@ impl LanguageConfig {
         Self {
             test_annotation: "test(", // Marker value; matches it(...) and test(...) calls (Vitest/Jest/Mocha)
             method_pattern: |method_name| {
+                // Mirrors JS_TEST_REGEX with a fixed title in place of the capture group.
                 format!(
-                    r"(?:it|test)\s*\(\s*['\x22]{}['\x22]",
+                    r"\b(?:it|test)(?:\.each\s*\([\s\S]*?\))?\s*\(\s*['\x22]{}['\x22]",
                     regex::escape(method_name)
                 )
             },
@@ -294,14 +302,26 @@ impl MethodBoundaryFinder {
             _ => None,
         };
 
+        // JavaScript declarations can span lines — `it.each([...])(` on one line and the
+        // title on the next — so the pattern is matched against the whole content and the
+        // match offset is mapped back to a line, rather than scanned line by line.
+        if self.config.test_annotation == "test(" {
+            method_start_line = method_regex
+                .as_ref()
+                .and_then(|re| re.find(content))
+                .map(|m| line_index_at_offset(content, m.start()));
+        }
+
         // Find the method start
         for (i, line) in lines.iter().enumerate() {
+            if method_start_line.is_some() {
+                break;
+            }
             let trimmed = line.trim();
 
-            // Special handling for Python and JavaScript - the declaration line
-            // (def test_foo(...): / it('name', ...) or test('name', ...)) is itself
-            // the match, unlike Java/C#/C++ where a separate annotation line precedes it.
-            if self.config.test_annotation == "def test_" || self.config.test_annotation == "test(" {
+            // Special handling for Python - the declaration line (def test_foo(...):) is
+            // itself the match, unlike Java/C#/C++ where a separate annotation line precedes it.
+            if self.config.test_annotation == "def test_" {
                 if method_regex.as_ref().is_some_and(|re| re.is_match(trimmed)) {
                     method_start_line = Some(i);
                     break;
@@ -1135,18 +1155,19 @@ impl StepFinder {
         content: &str,
         scenario_name: &str,
     ) -> Result<Vec<(String, usize)>> {
-        // For JavaScript, we need to look for test functions differently since they don't use annotations
+        // JavaScript tests carry no annotation: the title is a string literal passed to
+        // it()/test(), or to the second call of the parameterized it.each([...])('title')
+        // form where the title sits on a line after the opener. Scanning the whole content
+        // (not line by line) lets one regex span that opener-to-title gap; the match's byte
+        // offset maps back to the declaration's line number.
         let mut methods = Vec::new();
-        let lines: Vec<&str> = content.lines().collect();
 
-        let test_regex = &JS_TEST_REGEX;
-
-        for (i, line) in lines.iter().enumerate() {
-            if let Some(captures) = test_regex.captures(line.trim()) {
-                let test_name = &captures[1];
-                if strings_match_normalized(test_name, scenario_name) {
-                    methods.push((test_name.to_string(), i + 1)); // +1 for 1-indexed line numbers
-                }
+        for captures in JS_TEST_REGEX.captures_iter(content) {
+            let test_name = &captures[1];
+            if string_contains_normalized(test_name, scenario_name) {
+                let decl_offset = captures.get(0).map(|m| m.start()).unwrap_or(0);
+                let line_number = line_index_at_offset(content, decl_offset) + 1;
+                methods.push((test_name.to_string(), line_number));
             }
         }
 
@@ -1326,6 +1347,115 @@ class TestFetchAll:
         assert!(
             !method_content.contains("def test_next_method"),
             "Method should NOT include the next test method"
+        );
+    }
+
+    #[test]
+    fn test_javascript_it_each_multiline_title_matches_scenario() {
+        let finder = StepFinder::new(Language::JavaScript);
+        let content = r#"
+    it.each(['VARCHAR', 'STRING', 'TEXT'])(
+      'should cast string values to appropriate type for string and synonyms (%s)',
+      async (type) => {
+        // Given Snowflake client is logged in
+        void connection;
+      },
+    );
+"#;
+
+        let methods = finder
+            .find_javascript_test_methods_with_lines(
+                content,
+                "should cast string values to appropriate type for string and synonyms",
+            )
+            .expect("Should scan JS methods");
+
+        assert_eq!(methods.len(), 1);
+        assert_eq!(
+            methods[0].0,
+            "should cast string values to appropriate type for string and synonyms (%s)"
+        );
+        assert_eq!(methods[0].1, 2);
+    }
+
+    #[test]
+    fn test_javascript_it_each_declaration_boundaries_found_with_title_on_next_line() {
+        let content = r#"
+    it.each(['VARCHAR', 'STRING'])(
+      'should cast string values (%s)',
+      async (type) => {
+        // Given Snowflake client is logged in
+        void connection;
+
+        // When Query is executed
+        const rows = run(type);
+      },
+    );
+"#;
+        let title = "should cast string values (%s)";
+
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::javascript());
+        let boundaries = boundary_finder
+            .find_method_boundaries(content, title)
+            .expect("Should locate the it.each declaration");
+        assert!(
+            boundaries.is_some(),
+            "it.each declaration with title on the next line should be found"
+        );
+
+        let (start, _end) = boundaries.unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(
+            lines[start].contains("it.each("),
+            "start line should be the it.each opener"
+        );
+    }
+
+    /// Regression test: a title-specific pattern must anchor to the it/test that wraps the
+    /// title, not the leftmost it/test in the file. A greedy gap before the title let an
+    /// earlier it.each span across intervening blocks, so a later plain it() resolved to the
+    /// earlier declaration's line and its steps were read from the wrong body.
+    #[test]
+    fn test_javascript_boundaries_pick_the_declaration_that_owns_the_title() {
+        let content = r#"
+    it.each(['VARCHAR', 'STRING'])(
+      'should cast string values (%s)',
+      async (type) => {
+        // Given Snowflake client is logged in
+        void connection;
+      },
+    );
+
+    it('should select hardcoded string literals', async () => {
+      // Given Snowflake client is logged in
+      void connection;
+
+      // When Query is executed
+      const rows = run();
+
+      // Then the result matches
+      expect(rows).toEqual(['hello']);
+    });
+"#;
+        let title = "should select hardcoded string literals";
+
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::javascript());
+        let (start, end) = boundary_finder
+            .find_method_boundaries(content, title)
+            .expect("Should locate boundaries")
+            .expect("The plain it() declaration should be found");
+
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(
+            lines[start].contains("it('should select hardcoded string literals'"),
+            "start must be the plain it() that owns the title, not the earlier it.each; got line {start}: {}",
+            lines[start]
+        );
+
+        let body: String = lines[start..=end.min(lines.len() - 1)].join("\n");
+        assert!(
+            body.contains("// When Query is executed") && body.contains("// Then the result matches"),
+            "the body must span the owning declaration so its When/Then steps are seen"
         );
     }
 
