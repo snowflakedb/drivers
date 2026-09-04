@@ -11,7 +11,7 @@ import {
 describe('Connection', () => {
   const snowflake = getSnowflakeSDK();
 
-  it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('.connect() connects on valid parameters', async () => {
+  it('.connect() connects on valid parameters', async () => {
     const connection = createTestConnection(snowflake);
     try {
       await new Promise<void>((resolve, reject) => {
@@ -38,19 +38,15 @@ describe('Connection', () => {
     },
   );
 
-  it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
-    '.connectAsync() connects on valid parameters',
-    async () => {
-      const connection = createTestConnection(snowflake);
-      try {
-        await connection.connectAsync();
-        expect(connection.isUp()).toBe(true);
-      } finally {
-        await destroyConnectionAsync(connection);
-      }
-    },
-  );
-
+  it('.connectAsync() connects on valid parameters', async () => {
+    const connection = createTestConnection(snowflake);
+    try {
+      await connection.connectAsync();
+      expect(connection.isUp()).toBe(true);
+    } finally {
+      await destroyConnectionAsync(connection);
+    }
+  });
   // New driver doesn't have proper error mapping yet
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
     '.connectAsync() surfaces an error on invalid parameters',
@@ -70,15 +66,12 @@ describe('Connection', () => {
     },
   );
 
-  it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
-    'destroys the connection and transitions to a disconnected state',
-    async () => {
-      const connection = createTestConnection(snowflake);
-      await connection.connectAsync();
-      await destroyConnectionAsync(connection);
-      expect(connection.isUp()).toBe(false);
-    },
-  );
+  it('destroys the connection and transitions to a disconnected state', async () => {
+    const connection = createTestConnection(snowflake);
+    await connection.connectAsync();
+    await destroyConnectionAsync(connection);
+    expect(connection.isUp()).toBe(false);
+  });
 
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('attaches a query tag from the connection', async () => {
     const expectedQueryTag = 'test_query_tag';

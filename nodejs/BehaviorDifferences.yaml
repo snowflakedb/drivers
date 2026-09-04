@@ -418,12 +418,35 @@ behavior_differences:
     old_driver_behavior: |
       A connection whose login is still running is in its own connecting state, and requests
       reaching it are put on a queue and run once the login completes
-      (StateConnecting.request -> enqueueRequest). The caller sees no error.
+      (StateConnecting.request -> enqueueRequest). The caller sees no error, and isUp() reports
+      up, since a request there is taken rather than refused.
     new_driver_behavior: |
       A connection counts as never established until its connect resolves, so a statement issued
       in that window is refused with ClientError 407001, SQL state 08003, the same error a caller
-      gets for never calling connect at all.
+      gets for never calling connect at all. isUp() reports down for the same window, because a
+      connection that refuses statements is not usable.
     status_rationale: |
       The window is only reachable by starting a statement without awaiting connect, which no
       documented usage does. Queueing means holding operations and replaying them after login,
       which is its own feature rather than an error-mapping detail.
+
+  20:
+    name: 'isUp() keeps reporting up after a session renewal fails'
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: medium
+    old_driver_behavior: |
+      The driver renews the session token itself, so it sees the outcome. An expired master token,
+      or a renewal that fails for any reason other than a network error, moves the connection to
+      its disconnected state and isUp() answers false from then on
+      (StateRenewing.enter -> transitionToDisconnected).
+    new_driver_behavior: |
+      The core renews tokens without reporting the outcome to the wrapper, so the connection stays
+      marked connected and isUp() answers true even though the session is gone. The caller learns
+      of it only when an operation fails.
+    status_rationale: |
+      The wrapper cannot observe a renewal it does not perform. The core tracks both is_closed and
+      is_master_token_expired on the connection, but only behind async accessors, and isUp() is
+      synchronous. Closing this needs a synchronous state read from the core.

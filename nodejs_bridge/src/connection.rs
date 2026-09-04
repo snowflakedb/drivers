@@ -43,6 +43,13 @@ impl ConnectionState {
         self.0.store(Self::TERMINATED, Ordering::Relaxed);
     }
 
+    /// Up means the connection takes statements, so it holds for exactly the
+    /// state [`Self::unusable`] lets through. A session being renewed stays
+    /// [`Self::CONNECTED`], because the core renews without telling the wrapper.
+    fn is_up(&self) -> bool {
+        self.0.load(Ordering::Relaxed) == Self::CONNECTED
+    }
+
     fn unusable(&self) -> Option<UnusableConnection> {
         match self.0.load(Ordering::Relaxed) {
             Self::CONNECTED => None,
@@ -132,6 +139,11 @@ impl Connection {
     }
 
     #[napi]
+    pub fn is_up(&self) -> bool {
+        self.state.is_up()
+    }
+
+    #[napi]
     pub fn get_session_parameter(&self, name: String) -> Option<String> {
         self.session_parameters.get(&name).cloned()
     }
@@ -187,5 +199,43 @@ impl Connection {
             state.mark_terminated();
             close
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_connection_nobody_touched_is_not_up() {
+        let state = ConnectionState::pristine();
+
+        assert!(!state.is_up());
+        assert!(matches!(
+            state.unusable(),
+            Some(UnusableConnection::NeverEstablished)
+        ));
+    }
+
+    #[test]
+    fn an_established_connection_is_up() {
+        let state = ConnectionState::pristine();
+        state.mark_connected();
+
+        assert!(state.is_up());
+        assert!(state.unusable().is_none());
+    }
+
+    #[test]
+    fn a_terminated_connection_is_not_up() {
+        let state = ConnectionState::pristine();
+        state.mark_connected();
+        state.mark_terminated();
+
+        assert!(!state.is_up());
+        assert!(matches!(
+            state.unusable(),
+            Some(UnusableConnection::Terminated)
+        ));
     }
 }

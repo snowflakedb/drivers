@@ -32,6 +32,7 @@ export declare class Column {
 export declare class Connection {
   constructor(options: Record<string, string>, sessionParameters: Record<string, string>)
   connect(): Promise<undefined>
+  isUp(): boolean
   getSessionParameter(name: string): string | null
   execute(query: string): Statement
   getQueryResult(queryId: string): Statement
