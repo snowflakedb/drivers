@@ -276,16 +276,13 @@ describe('STRING data type', () => {
       expect(Object.values(rows[0])).toEqual(['NULL']);
     });
 
-    it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
-      'should render a NULL TEXT cell as null when representNullAsStringNull is disabled',
-      async () => {
-        await withNullPreservingConnection(snowflake, async (nullPreservingConnection) => {
-          const { rows } = await executeAsync(nullPreservingConnection, 'SELECT NULL::TEXT', {
-            fetchAsString: ['String'],
-          });
-          expect(Object.values(rows[0])).toEqual([null]);
+    it('should render a NULL TEXT cell as null when representNullAsStringNull is disabled', async () => {
+      await withNullPreservingConnection(snowflake, async (nullPreservingConnection) => {
+        const { rows } = await executeAsync(nullPreservingConnection, 'SELECT NULL::TEXT', {
+          fetchAsString: ['String'],
         });
-      },
-    );
+        expect(Object.values(rows[0])).toEqual([null]);
+      });
+    });
   });
 });

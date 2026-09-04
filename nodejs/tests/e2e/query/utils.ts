@@ -1,14 +1,18 @@
 import type { Connection } from '../../types/sdk-types.js';
-import { createTestConnection, destroyConnectionAsync, getSnowflakeSDK } from '../utils/index.js';
+import {
+  createTestConnection,
+  destroyConnectionAsync,
+  getSnowflakeSDK,
+  isRunningNewDriverWithBD,
+} from '../utils/index.js';
 
 /**
  * Runs `useConnection` against a connection that leaves NULL cells as `null` under
  * `fetchAsString` instead of rendering them as the string `'NULL'`.
  *
- * The old driver keeps `representNullAsStringNull` in module state written by
- * `createConnection`, not on the connection object, so the option outlives the connection that
- * set it and every later test in the process would inherit `false`. Restoring it belongs here
- * rather than in each caller's `finally`.
+ * The old driver keeps `representNullAsStringNull` in module state, not on the connection, so
+ * the `false` leaks into every later test in the process; the throwaway connection in `finally`
+ * resets it. The new driver scopes the option to the connection (BD#22) and needs no reset.
  */
 export async function withNullPreservingConnection(
   snowflake: ReturnType<typeof getSnowflakeSDK>,
@@ -19,7 +23,9 @@ export async function withNullPreservingConnection(
     await connection.connectAsync();
     await useConnection(connection);
   } finally {
-    createTestConnection(snowflake, { representNullAsStringNull: true });
+    if (!isRunningNewDriverWithBD('BD#22')) {
+      createTestConnection(snowflake, { representNullAsStringNull: true });
+    }
     await destroyConnectionAsync(connection);
   }
 }

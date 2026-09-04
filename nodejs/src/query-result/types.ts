@@ -24,8 +24,9 @@ export interface SessionParameters {
 }
 
 export interface RowOptions {
-  rowMode?: RowMode;
-  fetchAsString?: DataType[];
+  representNullAsStringNull: boolean;
+  rowMode: RowMode;
+  fetchAsString: DataType[];
 }
 
 export type StatementCallback = (
