@@ -314,12 +314,19 @@ def _schedule_async_telemetry(coro: Any) -> None:
         logger.debug("Skipped async telemetry with no running event loop", exc_info=True)
 
 
+def _api_method_name(self: Any, func: Callable[..., Any], *, async_path: bool) -> str:
+    name = f"{type(self).__name__}.{func.__name__}"
+    if async_path:
+        return f"async {name}"
+    return name
+
+
 def _send_api_usage(self: Any, func: Callable[..., Any], passed_arguments: list[str]) -> None:
     """Send the ``{ClassName}.{method_name}`` API-usage telemetry for *self*."""
     try:
         from snowflake.connector._common.telemetry import AsyncTelemetryClient
 
-        api_name = f"{type(self).__name__}.{func.__name__}"
+        api_name = _api_method_name(self, func, async_path=False)
         client = _telemetry_client_if_enabled(self)
         if client is None:
             return
@@ -332,11 +339,16 @@ def _send_api_usage(self: Any, func: Callable[..., Any], passed_arguments: list[
 
 
 async def _send_api_usage_async(self: Any, func: Callable[..., Any], passed_arguments: list[str]) -> None:
-    """Async counterpart of :func:`_send_api_usage`."""
+    """Async counterpart of :func:`_send_api_usage`.
+
+    Coroutine and async-generator methods record
+    ``async {ClassName}.{method_name}`` so they are distinguishable from the
+    sync methods that share the same class and function names.
+    """
     try:
         from snowflake.connector._common.telemetry import AsyncTelemetryClient
 
-        api_name = f"{type(self).__name__}.{func.__name__}"
+        api_name = _api_method_name(self, func, async_path=True)
         client = _telemetry_client_if_enabled(self)
         if client is None:
             return
@@ -349,7 +361,7 @@ async def _send_api_usage_async(self: Any, func: Callable[..., Any], passed_argu
 
 
 def api_telemetry(func: F) -> F:
-    """Record ``{ClassName}.{method_name}`` telemetry for the outermost call.
+    """Record API-usage telemetry for the outermost call.
 
     Suppresses ``_TRACKING`` for the method body so nested decorated calls
     are not recorded.  Generator results are wrapped to suppress only during
@@ -357,8 +369,9 @@ def api_telemetry(func: F) -> F:
 
     Supports synchronous functions, coroutine functions, and async generator
     functions — the suppression always spans the actual execution of the
-    wrapped callable (the awaited body or each iteration step), so async
-    methods record telemetry exactly like their sync counterparts.
+    wrapped callable (the awaited body or each iteration step). Sync methods
+    record ``{ClassName}.{method_name}``; coroutine and async-generator
+    methods record ``async {ClassName}.{method_name}``.
 
     Alongside the method name, the names of the arguments the caller
     explicitly passed are recorded (see :func:`_passed_argument_names`) —
