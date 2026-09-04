@@ -25,6 +25,21 @@ def get_python_dir() -> Path:
     return Path(__file__).parent.parent.parent
 
 
+SNOWFLAKE_NAMESPACE_INIT = "snowflake/__init__.py"
+
+
+def assert_wheel_preserves_snowflake_namespace(wheel_path: Path) -> None:
+    """PEP 420: the snowflake namespace root must not ship an __init__.py in wheels."""
+    with zipfile.ZipFile(wheel_path, "r") as whl:
+        if SNOWFLAKE_NAMESPACE_INIT in whl.namelist():
+            size = whl.getinfo(SNOWFLAKE_NAMESPACE_INIT).file_size
+            raise AssertionError(
+                f"{SNOWFLAKE_NAMESPACE_INIT} must not be present in {wheel_path.name} "
+                f"({size} bytes). A delvewheel patch at the namespace root breaks "
+                "sibling packages such as snowflake.sqlalchemy."
+            )
+
+
 class TestWheelPackaging:
     """Tests for wheel build and contents."""
 
@@ -83,6 +98,8 @@ class TestWheelPackaging:
 
     def _verify_wheel_contents(self, wheel_path: Path) -> None:
         """Verify the wheel contains expected build artifacts."""
+        assert_wheel_preserves_snowflake_namespace(wheel_path)
+
         with zipfile.ZipFile(wheel_path, "r") as whl:
             names = whl.namelist()
 

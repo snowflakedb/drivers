@@ -534,6 +534,26 @@ jobs:
             delocate-wheel --require-archs ${{ contains(matrix.cibw_build, 'x86_64') && 'x86_64' || 'arm64' }} --check-archs "$whl" && echo "✓ arch check passed"
           done
 
+      - name: Check wheels preserve snowflake namespace (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          bad = []
+          for whl in Path("python/dist").glob("*.whl"):
+              with zipfile.ZipFile(whl) as zf:
+                  if "snowflake/__init__.py" in zf.namelist():
+                      bad.append(whl.name)
+          if bad:
+              print("::error::Wheel(s) must not ship snowflake/__init__.py (PEP 420 namespace):", ", ".join(bad))
+              sys.exit(1)
+          print("snowflake namespace intact in all Windows wheels")
+          PY
+
       # ── Upload individual wheel artifacts (preserves per-version names) ──
       - name: Upload py3.11 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.11')
@@ -684,6 +704,8 @@ jobs:
           core = [n for n in names if "_core/" in n and "sf_core_python" in n and n.endswith((".so", ".pyd"))]
           if len(core) != 1:
               raise SystemExit(f"Expected exactly one sf_core_python binary in wheel, found {core}")
+          if "snowflake/__init__.py" in names:
+              raise SystemExit("Wheel must not ship snowflake/__init__.py (PEP 420 namespace)")
           print(f"sf_core_python in wheel: {core[0]}")
           '@ $whl
 
