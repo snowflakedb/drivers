@@ -42,6 +42,7 @@ export {
 // TODO: implement ConnectionOptions like in old driver (BD#2)
 export type ConnectionOptions = Record<string, unknown> & {
   rowMode?: RowMode;
+  fetchAsString?: DataType[];
   jsTreatIntegerAsBigInt?: boolean;
 };
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
@@ -69,10 +70,12 @@ export interface FetchResultOptions {
 export class Connection {
   #core: CoreConnectionInstance;
   #defaultRowMode?: RowMode;
+  #defaultFetchAsString?: DataType[];
 
   constructor(options: ConnectionOptions) {
-    const { rowMode, jsTreatIntegerAsBigInt, ...coreOptions } = options;
+    const { rowMode, fetchAsString, jsTreatIntegerAsBigInt, ...coreOptions } = options;
     this.#defaultRowMode = rowMode;
+    this.#defaultFetchAsString = fetchAsString;
     this.#core = new CoreConnection(
       // Cast until options are typed across the bridge, which takes strings only.
       normalizeConnectionOptions({
@@ -108,7 +111,7 @@ export class Connection {
       complete: options.complete,
       streamResult: options.streamResult,
       rowMode: options.rowMode ?? this.#defaultRowMode,
-      fetchAsString: options.fetchAsString,
+      fetchAsString: options.fetchAsString ?? this.#defaultFetchAsString,
     });
   }
 
@@ -120,7 +123,7 @@ export class Connection {
       // rowMode default, unlike execute() -- that asymmetry is treated as a bug
       // here, not preserved (BD#3).
       rowMode: this.#defaultRowMode,
-      fetchAsString: options.fetchAsString,
+      fetchAsString: options.fetchAsString ?? this.#defaultFetchAsString,
     });
   }
 
