@@ -1120,3 +1120,23 @@ behavior_differences:
       The new driver converts backend JSON results to Arrow before exposing them through JDBC.
       It therefore applies the Arrow conversion property to every result, regardless of the
       backend result format.
+  61:
+    name: "GET warns when multiple files share a destination basename"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      A GET that downloads multiple stage files which reduce to the same local destination
+      basename (e.g. files from different stage subdirectories) completes with no warning; the
+      later file's write silently overwrites the earlier file at the shared destination path.
+    new_driver_behavior: |
+      When a GET batch's destination basenames collide, the new driver logs one WARN-level
+      message per batch: "Downloading multiple files with the same name could cause failures.
+      File names with multiple entries: [...]", naming every colliding basename. The download
+      outcome is unchanged; the log message is the only new observable effect.
+    description: |
+      SNOW-3704981. The old Python connector already logs this exact message
+      (`file_transfer_agent.py`'s `basename_counts` check); the new driver now emits it for every
+      wrapper, including JDBC, which previously had no such warning.
