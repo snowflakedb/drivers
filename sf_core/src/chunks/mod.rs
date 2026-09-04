@@ -1,4 +1,5 @@
 mod arrow_parser;
+mod async_arrow_batch_fetcher;
 mod error;
 mod http_downloader;
 mod json_parser;
@@ -18,6 +19,7 @@ use crate::rest::snowflake::query_response::Chunk;
 use arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
 use arrow_ipc::reader::StreamReader;
+pub(crate) use async_arrow_batch_fetcher::AsyncArrowBatchFetcher;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 #[cfg(feature = "protobuf")]
 pub(crate) use error::ArrowIpcEncodeSnafu;
@@ -25,12 +27,12 @@ pub use error::ChunkError;
 pub(crate) use error::ChunkReadSnafu;
 use error::*;
 pub use json_parser::convert_string_rowset_to_arrow_reader;
-use prefetch::{
-    ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, ParseChunk, PrefetchChunkReader,
-};
+pub(crate) use prefetch::PrefetchChunkReader;
+use prefetch::{ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, ParseChunk};
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use snafu::{OptionExt, ResultExt, ensure};
+use tokio::task::AbortHandle;
 
 pub const DEFAULT_PREFETCH_THREADS: usize = 4;
 pub const DEFAULT_MEMORY_LIMIT_MB: u32 = 1536;
@@ -79,8 +81,26 @@ pub async fn json_prefetch_reader(
     client: Client,
     config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
+    let (reader, _abort) = json_prefetch(
+        initial_rowset,
+        row_types,
+        chunk_download_data,
+        client,
+        config,
+    )
+    .await?;
+    Ok(Box::new(reader))
+}
+
+pub(crate) async fn json_prefetch(
+    initial_rowset: &[Vec<Option<String>>],
+    row_types: Vec<RowType>,
+    chunk_download_data: Vec<ChunkDownloadData>,
+    client: Client,
+    config: &PrefetchConfig,
+) -> Result<(PrefetchChunkReader, AbortHandle), ChunkError> {
     let initial_reader = convert_string_rowset_to_arrow_reader(initial_rowset, &row_types)?;
-    json_chunks_reader(
+    open_json_prefetch(
         initial_reader,
         row_types,
         chunk_download_data,
@@ -97,63 +117,83 @@ async fn json_chunks_reader(
     client: Client,
     config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-    let downloader = HttpChunkDownloader { client };
-    let parser = JsonChunkParser {
-        row_types: row_types.clone(),
-    };
-    let initial_future = tokio::task::spawn_blocking(move || {
-        let schema = initial_reader.schema();
-        let batches = initial_reader
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .context(ChunkReadSnafu)?;
-        Ok((schema, batches))
-    });
-    PrefetchChunkReader::reader(
+    let (reader, _abort) = open_json_prefetch(
+        initial_reader,
+        row_types,
+        chunk_download_data,
+        client,
+        config,
+    )
+    .await?;
+    Ok(Box::new(reader))
+}
+
+async fn open_json_prefetch(
+    initial_reader: Box<dyn RecordBatchReader + Send>,
+    row_types: Vec<RowType>,
+    chunk_download_data: Vec<ChunkDownloadData>,
+    client: Client,
+    config: &PrefetchConfig,
+) -> Result<(PrefetchChunkReader, AbortHandle), ChunkError> {
+    let initial_future =
+        tokio::task::spawn_blocking(move || drain_reader_to_batches(initial_reader));
+    PrefetchChunkReader::open(
         Some(initial_future),
         chunk_download_data.into(),
-        downloader,
-        parser,
+        HttpChunkDownloader { client },
+        JsonChunkParser { row_types },
         config,
     )
     .await
 }
 
+pub(crate) fn drain_reader_to_batches(
+    reader: impl RecordBatchReader,
+) -> Result<(SchemaRef, Vec<RecordBatch>), ChunkError> {
+    let schema = reader.schema();
+    let batches = reader
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .context(ChunkReadSnafu)?;
+    Ok((schema, batches))
+}
+
+fn spawn_initial_arrow_decode(
+    b64: String,
+) -> tokio::task::JoinHandle<Result<(SchemaRef, Vec<RecordBatch>), ChunkError>> {
+    tokio::task::spawn_blocking(move || {
+        let bytes = BASE64.decode(b64).context(Base64DecodeSnafu)?;
+        let reader = StreamReader::try_new(io::Cursor::new(bytes), None).context(ChunkReadSnafu)?;
+        drain_reader_to_batches(reader)
+    })
+}
+
 pub async fn arrow_prefetch_reader(
-    initial_base64_opt: Option<&str>,
+    initial_base64_opt: Option<String>,
     chunk_download_data: VecDeque<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-    let initial_handle = match initial_base64_opt {
-        Some(b64) => {
-            let b64 = b64.to_owned();
-            Some(tokio::task::spawn_blocking(move || {
-                let bytes = BASE64.decode(b64).context(Base64DecodeSnafu)?;
-                let reader =
-                    StreamReader::try_new(io::Cursor::new(bytes), None).context(ChunkReadSnafu)?;
-                let schema = reader.schema();
-                let batches = reader
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()
-                    .context(ChunkReadSnafu)?;
-                Ok((schema, batches))
-            }))
-        }
-        None => None,
-    };
-    let downloader = HttpChunkDownloader { client };
-    let parser = ArrowChunkParser;
-    let reader = PrefetchChunkReader::reader(
-        initial_handle,
+    let (reader, _abort) =
+        arrow_prefetch(initial_base64_opt, chunk_download_data, client, config).await?;
+    Ok(maybe_inject_nullable(Box::new(reader), nullable_flags))
+}
+
+pub(crate) async fn arrow_prefetch(
+    initial_base64_opt: Option<String>,
+    chunk_download_data: VecDeque<ChunkDownloadData>,
+    client: Client,
+    config: &PrefetchConfig,
+) -> Result<(PrefetchChunkReader, AbortHandle), ChunkError> {
+    PrefetchChunkReader::open(
+        initial_base64_opt.map(spawn_initial_arrow_decode),
         chunk_download_data,
-        downloader,
-        parser,
+        HttpChunkDownloader { client },
+        ArrowChunkParser,
         config,
     )
-    .await?;
-    Ok(maybe_inject_nullable(reader, nullable_flags))
+    .await
 }
 
 /// Builds the initial reader from either the inline base64 chunk (always Arrow
@@ -249,25 +289,22 @@ impl Iterator for SchemaOverrideReader {
     }
 }
 
-/// Injects `"nullable"` metadata into each Arrow field that doesn't already have it.
-/// Returns the reader unchanged if no injection is needed.
-fn maybe_inject_nullable(
-    reader: Box<dyn RecordBatchReader + Send>,
+pub(crate) fn inject_nullable_schema(
+    schema: SchemaRef,
     nullable_flags: Option<&[bool]>,
-) -> Box<dyn RecordBatchReader + Send> {
+) -> SchemaRef {
     let Some(flags) = nullable_flags else {
-        return reader;
+        return schema;
     };
-    let schema = reader.schema();
     if flags.is_empty() || flags.len() != schema.fields().len() {
-        return reader;
+        return schema;
     }
     let needs_injection = schema
         .fields()
         .iter()
         .any(|f| !f.metadata().contains_key("nullable"));
     if !needs_injection {
-        return reader;
+        return schema;
     }
     let new_fields: Vec<Field> = schema
         .fields()
@@ -283,13 +320,26 @@ fn maybe_inject_nullable(
             }
         })
         .collect();
-    let new_schema = Arc::new(Schema::new_with_metadata(
+    Arc::new(Schema::new_with_metadata(
         new_fields,
         schema.metadata().clone(),
-    ));
+    ))
+}
+
+/// Injects `"nullable"` metadata into each Arrow field that doesn't already have it.
+/// Returns the reader unchanged if no injection is needed.
+pub(crate) fn maybe_inject_nullable(
+    reader: Box<dyn RecordBatchReader + Send>,
+    nullable_flags: Option<&[bool]>,
+) -> Box<dyn RecordBatchReader + Send> {
+    let schema = reader.schema();
+    let injected = inject_nullable_schema(schema.clone(), nullable_flags);
+    if Arc::ptr_eq(&injected, &schema) {
+        return reader;
+    }
     Box::new(SchemaOverrideReader {
         inner: reader,
-        schema: new_schema,
+        schema: injected,
     })
 }
 
@@ -332,7 +382,7 @@ pub async fn fetch_chunks_reader(
     match chunk_format {
         ChunkFormatKind::ArrowIpc => {
             arrow_prefetch_reader(
-                initial_base64_opt.as_deref(),
+                initial_base64_opt,
                 remote_chunks,
                 client,
                 prefetch_config,

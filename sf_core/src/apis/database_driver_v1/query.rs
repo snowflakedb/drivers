@@ -1,12 +1,13 @@
 use super::ColumnMetadata;
 use super::connection::{Connection, RefreshContext};
+use super::error::{ApiError, QueryResponseProcessSnafu};
 use super::global_state::{PutGetResultsetFlavor, WrapperPresets};
 use crate::apis::operation_ctx::OperationCtx;
 use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{boxed_arrow_reader, create_schema};
 use crate::chunks::{
-    ChunkError, PrefetchConfig, arrow_prefetch_reader, empty_reader, json_prefetch_reader,
-    schema_only_reader, single_chunk_reader,
+    ChunkDownloadData, ChunkError, PrefetchChunkReader, PrefetchConfig, arrow_prefetch,
+    empty_reader, json_prefetch, maybe_inject_nullable, schema_only_reader, single_chunk_reader,
 };
 use crate::config::retry::RetryPolicy;
 use crate::file_manager;
@@ -606,83 +607,198 @@ async fn fetch_fresh_stage_info_with_sql(
 /// Builds an Arrow `RecordBatchReader` from the stored `RowsetData`.
 /// Called lazily by `result_set_get_stream`.
 pub(super) async fn build_reader_from_rowset_data(
-    data: &RowsetData,
+    data: RowsetData,
     http_client: Client,
     prefetch_config: &PrefetchConfig,
     wrapper_presets: &WrapperPresets,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
+    Ok(into_sync_reader(
+        open_rowset_data(
+            data,
+            http_client,
+            prefetch_config,
+            wrapper_presets,
+            nullable_flags,
+        )
+        .await?,
+        nullable_flags,
+    ))
+}
+
+pub(super) async fn read_batches(
+    data: RowsetData,
+    http_client: Client,
+    prefetch_config: &PrefetchConfig,
+    nullable_flags: Option<&[bool]>,
+) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
+    Ok(into_sync_reader(
+        read_query_rowset(data, http_client, prefetch_config, nullable_flags)
+            .await
+            .context(BatchReadSnafu)?,
+        nullable_flags,
+    ))
+}
+
+pub(super) async fn build_async_stream(
+    data: RowsetData,
+    http_client: Client,
+    prefetch_config: &PrefetchConfig,
+    wrapper_presets: &WrapperPresets,
+    nullable_flags: Option<&[bool]>,
+) -> Result<super::AsyncArrowBatchFetcher, ApiError> {
+    into_async_fetcher(
+        open_rowset_data(
+            data,
+            http_client,
+            prefetch_config,
+            wrapper_presets,
+            nullable_flags,
+        )
+        .await
+        .context(QueryResponseProcessSnafu)?,
+        nullable_flags,
+    )
+    .await
+    .context(QueryResponseProcessSnafu)
+}
+
+enum OpenedBatches {
+    Reader(Box<dyn RecordBatchReader + Send>),
+    Prefetch(PrefetchChunkReader, tokio::task::AbortHandle),
+}
+
+async fn open_rowset_data(
+    data: RowsetData,
+    http_client: Client,
+    prefetch_config: &PrefetchConfig,
+    wrapper_presets: &WrapperPresets,
+    nullable_flags: Option<&[bool]>,
+) -> Result<OpenedBatches, QueryResponseProcessingError> {
     match data {
-        RowsetData::Upload(results) => {
-            upload_results_reader(results, wrapper_presets).context(UploadResultsConversionSnafu)
-        }
-        RowsetData::Download(results) => download_results_reader(results, wrapper_presets)
-            .context(DownloadResultsConversionSnafu),
-        _ => read_batches(data, http_client, prefetch_config, nullable_flags)
+        RowsetData::Upload(put_results) => Ok(OpenedBatches::Reader(
+            upload_results_reader(&put_results, wrapper_presets)
+                .context(UploadResultsConversionSnafu)?,
+        )),
+        RowsetData::Download(get_results) => Ok(OpenedBatches::Reader(
+            download_results_reader(&get_results, wrapper_presets)
+                .context(DownloadResultsConversionSnafu)?,
+        )),
+        other => read_query_rowset(other, http_client, prefetch_config, nullable_flags)
             .await
             .context(BatchReadSnafu),
     }
 }
 
-pub(super) async fn read_batches(
-    data: &RowsetData,
+async fn read_query_rowset(
+    data: RowsetData,
     http_client: Client,
     prefetch_config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
-) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
+) -> Result<OpenedBatches, ReadBatchesError> {
     match data {
-        RowsetData::ArrowSingleChunk { chunk_base64 } => {
-            single_chunk_reader(chunk_base64, nullable_flags).context(ChunkReadSnafu)
-        }
+        RowsetData::Upload(_) | RowsetData::Download(_) => UnexpectedPutGetRowsetSnafu.fail(),
+        RowsetData::ArrowSingleChunk { chunk_base64 } => Ok(OpenedBatches::Reader(
+            single_chunk_reader(&chunk_base64, nullable_flags).context(ChunkReadSnafu)?,
+        )),
         RowsetData::ArrowMultiChunk {
             initial_base64_opt,
             chunk_download_data,
-        } => arrow_prefetch_reader(
-            initial_base64_opt.as_deref(),
-            chunk_download_data.clone().into(),
-            http_client.clone(),
-            prefetch_config,
-            nullable_flags,
-        )
-        .await
-        .context(ChunkReadSnafu),
-        RowsetData::SchemaOnly { rowtype } => {
-            let row_types = parse_row_types(rowtype)?;
-            schema_only_reader(&row_types).context(ChunkReadSnafu)
-        }
-        RowsetData::JsonRowset { rowset, rowtype } => {
-            let row_types = parse_row_types(rowtype)?;
-            validate_column_count(rowset, &row_types)?;
-            json_prefetch_reader(
-                rowset,
-                row_types,
-                Vec::new(),
-                http_client.clone(),
+        } => {
+            let (reader, abort_handle) = arrow_prefetch(
+                initial_base64_opt,
+                chunk_download_data.into(),
+                http_client,
                 prefetch_config,
             )
             .await
-            .context(ChunkReadSnafu)
+            .context(ChunkReadSnafu)?;
+            Ok(OpenedBatches::Prefetch(reader, abort_handle))
+        }
+        RowsetData::SchemaOnly { rowtype } => {
+            let row_types = parse_row_types(&rowtype)?;
+            Ok(OpenedBatches::Reader(
+                schema_only_reader(&row_types).context(ChunkReadSnafu)?,
+            ))
+        }
+        RowsetData::JsonRowset { rowset, rowtype } => {
+            open_json_batches(&rowset, &rowtype, Vec::new(), http_client, prefetch_config).await
         }
         RowsetData::JsonMultiChunk {
             rowset,
             rowtype,
             chunk_download_data,
         } => {
-            let row_types = parse_row_types(rowtype)?;
-            validate_column_count(rowset, &row_types)?;
-
-            json_prefetch_reader(
-                rowset,
-                row_types,
-                chunk_download_data.clone(),
-                http_client.clone(),
+            open_json_batches(
+                &rowset,
+                &rowtype,
+                chunk_download_data,
+                http_client,
                 prefetch_config,
             )
             .await
-            .context(ChunkReadSnafu)
         }
-        RowsetData::NoData | RowsetData::Upload(_) | RowsetData::Download(_) => Ok(empty_reader()),
+        RowsetData::NoData => Ok(OpenedBatches::Reader(empty_reader())),
     }
+}
+
+fn into_sync_reader(
+    opened: OpenedBatches,
+    nullable_flags: Option<&[bool]>,
+) -> Box<dyn RecordBatchReader + Send> {
+    match opened {
+        OpenedBatches::Reader(reader) => reader,
+        OpenedBatches::Prefetch(reader, _abort_handle) => {
+            maybe_inject_nullable(Box::new(reader), nullable_flags)
+        }
+    }
+}
+
+async fn into_async_fetcher(
+    opened: OpenedBatches,
+    nullable_flags: Option<&[bool]>,
+) -> Result<super::AsyncArrowBatchFetcher, QueryResponseProcessingError> {
+    let inner = match opened {
+        OpenedBatches::Reader(reader) => {
+            crate::chunks::AsyncArrowBatchFetcher::from_record_batch_reader(reader)
+                .await
+                .context(ChunkReadSnafu)
+                .context(BatchReadSnafu)?
+        }
+        OpenedBatches::Prefetch(reader, abort_handle) => {
+            crate::chunks::AsyncArrowBatchFetcher::new(reader, Some(abort_handle), nullable_flags)
+        }
+    };
+    Ok(super::AsyncArrowBatchFetcher::from_chunks(inner))
+}
+
+async fn open_json_batches(
+    rowset: &[Vec<Option<String>>],
+    rowtype: &[query_response::RowType],
+    chunk_download_data: Vec<ChunkDownloadData>,
+    http_client: Client,
+    prefetch_config: &PrefetchConfig,
+) -> Result<OpenedBatches, ReadBatchesError> {
+    let row_types = parsed_json_rowset(rowset, rowtype)?;
+    let (reader, abort_handle) = json_prefetch(
+        rowset,
+        row_types,
+        chunk_download_data,
+        http_client,
+        prefetch_config,
+    )
+    .await
+    .context(ChunkReadSnafu)?;
+    Ok(OpenedBatches::Prefetch(reader, abort_handle))
+}
+
+fn parsed_json_rowset(
+    rowset: &[Vec<Option<String>>],
+    rowtype: &[query_response::RowType],
+) -> Result<Vec<RowType>, ReadBatchesError> {
+    let row_types = parse_row_types(rowtype)?;
+    validate_column_count(rowset, &row_types)?;
+    Ok(row_types)
 }
 
 fn parse_row_types(rowtype: &[query_response::RowType]) -> Result<Vec<RowType>, ReadBatchesError> {
@@ -991,6 +1107,11 @@ pub enum ReadBatchesError {
     #[snafu(display("Failed to convert rowset to Arrow format"))]
     RowsetConversion {
         source: ArrowUtilsError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("PUT/GET rowset cannot be read as query batches"))]
+    UnexpectedPutGetRowset {
         #[snafu(implicit)]
         location: Location,
     },

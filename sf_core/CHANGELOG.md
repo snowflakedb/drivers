@@ -26,6 +26,7 @@ New features:
 - Added nested column metadata for structured types: `ColumnMetadata` now carries a recursive `fields` list populated from the server's `rowType[].fields`, giving the element type for VECTOR and ARRAY, the key and value types for MAP, and one entry per attribute for a structured OBJECT. It is empty for every other type and for semi-structured ARRAY/OBJECT/MAP, which the server describes without a nested field list. Python's `ResultMetadataV2.fields` is populated from it, so VECTOR and structured-type schema inference works instead of falling back to the untyped path. (snowflakedb/drivers#1627)
 - Added a `_description_internal` property on the Python cursor, exposing the new-format `ResultMetadataV2` metadata for the last executed statement. Callers that probe for it (Snowpark) previously fell back to the PEP 249 `description`, losing `fields` and `vector_dimension`. (snowflakedb/drivers#1627)
 - Added the `MAP` type code (17) to the Python type-code table, matching legacy `snowflake-connector-python`. A structured MAP column previously reported as `TEXT` in `cursor.description`. (snowflakedb/drivers#1627)
+- Added `result_set_get_async_stream` so an in-process wrapper can await Arrow batches instead of draining the C stream on a blocking thread. (snowflakedb/drivers#1563)
 
 Bug fixes:
 
