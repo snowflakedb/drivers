@@ -3167,3 +3167,35 @@ class TestCursorDescribeInternalStructuredTypes:
         assert FIELD_ID_TO_NAME[element.type_code] == "OBJECT"
         assert element.fields is not None
         assert element.fields[0].name == "city"
+
+    def test_map_type_code_matches_old_driver(self, structured_cursor):
+        """A structured MAP column's type_code is MAP, matching the old driver.
+
+        Regression test for SNOW-4052969: sf_core's row-type resolution had no
+        MAP arm, so this describe call used to raise before returning anything.
+        """
+        sql = "SELECT {'a':1}::MAP(VARCHAR, INT) AS m"
+        result = structured_cursor._describe_internal(sql)
+
+        assert result is not None
+        assert FIELD_ID_TO_NAME[result[0].type_code] == "MAP"
+        assert result[0].fields is not None
+        assert FIELD_ID_TO_NAME[result[0].fields[0].type_code] == "TEXT"
+        assert FIELD_ID_TO_NAME[result[0].fields[1].type_code] == "FIXED"
+
+    def test_map_column_fetches_successfully(self, structured_cursor):
+        """A structured MAP column's value is correct via fetchone(), fetchmany(), and fetchall().
+
+        Regression test for SNOW-4052969: reading a MAP column used to raise
+        InternalError("Unsupported column type 'MAP'") before any row was read.
+        """
+        sql = "SELECT {'a':1}::MAP(VARCHAR, INT) AS m"
+
+        structured_cursor.execute(sql)
+        assert structured_cursor.fetchone() == ({"a": 1},)
+
+        structured_cursor.execute(sql)
+        assert structured_cursor.fetchmany(1) == [({"a": 1},)]
+
+        structured_cursor.execute(sql)
+        assert structured_cursor.fetchall() == [({"a": 1},)]
