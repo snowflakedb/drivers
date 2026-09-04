@@ -5,7 +5,6 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getSnowflakeSDK,
-  NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../utils/index.js';
 
 // This file covers only where fetchAsString may be set and which list wins. How a given type
@@ -37,7 +36,7 @@ describe('fetchAsString', () => {
     });
   });
 
-  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('set on the connection', () => {
+  describe('set on the connection', () => {
     it('should apply to a query that passes no fetchAsString', async () => {
       const connection = createTestConnection(snowflake, { fetchAsString: ['Number'] });
       try {

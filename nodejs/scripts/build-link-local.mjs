@@ -22,7 +22,7 @@ for (const dir of [BUILD_SDK_PACKAGE_DIR, BUILD_CORE_PACKAGE_DIR]) {
 }
 
 if (packageDirs.length > 0) {
-  execFileSync('npm', ['link', '-s', ...packageDirs], {
+  execFileSync('npm', ['link', '--silent', '--no-audit', ...packageDirs], {
     cwd: ROOT_DIR,
     stdio: 'inherit',
   });
