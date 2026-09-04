@@ -2,9 +2,18 @@
 
 ### Code Rules
 
-When writing test names, don't use "should"
-❌ `it('should pass the check')`
-✅ `it('passes the check')`
+When writing test names, start them with "should"
+❌ `it('passes the check')`
+✅ `it('should pass the check')`
+
+This matches the other drivers' test suites and the `should`-prefixed
+`Scenario:` names in `tests/definitions/**/*.feature` that many of these tests
+mirror.
+
+The rule applies to test names you write or rewrite. Existing test files still
+carry older present-tense names; leave them alone unless the rename is the
+point of the change. Editing a file for an unrelated reason is not a licence to
+rename its tests — that turns a small diff into a wide one.
 
 <!-- sync-target: .cursor/rules/nodejs-test-standards.mdc carries this body verbatim plus
      Cursor frontmatter. TO UPDATE: edit this file, copy it below the .mdc frontmatter,

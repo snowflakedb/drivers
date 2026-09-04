@@ -43,6 +43,14 @@ pub fn strings_match_normalized(s1: &str, s2: &str) -> bool {
     normalize_for_matching(s1) == normalize_for_matching(s2)
 }
 
+pub fn string_contains_normalized(string: &str, substring: &str) -> bool {
+    normalize_for_matching(string).contains(&normalize_for_matching(substring))
+}
+
+pub fn line_index_at_offset(content: &str, offset: usize) -> usize {
+    content[..offset].bytes().filter(|&b| b == b'\n').count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +172,42 @@ mod tests {
             "test_should_stage_bind_at_the_default_threshold_and_reuse_system_bind_across_consecutive_bulk_inserts",
             "test_should_stage_bind_at_the_default_threshold_and_reuse_system$bind_across_consecutive_bulk_inserts",
         ));
+    }
+
+    #[test]
+    fn test_string_contains_normalized_matches_substring_ignoring_separators() {
+        assert!(string_contains_normalized(
+            "should cast string values to appropriate type (%s)",
+            "should cast string values to appropriate type",
+        ));
+    }
+
+    #[test]
+    fn test_string_contains_normalized_matches_across_case_and_separators() {
+        assert!(string_contains_normalized(
+            "Should_Cast-String Values",
+            "cast string values",
+        ));
+    }
+
+    #[test]
+    fn test_string_contains_normalized_rejects_non_substring() {
+        assert!(!string_contains_normalized(
+            "should select hardcoded string literals",
+            "cast string values",
+        ));
+    }
+
+    #[test]
+    fn test_line_index_at_offset_counts_preceding_newlines() {
+        let content = "line0\nline1\nline2\n";
+
+        assert_eq!(line_index_at_offset(content, 0), 0);
+
+        let line1_offset = content.find("line1").expect("line1 present");
+        assert_eq!(line_index_at_offset(content, line1_offset), 1);
+
+        let line2_offset = content.find("line2").expect("line2 present");
+        assert_eq!(line_index_at_offset(content, line2_offset), 2);
     }
 }

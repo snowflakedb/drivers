@@ -479,11 +479,15 @@ rules:
       }
       ```
 
-  - id: ud-node-test-name-no-should
+  - id: ud-node-test-name-should
     rule: |
-      **OBJECTIVE**: Keep `it`/`describe` names reading as present-tense statements, matching this suite's existing style.
+      **OBJECTIVE**: Keep `it`/`describe` names consistent with the other drivers' test suites and with the `should`-prefixed Gherkin `Scenario:` names many of these tests mirror.
 
-      **REQUIREMENT**: `it(...)`/`test(...)` description strings must not start with "should" — state the behavior directly.
+      **REQUIREMENT**: `it(...)`/`test(...)` description strings must start with "should".
 
-      ❌ `it('should pass the check')`
-      ✅ `it('passes the check')`
+      Flag added and rewritten test names only. A pre-existing present-tense name
+      in a file that the PR touches for another reason is not a finding — renaming
+      it would widen the diff for no behavior change.
+
+      ❌ `it('passes the check')`
+      ✅ `it('should pass the check')`

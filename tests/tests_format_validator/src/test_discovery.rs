@@ -409,21 +409,91 @@ impl TestDiscovery {
                     .join(format!("{}Test.cs", pascal_name)),
             ],
             Language::JavaScript => {
-                // Node.js Gherkin-tracked coverage lives inline in the shared
-                // query-data-types*.test.ts e2e files, grouped by data type, rather than in
-                // a dedicated per-feature file like Python/JDBC/ODBC/Rust. Only date/time/
-                // semi_structured are mapped — each was verified scenario-by-scenario against
-                // its feature file. Adding an entry without the same verification risks the
-                // validator reporting false-positive coverage. The fallback assumes any other
-                // feature follows nodejs/tests/e2e/'s actual kebab-case naming convention (e.g.
-                // connection_pool.feature -> connection-pool.test.ts).
+                // Type features are migrating to one file each under query/data-types/, named in
+                // kebab-case (string.feature -> query/data-types/string.test.ts). date, time and
+                // semi_structured still live inline in the shared query-data-types*.test.ts
+                // files and map there until they move; both mappings were verified
+                // scenario-by-scenario, and an entry added without that check would report
+                // false-positive coverage. The flat candidate covers the non-type features,
+                // which sit directly in e2e/.
                 let e2e_dir = self.workspace_root.join("nodejs/tests/e2e");
+                let kebab_name = snake_name.replace('_', "-");
                 match snake_name.as_str() {
                     "date" | "time" => vec![e2e_dir.join("query-data-types.test.ts")],
                     "semi_structured" => vec![e2e_dir.join("query-data-types-variant.test.ts")],
-                    _ => vec![e2e_dir.join(format!("{}.test.ts", snake_name.replace('_', "-")))],
+                    _ => vec![
+                        e2e_dir.join(format!("query/data-types/{kebab_name}.test.ts")),
+                        e2e_dir.join(format!("{kebab_name}.test.ts")),
+                    ],
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn discovery() -> TestDiscovery {
+        TestDiscovery::new(PathBuf::from("/workspace"))
+    }
+
+    fn js_candidates(feature_name: &str) -> Vec<PathBuf> {
+        discovery().generate_test_file_candidates_with_level(
+            feature_name,
+            None,
+            &Language::JavaScript,
+            TestLevel::E2E,
+        )
+    }
+
+    #[test]
+    fn should_map_string_feature_to_per_type_file_then_flat_fallback() {
+        let candidates = js_candidates("string");
+
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("/workspace/nodejs/tests/e2e/query/data-types/string.test.ts"),
+                PathBuf::from("/workspace/nodejs/tests/e2e/string.test.ts"),
+            ]
+        );
+    }
+
+    #[test]
+    fn should_kebab_case_multiword_feature_names() {
+        let candidates = js_candidates("connection_pool");
+
+        assert_eq!(
+            candidates.first(),
+            Some(&PathBuf::from(
+                "/workspace/nodejs/tests/e2e/query/data-types/connection-pool.test.ts"
+            ))
+        );
+        assert_eq!(
+            candidates.get(1),
+            Some(&PathBuf::from(
+                "/workspace/nodejs/tests/e2e/connection-pool.test.ts"
+            ))
+        );
+    }
+
+    #[test]
+    fn should_map_date_and_time_to_shared_query_data_types_file() {
+        let shared = PathBuf::from("/workspace/nodejs/tests/e2e/query-data-types.test.ts");
+
+        assert_eq!(js_candidates("date"), vec![shared.clone()]);
+        assert_eq!(js_candidates("time"), vec![shared]);
+    }
+
+    #[test]
+    fn should_map_semi_structured_to_shared_variant_file() {
+        assert_eq!(
+            js_candidates("semi_structured"),
+            vec![PathBuf::from(
+                "/workspace/nodejs/tests/e2e/query-data-types-variant.test.ts"
+            )]
+        );
     }
 }

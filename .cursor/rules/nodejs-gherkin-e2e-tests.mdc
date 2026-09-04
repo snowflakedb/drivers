@@ -1,0 +1,156 @@
+---
+description: Translating shared Gherkin feature scenarios (tests/definitions) into Node.js e2e tests — file structure, step comments, feature tags, skip policy, BD branching, SQL safety
+globs: nodejs/tests/e2e/**/*.ts,tests/definitions/**/*.feature
+alwaysApply: false
+# DERIVED FROM .claude/rules/nodejs-gherkin-e2e-tests.md (canonical source).
+# Edit the .claude/ file first, then copy its full contents below.
+# The pre-commit hook (ai-rules-sync) or scripts/check-ai-rules-sync.sh will catch drift.
+---
+
+# Node.js Gherkin E2E Tests
+
+How to translate a shared Gherkin feature (`tests/definitions/**/*.feature`) into a
+Node.js e2e test file (`nodejs/tests/e2e/**/*.test.ts`), and how to tag the feature
+for the Node.js driver. Applies whenever you implement, edit, or tag a scenario the
+Node.js e2e suite mirrors. Test-name casing is owned by `nodejs-test-standards` and
+comment minimalism by `comment-prose`; this rule adds only the Gherkin-specific parts.
+
+## Feature → test-file structure
+
+- One shared `Connection` per top-level `describe` block: connect in that block's
+  `beforeAll`, destroy in its `afterAll`. This matches the rest of the suite and keeps
+  the run fast.
+- The feature's scenarios live in a `describe` named after the **repo-relative feature
+  path** — `describe('tests/definitions/shared/types/<name>.feature')`. That path is
+  the traceability link, so nothing above it restates it in a header comment.
+- One `it()` per implemented scenario; the name copies the scenario name verbatim
+  (already `should`-prefixed — see `nodejs-test-standards`).
+- Tests with **no** matching scenario (driver-specific options, APIs the feature does
+  not cover) sit **outside** the feature `describe`, grouped in a `describe` named
+  after the option or API they exercise. Sitting outside already says the feature does
+  not cover them, so no comment says it again.
+- A fixture used by a **single** test (e.g. a temp table) is created in the test body
+  and cleaned up in `try`/`finally`. Wrapping one `it()` in a `describe` just to get
+  `beforeAll`/`afterAll` splits the scenario across blocks and buries the
+  `And ... is created` step. A nested `describe` + hooks is for a fixture several tests
+  share.
+
+## Gherkin step comments (the traceability link)
+
+- Copy only the **step lines** — `Given` / `When` / `Then` / `And` — verbatim, and put
+  real code under every one. No empty steps; this is enforced by
+  `ud-no-empty-gherkin-step-implementations`.
+- The `Given Snowflake client is logged in` step is the exception with no code of its
+  own — the shared `Connection` is opened once in `beforeAll`. Put `void connection;`
+  under it, followed by a blank line, so the step is not empty. Without it the validator
+  reads the next step's comment as the first line under `Given` and reports the step
+  empty.
+
+```ts
+  // Given Snowflake client is logged in
+  void connection;
+
+  // When Query "SELECT ..." is executed
+```
+- Do **not** copy a step's **data table** into the comments. `tests_format_validator`
+  drops table rows when it parses the feature (`feature_parser.rs`) but folds any
+  comment line following a step comment into that step's text (`step_finder.rs`), so a
+  copied `//   | col1 | col2 |` turns `// Then the result should contain:` into a step
+  the validator cannot match, and the scenario reports as unimplemented. The `expect`
+  carries those values anyway.
+- Do **not** copy the feature file's `#` lines: those are the author's notes, not part
+  of the scenario, so importing them pins the test to prose nothing checks. Where a `#`
+  block is the real specification of a vague step (an enumerated corner-case list under
+  a single `When`), honor it in code — one entry per bullet — not in copied prose.
+- These step comments are the one exemption to `comment-prose`'s minimalism: they are
+  the link back to the scenario, not narration. Their data tables are not exempt — omit
+  them, as above. Everything else in the file follows `comment-prose`.
+- Pass SQL **inline** to the execute helper. A `const query = …` that restates the
+  `// When` comment only drifts from it.
+
+```ts
+it('should <scenario name copied verbatim>', async () => {
+  // Given Snowflake client is logged in
+  void connection;
+
+  // When Query "SELECT ..." is executed
+  const { rows } = await executeAsync(connection, `SELECT ...`);
+  // Then the result should contain the expected values
+  expect(Object.values(rows[0])).toEqual([/* ... */]);
+});
+```
+
+## Feature tags
+
+- Add `@nodejs` to the `Feature:` line and `@nodejs_e2e` to exactly the scenarios the
+  **new** driver runs — not the skip-for-new ones. Mirror how sibling features in the
+  same directory are tagged.
+- This satisfies `ud-dt-gherkin-driver-tags-match-claimed-support`: feature-level
+  `@nodejs` for a type the driver ships, scenario-level `@nodejs_e2e` on what it
+  actually runs. When Node covers a scenario only through a driver-specific test, the
+  choice is either to tag the feature and implement the step comments, or to omit the
+  tag and record the gap in `nodejs/BehaviorDifferences.yaml`.
+
+## Skip policy — old-driver-green is the bar
+
+- Scenarios the new driver cannot yet satisfy (typically parameter binding and
+  multi-chunk download, plus anything with an open gap) are wrapped in
+  `describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)` (or `it.skipIf(...)`). `skipIf`
+  already states the new driver cannot run them, so no comment restates that.
+- Those blocks still run and must pass under `npm run test:e2e-old-driver`; they are
+  skipped under `npm run test:e2e`. Everything else runs on both drivers.
+
+## Behavior differences
+
+When the old and new drivers legitimately differ, branch on
+`isRunningNewDriverWithBD('BD#N')` and make sure `BD#N` exists in
+`nodejs/BehaviorDifferences.yaml` (add an entry when the difference is new). Asserting
+only the old-driver value hides the difference. Cite `BD#N` only where the code reads
+`isRunningNewDriverWithBD('BD#N')`; when both drivers agree, the registry entry carries
+the cross-driver story, not a comment.
+
+## SQL safety & determinism
+
+- Values reach the server as `binds`, not string interpolation — except same-file
+  constant literals and `randomizeName()` identifiers, which are exempt.
+- Any table or multi-row assertion is deterministic: add an `ID` column and
+  `ORDER BY ID` rather than relying on natural order.
+- Temp tables are created as
+  `CREATE OR REPLACE TEMPORARY TABLE ${randomizeName('<PREFIX>')} (...)` and
+  `DROP TABLE IF EXISTS`-ed in the owning test's `finally` (or in `afterAll` when the
+  table is shared by several tests).
+
+```ts
+const tableName = randomizeName('<PREFIX>');
+await executeAsync(connection, `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (...)`);
+try {
+  // populate, query, assert
+} finally {
+  await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
+}
+```
+
+## Assertions restate the expected result, not the fixture
+
+A value used by exactly one test belongs in that test — inline in `it.each([...])`, in
+the `expect`, or a local `const`. A file-level constant is for a table genuinely reused
+across tests. Building a query and its expectation by mapping over the same array makes
+the assertion restate the fixture instead of the expected result, so a reader has to
+run the `map` in their head to see what the test proves. Write the literals in the SQL
+and the same literals in the `expect`.
+
+## Verify
+
+From `nodejs/`:
+
+```bash
+npm run test:e2e-old-driver -- <file>.test.ts   # the bar: must pass, incl. skip-for-new blocks
+npm run test:e2e -- <file>.test.ts              # non-skipped scenarios pass on the new driver
+```
+
+`test:e2e-old-driver` sets `SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER=1`, which makes
+`NOT_IMPLEMENTED_IN_NEW_DRIVER === false`, so the skip-for-new blocks actually run.
+
+<!-- sync-target: .cursor/rules/nodejs-gherkin-e2e-tests.mdc carries this body verbatim plus
+     Cursor frontmatter. TO UPDATE: edit this file, copy it below the .mdc frontmatter,
+     then run bash scripts/check-ai-rules-sync.sh (also a pre-commit hook). -->

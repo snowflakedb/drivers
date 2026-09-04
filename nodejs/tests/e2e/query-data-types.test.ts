@@ -27,34 +27,6 @@ describe('Query returning data types', () => {
     await destroyConnectionAsync(connection);
   });
 
-  it('returns STRING-like types as String', async () => {
-    const { statement, rows } = await executeAsync(
-      connection,
-      "SELECT 'a'::VARCHAR as A, 'b'::CHAR as B, 'c'::STRING as C, 'd'::TEXT as D",
-    );
-    const expectedValues: Record<string, string> = {
-      A: 'a',
-      B: 'b',
-      C: 'c',
-      D: 'd',
-    };
-    for (const colName of Object.keys(expectedValues)) {
-      const column = getStatementColumn(statement, colName);
-      expect(column.getType()).toBe('text');
-      expect(column.isString()).toBe(true);
-      expect(rows![0][colName]).toBe(expectedValues[colName]);
-    }
-  });
-
-  // A TEXT cell is already a string, so rendering its NULL is the only thing the
-  // String token has left to do.
-  it("returns TEXT unchanged, and its NULL as the string 'NULL', when fetchAsString is set", async () => {
-    const { rows } = await executeAsync(connection, "SELECT 'a'::TEXT, NULL::TEXT", {
-      fetchAsString: ['String'],
-    });
-    expect(Object.values(rows![0])).toEqual(['a', 'NULL']);
-  });
-
   // NOTE: BINARY_OUTPUT_FORMAT (HEX or BASE64) does not affect results.
   // The server always returns HEX and it is always converted to Buffer.
   it('returns BINARY as Buffer', async () => {
