@@ -98,6 +98,17 @@ export function executeAsync(
   });
 }
 
+export function collectStreamedRows(statement: RowStatement): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    const rows: Record<string, unknown>[] = [];
+    statement
+      .streamRows()
+      .on('data', (row: Record<string, unknown>) => rows.push(row))
+      .on('error', reject)
+      .on('end', () => resolve(rows));
+  });
+}
+
 // TODO: remove once we drop old-driver e2e tests. Every test should then call
 // statement.getColumn(...) directly instead of this helper.
 export function getStatementColumn(statement: RowStatement, id: string | number) {

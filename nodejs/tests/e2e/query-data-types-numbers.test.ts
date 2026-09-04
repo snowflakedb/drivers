@@ -8,7 +8,6 @@ import {
   getStatementColumn,
   getSnowflakeSDK,
   isRunningNewDriverWithBD,
-  NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
 /**
@@ -259,10 +258,9 @@ describe('Query returning number data types', () => {
     expect(Object.values(rows![0])).toEqual(expected);
   });
 
-  for (const { name, skip, connectionFactory } of [
+  for (const { name, connectionFactory } of [
     {
       name: 'JS_TREAT_INTEGER_AS_BIGINT session parameter',
-      skip: NOT_IMPLEMENTED_IN_NEW_DRIVER,
       connectionFactory: async () => {
         const connection = createTestConnection(snowflake);
         await connection.connectAsync();
@@ -281,7 +279,7 @@ describe('Query returning number data types', () => {
       },
     },
   ]) {
-    it.skipIf(skip)(`returns integer as BigInt instance when ${name} is set`, async () => {
+    it(`returns integer as BigInt instance when ${name} is set`, async () => {
       const bigIntConnection = await connectionFactory();
       try {
         const { statement, rows } = await executeAsync(

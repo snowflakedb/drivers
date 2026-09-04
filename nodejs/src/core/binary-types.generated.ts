@@ -33,10 +33,21 @@ export declare class Connection {
   constructor(options: Record<string, string>, sessionParameters: Record<string, string>)
   connect(): Promise<undefined>
   isUp(): boolean
-  getSessionParameter(name: string): string | null
+  getSessionParameter(name: string): SessionParameter | null
   execute(query: string): Statement
   getQueryResult(queryId: string): Statement
   destroy(): Promise<undefined>
+}
+
+export declare class SessionParameter {
+  getString(): string | null
+  getBool(): boolean | null
+  /**
+   * Integers reach JavaScript as `number`, so values beyond 2^53 lose
+   * precision. Session parameters rarely carry numbers that large.
+   */
+  getInt(): number | null
+  getDouble(): number | null
 }
 
 export declare class Statement {

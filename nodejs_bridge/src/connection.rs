@@ -1,5 +1,6 @@
 use crate::DRIVER;
 use crate::error::{ToJsError, UnusableConnection, async_to_js};
+use crate::session_params::SessionParameter;
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -16,8 +17,6 @@ use std::sync::atomic::{AtomicU8, Ordering};
 pub struct Connection {
     handle: Handle,
     state: ConnectionState,
-    /// TEMPORARY: Copied onto every [`Statement`] this connection creates.\
-    session_parameters: HashMap<String, String>,
 }
 
 /// Tracked here because the core cannot answer for it: `destroy` releases the
@@ -91,6 +90,11 @@ impl Connection {
             DRIVER
                 .connection_set_options(conn_handle, converted_options, false)
                 .await?;
+            if !session_parameters.is_empty() {
+                DRIVER
+                    .connection_set_session_parameters(conn_handle, session_parameters)
+                    .await?;
+            }
             DRIVER
                 .set_wrapper_identity(
                     conn_handle,
@@ -115,7 +119,6 @@ impl Connection {
         Ok(Self {
             handle: conn_handle,
             state: ConnectionState::pristine(),
-            session_parameters,
         })
     }
 
@@ -144,8 +147,14 @@ impl Connection {
     }
 
     #[napi]
-    pub fn get_session_parameter(&self, name: String) -> Option<String> {
-        self.session_parameters.get(&name).cloned()
+    pub fn get_session_parameter(
+        &self,
+        env: &Env,
+        name: String,
+    ) -> Result<Option<SessionParameter>> {
+        let setting = block_on(DRIVER.connection_get_parameter(self.handle, name))
+            .map_err(|e| e.to_js_error(*env))?;
+        Ok(setting.map(SessionParameter::from))
     }
 
     #[napi]

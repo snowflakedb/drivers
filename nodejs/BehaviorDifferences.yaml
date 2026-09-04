@@ -450,3 +450,29 @@ behavior_differences:
       The wrapper cannot observe a renewal it does not perform. The core tracks both is_closed and
       is_master_token_expired on the connection, but only behind async accessors, and isUp() is
       synchronous. Closing this needs a synchronous state read from the core.
+
+  21:
+    name: 'Row decoding uses the current session parameter values, not the ones in force when the statement ran'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Each Column binds its converter and format from the `parameters` map of its own response, so
+      JS_TREAT_INTEGER_AS_BIGINT, the *_OUTPUT_FORMAT parameters and TIMEZONE are all fixed at
+      execution time.
+    new_driver_behavior: |
+      Session parameters live in sf_core's per-connection cache, refreshed from the login response
+      and from every query response, and row decoding reads them when it builds its mappers. With
+      `streamResult: true` that happens on the first `streamRows()` call, so an ALTER SESSION run
+      between execution and that read changes how already-executed rows decode. A buffered
+      `execute()` and the Rust decoders read right after their own response, so they match the old
+      driver.
+    description: |
+      This BD can be probably deleted by reading all relevand parameters in brdige after query completes
+      and passing them to NodeJs side. However then we need to eagerly read all parameters.
+    status_rationale: |
+      This is the universal driver's model, not a Node.js decision: sf_core owns session parameters
+      per connection and `ResultSetDescriptor` exposes no per-result `parameters`, so every front end
+      reads the connection cache -- ODBC already does.

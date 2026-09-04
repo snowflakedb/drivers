@@ -20,6 +20,7 @@ mod session_params;
 mod statement;
 
 pub use connection::Connection;
+pub use session_params::SessionParameter;
 pub use statement::{Column, Statement};
 
 use sf_core::apis::database_driver_v1::DatabaseDriverV1;
