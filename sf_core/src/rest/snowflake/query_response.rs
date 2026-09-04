@@ -1010,6 +1010,7 @@ impl TryFrom<&RowType> for query_types::RowType {
             }
             "OBJECT" => Ok(query_types::RowType::object(&name, nullable)),
             "ARRAY" => Ok(query_types::RowType::array(&name, nullable)),
+            "MAP" => Ok(query_types::RowType::map(&name, nullable)),
             "VARIANT" => Ok(query_types::RowType::variant(&name, nullable)),
             "INTERVAL_YEAR_MONTH" => {
                 let precision = value.precision.context(MissingParameterSnafu {
@@ -1593,6 +1594,31 @@ mod tests {
                 ref name,
                 nullable: true,
             } if name == "arr_col"
+        ));
+    }
+
+    #[test]
+    fn test_map_type_maps_to_map() {
+        let row_type = RowType {
+            name: "map_col".to_string(),
+            type_: "MAP".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: None,
+            vector_dimension: None,
+            ..Default::default()
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Map {
+                ref name,
+                nullable: true,
+            } if name == "map_col"
         ));
     }
 
