@@ -17,6 +17,9 @@ arrow = { version = ">=54.0.0, <59" }
 chrono = "0.4.43"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
 tracing = "0.1.41"
+# `sync` only: the async mutex that serializes connect/destroy. The runtime
+# itself comes from `sf_core`.
+tokio = { version = "1.50.0", features = ["sync"] }
 
 [build-dependencies]
 napi-build = "2"

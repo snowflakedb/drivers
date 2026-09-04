@@ -7,3 +7,9 @@ import { CoreConnection } from '../../src/core/index.js';
 it('loads core binary', () => {
   expect(CoreConnection).toBeTypeOf('function');
 });
+
+it('owns the database handle for its lifetime', async () => {
+  const connection = new CoreConnection({}, {});
+
+  await expect(connection.destroy()).resolves.toBeUndefined();
+});

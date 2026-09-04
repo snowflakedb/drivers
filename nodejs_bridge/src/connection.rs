@@ -10,12 +10,25 @@ use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use tokio::sync::Mutex;
 
 #[napi]
 pub struct Connection {
-    handle: Handle,
+    /// Shared with every in-flight operation, so the handles outlive this object
+    /// for as long as any of them still needs them.
+    handles: Arc<Handles>,
     state: ConnectionState,
+    /// Serializes the lifecycle transitions so `destroy()` cannot close and
+    /// release while `connect()` is still initializing.
+    ///
+    /// Nothing stops JS from calling both without awaiting the first, and core
+    /// reports a *successful* close for a connection that was never
+    /// initialized. Unserialized, a `destroy()` could therefore close, release
+    /// the handles and return while the concurrent `connection_init` went on to
+    /// establish a real session — one now sitting behind handles that no longer
+    /// exist, so it could never be reached again, let alone logged out.
+    lifecycle: Arc<Mutex<()>>,
     /// TEMPORARY: Copied onto every [`Statement`] this connection creates.\
     session_parameters: HashMap<String, String>,
 }
@@ -52,6 +65,55 @@ impl ConnectionState {
     }
 }
 
+/// Owns the connection and database handles, releasing them once every holder
+/// is finished with them.
+///
+/// Async methods clone the `Arc` into their futures, so a `Connection` the JS
+/// side drops mid-operation cannot pull the handles out from under work that is
+/// still running. Releasing early would make `connection_init` fail to find the
+/// connection — or, worse, leave a server session established against a handle
+/// that is already gone and can therefore never be closed.
+///
+/// Release is on the last holder rather than on the JS object alone because
+/// `sf_core`'s handle managers never reuse ids: a handle nobody releases is
+/// consumed for the life of the process, and nothing obliges a JS caller to
+/// invoke `destroy()`.
+pub(crate) struct Handles {
+    pub(crate) connection: Handle,
+    database: Handle,
+    released: AtomicBool,
+}
+
+impl Handles {
+    fn new(connection: Handle, database: Handle) -> Arc<Self> {
+        Arc::new(Self {
+            connection,
+            database,
+            released: AtomicBool::new(false),
+        })
+    }
+
+    /// Release without waiting for the last holder, so `destroy()` frees core
+    /// resources when the caller asks rather than at some later GC. Idempotent,
+    /// so the final drop does not release a second time.
+    fn release(&self) {
+        if self.released.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let _ = DRIVER.connection_release(self.connection);
+        let _ = DRIVER.database_release(self.database);
+    }
+}
+
+/// Deliberately does not log out: that is network I/O and cannot be run from a
+/// finalizer. Callers who need a graceful logout must still call `destroy()`;
+/// this only stops the handles from leaking.
+impl Drop for Handles {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 #[napi]
 impl Connection {
     #[napi(constructor)]
@@ -60,6 +122,12 @@ impl Connection {
         env: &Env,
         session_parameters: HashMap<String, String>,
     ) -> Result<Self> {
+        let database_handle = DRIVER.database_new();
+        DRIVER.database_init(database_handle).map_err(|e| {
+            let _ = DRIVER.database_release(database_handle);
+            e.to_js_error(*env)
+        })?;
+
         let conn_handle = DRIVER.connection_new();
 
         // TODO: temporary conversion, proper options mapping will be done later
@@ -102,26 +170,33 @@ impl Connection {
         })
         .map_err(|e| {
             let _ = DRIVER.connection_release(conn_handle);
+            let _ = DRIVER.database_release(database_handle);
             e.to_js_error(*env)
         })?;
 
         Ok(Self {
-            handle: conn_handle,
+            handles: Handles::new(conn_handle, database_handle),
             state: ConnectionState::pristine(),
+            lifecycle: Arc::new(Mutex::new(())),
             session_parameters,
         })
     }
 
     #[napi]
     pub fn connect(&self, env: &Env) -> Result<AsyncBlock<()>> {
-        let handle = self.handle;
         let state = self.state.clone();
+        // Moved into the future so login keeps the handles alive: if the JS
+        // object became unreachable once the promise existed, releasing them
+        // here would either fail the init or strand a live server session on a
+        // handle that no longer exists.
+        let handles = self.handles.clone();
+        let lifecycle = self.lifecycle.clone();
         async_to_js(env, async move {
-            // TODO:
-            // The _db_handle parameter is currently unused but required; passing a dummy value for now.
-            // This argument is planned for removal from connection_init in a future update.
+            // Held across the init so a concurrent `destroy()` cannot release
+            // the handles midway and orphan the session this is establishing.
+            let _lifecycle = lifecycle.lock().await;
             let result = DRIVER
-                .connection_init(None, handle, Handle { id: 0, magic: 0 })
+                .connection_init(None, handles.connection, handles.database)
                 .await;
             match result {
                 Ok(()) => state.mark_connected(),
@@ -142,11 +217,11 @@ impl Connection {
             return Ok(Statement::refused(unusable));
         }
         let stmt_handle = DRIVER
-            .statement_new(self.handle)
+            .statement_new(self.handles.connection)
             .map_err(|e| e.to_js_error(*env))?;
         let operation_ctx = Arc::new(OperationCtx::with_own_token());
         Ok(Statement::from_pending(
-            self.handle,
+            self.handles.clone(),
             Some(operation_ctx.clone()),
             async move {
                 let result = async {
@@ -167,24 +242,48 @@ impl Connection {
         if let Some(unusable) = self.state.unusable() {
             return Statement::refused(unusable);
         }
-        let conn_handle = self.handle;
+        let conn_handle = self.handles.connection;
         // Shared with the `Statement` handed back, whose `cancel()` triggers it.
         let operation_ctx = Arc::new(OperationCtx::with_own_token());
-        Statement::from_pending(conn_handle, Some(operation_ctx.clone()), async move {
-            DRIVER
-                .connection_get_query_result(Some(&operation_ctx), conn_handle, query_id)
-                .await
-        })
+        Statement::from_pending(
+            self.handles.clone(),
+            Some(operation_ctx.clone()),
+            async move {
+                DRIVER
+                    .connection_get_query_result(Some(&operation_ctx), conn_handle, query_id)
+                    .await
+            },
+        )
     }
 
     #[napi]
     pub fn destroy(&self, env: &Env) -> Result<AsyncBlock<()>> {
-        let handle = self.handle;
         let state = self.state.clone();
+        // Held for the whole close, so the handles cannot be released — by a
+        // `Drop` or anything else — before `connection_close` has used them.
+        // Releasing early would leave the session logged in server-side.
+        let handles = self.handles.clone();
+        let lifecycle = self.lifecycle.clone();
         async_to_js(env, async move {
-            let close = DRIVER.connection_close(handle).await;
-            let _ = DRIVER.connection_release(handle);
-            state.mark_terminated();
+            // Waits out an in-flight `connect()`. Core reports a successful
+            // close for a connection that was never initialized, so without
+            // this the close could "succeed" and release the handles while the
+            // init it raced went on to establish a session nobody could reach.
+            // Teardown now always runs against a settled connection: either
+            // fully established, or one that never came up.
+            let _lifecycle = lifecycle.lock().await;
+            let close = DRIVER.connection_close(handles.connection).await;
+            if close.is_ok() {
+                // Only once core confirms the session is gone. A failed close is
+                // settled back to `Open` there precisely so a later `destroy()`
+                // can retry it; releasing regardless would strand a live session
+                // on handles nobody can reach again. Releasing eagerly on success
+                // still frees core resources when the caller asked rather than at
+                // the next GC — and on failure the `Arc` this connection holds
+                // keeps them alive for the retry, so nothing leaks either way.
+                handles.release();
+                state.mark_terminated();
+            }
             close
         })
     }

@@ -873,7 +873,15 @@ mod tests {
                 .all(|i| i.severity != ValidationSeverity::Error),
             "{odbc_issues:?}"
         );
-        assert!(odbc_resolved.contains_key("authentication_timeout"));
+        // ODBC's `LOGIN_TIMEOUT` resolves to the `authentication_timeout` Okta
+        // budget (the deliberate scoped-alias shadow), so the canonical
+        // `login_timeout` is unreachable from here. The outer login wrap picks
+        // it up from the `authentication_timeout` mirror applied a layer later,
+        // in `resolver::resolve_for_wrapper`.
+        assert_eq!(
+            odbc_resolved.get("authentication_timeout"),
+            Some(&Setting::Int(30))
+        );
         assert!(!odbc_resolved.contains_key("login_timeout"));
 
         let mut jdbc_opts = HashMap::new();
