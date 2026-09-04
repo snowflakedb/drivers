@@ -14,6 +14,7 @@ use crate::conversion::{
 };
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
+use sf_core::protobuf::generated::database_driver_v1::{ConfigSetting, config_setting};
 use snafu::ResultExt;
 use tracing;
 
@@ -23,6 +24,42 @@ use tracing;
 /// into `sf_core`'s GetObjects internals for a single constant.
 pub(crate) const ESCAPE_CHAR: char = '\\';
 
+/// Reads a `ConfigSetting` session-parameter value as a boolean.
+///
+/// ODBC preserves its historical boolean parsing: native `bool_value` and a
+/// case-insensitive `string_value` of `"true"` are true. Strings such as
+/// `"1"` or `"on"` and every other value type default to false. This is
+/// intentionally narrower than `Setting::coerce_bool` and the PUT/GET session
+/// parameter coercion.
+pub(crate) fn config_setting_bool(setting: &ConfigSetting) -> bool {
+    match &setting.value {
+        Some(config_setting::Value::BoolValue(b)) => *b,
+        Some(config_setting::Value::StringValue(s)) => s.eq_ignore_ascii_case("true"),
+        _ => false,
+    }
+}
+
+/// Reads a `ConfigSetting` session-parameter value as a `u64`, or `None` when
+/// absent/unparseable. Native `int_value` is the common case; `string_value`
+/// is a fallback for any parameter still delivered/overridden as a string.
+pub(crate) fn config_setting_u64(setting: &ConfigSetting) -> Option<u64> {
+    match &setting.value {
+        Some(config_setting::Value::IntValue(i)) => u64::try_from(*i).ok(),
+        Some(config_setting::Value::StringValue(s)) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Reads a `ConfigSetting` session-parameter value as a string, or `None` for
+/// anything unset/non-string (matching the historical "unrecognised value
+/// collapses to None" fall-through for string-typed parameters like
+/// `TIMESTAMP_TZ_OUTPUT_FORMAT`).
+pub(crate) fn config_setting_string(setting: &ConfigSetting) -> Option<String> {
+    match &setting.value {
+        Some(config_setting::Value::StringValue(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
 /// Logs `"{name}: exit"` at INFO when dropped — pair with a matching
 /// `tracing::info!("{name}: entry")` at the top of a public wrapper API
 /// function so a single call can be traced end to end, per the logging
@@ -508,6 +545,155 @@ pub(crate) fn zero_padded_driver_version(version: &str) -> String {
 mod tests {
     use super::*;
     use crate::api::error::OdbcError;
+
+    // ---- config_setting_bool ----
+
+    #[test]
+    fn config_setting_bool_preserves_odbc_coercion_rules() {
+        let cases = [
+            (Some(config_setting::Value::BoolValue(true)), true),
+            (Some(config_setting::Value::BoolValue(false)), false),
+            (
+                Some(config_setting::Value::StringValue("true".to_string())),
+                true,
+            ),
+            (
+                Some(config_setting::Value::StringValue("TRUE".to_string())),
+                true,
+            ),
+            (
+                Some(config_setting::Value::StringValue("True".to_string())),
+                true,
+            ),
+            (
+                Some(config_setting::Value::StringValue("false".to_string())),
+                false,
+            ),
+            (
+                Some(config_setting::Value::StringValue("FALSE".to_string())),
+                false,
+            ),
+            (
+                Some(config_setting::Value::StringValue("False".to_string())),
+                false,
+            ),
+            (
+                Some(config_setting::Value::StringValue("1".to_string())),
+                false,
+            ),
+            (
+                Some(config_setting::Value::StringValue("0".to_string())),
+                false,
+            ),
+            (
+                Some(config_setting::Value::StringValue("yes".to_string())),
+                false,
+            ),
+            (
+                Some(config_setting::Value::StringValue("on".to_string())),
+                false,
+            ),
+            (
+                Some(config_setting::Value::StringValue("off".to_string())),
+                false,
+            ),
+            (Some(config_setting::Value::IntValue(1)), false),
+            (Some(config_setting::Value::IntValue(0)), false),
+            (Some(config_setting::Value::DoubleValue(1.0)), false),
+            (None, false),
+        ];
+
+        for (value, expected) in cases {
+            assert_eq!(config_setting_bool(&ConfigSetting { value }), expected);
+        }
+    }
+
+    // ---- config_setting_u64 ----
+
+    #[test]
+    fn config_setting_u64_reads_native_int_value() {
+        let setting = ConfigSetting {
+            value: Some(config_setting::Value::IntValue(65280)),
+        };
+        assert_eq!(config_setting_u64(&setting), Some(65280));
+    }
+
+    #[test]
+    fn config_setting_u64_falls_back_to_string_value() {
+        let setting = ConfigSetting {
+            value: Some(config_setting::Value::StringValue("65280".to_string())),
+        };
+        assert_eq!(config_setting_u64(&setting), Some(65280));
+    }
+
+    #[test]
+    fn config_setting_u64_none_for_unparseable_string() {
+        let setting = ConfigSetting {
+            value: Some(config_setting::Value::StringValue(
+                "not-a-number".to_string(),
+            )),
+        };
+        assert_eq!(config_setting_u64(&setting), None);
+    }
+
+    #[test]
+    fn config_setting_u64_none_for_empty_string() {
+        let setting = ConfigSetting {
+            value: Some(config_setting::Value::StringValue(String::new())),
+        };
+        assert_eq!(config_setting_u64(&setting), None);
+    }
+
+    #[test]
+    fn config_setting_u64_none_for_negative_int_value() {
+        let setting = ConfigSetting {
+            value: Some(config_setting::Value::IntValue(-1)),
+        };
+        assert_eq!(config_setting_u64(&setting), None);
+    }
+
+    #[test]
+    fn config_setting_u64_none_for_double_value() {
+        let setting = ConfigSetting {
+            value: Some(config_setting::Value::DoubleValue(65280.0)),
+        };
+        assert_eq!(config_setting_u64(&setting), None);
+    }
+
+    #[test]
+    fn config_setting_u64_none_when_unset() {
+        let setting = ConfigSetting { value: None };
+        assert_eq!(config_setting_u64(&setting), None);
+    }
+
+    // ---- config_setting_string ----
+
+    #[test]
+    fn config_setting_string_reads_native_string_value() {
+        let setting = ConfigSetting {
+            value: Some(config_setting::Value::StringValue(
+                "YYYY-MM-DD HH24:MI:SS.FF3 TZH:TZM".to_string(),
+            )),
+        };
+        assert_eq!(
+            config_setting_string(&setting),
+            Some("YYYY-MM-DD HH24:MI:SS.FF3 TZH:TZM".to_string())
+        );
+    }
+
+    #[test]
+    fn config_setting_string_none_for_non_string_value() {
+        let setting = ConfigSetting {
+            value: Some(config_setting::Value::BoolValue(true)),
+        };
+        assert_eq!(config_setting_string(&setting), None);
+    }
+
+    #[test]
+    fn config_setting_string_none_when_unset() {
+        let setting = ConfigSetting { value: None };
+        assert_eq!(config_setting_string(&setting), None);
+    }
 
     // ---- process_catalog_arg: SQL_FALSE (pattern mode) ----
 

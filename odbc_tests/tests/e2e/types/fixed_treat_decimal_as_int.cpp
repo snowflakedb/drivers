@@ -2,6 +2,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <array>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -73,6 +74,29 @@ TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_DECIMAL_AS_INT SQL_C_DEFAULT resolves
   }
 }
 
+TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_DECIMAL_AS_INT false keeps scale-zero values as text",
+                 "[fixed][treat_decimal_as_int]") {
+  for (const char* value : {"false", "FALSE"}) {
+    INFO("ODBC_TREAT_DECIMAL_AS_INT=" << value);
+
+    // Given A Snowflake connection with ODBC_TREAT_DECIMAL_AS_INT disabled
+    conn.execute(std::string("ALTER SESSION SET ODBC_TREAT_DECIMAL_AS_INT=") + value);
+
+    // When A DECIMAL(10,0) value is fetched via SQL_C_DEFAULT
+    auto stmt = conn.execute_fetch("SELECT 42::DECIMAL(10,0)");
+
+    std::array<char, 100> buffer;
+    buffer.fill(static_cast<char>(0xFF));
+    SQLLEN indicator = -999;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DEFAULT, buffer.data(), buffer.size(), &indicator);
+
+    // Then SQL_C_DEFAULT resolves to SQL_C_CHAR and the value is returned as text
+    CHECK(ret == SQL_SUCCESS);
+    CHECK(indicator == 2);
+    CHECK(std::string(buffer.data(), static_cast<size_t>(indicator)) == "42");
+  }
+}
+
 TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_DECIMAL_AS_INT does not affect scale > 0", "[fixed][treat_decimal_as_int]") {
   // Given A Snowflake connection with ODBC_TREAT_DECIMAL_AS_INT=true
   conn.execute("ALTER SESSION SET ODBC_TREAT_DECIMAL_AS_INT=true");
@@ -141,6 +165,30 @@ TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_BIG_NUMBER_AS_STRING overrides TREAT_
     CHECK(ret == SQL_SUCCESS);
     CHECK(indicator == sizeof(SQLBIGINT));
     CHECK(value == 42);
+  }
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_BIG_NUMBER_AS_STRING false preserves integer conversion",
+                 "[fixed][treat_big_number_as_string]") {
+  conn.execute("ALTER SESSION SET ODBC_TREAT_DECIMAL_AS_INT=true");
+
+  for (const char* value : {"false", "FALSE"}) {
+    INFO("ODBC_TREAT_BIG_NUMBER_AS_STRING=" << value);
+
+    // Given A Snowflake connection with ODBC_TREAT_BIG_NUMBER_AS_STRING disabled
+    conn.execute(std::string("ALTER SESSION SET ODBC_TREAT_BIG_NUMBER_AS_STRING=") + value);
+
+    // When A NUMBER(38,0) value is fetched via SQL_C_DEFAULT
+    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(38,0)");
+
+    SQLBIGINT result = -1;
+    SQLLEN indicator = -999;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DEFAULT, &result, sizeof(result), &indicator);
+
+    // Then SQL_C_DEFAULT still resolves to SBIGINT
+    CHECK(ret == SQL_SUCCESS);
+    CHECK(indicator == sizeof(SQLBIGINT));
+    CHECK(result == 42);
   }
 }
 

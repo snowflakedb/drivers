@@ -1,3 +1,9 @@
+#include <sql.h>
+#include <sqlext.h>
+
+#include <array>
+#include <string>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
@@ -48,4 +54,70 @@ TEST_CASE("should set heartbeat frequency via connection string", "[session]") {
   auto value = get_data<SQL_C_CHAR>(stmt, 2);
   NEW_DRIVER_ONLY("BD#57") { CHECK(value == "1800"); }
   OLD_DRIVER_ONLY("BD#57") { CHECK(value == "3600"); }
+}
+
+TEST_CASE("should report canonical AUTOCOMMIT values through SQLGetConnectAttr", "[session][autocommit]") {
+  struct TestCase {
+    const char* value;
+    SQLULEN expected;
+  };
+  const std::array<TestCase, 4> cases = {{
+      {"TRUE", SQL_AUTOCOMMIT_ON},
+      {"true", SQL_AUTOCOMMIT_ON},
+      {"FALSE", SQL_AUTOCOMMIT_OFF},
+      {"false", SQL_AUTOCOMMIT_OFF},
+  }};
+
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  for (const auto& test_case : cases) {
+    INFO("AUTOCOMMIT=" << test_case.value);
+
+    // When AUTOCOMMIT is set to <value> with ALTER SESSION
+    conn.execute(std::string("ALTER SESSION SET AUTOCOMMIT = ") + test_case.value);
+
+    // Then SQLGetConnectAttr should report <expected>
+    SQLULEN autocommit = 99;
+    SQLRETURN ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_AUTOCOMMIT, &autocommit, 0, nullptr);
+
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(autocommit == test_case.expected);
+  }
+}
+
+TEST_CASE("should reject non-boolean session parameter values", "[session][boolean-parameters]") {
+  struct TestCase {
+    const char* parameter;
+    const char* value;
+  };
+  const std::array<TestCase, 12> cases = {{
+      {"AUTOCOMMIT", "1"},
+      {"AUTOCOMMIT", "'1'"},
+      {"AUTOCOMMIT", "'on'"},
+      {"AUTOCOMMIT", "'yes'"},
+      {"ODBC_TREAT_DECIMAL_AS_INT", "1"},
+      {"ODBC_TREAT_DECIMAL_AS_INT", "'1'"},
+      {"ODBC_TREAT_DECIMAL_AS_INT", "'on'"},
+      {"ODBC_TREAT_DECIMAL_AS_INT", "'yes'"},
+      {"ODBC_TREAT_BIG_NUMBER_AS_STRING", "1"},
+      {"ODBC_TREAT_BIG_NUMBER_AS_STRING", "'1'"},
+      {"ODBC_TREAT_BIG_NUMBER_AS_STRING", "'on'"},
+      {"ODBC_TREAT_BIG_NUMBER_AS_STRING", "'yes'"},
+  }};
+
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  for (const auto& test_case : cases) {
+    INFO(test_case.parameter << "=" << test_case.value);
+
+    // When ALTER SESSION sets <parameter> to <value>
+    auto stmt = conn.createStatement();
+    std::string query = std::string("ALTER SESSION SET ") + test_case.parameter + " = " + test_case.value;
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), reinterpret_cast<SQLCHAR*>(query.data()), SQL_NTS);
+
+    // Then the statement should fail with SQL_ERROR
+    CHECK(ret == SQL_ERROR);
+  }
 }

@@ -20,7 +20,9 @@ use crate::api::error::{
 };
 use crate::api::runtime::global;
 use crate::api::statement::{execute_show_query_collect_batch, set_state_for_catalog};
-use crate::api::utils::{ApiExitLog, ESCAPE_CHAR, catalog_arg_to_pattern, escape_like_wildcards};
+use crate::api::utils::{
+    ApiExitLog, ESCAPE_CHAR, catalog_arg_to_pattern, config_setting_bool, escape_like_wildcards,
+};
 use crate::api::{
     ConnectionState, ExecutionOrigin, OdbcResult, StatementInner, StatementState, stmt_from_handle,
 };
@@ -443,8 +445,8 @@ fn metadata_request_use_connection_ctx(
     });
     Ok(resp
         .ok()
-        .and_then(|r| r.value)
-        .is_some_and(|v| v.eq_ignore_ascii_case("true")))
+        .and_then(|r| r.typed_value)
+        .is_some_and(|v| config_setting_bool(&v)))
 }
 
 /// Fill still-NULL catalog/schema patterns from the session when
