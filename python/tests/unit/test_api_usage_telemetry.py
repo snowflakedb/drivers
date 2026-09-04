@@ -296,6 +296,21 @@ class TestCursorApiTelemetry:
 
         assert "SnowflakeCursor.fetchall" not in _get_api_methods(mock_db_api)
 
+    def test_fetch_pandas_all_sends_unprefixed_telemetry(self, cursor, mock_db_api):
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        mock_table = MagicMock()
+        mock_table.to_pandas.return_value = MagicMock()
+        with (
+            patch("snowflake.connector._common.extras.check_dependency"),
+            patch.object(cursor, "fetch_arrow_all", return_value=mock_table),
+        ):
+            cursor.fetch_pandas_all()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "SnowflakeCursor.fetch_pandas_all" in methods
+        assert "async SnowflakeCursor.fetch_pandas_all" not in methods
+        assert "SnowflakeCursor.fetch_arrow_all" not in methods
+
     def test_dict_cursor_fetchone_does_not_send_telemetry(self, connection, mock_db_api):
         """DictCursor.fetchone is a hot path — intentionally not api_telemetry-tracked."""
         from snowflake.connector.cursor import DictCursor
@@ -661,16 +676,18 @@ class TestAsyncConnectionApiTelemetry:
         _run_async(async_connection.close())
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "Connection.close" in methods
+        assert "async Connection.close" in methods
+        assert "Connection.close" not in methods
 
     def test_commit_suppresses_inner_calls(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_api_usage.reset_mock()
         _run_async(async_connection.commit())
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "Connection.commit" in methods
+        assert "async Connection.commit" in methods
         assert "Connection.cursor" not in methods
         assert "SnowflakeCursor.execute" not in methods
+        assert "async SnowflakeCursor.execute" not in methods
         assert "SnowflakeCursor.close" not in methods
 
     def test_rollback_suppresses_inner_calls(self, async_connection, mock_async_db_api):
@@ -678,16 +695,17 @@ class TestAsyncConnectionApiTelemetry:
         _run_async(async_connection.rollback())
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "Connection.rollback" in methods
+        assert "async Connection.rollback" in methods
         assert "Connection.cursor" not in methods
         assert "SnowflakeCursor.execute" not in methods
+        assert "async SnowflakeCursor.execute" not in methods
 
     def test_api_method_uses_runtime_class_name(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_api_usage.reset_mock()
         _run_async(async_connection.close())
 
         req = mock_async_db_api.telemetry_send_api_usage.call_args[0][0]
-        assert req.api_method == "Connection.close"
+        assert req.api_method == "async Connection.close"
 
 
 class TestAsyncCursorApiTelemetry:
@@ -697,7 +715,26 @@ class TestAsyncCursorApiTelemetry:
         _run_async(async_cursor.execute("SELECT 1"))
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "SnowflakeCursor.execute" in methods
+        assert "async SnowflakeCursor.execute" in methods
+        assert "SnowflakeCursor.execute" not in methods
+
+    def test_fetch_pandas_all_prefixes_api_method(self, async_cursor, mock_async_db_api):
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+        table = MagicMock()
+        with (
+            patch("snowflake.connector._common.extras.check_dependency"),
+            patch.object(async_cursor, "fetch_arrow_all", new=AsyncMock(return_value=table)),
+            patch(
+                "snowflake.connector.aio.cursor._base.to_pandas_async",
+                new=AsyncMock(return_value="df"),
+            ),
+        ):
+            _run_async(async_cursor.fetch_pandas_all())
+
+        methods = _get_api_methods(mock_async_db_api)
+        assert "async SnowflakeCursor.fetch_pandas_all" in methods
+        assert "SnowflakeCursor.fetch_pandas_all" not in methods
+        assert "async SnowflakeCursor.fetch_arrow_all" not in methods
 
     def test_close_sends_telemetry(self, async_cursor, mock_async_db_api):
         async def _close_and_drain():
