@@ -12,7 +12,7 @@ from ..statement_utils import (
     extract_sqlstate,
     get_stream_ptr,
 )
-from .result_metadata import QueryResultStats, ResultMetadata
+from .result_metadata import QueryResultStats, ResultMetadata, ResultMetadataV2
 
 
 class MultiStatementQueryResultState:
@@ -80,7 +80,8 @@ class QueryResult:
     """Pure metadata about a query execution result."""
 
     __slots__ = (
-        "description",
+        "description_v2",
+        "_description_v1",
         "sqlstate",
         "sfqid",
         "request_id",
@@ -93,7 +94,7 @@ class QueryResult:
     def __init__(
         self,
         *,
-        description: list[ResultMetadata] | None = None,
+        description_v2: list[ResultMetadataV2] | None = None,
         sqlstate: str | None = None,
         sfqid: str | None = None,
         request_id: str | None = None,
@@ -102,7 +103,8 @@ class QueryResult:
         rowcount: int | None = None,
         is_file_transfer: bool = False,
     ) -> None:
-        self.description = description
+        self.description_v2 = description_v2
+        self._description_v1: list[ResultMetadata] | None = None
         self.sqlstate = sqlstate
         self.sfqid = sfqid
         # Client-generated requestId of the query submission, populated on
@@ -112,6 +114,17 @@ class QueryResult:
         self.stats = stats if stats is not None else QueryResultStats()
         self.rowcount = rowcount
         self.is_file_transfer = is_file_transfer
+
+    @property
+    def description(self) -> list[ResultMetadata] | None:
+        """PEP 249 view of the column metadata, downcast from ``description_v2``.
+
+        ``description_v2`` is the single parse of the proto column list; this
+        view is built on first read and cached.
+        """
+        if self._description_v1 is None and self.description_v2 is not None:
+            self._description_v1 = [col._to_result_metadata_v1() for col in self.description_v2]
+        return self._description_v1
 
     def reset(self, closing: bool = False) -> None:
         """Optionally clear the rowcount.
@@ -128,9 +141,9 @@ class QueryResult:
         stream_ptr = get_stream_ptr(result)
         release_arrow_stream(stream_ptr)
 
-        description = ResultMetadata.create_description(result)
+        description = ResultMetadataV2.create_description(result)
         return QueryResult(
-            description=description,
+            description_v2=description,
             sqlstate=extract_sqlstate(result),
             sfqid=(result.query_id if result.query_id else None) if result else None,
             request_id=(result.request_id if result.request_id else None) if result else None,
@@ -167,7 +180,7 @@ class QueryResult:
         descriptor = response.result_descriptor
 
         return QueryResult(
-            description=ResultMetadata.create_description(descriptor),
+            description_v2=ResultMetadataV2.create_description(descriptor),
             sqlstate=extract_sqlstate(descriptor),
             sfqid=descriptor.query_id if descriptor.query_id else None,
             request_id=request_id,

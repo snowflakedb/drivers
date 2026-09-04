@@ -1696,7 +1696,7 @@ class TestReset:
         """reset() frees heavy result data but preserves lightweight metadata."""
         mock_desc = [MagicMock()]
         cursor._query_result = QueryResult(
-            description=mock_desc,
+            description_v2=mock_desc,
             sqlstate="42601",
             sfqid="abc-123",
             query="SELECT 1",
@@ -1714,7 +1714,7 @@ class TestReset:
         assert cursor._query_result.rowcount is None
         # Preserved by reset (matches old driver)
         assert cursor._rownumber == 10
-        assert cursor._query_result.description is mock_desc
+        assert cursor._query_result.description_v2 is mock_desc
         assert cursor._query_result.sqlstate == "42601"
         assert cursor._query_result.sfqid == "abc-123"
         assert cursor._query_result.query == "SELECT 1"
@@ -1745,7 +1745,7 @@ class TestReset:
         """reset(closing=True) preserves rowcount in addition to the usual preserved fields."""
         mock_desc = [MagicMock()]
         cursor._query_result = QueryResult(
-            description=mock_desc,
+            description_v2=mock_desc,
             sqlstate="42601",
             sfqid="abc-123",
             query="SELECT 1",
@@ -1762,7 +1762,7 @@ class TestReset:
         assert cursor._binding_data is None
         # Preserved by reset (always)
         assert cursor._rownumber == 10
-        assert cursor._query_result.description is mock_desc
+        assert cursor._query_result.description_v2 is mock_desc
         assert cursor._query_result.sqlstate == "42601"
         assert cursor._query_result.sfqid == "abc-123"
         assert cursor._query_result.query == "SELECT 1"
@@ -1823,13 +1823,13 @@ class TestClose:
     def test_close_clears_result_state(self, cursor):
         """close() clears result-related state via reset (except description)."""
         mock_desc = [MagicMock()]
-        cursor._query_result = QueryResult(description=mock_desc)
+        cursor._query_result = QueryResult(description_v2=mock_desc)
         cursor._iterator = iter([(1,)])
 
         cursor.close()
 
         assert cursor._iterator is None
-        assert cursor._query_result.description is mock_desc
+        assert cursor._query_result.description_v2 is mock_desc
 
     def test_close_returns_none_on_exception(self, cursor):
         """close() returns None when reset() raises an exception."""
@@ -1888,7 +1888,7 @@ class TestResetIntegration:
     def test_execute_calls_reset_before_executing(self, cursor, mock_connection):
         """execute() calls reset() before executing to clear old state."""
         cursor._query_result = QueryResult(
-            description=[MagicMock()],
+            description_v2=[MagicMock()],
             rowcount=100,
         )
         cursor._iterator = iter([(1,)])
@@ -1929,7 +1929,7 @@ class TestResetIntegration:
 
     def test_execute_resets_description_before_new_query(self, cursor, mock_connection):
         """execute() clears old description; new one is populated from the result."""
-        cursor._query_result.description = [MagicMock()]
+        cursor._query_result.description_v2 = [MagicMock()]
 
         cursor.execute("SELECT 1")
 

@@ -256,24 +256,26 @@ pub struct RowType {
     pub fields: Option<Vec<FieldMetadata>>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct FieldMetadata {
     #[serde(rename = "type")]
     pub type_: String,
-
-    // unused fields
     #[serde(rename = "name")]
-    _name: Option<String>,
+    pub name: Option<String>,
     #[serde(rename = "nullable")]
-    _nullable: bool,
+    pub nullable: bool,
     #[serde(rename = "length")]
-    _length: Option<i32>,
+    pub length: Option<u64>,
     #[serde(rename = "scale")]
-    _scale: Option<i32>,
+    pub scale: Option<u64>,
     #[serde(rename = "precision")]
-    _precision: Option<i32>,
+    pub precision: Option<u64>,
+    #[serde(rename = "byteLength", default)]
+    pub byte_length: Option<u64>,
+    #[serde(rename = "extTypeName", default)]
+    pub ext_type_name: Option<String>,
     #[serde(rename = "fields")]
-    _fields: Option<Vec<FieldMetadata>>,
+    pub fields: Option<Vec<FieldMetadata>>,
 }
 
 #[derive(Deserialize)]
@@ -2315,12 +2317,8 @@ mod tests {
     fn vector_field_metadata(type_: &str) -> FieldMetadata {
         FieldMetadata {
             type_: type_.to_string(),
-            _name: None,
-            _nullable: true,
-            _length: None,
-            _scale: None,
-            _precision: None,
-            _fields: None,
+            nullable: true,
+            ..Default::default()
         }
     }
 

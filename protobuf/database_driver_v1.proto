@@ -139,6 +139,12 @@ message ColumnMetadata {
   bool is_auto_increment = 13;
   string ext_col_type_name = 14;
   string udt_output_type = 15;
+  // Nested column metadata for structured types. Carries the element type for
+  // VECTOR and ARRAY, the key and value types for MAP, and one entry per
+  // attribute for structured OBJECT. Empty for every other type, and also for
+  // semi-structured (unstructured) ARRAY/OBJECT/MAP, which the server sends
+  // without a nested field list.
+  repeated ColumnMetadata fields = 16;
 }
 
 // DML operation statistics

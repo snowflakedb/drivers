@@ -927,7 +927,7 @@ behavior_differences:
 
   54:
     name: "ResultMetadataV2.fields is always None (no nested structured-type metadata)"
-    status: todo
+    status: fixed
     type: api_incompatibility
     reviewed: false
     is_breaking_change: false
@@ -938,20 +938,28 @@ behavior_differences:
       additional attributes: `vector_dimension: int | None` (for VECTOR column types)
       and `fields: list[ResultMetadataV2] | None` (for structured/object column types).
       Snowpark and other callers read these attributes to handle VECTOR and structured
-      columns correctly.
+      columns correctly. The cursor also exposes a `_description_internal` property
+      holding the same new-format metadata for the last executed statement.
     new_driver_behavior: |
       `cursor._describe_internal()` returns a real, distinct `ResultMetadataV2` class
-      (not an alias for `ResultMetadata`). `vector_dimension` is fully populated from
-      the protobuf `dimension` field, so VECTOR column schema inference works correctly.
-      `fields` is always `None` -- the UD proto `ColumnMetadata` carries no nested
-      column list for structured types (OBJECT/ARRAY/MAP) -- so structured-type
-      introspection via `_describe_internal` is unsupported; Snowpark falls back to
-      `cursor.description` (V1 path) for those columns.
+      (not an alias for `ResultMetadata`). `vector_dimension` is populated from the
+      protobuf `dimension` field. `fields` is populated from the proto
+      `ColumnMetadata.fields` repeated field, which mirrors the server's
+      `rowType[].fields`: the element type for VECTOR and ARRAY, the key and value
+      types for MAP, and one entry per attribute for structured OBJECT. It is `None`
+      for every other type and for semi-structured ARRAY/OBJECT/MAP, which the server
+      describes without a nested field list — matching the old driver, which leaves
+      `fields` `None` whenever the wire omits it.
+
+      The `_description_internal` property is also present, so callers that probe for
+      it (Snowpark's `get_new_description`) no longer fall back to the V1
+      `cursor.description` path and lose `fields`/`vector_dimension`.
     description: |
-      Tracked as part of SNOW-2912540 Snowpark compatibility work. `vector_dimension`
-      is fully implemented. Remaining fix requires the UD proto's `ColumnMetadata` to
-      carry a nested field list for structured types, then wiring `fields` to populate
-      from it.
+      Tracked as part of SNOW-2912540 Snowpark compatibility work. Fixed in
+      SNOW-3895458: the proto `ColumnMetadata` gained a recursive `fields` list,
+      sf_core stopped discarding the `rowType[].fields` it already parsed, and the
+      Python layer recurses into it. Sub-fields carry `name = None` when the wire
+      omits a name, matching the old driver's `{"name": None, **f}` merge.
 
   55:
     name: "internal_size mapped to byte count instead of the old driver's char count (V1 and V2)"

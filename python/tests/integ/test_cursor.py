@@ -9,6 +9,7 @@ from decimal import Decimal
 
 import pytest
 
+from snowflake.connector.constants import FIELD_ID_TO_NAME
 from snowflake.connector.cursor import QueryResultStats, ResultMetadata, ResultMetadataV2, SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import NEW_DRIVER_ONLY, is_new_driver
@@ -3026,3 +3027,143 @@ class TestCursorDescribeInternal:
         cur.close()
         with pytest.raises(InterfaceError):
             cur._describe_internal("SELECT 1")
+
+    def test_vector_int_element_type_in_fields(self, cursor):
+        """A VECTOR(INT, n) column describes with a single FIXED sub-field.
+
+        Snowpark maps this pair (element type plus vector_dimension) to
+        VectorType(int, n); without the sub-field it raises outright.
+        """
+        result = cursor._describe_internal("SELECT [1,2,3]::VECTOR(INT,3) AS v")
+
+        assert result is not None
+        assert result[0].vector_dimension == 3
+        assert result[0].fields is not None
+        assert len(result[0].fields) == 1
+        assert FIELD_ID_TO_NAME[result[0].fields[0].type_code] == "FIXED"
+        # The server sends no name for a vector element.
+        assert result[0].fields[0].name is None
+
+    def test_vector_float_element_type_in_fields(self, cursor):
+        """A VECTOR(FLOAT, n) column describes with a single REAL sub-field."""
+        result = cursor._describe_internal("SELECT [1.1,2.2,3.3]::VECTOR(FLOAT,3) AS v")
+
+        assert result is not None
+        assert result[0].vector_dimension == 3
+        assert FIELD_ID_TO_NAME[result[0].fields[0].type_code] == "REAL"
+
+    def test_fields_none_for_semi_structured_columns(self, cursor):
+        """Semi-structured ARRAY/OBJECT describe without a nested field list.
+
+        The server omits `fields` for them, and Snowpark relies on a falsy value
+        here to fall back to the unstructured ArrayType/MapType.
+        """
+        sql = "SELECT ARRAY_CONSTRUCT(1,2) AS a, OBJECT_CONSTRUCT('k','v') AS o"
+        result = cursor._describe_internal(sql)
+
+        assert result is not None
+        assert result[0].fields is None
+        assert result[1].fields is None
+
+    def test_description_internal_matches_describe_for_executed_query(self, cursor):
+        """_description_internal exposes the same V2 metadata after execute().
+
+        Snowpark's get_new_description probes for this property and silently drops to
+        the V1 description when it is missing, losing fields and vector_dimension.
+        """
+        cursor.execute("SELECT [1,2,3]::VECTOR(INT,3) AS v")
+        cursor.fetchall()
+
+        internal = cursor._description_internal
+
+        assert internal is not None
+        assert all(isinstance(col, ResultMetadataV2) for col in internal)
+        assert internal[0].vector_dimension == 3
+        assert FIELD_ID_TO_NAME[internal[0].fields[0].type_code] == "FIXED"
+
+    def test_description_internal_and_description_agree_on_shared_attributes(self, cursor):
+        """The V1 description is the same columns downcast, not a separate parse."""
+        cursor.execute("SELECT 1::NUMBER(18,6) AS amount, 'x'::VARCHAR(100) AS label")
+        cursor.fetchall()
+
+        v1 = cursor.description
+        v2 = cursor._description_internal
+
+        assert v1 is not None and v2 is not None
+        for v1_col, v2_col in zip(v1, v2, strict=True):
+            assert isinstance(v1_col, ResultMetadata)
+            assert v1_col.name == v2_col.name
+            assert v1_col.type_code == v2_col.type_code
+            assert v1_col.precision == v2_col.precision
+            assert v1_col.scale == v2_col.scale
+            assert v1_col.internal_size == v2_col.internal_size
+            assert v1_col.is_nullable == v2_col.is_nullable
+
+
+class TestCursorDescribeInternalStructuredTypes:
+    """Nested `fields` metadata for structured OBJECT and ARRAY columns.
+
+    Structured types are gated behind session parameters that are not enabled on
+    every account (see SNOW-1348805), so the fixture skips the class when the
+    server refuses to set them.
+    """
+
+    pytestmark = skip_async("_describe_internal is sync-only; Snowpark never calls it through the async cursor")
+
+    # Mirrors snowpark-python's STRUCTURED_TYPE_PARAMETERS. The last entry makes the
+    # server send nested `fields` regardless of the client version it detects; without
+    # it the response carries no sub-field metadata for this driver. The misspelling of
+    # "VERSION" is the server-side parameter's own.
+    STRUCTURED_TYPE_PARAMETERS = (
+        "ENABLE_STRUCTURED_TYPES_IN_FDN_TABLES",
+        "ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE",
+        "ENABLE_STRUCTURED_TYPES_NATIVE_ARROW_FORMAT",
+        "FORCE_ENABLE_STRUCTURED_TYPES_NATIVE_ARROW_FORMAT",
+        "IGNORE_CLIENT_VESRION_IN_STRUCTURED_TYPES_RESPONSE",
+    )
+
+    @pytest.fixture
+    def structured_cursor(self, function_connection):
+        cur = function_connection.cursor()
+        try:
+            for parameter in self.STRUCTURED_TYPE_PARAMETERS:
+                try:
+                    cur.execute(f"alter session set {parameter} = true")
+                except ProgrammingError as exc:
+                    pytest.skip(f"structured types unavailable on this account: {parameter}: {exc}")
+            yield cur
+        finally:
+            cur.close()
+
+    def test_structured_object_sub_fields_carry_names_and_types(self, structured_cursor):
+        """A structured OBJECT describes one named sub-field per attribute."""
+        sql = "SELECT {'city':'SF','zip':94107}::OBJECT(city VARCHAR, zip INT) AS o"
+        result = structured_cursor._describe_internal(sql)
+
+        assert result is not None
+        assert FIELD_ID_TO_NAME[result[0].type_code] == "OBJECT"
+        assert result[0].fields is not None
+        assert [f.name for f in result[0].fields] == ["city", "zip"]
+        assert FIELD_ID_TO_NAME[result[0].fields[0].type_code] == "TEXT"
+        assert FIELD_ID_TO_NAME[result[0].fields[1].type_code] == "FIXED"
+
+    def test_structured_array_element_sub_field(self, structured_cursor):
+        """A structured ARRAY describes a single unnamed element sub-field."""
+        result = structured_cursor._describe_internal("SELECT [1,2]::ARRAY(INT) AS a")
+
+        assert result is not None
+        assert FIELD_ID_TO_NAME[result[0].type_code] == "ARRAY"
+        assert len(result[0].fields) == 1
+        assert result[0].fields[0].name is None
+        assert FIELD_ID_TO_NAME[result[0].fields[0].type_code] == "FIXED"
+
+    def test_nested_structured_object_inside_array_recurses(self, structured_cursor):
+        """Sub-field metadata recurses through nested structured types."""
+        sql = "SELECT [{'city':'SF'}]::ARRAY(OBJECT(city VARCHAR)) AS a"
+        result = structured_cursor._describe_internal(sql)
+
+        assert result is not None
+        element = result[0].fields[0]
+        assert FIELD_ID_TO_NAME[element.type_code] == "OBJECT"
+        assert element.fields is not None
+        assert element.fields[0].name == "city"

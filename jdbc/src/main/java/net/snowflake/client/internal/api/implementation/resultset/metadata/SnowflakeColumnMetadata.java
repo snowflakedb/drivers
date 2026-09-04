@@ -69,8 +69,8 @@ public class SnowflakeColumnMetadata implements Serializable {
     this.base = columnTypeInfo.getSnowflakeType();
 
     // TODO(SNOW-3740745): !not ported! - structured-type field metadata.
-    //  The proto has no nested fields, so this is always empty (and `getSnowflakeType`
-    //  therefore treats every column as non-structured).
+    //  `ColumnMetadata` now carries a nested `fields` list, but it is not read here yet,
+    //  so this stays empty and `getSnowflakeType` treats every column as non-structured.
     //    List<FieldMetadata> fieldsMetadata =
     //        getFieldMetadata(jdbcTreatDecimalAsInt, internalColTypeName, colNode);
     //    this.fields = fieldsMetadata;
@@ -107,8 +107,8 @@ public class SnowflakeColumnMetadata implements Serializable {
     String internalColTypeName = colNode.path("type").asText();
 
     // TODO(SNOW-3740745): !not ported! - structured-type field metadata.
-    //  The proto has no nested fields, so this is always empty (and `getSnowflakeType`
-    //  therefore treats every column as non-structured).
+    //  `ColumnMetadata` now carries a nested `fields` list, but it is not read here yet,
+    //  so this stays empty and `getSnowflakeType` treats every column as non-structured.
     //    List<FieldMetadata> fieldsMetadata =
     //        getFieldMetadata(jdbcTreatDecimalAsInt, internalColTypeName, colNode);
     //    this.fields = fieldsMetadata;

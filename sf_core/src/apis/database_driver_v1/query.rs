@@ -854,6 +854,7 @@ fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
             is_auto_increment: false,
             ext_col_type_name: String::new(),
             udt_output_type: String::new(),
+            fields: Vec::new(),
         },
         RowType::Fixed {
             name,
@@ -876,6 +877,7 @@ fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
             is_auto_increment: false,
             ext_col_type_name: String::new(),
             udt_output_type: String::new(),
+            fields: Vec::new(),
         },
         _ => todo!(),
     }
