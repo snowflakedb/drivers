@@ -70,6 +70,12 @@ WORKDIR /workdir/nodejs
 # 4. build:link-local npm-links both built packages into this package's own
 #    node_modules (see scripts/build-link-local.mjs), so require('snowflake-sdk')
 #    resolves here without any manual node_modules assembly
+
+# npm 10.x (the version bundled with node:22) crashes on `npm install` with
+# "Cannot read properties of null (reading 'edgesOut')". npm 11 does not hit
+# it. https://github.com/npm/cli/issues/9787
+# TODO: Remove this once npm fixes the bug, so the build runs on the npm that ships
+# with Node — matching how most users install the driver.
 RUN npm install -g npm@11 && npm install --include=dev
 RUN npm run build:core
 RUN npm run build:sdk
