@@ -4,6 +4,7 @@ mod encryption;
 mod gcs_transfer;
 mod multipart;
 mod s3_transfer;
+mod scheduler;
 mod spool;
 
 mod path_expansion;
@@ -19,16 +20,27 @@ pub mod internal {
         EncryptingReader, EncryptionError, Encryptor, build_encryptor, compute_sha256_digest,
         decrypt_ciphertext_to_writer,
     };
-    pub use super::gcs_transfer::download_from_gcs_streaming;
+    pub use super::gcs_transfer::{download_from_gcs_streaming, upload_to_gcs_or_skip};
     // Real per-cloud part-size formula, so live/e2e tests derive the expected
     // part/range count from it instead of mirroring constants.
     pub use super::multipart::{MultipartConfig, compute_part_size};
     pub use crate::compression::compress_to_tempfile;
 
-    use super::{
-        CloudCredentials, RefreshFuture, StageInfoCache, StageInfoRefreshError, StageInfoRefresher,
-        StageInfoSnapshot,
+    pub use super::scheduler::TransferScheduler;
+    pub use super::{
+        open_azure_download_stream, open_gcs_download_stream, open_s3_download_stream,
     };
+
+    use super::{
+        CloudCredentials, MultipartParams, RefreshFuture, StageInfoCache, StageInfoRefreshError,
+        StageInfoRefresher, StageInfoSnapshot,
+    };
+
+    /// [`TransferScheduler`] for tests that call a cloud transfer function
+    /// directly instead of going through `upload_files` / `download_files`.
+    pub fn test_scheduler(multipart: MultipartParams) -> TransferScheduler {
+        TransferScheduler::for_command(multipart)
+    }
     use crate::utils::sync::MutexRecoverExt;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
@@ -166,15 +178,14 @@ pub mod internal {
 
 pub use self::types::*;
 pub use azure_transfer::{AzureDownloadError, AzureUploadError, download_from_azure};
-pub use gcs_transfer::{
-    GcsDownloadError, GcsUploadError, download_from_gcs, upload_to_gcs_or_skip,
-};
+pub use gcs_transfer::{GcsDownloadError, GcsUploadError, download_from_gcs};
 pub use multipart::{FileTooLargeError, MultipartParams, MultipartThreshold};
 // Mirrors the Azure/GCS `pub use` above: `FileManagerError::S3Upload`/
 // `S3Download` carry a `pub source: UploadFileError`/`DownloadFileError`, so
 // the type must be reachable for external callers (including tests) to
 // pattern-match on it.
 pub use s3_transfer::{DownloadFileError, UploadFileError};
+pub(crate) use scheduler::TransferScheduler;
 pub(crate) use spool::{SPOOL_MEM_THRESHOLD, SpooledBuffer};
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
@@ -191,7 +202,9 @@ use encryption::{
     EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
 };
 use flate2::write::GzDecoder;
-use gcs_transfer::{download_from_gcs_streaming, gcs_get_streaming, gcs_retry_policy};
+use gcs_transfer::{
+    download_from_gcs_streaming, gcs_get_streaming, gcs_retry_policy, upload_to_gcs_or_skip,
+};
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{
     S3Download, S3DownloadBody, S3StreamingDownload, download_from_s3, download_from_s3_streaming,
@@ -373,6 +386,13 @@ pub async fn upload_files(
     let mut results = Vec::with_capacity(file_locations.len());
     let mut failures: Vec<String> = Vec::new();
 
+    // One budget for the whole batch: every cloud request each file issues —
+    // whole-file PUT, `UploadPart`, resumable chunk — takes a slot from it, so
+    // part-level and (later) file-level concurrency cannot multiply. Resolved
+    // here, once, and threaded down via `tx`; see `scheduler_for`.
+    let scheduler = scheduler_for(tx, data.multipart);
+    let tx = tx.with_scheduler(&scheduler);
+
     // The refresher owns the latest stage info (creds + presigned URLs) for
     // the batch via its shared `StageInfoCache`; per-file calls read from
     // that cache, so refreshed creds/URLs heal the remaining files
@@ -424,6 +444,23 @@ pub async fn upload_files(
     }
 
     Ok(results)
+}
+
+/// The scheduler a transfer should run under: the batch budget the caller
+/// joined via [`TransferCtx::with_scheduler`], or a fresh batch-of-one for a
+/// caller that supplied none (an internal single-file caller, or a test).
+///
+/// Cloning a `Some` is an `Arc` bump, not a new budget — the returned scheduler
+/// shares the caller's semaphores, so resolving again in a nested layer is free
+/// and cannot accidentally mint a second budget.
+///
+/// A batch entry point must resolve *once* and pass the result down through
+/// `tx`; resolving per file would give each file a private budget and defeat the
+/// whole point.
+fn scheduler_for(tx: TransferCtx<'_>, multipart: MultipartParams) -> TransferScheduler {
+    tx.scheduler
+        .cloned()
+        .unwrap_or_else(|| TransferScheduler::for_command(multipart))
 }
 
 /// Returns a copy of `base` with `creds` and `presigned_url` overlaid from
@@ -544,9 +581,7 @@ pub(crate) async fn upload_prepared_source(
             data.skip_upload_on_content_match,
             data.multipart,
             policy,
-            // Refresher only: Azure has no abort to register (see
-            // `azure_multipart_upload`).
-            tx.refresher,
+            tx,
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -830,6 +865,10 @@ pub async fn download_files(
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
 
+    // One budget for the whole batch — see the mirror comment in `upload_files`.
+    let scheduler = scheduler_for(tx, data.multipart);
+    let tx = tx.with_scheduler(&scheduler);
+
     // Three-way zip: src_locations / encryption_materials / presigned_urls.
     // `presigned_urls` is built in `query_response::to_file_download_data` to
     // be the same length as `src_locations` (padded with `None` when GS
@@ -1067,6 +1106,9 @@ async fn download_single_file_to(
     output_path: PathBuf,
     partial_path: PathBuf,
 ) -> Result<DownloadResult, FileManagerError> {
+    // A batch caller already resolved this and joined it to `tx`; a single-file
+    // caller gets a batch-of-one here.
+    let scheduler = scheduler_for(tx, data.multipart);
     // CSE downloads decrypt the ciphertext through a blocking `Read`; SSE
     // downloads skip decryption and write the raw bytes. S3 buffers small blobs
     // in memory and spills large ranged downloads to a tempfile (renamed into
@@ -1122,7 +1164,7 @@ async fn download_single_file_to(
                 &data.stage_info,
                 data.src_location.as_str(),
                 policy,
-                data.multipart,
+                &scheduler,
                 tx.refresher,
                 unsafe_file_write,
                 spill_target,
@@ -1278,7 +1320,7 @@ async fn download_single_file_to(
                     policy,
                 ),
                 per_file_index,
-                data.multipart,
+                &scheduler,
                 tx.refresher,
                 unsafe_file_write,
                 spill_target,
@@ -1380,7 +1422,7 @@ async fn download_single_file_to(
             let dl = download_from_azure_streaming(
                 &data.stage_info,
                 data.src_location.as_str(),
-                data.multipart,
+                &scheduler,
                 policy,
                 unsafe_file_write,
                 spill_target,
@@ -1498,13 +1540,16 @@ pub async fn open_s3_download_stream(
     refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
+    multipart: MultipartParams,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
+    let scheduler = TransferScheduler::for_command(multipart);
     let S3StreamingDownload {
         body,
         digest,
         file_metadata,
         cloud_byte_count,
-    } = download_from_s3_streaming(stage_info, src_location, policy, refresher)
+        slot,
+    } = download_from_s3_streaming(stage_info, src_location, policy, refresher, &scheduler)
         .await
         .context(S3DownloadSnafu)?;
 
@@ -1512,7 +1557,7 @@ pub async fn open_s3_download_stream(
         (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
         _ => None,
     };
-    let (reader, producer_abort) = spawn_s3_byte_stream_producer(body);
+    let (reader, producer_abort) = spawn_s3_byte_stream_producer(body, slot);
 
     Ok(spawn_download_stream_pipeline(
         reader,
@@ -1527,6 +1572,7 @@ pub async fn open_s3_download_stream(
 /// Opens a zero-disk, chunked streaming download against a GCS-backed stage.
 /// See [`open_s3_download_stream`] for the shared contract; the only
 /// difference is the cloud-specific GET (`download_from_gcs_streaming`).
+#[allow(clippy::too_many_arguments)]
 pub async fn open_gcs_download_stream(
     stage_info: &StageInfo,
     src_location: &str,
@@ -1535,7 +1581,9 @@ pub async fn open_gcs_download_stream(
     refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
+    multipart: MultipartParams,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
+    let scheduler = TransferScheduler::for_command(multipart);
     let using_presigned_url =
         per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
     // Zero-disk needs a single unranged, abortable GET. Call
@@ -1549,6 +1597,7 @@ pub async fn open_gcs_download_stream(
         &gcs_retry_policy(using_presigned_url, policy),
         0,
         refresher,
+        &scheduler,
     )
     .await
     .context(GcsDownloadSnafu)?;
@@ -1566,8 +1615,10 @@ pub async fn open_azure_download_stream(
     refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
+    multipart: MultipartParams,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
-    let dl = azure_get_streaming(stage_info, src_location, policy, refresher)
+    let scheduler = TransferScheduler::for_command(multipart);
+    let dl = azure_get_streaming(stage_info, src_location, policy, refresher, &scheduler)
         .await
         .context(AzureDownloadSnafu)?;
 
@@ -1621,6 +1672,10 @@ fn open_cloud_download_stream(
 /// [`open_gcs_download_stream`] / [`open_azure_download_stream`] based on
 /// `stage_info.location_type`. `LocationType` is exhaustive (S3/Gcs/Azure),
 /// so this `match` needs no fallback arm.
+///
+/// `multipart` sizes the request budget the opened stream's GET draws on; the
+/// ticket is held until the consumer closes the stream.
+#[allow(clippy::too_many_arguments)]
 pub async fn open_download_stream_for_stage(
     stage_info: &StageInfo,
     src_location: &str,
@@ -1629,6 +1684,7 @@ pub async fn open_download_stream_for_stage(
     refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
+    multipart: MultipartParams,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
     match stage_info.location_type {
         LocationType::S3 => {
@@ -1639,6 +1695,7 @@ pub async fn open_download_stream_for_stage(
                 refresher,
                 encryption_material,
                 decompress,
+                multipart,
             )
             .await
         }
@@ -1651,6 +1708,7 @@ pub async fn open_download_stream_for_stage(
                 refresher,
                 encryption_material,
                 decompress,
+                multipart,
             )
             .await
         }
@@ -1662,6 +1720,7 @@ pub async fn open_download_stream_for_stage(
                 refresher,
                 encryption_material,
                 decompress,
+                multipart,
             )
             .await
         }

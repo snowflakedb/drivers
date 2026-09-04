@@ -1,9 +1,11 @@
 use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
 use super::multipart::{self, MultipartConfig, MultipartParams};
+use super::scheduler::TransferScheduler;
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
     LocationType, MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError,
-    StageInfoRefresher, UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    StageInfoRefresher, TransferCtx, UploadStatus, build_encryption_metadata_json,
+    percent_encode_path,
 };
 use super::{RemoteHead, skip_upload_decision};
 use crate::config::retry::RetryPolicy;
@@ -285,6 +287,9 @@ fn apply_create_precondition(
 
 /// Runs ONE Azure PUT attempt with in-line retry for non-403 transients.
 /// 403 fast-fails as `AzureAttemptError::SasExpired`.
+///
+/// Takes one request slot from `scheduler` for the whole-blob PUT, so it costs
+/// the batch exactly what one staged block does.
 async fn azure_put_attempt(
     client: &reqwest::Client,
     url: &str,
@@ -292,6 +297,7 @@ async fn azure_put_attempt(
     prepared: PreparedUpload,
     base: &RetryPolicy,
     overwrite: bool,
+    scheduler: &TransferScheduler,
 ) -> Result<(), AzureAttemptError<AzureUploadError>> {
     let source = prepared.source.byte_source();
     let digest = prepared.digest;
@@ -334,6 +340,7 @@ async fn azure_put_attempt(
     let adapter = AzurePutAttemptRetry {
         url_redacted: url_redacted.clone(),
     };
+    let _slot = scheduler.acquire_request().await;
     cloud_http::upload_with_retry(
         &policy,
         &adapter,
@@ -535,8 +542,11 @@ fn sas_expired_or_other(
 /// and restart the attempt, while multipart self-heals per-block and per-commit
 /// (Python-parity per-block resume, SNOW-3406384) — a block 403 retries just
 /// that block, keeping already-staged blocks rather than restarting the file.
+///
+/// Of `tx` this reads the refresher and the request budget; `tx.cleanup` goes
+/// unused, because Azure has no abort to register (see `azure_multipart_upload`).
 // One arg over S3/GCS (Azure adds `skip_upload_on_content_match`); a follow-up
-// may bundle {multipart, policy, refresher} into an opts struct.
+// may bundle {multipart, policy, tx} into an opts struct.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn upload_to_azure_or_skip(
     prepared: PreparedUpload,
@@ -546,8 +556,10 @@ pub(super) async fn upload_to_azure_or_skip(
     skip_upload_on_content_match: bool,
     multipart: MultipartParams,
     policy: &RetryPolicy,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<UploadStatus, AzureUploadError> {
+    let scheduler = &super::scheduler_for(tx, multipart);
+    let refresher = tx.refresher;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let head_needed = super::head_needed(overwrite, skip_upload_on_content_match);
 
@@ -583,7 +595,9 @@ pub(super) async fn upload_to_azure_or_skip(
             // existence/skip probe rotates the SAS and retries, rather than
             // failing closed before the PUT ever runs (mirrors S3/GCS).
             let remote = if head_needed {
-                match send_head_to_azure_blob(&client, &url, &sas_token, &attempt_policy).await {
+                match send_head_to_azure_blob(&client, &url, &sas_token, scheduler, &attempt_policy)
+                    .await
+                {
                     Ok(remote) => remote,
                     // Expired-SAS 403 on the MANDATORY existence check (!overwrite):
                     // route to refresh + retry rather than failing closed before
@@ -623,7 +637,7 @@ pub(super) async fn upload_to_azure_or_skip(
                 return Ok(status);
             }
 
-            let upload = if body_len >= multipart.threshold.bytes() {
+            let upload = if scheduler.multipart().should_chunk(body_len) {
                 // Multipart self-heals an expired SAS per-block and per-commit,
                 // so its 403s never bubble up as `SasExpired` — a block 403 no
                 // longer restarts the whole file. Errors are terminal (`Other`).
@@ -635,7 +649,7 @@ pub(super) async fn upload_to_azure_or_skip(
                     initial_creds: &stage_info.creds,
                     overwrite,
                 };
-                azure_multipart_upload(block_ctx, prepared, body_len, multipart.concurrency)
+                azure_multipart_upload(block_ctx, prepared, body_len, scheduler)
                     .await
                     .map_err(AzureAttemptError::Other)
             } else {
@@ -646,6 +660,7 @@ pub(super) async fn upload_to_azure_or_skip(
                     prepared,
                     &base,
                     overwrite,
+                    scheduler,
                 )
                 .await
             };
@@ -738,8 +753,10 @@ async fn send_head_to_azure_blob(
     client: &reqwest::Client,
     url: &str,
     sas_token: &SensitiveString,
+    scheduler: &TransferScheduler,
     policy: &RetryPolicy,
 ) -> Result<Option<RemoteBlobHeader>, AzureUploadError> {
+    let _slot = scheduler.acquire_request().await;
     match azure_request_with_retry(
         || client.head(build_sas_url(url, sas_token.reveal())),
         Method::HEAD,
@@ -792,10 +809,11 @@ async fn azure_multipart_upload(
     multipart_ctx: AzureMultipartCtx<'_>,
     prepared: PreparedUpload,
     body_len: u64,
-    concurrency: usize,
+    scheduler: &TransferScheduler,
 ) -> Result<(), AzureUploadError> {
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::AZURE)
         .context(azure_upload_error::FileTooLargeSnafu)?;
+    let concurrency = scheduler.multipart().concurrency;
     // CSE params (cloud metadata + encryptor) are both present or both absent;
     // the metadata + digest ride on the `Put Block List` commit, the encryptor
     // lazily encrypts each block as the part-reader cuts it.
@@ -819,6 +837,8 @@ async fn azure_multipart_upload(
         .map(|part| async move {
             let part = part.context(azure_upload_error::SourceIoSnafu)?;
             let number = part.number;
+            // One slot per staged block, shared with the batch's other files.
+            let _slot = scheduler.acquire_request().await;
             azure_put_block_with_refresh(multipart_ctx, part).await?;
             Ok::<i32, AzureUploadError>(number)
         })
@@ -1366,9 +1386,11 @@ fn parse_azure_file_metadata(
 async fn azure_head_attempt(
     client: &reqwest::Client,
     full_url: &str,
+    scheduler: &TransferScheduler,
     base: &RetryPolicy,
 ) -> Result<reqwest::Response, AzureAttemptError<AzureDownloadError>> {
     let policy = azure_403_fastfail_policy(base);
+    let _slot = scheduler.acquire_request().await;
     match azure_request_with_retry(|| client.head(full_url), Method::HEAD, &policy).await {
         Ok(response) => Ok(response),
         Err(AzureRequestError::AzureHttp { status_code, body }) => Err(map_http_to_attempt(
@@ -1395,7 +1417,7 @@ async fn azure_range_attempt(
     full_url: &str,
     content_length: u64,
     chunk_size: u64,
-    concurrency: usize,
+    scheduler: &TransferScheduler,
     base: &RetryPolicy,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
@@ -1406,7 +1428,7 @@ async fn azure_range_attempt(
         full_url,
         content_length,
         chunk_size,
-        concurrency,
+        scheduler,
         &policy,
         unsafe_file_write,
         spill_target,
@@ -1434,15 +1456,15 @@ async fn azure_range_attempt(
 
 /// Downloads a file from Azure and returns a [`CloudStreamingDownload`] whose
 /// `body` yields the ciphertext via a sync `Read`. A HEAD probe (Python /
-/// JDBC / ODBC parity) yields the blob size + metadata: blobs at or above
-/// `multipart.threshold` are fetched with parallel ranged GETs into a tempfile
-/// (read back through `SpilledReader`); smaller ones stream a single GET straight
-/// off the network. On a 403 the `refresher` (if any) rotates the SAS and the
-/// HEAD + GET retry with fresh credentials.
+/// JDBC / ODBC parity) yields the blob size + metadata: blobs at or above the
+/// scheduler's multipart threshold are fetched with parallel ranged GETs into
+/// a tempfile (read back through `SpilledReader`); smaller ones stream a
+/// single GET straight off the network. On a 403 the `refresher` (if any)
+/// rotates the SAS and the HEAD + GET retry with fresh credentials.
 pub async fn download_from_azure_streaming(
     stage_info: &StageInfo,
     filename: &str,
-    multipart: MultipartParams,
+    scheduler: &TransferScheduler,
     policy: &RetryPolicy,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
@@ -1467,7 +1489,7 @@ pub async fn download_from_azure_streaming(
             let full_url = build_sas_url(&url, sas_token.reveal());
 
             // Routing HEAD for size + metadata; 403 fast-fails to SasExpired.
-            let head = azure_head_attempt(&client, &full_url, &base).await?;
+            let head = azure_head_attempt(&client, &full_url, scheduler, &base).await?;
             // Read the size from Content-Length rather than reqwest's
             // `content_length()`, unreliable for HEAD (no body). Real Azure always
             // sends Content-Length on Get Blob Properties.
@@ -1496,7 +1518,7 @@ pub async fn download_from_azure_streaming(
             // threshold, a single streamed GET below. Both fast-fail 403.
             // Only the streamed branch carries a producer task to abort — the
             // ranged/spilled branch has already finished all its I/O.
-            let (body, cloud_bytes_read) = if content_length >= multipart.threshold.bytes() {
+            let (body, cloud_bytes_read) = if scheduler.multipart().should_chunk(content_length) {
                 let chunk_size =
                     multipart::compute_part_size(content_length, &MultipartConfig::AZURE)
                         .context(azure_download_error::FileTooLargeSnafu)
@@ -1504,14 +1526,14 @@ pub async fn download_from_azure_streaming(
                 tracing::debug!(
                     "Azure ranged download: content_length={content_length} \
                      chunk_size={chunk_size} concurrency={}",
-                    multipart.concurrency
+                    scheduler.multipart().concurrency
                 );
                 let spilled = azure_range_attempt(
                     &client,
                     &full_url,
                     content_length,
                     chunk_size,
-                    multipart.concurrency,
+                    scheduler,
                     &base,
                     unsafe_file_write,
                     spill_target,
@@ -1524,10 +1546,15 @@ pub async fn download_from_azure_streaming(
                     std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 )
             } else {
+                // Slot taken before the GET and released by the producer task
+                // once the body is drained — the request is not done when the
+                // headers land.
+                let slot = scheduler.acquire_request().await;
                 let response = azure_get_attempt(&client, &full_url, &base)
                     .await
                     .map_err(|e| e.map_other(AzureDownloadError::from))?;
-                let (reader, producer_abort) = cloud_http::spawn_byte_stream_producer(response);
+                let (reader, producer_abort) =
+                    cloud_http::spawn_byte_stream_producer(response, slot);
                 let handle = reader.bytes_read_handle();
                 (
                     cloud_http::CloudDownloadBody::Streamed {
@@ -1581,11 +1608,13 @@ pub(super) async fn azure_get_streaming(
     filename: &str,
     policy: &RetryPolicy,
     refresher: Option<&dyn StageInfoRefresher>,
+    scheduler: &TransferScheduler,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
     // Issue the single GET under the SAS-refresh-on-403 layer so an
     // already-expired SAS is rotated and retried, matching `gcs_get_streaming`
     // and `download_from_azure_streaming`. Without a `refresher` it runs once
     // and a 403 surfaces terminally (the prior behaviour).
+    let slot = scheduler.acquire_request().await;
     let response = azure_get_with_refresh(stage_info, filename, policy, refresher).await?;
 
     let (digest, file_metadata) = parse_azure_file_metadata(response.headers())?;
@@ -1596,21 +1625,22 @@ pub(super) async fn azure_get_streaming(
         response,
         digest,
         file_metadata,
+        slot,
     ))
 }
 
 /// Downloads the blob with parallel ranged GETs into a pre-allocated file,
 /// returning the assembled [`CloudSpilledBody`](cloud_http::CloudSpilledBody).
-/// Ranges are fetched up to `concurrency` at a time and written at their
-/// absolute offset, so out-of-order completion is fine. Thin wrapper around
-/// the shared [`cloud_http::assemble_ranged_download`] helper.
+/// Ranges are fetched under `scheduler`'s shared request budget and written at
+/// their absolute offset, so out-of-order completion is fine. Thin wrapper
+/// around the shared [`cloud_http::assemble_ranged_download`] helper.
 #[allow(clippy::too_many_arguments)]
 async fn azure_range_download(
     client: &reqwest::Client,
     full_url: &str,
     content_length: u64,
     chunk_size: u64,
-    concurrency: usize,
+    scheduler: &TransferScheduler,
     policy: &RetryPolicy,
     unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
@@ -1620,7 +1650,7 @@ async fn azure_range_download(
     cloud_http::assemble_ranged_download(
         content_length,
         chunk_size,
-        concurrency,
+        scheduler,
         target,
         unsafe_file_write,
         mk_temp_err,
@@ -1880,6 +1910,8 @@ pub enum AzureDownloadError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::internal::test_scheduler;
+    use super::super::multipart::MultipartParams;
     use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
@@ -2384,7 +2416,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&fake as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&fake),
         )
         .await
         .expect("default PUT must refresh the expired SAS on the HEAD 403 and upload");
@@ -2430,7 +2462,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&fake as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&fake),
         )
         .await;
 
@@ -2480,7 +2512,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&fake as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&fake),
         )
         .await;
 
@@ -2558,7 +2590,7 @@ mod tests {
         let dl = download_from_azure_streaming(
             &stage,
             "file.csv",
-            MultipartParams::default(),
+            &test_scheduler(MultipartParams::default()),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp {
@@ -2621,7 +2653,7 @@ mod tests {
         let result = download_from_azure_streaming(
             &stage,
             "file.csv",
-            MultipartParams::default(),
+            &test_scheduler(MultipartParams::default()),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp {
@@ -2671,7 +2703,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2705,7 +2737,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("a failed conditional create is a normal skip outcome");
@@ -2740,7 +2772,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("BlobAlreadyExists is a normal conditional-create skip");
@@ -2776,7 +2808,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2836,7 +2868,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2871,7 +2903,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2903,7 +2935,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2937,7 +2969,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2990,7 +3022,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3048,7 +3080,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await;
         assert!(
@@ -3098,7 +3130,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3183,7 +3215,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("retry should recover and existence skip should fire");
@@ -3217,7 +3249,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await;
         assert!(
@@ -3261,7 +3293,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("skip_match 403 HEAD should fail-OPEN to PUT");
@@ -3294,7 +3326,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await;
         assert!(
@@ -3332,7 +3364,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await;
         assert!(
@@ -3357,10 +3389,7 @@ mod tests {
     /// `MultipartParams` with a 1-byte threshold so any non-empty body takes
     /// the block-blob path.
     fn always_multipart() -> MultipartParams {
-        MultipartParams {
-            threshold: super::super::multipart::MultipartThreshold::from_server(Some(1)),
-            concurrency: 4,
-        }
+        MultipartParams::from_server(Some(1), Some(4))
     }
 
     /// A 9 MiB SSE body splits into two Azure blocks (8 + 1 MiB) at the
@@ -3415,7 +3444,7 @@ mod tests {
             false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("block-blob upload should succeed against the mock");
@@ -3478,7 +3507,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("a failed conditional block-list commit is a normal skip outcome");
@@ -3538,10 +3567,10 @@ mod tests {
                     false,
                     always_multipart(),
                     &policy,
-                    // The refresher — this function takes no cleanup scope, because
-                    // Azure has no abort to register. The operation context is still real
+                    // Neither refresher nor cleanup scope: Azure has no abort to
+                    // register. The operation context driving the cancel is still real
                     // (`cancelled_by` owns it), so the cancel itself is live.
-                    None,
+                    TransferCtx::default(),
                 )
                 .await
             })
@@ -3640,7 +3669,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&coordinator as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&coordinator),
         )
         .await
         .expect("concurrent block 403s must refresh once and upload");
@@ -3725,7 +3754,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&fake as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&fake),
         )
         .await
         .expect("a commit 403 must refresh and retry the commit");
@@ -3776,7 +3805,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            None,
+            TransferCtx::default(),
         )
         .await;
 
@@ -3859,7 +3888,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&coordinator as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&coordinator),
         )
         .await;
 
@@ -3930,7 +3959,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&fake as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&fake),
         )
         .await;
 
@@ -3987,7 +4016,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&fake as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&fake),
         )
         .await;
 
@@ -4072,7 +4101,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            Some(&fake as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&fake),
         )
         .await
         .expect("a single block 403 must resume just that block");
@@ -4136,7 +4165,7 @@ mod tests {
         let dl = download_from_azure_streaming(
             &stage,
             "file.dat",
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp {
@@ -4205,7 +4234,7 @@ mod tests {
         let dl = download_from_azure_streaming(
             &stage,
             "file.dat",
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp {
@@ -4259,7 +4288,7 @@ mod tests {
         let dl = download_from_azure_streaming(
             &stage,
             "file.dat",
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
@@ -4313,7 +4342,7 @@ mod tests {
         let result = download_from_azure_streaming(
             &stage,
             "file.dat",
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),

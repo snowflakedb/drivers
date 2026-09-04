@@ -40,6 +40,10 @@ pub(super) const MAX_PART_CONCURRENCY: usize = 16;
 /// fires when the response omits the field entirely.
 const DEFAULT_PART_CONCURRENCY: usize = 1;
 
+/// Command-wide transfer width used when the server omits `data.parallel` or
+/// sends a non-positive value.
+const DEFAULT_COMMAND_PARALLEL: usize = 1;
+
 /// Per-cloud multipart limits, tabulated as consts so adding a cloud is one
 /// struct literal rather than a new branch in every helper.
 pub struct MultipartConfig {
@@ -200,22 +204,37 @@ pub(super) fn resolve_part_concurrency(parallel: Option<i64>) -> usize {
     requested.clamp(1, MAX_PART_CONCURRENCY)
 }
 
-/// Server-resolved multipart knobs carried alongside each transfer request,
+/// Resolves the command-wide transfer width from the server's `data.parallel`,
+/// defaulting to [`DEFAULT_COMMAND_PARALLEL`]. Not clamped to
+/// [`MAX_PART_CONCURRENCY`], which bounds only the parts of a single file.
+pub(super) fn resolve_command_parallel(parallel: Option<i64>) -> usize {
+    match parallel {
+        Some(p) if p > 0 => p as usize,
+        _ => DEFAULT_COMMAND_PARALLEL,
+    }
+}
+
+/// Server-resolved transfer knobs carried alongside each transfer request,
 /// bundled so the plumbing through `UploadData`/`DownloadData` is one field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MultipartParams {
     pub threshold: MultipartThreshold,
-    /// Concurrent part transfers, already clamped to `1..=MAX_PART_CONCURRENCY`.
+    /// Concurrent part transfers *within one file*, clamped to
+    /// `1..=MAX_PART_CONCURRENCY`.
     pub concurrency: usize,
+    /// The command's cloud-request budget and, for a batch, how many files
+    /// transfer at once. Resolved from `data.parallel` without the part clamp.
+    pub command_parallel: usize,
 }
 
 impl MultipartParams {
-    /// Resolves both knobs from the raw `data.threshold` / `data.parallel`
+    /// Resolves every knob from the raw `data.threshold` / `data.parallel`
     /// fields of a PUT/GET server response.
     pub fn from_server(threshold: Option<i64>, parallel: Option<i64>) -> Self {
         Self {
             threshold: MultipartThreshold::from_server(threshold),
             concurrency: resolve_part_concurrency(parallel),
+            command_parallel: resolve_command_parallel(parallel),
         }
     }
 
@@ -566,12 +585,30 @@ mod tests {
     }
 
     #[test]
+    fn command_parallel_defaults_and_is_not_clamped() {
+        assert_eq!(resolve_command_parallel(None), DEFAULT_COMMAND_PARALLEL);
+        assert_eq!(resolve_command_parallel(Some(0)), DEFAULT_COMMAND_PARALLEL);
+        assert_eq!(resolve_command_parallel(Some(-5)), DEFAULT_COMMAND_PARALLEL);
+        assert_eq!(resolve_command_parallel(Some(8)), 8);
+        // The per-file part ceiling must not truncate the command width: a
+        // server `parallel` of 50 stays 50 here while parts stay capped at 16.
+        assert_eq!(resolve_command_parallel(Some(50)), 50);
+        assert_eq!(resolve_part_concurrency(Some(50)), MAX_PART_CONCURRENCY);
+    }
+
+    #[test]
     fn params_from_server_routes_each_field() {
         // Distinguishable values catch a future threshold/parallel arg swap
         // that the type system can't (both are `Option<i64>`).
         let params = MultipartParams::from_server(Some(100), Some(8));
         assert_eq!(params.threshold.bytes(), 100);
         assert_eq!(params.concurrency, 8);
+        assert_eq!(params.command_parallel, 8);
+
+        // Above the part ceiling the two views of `data.parallel` diverge.
+        let wide = MultipartParams::from_server(None, Some(50));
+        assert_eq!(wide.concurrency, MAX_PART_CONCURRENCY);
+        assert_eq!(wide.command_parallel, 50);
 
         // Default routes through from_server, so the defaults live in one place.
         assert_eq!(
@@ -582,6 +619,10 @@ mod tests {
         assert_eq!(
             MultipartParams::default().concurrency,
             DEFAULT_PART_CONCURRENCY
+        );
+        assert_eq!(
+            MultipartParams::default().command_parallel,
+            DEFAULT_COMMAND_PARALLEL
         );
     }
 

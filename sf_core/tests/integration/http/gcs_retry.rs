@@ -1336,7 +1336,7 @@ async fn assert_gcs_upload_401_then_refresh_then_200(overwrite: bool) {
         "test-digest".to_string(),
     );
     let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
-    let result = sf_core::file_manager::upload_to_gcs_or_skip(
+    let result = sf_core::file_manager::internal::upload_to_gcs_or_skip(
         prepared,
         &stage,
         "file.csv",
@@ -1474,7 +1474,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         "test-digest".to_string(),
     );
     let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
-    let result = sf_core::file_manager::upload_to_gcs_or_skip(
+    let result = sf_core::file_manager::internal::upload_to_gcs_or_skip(
         prepared,
         &stage,
         "file.csv",
@@ -1558,7 +1558,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         "test-digest".to_string(),
     );
     let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
-    let result = sf_core::file_manager::upload_to_gcs_or_skip(
+    let result = sf_core::file_manager::internal::upload_to_gcs_or_skip(
         prepared,
         &stage,
         "part-01.csv.gz",
@@ -1636,7 +1636,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         "test-digest".to_string(),
     );
     let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
-    let err = sf_core::file_manager::upload_to_gcs_or_skip(
+    let err = sf_core::file_manager::internal::upload_to_gcs_or_skip(
         prepared,
         &stage,
         "file.csv",
@@ -1954,7 +1954,7 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         enc_meta,
         encryptor,
     );
-    let result = sf_core::file_manager::upload_to_gcs_or_skip(
+    let result = sf_core::file_manager::internal::upload_to_gcs_or_skip(
         prepared,
         &gcs_stage_with_token(&server.uri()),
         "file.bin",

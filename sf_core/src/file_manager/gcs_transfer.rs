@@ -1,5 +1,6 @@
 use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
 use super::multipart::{self, MultipartConfig, MultipartParams};
+use super::scheduler::TransferScheduler;
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
     LocationType, MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError,
@@ -132,6 +133,7 @@ pub async fn upload_to_gcs_or_skip(
     policy: &RetryPolicy,
     tx: TransferCtx<'_>,
 ) -> Result<UploadStatus, GcsUploadError> {
+    let scheduler = &super::scheduler_for(tx, multipart);
     let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let using_presigned_url = stage_info.presigned_url.is_some();
@@ -175,7 +177,7 @@ pub async fn upload_to_gcs_or_skip(
                 // nothing to check, so we go straight to the PUT.
                 let head_needed = !overwrite || skip_upload_on_content_match;
                 let head = if head_needed {
-                    check_file_exists_gcs(&client, &url, token).await
+                    check_file_exists_gcs(&client, &url, token, scheduler).await
                 } else {
                     GcsHeadResult::NotFound
                 };
@@ -211,7 +213,7 @@ pub async fn upload_to_gcs_or_skip(
                     .map_err(|e| GcsRequestError::SourceIo { source: e })
                     .map_err(map_gcs_request_error_for_attempt)?;
                 let upload = if let Some(tok) = token
-                    && multipart.should_chunk(body_len)
+                    && scheduler.multipart().should_chunk(body_len)
                 {
                     gcs_resumable_upload(
                         GcsResumableUploadCtx {
@@ -221,6 +223,7 @@ pub async fn upload_to_gcs_or_skip(
                             policy: &wire_policy,
                             conditional_create,
                             cleanup: tx.cleanup,
+                            scheduler,
                         },
                         prepared,
                         body_len,
@@ -234,6 +237,7 @@ pub async fn upload_to_gcs_or_skip(
                         prepared,
                         &wire_policy,
                         conditional_create,
+                        scheduler,
                     )
                     .await
                 };
@@ -627,12 +631,14 @@ async fn check_file_exists_gcs(
     client: &reqwest::Client,
     url: &str,
     token: Option<&str>,
+    scheduler: &TransferScheduler,
 ) -> GcsHeadResult {
     let mut request = client.head(url);
     if let Some(t) = token {
         request = request.bearer_auth(t);
     }
 
+    let _slot = scheduler.acquire_request().await;
     match request.send().await {
         Ok(resp) => match resp.status() {
             StatusCode::OK => {
@@ -698,6 +704,7 @@ async fn upload_to_gcs(
     prepared: PreparedUpload,
     policy: &RetryPolicy,
     conditional_create: bool,
+    scheduler: &TransferScheduler,
 ) -> Result<(), GcsRequestError> {
     // `body_for` re-opens the source per retry (a `Path` re-open or an O(1)
     // `Bytes` refcount clone). `prepared` is held until this fn returns, so a
@@ -767,6 +774,7 @@ async fn upload_to_gcs(
     let url_owned = url.to_string();
     let token = token.map(str::to_string);
 
+    let _slot = scheduler.acquire_request().await;
     gcs_upload_with_retry(
         async move || {
             // CSE → lazy AES-CBC encrypting stream; SSE Path → fresh
@@ -828,6 +836,7 @@ struct GcsResumableUploadCtx<'a> {
     policy: &'a RetryPolicy,
     conditional_create: bool,
     cleanup: Option<&'a CleanupScope>,
+    scheduler: &'a TransferScheduler,
 }
 
 /// Uploads `prepared` to GCS via the XML-API **resumable** protocol: a single
@@ -853,6 +862,7 @@ struct GcsResumableUploadCtx<'a> {
 /// `Put`-object path in [`upload_to_gcs`]. Mirrors the Node.js connector's
 /// `uploadFileResumable` (snowflake-connector-nodejs#1427) and the
 /// Python/JDBC resumable upload model.
+#[allow(clippy::too_many_arguments)]
 async fn gcs_resumable_upload(
     upload_ctx: GcsResumableUploadCtx<'_>,
     prepared: PreparedUpload,
@@ -865,6 +875,7 @@ async fn gcs_resumable_upload(
         policy,
         conditional_create,
         cleanup,
+        scheduler,
     } = upload_ctx;
     let chunk_size =
         multipart::compute_part_size(body_len, &MultipartConfig::GCS).map_err(|e| {
@@ -934,19 +945,25 @@ async fn gcs_resumable_upload(
         while let Some(part) = rx.recv().await {
             let part = part.map_err(|source| GcsRequestError::SourceIo { source })?;
             let len = part.body.len() as u64;
-            let done = gcs_put_one_chunk(
-                client,
-                &session_url,
-                token,
-                part.body,
-                ChunkRange {
-                    offset,
-                    len,
-                    total: body_len,
-                },
-                policy,
-            )
-            .await?;
+            // One slot per session chunk. A resumable session commits chunks in
+            // order, so this file only ever holds one slot at a time — the rest
+            // of the budget stays available to the batch's other files.
+            let done = {
+                let _slot = scheduler.acquire_request().await;
+                gcs_put_one_chunk(
+                    client,
+                    &session_url,
+                    token,
+                    part.body,
+                    ChunkRange {
+                        offset,
+                        len,
+                        total: body_len,
+                    },
+                    policy,
+                )
+                .await?
+            };
             offset += len;
             if done {
                 committed = true;
@@ -1469,7 +1486,7 @@ pub async fn download_from_gcs_streaming(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    multipart: MultipartParams,
+    scheduler: &TransferScheduler,
     refresher: Option<&dyn StageInfoRefresher>,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
@@ -1485,7 +1502,7 @@ pub async fn download_from_gcs_streaming(
             stage_info,
             filename,
             policy,
-            multipart,
+            scheduler,
             refresher,
             unsafe_file_write,
             spill_target,
@@ -1505,6 +1522,7 @@ pub async fn download_from_gcs_streaming(
         policy,
         per_file_index,
         refresher,
+        scheduler,
     )
     .await
 }
@@ -1522,7 +1540,9 @@ pub(super) async fn gcs_get_streaming(
     policy: &RetryPolicy,
     per_file_index: usize,
     refresher: Option<&dyn StageInfoRefresher>,
+    scheduler: &TransferScheduler,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
+    let slot = scheduler.acquire_request().await;
     let response = gcs_get_with_refresh(
         stage_info,
         filename,
@@ -1565,6 +1585,7 @@ pub(super) async fn gcs_get_streaming(
         response,
         digest,
         file_metadata,
+        slot,
     ))
 }
 
@@ -1620,7 +1641,7 @@ async fn gcs_try_ranged_download(
     stage_info: &StageInfo,
     filename: &str,
     policy: &RetryPolicy,
-    multipart: MultipartParams,
+    scheduler: &TransferScheduler,
     refresher: Option<&dyn StageInfoRefresher>,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
@@ -1648,7 +1669,7 @@ async fn gcs_try_ranged_download(
                     &client,
                     &url,
                     token,
-                    multipart,
+                    scheduler,
                     policy,
                     unsafe_file_write,
                     spill_target,
@@ -1675,21 +1696,23 @@ async fn gcs_ranged_download_attempt(
     client: &reqwest::Client,
     url: &str,
     token: &str,
-    multipart: MultipartParams,
+    scheduler: &TransferScheduler,
     policy: &RetryPolicy,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<Option<CloudStreamingDownload>, GcsAttemptError<GcsDownloadError>> {
     // HEAD probe. A 401 must refresh; any other probe failure degrades to the
     // proven single-GET path (`Ok(None)`).
-    let head =
+    let head = {
+        let _slot = scheduler.acquire_request().await;
         match gcs_request_with_retry(|| client.head(url).bearer_auth(token), Method::HEAD, policy)
             .await
         {
             Ok(resp) => resp,
             Err(GcsRequestError::TokenExpired) => return Err(GcsAttemptError::TokenExpired),
             Err(_) => return Ok(None),
-        };
+        }
+    };
 
     let Some(content_length) = head
         .headers()
@@ -1699,7 +1722,7 @@ async fn gcs_ranged_download_attempt(
     else {
         return Ok(None);
     };
-    if !multipart.should_chunk(content_length) {
+    if !scheduler.multipart().should_chunk(content_length) {
         return Ok(None);
     }
 
@@ -1717,7 +1740,7 @@ async fn gcs_ranged_download_attempt(
     tracing::debug!(
         "GCS ranged download: content_length={content_length} chunk_size={chunk_size} \
          concurrency={}",
-        multipart.concurrency
+        scheduler.multipart().concurrency
     );
     let spilled = gcs_range_download(
         client,
@@ -1725,7 +1748,7 @@ async fn gcs_ranged_download_attempt(
         token,
         content_length,
         chunk_size,
-        multipart.concurrency,
+        scheduler,
         policy,
         unsafe_file_write,
         spill_target,
@@ -1766,7 +1789,7 @@ async fn gcs_range_download(
     token: &str,
     content_length: u64,
     chunk_size: u64,
-    concurrency: usize,
+    scheduler: &TransferScheduler,
     policy: &RetryPolicy,
     unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
@@ -1781,7 +1804,7 @@ async fn gcs_range_download(
     cloud_http::assemble_ranged_download(
         content_length,
         chunk_size,
-        concurrency,
+        scheduler,
         target,
         unsafe_file_write,
         mk_temp_err,
@@ -2296,6 +2319,8 @@ pub enum GcsDownloadError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::internal::test_scheduler;
+    use super::super::multipart::MultipartParams;
     use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
@@ -3032,7 +3057,13 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let result = check_file_exists_gcs(
+            &client,
+            &url,
+            Some("token"),
+            &test_scheduler(MultipartParams::default()),
+        )
+        .await;
 
         assert_eq!(
             result,
@@ -3053,7 +3084,13 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let result = check_file_exists_gcs(
+            &client,
+            &url,
+            Some("token"),
+            &test_scheduler(MultipartParams::default()),
+        )
+        .await;
 
         // Older objects (pre-`sfc-digest`-write era, libsfclient-S3-style
         // uploads, etc.) lack the header; the conservative fall-through
@@ -3075,7 +3112,13 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let result = check_file_exists_gcs(
+            &client,
+            &url,
+            Some("token"),
+            &test_scheduler(MultipartParams::default()),
+        )
+        .await;
 
         assert_eq!(result, GcsHeadResult::NotFound);
     }
@@ -3091,7 +3134,13 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let result = check_file_exists_gcs(
+            &client,
+            &url,
+            Some("token"),
+            &test_scheduler(MultipartParams::default()),
+        )
+        .await;
 
         // 403 indicates limited credentials (e.g. PUT-only); proceed
         // with upload rather than surface a hard error — the worst
@@ -3110,7 +3159,13 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let result = check_file_exists_gcs(
+            &client,
+            &url,
+            Some("token"),
+            &test_scheduler(MultipartParams::default()),
+        )
+        .await;
 
         assert_eq!(result, GcsHeadResult::NotFound);
     }
@@ -3133,7 +3188,13 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let result = check_file_exists_gcs(
+            &client,
+            &url,
+            Some("token"),
+            &test_scheduler(MultipartParams::default()),
+        )
+        .await;
 
         assert_eq!(result, GcsHeadResult::Found { digest: None });
     }
@@ -3206,10 +3267,7 @@ mod tests {
     /// `MultipartParams` with a 1-byte threshold so any non-empty body takes the
     /// resumable/ranged multipart path, at the resolved concurrency.
     fn always_multipart() -> MultipartParams {
-        MultipartParams {
-            threshold: super::super::multipart::MultipartThreshold::from_server(Some(1)),
-            concurrency: 4,
-        }
+        MultipartParams::from_server(Some(1), Some(4))
     }
 
     /// Above the threshold on the access-token path, the upload takes the XML
@@ -3672,7 +3730,7 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             /* per_file_index */ 0,
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             /* refresher */ None,
             /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Temp {
@@ -3723,7 +3781,7 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             /* per_file_index */ 0,
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             /* refresher */ None,
             /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Part(&part_path),
@@ -3778,7 +3836,7 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             /* per_file_index */ 0,
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             /* refresher */ None,
             /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Part(&part_path),
