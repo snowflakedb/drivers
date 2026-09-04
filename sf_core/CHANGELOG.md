@@ -40,6 +40,7 @@ Bug fixes:
 
 Internal improvements:
 
+- Added a per-statement cloud-request budget for PUT/GET: every request that moves object bytes or reads object metadata takes a slot from one shared `TransferScheduler` sized from the server's `PARALLEL`, so part-level and file-level concurrency cannot multiply into `PARALLEL²` simultaneous requests once file fan-out lands. Files still transfer one at a time, so transfer behaviour is unchanged on its own. (snowflakedb/drivers#1449)
 - Replaced the per-statement in-flight `requestId` slot and the `StatementCancel` RPC with operation-handle cancellation: a wrapper cancels the handle it dispatched under, and the core fires the abort-request from inside the cancelled operation. The abort now has exactly one emitter, cancelling also covers phases `StatementCancel` could not reach (such as a bind-variable stage upload), and a cancel can no longer abort a query that was never submitted. (snowflakedb/drivers#1491)
 - Added `proto_utils::CancellableTransport`, and the Rust generator now emits a `<rpc>_cancellable(operation, request)` client method plus `register_operation`/`cancel_operation`/`deregister_operation` for every `async_first` RPC, so a wrapper holding only the generated typed client can dispatch cancellably. (snowflakedb/drivers#1491)
 - Node's `Statement.cancel()` now cancels through a per-statement `OperationCtx` instead of the removed `StatementCancel` RPC. (snowflakedb/drivers#1491)

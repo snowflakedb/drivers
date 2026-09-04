@@ -7,6 +7,7 @@ use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::file_manager::MultipartParams;
 use sf_core::file_manager::TransferCtx;
+use sf_core::file_manager::internal::test_scheduler;
 use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, EncryptedFileMetadata, EncryptionMaterial, LocationType,
     SingleDownloadData, StageInfo,
@@ -463,7 +464,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                     DEFAULT_PUT_GET_MAX_ATTEMPTS,
                 ),
                 0,
-                MultipartParams::default(),
+                &test_scheduler(MultipartParams::default()),
                 None,
                 false,
                 sf_core::file_manager::internal::CloudSpillTarget::Temp {
@@ -498,7 +499,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
             sf_core::file_manager::internal::download_from_azure_streaming(
                 &stage,
                 "azure-blob",
-                MultipartParams::default(),
+                &test_scheduler(MultipartParams::default()),
                 // Success-path roundtrip; no retries exercised, so the default
                 // policy is sufficient.
                 &RetryPolicy {
@@ -663,7 +664,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             0,
-            MultipartParams::default(),
+            &test_scheduler(MultipartParams::default()),
             None,
             false,
             sf_core::file_manager::internal::CloudSpillTarget::Temp {
@@ -896,6 +897,7 @@ async fn open_download_stream_cse_roundtrip_for(cloud: Cloud) {
         None,
         Some(material),
         false,
+        MultipartParams::default(),
     )
     .await
     .expect("open_download_stream_for_stage must succeed");
@@ -1016,6 +1018,7 @@ async fn open_download_stream_for_stage_azure_refreshes_sas_on_403() {
         Some(&refresher as &dyn StageInfoRefresher),
         None,
         false,
+        MultipartParams::default(),
     )
     .await
     .expect("Azure open must succeed after the SAS is refreshed");
@@ -1040,7 +1043,7 @@ async fn open_download_stream_for_stage_azure_refreshes_sas_on_403() {
 async fn s3_open_download_stream_gunzip_only_roundtrip() {
     use flate2::Compression;
     use flate2::write::GzEncoder;
-    use sf_core::file_manager::open_s3_download_stream;
+    use sf_core::file_manager::internal::open_s3_download_stream;
     use std::io::Write as _;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
@@ -1064,6 +1067,7 @@ async fn s3_open_download_stream_gunzip_only_roundtrip() {
         None,
         None,
         true,
+        MultipartParams::default(),
     )
     .await
     .expect("open_s3_download_stream must succeed");
@@ -1088,7 +1092,7 @@ async fn s3_open_download_stream_gunzip_only_roundtrip() {
 // ---------------------------------------------------------------------------
 #[tokio::test(flavor = "multi_thread")]
 async fn s3_open_download_stream_mid_body_disconnect_surfaces_error() {
-    use sf_core::file_manager::open_s3_download_stream;
+    use sf_core::file_manager::internal::open_s3_download_stream;
 
     let (addr, server) = spawn_truncated_body_server(false).await;
 
@@ -1102,6 +1106,7 @@ async fn s3_open_download_stream_mid_body_disconnect_surfaces_error() {
             None,
             None,
             false,
+            MultipartParams::default(),
         ),
     )
     .await
@@ -1151,6 +1156,7 @@ async fn dispatch_raw_roundtrip_for(
         None,
         None,
         false,
+        MultipartParams::default(),
     )
     .await
     .expect("open_download_stream_for_stage must succeed");
@@ -1225,7 +1231,7 @@ async fn open_download_stream_for_stage_dispatches_to_azure() {
 /// the download only succeeds if the per-file URL actually won.
 #[tokio::test]
 async fn open_gcs_download_stream_per_file_presigned_url_takes_precedence() {
-    use sf_core::file_manager::open_gcs_download_stream;
+    use sf_core::file_manager::internal::open_gcs_download_stream;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
     let plaintext = b"per-file-presigned-url-wins".to_vec();
@@ -1248,6 +1254,7 @@ async fn open_gcs_download_stream_per_file_presigned_url_takes_precedence() {
         None,
         None,
         false,
+        MultipartParams::default(),
     )
     .await
     .expect("per_file_presigned_url must take precedence over stage_info.presigned_url");
@@ -1284,6 +1291,7 @@ async fn abort_stops_a_hanging_download_for(cloud: Cloud) {
             None,
             None,
             false,
+            MultipartParams::default(),
         ),
     )
     .await

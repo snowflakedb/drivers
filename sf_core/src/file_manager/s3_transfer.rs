@@ -1,6 +1,7 @@
 use super::cloud_http;
 use super::encryption::Encryptor;
 use super::multipart::{self, MultipartConfig, MultipartParams};
+use super::scheduler::TransferScheduler;
 use super::types::{
     ByteSource, CloudCredentials, EncryptedFileMetadata, LocationType, MaterialDescription,
     PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher, TransferCtx,
@@ -67,7 +68,7 @@ const MAX_CONDITIONAL_CONFLICT_ATTEMPTS: u32 = 2;
 #[derive(Clone, Copy)]
 enum S3WriteProtocol {
     PutObject,
-    Multipart { body_len: u64, concurrency: usize },
+    Multipart { body_len: u64 },
 }
 
 /// One conditional S3 object write, including the inputs that must be replayed
@@ -89,6 +90,7 @@ struct S3ConditionalWrite<'a> {
     key: &'a str,
     overwrite: bool,
     cleanup: Option<&'a CleanupScope>,
+    scheduler: &'a TransferScheduler,
     protocol: S3WriteProtocol,
 }
 
@@ -150,13 +152,11 @@ impl S3ConditionalWrite<'_> {
                     self.stage_info,
                     self.key,
                     self.overwrite,
+                    self.scheduler,
                 )
                 .await
             }
-            S3WriteProtocol::Multipart {
-                body_len,
-                concurrency,
-            } => {
+            S3WriteProtocol::Multipart { body_len } => {
                 s3_multipart_upload(
                     S3MultipartCtx {
                         client: self.client,
@@ -167,7 +167,7 @@ impl S3ConditionalWrite<'_> {
                     },
                     self.prepared.clone(),
                     body_len,
-                    concurrency,
+                    self.scheduler,
                 )
                 .await
             }
@@ -219,7 +219,7 @@ impl S3ConditionalWrite<'_> {
 /// place.
 ///
 /// Files whose on-cloud size (ciphertext length for CSE, source length for SSE)
-/// is at or above `multipart.threshold` take the multipart path
+/// is at or above the scheduler's multipart threshold take the multipart path
 /// ([`s3_multipart_upload`]); smaller files take the single `PutObject` path.
 /// The skip check gates both paths identically — a content-match hit skips
 /// the upload regardless of which path would otherwise have run.
@@ -250,6 +250,7 @@ pub(super) async fn upload_to_s3_or_skip(
     multipart: MultipartParams,
     tx: TransferCtx<'_>,
 ) -> Result<UploadStatus, UploadFileError> {
+    let scheduler = &super::scheduler_for(tx, multipart);
     let transfer_started = Instant::now();
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -264,7 +265,7 @@ pub(super) async fn upload_to_s3_or_skip(
         .build()
     })?;
     // `>=` matches the Python connector boundary (`upload_size >= threshold`).
-    let use_multipart = body_len >= multipart.threshold.bytes();
+    let use_multipart = scheduler.multipart().should_chunk(body_len);
 
     // HEAD checks existence (`!overwrite`) or fetches the remote digest for the
     // opt-in content-match skip; elided otherwise so the common `overwrite=true`,
@@ -308,10 +309,7 @@ pub(super) async fn upload_to_s3_or_skip(
             }
 
             let protocol = if use_multipart {
-                S3WriteProtocol::Multipart {
-                    body_len,
-                    concurrency: multipart.concurrency,
-                }
+                S3WriteProtocol::Multipart { body_len }
             } else {
                 S3WriteProtocol::PutObject
             };
@@ -322,6 +320,7 @@ pub(super) async fn upload_to_s3_or_skip(
                 key: &s3_key,
                 overwrite,
                 cleanup: tx.cleanup,
+                scheduler,
                 protocol,
             }
             .execute_with_conflict_retry(&policy, transfer_started)
@@ -707,12 +706,16 @@ fn encrypting_byte_stream(source: ByteSource, encryptor: Encryptor) -> ByteStrea
 
 /// Issues the S3 `PutObject` call and folds `ExpiredToken` into the
 /// `S3AttemptError::StsExpired` arm so the generic refresh helper can catch it.
+///
+/// Takes one request slot from `scheduler` for the duration of the send, so a
+/// whole-file PUT costs the batch exactly what one `UploadPart` does.
 async fn put_object(
     prepared: PreparedUpload,
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
     overwrite: bool,
+    scheduler: &TransferScheduler,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
     // CSE params (cloud metadata + encryptor) are both present or both absent.
     let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
@@ -772,6 +775,7 @@ async fn put_object(
     // Log only safe metadata.
     tracing::trace!(bucket = %stage_info.bucket, key = ?s3_key, "Sending S3 PutObject request");
 
+    let _slot = scheduler.acquire_request().await;
     match put_object_request
         .customize()
         .disable_payload_signing()
@@ -840,7 +844,7 @@ async fn s3_multipart_upload(
     multipart_ctx: S3MultipartCtx<'_>,
     prepared: PreparedUpload,
     body_len: u64,
-    concurrency: usize,
+    scheduler: &TransferScheduler,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
     let S3MultipartCtx {
         client: s3_client,
@@ -853,6 +857,7 @@ async fn s3_multipart_upload(
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::S3)
         .context(upload_file_error::FileTooLargeSnafu)
         .map_err(S3AttemptError::Other)?;
+    let concurrency = scheduler.multipart().concurrency;
 
     let upload_id = s3_create_multipart_upload(&prepared, s3_client, stage_info, s3_key).await?;
     tracing::debug!(
@@ -892,13 +897,7 @@ async fn s3_multipart_upload(
         move || (*abort_on_unwind)(),
         // Boxed to keep this large future off the frame — see clippy.toml.
         Box::pin(upload_parts_and_complete(
-            s3_client,
-            stage_info,
-            s3_key,
-            &upload_id,
-            parts_rx,
-            concurrency,
-            overwrite,
+            s3_client, stage_info, s3_key, &upload_id, parts_rx, scheduler, overwrite,
         )),
     )
     .await;
@@ -983,7 +982,7 @@ async fn upload_parts_and_complete(
     s3_key: &str,
     upload_id: &str,
     parts_rx: tokio::sync::mpsc::Receiver<std::io::Result<multipart::UploadPart>>,
-    concurrency: usize,
+    scheduler: &TransferScheduler,
     overwrite: bool,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
     let mut completed: Vec<CompletedPart> = ReceiverStream::new(parts_rx)
@@ -996,9 +995,10 @@ async fn upload_parts_and_complete(
                     .build(),
                 )
             })?;
+            let _slot = scheduler.acquire_request().await;
             upload_one_part(s3_client, stage_info, s3_key, upload_id, part).await
         })
-        .buffer_unordered(concurrency)
+        .buffer_unordered(scheduler.multipart().concurrency)
         .try_collect()
         .await?;
 
@@ -1220,15 +1220,15 @@ impl S3DownloadBody {
 /// shared `StageInfoCache` rather than returned.
 ///
 /// A HEAD probe runs first (matching Python/JDBC/ODBC) to learn the object
-/// size and metadata: blobs at or above `multipart.threshold` are fetched with
-/// parallel ranged GETs into a tempfile; smaller ones take a single buffered
-/// GET. `cloud_byte_count` reflects the on-cloud (pre-decryption) byte count
-/// from the HEAD `Content-Length`.
+/// size and metadata: blobs at or above the scheduler's multipart threshold
+/// are fetched with parallel ranged GETs into a tempfile; smaller ones take
+/// a single buffered GET. `cloud_byte_count` reflects the on-cloud
+/// (pre-decryption) byte count from the HEAD `Content-Length`.
 pub(super) async fn download_from_s3(
     stage_info: &StageInfo,
     filename: &str,
     base_policy: &RetryPolicy,
-    multipart: MultipartParams,
+    scheduler: &TransferScheduler,
     refresher: Option<&dyn StageInfoRefresher>,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
@@ -1248,7 +1248,7 @@ pub(super) async fn download_from_s3(
                 &s3_client,
                 &stage_info,
                 &s3_key,
-                multipart,
+                scheduler,
                 unsafe_file_write,
                 spill_target,
             )
@@ -1274,24 +1274,24 @@ async fn s3_download_attempt(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-    multipart: MultipartParams,
+    scheduler: &TransferScheduler,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<S3Download, S3AttemptError<DownloadFileError>> {
-    let head = s3_head_object(s3_client, stage_info, s3_key).await?;
+    let head = s3_head_object(s3_client, stage_info, s3_key, scheduler).await?;
     let content_length = head.content_length().unwrap_or(0).max(0) as u64;
     let metadata_map = head.metadata().cloned().unwrap_or_default();
     let (digest, file_metadata) =
         parse_s3_file_metadata(&metadata_map).map_err(S3AttemptError::Other)?;
 
-    let body = if content_length >= multipart.threshold.bytes() {
+    let body = if scheduler.multipart().should_chunk(content_length) {
         let chunk_size = multipart::compute_part_size(content_length, &MultipartConfig::S3)
             .context(download_file_error::FileTooLargeSnafu)
             .map_err(S3AttemptError::Other)?;
         tracing::debug!(
             "S3 ranged download: key={s3_key:?} content_length={content_length} \
              chunk_size={chunk_size} concurrency={}",
-            multipart.concurrency
+            scheduler.multipart().concurrency
         );
         let spilled = s3_range_download(
             s3_client,
@@ -1299,14 +1299,14 @@ async fn s3_download_attempt(
             s3_key,
             content_length,
             chunk_size,
-            multipart.concurrency,
+            scheduler,
             unsafe_file_write,
             spill_target,
         )
         .await?;
         S3DownloadBody::Spilled(spilled)
     } else {
-        S3DownloadBody::InMemory(s3_get_whole(s3_client, stage_info, s3_key).await?)
+        S3DownloadBody::InMemory(s3_get_whole(s3_client, stage_info, s3_key, scheduler).await?)
     };
 
     Ok(S3Download {
@@ -1331,6 +1331,7 @@ pub(super) struct S3StreamingDownload {
     /// (chunked transfer-encoding) or the object is empty — indistinguishable
     /// here, but S3 GETs practically always report a length.
     pub(super) cloud_byte_count: i64,
+    pub(super) slot: super::scheduler::RequestTicket,
 }
 
 /// Opens a streaming GET against S3, returning the body as a `ByteStream`
@@ -1345,6 +1346,7 @@ pub(super) async fn download_from_s3_streaming(
     filename: &str,
     base_policy: &RetryPolicy,
     refresher: Option<&dyn StageInfoRefresher>,
+    scheduler: &TransferScheduler,
 ) -> Result<S3StreamingDownload, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -1357,7 +1359,7 @@ pub(super) async fn download_from_s3_streaming(
             let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy)
                 .await
                 .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
-            s3_get_streaming(&s3_client, &stage_info, &s3_key).await
+            s3_get_streaming(&s3_client, &stage_info, &s3_key, scheduler).await
         }
     };
 
@@ -1379,6 +1381,7 @@ async fn s3_get_streaming(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
+    scheduler: &TransferScheduler,
 ) -> Result<S3StreamingDownload, S3AttemptError<DownloadFileError>> {
     tracing::info!(
         method = "GET",
@@ -1386,6 +1389,7 @@ async fn s3_get_streaming(
         key = ?s3_key,
         "S3 GetObject (streaming)"
     );
+    let slot = scheduler.acquire_request().await;
     let out = match s3_client
         .get_object()
         .bucket(stage_info.bucket.clone())
@@ -1417,6 +1421,7 @@ async fn s3_get_streaming(
         digest,
         file_metadata,
         cloud_byte_count,
+        slot,
     })
 }
 
@@ -1460,6 +1465,7 @@ async fn s3_head_object(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
+    scheduler: &TransferScheduler,
 ) -> Result<aws_sdk_s3::operation::head_object::HeadObjectOutput, S3AttemptError<DownloadFileError>>
 {
     tracing::info!(
@@ -1468,6 +1474,7 @@ async fn s3_head_object(
         key = ?s3_key,
         "S3 HeadObject"
     );
+    let _slot = scheduler.acquire_request().await;
     match s3_client
         .head_object()
         .bucket(stage_info.bucket.clone())
@@ -1508,6 +1515,7 @@ async fn s3_get_whole(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
+    scheduler: &TransferScheduler,
 ) -> Result<Bytes, S3AttemptError<DownloadFileError>> {
     tracing::info!(
         method = "GET",
@@ -1515,6 +1523,8 @@ async fn s3_get_whole(
         key = ?s3_key,
         "S3 GetObject"
     );
+    // A whole-object GET costs the batch one slot, same as one ranged GET.
+    let _slot = scheduler.acquire_request().await;
     let out = match s3_client
         .get_object()
         .bucket(stage_info.bucket.clone())
@@ -1550,7 +1560,7 @@ async fn s3_range_download(
     s3_key: &str,
     content_length: u64,
     chunk_size: u64,
-    concurrency: usize,
+    scheduler: &TransferScheduler,
     unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, S3AttemptError<DownloadFileError>> {
@@ -1561,7 +1571,7 @@ async fn s3_range_download(
     cloud_http::assemble_ranged_download(
         content_length,
         chunk_size,
-        concurrency,
+        scheduler,
         target,
         unsafe_file_write,
         mk_temp_err,
@@ -2040,6 +2050,8 @@ pub enum DownloadFileError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::internal::test_scheduler;
+    use super::super::multipart::MultipartParams;
     use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::retry::RetryPolicy;
@@ -3392,10 +3404,7 @@ mod tests {
     /// `MultipartParams` with a 1-byte threshold so any non-empty body takes
     /// the multipart path, at the resolved concurrency.
     fn always_multipart() -> MultipartParams {
-        MultipartParams {
-            threshold: super::super::multipart::MultipartThreshold::from_server(Some(1)),
-            concurrency: 4,
-        }
+        MultipartParams::from_server(Some(1), Some(4))
     }
 
     /// A 20 MiB SSE body splits into three S3 parts (8 + 8 + 4 MiB) at the
@@ -3787,7 +3796,7 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             &base_policy(),
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             None,
             false,
             cloud_http::CloudSpillTarget::Temp {
@@ -3843,7 +3852,7 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             &base_policy(),
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             None,
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
@@ -3893,7 +3902,7 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             &base_policy_with_attempts(1), // single attempt: fail fast
-            always_multipart(),
+            &test_scheduler(always_multipart()),
             None,
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),

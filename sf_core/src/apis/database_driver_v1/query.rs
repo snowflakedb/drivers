@@ -257,6 +257,9 @@ pub(super) async fn build_and_upload_stream(
     // file-path PUT now aborts. Deliberately out of scope here; closing it means
     // marking those RPCs `async_first` and threading `operation_ctx` through them.
     // TODO: needs a tracking ticket before this PR merges — see the PR discussion.
+
+    // No scheduler joined: a streamed PUT is a batch of one, so the cloud upload
+    // leaf sizes its own budget (see `file_manager::scheduler_for`).
     let transfer_ctx = match refresher_handle {
         Some(refresher) => file_manager::TransferCtx::with_refresher(refresher),
         None => file_manager::TransferCtx::default(),

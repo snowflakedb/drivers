@@ -135,12 +135,19 @@ impl std::io::Read for StreamReader {
 /// scope; revisit if Range-resume becomes a requirement. The
 /// `gcs_streaming_mid_body_disconnect_surfaces_error` test pins this
 /// behaviour.
+///
+/// `slot` is released once the body has been drained, not when the response
+/// headers arrive. On the zero-disk `download_stream_*` path that means an idle
+/// consumer occupies a slot until the stream is closed or reaped.
 pub(super) fn spawn_byte_stream_producer(
     response: reqwest::Response,
+    slot: super::scheduler::RequestTicket,
 ) -> (StreamReader, tokio::task::AbortHandle) {
     let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Bytes>>(8);
     let stream = response.bytes_stream();
     let join_handle = tokio::spawn(async move {
+        // Released when the drain loop ends (EOF, error, or consumer hang-up).
+        let _slot = slot;
         let mut stream = stream;
         while let Some(chunk_result) = stream.next().await {
             let mapped = chunk_result.map_err(std::io::Error::other);
@@ -179,11 +186,17 @@ pub(super) fn spawn_byte_stream_producer(
 /// Same tradeoff as the GCS/Azure producer: the AWS SDK's retry only covers
 /// opening the GET. Once the body is in hand, a mid-body failure surfaces to
 /// the consumer as `io::Error::other(...)` with no retry and no Range-resume.
+///
+/// `slot` is released when the drain loop ends, as in
+/// [`spawn_byte_stream_producer`].
 pub(super) fn spawn_s3_byte_stream_producer(
     mut body: aws_sdk_s3::primitives::ByteStream,
+    slot: super::scheduler::RequestTicket,
 ) -> (StreamReader, tokio::task::AbortHandle) {
     let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Bytes>>(8);
     let join_handle = tokio::spawn(async move {
+        // Released when the drain loop ends (EOF, error, or consumer hang-up).
+        let _slot = slot;
         while let Some(chunk_result) = body.next().await {
             let mapped = chunk_result.map_err(std::io::Error::other);
             // `.await`, not blocking send — see `spawn_byte_stream_producer`.
@@ -265,10 +278,13 @@ impl CloudStreamingDownload {
     /// cloud-specific headers into `digest` / `file_metadata`. Not used by
     /// `download_from_azure_streaming`'s streamed branch, whose
     /// `cloud_byte_count` comes from an earlier HEAD probe instead.
+    /// `slot` is the scheduler reservation for the GET, handed to the producer
+    /// task — see [`spawn_byte_stream_producer`] for why it is released there.
     pub(super) fn from_reqwest_response(
         response: reqwest::Response,
         digest: Option<String>,
         file_metadata: Option<EncryptedFileMetadata>,
+        slot: super::scheduler::RequestTicket,
     ) -> Self {
         let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
         // Git-stage objects carry encryption headers but no sfc-digest —
@@ -284,7 +300,7 @@ impl CloudStreamingDownload {
             }
             (None, _) => None,
         };
-        let (reader, producer_abort) = spawn_byte_stream_producer(response);
+        let (reader, producer_abort) = spawn_byte_stream_producer(response, slot);
         let cloud_bytes_read = reader.bytes_read_handle();
         Self {
             cloud_byte_count,
@@ -419,11 +435,17 @@ impl CloudDownloadBody {
 /// the truncation case to its own error variant rather than a generic one —
 /// GCS does this today (`GcsRequestError::RangeNotHonored`); S3 and Azure both
 /// pass the same closure for both parameters.
+///
+/// Every ranged GET takes a request slot from `scheduler` before it is issued,
+/// so the ranges of this object compete with the rest of the batch (and with
+/// every other in-flight PUT/GET in the process) for one shared budget. The
+/// `buffer_unordered` width below only bounds how many futures are polled; the
+/// scheduler is what bounds how many are actually on the wire.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn assemble_ranged_download<E, Fut, G, M, MR>(
     content_length: u64,
     chunk_size: u64,
-    concurrency: usize,
+    scheduler: &super::scheduler::TransferScheduler,
     target: CloudSpillTarget<'_>,
     unsafe_file_write: bool,
     mk_temp_err: M,
@@ -500,7 +522,10 @@ where
     // after the drain.
     let fetch_ranges = futures::stream::iter(ranges)
         .map(|range| async move {
-            let bytes = get_range(range).await?;
+            let bytes = {
+                let _slot = scheduler.acquire_request().await;
+                get_range(range).await?
+            };
             // 206-vs-200 guard: an endpoint that ignores Range and returns the
             // whole object (200) would overrun the pre-allocated length.
             let expected_len = range.end - range.start + 1;
@@ -521,7 +546,7 @@ where
             .map_err(|e| mk_temp_err(format!("join error writing chunk: {e}")))?
             .map_err(|e| mk_temp_err(e.to_string()))
         })
-        .buffer_unordered(concurrency)
+        .buffer_unordered(scheduler.multipart().concurrency)
         .collect();
     // Boxed to keep this large future off the frame — see clippy.toml.
     let results: Vec<Result<(), E>> = with_cleanup_scope_opt(
@@ -748,4 +773,143 @@ where
     }
 
     Err(adapter.on_exhausted(format!("upload exhausted {max_attempts} attempts")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file_manager::internal::test_scheduler;
+    use crate::file_manager::{MultipartParams, TransferScheduler};
+
+    /// `TransferScheduler` whose command budget is `parallel`.
+    fn scheduler(parallel: i64) -> TransferScheduler {
+        test_scheduler(MultipartParams::from_server(None, Some(parallel)))
+    }
+
+    /// Runs `assemble_ranged_download` over a `total`-byte object in
+    /// `chunk_size` ranges, serving each range from a synthetic payload. Range 0
+    /// sleeps while the rest only yield, so the ranges complete out of order and
+    /// the assembled bytes prove the positioned writes, not the arrival order.
+    async fn assemble_out_of_order(total: u64, chunk_size: u64) -> Vec<u8> {
+        let payload: Vec<u8> = (0..total).map(|i| (i % 251) as u8).collect();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let part_path = dir.path().join("out.bin.part");
+
+        let body = assemble_ranged_download(
+            total,
+            chunk_size,
+            &scheduler(4),
+            CloudSpillTarget::Part(&part_path),
+            /* unsafe_file_write */ false,
+            |detail: String| -> String { detail },
+            |detail: String| -> String { detail },
+            |range: super::super::multipart::DownloadRange| {
+                let payload = &payload;
+                async move {
+                    if range.start == 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    } else {
+                        tokio::task::yield_now().await;
+                    }
+                    Ok::<Bytes, String>(Bytes::copy_from_slice(
+                        &payload[range.start as usize..=range.end as usize],
+                    ))
+                }
+            },
+        )
+        .await
+        .expect("ranged assembly should succeed");
+
+        let path = match body {
+            CloudSpilledBody::Part(p) => p,
+            CloudSpilledBody::Temp(_) => panic!("Part target must produce a Part body"),
+        };
+        std::fs::read(path).expect("read assembled file")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_reassemble_ranges_in_order_regardless_of_completion_order() {
+        let assembled = assemble_out_of_order(1000, 128).await;
+
+        let expected: Vec<u8> = (0..1000u64).map(|i| (i % 251) as u8).collect();
+        assert!(
+            assembled == expected,
+            "positioned writes must reassemble the object byte-for-byte"
+        );
+    }
+
+    /// `spawn_byte_stream_producer` holds its slot on a spawned task, not a
+    /// stack frame — the longest-held slot in the design (headers to last
+    /// byte), so its release paths get their own tests rather than resting on
+    /// the scheduler's own drop tests.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_release_the_request_slot_after_the_producer_drains_to_eof() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"hello world".to_vec()))
+            .mount(&mock)
+            .await;
+        let response = reqwest::Client::new()
+            .get(mock.uri())
+            .send()
+            .await
+            .expect("mock GET must succeed");
+
+        let scheduler = scheduler(1);
+        let slot = scheduler.acquire_request().await;
+        let (mut reader, _abort_handle) = spawn_byte_stream_producer(response, slot);
+
+        tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            reader.read_to_end(&mut buf)
+        })
+        .await
+        .expect("join")
+        .expect("draining the mock body must succeed");
+
+        // The per-command budget is 1: if EOF hadn't released the slot, this
+        // would hang.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            scheduler.acquire_request(),
+        )
+        .await
+        .expect("draining to EOF must release the slot");
+    }
+
+    #[tokio::test]
+    async fn should_release_the_request_slot_when_the_producer_is_aborted() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"unread".to_vec()))
+            .mount(&mock)
+            .await;
+        let response = reqwest::Client::new()
+            .get(mock.uri())
+            .send()
+            .await
+            .expect("mock GET must succeed");
+
+        let scheduler = scheduler(1);
+        let slot = scheduler.acquire_request().await;
+        let (_reader, abort_handle) = spawn_byte_stream_producer(response, slot);
+        // Single-threaded runtime: the spawned task cannot have run yet, so
+        // this proves the slot releases with the aborted future itself, not
+        // via the drain loop noticing the abort.
+        abort_handle.abort();
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            scheduler.acquire_request(),
+        )
+        .await
+        .expect("aborting the producer must still release the slot");
+    }
 }

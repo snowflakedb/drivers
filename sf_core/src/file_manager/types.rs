@@ -1,3 +1,4 @@
+use super::scheduler::TransferScheduler;
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::apis::operation_ctx::CleanupScope;
 use crate::compression_types::CompressionType;
@@ -787,17 +788,18 @@ pub trait StageInfoRefresher: Send + Sync {
 }
 
 /// Per-transfer capabilities threaded down the PUT/GET spine: how to refresh
-/// expiring stage credentials, and where to register cancellation cleanup.
+/// expiring stage credentials, where to register cancellation cleanup, and which
+/// budget the transfer's cloud requests draw on.
 ///
 /// Bundled for the reason [`StageTransport`] is (see its doc comment) — loose
 /// optional parameters on this chain get forgotten at a call site.
 ///
-/// Only functions needing *both* capabilities take the bundle; one needing a single
-/// capability takes that one, so its signature says what it can do. Hence the two
-/// asymmetric shapes further down: a helper that only refreshes credentials takes
-/// `Option<&dyn StageInfoRefresher>` and receives [`Self::refresher`], while
-/// `s3_multipart_upload` / `gcs_resumable_upload` take `Option<&CleanupScope>` and
-/// receive [`Self::cleanup`] — they sit *inside* the credential-refresh retry loop,
+/// Functions take the bundle when they need more than one of these; one needing a
+/// single capability takes that one, so its signature says what it can do. Hence
+/// the asymmetric shapes further down: a helper that only refreshes credentials
+/// takes `Option<&dyn StageInfoRefresher>` and receives [`Self::refresher`], and
+/// one that only registers cleanup takes `Option<&CleanupScope>` and receives
+/// [`Self::cleanup`] — the latter sit *inside* the credential-refresh retry loop,
 /// so refreshing is already handled above them and a refresher would be dead
 /// weight they could wrongly use.
 #[derive(Clone, Copy, Default)]
@@ -810,23 +812,50 @@ pub struct TransferCtx<'a> {
     /// this transfer — an internal caller, a test, or an RPC not marked
     /// `async_first` — so nothing is registered.
     pub cleanup: Option<&'a CleanupScope>,
+    /// The budget every cloud request of the transfer draws on, shared across the
+    /// batch's files. The multipart control requests (create/complete/abort,
+    /// resumable initiate) and the cancellation abort path are the exceptions.
+    ///
+    /// `None` means the caller has no batch to share with — an internal
+    /// single-file caller or a test — and the callee builds a batch-of-one
+    /// scheduler sized from its own `MultipartParams`
+    /// (`file_manager::scheduler_for`).
+    pub(crate) scheduler: Option<&'a TransferScheduler>,
 }
 
 impl<'a> TransferCtx<'a> {
-    /// Credential refresh only — for a transfer that cannot be cancelled.
+    /// Credential refresh only — for a transfer that cannot be cancelled and has
+    /// no batch budget to join.
     pub fn with_refresher(refresher: &'a dyn StageInfoRefresher) -> Self {
         Self {
             refresher: Some(refresher),
-            cleanup: None,
+            ..Self::default()
         }
     }
 
-    /// Both capabilities, from the optional handles the callers hold.
+    /// Refresh + cleanup, from the optional handles the callers hold. Leaves
+    /// `scheduler` unset; chain [`Self::with_scheduler`] to join a batch budget.
     pub fn new(
         refresher: Option<&'a dyn StageInfoRefresher>,
         cleanup: Option<&'a CleanupScope>,
     ) -> Self {
-        Self { refresher, cleanup }
+        Self {
+            refresher,
+            cleanup,
+            scheduler: None,
+        }
+    }
+
+    /// Joins `scheduler`'s budget, so this transfer's cloud requests are counted
+    /// against the same ceiling as the rest of its batch.
+    ///
+    /// Crate-internal alongside the field it sets: [`TransferScheduler`] is not
+    /// on the public surface, so an external caller has nothing to pass here.
+    pub(crate) fn with_scheduler(self, scheduler: &'a TransferScheduler) -> Self {
+        Self {
+            scheduler: Some(scheduler),
+            ..self
+        }
     }
 }
 

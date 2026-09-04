@@ -450,6 +450,7 @@ impl DatabaseDriverV1 {
                 Some(&refresher as &dyn file_manager::StageInfoRefresher),
                 resolved.encryption_material,
                 decompress,
+                resolved.multipart,
             )
             .await
             .map_err(|e| {
@@ -643,6 +644,7 @@ struct ResolvedDownload {
     encryption_material: Option<file_manager::EncryptionMaterial>,
     presigned_url: Option<String>,
     initial_snapshot: file_manager::StageInfoSnapshot,
+    multipart: file_manager::MultipartParams,
 }
 
 /// Parses a GET's GS `response` into a [`ResolvedDownload`]: rejects a
@@ -717,6 +719,7 @@ fn resolve_download_target(
     Ok(ResolvedDownload {
         src_location,
         stage_info: download_data.stage_info,
+        multipart: download_data.multipart,
         encryption_material: download_data
             .encryption_materials
             .into_iter()
