@@ -39,7 +39,7 @@ use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
 use crate::api::odbc_installer::resolve_driver_name;
 use crate::api::runtime::global;
-use crate::api::utils::zero_padded_driver_version;
+use crate::api::utils::{config_setting_bool, zero_padded_driver_version};
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcError, OdbcResult, conn_from_handle, env_from_handle,
     types::{AccessMode, AutocommitValue, ConnectionAttribute, Dbc, StatementState},
@@ -1055,7 +1055,10 @@ pub fn native_sql<E: OdbcEncoding>(
 }
 
 /// Query a session parameter from sf_core's cached session state.
-fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResult<Option<String>> {
+fn get_session_parameter(
+    conn_handle: &ConnectionHandle,
+    key: &str,
+) -> OdbcResult<Option<ConfigSetting>> {
     global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         let resp = c
             .connection_get_parameter(ConnectionGetParameterRequest {
@@ -1063,7 +1066,7 @@ fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResul
                 key: key.to_string(),
             })
             .await?;
-        Ok(resp.value)
+        Ok(resp.typed_value)
     })
 }
 
@@ -1551,7 +1554,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             drop(connection);
             let val: sql::UInteger = match maybe_conn_handle {
                 Some(conn_handle) => match get_session_parameter(&conn_handle, "AUTOCOMMIT") {
-                    Ok(Some(v)) if v.eq_ignore_ascii_case("true") => {
+                    Ok(Some(v)) if config_setting_bool(&v) => {
                         dbc.connection.lock().cached_autocommit = AutocommitValue::On;
                         AutocommitValue::On.as_raw()
                     }
