@@ -1,7 +1,7 @@
-import type { CoreConnectionInstance, CoreColumnInstance } from '../core/index.js';
+import type { CoreColumnInstance, CoreConnectionInstance } from '../core/index.js';
 import type { CellConverter, ConversionContext, DataType, RowMode } from './types.js';
-import SessionParameterName from '../constants/SessionParameterName.js';
 import { resolveColumnNames } from './column-names.js';
+import { readSessionParameters } from './session-parameters.js';
 import {
   binaryAsStringConverter,
   booleanAsStringConverter,
@@ -40,10 +40,6 @@ const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
   JSON: ['variant'],
 };
 
-function isSessionParameterEnabled(connection: CoreConnectionInstance, name: string): boolean {
-  return connection.getSessionParameter(name)?.toLowerCase() === 'true';
-}
-
 function selectConverter(
   column: CoreColumnInstance,
   asStringColumnTypes: ReadonlySet<string>,
@@ -81,10 +77,7 @@ export function createRowFormatter({
   const asStringColumnTypes = new Set(
     (fetchAsString ?? []).flatMap((token) => COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN[token]),
   );
-  const treatIntegerAsBigInt = isSessionParameterEnabled(
-    connection,
-    SessionParameterName.JS_TREAT_INTEGER_AS_BIGINT,
-  );
+  const { treatIntegerAsBigInt } = readSessionParameters(connection);
 
   const columnConverters: ColumnConverter[] = [];
   for (const column of columns) {

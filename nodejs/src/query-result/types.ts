@@ -19,6 +19,10 @@ export type CellConverter = (value: unknown, context: ConversionContext) => unkn
 
 export type Column = CoreColumnInstance;
 
+export interface SessionParameters {
+  treatIntegerAsBigInt: boolean;
+}
+
 export interface RowOptions {
   rowMode?: RowMode;
   fetchAsString?: DataType[];
