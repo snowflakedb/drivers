@@ -11,5 +11,19 @@ coverage/
 snowflake.log
 npm-debug.log*
 
-# We want CI/Devs to install latest available versions to catch issues early
+# package-lock.json is intentionally not committed.
+#
+# As a published npm library we don't ship our lock file to customers, so they
+# resolve our dependency ranges fresh (new projects, no lockfile). Committing a
+# lock file here would let CI/dev builds pass against pinned transitive versions
+# that our users never get, hiding breakage until they report it.
+#
+# Running installs unlocked gives us an early signal when a downstream
+# dependency release breaks resolution. Example: in May 2026 an aws-sdk minor
+# silently dropped Node 18 support and we caught it in CI before customers did.
+#
+# Trade-off: this makes main more susceptible to breakage from an upstream
+# release landing between merges. The preferred fix is to bump/adjust our
+# declared ranges when a release breaks us; pinning an exact version is also
+# acceptable when there's no alternative.
 package-lock.json
