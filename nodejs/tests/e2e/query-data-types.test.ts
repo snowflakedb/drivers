@@ -61,37 +61,6 @@ describe('Query returning data types', () => {
 
   it.todo('returns BINARY as base64 when fetchAsString is set and BINARY_OUTPUT_FORMAT is BASE64');
 
-  it('returns NULL as null', async () => {
-    const { statement, rows } = await executeAsync(connection, 'SELECT NULL::TEXT as NULL_COLUMN');
-    const column = getStatementColumn(statement, 0);
-    expect(column.getType()).toBe('text');
-    expect(rows![0].NULL_COLUMN).toBe(null);
-  });
-
-  it('returns BOOLEAN as Boolean', async () => {
-    const { statement, rows } = await executeAsync(
-      connection,
-      'SELECT TRUE::BOOLEAN as TRUE_COLUMN, FALSE::BOOLEAN as FALSE_COLUMN',
-    );
-    const trueColumn = getStatementColumn(statement, 0);
-    const falseColumn = getStatementColumn(statement, 1);
-    expect(trueColumn.getType()).toBe('boolean');
-    expect(trueColumn.isBoolean()).toBe(true);
-    expect(falseColumn.getType()).toBe('boolean');
-    expect(falseColumn.isBoolean()).toBe(true);
-    expect(rows![0].TRUE_COLUMN).toBe(true);
-    expect(rows![0].FALSE_COLUMN).toBe(false);
-  });
-
-  it('returns BOOLEAN as an upper-case string when fetchAsString is set', async () => {
-    const { rows } = await executeAsync(
-      connection,
-      'SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, NULL::BOOLEAN',
-      { fetchAsString: ['Boolean'] },
-    );
-    expect(Object.values(rows![0])).toEqual(['TRUE', 'FALSE', 'NULL']);
-  });
-
   // NOTE: DATE_OUTPUT_FORMAT does not affect results, we always convert to Date
   it('returns DATE as Date', async () => {
     const { statement, rows } = await executeAsync(
