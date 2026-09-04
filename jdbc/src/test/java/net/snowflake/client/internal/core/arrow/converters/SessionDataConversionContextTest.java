@@ -20,6 +20,7 @@ import net.snowflake.client.internal.api.implementation.parameters.CoreParameter
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
+import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
@@ -45,7 +46,9 @@ public class SessionDataConversionContextTest {
     for (Map.Entry<String, String> entry : params.entrySet()) {
       when(api.connectionGetParameter(any(), eq(entry.getKey())))
           .thenReturn(
-              ConnectionGetParameterResponse.newBuilder().setValue(entry.getValue()).build());
+              ConnectionGetParameterResponse.newBuilder()
+                  .setTypedValue(ConfigSettingFactory.from(entry.getValue()))
+                  .build());
     }
     ParametersRegistry registry =
         new CoreParametersRegistry(api, ConnectionHandle.getDefaultInstance());
