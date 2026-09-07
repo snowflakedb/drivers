@@ -4,7 +4,7 @@ Apply this rule whenever you write, edit, or review a `CHANGELOG.md` file in thi
 
 ## File structure
 
-- Component changelogs live at `<component>/CHANGELOG.md` (e.g. `python/CHANGELOG.md`, `nodejs/CHANGELOG.md`).
+- Component changelogs live at `<component>/CHANGELOG.md` (e.g. `odbc/CHANGELOG.md`, `sf_core/CHANGELOG.md`).
 - The first section is always `## Upcoming Release` for in-progress work.
 - Shipped releases use `## X.Y.Z` headings below that.
 - Within a release, group entries under plain-text section labels followed by a colon and a blank line. Order: `Breaking changes:` (only when present), `New features:`, `Changes:`, `Bug fixes:`, `Dependencies:`, `Internal changes:`. Omit empty sections.
@@ -12,14 +12,14 @@ Apply this rule whenever you write, edit, or review a `CHANGELOG.md` file in thi
 
 ## PR link requirement
 
-Every bullet entry **must** end with a PR link in the format `(snowflakedb/drivers#N)` where N is the pull request number. An entry without a PR link is incomplete and must not be merged.
+Every bullet entry **must** end with a PR link in the format `(snowflake-eng/drivers#N)` where N is the pull request number. An entry without a PR link is incomplete and must not be merged.
 
 ```
 # ❌ Missing PR link
 - Fixed connection reset on idle timeout.
 
 # ✅ Correct
-- Fixed connection reset on idle timeout. (snowflakedb/drivers#42)
+- Fixed connection reset on idle timeout. (snowflake-eng/drivers#42)
 ```
 
 For multi-line entries (parent bullet + indented sub-bullets), place the PR link on the parent bullet line.
@@ -30,7 +30,7 @@ For multi-line entries (parent bullet + indented sub-bullets), place the PR link
 - One sentence per entry; avoid internal jargon.
 - Customer-invisible changes (CI automation, internal telemetry, repo hygiene with no user-visible effect) belong in `Internal changes:`.
 
-These rules apply at write-time. For interactive changelog cleanup and sorting, invoke the `changelog-cleanup` skill.
+These rules apply at write-time.
 
 <!-- sync-target: .cursor/rules/changelog-format.mdc carries an identical body
      (the full content of this file) plus Cursor-specific frontmatter.
