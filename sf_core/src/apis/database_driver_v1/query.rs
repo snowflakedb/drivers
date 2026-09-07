@@ -845,17 +845,45 @@ macro_rules! int64_array {
     };
 }
 
+struct PutColumnNames {
+    source_size: &'static str,
+    target_size: &'static str,
+    source_compression: &'static str,
+    target_compression: &'static str,
+}
+
+fn put_column_names(flavor: &PutGetResultsetFlavor) -> PutColumnNames {
+    match flavor {
+        PutGetResultsetFlavor::NodeJs => PutColumnNames {
+            source_size: "sourceSize",
+            target_size: "targetSize",
+            source_compression: "sourceCompression",
+            target_compression: "targetCompression",
+        },
+        PutGetResultsetFlavor::Python
+        | PutGetResultsetFlavor::Odbc
+        | PutGetResultsetFlavor::Jdbc => PutColumnNames {
+            source_size: "source_size",
+            target_size: "target_size",
+            source_compression: "source_compression",
+            target_compression: "target_compression",
+        },
+    }
+}
+
 fn upload_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
+    let flavor = &wrapper_presets.put_get_resultset_flavor;
+    let names = put_column_names(flavor);
     let mut row_types = vec![
         build_generic_text_rowtype("source"),
         build_generic_text_rowtype("target"),
-        build_generic_fixed_rowtype("source_size"),
-        build_generic_fixed_rowtype("target_size"),
-        build_generic_text_rowtype("source_compression"),
-        build_generic_text_rowtype("target_compression"),
+        build_generic_fixed_rowtype(names.source_size),
+        build_generic_fixed_rowtype(names.target_size),
+        build_generic_text_rowtype(names.source_compression),
+        build_generic_text_rowtype(names.target_compression),
         build_generic_text_rowtype("status"),
     ];
-    if emits_encryption_column(&wrapper_presets.put_get_resultset_flavor) {
+    if emits_encryption_column(flavor) {
         row_types.push(build_generic_text_rowtype("encryption"));
     }
     row_types.push(build_generic_text_rowtype("message"));
@@ -1225,6 +1253,46 @@ mod tests {
         assert_eq!(columns[4].r#type, "TEXT");
 
         assert_eq!(columns[5].name, "target_compression");
+        assert_eq!(columns[5].r#type, "TEXT");
+
+        assert_eq!(columns[6].name, "status");
+        assert_eq!(columns[6].r#type, "TEXT");
+
+        assert_eq!(columns[7].name, "message");
+        assert_eq!(columns[7].r#type, "TEXT");
+    }
+
+    #[test]
+    fn upload_column_metadata_has_correct_structure_nodejs() {
+        let columns = upload_column_metadata(&WrapperPresets::nodejs());
+
+        assert_eq!(
+            columns.len(),
+            8,
+            "PUT (Node.js) should have 8 columns and no encryption column"
+        );
+
+        assert_eq!(columns[0].name, "source");
+        assert_eq!(columns[0].r#type, "TEXT");
+
+        assert_eq!(columns[1].name, "target");
+        assert_eq!(columns[1].r#type, "TEXT");
+
+        assert_eq!(columns[2].name, "sourceSize");
+        assert_eq!(columns[2].r#type, "FIXED");
+        assert_eq!(
+            columns[2].precision,
+            Some(PUT_GET_ROWSET_FIXED_LENGTH as i64)
+        );
+        assert_eq!(columns[2].scale, Some(0));
+
+        assert_eq!(columns[3].name, "targetSize");
+        assert_eq!(columns[3].r#type, "FIXED");
+
+        assert_eq!(columns[4].name, "sourceCompression");
+        assert_eq!(columns[4].r#type, "TEXT");
+
+        assert_eq!(columns[5].name, "targetCompression");
         assert_eq!(columns[5].r#type, "TEXT");
 
         assert_eq!(columns[6].name, "status");

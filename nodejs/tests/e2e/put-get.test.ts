@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type { Connection } from '../types/sdk-types.js';
+import type { Connection, RowStatement } from '../types/sdk-types.js';
 import {
   createRandomFileName,
   createTestDir,
@@ -13,7 +13,9 @@ import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
+  expectColumnsNames,
   getSnowflakeSDK,
+  isRunningNewDriverWithBD,
   randomizeName,
 } from './utils/index.js';
 
@@ -31,26 +33,30 @@ const COL2_DATA = 'SECOND';
 const COL3_DATA = 'THIRD';
 const ROW_DATA = `${COL1_DATA},${COL2_DATA},${COL3_DATA}\n`.repeat(4);
 const ROW_DATA_SIZE = 76;
+const ENCRYPTED_ROW_DATA_SIZE = 80;
+
+const PUT_COLUMNS = [
+  'source',
+  'target',
+  'sourceSize',
+  'targetSize',
+  'sourceCompression',
+  'targetCompression',
+  'status',
+  'message',
+];
+const GET_COLUMNS = ['file', 'size', 'status', 'message'];
 
 // The file content is always plain CSV; the extension alone tells the driver the file is
 // already compressed, so it is uploaded and downloaded untouched.
 const compressionCases = [
-  { name: 'gzip', extension: '.gz' },
-  { name: 'bzip2', extension: '.bz2' },
-  { name: 'brotli', extension: '.br' },
-  { name: 'deflate', extension: '.deflate' },
-  { name: 'raw deflate', extension: '.raw_deflate' },
-  { name: 'zstd', extension: '.zst' },
+  { name: 'gzip', extension: '.gz', targetCompression: 'GZIP' },
+  { name: 'bzip2', extension: '.bz2', targetCompression: 'BZIP2' },
+  { name: 'brotli', extension: '.br', targetCompression: 'BROTLI' },
+  { name: 'deflate', extension: '.deflate', targetCompression: 'DEFLATE' },
+  { name: 'raw deflate', extension: '.raw_deflate', targetCompression: 'RAW_DEFLATE' },
+  { name: 'zstd', extension: '.zst', targetCompression: 'ZSTD' },
 ];
-
-async function executeAsyncAndExpectOneRow(
-  connection: Connection,
-  sqlText: string,
-): Promise<Record<string, unknown>> {
-  const { rows } = await executeAsync(connection, sqlText);
-  expect(rows).toHaveLength(1);
-  return rows[0];
-}
 
 describe('PUT GET', () => {
   const snowflake = getSnowflakeSDK();
@@ -65,7 +71,7 @@ describe('PUT GET', () => {
     await destroyConnectionAsync(connection);
   });
 
-  describe.for(compressionCases)('$name', ({ name, extension }) => {
+  describe.for(compressionCases)('$name', ({ name, extension, targetCompression }) => {
     const tableName = randomizeName('TEMP_TABLE');
     const stage = `@${DATABASE_NAME}.${SCHEMA_NAME}.%${tableName}`;
 
@@ -97,11 +103,24 @@ describe('PUT GET', () => {
     });
 
     it('uploads the file to the stage', async () => {
-      const uploaded = await executeAsyncAndExpectOneRow(
+      const { statement, rows } = await executeAsync(
         connection,
         `PUT ${toFileUrl(uploadedFile)} ${stage}`,
       );
-      expect(uploaded.status).toBe(UPLOADED);
+      expectColumnsNames(statement as RowStatement, PUT_COLUMNS);
+
+      expect(rows).toMatchObject([
+        {
+          source: path.basename(uploadedFile),
+          target: path.basename(uploadedFile),
+          sourceSize: ROW_DATA_SIZE,
+          targetSize: isRunningNewDriverWithBD('BD#23') ? ENCRYPTED_ROW_DATA_SIZE : ROW_DATA_SIZE,
+          sourceCompression: isRunningNewDriverWithBD('BD#24') ? targetCompression : null,
+          targetCompression,
+          status: UPLOADED,
+          message: isRunningNewDriverWithBD('BD#25') ? '' : undefined,
+        },
+      ]);
     });
 
     it('copies the staged file into the table', async () => {
@@ -117,14 +136,22 @@ describe('PUT GET', () => {
     });
 
     it('downloads the file from the stage', async () => {
-      const downloaded = await executeAsyncAndExpectOneRow(
+      const { statement, rows } = await executeAsync(
         connection,
         `GET ${stage} ${toFileUrl(downloadDir)}`,
       );
-      expect(downloaded.status).toBe(DOWNLOADED);
-      expect(downloaded.size).toBe(ROW_DATA_SIZE);
+      expectColumnsNames(statement as RowStatement, GET_COLUMNS);
 
-      const downloadedFile = path.join(downloadDir, downloaded.file as string);
+      expect(rows).toMatchObject([
+        {
+          file: path.basename(uploadedFile),
+          size: ROW_DATA_SIZE,
+          status: DOWNLOADED,
+          message: isRunningNewDriverWithBD('BD#25') ? '' : undefined,
+        },
+      ]);
+
+      const downloadedFile = path.join(downloadDir, rows[0].file as string);
       expect(fs.readFileSync(downloadedFile, 'utf8')).toBe(ROW_DATA);
     });
   });

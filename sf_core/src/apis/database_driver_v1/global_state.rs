@@ -29,10 +29,11 @@ pub enum PutGetResultsetFlavor {
     Python,
     Odbc,
     Jdbc,
+    NodeJs,
 }
 
-/// Immutable behavioural presets declared by each wrapper (Python, ODBC, JDBC)
-/// at startup. These are **not** exposed to end users — they capture
+/// Immutable behavioural presets declared by each wrapper (Python, ODBC, JDBC,
+/// Node.js) at startup. These are **not** exposed to end users — they capture
 /// compile-time / init-time differences between wrappers so that shared Rust
 /// code can branch on them without hard-coding wrapper knowledge everywhere.
 #[derive(Debug, Clone)]
@@ -79,12 +80,12 @@ impl Default for WrapperPresets {
     /// `put_get_fastfail_default` `bool::default() == false`, flipping every
     /// wrapper but ODBC to collect-all by accident.
     ///
-    /// `configuration_flavor` is `Wrapper::Python`, so any wrapper without its
-    /// own constructor here — today the Node.js bridge and .NET — resolves
-    /// aliases under the Python flavor, and a `NodeJs`- or `DotNet`-scoped alias
-    /// in `sf_params_spec` is inert until that wrapper gets a
-    /// `WrapperPresets::…()` beside [`Self::python`], [`Self::odbc`] and
-    /// [`Self::jdbc`].
+    /// `configuration_flavor` is `Wrapper::Python`, so a wrapper resolving aliases
+    /// under the Python flavor leaves its own scoped aliases in `sf_params_spec`
+    /// inert. That covers .NET (no constructor yet) and, on purpose,
+    /// [`Self::nodejs`], which has a constructor but keeps `Wrapper::Python`
+    /// because only its PUT/GET result-set flavor differs -- beside
+    /// [`Self::python`], [`Self::odbc`] and [`Self::jdbc`].
     fn default() -> Self {
         Self {
             configuration_flavor: Wrapper::Python,
@@ -130,6 +131,14 @@ impl WrapperPresets {
             legacy_empty_get_on_missing: true,
             honor_put_get_disable: true,
             clear_query_context_on_null_entries: false,
+            ..Self::default()
+        }
+    }
+
+    /// Presets for the Node.js bridge.
+    pub fn nodejs() -> Self {
+        Self {
+            put_get_resultset_flavor: PutGetResultsetFlavor::NodeJs,
             ..Self::default()
         }
     }
