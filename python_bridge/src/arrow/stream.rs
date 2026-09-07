@@ -8,10 +8,6 @@ use crate::arrow::error::{
     BatchReadSnafu, NullStreamPointerSnafu, ReaderCreateSnafu, StreamError, StreamNotReleasedSnafu,
 };
 
-/// Consumes an Arrow C Data Interface stream and yields [`RecordBatch`]es.
-///
-/// The stream pointer is owned by this struct; dropping it releases the
-/// underlying `ArrowArrayStream`
 pub(crate) struct RowStream {
     reader: ArrowArrayStreamReader,
 }

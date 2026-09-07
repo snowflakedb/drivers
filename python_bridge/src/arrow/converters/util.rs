@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), expect(dead_code))]
-
 use arrow::array::{Array, ArrayRef};
 use arrow::datatypes::DataType;
 use pyo3::exceptions::PyValueError;

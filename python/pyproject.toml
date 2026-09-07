@@ -85,6 +85,7 @@ include = [
     "sf_core/",
     "python_bridge/",
     "sf_params_spec/",
+    "sf_types/",
     "proto_utils/",
     "proto_generator/",
     "protobuf/",
@@ -98,6 +99,7 @@ exclude = [
     "sf_core/target/",
     "python_bridge/target/",
     "sf_params_spec/target/",
+    "sf_types/target/",
     "proto_utils/target/",
     # Exclude sf_core tests (except arrow_deserialize_macro which is a dev-dependency)
     "sf_core/tests/e2e/",
@@ -343,7 +345,8 @@ install-wheel = [
   "uv pip install {env:WHEEL_PATH:dist/*.whl}",
   "python hatch_native_arrow.py",
 ]
-cov = "true {args}"
+# BOOLEAN-only until TEXT and NUMBER converters can serve execute_query status rows.
+cov = "pytest tests/e2e/types/test_boolean.py --deselect tests/e2e/types/test_boolean.py::TestBooleanTable --deselect tests/e2e/types/test_boolean.py::TestBooleanBinding::test_should_insert_boolean_using_parameter_binding --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # Pandas-specific CI test environment
 [tool.hatch.envs.test-pandas]

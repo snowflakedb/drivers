@@ -1,19 +1,15 @@
-//! Adapter from [`odbc_decode`](crate::arrow::odbc_decode) to Python cells.
+//! Adapter from [`sf_types`] readers to Python cells.
 //!
 //! A decoder produces an intermediate Rust representation; a
 //! [`PyMaterializer`] turns that value into a Python object. Null → `None`
-//! and exception mapping live here, not in `odbc_decode`.
-//!
-//! Production callers are `Column` variants; those land with each converter.
-
-#![cfg_attr(not(test), expect(dead_code))]
+//! and exception mapping live here, not in `sf_types`.
 
 use arrow::array::Array;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use sf_types::{ReadArrowError, ReadArrowType, SnowflakeType};
 
 use super::util::py_none;
-use crate::arrow::odbc_decode::{DecodeError, ReadArrowType, SnowflakeType};
 
 pub(crate) trait PyMaterializer<D: SnowflakeType>: Send + Sync {
     fn materialize<'py>(
@@ -64,7 +60,7 @@ where
 {
     match decoder.read_arrow_type(array, row) {
         Ok(value) => Ok(Some(value)),
-        Err(DecodeError::NullValue { .. }) => Ok(None),
+        Err(ReadArrowError::NullValue { .. }) => Ok(None),
         Err(err) => Err(PyValueError::new_err(err.to_string())),
     }
 }
@@ -75,12 +71,12 @@ mod tests {
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
     use pyo3::types::PyInt;
+    use sf_types::{
+        InvalidArrowValueSnafu, NullValueSnafu, ReadArrowError, ReadArrowType, SnowflakeType,
+    };
 
     use super::{PyMaterializer, TypedColumn, decode_optional};
     use crate::arrow::converters::test_util::assert_py_none;
-    use crate::arrow::odbc_decode::{
-        DecodeError, InvalidArrowValueSnafu, NullValueSnafu, ReadArrowType, SnowflakeType,
-    };
 
     /// Test double — not a production datatype reader.
     struct Probe;
@@ -90,7 +86,11 @@ mod tests {
     }
 
     impl ReadArrowType<Int32Array> for Probe {
-        fn read_arrow_type(&self, array: &Int32Array, row_idx: usize) -> Result<i32, DecodeError> {
+        fn read_arrow_type(
+            &self,
+            array: &Int32Array,
+            row_idx: usize,
+        ) -> Result<i32, ReadArrowError> {
             if array.is_null(row_idx) {
                 return NullValueSnafu.fail();
             }

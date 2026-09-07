@@ -7,6 +7,7 @@ use crate::arrow::batch_converter::BatchConverter;
 use crate::arrow::plan::{LogicalPlan, SnowflakeFieldType};
 
 use super::Column;
+use super::boolean;
 
 pub(crate) struct ConversionContext {
     plan: LogicalPlan,
@@ -32,10 +33,11 @@ impl ConversionContext {
 
     pub(crate) fn converter_from_column(
         &self,
-        _array: &ArrayRef,
+        array: &ArrayRef,
         field_type: &SnowflakeFieldType,
     ) -> PyResult<Column> {
         match *field_type {
+            SnowflakeFieldType::Boolean => boolean::from_column(array, field_type),
             SnowflakeFieldType::Varchar { .. }
             | SnowflakeFieldType::Number { .. }
             | SnowflakeFieldType::Date
@@ -43,7 +45,6 @@ impl ConversionContext {
             | SnowflakeFieldType::TimestampNtz { .. }
             | SnowflakeFieldType::TimestampLtz { .. }
             | SnowflakeFieldType::TimestampTz { .. }
-            | SnowflakeFieldType::Boolean
             | SnowflakeFieldType::Binary { .. }
             | SnowflakeFieldType::Real
             | SnowflakeFieldType::Decfloat { .. }

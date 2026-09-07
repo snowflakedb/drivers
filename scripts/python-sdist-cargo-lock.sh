@@ -18,6 +18,7 @@ members=(
   sf_core
   python_bridge
   sf_params_spec
+  sf_types
   proto_utils
   error_trace
   error_trace_derive

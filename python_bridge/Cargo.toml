@@ -11,12 +11,13 @@ crate-type = ["cdylib", "rlib"]
 default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
 vendored-openssl = ["sf_core/vendored-openssl"]
-native-arrow = ["dep:arrow", "dep:snafu", "dep:error_trace"]
+native-arrow = ["dep:arrow", "dep:snafu", "dep:error_trace", "dep:sf_types"]
 
 [dependencies]
 arrow = { version = ">=54.0.0, <59", features = ["ffi"], optional = true }
 snafu = { version = "0.8", optional = true }
 error_trace = { path = "../error_trace", optional = true }
+sf_types = { path = "../sf_types", optional = true }
 
 sf_core = { path = "../sf_core" }
 proto_utils = { path = "../proto_utils" }
