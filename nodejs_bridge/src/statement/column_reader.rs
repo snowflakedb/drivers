@@ -11,7 +11,7 @@ use super::column_reader_util::{
 use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
 use super::time_format;
-use crate::session_params::SessionParams;
+use crate::session_params::KnownSessionParameters;
 use sf_types::ReadArrowType;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -27,16 +27,13 @@ const SECONDS_PER_DAY: i64 = 86_400;
 
 /// Per-column state a `TIME` decoder needs beyond the raw Arrow array:
 /// the column's declared scale (0-9 fractional-second digits) and the
-/// session's `TIME_OUTPUT_FORMAT` at the time the stream was built. A
-/// named struct, not a positional tuple, so the two `Time*` variants below
-/// can't have `scale`/`format` swapped at a construction or match site.
-///
-/// `format` is an `Arc<str>` clone of `SessionParams::time_format`, not an
-/// owned `String` copy — cloning an `Arc` is a refcount bump, not a heap
-/// allocation, and every TIME column in a batch shares the same format.
+/// session parameters the stream was built with, whose `time_output_format`
+/// the renderer reads. A named struct, not a positional tuple, so the two
+/// `Time*` variants below can't have `scale`/`params` swapped at a construction
+/// or match site.
 pub(crate) struct TimeMeta {
     scale: u32,
-    format: Arc<str>,
+    params: Arc<KnownSessionParameters>,
 }
 
 /// Decodes one Arrow column into [`JsCell`]s, one cell at a time.
@@ -67,7 +64,7 @@ impl ColumnReader {
     pub(crate) fn for_field(
         field: &Field,
         column: &dyn Array,
-        session_params: &SessionParams,
+        session_params: &Arc<KnownSessionParameters>,
     ) -> Result<Self, String> {
         match field.metadata().get("logicalType").map(String::as_str) {
             Some("TEXT") => {
@@ -153,7 +150,7 @@ impl ColumnReader {
                 }
                 let meta = TimeMeta {
                     scale,
-                    format: session_params.time_format.clone(),
+                    params: Arc::clone(session_params),
                 };
                 match column.data_type() {
                     DataType::Int32 => {
@@ -383,7 +380,7 @@ where
         .unwrap_or_else(|_| {
             unreachable!("non-null, range-validated TIME cell always decodes to a NaiveTime")
         });
-    time_format::render(time, meta.scale, &meta.format)
+    time_format::render(time, meta.scale, &meta.params.time_output_format)
 }
 
 #[cfg(test)]
@@ -409,10 +406,11 @@ mod tests {
         Field::new("C", data_type, true).with_metadata(metadata)
     }
 
-    fn session_params(time_format: &str) -> SessionParams {
-        SessionParams {
-            time_format: Arc::from(time_format),
-        }
+    fn session_params(time_format: &str) -> Arc<KnownSessionParameters> {
+        Arc::new(KnownSessionParameters {
+            time_output_format: time_format.to_string(),
+            ..KnownSessionParameters::test_defaults()
+        })
     }
 
     fn reader_with_format(field: &Field, column: &dyn Array, time_format: &str) -> ColumnReader {

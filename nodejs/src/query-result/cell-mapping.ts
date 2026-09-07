@@ -1,7 +1,6 @@
 import type { CoreColumnInstance, CoreConnectionInstance } from '../core/index.js';
 import type { CellConverter, ConversionContext, DataType, RowOptions } from './types.js';
 import { resolveColumnNames } from './column-names.js';
-import { readSessionParameters } from './session-parameters.js';
 import {
   binaryAsStringConverter,
   booleanAsStringConverter,
@@ -86,7 +85,7 @@ export function createRowFormatter({
   const asStringColumnTypes = new Set(
     rowOptions.fetchAsString.flatMap((token) => COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN[token]),
   );
-  const { treatIntegerAsBigInt } = readSessionParameters(connection);
+  const { jsTreatIntegerAsBigInt: treatIntegerAsBigInt } = connection.getSessionParameters();
 
   const columnConverters: ColumnConverter[] = [];
   for (const column of columns) {

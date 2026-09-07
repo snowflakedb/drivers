@@ -11,7 +11,7 @@ pub use column::Column;
 
 use crate::DRIVER;
 use crate::error::{BridgeError, ToJsError, UnusableConnection, async_to_js};
-use crate::session_params::SessionParams;
+use crate::session_params::KnownSessionParameters;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use result::{ResultData, StatementResult};
@@ -173,19 +173,20 @@ impl Statement {
 async fn result_data_from(
     result: ExecuteQueryResult,
     conn_handle: Handle,
-) -> std::result::Result<ResultData, ApiError> {
+) -> std::result::Result<ResultData, BridgeError> {
     let (result_set_handle, result_set_descriptor) = match result {
         ExecuteQueryResult::Single { info, .. } => (info.handle, info.descriptor),
         ExecuteQueryResult::Multi { .. } => {
             return Err(ApiError::invalid_argument(
                 "multi-statement results are not supported yet",
-            ));
+            )
+            .into());
         }
     };
 
     // Snapshotted once here (rather than per-decoder-call) so every column
     // reader in this result set shares the same session-parameter snapshot.
-    let session_params = Arc::new(SessionParams::from_connection(conn_handle).await?);
+    let session_params = Arc::new(KnownSessionParameters::from_connection(conn_handle).await?);
     let batch_reader = DRIVER.result_set_get_stream(result_set_handle).await?;
 
     Ok(ResultData {
