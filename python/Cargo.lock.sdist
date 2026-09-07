@@ -3996,6 +3996,7 @@ dependencies = [
  "pyo3",
  "pyo3-async-runtimes",
  "sf_core",
+ "sf_types",
  "snafu 0.8.9",
  "tokio",
  "tokio-util",
@@ -4811,6 +4812,16 @@ dependencies = [
 [[package]]
 name = "sf_params_spec"
 version = "0.0.0"
+
+[[package]]
+name = "sf_types"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "chrono",
+ "error_trace",
+ "snafu 0.8.9",
+]
 
 [[package]]
 name = "sha1"

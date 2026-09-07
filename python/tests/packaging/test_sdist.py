@@ -221,6 +221,8 @@ class TestSdistPackaging:
                 "python_bridge/src/lib.rs",
                 "sf_params_spec/Cargo.toml",
                 "sf_params_spec/src/lib.rs",
+                "sf_types/Cargo.toml",
+                "sf_types/src/lib.rs",
                 "proto_utils/Cargo.toml",
                 "proto_utils/src/lib.rs",
                 "proto_generator/Cargo.toml",
@@ -248,6 +250,7 @@ class TestSdistPackaging:
             assert "sf_core" in content
             assert "python_bridge" in content
             assert "sf_params_spec" in content
+            assert "sf_types" in content
             assert "proto_utils" in content
             assert "error_trace" in content
             assert "error_trace_derive" in content

@@ -5,6 +5,7 @@ members = [
     "python_bridge",
     "python_bridge/stub_gen",
     "sf_params_spec",
+    "sf_types",
     "proto_utils",
     "error_trace",
     "error_trace_derive",
