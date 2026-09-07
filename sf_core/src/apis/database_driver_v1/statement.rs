@@ -12,8 +12,8 @@ use super::result_set::{
     response_to_descriptor,
 };
 use super::validation::{
-    ValidationIssue, ValidationSeverity, canonicalize_setting_key, resolve_options,
-    validate_statement_option_write,
+    ValidationIssue, ValidationSeverity, canonicalize_setting_key, is_unregistered_param,
+    resolve_options, validate_statement_option_write,
 };
 use crate::apis::operation_ctx::{OperationCtx, run_opt, with_cleanup_opt};
 use crate::config::ParamStore;
@@ -1267,6 +1267,13 @@ fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde
             params.insert(server_name.to_string(), setting_to_json_value(setting));
         }
     }
+    for (key, setting) in settings.iter() {
+        if is_unregistered_param(key) {
+            params
+                .entry(key.to_ascii_uppercase())
+                .or_insert_with(|| setting_to_json_value(setting));
+        }
+    }
     if params.is_empty() {
         None
     } else {
@@ -1510,6 +1517,112 @@ mod tests {
             build_query_parameters(&settings).is_none(),
             "registered client-only statement option must not be forwarded to GS"
         );
+    }
+
+    // SNOW-4072350: statement options with no entry in the param registry
+    // (e.g. DATE_INPUT_FORMAT) were silently dropped by QUERY_PARAMETER_NAMES'
+    // allowlist instead of reaching GS.
+    #[test]
+    fn unregistered_statement_option_is_forwarded_to_gs() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "DATE_INPUT_FORMAT".to_string(),
+            Setting::String("MM-DD-YYYY".to_string()),
+        );
+        let params =
+            build_query_parameters(&settings).expect("unregistered option should be forwarded");
+        assert_eq!(
+            params.get("DATE_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("MM-DD-YYYY".to_string()))
+        );
+    }
+
+    #[test]
+    fn unregistered_statement_option_forwarding_is_not_special_cased_to_date_formats() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "SF_PARTNER".to_string(),
+            Setting::String("FAKE_PARTNER".to_string()),
+        );
+        let params =
+            build_query_parameters(&settings).expect("unregistered option should be forwarded");
+        assert_eq!(
+            params.get("SF_PARTNER"),
+            Some(&serde_json::Value::String("FAKE_PARTNER".to_string()))
+        );
+    }
+
+    #[test]
+    fn unregistered_statement_option_key_is_uppercased_for_gs() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "date_input_format".to_string(),
+            Setting::String("MM-DD-YYYY".to_string()),
+        );
+        let params = build_query_parameters(&settings).expect("should be forwarded");
+        assert_eq!(
+            params.get("DATE_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("MM-DD-YYYY".to_string()))
+        );
+    }
+
+    #[test]
+    fn unregistered_statement_options_coexist_with_registered_ones() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "query_tag".to_string(),
+            Setting::String("stmt_tag".to_string()),
+        );
+        settings.insert(
+            "SF_PARTNER".to_string(),
+            Setting::String("FAKE_PARTNER".to_string()),
+        );
+        let params = build_query_parameters(&settings).expect("both should be forwarded");
+        assert_eq!(params.len(), 2);
+        assert_eq!(
+            params.get("QUERY_TAG"),
+            Some(&serde_json::Value::String("stmt_tag".to_string()))
+        );
+        assert_eq!(
+            params.get("SF_PARTNER"),
+            Some(&serde_json::Value::String("FAKE_PARTNER".to_string()))
+        );
+    }
+
+    #[test]
+    fn unregistered_statement_options_differing_only_in_case_do_not_panic() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "date_input_format".to_string(),
+            Setting::String("MM-DD-YYYY".to_string()),
+        );
+        settings.insert(
+            "DATE_INPUT_FORMAT".to_string(),
+            Setting::String("YYYY-MM-DD".to_string()),
+        );
+        let params = build_query_parameters(&settings).expect("should be forwarded");
+        assert_eq!(params.len(), 1);
+        assert!(params.contains_key("DATE_INPUT_FORMAT"));
+    }
+
+    // Known gap tracked separately from SNOW-4072350: a registered but
+    // Session-only statement option (never Statement-scoped) still hard-errors
+    // instead of falling through as passthrough.
+    #[tokio::test]
+    async fn registered_session_only_statement_option_still_errors() {
+        let ds = DatabaseDriverV1::new();
+        let ch = ds.connection_new();
+        let sh = ds.statement_new(ch).unwrap();
+        let err = ds
+            .statement_set_option(sh, "client_prefetch_threads".into(), Setting::Int(8))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not statement-scoped"),
+            "unexpected: {err}"
+        );
+        ds.statement_release(sh).unwrap();
+        ds.connection_release(ch).unwrap();
     }
 
     #[test]
