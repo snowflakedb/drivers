@@ -8,6 +8,7 @@ use crate::arrow::plan::{LogicalPlan, SnowflakeFieldType};
 
 use super::Column;
 use super::boolean;
+use super::real;
 
 pub(crate) struct ConversionContext {
     plan: LogicalPlan,
@@ -38,6 +39,7 @@ impl ConversionContext {
     ) -> PyResult<Column> {
         match *field_type {
             SnowflakeFieldType::Boolean => boolean::from_column(array, field_type),
+            SnowflakeFieldType::Real => real::from_column(array, field_type),
             SnowflakeFieldType::Varchar { .. }
             | SnowflakeFieldType::Number { .. }
             | SnowflakeFieldType::Date
@@ -46,7 +48,6 @@ impl ConversionContext {
             | SnowflakeFieldType::TimestampLtz { .. }
             | SnowflakeFieldType::TimestampTz { .. }
             | SnowflakeFieldType::Binary { .. }
-            | SnowflakeFieldType::Real
             | SnowflakeFieldType::Decfloat { .. }
             | SnowflakeFieldType::Vector { .. } => Err(PyNotImplementedError::new_err(format!(
                 "native Arrow conversion is not implemented for logical type {}",
