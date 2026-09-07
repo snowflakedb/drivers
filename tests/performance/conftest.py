@@ -10,6 +10,9 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+_ARROW_ONLY_FETCH_MODES = frozenset({"pandas", "arrow_batches"})
+_RESULT_FORMATS = ("arrow", "json")
+
 # Track test failures across the session
 _test_failures = []
 
@@ -100,6 +103,14 @@ def pytest_addoption(parser):
         help="Reuse existing WireMock mappings directory (e.g., 'run_20251230_155413'). Skips recording phase.",
     )
     parser.addoption(
+        "--result-format",
+        action="store",
+        default=None,
+        help="SELECT result format: arrow or json (default: arrow). Sets the "
+        "connector-specific PYTHON/JDBC/ODBC/UNIVERSAL_DRIVER session parameters "
+        "Recorded as the RESULT_FORMAT Benchstore tag; metric names stay unchanged.",
+    )
+    parser.addoption(
         "--regression-check",
         action="store_true",
         default=False,
@@ -155,6 +166,17 @@ def _resolve_parameters_path(config) -> str:
 def _resolve_driver(config) -> str:
     """Resolve the active driver from CLI flag or environment (default: core)."""
     return config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+
+
+def _resolve_result_format(config) -> str:
+    raw = (
+        config.getoption("--result-format") or os.getenv("PERF_RESULT_FORMAT") or "arrow"
+    ).lower()
+    if raw not in _RESULT_FORMATS:
+        raise pytest.UsageError(
+            f"Invalid --result-format '{raw}'. Supported: {', '.join(_RESULT_FORMATS)}"
+        )
+    return raw
 
 
 @pytest.fixture
@@ -238,6 +260,12 @@ def driver(request):
     return _resolve_driver(request.config)
 
 
+@pytest.fixture(scope="session")
+def result_format(request):
+    """SELECT wire format for this session (arrow or json)."""
+    return _resolve_result_format(request.config)
+
+
 @pytest.fixture
 def driver_type(request):
     """Get driver type from command line or environment"""
@@ -262,7 +290,7 @@ def run_id():
 
 
 @pytest.fixture(scope="session")
-def session_results_dir(run_id):
+def session_results_dir(run_id, result_format):
     """
     Create and return run-specific results directory for this test session.
     
@@ -277,9 +305,13 @@ def session_results_dir(run_id):
     run_dir.mkdir(exist_ok=True)
     
     _current_run_dir = run_dir
-    
+    (run_dir / "run_config.json").write_text(
+        json.dumps({"result_format": result_format})
+    )
+
     logger.info(f"Results for this run will be saved to: {run_dir}")
-    
+    logger.info(f"SELECT result format: {result_format}")
+
     log_node_info(collect_node_info())
     
     return run_dir
@@ -336,7 +368,12 @@ def _validate_wiremock_old_driver(driver: str, driver_type: str):
         )
 
 
-def _prepare_setup_queries(test_type: PerfTestType, parameters_json: str, setup_queries: list[str] = None) -> list[str]:
+def _prepare_setup_queries(
+    test_type: PerfTestType,
+    parameters_json: str,
+    setup_queries: list[str] = None,
+    result_format: str = "arrow",
+) -> list[str]:
     """
     Prepare setup queries based on test type.
     
@@ -344,15 +381,23 @@ def _prepare_setup_queries(test_type: PerfTestType, parameters_json: str, setup_
         test_type: Type of test (SELECT, PUT_GET, or SELECT_RECORDED_HTTP)
         parameters_json: JSON string with connection parameters
         setup_queries: Optional user-provided setup queries
-    
+        result_format: wire format for SELECT tests (arrow or json)
+
     Returns:
         List of setup queries with test-type-specific prefixes
     """
     match test_type:
         case PerfTestType.SELECT | PerfTestType.SELECT_RECORDED_HTTP | PerfTestType.CONCURRENT:
-            # SELECT tests: always use ARROW format
-            arrow_query = "alter session set query_result_format = 'ARROW'"
-            return [arrow_query] + (setup_queries or [])
+            fmt = result_format.upper()
+            # connector-specific params override, set all of them, so each path is covered
+            format_queries = [
+                f"alter session set query_result_format = '{fmt}'",
+                f"alter session set python_connector_query_result_format = '{fmt}'",
+                f"alter session set jdbc_query_result_format = '{fmt}'",
+                f"alter session set odbc_query_result_format = '{fmt}'",
+                f"alter session set universal_driver_query_result_format = '{fmt}'",
+            ]
+            return format_queries + (setup_queries or [])
         
         case PerfTestType.PUT_GET:
             # PUT/GET tests: USE DATABASE is required for TEMPORARY STAGE
@@ -369,7 +414,7 @@ def _prepare_setup_queries(test_type: PerfTestType, parameters_json: str, setup_
 
 
 @pytest.fixture
-def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iterations, driver, driver_type, use_local_binary, preserve_mappings, reuse_mappings_dir, request):
+def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iterations, driver, driver_type, use_local_binary, preserve_mappings, reuse_mappings_dir, result_format, request):
     """
     Returns a callable for running performance tests with pre-configured parameters.
     
@@ -380,8 +425,8 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 setup_queries=["ALTER SESSION SET QUERY_TAG = 'perf_test'"]  # optional
             )
     
-    Note: ARROW format is automatically enabled. Any setup_queries provided will be
-    appended after "alter session set query_result_format = 'ARROW'".
+    Note: SELECT tests prepend the connector result-format session parameters
+    from --result-format (default ARROW). Any setup_queries provided are appended after that.
 
     The test_name is automatically derived from the test function name (strips "test_" prefix).
     You can also explicitly provide test_name if needed.
@@ -412,11 +457,23 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         if worker_count < 1:
             raise ValueError(f"worker_count must be >= 1, got {worker_count}")
 
+        if (
+            result_format == "json"
+            and test_type in (PerfTestType.SELECT, PerfTestType.SELECT_RECORDED_HTTP)
+            and fetch_mode in _ARROW_ONLY_FETCH_MODES
+        ):
+            pytest.skip(
+                f"fetch_mode={fetch_mode} requires QUERY_RESULT_FORMAT=ARROW; "
+                f"got --result-format={result_format}"
+            )
+
         # Prepare test parameters
         if test_name is None:
             test_name = _derive_test_name(request.node.name)
 
-        final_setup_queries = _prepare_setup_queries(test_type, parameters_json, setup_queries)
+        final_setup_queries = _prepare_setup_queries(
+            test_type, parameters_json, setup_queries, result_format
+        )
         s3_files_dir = _download_s3_files_if_needed(s3_download_url, s3_download_dir)
         universal_only = request.node.get_closest_marker("universal_only") is not None
         effective_driver_type = (
@@ -504,6 +561,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 test_type=container_test_type,
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
+                result_format=result_format,
             )
         else:
             from runner.modes.wiremock_runner import run_wiremock_performance_test
@@ -525,6 +583,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 test_type=container_test_type,
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
+                result_format=result_format,
             )
     
     def _run_e2e_test(
@@ -593,7 +652,15 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
 
             if os.environ.get("PERF_LOCAL_COMPARE") == "1":
                 # Full comparison: UD vs OLD + history
-                comp = compare_with_history(ud_files, results_dir, test_name, driver, "universal", old_median=old_median)
+                comp = compare_with_history(
+                    ud_files,
+                    results_dir,
+                    test_name,
+                    driver,
+                    "universal",
+                    old_median=old_median,
+                    result_format=result_format,
+                )
             else:
                 # UD vs OLD only
                 ud_result = get_file_median(ud_files)
@@ -621,7 +688,14 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
             actual_driver_type = _normalize_driver_type(driver, driver_type)
             if actual_driver_type == "old":
                 return
-            comp = compare_with_history(result, results_dir, test_name, driver, actual_driver_type)
+            comp = compare_with_history(
+                result,
+                results_dir,
+                test_name,
+                driver,
+                actual_driver_type,
+                result_format=result_format,
+            )
             if comp:
                 _perf_comparisons.append(comp)
 
@@ -657,10 +731,35 @@ def _skip_universal_only(item):
         pytest.skip("'universal_only' test; skipping for --driver-type=old")
 
 
+def _item_fetch_mode(item) -> str | None:
+    callspec = getattr(item, "callspec", None)
+    if callspec is None:
+        return None
+    mode = callspec.params.get("fetch_mode")
+    return mode if isinstance(mode, str) else None
+
+
+def _skip_json_unsupported(item):
+    """Skip unmarked tests, Node.js, and Arrow-only fetch modes when --result-format=json."""
+    if _resolve_result_format(item.config) != "json":
+        return
+    if _resolve_driver(item.config).lower() == "nodejs":
+        pytest.skip("nodejs not supported, json is the default path")
+    if item.get_closest_marker("supports_json") is None:
+        pytest.skip("not marked supports_json; skipping for --result-format=json")
+    fetch_mode = _item_fetch_mode(item)
+    if fetch_mode in _ARROW_ONLY_FETCH_MODES:
+        pytest.skip(
+            f"fetch_mode={fetch_mode} requires QUERY_RESULT_FORMAT=ARROW; "
+            f"got --result-format=json"
+        )
+
+
 def pytest_runtest_setup(item):
     """Hook called before each test starts - gate by driver, add visual separation."""
     _skip_unsupported_driver(item)
     _skip_universal_only(item)
+    _skip_json_unsupported(item)
     logger.info("")
     logger.info("=" * 80)
     logger.info(f">>> TEST: {item.name}")
@@ -677,11 +776,14 @@ def pytest_runtest_teardown(item):
 
 def pytest_runtest_makereport(item, call):
     """Hook to capture test failures"""
-    if call.when == "call" and call.excinfo is not None:
-        _test_failures.append({
-            'name': item.nodeid,
-            'error': str(call.excinfo.value),
-        })
+    if call.when != "call" or call.excinfo is None:
+        return
+    if call.excinfo.errisinstance(pytest.skip.Exception):
+        return
+    _test_failures.append({
+        'name': item.nodeid,
+        'error': str(call.excinfo.value),
+    })
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -758,6 +860,12 @@ def pytest_sessionfinish(session, exitstatus):
     # Regression check (PR vs main baseline from Benchstore)
     regression_check_enabled = session.config.getoption("--regression-check")
     if regression_check_enabled:
+        if _resolve_result_format(session.config) != "arrow":
+            logger.warning(
+                "Skipping regression check — main baselines are Arrow; "
+                "re-run with --result-format=arrow"
+            )
+            return
         if exitstatus != 0:
             logger.warning("Skipping regression check — test session already failed (exit code %d)", exitstatus)
             return

@@ -12,8 +12,38 @@ from runner.benchstore_upload import (
     BENCHMARK_NAME,
     login_to_benchstore,
 )
+from runner.result_format import is_arrow_baseline_run, merge_arrow_baseline_runs
 
 logger = logging.getLogger(__name__)
+
+
+def _query_run_info(sf_storage, benchmark_key, tags: list[str], limit: int):
+    query = benchstore_pb2.RunInfoQuery(
+        benchmark_key=benchmark_key,
+        tags=tags,
+        limit=limit,
+    )
+    return sf_storage.query_run_info(query)
+
+
+def _query_arrow_baseline_runs(sf_storage, benchmark_key, driver_tag: str, num_runs: int):
+    """Recent Arrow main runs: tagged RESULT_FORMAT=ARROW, then untagged history."""
+    base_tags = ["BRANCH_NAME=main", f"DRIVER={driver_tag}"]
+    tagged = _query_run_info(
+        sf_storage, benchmark_key, [*base_tags, "RESULT_FORMAT=ARROW"], num_runs
+    )
+    tagged_runs = list(tagged.run_info_list) if tagged.run_info_list else []
+    if len(tagged_runs) >= num_runs:
+        return tagged_runs[:num_runs]
+
+    unfiltered = _query_run_info(sf_storage, benchmark_key, base_tags, 50)
+    unfiltered_runs = list(unfiltered.run_info_list) if unfiltered.run_info_list else []
+    skipped_json = sum(1 for run in unfiltered_runs if not is_arrow_baseline_run(run))
+    if skipped_json:
+        logger.info(
+            "Excluded %d JSON main-branch run(s) from Arrow baseline", skipped_json
+        )
+    return merge_arrow_baseline_runs(tagged_runs, unfiltered_runs, num_runs)
 
 
 def _build_metric_key_to_label(sf_storage, benchmark_info) -> dict[int, str]:
@@ -38,8 +68,9 @@ def get_main_baseline(
     """
     Query Benchstore for the latest main branch median fetch_s values.
 
-    Fetches the last `num_runs` runs and computes the median of their medians
-    to reduce sensitivity to single-run outliers.
+    Uses Arrow runs only (`RESULT_FORMAT=ARROW` first, then untagged pre-tag
+    history). JSON nightlies are excluded so they cannot contaminate the PR
+    smoke baseline.
 
     Args:
         test_names: Test names to look up (without 'test_' prefix).
@@ -63,33 +94,27 @@ def get_main_baseline(
 
     driver_tag = f"{driver}_old" if driver_type == "old" else driver
 
-    query = benchstore_pb2.RunInfoQuery(
-        benchmark_key=benchmark_key,
-        tags=[
-            "BRANCH_NAME=main",
-            f"DRIVER={driver_tag}",
-        ],
-        limit=num_runs,
+    arrow_runs = _query_arrow_baseline_runs(
+        sf_storage, benchmark_key, driver_tag, num_runs
     )
-    response = sf_storage.query_run_info(query)
 
-    if not response.run_info_list:
-        logger.warning("No main branch runs found in Benchstore")
+    if not arrow_runs:
+        logger.warning("No Arrow main-branch runs found in Benchstore")
         return {}, None
 
-    latest_run_key = response.run_info_list[0].run_key
+    latest_run_key = arrow_runs[0].run_key
 
-    logger.info(f"Fetched {len(response.run_info_list)} baseline run(s):")
-    for run_info in response.run_info_list:
+    logger.info(f"Fetched {len(arrow_runs)} Arrow baseline run(s):")
+    for run_info in arrow_runs:
         logger.info(f"  run_key={run_info.run_key}")
         for tag in run_info.tags:
-            if tag.startswith("BUILD_NUMBER=") or tag.startswith("BRANCH_NAME="):
+            if tag.startswith("BUILD_NUMBER=") or tag.startswith("BRANCH_NAME=") or tag.startswith("RESULT_FORMAT="):
                 logger.info(f"    {tag}")
 
     # Collect per-test medians from each run
     per_test_values: dict[str, list[float]] = {name: [] for name in test_names}
 
-    for run_info in response.run_info_list:
+    for run_info in arrow_runs:
         label_to_agg = {}
         for agg in run_info.aggregate.metric_aggregate_list:
             label = key_to_label.get(agg.metric_key)

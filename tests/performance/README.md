@@ -130,6 +130,7 @@ hatch run core-local --parameters-json=parameters/parameters_perf_azure.json
 | `--use-local-binary` | Use local binary (Core only) | `false` |
 | `--preserve-mappings` | Keep WireMock mappings after tests (for debugging) | `false` (enabled in local runs) |
 | `--reuse-mappings` | Reuse existing mappings directory (e.g., `run_20260115_120000`) | None (runs recording phase) |
+| `--result-format` | SELECT wire format: `arrow` or `json`. Sets `QUERY_RESULT_FORMAT` plus the PYTHON/JDBC/ODBC connector overrides. | `arrow` |
 
 ### Local Performance Compare
 
@@ -161,6 +162,8 @@ SUMMARY
 
 Previous runs are read from the local `results/` directory. Use `hatch run clean` to reset it.
 
+Series names such as `select_number_10k_arrow_fetchall` keep `_arrow` even on a `--result-format=json` run. That substring is the historical test/metric name, not the wire format. The run's format is the `RESULT_FORMAT` Benchstore tag (`ARROW` or `JSON`), written to `run_config.json`. Filter dashboards on that tag (or missing, for pre-tag history); do not infer format from the metric name.
+
 ---
 
 #### Examples with Custom Arguments
@@ -180,6 +183,9 @@ hatch run python-both-local -k "1M"
 
 # Combined options
 hatch run python-universal-local --cloud=azure --iterations=10 -k "1M"
+
+# JSON result format (only tests marked @pytest.mark.supports_json; recorded-HTTP stays Arrow)
+hatch run python-universal-local --result-format=json
 ```
 
 ### Utility Scripts
@@ -196,7 +202,8 @@ hatch run clean  # Remove cache directories and results
 1. Create test in `tests/` directory
 2. Use `perf_test` fixture
 3. Add appropriate markers for iterations
-4. Extend driver images if needed
+4. Mark `@pytest.mark.supports_json` on e2e SELECT tests that should run under `--result-format=json`
+5. Extend driver images if needed
 
 ### Writing Tests
 
@@ -238,7 +245,7 @@ def test_put_files_12mx100(perf_test):
 ```
 
 **Notes**: 
-- **SELECT tests**: ARROW format (`ALTER SESSION SET QUERY_RESULT_FORMAT = 'ARROW'`) is added to any provided `setup_queries`.
+- **SELECT tests**: `--result-format` (default `arrow`) prepends the session parameters: `PYTHON_CONNECTOR_QUERY_RESULT_FORMAT` (Python), `JDBC_QUERY_RESULT_FORMAT` (JDBC), `ODBC_QUERY_RESULT_FORMAT` (ODBC), and `UNIVERSAL_DRIVER_QUERY_RESULT_FORMAT` (core). `QUERY_RESULT_FORMAT` is also set. Node.js (`JavaScript`) is hardcoded to JSON by GS, so the JSON pass is skipped for that driver. Metric names stay unchanged (including an `_arrow` infix); the wire format is the `RESULT_FORMAT` tag, not the name. `RESULT_FORMAT` is always uploaded as a regular tag; it is comparable only for JSON so Arrow continues the untagged historical series. `pandas` / `arrow_batches` are skipped for JSON (old `fetch_pandas_all` requires Arrow). JSON runs only tests marked `@pytest.mark.supports_json` (e2e small/mid SELECT up to 100k). Recorded-HTTP, 1M, 50M, PUT/GET, concurrent, and cold-start stay Arrow. The nightly Jenkins job runs a second pytest session with `tests/ -m supports_json --result-format=json` after the Arrow pass. PR regression baselines query `RESULT_FORMAT=ARROW` and fall back to untagged history.
 - **PUT/GET tests**: `USE DATABASE {database}` is added to any provided `setup_queries`. This is required for `CREATE TEMPORARY STAGE` operations which need a database context.
 - PUT/GET tests use `test_type=PerfTestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
 - The `s3_download_url` parameter triggers automatic download of test files from S3 before test execution
@@ -314,7 +321,7 @@ hatch run python-universal-local tests/test_select_1M.py::test_select_1M_recorde
 | `--preserve-mappings`    | Keep mappings after test completion              | Debugging or reusing mappings later. Enabled by default in local runs.                                         |
 | `--reuse-mappings <dir>` | Skip recording phase and reuse existing mappings | Faster iteration when testing against the same recorded traffic (e.g., `--reuse-mappings run_20260115_120000`) |
 
-**Note**: Mappings are stored in `mappings/<run_id>/<test_name>/` and can be found by checking the test output for the run ID.
+**Note**: Mappings are stored in `mappings/<run_id>/<result_format>/<test_name>/` (Arrow reuse also accepts the legacy `mappings/<run_id>/<test_name>/` layout).
 
 ### Key Details
 
@@ -388,7 +395,7 @@ All drivers receive their configuration through **environment variables**. The r
 |-----------------|------------|------------------------------------------------------------------------------------------------------------------------------------------|---------------|
 | `DRIVER_TYPE`   | String     | `"universal"` or `"old"`                                                                                                                 | `"universal"` |
 | `TEST_TYPE`     | String     | `"select"`, `"put_get"`, `"cold_start"`, or `"concurrent"`                                                                               | `"select"`    |
-| `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, ARROW format is prepended. For PUT/GET tests, `USE DATABASE` is prepended.             | `[]`          |
+| `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, `QUERY_RESULT_FORMAT` and the PYTHON/JDBC/ODBC connector overrides from `--result-format` are prepended. For PUT/GET tests, `USE DATABASE` is prepended.             | `[]`          |
 | `FETCH_MODE`    | String     | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, `"pandas"`, `"arrow_batches"`, or `"aio"` (concurrent UD only) | `"fetchmany"` |
 | `BIND_MODE`     | String     | ODBC column bind target: `"char"` (`SQL_C_CHAR`) or `"default"` (`SQL_C_DEFAULT`). Ignored by other drivers.                             | `"char"`      |
 | `WORKER_COUNT`  | Integer    | Concurrent workers for `TEST_TYPE=concurrent`. Python: one shared connection, one statement per thread. ODBC and JDBC: one connection per worker (opened before burst timing; setup queries run on each). | `"1"`         |
@@ -686,6 +693,7 @@ The following tags are automatically attached to each metric:
 | `SERVER_VERSION` | Snowflake server version | Retrieved during connection | `"9.34.0"` |
 | `CLOUD_PROVIDER` | Cloud platform | Parameters filename | `"AWS"`, `"AZURE"`, `"GCP"` |
 | `REGION` | Cloud region | Extracted from host | `"us-west-2"`, `"east-us-2"` |
+| `RESULT_FORMAT` | SELECT wire format | `--result-format` (written to `run_config.json`) | `"ARROW"`, `"JSON"` |
 | `ARCHITECTURE` | CPU architecture | Detected from system | `"x86_64"`, `"arm64"` |
 | `OS` | Operating system | Detected from system | `"Debian_13"`, `"Darwin_24.6.0"` |
 | `JENKINS_NODE` | Jenkins node label | Jenkins `JENKINS_NODE_LABEL` env var | `"regular-memory-node-snowos"` |
@@ -701,6 +709,7 @@ The following tags are automatically attached to each metric:
 
 **Notes**:
 - `CLOUD_PROVIDER` extracted from parameters filename (e.g., `parameters_perf_aws.json` → `"AWS"`)
+- `RESULT_FORMAT` is `ARROW` when `run_config.json` is missing (legacy result dirs). A name like `select_number_10k_arrow_fetchall` is the series key; `_arrow` there does not mean the run used Arrow. `RESULT_FORMAT` is always a regular tag. It is comparable only for JSON, so Arrow continues the untagged historical series and JSON is a new one. Filter dashboards on `RESULT_FORMAT=JSON` to see the JSON series; leave the filter off (or allow missing/`ARROW`) for Arrow vs history.
 - Old drivers have `_old` suffix (e.g., `"python_old"`)
 - Local runs use `"LOCAL"` for build and branch tags
 - **Node hardware tags** (`NODE_*`) help identify performance variance caused by Jenkins node heterogeneity — different physical machines in the pool may have different CPU models, memory sizes, and cache configurations

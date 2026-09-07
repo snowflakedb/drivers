@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from runner.result_format import read_result_format_tag
+
 _GREEN = "\033[32m"
 _RED = "\033[31m"
 _RESET = "\033[0m"
@@ -112,6 +114,7 @@ def compare_with_history(
     driver: str,
     driver_type: Optional[str],
     old_median: Optional[float] = None,
+    result_format: str = "arrow",
 ) -> Optional[dict]:
     """
     Build comparison data for a test run against historical runs.
@@ -123,6 +126,7 @@ def compare_with_history(
         driver:        Driver name (core, python, odbc, jdbc)
         driver_type:   Driver type (universal, old) or None for core
         old_median:    Optional OLD driver median from the same run (for UD vs OLD display)
+        result_format: Current run wire format; history from a different format is ignored
 
     Returns:
         Dict with comparison data, or None if the current median cannot be determined.
@@ -155,7 +159,11 @@ def compare_with_history(
             ],
             key=lambda d: d.name,
         )
+        current_fmt = result_format.lower()
         for run_dir in all_run_dirs:
+            prev_fmt = read_result_format_tag(run_dir).lower()
+            if prev_fmt != current_fmt:
+                continue
             prev_file = _find_result_file(run_dir, test_name, driver, driver_type)
             if prev_file is None:
                 continue

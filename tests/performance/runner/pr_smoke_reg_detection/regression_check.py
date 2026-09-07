@@ -259,6 +259,7 @@ def _upload_to_benchstore(
         read_csv_results,
         _sanitize_tag,
     )
+    from runner.result_format import read_result_format_tag
     from runner.container import get_resource_limits
     from runner.utils import collect_node_info
 
@@ -289,6 +290,7 @@ def _upload_to_benchstore(
         f"REGRESSION_THRESHOLD={threshold_pct}",
         f"BASELINE_RUN_KEY={baseline_run_key or 'UNKNOWN'}",
         f"REGRESSION_DETECTED={'true' if regression_detected else 'false'}",
+        f"RESULT_FORMAT={read_result_format_tag(results_dir)}",
         f"NODE_CPU_MODEL={node_info.get('node_cpu_model', 'UNKNOWN')}",
         f"NODE_CPU_CORES={node_info.get('node_cpu_cores', 'UNKNOWN')}",
         f"NODE_MEMORY_GB={node_info.get('node_memory_gb', 'UNKNOWN')}",
@@ -300,7 +302,11 @@ def _upload_to_benchstore(
 
     tested_names = {r.test_name for r in results}
 
-    comparable_tags = [t for t in tags if t.startswith("DRIVER=") or t.startswith("JENKINS_NODE=")]
+    comparable_tags = [
+        t
+        for t in tags
+        if t.startswith("DRIVER=") or t.startswith("JENKINS_NODE=")
+    ]
 
     quickstore_input = benchstore_pb2.QuickstoreInput(
         benchmark_name_lookup=benchstore_pb2.BenchmarkNameLookup(

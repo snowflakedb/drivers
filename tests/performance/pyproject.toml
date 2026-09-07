@@ -48,6 +48,7 @@ markers = [
     "warmup_iterations(n): set number of warmup iterations for this test",
     "supported_drivers(*names): restrict this test to the named drivers; skipped for any other --driver",
     "universal_only: run only against the universal driver; skipped for --driver-type=old and not compared when --driver-type=both",
+    "supports_json: run this test under --result-format=json; unmarked tests stay Arrow-only",
 ]
 
 [tool.hatch.envs.default.scripts]

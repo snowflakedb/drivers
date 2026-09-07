@@ -179,7 +179,8 @@ pipeline {
                                     }
                                     
                                     // Build test command with optional TEST_ARGS
-                                    def testArgs = params.TEST_ARGS?.trim() ?: ""
+                                    def userTestArgs = params.TEST_ARGS?.trim() ?: ""
+                                    def testArgs = userTestArgs
                                     
                                     // 12GB PUT datasets (12mx1000, 1.2Gx10) are core-only
                                     if (!testArgs && params.DRIVER != 'core') {
@@ -205,6 +206,19 @@ pipeline {
                                             export CLOUD=${cloud}
                                             echo "Executing: python -m hatch run ${hatchEnv}"
                                             python -m hatch run ${hatchEnv}
+                                        """
+                                    }
+
+                                    // JSON is a second session so RESULT_FORMAT stays a run-level tag.
+                                    // -m supports_json keeps collection to e2e small/mid SELECT.
+                                    // Skip when the user asked for a custom subset.
+                                    if (!userTestArgs) {
+                                        echo "Running JSON result-format pass"
+                                        sh """
+                                            source .venv/bin/activate
+                                            export CLOUD=${cloud}
+                                            echo "Executing: python -m hatch run ${hatchEnv} -- tests/ -m supports_json --result-format=json"
+                                            python -m hatch run ${hatchEnv} -- tests/ -m supports_json --result-format=json
                                         """
                                     }
                                 }
@@ -288,13 +302,14 @@ def parseBenchDashUrls() {
     Parse console log to extract BenchDash URLs with driver context.
     
     Returns a Map of URL -> label, where label is formatted as:
-    - {driver}_old_results for old drivers
-    - {driver}_universal_results for universal drivers
+    - {driver}_old_{FORMAT}_results for old drivers
+    - {driver}_universal_{FORMAT}_results for universal drivers
     """
-    def log = currentBuild.rawBuild.getLog(1000)
+    def log = currentBuild.rawBuild.getLog(4000)
     def urlMap = [:]  // Map of URL to driver label
     def urlPattern = ~/https:\/\/bench-dash[^\s]+\/run\/\d+/
     def uploadPattern = ~/✓ Uploaded (\w+) \((\w+)\)/  // Matches: ✓ Uploaded python (universal)
+    def formatPattern = ~/RESULT_FORMAT=(\w+)/
     
     def pendingUrl = null
     
@@ -312,11 +327,10 @@ def parseBenchDashUrls() {
             def driverType = uploadMatcher[0][2]
             
             if (!urlMap.containsKey(pendingUrl)) {
-                // Create label based on driver info
-                def label = driverType == "old" ? 
-                    "${driver}_old_results" : 
-                    "${driver}_universal_results"
-                urlMap[pendingUrl] = label
+                def formatMatcher = (line =~ formatPattern)
+                def format = formatMatcher ? formatMatcher[0][1] : "ARROW"
+                def typePart = driverType == "old" ? "old" : "universal"
+                urlMap[pendingUrl] = "${driver}_${typePart}_${format}_results"
             }
             
             // Reset pending URL after processing

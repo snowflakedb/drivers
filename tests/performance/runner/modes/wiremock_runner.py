@@ -37,6 +37,7 @@ def run_wiremock_performance_test(
     test_type: PerfTestType = PerfTestType.SELECT,
     fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
+    result_format: str = "arrow",
 ) -> list[Path]:
     """
     Run a performance test with WireMock HTTP traffic recording.
@@ -86,7 +87,9 @@ def run_wiremock_performance_test(
         )
     
     # Determine mappings directory and mode
-    mappings_dir, skip_recording = _get_mappings_dir(test_name, results_dir, run_id, reuse_mappings_dir)
+    mappings_dir, skip_recording = _get_mappings_dir(
+        test_name, results_dir, run_id, reuse_mappings_dir, result_format
+    )
     
     if skip_recording:
         _log_banner(f"WIREMOCK REPLAY MODE (REUSING MAPPINGS: {reuse_mappings_dir})")
@@ -288,6 +291,7 @@ def run_wiremock_comparison_test(
     test_type: PerfTestType = PerfTestType.SELECT,
     fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
+    result_format: str = "arrow",
 ) -> dict[str, list[Path]]:
     """
     Run WireMock test on both universal and old driver implementations.
@@ -341,6 +345,7 @@ def run_wiremock_comparison_test(
         test_type=test_type,
         fetch_mode=fetch_mode,
         bind_mode=bind_mode,
+        result_format=result_format,
     )
     
     # Determine the mappings directory created by universal driver
@@ -380,6 +385,7 @@ def run_wiremock_comparison_test(
         test_type=test_type,
         fetch_mode=fetch_mode,
         bind_mode=bind_mode,
+        result_format=result_format,
     )
     
     return results
@@ -393,27 +399,41 @@ def _extract_run_id(results_dir: Path, run_id: str = None) -> str:
     return results_dir.name.replace("run_", "")
 
 
-def _get_mappings_dir(test_name: str, results_dir: Path, run_id: str = None, reuse_mappings_dir: str = None) -> tuple[Path, bool]:
+def _get_mappings_dir(
+    test_name: str,
+    results_dir: Path,
+    run_id: str = None,
+    reuse_mappings_dir: str = None,
+    result_format: str = "arrow",
+) -> tuple[Path, bool]:
     """
     Determine mappings directory and whether to skip recording.
-    
-    Returns:
-        Tuple of (mappings_dir, skip_recording)
+
+    Layout: mappings/<run_id>/<result_format>/<test_name>/
+    Arrow reuse falls back to the legacy mappings/<run_id>/<test_name>/ path.
     """
+    format_key = result_format.lower()
+
+    def _under(run_dir: Path) -> Path:
+        return (run_dir / format_key / test_name).resolve()
+
     if reuse_mappings_dir:
-        # User provided existing mappings directory to reuse
-        mappings_dir = (MAPPINGS_BASE_DIR / reuse_mappings_dir / test_name).resolve()
+        run_dir = (MAPPINGS_BASE_DIR / reuse_mappings_dir).resolve()
+        mappings_dir = _under(run_dir)
+        if not mappings_dir.exists() and format_key == "arrow":
+            legacy = (run_dir / test_name).resolve()
+            if legacy.exists():
+                return legacy, True
         if not mappings_dir.exists():
             raise RuntimeError(
                 f"Reuse mappings directory not found: {mappings_dir}\n"
                 f"Available runs: {list(MAPPINGS_BASE_DIR.glob('run_*'))}"
             )
         return mappings_dir, True
-    else:
-        # Normal flow: record first, then replay
-        actual_run_id = _extract_run_id(results_dir, run_id)
-        mappings_dir = (MAPPINGS_BASE_DIR / f"run_{actual_run_id}" / test_name).resolve()
-        return mappings_dir, False
+
+    actual_run_id = _extract_run_id(results_dir, run_id)
+    mappings_dir = _under(MAPPINGS_BASE_DIR / f"run_{actual_run_id}")
+    return mappings_dir, False
 
 
 def _log_banner(message: str, separator: str = "=" * 80):
