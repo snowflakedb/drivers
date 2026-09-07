@@ -1,5 +1,5 @@
 use crate::DRIVER;
-use crate::error::{ToJsError, UnusableConnection, async_to_js};
+use crate::error::{BridgeError, ToJsError, UnusableConnection, async_to_js};
 use crate::session_params::KnownSessionParameters;
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
@@ -233,6 +233,18 @@ impl Connection {
     #[napi]
     pub fn is_up(&self) -> bool {
         self.state.is_up()
+    }
+
+    #[napi]
+    pub fn is_valid_async(&self, env: &Env) -> Result<AsyncBlock<bool>> {
+        let handle = self.handles.connection;
+        let state = self.state.clone();
+        async_to_js(env, async move {
+            if !state.is_up() {
+                return Ok::<bool, BridgeError>(false);
+            }
+            Ok(DRIVER.connection_heartbeat(handle).await.unwrap_or(false))
+        })
     }
 
     #[napi]

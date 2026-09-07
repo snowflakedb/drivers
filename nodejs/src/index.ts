@@ -160,6 +160,14 @@ export class Connection {
     return this.#core.isUp();
   }
 
+  /**
+   * Sends a heartbeat to the server, which also renews the session. Resolves `false` when the
+   * session is gone rather than rejecting.
+   */
+  isValidAsync(): Promise<boolean> {
+    return this.#core.isValidAsync();
+  }
+
   execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
     const bindings =
       options.binds && options.binds.length > 0
