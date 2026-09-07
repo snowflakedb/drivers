@@ -74,14 +74,22 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
       - name: Run unit tests
-        run: npm run test:unit
+        run: npm run test:unit -- --reporter=default --reporter=junit --outputFile=reports/nodejs-unit.xml
         working-directory: nodejs
 
       - name: Run e2e tests (new driver)
-        run: npm run test:e2e
+        run: npm run test:e2e -- --reporter=default --reporter=junit --outputFile=reports/nodejs-e2e.xml
         working-directory: nodejs
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nodejs-tests
+          path: nodejs/reports/*
+          retention-days: 14
 
       - name: Save Rust cache
         if: always()
@@ -137,10 +145,18 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
       - name: Run e2e tests (old driver reference)
-        run: npm run test:e2e-old-driver
+        run: npm run test:e2e-old-driver -- --reporter=default --reporter=junit --outputFile=reports/nodejs-e2e-old-driver.xml
         working-directory: nodejs
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
+      - name: Upload reference test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nodejs-tests-reference
+          path: nodejs/reports/*
+          retention-days: 14
 
       - name: Save Rust cache
         if: always()
