@@ -4,13 +4,11 @@ import type { Connection } from '../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
-  getSnowflakeSDK,
   IS_RUNNING_FOR_OLD_DRIVER,
 } from './utils/index.js';
 import { loginSuccess, logoutSuccess, WiremockServer } from './utils/wiremock/index.js';
 
 describe('Login Request Body', () => {
-  const snowflake = getSnowflakeSDK();
   let wiremock: WiremockServer;
   let connection: Connection;
 
@@ -19,7 +17,7 @@ describe('Login Request Body', () => {
   });
 
   beforeEach(async () => {
-    connection = createTestConnection(snowflake, wiremock.connectionOptions);
+    connection = createTestConnection(wiremock.connectionOptions);
     await wiremock.reset();
   });
 

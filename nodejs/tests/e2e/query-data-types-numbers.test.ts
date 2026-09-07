@@ -6,7 +6,6 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getStatementColumn,
-  getSnowflakeSDK,
   isRunningNewDriverWithBD,
 } from './utils/index.js';
 
@@ -27,11 +26,10 @@ function isBigIntValue(value: unknown): boolean {
 }
 
 describe('Query returning number data types', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 
@@ -262,7 +260,7 @@ describe('Query returning number data types', () => {
     {
       name: 'JS_TREAT_INTEGER_AS_BIGINT session parameter',
       connectionFactory: async () => {
-        const connection = createTestConnection(snowflake);
+        const connection = createTestConnection();
         await connection.connectAsync();
         await executeAsync(connection, 'ALTER SESSION SET JS_TREAT_INTEGER_AS_BIGINT = true');
         return connection;
@@ -271,7 +269,7 @@ describe('Query returning number data types', () => {
     {
       name: 'jsTreatIntegerAsBigInt connection parameter',
       connectionFactory: async () => {
-        const connection = createTestConnection(snowflake, {
+        const connection = createTestConnection({
           jsTreatIntegerAsBigInt: true,
         });
         await connection.connectAsync();
@@ -375,11 +373,10 @@ describe('Query returning number data types', () => {
 });
 
 describe('Query returning BigInt data types', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake, { jsTreatIntegerAsBigInt: true });
+    connection = createTestConnection({ jsTreatIntegerAsBigInt: true });
     await connection.connectAsync();
   });
 

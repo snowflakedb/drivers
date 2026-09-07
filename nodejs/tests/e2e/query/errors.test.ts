@@ -1,18 +1,12 @@
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import type { Connection, SnowflakeError } from '../../types/sdk-types.js';
-import {
-  createTestConnection,
-  destroyConnectionAsync,
-  executeAsync,
-  getSnowflakeSDK,
-} from '../utils/index.js';
+import { createTestConnection, destroyConnectionAsync, executeAsync } from '../utils/index.js';
 
 describe('Query Errors', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 

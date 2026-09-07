@@ -5,7 +5,6 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getStatementColumn,
-  getSnowflakeSDK,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
   randomizeName,
 } from '../../utils/index.js';
@@ -39,11 +38,10 @@ const CORNER_CASES: { name: string; literalSql: string; expected: string | null 
 ];
 
 describe('STRING data type', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 
@@ -274,7 +272,7 @@ describe('STRING data type', () => {
     });
 
     it('should render a NULL TEXT cell as null when representNullAsStringNull is disabled', async () => {
-      await withNullPreservingConnection(snowflake, async (nullPreservingConnection) => {
+      await withNullPreservingConnection(async (nullPreservingConnection) => {
         const { rows } = await executeAsync(nullPreservingConnection, 'SELECT NULL::TEXT', {
           fetchAsString: ['String'],
         });

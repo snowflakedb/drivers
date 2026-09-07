@@ -4,16 +4,15 @@ import getTestParameter from './utils/getTestParameter.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
-  getSnowflakeSDK,
+  snowflake,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
 describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deserialization', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 
@@ -22,7 +21,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deser
   });
 
   it('serialization of a disconnected connection returns empty tokenInfo', () => {
-    const disconnectedConnection = createTestConnection(snowflake);
+    const disconnectedConnection = createTestConnection();
     const serialized = disconnectedConnection.serialize();
     // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
     expect(snowflake.serializeConnection(disconnectedConnection)).toEqual(serialized);
@@ -45,14 +44,12 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deser
   });
 
   it('snowflake.serializeConnection() returns the same string as connection.serialize()', () => {
-    const snowflake = getSnowflakeSDK();
     // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
     expect(snowflake.serializeConnection(connection)).toBe(connection.serialize());
   });
 
   describe('snowflake.deserializeConnection()', () => {
     it('rehydrates into a usable connection', async () => {
-      const snowflake = getSnowflakeSDK();
       // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
       const connectionFromDeserialization = snowflake.deserializeConnection(
         {
@@ -71,7 +68,6 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deser
     });
 
     it('rehydrates into a disconnected connection when tokens are missing', () => {
-      const snowflake = getSnowflakeSDK();
       // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
       const connectionFromDeserialization = snowflake.deserializeConnection(
         {

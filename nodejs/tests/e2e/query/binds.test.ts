@@ -1,33 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { Connection, Binds } from '../../types/sdk-types.js';
 import {
-  createTestConnection,
-  destroyConnectionAsync,
   executeAsync,
-  getSnowflakeSDK,
   isRunningNewDriverWithBD,
   randomizeName,
+  withConnection,
 } from '../utils/index.js';
 
 const LOW_THRESHOLD = 3;
 const HIGH_THRESHOLD = 1_000_000;
 
 describe('Query Binds', () => {
-  const snowflake = getSnowflakeSDK();
-
-  async function withConnection(
-    overrides: Record<string, unknown>,
-    body: (connection: Connection) => Promise<void>,
-  ): Promise<void> {
-    const connection = createTestConnection(snowflake, overrides);
-    try {
-      await connection.connectAsync();
-      await body(connection);
-    } finally {
-      await destroyConnectionAsync(connection);
-    }
-  }
-
   async function insertRowsAndSelect(connection: Connection, binds: Binds): Promise<unknown[]> {
     const tableName = randomizeName('BIND_TEST');
     await executeAsync(

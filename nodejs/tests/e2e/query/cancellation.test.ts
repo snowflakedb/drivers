@@ -4,7 +4,6 @@ import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
-  getSnowflakeSDK,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
   sleepAsync,
 } from '../utils/index.js';
@@ -16,11 +15,10 @@ function cancelStatement(statement: RowStatement) {
 }
 
 describe('Query Cancellation', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 

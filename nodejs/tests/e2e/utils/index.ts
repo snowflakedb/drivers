@@ -36,13 +36,7 @@ export function isRunningNewDriverWithBD(bdRef: `BD#${number}`): boolean {
   return !IS_RUNNING_FOR_OLD_DRIVER;
 }
 
-export function getSnowflakeSDK() {
-  if (IS_RUNNING_FOR_OLD_DRIVER) {
-    return oldSnowflakeSDK;
-  } else {
-    return newSnowflakeSDK;
-  }
-}
+export const snowflake = IS_RUNNING_FOR_OLD_DRIVER ? oldSnowflakeSDK : newSnowflakeSDK;
 
 const baseConnectionOptions = {
   account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
@@ -66,10 +60,7 @@ export const TEST_CONNECTION_OPTIONS: ConnectionOptions = getTestParameter('SNOW
       privateKeyPass: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD'),
     };
 
-export function createTestConnection(
-  snowflake: ReturnType<typeof getSnowflakeSDK>,
-  overrides: Partial<ConnectionOptions> = {},
-): Connection {
+export function createTestConnection(overrides: Partial<ConnectionOptions> = {}): Connection {
   return snowflake.createConnection({
     ...TEST_CONNECTION_OPTIONS,
     ...overrides,
@@ -80,6 +71,19 @@ export function destroyConnectionAsync(connection: Connection): Promise<void> {
   return new Promise((resolve, reject) => {
     connection.destroy((err) => (err ? reject(err) : resolve()));
   });
+}
+
+export async function withConnection(
+  overrides: Record<string, unknown>,
+  body: (connection: Connection) => Promise<void>,
+): Promise<void> {
+  const connection = createTestConnection(overrides);
+  try {
+    await connection.connectAsync();
+    await body(connection);
+  } finally {
+    await destroyConnectionAsync(connection);
+  }
 }
 
 export function executeAsync(

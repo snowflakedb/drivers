@@ -5,7 +5,6 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getStatementColumn,
-  getSnowflakeSDK,
   isRunningNewDriverWithBD,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
@@ -15,11 +14,10 @@ function dateAtUtcMidnight(dateLiteral: string): Date {
 }
 
 describe('Query returning data types', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 

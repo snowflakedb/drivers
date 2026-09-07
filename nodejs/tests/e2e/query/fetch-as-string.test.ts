@@ -1,23 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Connection } from '../../types/sdk-types.js';
-import {
-  createTestConnection,
-  destroyConnectionAsync,
-  executeAsync,
-  getSnowflakeSDK,
-} from '../utils/index.js';
+import { createTestConnection, destroyConnectionAsync, executeAsync } from '../utils/index.js';
 
 // This file covers only where fetchAsString may be set and which list wins. How a given type
 // renders as a string, and what its NULL becomes, lives in tests/e2e/query/data-types/.
 describe('fetchAsString', () => {
-  const snowflake = getSnowflakeSDK();
   const SQL = 'SELECT 1::NUMBER AS NUM, TRUE::BOOLEAN AS BOOL';
 
   describe('set per query', () => {
     let connection: Connection;
 
     beforeAll(async () => {
-      connection = createTestConnection(snowflake);
+      connection = createTestConnection();
       await connection.connectAsync();
     });
 
@@ -38,7 +32,7 @@ describe('fetchAsString', () => {
 
   describe('set on the connection', () => {
     it('should apply to a query that passes no fetchAsString', async () => {
-      const connection = createTestConnection(snowflake, { fetchAsString: ['Number'] });
+      const connection = createTestConnection({ fetchAsString: ['Number'] });
       try {
         await connection.connectAsync();
         const { rows } = await executeAsync(connection, SQL);
@@ -49,7 +43,7 @@ describe('fetchAsString', () => {
     });
 
     it('should be replaced, not merged, by the fetchAsString a query passes', async () => {
-      const connection = createTestConnection(snowflake, { fetchAsString: ['Number'] });
+      const connection = createTestConnection({ fetchAsString: ['Number'] });
       try {
         await connection.connectAsync();
         const { rows } = await executeAsync(connection, SQL, { fetchAsString: ['Boolean'] });
@@ -60,7 +54,7 @@ describe('fetchAsString', () => {
     });
 
     it('should be turned off by an empty fetchAsString on the query', async () => {
-      const connection = createTestConnection(snowflake, { fetchAsString: ['Number'] });
+      const connection = createTestConnection({ fetchAsString: ['Number'] });
       try {
         await connection.connectAsync();
         const { rows } = await executeAsync(connection, SQL, { fetchAsString: [] });

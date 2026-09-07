@@ -6,7 +6,6 @@ import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
-  getSnowflakeSDK,
   isRunningNewDriverWithBD,
 } from './utils/index.js';
 import { getSessionParameterFromServer, setSessionParameter } from './utils/query.js';
@@ -15,7 +14,6 @@ import { getSessionParameterFromServer, setSessionParameter } from './utils/quer
 // and back in to drive row decoding, including after an ALTER SESSION.
 describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
   const PARAMETER_NAME = 'JS_TREAT_INTEGER_AS_BIGINT';
-  const snowflake = getSnowflakeSDK();
   let connection: Connection | undefined;
 
   afterEach(async () => {
@@ -53,14 +51,14 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
   }
 
   it('sets the session parameter on the server when passed as a connection option', async () => {
-    connection = createTestConnection(snowflake, { jsTreatIntegerAsBigInt: true });
+    connection = createTestConnection({ jsTreatIntegerAsBigInt: true });
     await connection.connectAsync();
 
     expect(await getSessionParameterFromServer(connection, PARAMETER_NAME)).toBe('true');
   });
 
   it('stays at the server default when the connection option is absent', async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
 
     expect(await getSessionParameterFromServer(connection, PARAMETER_NAME)).toBe('false');
@@ -68,7 +66,7 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
   });
 
   it('sets the session parameter to false on the server when the connection option is false', async () => {
-    connection = createTestConnection(snowflake, { jsTreatIntegerAsBigInt: false });
+    connection = createTestConnection({ jsTreatIntegerAsBigInt: false });
     await connection.connectAsync();
 
     expect(await getSessionParameterFromServer(connection, PARAMETER_NAME)).toBe('false');
@@ -76,21 +74,21 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
   });
 
   it('maps integers as BigInt when set as a connection option', async () => {
-    connection = createTestConnection(snowflake, { jsTreatIntegerAsBigInt: true });
+    connection = createTestConnection({ jsTreatIntegerAsBigInt: true });
     await connection.connectAsync();
 
     expectBigInt(await selectInteger(connection), '7');
   });
 
   it('maps streamed integers as BigInt when set as a connection option', async () => {
-    connection = createTestConnection(snowflake, { jsTreatIntegerAsBigInt: true });
+    connection = createTestConnection({ jsTreatIntegerAsBigInt: true });
     await connection.connectAsync();
 
     expectBigInt(await selectInteger(connection, { streamResult: true }), '7');
   });
 
   it('takes effect on an already connected session via ALTER SESSION', async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
     expect(await selectInteger(connection)).toBe(7);
 
@@ -101,7 +99,7 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
   });
 
   it('stops applying when ALTER SESSION turns off what the connection option enabled', async () => {
-    connection = createTestConnection(snowflake, { jsTreatIntegerAsBigInt: true });
+    connection = createTestConnection({ jsTreatIntegerAsBigInt: true });
     await connection.connectAsync();
     expectBigInt(await selectInteger(connection), '7');
 
@@ -112,9 +110,9 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
   });
 
   it('applies per connection, not per process', async () => {
-    connection = createTestConnection(snowflake, { jsTreatIntegerAsBigInt: true });
+    connection = createTestConnection({ jsTreatIntegerAsBigInt: true });
     await connection.connectAsync();
-    const defaultConnection = createTestConnection(snowflake);
+    const defaultConnection = createTestConnection();
     await defaultConnection.connectAsync();
 
     try {
@@ -126,7 +124,7 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
   });
 
   it('decodes a streamed result with the setting current when its rows are first read', async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
     const { statement } = await executeAsync(connection, 'SELECT 7::INT AS INT_COLUMN', {
       streamResult: true,

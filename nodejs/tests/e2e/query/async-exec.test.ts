@@ -6,7 +6,6 @@ import {
   destroyConnectionAsync,
   sleepAsync,
   executeAsync,
-  getSnowflakeSDK,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../utils/index.js';
 
@@ -17,11 +16,10 @@ const EXPECTED_WAIT_RESULT = `waited ${WAIT_SECONDS} seconds`;
 const NON_EXISTENT_QUERY_ID = '12345678-1234-4123-A123-123456789012';
 
 describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Async Query Execution', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 
