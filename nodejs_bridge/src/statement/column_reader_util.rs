@@ -2,8 +2,7 @@
 
 use super::js_cell::JsCell;
 use arrow::array::Array;
-use arrow::compute::cast;
-use arrow::datatypes::{DataType, Field};
+use arrow::datatypes::Field;
 
 /// Returns [`JsCell::Null`] when the Arrow cell is null so each reader arm
 /// only needs to describe the non-null case.
@@ -32,18 +31,15 @@ pub(super) fn usize_from_metadata(field: &Field, key: &str) -> Result<usize, Str
     })
 }
 
-pub(super) fn widen<T: Array + Clone + 'static>(
+pub(super) fn downcast_array<T: Array + Clone + 'static>(
     column: &dyn Array,
-    to: &DataType,
     target: &str,
 ) -> Result<T, String> {
-    let widened =
-        cast(column, to).map_err(|e| format!("could not cast column to {target}: {e}"))?;
-    widened
+    column
         .as_any()
         .downcast_ref::<T>()
         .cloned()
-        .ok_or_else(|| format!("cast of column did not yield a {target}"))
+        .ok_or_else(|| format!("Arrow column could not be downcast to {target}"))
 }
 
 pub(super) fn scale_from_metadata(field: &Field) -> Result<u32, String> {

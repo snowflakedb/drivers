@@ -1,12 +1,13 @@
 use arrow::array::{
-    Array, ArrowNumericType, BinaryArray, BooleanArray, Decimal128Array, Float64Array, Int64Array,
-    PrimitiveArray, StringArray, StringBuilder, StructArray,
+    Array, ArrowNumericType, BinaryArray, BooleanArray, Decimal128Array, Float32Array,
+    Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, PrimitiveArray, StringArray,
+    StringBuilder, StructArray,
 };
 use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type};
 use chrono::NaiveTime;
 
 use super::column_reader_util::{
-    decimal_string, read_cell, scale_from_metadata, usize_from_metadata, widen,
+    decimal_string, downcast_array, read_cell, scale_from_metadata, usize_from_metadata,
 };
 use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
@@ -53,9 +54,13 @@ pub(crate) enum ColumnReader {
     TimeI64(PrimitiveArray<Int64Type>, TimeMeta),
     Variant(StringArray),
     Text(StringArray),
-    FixedInt { array: Int64Array, scale: u32 },
+    FixedI8 { array: Int8Array, scale: u32 },
+    FixedI16 { array: Int16Array, scale: u32 },
+    FixedI32 { array: Int32Array, scale: u32 },
+    FixedI64 { array: Int64Array, scale: u32 },
     FixedDecimal { array: Decimal128Array, scale: u32 },
-    Real(Float64Array),
+    RealF32(Float32Array),
+    RealF64(Float64Array),
     Decfloat(StringArray),
 }
 
@@ -100,20 +105,26 @@ impl ColumnReader {
             Some("FIXED") => {
                 let scale = scale_from_metadata(field)?;
                 match column.data_type() {
-                    DataType::Decimal128(_, _) => {
-                        let array = column
-                            .as_any()
-                            .downcast_ref::<Decimal128Array>()
-                            .cloned()
-                            .ok_or_else(|| {
-                                "Arrow column could not be downcast to Decimal128Array".to_string()
-                            })?;
-                        Ok(Self::FixedDecimal { array, scale })
-                    }
-                    DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
-                        let array = widen(column, &DataType::Int64, "Int64Array")?;
-                        Ok(Self::FixedInt { array, scale })
-                    }
+                    DataType::Int8 => Ok(Self::FixedI8 {
+                        array: downcast_array(column, "Int8Array")?,
+                        scale,
+                    }),
+                    DataType::Int16 => Ok(Self::FixedI16 {
+                        array: downcast_array(column, "Int16Array")?,
+                        scale,
+                    }),
+                    DataType::Int32 => Ok(Self::FixedI32 {
+                        array: downcast_array(column, "Int32Array")?,
+                        scale,
+                    }),
+                    DataType::Int64 => Ok(Self::FixedI64 {
+                        array: downcast_array(column, "Int64Array")?,
+                        scale,
+                    }),
+                    DataType::Decimal128(_, _) => Ok(Self::FixedDecimal {
+                        array: downcast_array(column, "Decimal128Array")?,
+                        scale,
+                    }),
                     other => Err(format!(
                         "FIXED column {:?} has unsupported Arrow type {other}",
                         field.name()
@@ -192,11 +203,14 @@ impl ColumnReader {
                     })?;
                 Ok(Self::Variant(array))
             }
-            Some("REAL") => Ok(Self::Real(widen(
-                column,
-                &DataType::Float64,
-                "Float64Array",
-            )?)),
+            Some("REAL") => match column.data_type() {
+                DataType::Float32 => Ok(Self::RealF32(downcast_array(column, "Float32Array")?)),
+                DataType::Float64 => Ok(Self::RealF64(downcast_array(column, "Float64Array")?)),
+                other => Err(format!(
+                    "REAL column {:?} has unsupported Arrow type {other}",
+                    field.name()
+                )),
+            },
             // TODO: DECFLOAT iterates over rows in `for_field`, making its `read` arm a
             // plain lookup like every other variant. Worth revisiting whether the
             // for_field/read split should just collapse into one eager step for all.
@@ -253,26 +267,11 @@ impl ColumnReader {
                     });
                 JsCell::Buffer(value)
             }),
-            Self::FixedInt { array, scale } => read_cell(array, row_index, || {
-                let mantissa = sf_types::SnowflakeFixed
-                    .read_arrow_type(array, row_index)
-                    .unwrap_or_else(|_| {
-                        unreachable!(
-                            "non-null integer FIXED cell always decodes to an i128 mantissa"
-                        )
-                    });
-                JsCell::Str(Cow::Owned(decimal_string(mantissa, *scale)))
-            }),
-            Self::FixedDecimal { array, scale } => read_cell(array, row_index, || {
-                let mantissa = sf_types::SnowflakeFixed
-                    .read_arrow_type(array, row_index)
-                    .unwrap_or_else(|_| {
-                        unreachable!(
-                            "non-null Decimal128 FIXED cell always decodes to an i128 mantissa"
-                        )
-                    });
-                JsCell::Str(Cow::Owned(decimal_string(mantissa, *scale)))
-            }),
+            Self::FixedI8 { array, scale } => read_fixed(array, row_index, *scale),
+            Self::FixedI16 { array, scale } => read_fixed(array, row_index, *scale),
+            Self::FixedI32 { array, scale } => read_fixed(array, row_index, *scale),
+            Self::FixedI64 { array, scale } => read_fixed(array, row_index, *scale),
+            Self::FixedDecimal { array, scale } => read_fixed(array, row_index, *scale),
             Self::Date(array) => read_cell(array, row_index, || {
                 // The Arrow `Date32` → `NaiveDate` decode is shared with the
                 // ODBC and Python front ends via `sf_types`; only the
@@ -309,14 +308,8 @@ impl ColumnReader {
                     });
                 JsCell::Str(Cow::Borrowed(value))
             }),
-            Self::Real(array) => read_cell(array, row_index, || {
-                let value = sf_types::SnowflakeReal
-                    .read_arrow_type(array, row_index)
-                    .unwrap_or_else(|_| {
-                        unreachable!("non-null Float64 cell always decodes to an f64")
-                    });
-                JsCell::Number(value)
-            }),
+            Self::RealF32(array) => read_real(array, row_index),
+            Self::RealF64(array) => read_real(array, row_index),
             Self::Decfloat(array) => read_cell(array, row_index, || {
                 JsCell::Str(Cow::Borrowed(array.value(row_index)))
             }),
@@ -368,6 +361,34 @@ where
         "column {column_name:?} failed TIME range validation (scale {scale}) but no \
          offending row could be located"
     ))
+}
+
+fn read_fixed<'a, A>(array: &'a A, row_index: usize, scale: u32) -> JsCell<'a>
+where
+    A: Array,
+    sf_types::SnowflakeFixed: ReadArrowType<A>,
+{
+    read_cell(array, row_index, || {
+        let mantissa = sf_types::SnowflakeFixed
+            .read_arrow_type(array, row_index)
+            .unwrap_or_else(|_| {
+                unreachable!("non-null FIXED cell always decodes to an i128 mantissa")
+            });
+        JsCell::Str(Cow::Owned(decimal_string(mantissa, scale)))
+    })
+}
+
+fn read_real<'a, A>(array: &'a A, row_index: usize) -> JsCell<'a>
+where
+    A: Array,
+    sf_types::SnowflakeReal: ReadArrowType<A>,
+{
+    read_cell(array, row_index, || {
+        let value = sf_types::SnowflakeReal
+            .read_arrow_type(array, row_index)
+            .unwrap_or_else(|_| unreachable!("non-null REAL cell always decodes to an f64"));
+        JsCell::Number(value)
+    })
 }
 
 fn render_time<T>(array: &PrimitiveArray<T>, row_index: usize, meta: &TimeMeta) -> String
@@ -681,8 +702,8 @@ mod tests {
         let array = Int64Array::from(vec![Some(42), Some(-1), None]);
         let reader = reader(&field, &array);
         assert!(
-            matches!(reader, ColumnReader::FixedInt { .. }),
-            "Int64 FIXED should route to the FixedInt arm"
+            matches!(reader, ColumnReader::FixedI64 { .. }),
+            "Int64 FIXED should route to the FixedI64 arm"
         );
         assert_eq!(reader.read(0), str_cell("42"));
         assert_eq!(reader.read(1), str_cell("-1"));
@@ -701,15 +722,34 @@ mod tests {
     }
 
     #[test]
-    fn fixed_int8_widens_and_reads_string() {
-        let field = field("FIXED", DataType::Int8, &[("scale", "0")]);
-        let array = Int8Array::from(vec![Some(42i8)]);
-        let reader = reader(&field, &array);
+    fn fixed_narrow_integers_keep_physical_type_and_read_string() {
+        let i8_field = field("FIXED", DataType::Int8, &[("scale", "0")]);
+        let i8 = Int8Array::from(vec![Some(42i8), None]);
+        let i8_reader = reader(&i8_field, &i8);
         assert!(
-            matches!(reader, ColumnReader::FixedInt { .. }),
-            "Int8 FIXED should widen to the FixedInt arm"
+            matches!(i8_reader, ColumnReader::FixedI8 { .. }),
+            "Int8 FIXED should keep the FixedI8 arm, not widen to Int64"
         );
-        assert_eq!(reader.read(0), str_cell("42"));
+        assert_eq!(i8_reader.read(0), str_cell("42"));
+        assert_eq!(i8_reader.read(1), JsCell::Null);
+
+        let i16_field = field("FIXED", DataType::Int16, &[("scale", "2")]);
+        let i16 = Int16Array::from(vec![Some(123i16)]);
+        let i16_reader = reader(&i16_field, &i16);
+        assert!(
+            matches!(i16_reader, ColumnReader::FixedI16 { .. }),
+            "Int16 FIXED should keep the FixedI16 arm, not widen to Int64"
+        );
+        assert_eq!(i16_reader.read(0), str_cell("1.23"));
+
+        let i32_field = field("FIXED", DataType::Int32, &[("scale", "0")]);
+        let i32 = Int32Array::from(vec![Some(-1)]);
+        let i32_reader = reader(&i32_field, &i32);
+        assert!(
+            matches!(i32_reader, ColumnReader::FixedI32 { .. }),
+            "Int32 FIXED should keep the FixedI32 arm, not widen to Int64"
+        );
+        assert_eq!(i32_reader.read(0), str_cell("-1"));
     }
 
     #[test]
@@ -733,23 +773,24 @@ mod tests {
         let array = Float64Array::from(vec![Some(1.5), None]);
         let reader = reader(&field, &array);
         assert!(
-            matches!(reader, ColumnReader::Real(_)),
-            "Float64 REAL should route to the Real arm"
+            matches!(reader, ColumnReader::RealF64(_)),
+            "Float64 REAL should route to the RealF64 arm"
         );
         assert_eq!(reader.read(0), JsCell::Number(1.5));
         assert_eq!(reader.read(1), JsCell::Null);
     }
 
     #[test]
-    fn real_float32_widens_and_reads_float() {
+    fn real_float32_keeps_physical_type_and_reads_float() {
         let field = field("REAL", DataType::Float32, &[]);
-        let array = Float32Array::from(vec![Some(1.5f32)]);
+        let array = Float32Array::from(vec![Some(1.5f32), None]);
         let reader = reader(&field, &array);
         assert!(
-            matches!(reader, ColumnReader::Real(_)),
-            "Float32 REAL should widen to the Real arm"
+            matches!(reader, ColumnReader::RealF32(_)),
+            "Float32 REAL should keep the RealF32 arm, not widen to Float64"
         );
         assert_eq!(reader.read(0), JsCell::Number(1.5));
+        assert_eq!(reader.read(1), JsCell::Null);
     }
 
     fn decfloat_struct(

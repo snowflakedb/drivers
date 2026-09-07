@@ -1,16 +1,16 @@
-use arrow::array::{Array, Float64Array};
+use arrow::array::{Array, Float32Array, Float64Array};
 
 use crate::error::ReadArrowError;
 use crate::traits::{ReadArrowType, SnowflakeType};
 
 /// Snowflake REAL (the FLOAT / DOUBLE / REAL logical type).
 ///
-/// The server sends REAL as an Arrow `Float64`, so the decode is the identity
-/// on the stored `f64` and needs no column metadata. `NaN` and `±Infinity` are
-/// values a Snowflake FLOAT column can hold, so the reader passes them through
-/// unchanged rather than normalizing or rejecting them; how a front end renders
-/// or coerces them (ODBC's `"INFINITY"` char form, the Node.js bridge's numeric
-/// cell) is the front end's job.
+/// REAL arrives as Arrow `Float64` or `Float32`. Both decode to `f64` — identity
+/// on `Float64`, `f64::from` on each `Float32` cell — with no column metadata.
+/// `NaN` and `±Infinity` are values a Snowflake FLOAT column can hold, so the
+/// reader passes them through unchanged rather than normalizing or rejecting
+/// them; how a front end renders or coerces them (ODBC's `"INFINITY"` char
+/// form, the Node.js bridge's numeric cell) is the front end's job.
 pub struct SnowflakeReal;
 
 impl SnowflakeType for SnowflakeReal {
@@ -29,6 +29,21 @@ impl ReadArrowType<Float64Array> for SnowflakeReal {
             });
         }
         Ok(array.value(row_idx))
+    }
+}
+
+impl ReadArrowType<Float32Array> for SnowflakeReal {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a Float32Array,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        if array.is_null(row_idx) {
+            return Err(ReadArrowError::NullValue {
+                location: snafu::location!(),
+            });
+        }
+        Ok(f64::from(array.value(row_idx)))
     }
 }
 
@@ -85,6 +100,23 @@ mod tests {
         assert!(
             matches!(err, ReadArrowError::NullValue { .. }),
             "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn should_read_float32_as_f64() {
+        let array = Float32Array::from(vec![Some(1.5f32), None, Some(-0.0)]);
+        assert_eq!(SnowflakeReal.read_arrow_type(&array, 0).unwrap(), 1.5);
+        let err = SnowflakeReal.read_arrow_type(&array, 1).unwrap_err();
+        assert!(
+            matches!(err, ReadArrowError::NullValue { .. }),
+            "got {err:?}"
+        );
+        assert!(
+            SnowflakeReal
+                .read_arrow_type(&array, 2)
+                .unwrap()
+                .is_sign_negative()
         );
     }
 }
