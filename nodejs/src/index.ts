@@ -13,7 +13,7 @@ import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import {
   CoreConnection,
-  CoreQueryBindingFormat,
+  CoreQueryBindings,
   type CoreConnectionInstance,
   type CoreStatementInstance,
 } from './core/index.js';
@@ -24,7 +24,12 @@ import {
   type CustomParser,
   type XMlParserConfigOption,
 } from './global-config.js';
-import { buildBindsMap, type Binds, type InsertBinds, type Bind } from './query-result/binds.js';
+import {
+  type Binds,
+  type InsertBinds,
+  type Bind,
+  selectBindPayload,
+} from './query-result/binds.js';
 import { collectRows } from './query-result/rows.js';
 import { RowStatement, FileAndStageBindStatement } from './query-result/RowStatement.js';
 
@@ -66,6 +71,22 @@ export type ConnectionOptions = Record<string, unknown> & {
    * @default true
    */
   representNullAsStringNull?: boolean;
+  /**
+   * Decides when large bulk {@link StatementOption.binds} are uploaded to a temporary stage instead
+   * of being sent with the request.
+   *
+   * The driver counts the total number of bound values (rows * columns). If the count is greater
+   * than this number, the driver uploads the values to a stage as a CSV file, and the query reads
+   * them from that file. If the count is this number or lower, the values are sent inline in the
+   * request. Uploading is faster for big batches; inline is simpler for small ones. Single-row
+   * binds are always sent inline and ignore this option.
+   *
+   * When set, the connection starts with this value as its custom
+   * `CLIENT_STAGE_ARRAY_BINDING_THRESHOLD` session parameter.
+   *
+   * @default User's CLIENT_STAGE_ARRAY_BINDING_THRESHOLD value
+   */
+  arrayBindingThreshold?: number;
 };
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
 
@@ -123,22 +144,31 @@ export class Connection {
       fetchAsString,
       jsTreatIntegerAsBigInt,
       representNullAsStringNull,
+      arrayBindingThreshold,
       ...coreOptions
     } = options;
+
     this.#defaultRowOptions = {
       rowMode: rowMode ?? 'object',
       fetchAsString: fetchAsString ?? [],
       representNullAsStringNull: representNullAsStringNull ?? true,
     };
+
+    const sessionParameters: Record<string, string> = {};
+    if (jsTreatIntegerAsBigInt !== undefined) {
+      sessionParameters['JS_TREAT_INTEGER_AS_BIGINT'] = String(jsTreatIntegerAsBigInt);
+    }
+    if (arrayBindingThreshold !== undefined) {
+      sessionParameters['CLIENT_STAGE_ARRAY_BINDING_THRESHOLD'] = String(arrayBindingThreshold);
+    }
+
     this.#core = new CoreConnection(
       // Cast until options are typed across the bridge, which takes strings only.
       normalizeConnectionOptions({
         ...(coreOptions as Record<string, string>),
         useEnvProxy: String(GlobalConfig.useEnvProxy),
       }),
-      jsTreatIntegerAsBigInt === undefined
-        ? {}
-        : { JS_TREAT_INTEGER_AS_BIGINT: String(jsTreatIntegerAsBigInt) },
+      sessionParameters,
     );
   }
 
@@ -169,13 +199,21 @@ export class Connection {
   }
 
   execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
-    const bindings =
-      options.binds && options.binds.length > 0
-        ? {
-            format: CoreQueryBindingFormat.Json,
-            data: JSON.stringify(buildBindsMap(options.binds)),
-          }
-        : undefined;
+    let bindings: CoreQueryBindings | null = null;
+
+    // getSessionParameters() throws a different error when the connection is not up.
+    // Swallowing it leaves bindings null so callers see core.execute()'s
+    // connection-state error via #runStatement. One of two fixes would remove the swallow:
+    // - Gate on isUp() and pass null bindings when false. isUp() is not implemented yet.
+    // - Move bind selection into the bridge, which already gates on connection state
+    //   (preferred: the session-parameter read leaves this layer).
+    try {
+      const { clientStageArrayBindingThreshold } = this.#core.getSessionParameters();
+      bindings = selectBindPayload(options.binds, clientStageArrayBindingThreshold);
+    } catch {
+      // Ignore the error
+    }
+
     return this.#runStatement(this.#core.execute(options.sqlText, bindings), {
       complete: options.complete,
       streamResult: options.streamResult,

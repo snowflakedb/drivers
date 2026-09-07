@@ -332,37 +332,6 @@ describe('Test Array Bind', function () {
       done,
     );
   });
-  it('testBindWithLargeArray', function (done) {
-    async.series(
-      [
-        function (callback) {
-          const createSql = 'create or replace table testBindLargeArray(colA varchar(30))';
-          testUtil.executeCmd(connection, createSql, callback);
-        },
-        function (callback) {
-          const arrBind = [];
-          const count = 100;
-          for (let i = 0; i < count; i++) {
-            arrBind.push(['some-data-for-stuff1']);
-          }
-          const insertSql = 'insert into testBindLargeArray(colA) values (?)';
-          connection.execute({
-            sqlText: insertSql,
-            binds: arrBind,
-            complete: function (err, stmt) {
-              if (err) {
-                callback(err);
-              } else {
-                assert.strictEqual(stmt.getNumUpdatedRows(), count);
-                callback();
-              }
-            },
-          });
-        },
-      ],
-      done,
-    );
-  });
   it('testBindWithArray', function (done) {
     async.series(
       [

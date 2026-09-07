@@ -1,3 +1,6 @@
+import type { CoreQueryBindings } from '../core/index.js';
+import { CoreQueryBindingFormat } from '../core/index.js';
+
 export type Bind = string | number | boolean | null;
 export type InsertBinds = readonly Bind[][];
 export type Binds = readonly Bind[] | InsertBinds;
@@ -60,4 +63,36 @@ export function countBoundValues(binds?: Binds): number {
     if (Array.isArray(row)) total += row.length;
   }
   return total;
+}
+
+const CSV_CHARS_REQUIRING_QUOTES = /["\\,\n\t]/;
+
+function toCsvField(value: unknown): string {
+  // A bare empty field is a NULL; a quoted "" is an empty string. The emptiness
+  // check runs on the raw value's string form, so an empty array -- whose string
+  // form is "" -- also serializes to "", not "[]".
+  if (value === null) return '';
+  if (String(value) === '') return '""';
+  const text =
+    typeof value === 'string'
+      ? value
+      : value instanceof Date
+        ? value.toJSON()
+        : JSON.stringify(value);
+  return CSV_CHARS_REQUIRING_QUOTES.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+export function buildBindsCsv(binds: InsertBinds): string {
+  const lines = binds.map((row) => row.map(toCsvField).join(','));
+  return lines.join('\n') + '\n';
+}
+
+export function selectBindPayload(
+  binds: Binds | undefined,
+  threshold: number,
+): CoreQueryBindings | null {
+  if (!binds || binds.length === 0) return null;
+  return countBoundValues(binds) > threshold
+    ? { format: CoreQueryBindingFormat.Csv, data: buildBindsCsv(binds as InsertBinds) }
+    : { format: CoreQueryBindingFormat.Json, data: JSON.stringify(buildBindsMap(binds)) };
 }

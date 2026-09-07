@@ -11,6 +11,7 @@ export type FileAndStageBindStatement =
   | oldSnowflakeSdk.FileAndStageBindStatement;
 export type RowStatement = newSnowflakeSdk.RowStatement | oldSnowflakeSdk.RowStatement;
 export type StatementOption = newSnowflakeSdk.StatementOption | oldSnowflakeSdk.StatementOption;
+export type Binds = newSnowflakeSdk.Binds | oldSnowflakeSdk.Binds;
 export type QueryStatus = newSnowflakeSdk.QueryStatus | oldSnowflakeSdk.QueryStatus;
 export type SnowflakeError = newSnowflakeSdk.SnowflakeError | oldSnowflakeSdk.SnowflakeError;
 export type RowMode = newSnowflakeSdk.RowMode | oldSnowflakeSdk.RowMode;
