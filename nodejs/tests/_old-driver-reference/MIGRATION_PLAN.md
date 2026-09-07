@@ -68,11 +68,10 @@ Review when working on structured-types support in the new driver:
 
 ### Connection
 
-- `integration/testConnection.js` — park `heartbeat` / `isValid` coverage for now. When
-  implementing the connection surface in the new driver:
-  - `.heartbeat()` / `.heartbeatAsync()` should be removed — they are not part of the public
-    documentation.
-  - `.isValidAsync()` — verify that `sf_core` implements this correctly before migrating coverage.
+- `integration/testConnection.js` — partially migrated. The `isValid` describe block moved to
+  `nodejs/tests/e2e/connection.test.ts`; the new driver reaches the same `POST /session/heartbeat`
+  through the core's `connection_heartbeat`. Still parked: `.heartbeat()` / `.heartbeatAsync()`,
+  which should be removed rather than migrated — they are not part of the public documentation.
 - `integration/testConnectionNegative.ts` — once connection creation lands in the new driver,
   rewrite this as a single test that asserts a generic "invalid connection parameters" error code.
 - `integration/testEasyLoggingOnConnecting.js` — figure out what "easy logger" is, what its public

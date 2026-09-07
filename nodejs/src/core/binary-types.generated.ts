@@ -33,6 +33,7 @@ export declare class Connection {
   constructor(options: Record<string, string>, sessionParameters: Record<string, string>)
   connect(): Promise<undefined>
   isUp(): boolean
+  isValidAsync(): Promise<boolean>
   getSessionParameters(): KnownSessionParameters
   execute(query: string, bindings?: QueryBindings | undefined | null): Statement
   getQueryResult(queryId: string): Statement

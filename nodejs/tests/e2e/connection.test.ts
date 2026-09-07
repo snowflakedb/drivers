@@ -73,6 +73,24 @@ describe('Connection', () => {
     expect(connection.isUp()).toBe(false);
   });
 
+  it('should report a connection as valid after connect', async () => {
+    const connection = createTestConnection(snowflake);
+    try {
+      await connection.connectAsync();
+      await expect(connection.isValidAsync()).resolves.toBe(true);
+    } finally {
+      await destroyConnectionAsync(connection);
+    }
+  });
+
+  it('should report a connection as invalid after destroy', async () => {
+    const connection = createTestConnection(snowflake);
+    await connection.connectAsync();
+    await destroyConnectionAsync(connection);
+
+    await expect(connection.isValidAsync()).resolves.toBe(false);
+  });
+
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('attaches a query tag from the connection', async () => {
     const expectedQueryTag = 'test_query_tag';
     const connection = createTestConnection(snowflake, { queryTag: expectedQueryTag });
