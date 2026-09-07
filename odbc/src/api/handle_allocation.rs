@@ -91,7 +91,9 @@ pub fn alloc_connection(env_id: HandleId) -> OdbcResult<sql::Handle> {
         env_id,
         telemetry_connection_cache: arc_swap::ArcSwapOption::empty(),
         connection: Mutex::new(Connection {
-            state: ConnectionState::Disconnected,
+            state: ConnectionState::Disconnected {
+                browse_params: None,
+            },
             diagnostic_info: DiagnosticInfo::default(),
             pre_connection_attrs: Default::default(),
             numeric_settings: Default::default(),
@@ -121,7 +123,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<sql::Handle> {
     let mut conn = dbc.connection.lock();
     let conn_handle = match conn.state {
         ConnectionState::Connected { conn_handle, .. } => conn_handle,
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     };
 
     let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
@@ -949,7 +951,7 @@ mod tests {
                     .expect("dbc in registry");
                 match &dbc.connection.lock().state {
                     ConnectionState::Connected { db_handle, .. } => *db_handle,
-                    ConnectionState::Disconnected => panic!("expected Connected"),
+                    ConnectionState::Disconnected { .. } => panic!("expected Connected"),
                 }
             };
             g.block_on(async |c| {

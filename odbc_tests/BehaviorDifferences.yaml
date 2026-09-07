@@ -1118,14 +1118,16 @@ behavior_differences:
       Note on SQLGetInfo with an invalid (out-of-range) InfoType: 4.x returns the spec-mandated HY096 on every DM (Windows, iODBC, and unixODBC all forward the driver's SQLSTATE unchanged — confirmed by CI). 3.x returns HY096 under iODBC and Windows but a generic HY000 under unixODBC (confirmed by the 3.x reference iODBC job). This is therefore a genuine driver behavior difference under unixODBC (4.x = spec-correct HY096, 3.x = HY000), not a DM interception artifact. See `odbc/src/api/error.rs`'s `UnknownInfoType` mapping and the `SQLGetInfo: HY096/HY000 - Invalid InfoType` test's driver-gated unixODBC branch.
   63:
     name: "SQLBrowseConnect short-circuits with SQL_ERROR under iODBC instead of returning SQL_NEED_DATA for the iterative protocol"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      3.x returns SQL_NEED_DATA for an incomplete connection string under
-      iODBC, while 4.x attempts a one-shot connection and returns SQL_ERROR.
-      Matching the 3.x return requires partial-string parsing and connection
-      state across calls. Under unixODBC both drivers return SQL_ERROR.
+      4.x now returns SQL_NEED_DATA for a browse string that names no
+      account/host/server, reports a nonzero output length, and leaves the
+      output buffer unchanged, matching 3.x under iODBC. The return does not
+      depend on the driver manager. Under unixODBC the observable is still
+      SQL_ERROR because that DM rejects an unregistered DRIVER= path with
+      IM002 before the driver is loaded, as it does for 3.x.
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
@@ -1134,7 +1136,16 @@ behavior_differences:
       supplied output buffer unchanged. Under unixODBC 3.x short-circuits with
       SQL_ERROR like 4.x.
     new_driver_behavior: |
-      Returns SQL_ERROR.
+      Under iODBC, SQLBrowseConnect("DRIVER={Snowflake}") returns
+      SQL_NEED_DATA and reports a nonzero output length, while leaving the
+      supplied output buffer unchanged. Under unixODBC the DM rejects the
+      call with IM002 before reaching the driver, so SQL_ERROR still surfaces
+      as it does for 3.x.
+    description: |
+      Regression fixed. iODBC applications that start SQLBrowseConnect with
+      only DRIVER= receive SQL_NEED_DATA and can continue the iterative
+      protocol, matching 3.x. unixODBC behavior is unchanged (SQL_ERROR from
+      the driver manager).
 
   64:
     name: "Connection-attribute state flips synchronously after SQLDisconnect under iODBC: SQL_ATTR_CONNECTION_DEAD reports SQL_CD_TRUE and reads of other attrs surface SQL_ERROR, instead of stale cached values"

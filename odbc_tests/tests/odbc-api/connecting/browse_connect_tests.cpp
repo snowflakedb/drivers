@@ -372,7 +372,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Iterative browse with 
   const SQLRETURN ret =
       SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
-  OLD_IODBC_ONLY("BD#63") {
+  // unixODBC and the Windows DM reject an unregistered DRIVER= path with IM002
+  // before the driver is loaded, so only iODBC observes the driver's NEED_DATA.
+  IODBC_ONLY {
     REQUIRE(ret == SQL_NEED_DATA);
     REQUIRE(outLen > 0);
     REQUIRE(static_cast<size_t>(outLen) < sizeof(outConnStr));
@@ -384,4 +386,78 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Iterative browse with 
     auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
     REQUIRE(!records.empty());
   }
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Iterative browse completes with attributes from later calls",
+                 "[odbc-api][browse_connect][connecting][integration][iterative]") {
+  NON_IODBC { SKIP("The driver manager rejects DRIVER=<path> before loading the driver"); }
+
+  const std::string driverPath = DriverConfig::get_driver_path();
+  const std::string initialConnStr = "DRIVER=" + driverPath;
+  SQLCHAR outConnStr[8192];
+  std::memset(outConnStr, 0xFF, sizeof(outConnStr));
+  SQLSMALLINT outLen = 0;
+
+  SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(initialConnStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  const std::string partialConnStr = "UID=overridden_by_final_call";
+  std::memset(outConnStr, 0xFF, sizeof(outConnStr));
+  outLen = 0;
+  ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(partialConnStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  REQUIRE(ret == SQL_NEED_DATA);
+  REQUIRE(outLen > 0);
+  REQUIRE(static_cast<int>(outConnStr[0]) == 0xFF);
+
+  const std::string completeConnStr = connection_string();
+  const size_t firstSeparator = completeConnStr.find(';');
+  REQUIRE(firstSeparator != std::string::npos);
+  const std::string remainingAttributes = completeConnStr.substr(firstSeparator + 1);
+
+  std::memset(outConnStr, 0xFF, sizeof(outConnStr));
+  outLen = 0;
+  ret = SQLBrowseConnect(dbc_handle(), sqlchar(remainingAttributes.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr),
+                         &outLen);
+  REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
+  REQUIRE(outLen > 0);
+  REQUIRE(static_cast<size_t>(outLen) < sizeof(outConnStr));
+
+  const std::string output(reinterpret_cast<char*>(outConnStr), static_cast<size_t>(outLen));
+  REQUIRE(output.find("DRIVER=" + driverPath) != std::string::npos);
+  REQUIRE(output.find("UID=" + expected_user_name()) != std::string::npos);
+  REQUIRE(output.find("UID=overridden_by_final_call") == std::string::npos);
+
+  SQLHSTMT stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
+  REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
+  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Disconnect cancels an incomplete iterative browse",
+                 "[odbc-api][browse_connect][connecting][integration][iterative][lifecycle]") {
+  NON_IODBC { SKIP("The driver manager rejects DRIVER=<path> before loading the driver"); }
+
+  const std::string connStr = "DRIVER=" + DriverConfig::get_driver_path();
+  SQLCHAR outConnStr[8192];
+  std::memset(outConnStr, 0xFF, sizeof(outConnStr));
+  SQLSMALLINT outLen = 0;
+
+  SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_ERROR);
+  const auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
+  REQUIRE(!records.empty());
 }
