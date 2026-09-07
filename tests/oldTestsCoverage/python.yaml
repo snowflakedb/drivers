@@ -3725,13 +3725,15 @@ tests:
   - test_name: test_cache_dir_xdg_cache_home
     ud_tests: []
   - test_name: test_cache_file_incorrect_permission_with_skip_file_permissions_check
-    ud_tests:
-      - sf_core/src/token_cache/file_cache.rs::tests::file_token_cache_tests::remediates_file_with_wrong_permissions
-    notes: |
-      UD auto-remediates token-cache file permissions to 0o600 instead of
-      refusing; no bypass flag is needed.
-  - test_name: test_cache_file_incorrect_permissions
     ud_tests: []
+    notes: |
+      UD accepts `skip_file_permissions_check` but fans it out to the
+      config-file and CRL-cache permission checks only, so it cannot opt out of
+      the token-cache file permission check.
+  - test_name: test_cache_file_incorrect_permissions
+    ud_tests:
+      - sf_core/src/token_cache/file_cache.rs::tests::file_token_cache_tests::rejects_read_of_file_with_wrong_permissions
+      - sf_core/src/token_cache/file_cache.rs::tests::file_token_cache_tests::rejects_write_to_file_with_wrong_permissions
   - test_name: test_delete_specific_item
     ud_tests: []
   - test_name: test_file_lock

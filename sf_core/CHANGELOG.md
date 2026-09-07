@@ -31,6 +31,7 @@ New features:
 
 Bug fixes:
 
+- Fixed the file-based token cache changing the mode of a cache file that is not `0600` and then reading from and writing to it anyway. Such a file is now reported and left unused, and the driver authenticates as it would with no cached token. Restoring `0600` on the file, or removing it so the driver recreates it, makes the cache usable again. (snowflakedb/drivers#1793)
 - Fixed JSON timestamp cells with a negative fractional epoch so the seconds and fraction floor the same way as Arrow (`div_euclid`), instead of truncating toward zero. (snowflakedb/drivers#1580)
 - Fixed an empty `account` value skipping required-parameter validation and hanging until login timed out; it is now rejected immediately as a missing account. (snowflakedb/drivers#1514)
 - Fixed cancelling a PUT abandoning the in-progress cloud upload instead of aborting it: an S3 multipart upload was left with its uploaded parts in place, which AWS bills until a lifecycle rule reaps them, and a GCS resumable session was left half-staged until Google expired it a week later. Both are now aborted when the transfer is cancelled, not only when it errors. (snowflakedb/drivers#TBD)

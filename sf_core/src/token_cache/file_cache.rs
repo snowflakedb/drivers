@@ -187,12 +187,15 @@ fn validate_file_fd(file: &fs::File, path: &Path) -> Result<(), TokenCacheError>
 
     let mode = metadata.permissions().mode() & 0o777;
     if mode != 0o600 {
-        let new_perms = fs::Permissions::from_mode(0o600);
-        file.set_permissions(new_perms)
-            .boxed()
-            .context(InsufficientPermissionsSnafu {
-                path: path.to_path_buf(),
-            })?;
+        tracing::warn!(
+            path = %path.display(),
+            "Refusing to use credential cache file: file mode is {mode:04o}, expected 0600"
+        );
+        return InsufficientPermissionsSnafu {
+            path: path.to_path_buf(),
+            mode,
+        }
+        .fail();
     }
 
     Ok(())
@@ -719,7 +722,7 @@ mod tests {
 
         #[cfg(unix)]
         #[test]
-        fn remediates_file_with_wrong_permissions() {
+        fn rejects_read_of_file_with_wrong_permissions() {
             use std::os::unix::fs::PermissionsExt;
 
             let (_dir, cache) = create_temp_cache();
@@ -729,15 +732,53 @@ mod tests {
             fs::set_permissions(&cache.cache_file_path, fs::Permissions::from_mode(0o644))
                 .expect("Failed to change permissions");
 
-            let result = cache
+            let err = cache
                 .get_secret("key")
-                .expect("Should succeed after remediating permissions");
+                .expect_err("Reading a cache file with wrong permissions must fail");
 
-            assert_eq!(result, Some(b"val".to_vec()));
+            assert!(
+                matches!(
+                    err,
+                    TokenCacheError::InsufficientPermissions { mode: 0o644, .. }
+                ),
+                "Expected InsufficientPermissions for mode 0o644, got: {err}"
+            );
             let metadata =
                 fs::metadata(&cache.cache_file_path).expect("Failed to read file metadata");
             let mode = metadata.permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "Permissions should be remediated to 0o600");
+            assert_eq!(mode, 0o644, "The rejected file's mode is left as found");
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn rejects_write_to_file_with_wrong_permissions() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let (_dir, cache) = create_temp_cache();
+            cache
+                .set_secret("key", b"val")
+                .expect("Failed to set secret");
+            fs::set_permissions(&cache.cache_file_path, fs::Permissions::from_mode(0o644))
+                .expect("Failed to change permissions");
+
+            let err = cache
+                .set_secret("other_key", b"other_val")
+                .expect_err("Writing to a cache file with wrong permissions must fail");
+
+            assert!(
+                matches!(
+                    err,
+                    TokenCacheError::InsufficientPermissions { mode: 0o644, .. }
+                ),
+                "Expected InsufficientPermissions for mode 0o644, got: {err}"
+            );
+            let content = fs::read_to_string(&cache.cache_file_path).expect("Failed to read file");
+            let parsed: CacheFileContent =
+                serde_json::from_str(&content).expect("Invalid JSON in cache file");
+            assert!(
+                !parsed.tokens.contains_key("other_key"),
+                "The rejected file must not be written to"
+            );
         }
 
         #[cfg(unix)]
