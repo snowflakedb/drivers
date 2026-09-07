@@ -6,6 +6,7 @@ node_modules/
 
 # Test output
 coverage/
+reports/
 
 # Logs
 snowflake.log
