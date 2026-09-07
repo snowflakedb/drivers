@@ -8,7 +8,20 @@ source "${SCRIPT_DIR}/../detect_platform.sh"
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"
 
+REFERENCE_ODBC_VERSION=$(tr -d '[:space:]' < ci/reference-odbc-version)
+# shellcheck disable=SC1091
+. ci/reference-odbc-checksums
+case "${BUILDPLATFORM}" in
+  linux/arm64|linux/arm64/v8)
+    REFERENCE_ODBC_SHA256="${DEB_AARCH64_SHA256}"
+    ;;
+  *)
+    REFERENCE_ODBC_SHA256="${DEB_X86_64_SHA256}"
+    ;;
+esac
+
 echo "Building ODBC performance drivers..."
+echo "Reference ODBC version: ${REFERENCE_ODBC_VERSION}"
 echo "Platform: ${BUILDPLATFORM}"
 echo ""
 
@@ -61,6 +74,8 @@ echo ""
 echo "→ Building universal driver image..."
 docker build -f tests/performance/drivers/odbc/Dockerfile \
   --build-arg BUILDPLATFORM="${BUILDPLATFORM}" \
+  --build-arg REFERENCE_ODBC_VERSION="${REFERENCE_ODBC_VERSION}" \
+  --build-arg REFERENCE_ODBC_SHA256="${REFERENCE_ODBC_SHA256}" \
   --target universal \
   -t odbc-perf-driver-universal:latest .
 
@@ -72,6 +87,8 @@ echo ""
 echo "→ Building old driver image..."
 docker build -f tests/performance/drivers/odbc/Dockerfile \
   --build-arg BUILDPLATFORM="${BUILDPLATFORM}" \
+  --build-arg REFERENCE_ODBC_VERSION="${REFERENCE_ODBC_VERSION}" \
+  --build-arg REFERENCE_ODBC_SHA256="${REFERENCE_ODBC_SHA256}" \
   --target old \
   -t odbc-perf-driver-old:latest .
 

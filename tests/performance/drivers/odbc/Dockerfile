@@ -12,22 +12,26 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+ARG REFERENCE_ODBC_VERSION
+ARG REFERENCE_ODBC_SHA256
 RUN if [ "$(uname -m)" = "x86_64" ]; then \
-        ARCH="linux"; \
+        URL_PATH="linux"; \
         PACKAGE_ARCH="x86_64"; \
     elif [ "$(uname -m)" = "aarch64" ]; then \
-        ARCH="linuxaarch64"; \
+        URL_PATH="linuxaarch64"; \
         PACKAGE_ARCH="aarch64"; \
     else \
         echo "Unsupported architecture: $(uname -m)"; \
         exit 1; \
     fi && \
-    echo "Downloading latest Snowflake ODBC driver for ${ARCH}..." && \
-    LATEST_VERSION=$(curl -s https://sfc-repo.snowflakecomputing.com/odbc/${ARCH}/latest/index.html | grep -oP 'snowflake-odbc-\K[0-9]+\.[0-9]+\.[0-9]+' | head -1) && \
-    echo "Found version: ${LATEST_VERSION}" && \
-    curl -O https://sfc-repo.snowflakecomputing.com/odbc/${ARCH}/${LATEST_VERSION}/snowflake-odbc-${LATEST_VERSION}.${PACKAGE_ARCH}.deb && \
-    dpkg -i snowflake-odbc-${LATEST_VERSION}.${PACKAGE_ARCH}.deb || true && \
-    rm -f snowflake-odbc-${LATEST_VERSION}.${PACKAGE_ARCH}.deb
+    DEB="snowflake-odbc-${REFERENCE_ODBC_VERSION}.${PACKAGE_ARCH}.deb" && \
+    echo "Installing reference Snowflake ODBC driver ${REFERENCE_ODBC_VERSION} (${PACKAGE_ARCH})..." && \
+    curl -fsSLO "https://sfc-repo.snowflakecomputing.com/odbc/${URL_PATH}/${REFERENCE_ODBC_VERSION}/${DEB}" && \
+    echo "${REFERENCE_ODBC_SHA256}  ${DEB}" | sha256sum -c - && \
+    apt-get update && \
+    (dpkg -i "${DEB}" || apt-get install -y -f) && \
+    rm -f "${DEB}" && \
+    rm -rf /var/lib/apt/lists/*
 
 # ============================================================================
 # Base stage: runtime deps + test app build (shared)
