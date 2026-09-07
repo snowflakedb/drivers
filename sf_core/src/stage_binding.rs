@@ -9,7 +9,6 @@ use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::RetryPolicy;
 use crate::file_manager;
 use crate::file_manager::upload_in_memory_file;
-use crate::rest::snowflake::query_request::QueryContext;
 use crate::rest::snowflake::query_response::{Data, QueryResponseError, Response};
 use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
 use crate::sensitive::SensitiveString;

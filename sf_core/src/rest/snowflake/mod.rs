@@ -4228,7 +4228,7 @@ mod tests {
         /// produced must walk the chain, matching the pattern already used
         /// for root-cause extraction elsewhere in this crate (see
         /// `protobuf::apis::database_driver_v1::converter::extract_root_cause`).
-        fn full_chain_message(err: &(dyn std::error::Error)) -> String {
+        fn full_chain_message(err: &dyn std::error::Error) -> String {
             let mut messages = vec![err.to_string()];
             let mut current = err.source();
             while let Some(cause) = current {

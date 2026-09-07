@@ -39,8 +39,8 @@ use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::query_context_cache::QueryContextCacheAdapter;
 use crate::rest::snowflake::{
-    self, QueryInput, QueryOptions, RestError, SessionTokens, SnowflakeResponseError, heartbeat,
-    query_request, snowflake_query_with_client,
+    self, QueryInput, QueryOptions, RestError, SessionTokens, heartbeat,
+    snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::config::ProxyConfig;

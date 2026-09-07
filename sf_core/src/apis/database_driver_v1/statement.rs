@@ -23,8 +23,7 @@ use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
     AbortOutcome, MissingQueryIdSnafu, QueryExecutionMode, QueryIds, QueryInput, QueryOptions,
-    query_request, query_response, snowflake_abort_query, snowflake_cancel_query,
-    snowflake_query_with_client,
+    query_response, snowflake_abort_query, snowflake_cancel_query, snowflake_query_with_client,
 };
 use crate::utils::sync::MutexRecoverExt;
 
@@ -1424,6 +1423,7 @@ fn inject_timestamp_input_format_auto(
 mod tests {
     use super::super::result_set;
     use super::*;
+    use crate::rest::snowflake::query_request;
     use crate::rest::snowflake::query_response::Data;
 
     #[test]

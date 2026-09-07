@@ -35,7 +35,6 @@ use super::like_pattern;
 use crate::chunks::PrefetchConfig;
 use crate::config::settings::Settings;
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::query_request::QueryContext;
 use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
 // ---------------------------------------------------------------------------
 // Depth constants (public — used by wrapper to map SQLTables special cases)
