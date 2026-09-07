@@ -67,19 +67,19 @@ Feature: BOOLEAN type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @nodejs_e2e
   Scenario: should select boolean using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN" is executed with bound boolean values [TRUE, FALSE, TRUE]
     Then Result should contain [TRUE, FALSE, TRUE]
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @nodejs_e2e
   Scenario: should select null boolean using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
     Then Result should contain [NULL]
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should insert boolean using parameter binding
     Given Snowflake client is logged in
     And Table with BOOLEAN column exists

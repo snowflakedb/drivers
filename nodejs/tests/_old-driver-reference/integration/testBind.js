@@ -39,69 +39,6 @@ describe('Test Bind Varible', function () {
     );
   });
 
-  it('testBindWithQmark', function (done) {
-    async.series(
-      [
-        function (callback) {
-          testUtil.executeCmd(connection, createTestTbl, callback);
-        },
-        function (callback) {
-          testUtil.executeCmd(connection, insertWithQmark, callback, ['string', 3]);
-        },
-        function (callback) {
-          testUtil.executeQueryAndVerify(
-            connection,
-            selectAllFromTbl,
-            [
-              {
-                COLA: 'string',
-                COLB: 3,
-              },
-            ],
-            callback,
-          );
-        },
-        function (callback) {
-          testUtil.executeCmd(connection, dropTestTbl, callback);
-        },
-      ],
-      done,
-    );
-  });
-
-  it('testBindArrayWithQmark', function (done) {
-    async.series(
-      [
-        function (callback) {
-          testUtil.executeCmd(connection, createTestTbl, callback);
-        },
-        function (callback) {
-          testUtil.executeCmd(connection, insertWithQmark, callback, [
-            ['string3', 6],
-            ['string2', 4],
-            ['string1', 2],
-          ]);
-        },
-        function (callback) {
-          testUtil.executeQueryAndVerify(
-            connection,
-            selectAllFromTbl,
-            [
-              { COLA: 'string1', COLB: 2 },
-              { COLA: 'string2', COLB: 4 },
-              { COLA: 'string3', COLB: 6 },
-            ],
-            callback,
-          );
-        },
-        function (callback) {
-          testUtil.executeCmd(connection, dropTestTbl, callback);
-        },
-      ],
-      done,
-    );
-  });
-
   it('testBindWithSemiColon', function (done) {
     async.series(
       [

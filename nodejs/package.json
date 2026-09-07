@@ -35,6 +35,7 @@
   "napi": {
     "binaryName": "snowflake-sdk-core",
     "packageName": "snowflake-sdk-core",
+    "constEnum": false,
     "targets": [
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",

@@ -52,6 +52,7 @@ const core = getCore();
 export const CoreConnection = core.Connection;
 export const CoreStatement = core.Statement;
 export const CoreColumn = core.Column;
+export const CoreQueryBindingFormat = core.QueryBindingFormat;
 
 export type CoreConnectionInstance = InstanceType<typeof CoreConnection>;
 export type CoreStatementInstance = InstanceType<typeof CoreStatement>;
