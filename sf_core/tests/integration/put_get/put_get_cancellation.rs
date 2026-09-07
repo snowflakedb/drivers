@@ -286,7 +286,12 @@ async fn should_keep_completed_files_and_skip_the_rest_when_a_batch_is_cancelled
         .mount(&completed)
         .await;
 
-    // Must never be requested: the sequential loop is dropped while on file 2.
+    // Must never be requested. This holds because `MultipartParams::default()`
+    // below resolves `data.parallel` to 1, so the batch's file fan-out is 1 and
+    // file 3 has not started when the cancel lands on file 2. The fan-out=2 case,
+    // where a later file genuinely starts before the cancel lands, is covered by
+    // `should_clean_up_every_in_flight_file_when_a_batch_is_cancelled_at_fan_out_two`
+    // below.
     let third = third_requests.clone();
     Mock::given(method("GET"))
         .and(path_matcher("/presigned/three"))
@@ -351,7 +356,113 @@ async fn should_keep_completed_files_and_skip_the_rest_when_a_batch_is_cancelled
     assert_eq!(
         third_requests.load(Ordering::SeqCst),
         0,
-        "files after the cancelled one must never be requested"
+        "files after the cancelled one must never be requested — see the fan-out \
+         note on the mock above before relaxing this"
+    );
+}
+
+/// The fan-out=1 test above pins `MultipartParams::default()`, so it can only ever
+/// observe one in-flight file at cancel time — cleanup that only aborts the single
+/// file it already knows about would still pass there. This sets `data.parallel`
+/// to exactly 2, the same number as the two [`StallingBodyServer`]s below, so both
+/// are genuinely in flight when the cancel lands.
+///
+/// Files "one" and "two" each get their own [`StallingBodyServer`] instance
+/// because `StallingBodyServer::spawn` accepts a single connection and returns —
+/// it does not loop — so one instance cannot serve two files: the second
+/// connection would sit unaccepted in the backlog and never produce a `.part`.
+/// File "three" stays on wiremock and is asserted unrequested: with a budget of
+/// exactly 2 already held by "one" and "two", "three" blocks on the scheduler's
+/// semaphore before it can even send headers.
+#[tokio::test(flavor = "multi_thread")]
+async fn should_clean_up_every_in_flight_file_when_a_batch_is_cancelled_at_fan_out_two() {
+    let completed = MockServer::start().await;
+    let stalling_one = StallingBodyServer::spawn().await;
+    let stalling_two = StallingBodyServer::spawn().await;
+    let third_requests = Arc::new(AtomicUsize::new(0));
+
+    let third = third_requests.clone();
+    Mock::given(method("GET"))
+        .and(path_matcher("/presigned/three"))
+        .respond_with(move |_: &Request| {
+            third.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"third-file".to_vec())
+                .insert_header("x-goog-meta-sfc-digest", "test-digest")
+        })
+        .mount(&completed)
+        .await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().to_path_buf();
+    let base = completed.uri();
+
+    let data = DownloadData {
+        src_locations: vec!["one".to_string(), "two".to_string(), "three".to_string()],
+        local_location: dir.to_string_lossy().to_string(),
+        stage_info: presigned_gcs_stage(),
+        encryption_materials: vec![None, None, None],
+        presigned_urls: vec![
+            Some(stalling_one.url.clone()),
+            Some(stalling_two.url.clone()),
+            Some(format!("{base}/presigned/three")),
+        ],
+        flavor: PutGetResultsetFlavor::Python,
+        multipart: MultipartParams::from_server(None, Some(2)),
+        unsafe_file_write: false,
+        get_fastfail: true,
+    };
+
+    let (reached_one, mid_one) = once_partial_file_exists(partial_path(&dir, "one"));
+    let (reached_two, mid_two) = once_partial_file_exists(partial_path(&dir, "two"));
+    // Waits for both, not just one: cancelling as soon as either file's `.part`
+    // appears would risk firing before the other has started, and then its
+    // "no debris" assertion below would pass vacuously rather than proving
+    // cleanup actually ran on a second in-flight transfer.
+    let both_mid_body = async move {
+        tokio::join!(mid_one, mid_two);
+    };
+
+    let outcome = cancelled_by(both_mid_body, move |scope| async move {
+        download_files(
+            data,
+            &RetryPolicy::put_get(&ParamStore::new()),
+            TransferCtx::new(None, Some(&scope)),
+        )
+        .await
+    })
+    .await;
+
+    assert!(
+        reached_one.load(Ordering::SeqCst) && reached_two.load(Ordering::SeqCst),
+        "files one and two must both reach mid-body before the cancel, proving \
+         `parallel=2` genuinely ran them concurrently — otherwise this test \
+         exercises the same one-in-flight-at-a-time path as the fan-out=1 test above"
+    );
+    assert!(
+        outcome.is_none(),
+        "a cancelled batch reports cancellation, not partial result rows"
+    );
+    for (name, server) in [("one", &stalling_one), ("two", &stalling_two)] {
+        assert!(
+            !dir.join(name).exists() && !partial_path(&dir, name).exists(),
+            "file {name}, in flight when the cancel landed, must leave neither a \
+             destination nor `.part` debris"
+        );
+        assert!(
+            server.saw_client_disconnect().await,
+            "file {name}'s connection must be closed rather than drained in the background"
+        );
+        assert!(
+            server.bytes_sent() < ADVERTISED_LEN,
+            "file {name} must not have run to completion"
+        );
+    }
+    assert_eq!(
+        third_requests.load(Ordering::SeqCst),
+        0,
+        "file three must never be requested — a budget of 2 already held by \
+         files one and two blocks it before it can send headers"
     );
 }
 

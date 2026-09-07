@@ -27,6 +27,7 @@ New features:
 - Added a `_description_internal` property on the Python cursor, exposing the new-format `ResultMetadataV2` metadata for the last executed statement. Callers that probe for it (Snowpark) previously fell back to the PEP 249 `description`, losing `fields` and `vector_dimension`. (snowflakedb/drivers#1627)
 - Added the `MAP` type code (17) to the Python type-code table, matching legacy `snowflake-connector-python`. A structured MAP column previously reported as `TEXT` in `cursor.description`. (snowflakedb/drivers#1627)
 - Added `result_set_get_async_stream` so an in-process wrapper can await Arrow batches instead of draining the C stream on a blocking thread. (snowflakedb/drivers#1563)
+- Added file-level parallelism to PUT and GET: a multi-file transfer now uploads or downloads several files at once instead of one at a time, bounded by the statement's `PARALLEL` value, and result rows keep their original file order. Fail-fast now lets files already in flight (up to `PARALLEL` of them) finish and land on the stage after the first error, instead of stopping after only the current file. (snowflakedb/drivers#1451)
 
 Bug fixes:
 
@@ -45,7 +46,7 @@ Bug fixes:
 
 Internal improvements:
 
-- Added a per-statement cloud-request budget for PUT/GET: every request that moves object bytes or reads object metadata takes a slot from one shared `TransferScheduler` sized from the server's `PARALLEL`, so part-level and file-level concurrency cannot multiply into `PARALLEL²` simultaneous requests once file fan-out lands. Files still transfer one at a time, so transfer behaviour is unchanged on its own. (snowflakedb/drivers#1449)
+- Added a per-statement cloud-request budget for PUT/GET: every request that moves object bytes or reads object metadata takes a slot from one shared `TransferScheduler` sized from the server's `PARALLEL`, so part-level and file-level concurrency cannot multiply into `PARALLEL²` simultaneous requests now that file fan-out has landed. (snowflakedb/drivers#1449)
 - Replaced the per-statement in-flight `requestId` slot and the `StatementCancel` RPC with operation-handle cancellation: a wrapper cancels the handle it dispatched under, and the core fires the abort-request from inside the cancelled operation. The abort now has exactly one emitter, cancelling also covers phases `StatementCancel` could not reach (such as a bind-variable stage upload), and a cancel can no longer abort a query that was never submitted. (snowflakedb/drivers#1491)
 - Added `proto_utils::CancellableTransport`, and the Rust generator now emits a `<rpc>_cancellable(operation, request)` client method plus `register_operation`/`cancel_operation`/`deregister_operation` for every `async_first` RPC, so a wrapper holding only the generated typed client can dispatch cancellably. (snowflakedb/drivers#1491)
 - Node's `Statement.cancel()` now cancels through a per-statement `OperationCtx` instead of the removed `StatementCancel` RPC. (snowflakedb/drivers#1491)

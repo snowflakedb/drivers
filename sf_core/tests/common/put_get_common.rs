@@ -91,6 +91,24 @@ pub fn get_file_from_stage(
     (get_result, download_dir)
 }
 
+/// `GET`s everything under `stage_ref` into a fresh directory with `PARALLEL`
+/// set. `stage_ref` is a stage name, optionally with a path
+/// (`MY_STAGE` or `MY_STAGE/one_file.bin`) — unlike [`get_file_from_stage`],
+/// which always addresses a single file and takes no options.
+pub fn get_from_stage_with_parallel(
+    client: &SnowflakeTestClient,
+    stage_ref: &str,
+    parallel: u32,
+) -> (ResultSetGetStreamResponse, tempfile::TempDir) {
+    let download_dir = tempfile::TempDir::new().unwrap();
+    let get_sql = format!(
+        "GET @{stage_ref} file://{}/ PARALLEL={parallel}",
+        path_to_sql_uri(download_dir.path())
+    );
+    let get_result = client.execute_query(&get_sql);
+    (get_result, download_dir)
+}
+
 pub fn assert_file_exists(download_dir: &tempfile::TempDir, filename: &str) {
     let file_path = download_dir.path().join(filename);
     assert!(

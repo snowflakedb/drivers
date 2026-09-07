@@ -202,6 +202,7 @@ use encryption::{
     EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
 };
 use flate2::write::GzDecoder;
+use futures::StreamExt as _;
 use gcs_transfer::{
     download_from_gcs_streaming, gcs_get_streaming, gcs_retry_policy, upload_to_gcs_or_skip,
 };
@@ -216,6 +217,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Message string emitted in the PUT result's `message` column when the
 /// upload outcome is `Skipped` under `PutGetResultsetFlavor::Odbc`. Mirrors
@@ -356,12 +358,64 @@ pub(crate) fn prepared_upload_with_digest(digest: &str) -> PreparedUpload {
 /// already covers it. 512 is O(1) regardless of file size.
 const COMPRESSION_DETECT_PREFIX_LEN: usize = 512;
 
-/// Uploads every file matching `data.src_location_pattern`, sequentially.
+/// Fail-fast's stop signal for a batch whose files run concurrently.
 ///
-/// On cancellation the loop stops, so later files never begin; the in-flight one
-/// is aborted by the cleanup registered further down; files already uploaded stay
-/// on the stage, complete and valid but unreported — the caller sees only
-/// `ApiError::Cancelled`, never partial result rows.
+/// Fail-fast must not abort by *dropping* the transfers still in flight. A
+/// dropped future never returns, so `s3_multipart_upload`'s inline
+/// `AbortMultipartUpload` (and GCS's session `DELETE`) — which run on the `Err`
+/// path — never fire. The cancellation cleanup registered via
+/// [`with_cleanup_scope_opt`] does cover a dropped future, but only when the
+/// operation's token is cancelled, and only when a caller supplied a
+/// `CleanupScope` at all: an internal caller, a test, or a non-`async_first` RPC
+/// passes `None`. Fail-fast is not cancellation, so neither guarantee applies to
+/// it.
+///
+/// So instead of dropping anything, the flag makes the *not yet started* files
+/// short-circuit while the in-flight ones run to completion and clean up through
+/// their own error paths. Fail-fast still avoids transferring the rest of the
+/// batch, which is what it is for; it just does not do so by abandoning open
+/// uploads. Cancellation keeps its own semantics, unchanged and independent.
+///
+/// `enabled` is `false` for collect-all, where every file runs regardless.
+struct BatchAbort {
+    enabled: bool,
+    tripped: AtomicBool,
+}
+
+impl BatchAbort {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            tripped: AtomicBool::new(false),
+        }
+    }
+
+    /// True once a file has failed under fail-fast. `Relaxed` is sufficient:
+    /// this is a kill switch, not a synchronisation point — a file that observes
+    /// the flag one poll late simply runs and reports its own outcome, which the
+    /// caller then discards in favour of the lowest-index error.
+    fn is_aborted(&self) -> bool {
+        self.enabled && self.tripped.load(Ordering::Relaxed)
+    }
+
+    fn record_failure(&self) {
+        if self.enabled {
+            self.tripped.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Uploads every file matching `data.src_location_pattern`, transferring up to
+/// [`TransferScheduler::file_fanout`] of them concurrently.
+///
+/// On cancellation, files that have not started never begin; the ones in flight
+/// (at most the fan-out) are aborted by the cleanup each registered further down;
+/// files already uploaded stay on the stage, complete and valid but unreported —
+/// the caller sees only `ApiError::Cancelled`, never partial result rows.
+///
+/// `tx.scheduler` carries the batch's cloud-request budget when the caller built
+/// one; otherwise [`scheduler_for`] mints one here. Every file draws its cloud
+/// requests from it.
 pub async fn upload_files(
     data: &UploadData,
     policy: &RetryPolicy,
@@ -384,8 +438,9 @@ pub async fn upload_files(
         .fail();
     }
 
-    let mut results = Vec::with_capacity(file_locations.len());
-    let mut failures: Vec<String> = Vec::new();
+    // Fail-fast's "stop the batch" signal, shared across the in-flight files.
+    // See `BatchAbort` for why a flag rather than dropping the stream.
+    let abort = BatchAbort::new(data.put_fastfail);
 
     // One budget for the whole batch: every cloud request each file issues —
     // whole-file PUT, `UploadPart`, resumable chunk — takes a slot from it, so
@@ -400,39 +455,75 @@ pub async fn upload_files(
     // automatically (matching Python's shared `StorageCredential`). The
     // refresher coalesces rapid-fire token refresh calls across files; URL
     // refresh is intentionally not coalesced (each file may carry its own
-    // presigned URL).
-    for file_location in file_locations {
-        let stage_info = current_stage_info(&data.stage_info, tx.refresher);
-        let path = PathBuf::from(&file_location.path);
-        // Retained for the aggregate-failure report: `filename` moves into
-        // `SingleUploadData` below, but a failed transfer still needs a name
-        // to list in `UploadBatch`.
-        let name = file_location.filename.clone();
-        let single_upload_data = SingleUploadData {
-            source: ByteSource::Path(path),
-            filename: file_location.filename,
-            stage_info,
-            encryption_material: data.encryption_material.clone(),
-            auto_compress: data.auto_compress,
-            source_compression: data.source_compression.clone(),
-            overwrite: data.overwrite,
-            flavor: data.flavor.clone(),
-            legacy_odbc_compression_autodetect: data.legacy_odbc_compression_autodetect,
-            skip_upload_on_content_match: data.skip_upload_on_content_match,
-            multipart: data.multipart,
-        };
+    // presigned URL). All of that is already concurrency-safe — the cache is an
+    // `Arc<RwLock>` and the coalescing window is what it is for.
+    //
+    // One consequence of running files concurrently: a *credential* expiry now
+    // has several files hit `refresh()` at once, which the coalescing window
+    // collapses into one GS round-trip. A per-file presigned-URL expiry
+    // (`refresh_url`, GCS PUT only) deliberately bypasses that window, so up to
+    // `file_fanout()` URL refreshes can be in flight together where the
+    // sequential loop issued them one after another. Bounded by the fan-out and
+    // by the two-strike `PresignedUrlExpired` guard at the call site, so it
+    // cannot loop — but it is a burst GS did not previously see.
+    let outcomes = futures::stream::iter(file_locations)
+        .map(|file_location| {
+            let abort = &abort;
+            async move {
+                // Retained for the aggregate-failure report: `filename` moves
+                // into `SingleUploadData` below, but a failed transfer still
+                // needs a name to list in `UploadBatch`.
+                let name = file_location.filename.clone();
+                if abort.is_aborted() {
+                    return (name, None);
+                }
+                let single_upload_data = SingleUploadData {
+                    source: ByteSource::Path(PathBuf::from(&file_location.path)),
+                    filename: file_location.filename,
+                    // Read per file, not once for the batch: an earlier file's
+                    // refresh must be picked up by the files that follow.
+                    stage_info: current_stage_info(&data.stage_info, tx.refresher),
+                    encryption_material: data.encryption_material.clone(),
+                    auto_compress: data.auto_compress,
+                    source_compression: data.source_compression.clone(),
+                    overwrite: data.overwrite,
+                    flavor: data.flavor.clone(),
+                    legacy_odbc_compression_autodetect: data.legacy_odbc_compression_autodetect,
+                    skip_upload_on_content_match: data.skip_upload_on_content_match,
+                    multipart: data.multipart,
+                };
+                let outcome = upload_single_file(single_upload_data, policy, tx).await;
+                if outcome.is_err() {
+                    abort.record_failure();
+                }
+                (name, Some(outcome))
+            }
+        })
+        // `buffered`, not `buffer_unordered`: PUT results are one row per input
+        // file and callers (and the wrappers' tests) read them positionally, so
+        // the row order must stay the input order regardless of which transfer
+        // finishes first.
+        .buffered(scheduler.file_fanout())
+        .collect::<Vec<_>>()
+        .await;
 
-        match upload_single_file(single_upload_data, policy, tx).await {
-            Ok(result) => results.push(result),
-            // Fail-fast aborts at the first error; collect-all (the default)
-            // attempts every file and reports all failures together (ODBC parity,
-            // SNOW-3838438).
-            Err(e) => {
+    let mut results = Vec::with_capacity(outcomes.len());
+    let mut failures: Vec<String> = Vec::new();
+    for (name, outcome) in outcomes {
+        match outcome {
+            Some(Ok(result)) => results.push(result),
+            // Fail-fast aborts the batch at the first error; collect-all (the
+            // default) attempts every file and reports all failures together
+            // (ODBC parity, SNOW-3838438).
+            Some(Err(e)) => {
                 if data.put_fastfail {
                     return Err(e);
                 }
                 failures.push(format!("{name}: {e}"));
             }
+            // Skipped because fail-fast had already tripped. The error from the
+            // file that tripped it is returned above, so this row is dropped.
+            None => {}
         }
     }
 
@@ -852,13 +943,14 @@ fn auto_detect_source_compression(
     }
 }
 
-/// Downloads every file listed in `data.src_locations`, sequentially.
+/// Downloads every file listed in `data.src_locations`, transferring up to
+/// [`TransferScheduler::file_fanout`] of them concurrently.
 ///
-/// On cancellation the loop stops, so later files never begin; the in-flight one
-/// is stopped and its `.part` removed by the cleanup registered in
-/// [`download_single_file`]; files already downloaded stay on disk, whole because
-/// each was published by an atomic rename. The caller sees only
-/// `ApiError::Cancelled`, never partial result rows.
+/// On cancellation, files that have not started never begin; the ones in flight
+/// (at most the fan-out) are stopped and their `.part` removed by the cleanup
+/// each registered in [`download_single_file`]; files already downloaded stay on
+/// disk, whole because each was published by an atomic rename. The caller sees
+/// only `ApiError::Cancelled`, never partial result rows.
 pub async fn download_files(
     mut data: DownloadData,
     policy: &RetryPolicy,
@@ -868,7 +960,9 @@ pub async fn download_files(
         tracing::warn!("{message}");
     }
 
-    let mut results = Vec::new();
+    // Fail-fast's stop signal — see `BatchAbort` for why in-flight files are
+    // allowed to finish rather than being dropped.
+    let abort = BatchAbort::new(data.get_fastfail);
 
     // One budget for the whole batch — see the mirror comment in `upload_files`.
     let scheduler = scheduler_for(tx, data.multipart);
@@ -883,35 +977,67 @@ pub async fn download_files(
     // The per-file index (`enumerate`) is forwarded into `download_single_file`
     // so the GCS layer can re-resolve `presigned_urls[i]` from the refresher
     // cache after a 400-triggered URL refresh.
-    let download_iter = data
+    let download_iter: Vec<_> = data
         .src_locations
         .drain(..)
         .zip(data.encryption_materials.drain(..))
         .zip(data.presigned_urls.drain(..))
-        .enumerate();
-    for (index, ((file_location, encryption_material), presigned_url)) in download_iter {
-        let stage_info = current_stage_info(&data.stage_info, tx.refresher);
-        // Retained for the collect-all ERROR row: `file_location` moves into
-        // `SingleDownloadData` below, but a failed transfer still needs a
-        // `file` column to report.
-        let name = file_location.clone();
-        let single_download_data = SingleDownloadData {
-            src_location: file_location,
-            local_location: data.local_location.clone(),
-            stage_info,
-            encryption_material,
-            presigned_url,
-            flavor: data.flavor.clone(),
-            multipart: data.multipart,
-            unsafe_file_write: data.unsafe_file_write,
-        };
+        .enumerate()
+        .collect();
 
-        match download_single_file(single_download_data, policy, index, tx).await {
-            Ok(result) => results.push(result),
+    let data = &data;
+    let outcomes = futures::stream::iter(download_iter)
+        .map(
+            |(index, ((file_location, encryption_material), presigned_url))| {
+                let abort = &abort;
+                async move {
+                    // Retained for the collect-all ERROR row: `file_location`
+                    // moves into `SingleDownloadData` below, but a failed
+                    // transfer still needs a `file` column to report.
+                    let name = file_location.clone();
+                    if abort.is_aborted() {
+                        return (name, None);
+                    }
+                    let single_download_data = SingleDownloadData {
+                        src_location: file_location,
+                        local_location: data.local_location.clone(),
+                        // Read per file, not once for the batch: an earlier
+                        // file's refresh must be picked up by those that follow.
+                        stage_info: current_stage_info(&data.stage_info, tx.refresher),
+                        encryption_material,
+                        presigned_url,
+                        flavor: data.flavor.clone(),
+                        multipart: data.multipart,
+                        unsafe_file_write: data.unsafe_file_write,
+                    };
+                    let outcome =
+                        download_single_file(single_download_data, policy, index, tx).await;
+                    if outcome.is_err() {
+                        abort.record_failure();
+                    }
+                    (name, Some(outcome))
+                }
+            },
+        )
+        // `buffered`, not `buffer_unordered`: GET emits one result row per
+        // requested file and callers read them positionally, so row order must
+        // stay the input order regardless of completion order.
+        .buffered(scheduler.file_fanout())
+        .collect::<Vec<_>>()
+        .await;
+
+    let mut results = Vec::with_capacity(outcomes.len());
+    for (name, outcome) in outcomes {
+        match outcome {
+            Some(Ok(result)) => results.push(result),
+
             // Fail-fast (`get_fastfail`) aborts the batch on the first error;
             // collect-all records an ERROR row and continues (ODBC parity,
             // SNOW-3838438).
-            Err(e) => results.push(on_download_file_error(data.get_fastfail, name, e)?),
+            Some(Err(e)) => results.push(on_download_file_error(data.get_fastfail, name, e)?),
+            // Skipped because fail-fast had already tripped; the error from the
+            // file that tripped it is returned above.
+            None => {}
         }
     }
 
@@ -2665,6 +2791,15 @@ mod tests {
         }
     }
 
+    /// Exact request path for `name` on the mock stage built by
+    /// [`batch_upload_data_for`] (bucket `test-bucket`, key prefix `prefix/`,
+    /// path-style addressing). Exact rather than a `path_regex` suffix: an
+    /// unanchored suffix with an unescaped `.` would also match a neighbouring
+    /// file's path, silently pairing a test's mock with the wrong request.
+    fn mock_object_path(name: &str) -> String {
+        format!("/test-bucket/prefix/{name}")
+    }
+
     /// Builds an `UploadData` batch for a glob pattern matching every file in
     /// `dir`, targeting an S3 stage pointed at `mock` (path-style, since the
     /// endpoint host is an IP literal). `overwrite=true` skips the HEAD probe
@@ -2708,6 +2843,20 @@ mod tests {
         }
     }
 
+    /// [`batch_upload_data_for`] with `data.parallel` set, so the batch fans out
+    /// over `parallel` files at a time instead of the default 1.
+    fn parallel_batch_upload_data_for(
+        dir: &std::path::Path,
+        mock_uri: &str,
+        put_fastfail: bool,
+        parallel: i64,
+    ) -> UploadData {
+        UploadData {
+            multipart: MultipartParams::from_server(None, Some(parallel)),
+            ..batch_upload_data_for(dir, mock_uri, put_fastfail)
+        }
+    }
+
     /// Sets up good.dat + two failing files against a mock S3 endpoint. Uses a
     /// plain 400 (not 500) for the failures — mirrors
     /// `s3_multipart_upload_aborts_on_part_failure`'s technique for a terminal
@@ -2738,6 +2887,264 @@ mod tests {
 
         let data = batch_upload_data_for(tmp.path(), &mock.uri(), put_fastfail);
         (mock, data)
+    }
+
+    /// Mock that fails every `PutObject` terminally, counting attempts. 400
+    /// (not 5xx) so the AWS SDK treats it as final and does not retry, which
+    /// would otherwise inflate the count.
+    struct CountingFailedPut(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl wiremock::Respond for CountingFailedPut {
+        fn respond(&self, _: &wiremock::Request) -> wiremock::ResponseTemplate {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            wiremock::ResponseTemplate::new(400).set_body_string("nope")
+        }
+    }
+
+    /// Fail-fast under concurrency must stop *starting* files rather than
+    /// cancelling the ones already in flight — see `BatchAbort`. With every PUT
+    /// failing, only the files up to the point the flag trips may reach the
+    /// server; the rest are skipped.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_fail_fast_stops_starting_new_files() {
+        const FILES: usize = 20;
+        const FANOUT: i64 = 2;
+        let tmp = tempfile::TempDir::new().unwrap();
+        for i in 0..FILES {
+            std::fs::write(tmp.path().join(format!("f{i:02}.dat")), "x").unwrap();
+        }
+
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .respond_with(CountingFailedPut(Arc::clone(&attempts)))
+            .mount(&mock)
+            .await;
+
+        let data = parallel_batch_upload_data_for(tmp.path(), &mock.uri(), true, FANOUT);
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+
+        let err = upload_files(
+            &data,
+            &policy,
+            TransferCtx::default().with_scheduler(&internal::test_scheduler(data.multipart)),
+        )
+        .await
+        .expect_err("fail-fast must surface the first per-file error");
+        assert!(
+            !matches!(err, FileManagerError::UploadBatch { .. }),
+            "fail-fast must abort with the raw per-file error, not the collect-all aggregate: {err}"
+        );
+
+        let attempted = attempts.load(Ordering::SeqCst);
+        assert!(
+            attempted >= 1,
+            "the first file must have been attempted, saw {attempted}"
+        );
+        assert!(
+            attempted < FILES,
+            "fail-fast must stop starting files once one has failed; all {FILES} were attempted"
+        );
+    }
+
+    /// Result rows must stay in input (glob) order even though the transfers
+    /// finish out of order. Callers read PUT/GET rows positionally, so
+    /// `buffer_unordered` here would silently mis-pair rows with files.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_returns_results_in_input_order_despite_out_of_order_completion() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Later files answer sooner, so completion order is the reverse of input
+        // order — any unordered collection would surface it.
+        let names = ["a.dat", "b.dat", "c.dat", "d.dat"];
+        for name in names {
+            std::fs::write(tmp.path().join(name), name).unwrap();
+        }
+        let mock = wiremock::MockServer::start().await;
+        for (i, name) in names.iter().enumerate() {
+            let delay = std::time::Duration::from_millis(50 * (names.len() - i) as u64);
+            wiremock::Mock::given(wiremock::matchers::method("PUT"))
+                .and(wiremock::matchers::path(mock_object_path(name)))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_delay(delay))
+                .mount(&mock)
+                .await;
+        }
+        let data = parallel_batch_upload_data_for(tmp.path(), &mock.uri(), false, 4);
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+
+        let results = upload_files(
+            &data,
+            &policy,
+            TransferCtx::default().with_scheduler(&internal::test_scheduler(data.multipart)),
+        )
+        .await
+        .expect("all four uploads should succeed");
+
+        let sources: Vec<&str> = results.iter().map(|r| r.source.as_str()).collect();
+        assert_eq!(
+            sources,
+            names.to_vec(),
+            "result rows must follow input order, not completion order"
+        );
+    }
+
+    /// Mock S3 endpoint that answers every `PutObject` after `delay`, counting
+    /// how many requests have arrived. Because no response completes inside the
+    /// observation window, the arrival count *is* the number of uploads in
+    /// flight — which is what lets the tests below assert on file-level
+    /// concurrency without reaching inside the scheduler.
+    #[derive(Clone)]
+    struct CountingSlowPut {
+        arrivals: Arc<std::sync::atomic::AtomicUsize>,
+        delay: std::time::Duration,
+    }
+
+    impl wiremock::Respond for CountingSlowPut {
+        fn respond(&self, _: &wiremock::Request) -> wiremock::ResponseTemplate {
+            self.arrivals.fetch_add(1, Ordering::SeqCst);
+            wiremock::ResponseTemplate::new(200).set_delay(self.delay)
+        }
+    }
+
+    /// Writes `count` files and mounts a slow counting PUT handler over them.
+    async fn setup_slow_upload_batch(
+        tmp: &tempfile::TempDir,
+        count: usize,
+        parallel: i64,
+    ) -> (
+        wiremock::MockServer,
+        UploadData,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        for i in 0..count {
+            std::fs::write(tmp.path().join(format!("f{i:02}.dat")), format!("body-{i}")).unwrap();
+        }
+        let arrivals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .respond_with(CountingSlowPut {
+                arrivals: Arc::clone(&arrivals),
+                // Long enough that nothing completes while the tests observe the
+                // in-flight count; the tests abort the upload rather than wait.
+                delay: std::time::Duration::from_secs(30),
+            })
+            .mount(&mock)
+            .await;
+        let data = parallel_batch_upload_data_for(tmp.path(), &mock.uri(), false, parallel);
+        (mock, data, arrivals)
+    }
+
+    /// Polls `arrivals` until it reaches `want`, returning the value observed.
+    /// Polling (rather than sleeping a fixed time) keeps the test fast when the
+    /// condition is already met and non-flaky on a loaded runner: extra load
+    /// makes requests arrive *later*, never sooner, so it cannot cause a false
+    /// pass.
+    async fn wait_for_arrivals(arrivals: &std::sync::atomic::AtomicUsize, want: usize) -> usize {
+        let deadline = std::time::Duration::from_secs(10);
+        tokio::time::timeout(deadline, async {
+            loop {
+                let seen = arrivals.load(Ordering::SeqCst);
+                if seen >= want {
+                    return seen;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "expected at least {want} concurrent transfers within {deadline:?}, saw {}",
+                arrivals.load(Ordering::SeqCst)
+            )
+        })
+    }
+
+    /// The point of the change: files no longer transfer one at a time. With
+    /// `data.parallel = 4`, four PUTs must be on the wire together — before this
+    /// work the loop was sequential and only ever one would have arrived.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_transfers_files_concurrently_up_to_the_fanout() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (_mock, data, arrivals) = setup_slow_upload_batch(&tmp, 12, 4).await;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let scheduler = internal::test_scheduler(data.multipart);
+
+        let upload = async {
+            upload_files(
+                &data,
+                &policy,
+                TransferCtx::default().with_scheduler(&scheduler),
+            )
+            .await
+        };
+        let observe = async {
+            // Reaching 4 is the fan-out's doing: a sequential loop, or a fan-out
+            // pinned to 1, tops out at one arrival however many tickets exist.
+            let seen = wait_for_arrivals(&arrivals, 4).await;
+            // Staying at 4 is the *request budget's* doing, not the fan-out's —
+            // widening `file_fanout` alone cannot exceed this, because each
+            // upload still needs a ticket. No response has completed (30s
+            // delay), so a finished slot cannot have inflated the count.
+            assert!(
+                seen <= 4,
+                "the request budget must cap in-flight uploads at data.parallel=4, saw {seen} \
+                 of 12 files in flight at once"
+            );
+        };
+
+        // Race the observation against the (never-completing) upload, then drop
+        // the upload future: nothing to clean up on the cloud side here, since
+        // these are single `PutObject` calls, not multipart uploads.
+        tokio::select! {
+            _ = upload => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    /// `data.parallel = 1` (the fallback when the server omits the field) must
+    /// keep uploads one-at-a-time on the wire, so the knob is honoured in both
+    /// directions. The single ticket is what enforces this; the fan-out of 1
+    /// additionally keeps the batch from preparing files ahead.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_stays_sequential_when_parallel_is_one() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (_mock, data, arrivals) = setup_slow_upload_batch(&tmp, 6, 1).await;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let scheduler = internal::test_scheduler(data.multipart);
+
+        let upload = async {
+            upload_files(
+                &data,
+                &policy,
+                TransferCtx::default().with_scheduler(&scheduler),
+            )
+            .await
+        };
+        let observe = async {
+            // Wait for the first upload to be on the wire, then give the batch
+            // room to (incorrectly) start more. The second wait is a deliberate
+            // pause, not a wait-for-condition: the assertion is that nothing
+            // further happens, which has no condition to poll for.
+            wait_for_arrivals(&arrivals, 1).await;
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            assert_eq!(
+                arrivals.load(Ordering::SeqCst),
+                1,
+                "data.parallel=1 must keep exactly one upload on the wire at a time"
+            );
+        };
+
+        tokio::select! {
+            _ = upload => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2793,6 +3200,207 @@ mod tests {
                 panic!("collect-all must attempt every file then raise UploadBatch, got {other:?}")
             }
         }
+    }
+
+    /// Builds a `DownloadData` for `names` against an S3 stage pointed at `mock`,
+    /// with `data.parallel` set so the batch fans out.
+    fn batch_download_data_for(
+        names: &[&str],
+        local_dir: &std::path::Path,
+        mock_uri: &str,
+        get_fastfail: bool,
+        parallel: i64,
+    ) -> DownloadData {
+        let upload = parallel_batch_upload_data_for(local_dir, mock_uri, false, parallel);
+        DownloadData {
+            src_locations: names.iter().map(|n| (*n).to_string()).collect(),
+            local_location: local_dir.to_string_lossy().into_owned(),
+            stage_info: upload.stage_info,
+            encryption_materials: names.iter().map(|_| None).collect(),
+            presigned_urls: names.iter().map(|_| None).collect(),
+            flavor: PutGetResultsetFlavor::Python,
+            multipart: upload.multipart,
+            unsafe_file_write: false,
+            get_fastfail,
+        }
+    }
+
+    /// Mounts HEAD + GET for `name`, answering the GET after `delay_ms`.
+    /// `body` doubles as the HEAD `Content-Length` source, which is what routes
+    /// the download to the single buffered GET rather than ranged GETs.
+    async fn mount_slow_get(mock: &wiremock::MockServer, name: &str, body: &str, delay_ms: u64) {
+        let object_path = mock_object_path(name);
+        wiremock::Mock::given(wiremock::matchers::method("HEAD"))
+            .and(wiremock::matchers::path(object_path.clone()))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_bytes(vec![0u8; body.len()]),
+            )
+            .mount(mock)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(object_path))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(body)
+                    .set_delay(std::time::Duration::from_millis(delay_ms)),
+            )
+            .mount(mock)
+            .await;
+    }
+
+    /// GET rows are read positionally too, so completion order must not leak
+    /// into row order. Later files answer sooner, inverting completion order.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn download_returns_results_in_input_order_despite_out_of_order_completion() {
+        let names = ["a.csv", "b.csv", "c.csv", "d.csv"];
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mock = wiremock::MockServer::start().await;
+        for (i, name) in names.iter().enumerate() {
+            mount_slow_get(&mock, name, name, 50 * (names.len() - i) as u64).await;
+        }
+        let data = batch_download_data_for(&names, tmp.path(), &mock.uri(), false, 4);
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let scheduler = internal::test_scheduler(data.multipart);
+
+        let results = download_files(
+            data,
+            &policy,
+            TransferCtx::default().with_scheduler(&scheduler),
+        )
+        .await
+        .expect("all four downloads should succeed");
+
+        let files: Vec<&str> = results.iter().map(|r| r.file.as_str()).collect();
+        assert_eq!(
+            files,
+            names.to_vec(),
+            "result rows must follow input order, not completion order"
+        );
+        assert!(
+            results.iter().all(|r| r.status == "DOWNLOADED"),
+            "every row should be DOWNLOADED: {results:?}"
+        );
+    }
+
+    /// GET analogue of [`CountingSlowPut`]: the HEAD answers at once so every
+    /// file reaches its GET, and the GETs then park, making the arrival count the
+    /// number of downloads in flight.
+    #[derive(Clone)]
+    struct CountingSlowGet {
+        arrivals: Arc<std::sync::atomic::AtomicUsize>,
+        body_len: usize,
+        delay: std::time::Duration,
+    }
+
+    impl wiremock::Respond for CountingSlowGet {
+        fn respond(&self, req: &wiremock::Request) -> wiremock::ResponseTemplate {
+            if req.method.as_str() == "HEAD" {
+                return wiremock::ResponseTemplate::new(200)
+                    .set_body_bytes(vec![0u8; self.body_len]);
+            }
+            self.arrivals.fetch_add(1, Ordering::SeqCst);
+            wiremock::ResponseTemplate::new(200)
+                .set_body_bytes(vec![b'x'; self.body_len])
+                .set_delay(self.delay)
+        }
+    }
+
+    /// Mirror of `upload_transfers_files_concurrently_up_to_the_fanout` for the
+    /// GET direction: `download_files` got the same `buffered` treatment, so a
+    /// regression to one-at-a-time must fail here too.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn download_transfers_files_concurrently_up_to_the_fanout() {
+        const FILES: usize = 12;
+        const PARALLEL: i64 = 4;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let names: Vec<String> = (0..FILES).map(|i| format!("d{i:02}.csv")).collect();
+        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+        let arrivals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(|req: &wiremock::Request| {
+            matches!(req.method.as_str(), "GET" | "HEAD")
+        })
+        .respond_with(CountingSlowGet {
+            arrivals: Arc::clone(&arrivals),
+            body_len: 8,
+            delay: std::time::Duration::from_secs(30),
+        })
+        .mount(&mock)
+        .await;
+
+        let data = batch_download_data_for(&name_refs, tmp.path(), &mock.uri(), false, PARALLEL);
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let scheduler = internal::test_scheduler(data.multipart);
+
+        let download = async {
+            download_files(
+                data,
+                &policy,
+                TransferCtx::default().with_scheduler(&scheduler),
+            )
+            .await
+        };
+        let observe = async {
+            // Fails with "saw 1" if the batch is sequential again.
+            let seen = wait_for_arrivals(&arrivals, PARALLEL as usize).await;
+            assert!(
+                seen <= PARALLEL as usize,
+                "the request budget must cap in-flight downloads at data.parallel={PARALLEL}, \
+                 saw {seen} of {FILES} files in flight at once"
+            );
+        };
+
+        tokio::select! {
+            _ = download => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    /// Collect-all (GET's default) must still attempt every file and fold each
+    /// failure into its own ERROR row at the right position, now that the files
+    /// run concurrently.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn download_collect_all_emits_error_rows_in_place() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mock = wiremock::MockServer::start().await;
+        mount_slow_get(&mock, "ok1.csv", "one", 0).await;
+        mount_slow_get(&mock, "ok2.csv", "two", 0).await;
+        // No HEAD/GET mounted for bad.csv — wiremock answers 404, so its
+        // download fails while its neighbours succeed.
+        let names = ["ok1.csv", "bad.csv", "ok2.csv"];
+        let data = batch_download_data_for(&names, tmp.path(), &mock.uri(), false, 3);
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let scheduler = internal::test_scheduler(data.multipart);
+
+        let results = download_files(
+            data,
+            &policy,
+            TransferCtx::default().with_scheduler(&scheduler),
+        )
+        .await
+        .expect("collect-all must not abort the batch");
+
+        let rows: Vec<(&str, &str)> = results
+            .iter()
+            .map(|r| (r.file.as_str(), r.status.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("ok1.csv", "DOWNLOADED"),
+                ("bad.csv", "ERROR"),
+                ("ok2.csv", "DOWNLOADED"),
+            ],
+            "the failing file must yield an ERROR row in its own position while its \
+             neighbours still download"
+        );
     }
 
     #[test]
