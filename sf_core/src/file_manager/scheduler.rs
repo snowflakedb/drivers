@@ -26,6 +26,11 @@ impl TransferScheduler {
         self.multipart
     }
 
+    /// How many files a batch keeps in flight concurrently.
+    pub(super) fn file_fanout(&self) -> usize {
+        self.multipart.command_parallel.max(1)
+    }
+
     /// The returned [`RequestTicket`] must stay alive for the duration of the
     /// request; dropping it returns the slot.
     pub(super) async fn acquire_request(&self) -> RequestTicket {
@@ -119,6 +124,23 @@ mod tests {
             50,
             "the command budget must honour the server's parallel in full"
         );
+        assert_eq!(
+            s.file_fanout(),
+            50,
+            "fan-out must honour it too, not stop at the per-file part cap"
+        );
+    }
+
+    #[test]
+    fn should_fall_back_to_one_file_when_the_server_sends_no_parallel() {
+        for absent in [None, Some(0), Some(-1)] {
+            let s = TransferScheduler::for_command(MultipartParams::from_server(None, absent));
+            assert_eq!(
+                s.file_fanout(),
+                1,
+                "data.parallel={absent:?} must transfer one file at a time"
+            );
+        }
     }
 
     #[tokio::test]

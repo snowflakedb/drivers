@@ -41,7 +41,10 @@ pub(super) const MAX_PART_CONCURRENCY: usize = 16;
 const DEFAULT_PART_CONCURRENCY: usize = 1;
 
 /// Command-wide transfer width used when the server omits `data.parallel` or
-/// sends a non-positive value.
+/// sends a non-positive value. Matches the same conservative reference-driver
+/// fallback as [`DEFAULT_PART_CONCURRENCY`] for a malformed or missing payload —
+/// the server is expected to already resolve the SQL `PARALLEL` clause's
+/// defaults into `data.parallel`, so this is not a stand-in for those defaults.
 const DEFAULT_COMMAND_PARALLEL: usize = 1;
 
 /// Per-cloud multipart limits, tabulated as consts so adding a cloud is one

@@ -4,16 +4,24 @@
 //! deterministic wiremock coverage in `integration/http/s3_multipart.rs`,
 //! `integration/http/azure_multipart.rs`, and `integration/http/gcs_multipart.rs`.
 //!
+//! `PARALLEL` is set on both statements, so this also covers part-level
+//! concurrency within one file: the file-level counterpart is
+//! `put_get_parallel_roundtrip`, and the in-flight counts themselves are pinned
+//! by `file_manager::tests::upload_transfers_files_concurrently_up_to_the_fanout`
+//! and its download twin.
+//!
 //! Cloud-agnostic by design, not by branching: `connect_with_default_auth`
 //! connects to whichever account each CI `cloud_provider` matrix lane decoded
 //! (see `scripts/decode_secrets.sh` — a distinct dedicated account per cloud),
 //! so this single test exercises S3 multipart on the `aws` lane, Azure
 //! block-blob multipart on the `azure` lane, and GCS resumable multipart on
-//! the `gcp` lane without any per-cloud test code. CI scopes it to all three
-//! lanes (nightly "Run long-running tests" step).
+//! the `gcp` lane without any per-cloud test code.
 //!
 //! Gated `#[ignore]`: it generates and round-trips ~210 MiB over the network, so
-//! it does not run in the normal `e2e` lane. Run it explicitly with:
+//! it stays out of the every-PR lane. Two CI lanes do run it: the nightly
+//! "Run long-running tests" step (`--ignored large_`, which this name matches),
+//! and `full_put_get_tests`, whose sf_core step passes `--include-ignored` and so
+//! runs it on each of its three cloud lanes. Run it locally with:
 //!   cargo test -p sf_core --test e2e_tests --features protobuf \
 //!     put_get::put_get_multipart_roundtrip::should_upload_and_download_large_file_via_multipart_roundtrip -- --ignored --nocapture
 //!
@@ -23,10 +31,14 @@
 //! the multipart paths through the real PUT/GET command path.
 
 use crate::common::put_get_common::{
-    MULTIPART_FILE_LEN, file_digest, get_file_from_stage, upload_to_stage_with_options,
+    MULTIPART_FILE_LEN, file_digest, get_from_stage_with_parallel, upload_to_stage_with_options,
     write_payload,
 };
 use crate::common::snowflake_test_client::SnowflakeTestClient;
+
+/// Set on both the PUT and the GET so the server resolves a `data.parallel`
+/// above 1, putting several parts of this one file on the wire at once.
+const PARALLEL: u32 = 4;
 
 #[test]
 #[ignore = "~210 MiB real-cloud multipart round-trip; belongs to the `large_` CI category, run with --ignored. Fast coverage: integration::http::s3_multipart, integration::http::azure_multipart, integration::http::gcs_multipart"]
@@ -47,18 +59,21 @@ fn should_upload_and_download_large_file_via_multipart_roundtrip() {
         &client,
         stage_name,
         src_path.to_str().unwrap(),
-        "AUTO_COMPRESS=FALSE OVERWRITE=TRUE",
+        &format!("AUTO_COMPRESS=FALSE OVERWRITE=TRUE PARALLEL={PARALLEL}"),
     );
 
     // Then File should be downloaded byte-for-byte identical via ranged GET
-    let (_get_result, download_dir) = get_file_from_stage(&client, stage_name, "bigfile.bin");
+    let (_get_result, download_dir) =
+        get_from_stage_with_parallel(&client, &format!("{stage_name}/bigfile.bin"), PARALLEL);
     let downloaded = download_dir.path().join("bigfile.bin");
     assert!(downloaded.exists(), "downloaded file should exist");
 
     // Byte-for-byte equality via SHA-256 (streamed; avoids holding 420 MiB).
+    // `write_payload`'s position-dependent bytes mean a part or range
+    // reassembled at the wrong offset changes the digest.
     assert_eq!(
         file_digest(&downloaded),
         src_digest,
-        "downloaded file must match the original byte-for-byte"
+        "a {PARALLEL}-way parallel multipart round-trip must preserve the file byte-for-byte"
     );
 }
