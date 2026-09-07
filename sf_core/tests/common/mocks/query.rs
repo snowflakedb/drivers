@@ -6,6 +6,7 @@
 //! single-statement response.
 
 use serde_json::json;
+use std::time::Duration;
 use wiremock::matchers::{body_string_contains, method, path_regex};
 use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
@@ -76,11 +77,22 @@ pub async fn mount_multistatement_response_for_count_carrying_request(
 /// response. Use `expected_calls` to pin the exact count of
 /// single-statement executes.
 pub async fn mount_single_statement_response(server: &MockServer, expected_calls: u64) {
+    mount_delayed_single_statement_response(server, expected_calls, Duration::ZERO).await;
+}
+
+/// Same as [`mount_single_statement_response`], with a response delay so
+/// concurrent executes can overlap at the mock.
+pub async fn mount_delayed_single_statement_response(
+    server: &MockServer,
+    expected_calls: u64,
+    delay: Duration,
+) {
     Mock::given(method("POST"))
         .and(path_regex(r"/queries/v1/query-request.*"))
         .and(BodyStringDoesNotContain("MULTI_STATEMENT_COUNT"))
         .respond_with(
             ResponseTemplate::new(200)
+                .set_delay(delay)
                 .set_body_json(json!({
                     "success": true,
                     "data": {

@@ -1,5 +1,6 @@
 mod abort_query;
 mod async_execution;
+mod concurrent_execution;
 mod distributed_fetch;
 mod large_result_set;
 mod multistatement;
