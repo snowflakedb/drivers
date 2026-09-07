@@ -16,6 +16,8 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   warehouse: 'warehouse',
   role: 'role',
   useEnvProxy: 'use_proxy_env',
+  port: 'port',
+  protocol: 'protocol',
 };
 
 export function normalizeConnectionOptions(
