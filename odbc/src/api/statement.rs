@@ -118,7 +118,7 @@ fn exec_direct_impl(
 
         let conn_handle = match &conn.state {
             ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-            ConnectionState::Disconnected => {
+            ConnectionState::Disconnected { .. } => {
                 tracing::error!("exec_direct: connection is disconnected");
                 return DisconnectedSnafu.fail();
             }
@@ -841,7 +841,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
         // === SYNC / SPAWN PATH ===
         let _conn_handle = match &conn.state {
             ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-            ConnectionState::Disconnected => {
+            ConnectionState::Disconnected { .. } => {
                 tracing::error!("prepare: connection is disconnected");
                 return DisconnectedSnafu.fail();
             }
@@ -1014,7 +1014,7 @@ pub fn execute(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRe
         };
         let is_prepared = origin.is_prepared();
 
-        if matches!(conn.state, ConnectionState::Disconnected) {
+        if matches!(conn.state, ConnectionState::Disconnected { .. }) {
             tracing::error!("execute: connection is disconnected");
             return DisconnectedSnafu.fail();
         }
@@ -1041,7 +1041,7 @@ pub fn execute(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRe
 
         let conn_handle = match &conn.state {
             ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-            ConnectionState::Disconnected => {
+            ConnectionState::Disconnected { .. } => {
                 tracing::error!("execute: connection is disconnected");
                 return DisconnectedSnafu.fail();
             }
@@ -3458,7 +3458,7 @@ fn execute_dae(
 
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => {
+        ConnectionState::Disconnected { .. } => {
             tracing::error!("execute_dae: connection is disconnected");
             inner.state.set(restored);
             return DisconnectedSnafu.fail();
@@ -3708,7 +3708,7 @@ pub fn more_results(statement_handle: sql::Handle) -> OdbcResult<()> {
     let conn = dbc.connection.lock();
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     };
     drop(conn);
 

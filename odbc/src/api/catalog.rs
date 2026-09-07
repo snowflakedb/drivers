@@ -171,7 +171,7 @@ pub fn tables<E: OdbcEncoding>(
 
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     };
 
     let metadata_id = inner.metadata_id;
@@ -306,7 +306,7 @@ pub fn columns<E: OdbcEncoding>(
 
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     };
 
     let metadata_id = inner.metadata_id;
@@ -755,7 +755,7 @@ pub fn primary_keys<E: OdbcEncoding>(
 
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     };
     let metadata_id = inner.metadata_id;
     let stmt_handle = guard.stmt_handle;
@@ -1213,7 +1213,7 @@ pub fn foreign_keys<E: OdbcEncoding>(
 
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     };
     let metadata_id = inner.metadata_id;
     let stmt_handle = guard.stmt_handle;
@@ -1583,7 +1583,7 @@ pub fn procedures<E: OdbcEncoding>(
 
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     };
     let metadata_id = inner.metadata_id;
     let stmt_handle = guard.stmt_handle;
@@ -2270,7 +2270,7 @@ pub fn procedure_columns<E: OdbcEncoding>(
 
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     };
     let metadata_id = inner.metadata_id;
     let numeric_settings = conn.numeric_settings;
@@ -3645,7 +3645,7 @@ pub fn special_columns<E: OdbcEncoding>(
 
     match &conn.state {
         ConnectionState::Connected { .. } => {}
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     }
     drop(conn);
 
@@ -3700,7 +3700,7 @@ pub fn column_privileges<E: OdbcEncoding>(
 
     match &conn.state {
         ConnectionState::Connected { .. } => {}
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     }
     drop(conn);
 
@@ -3753,7 +3753,7 @@ pub fn table_privileges<E: OdbcEncoding>(
 
     match &conn.state {
         ConnectionState::Connected { .. } => {}
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     }
     drop(conn);
 
@@ -3809,7 +3809,7 @@ pub fn statistics<E: OdbcEncoding>(
 
     match &conn.state {
         ConnectionState::Connected { .. } => {}
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     }
     drop(conn);
 
@@ -4536,7 +4536,7 @@ pub fn get_type_info(statement_handle: sql::Handle, data_type: sql::SmallInt) ->
 
     match &conn.state {
         ConnectionState::Connected { .. } => {}
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     }
     drop(conn);
 

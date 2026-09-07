@@ -12,6 +12,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, ExecuteQueryResponse,
     StatementHandle,
 };
+use sf_core::sensitive::SensitiveString;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1643,7 +1644,9 @@ pub struct Environment {
 }
 
 pub enum ConnectionState {
-    Disconnected,
+    Disconnected {
+        browse_params: Option<HashMap<String, SensitiveString>>,
+    },
     Connected {
         #[allow(dead_code)]
         db_handle: TDatabaseHandle,
@@ -1705,7 +1708,9 @@ impl Dbc {
     /// [`ConnectionState`] and the telemetry cache under the caller's held
     /// `connection` guard. See [`Dbc::mark_connected`] for the invariant.
     pub(crate) fn mark_disconnected(&self, connection: &mut Connection) {
-        connection.state = ConnectionState::Disconnected;
+        connection.state = ConnectionState::Disconnected {
+            browse_params: None,
+        };
         self.telemetry_connection_cache.store(None);
     }
 }
@@ -1719,7 +1724,9 @@ impl Dbc {
             env_id: HandleId::from(std::ptr::null_mut::<sql::Obj>()),
             telemetry_connection_cache: arc_swap::ArcSwapOption::empty(),
             connection: Mutex::new(Connection {
-                state: ConnectionState::Disconnected,
+                state: ConnectionState::Disconnected {
+                    browse_params: None,
+                },
                 diagnostic_info: DiagnosticInfo::default(),
                 pre_connection_attrs: Default::default(),
                 numeric_settings: Default::default(),

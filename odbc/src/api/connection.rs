@@ -338,27 +338,19 @@ fn serialize_connection_string(params: &HashMap<String, String>) -> String {
     parts.join(";")
 }
 
-/// Read, parse, and connect from a raw connection string — the pipeline shared
-/// by `SQLDriverConnect` and `SQLBrowseConnect`. On success the caller-supplied
-/// connection string is returned so it can be echoed into the output buffer.
-fn resolve_and_connect<E: OdbcEncoding>(
-    connection_handle: sql::Handle,
-    in_connection_string: *const E::Char,
-    in_string_length: sql::SmallInt,
-) -> OdbcResult<String> {
-    let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
-    let params = parse_connection_string(&connection_string)?;
-    // Capture the original `DRIVER=` / `DSN=` keywords (if any) before
-    // they get normalised away — they are needed later to resolve the
-    // driver's file name for `SQLGetInfo(SQL_DRIVER_NAME)`.
-    let driver_section = params.get("DRIVER").cloned();
-    let dsn_name = params.get("DSN").cloned();
-    // Expand any DSN-stored attributes (account, host, user, credentials)
-    // underneath the caller-supplied connection-string params so that a bare
-    // "DSN=<name>" string picks up everything stored in odbc.ini / registry.
-    let params = merge_dsn_config(params, dsn_name.as_deref())?;
-    connect_with_params(connection_handle, params, driver_section, dsn_name)?;
-    Ok(connection_string)
+fn completed_connection_string(
+    params: &HashMap<String, String>,
+    driver_section: Option<&str>,
+    dsn_name: Option<&str>,
+) -> SensitiveString {
+    let mut out = params.clone();
+    if let Some(dsn) = dsn_name {
+        out.insert("DSN".to_owned(), dsn.to_owned());
+    }
+    if let Some(driver) = driver_section {
+        out.insert("DRIVER".to_owned(), driver.to_owned());
+    }
+    SensitiveString::from(serialize_connection_string(&out))
 }
 
 /// Connect using connection string (SQLDriverConnect / SQLDriverConnectW).
@@ -387,19 +379,8 @@ pub fn driver_connect<E: OdbcEncoding>(
     // underneath the caller-supplied connection-string params so that a bare
     // "DSN=<name>" string picks up everything stored in odbc.ini / registry.
     let params = merge_dsn_config(params, dsn_name.as_deref())?;
-    // Build the completed connection string before params are consumed.
-    // The ODBC spec requires OutConnectionString to contain all attributes
-    // including those expanded from the DSN, and must include DSN= or DRIVER=.
-    let completed_conn_str = {
-        let mut out = params.clone();
-        if let Some(ref dsn) = dsn_name {
-            out.insert("DSN".to_owned(), dsn.clone());
-        }
-        if let Some(ref driver) = driver_section {
-            out.insert("DRIVER".to_owned(), driver.clone());
-        }
-        SensitiveString::from(serialize_connection_string(&out))
-    };
+    let completed_conn_str =
+        completed_connection_string(&params, driver_section.as_deref(), dsn_name.as_deref());
     connect_with_params(connection_handle, params, driver_section, dsn_name)?;
 
     // Per the ODBC spec, `SQLDriverConnect` returns the completed connection
@@ -419,30 +400,54 @@ pub fn driver_connect<E: OdbcEncoding>(
 
 /// Outcome of a successful [`browse_connect`] call.
 ///
-/// Snowflake does not implement iterative attribute discovery, so a completed
-/// connection is either fully established (`Complete`) or the output buffer was
-/// too small to receive the connection string (`NeedData`). The FFI shim maps
-/// `NeedData` to `SQL_NEED_DATA`.
+/// `NeedData` is used both when the output buffer is too small after a
+/// successful connect and when the browse string is still incomplete, so the
+/// application can supply more attributes without the handle being connected.
 pub enum BrowseOutcome {
     Complete,
     NeedData,
 }
 
+fn accumulate_browse_params(
+    stored: Option<&HashMap<String, SensitiveString>>,
+    incoming: HashMap<String, String>,
+) -> HashMap<String, String> {
+    match stored {
+        None => incoming,
+        Some(stored) => {
+            let mut acc = stored
+                .iter()
+                .map(|(key, value)| (key.clone(), value.reveal().clone()))
+                .collect::<HashMap<_, _>>();
+            acc.extend(incoming);
+            acc
+        }
+    }
+}
+
+fn browse_connect_has_locator(params: &HashMap<String, String>) -> bool {
+    ["ACCOUNT", "HOST", "SERVER"]
+        .iter()
+        .any(|key| params.get(*key).is_some_and(|v| !v.is_empty()))
+}
+
+fn indicate_browse_need_data(string_length_ptr: *mut sql::SmallInt) {
+    const REQUEST: &str = "SERVER:Server={?};UID:Login ID=?;PWD:Password=?";
+    let len = sql::SmallInt::try_from(REQUEST.len()).unwrap_or(sql::SmallInt::MAX);
+    if !string_length_ptr.is_null() {
+        // SAFETY: null was checked; the ODBC caller owns this output pointer.
+        unsafe {
+            *string_length_ptr = len;
+        }
+    }
+}
+
 /// Connect using connection string (SQLBrowseConnect / SQLBrowseConnectW).
 ///
-/// Behaves like [`driver_connect`] — Snowflake requires a complete connection
-/// string up front and does not iteratively prompt for attributes — with one
-/// spec-mandated difference: when the output buffer is too small to hold the
-/// connection string (including `buffer_length == 0`), it returns
-/// `SQL_NEED_DATA` (via [`BrowseOutcome::NeedData`]) rather than the `01004`
-/// truncation warning `SQLDriverConnect` uses. `*string_length_ptr` always
-/// receives the full required length. An incomplete string, bad credentials, or
-/// an unknown DSN surface as the usual connect errors (`SQL_ERROR` / `28000` /
-/// `IM002`).
-///
-/// Note: on `NeedData` the connection has already been established (Snowflake
-/// connects in a single round-trip); a subsequent call on the same handle would
-/// therefore be rejected with `08002`.
+/// Unlike `SQLDriverConnect`, a short output buffer is `SQL_NEED_DATA` rather
+/// than a `01004` truncation warning. An incomplete browse string also returns
+/// `NeedData` without connecting, so later calls can add attributes on the same
+/// handle.
 pub fn browse_connect<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     in_connection_string: *const E::Char,
@@ -451,13 +456,44 @@ pub fn browse_connect<E: OdbcEncoding>(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<BrowseOutcome> {
-    let connection_string =
-        resolve_and_connect::<E>(connection_handle, in_connection_string, in_string_length)?;
+    let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
+    let incoming = parse_connection_string(&connection_string)?;
+    let dbc = conn_from_handle(connection_handle)?;
+    let (params, driver_section, dsn_name, completed_conn_str) = {
+        let mut connection = dbc.connection.lock();
+        let stored = match &connection.state {
+            ConnectionState::Disconnected { browse_params } => browse_params.as_ref(),
+            ConnectionState::Connected { .. } => None,
+        };
+        let accumulated = accumulate_browse_params(stored, incoming);
+        let driver_section = accumulated.get("DRIVER").cloned();
+        let dsn_name = accumulated.get("DSN").cloned();
+        let params = merge_dsn_config(accumulated.clone(), dsn_name.as_deref())?;
+
+        if !browse_connect_has_locator(&params) {
+            let protected = accumulated
+                .into_iter()
+                .map(|(key, value)| (key, SensitiveString::from(value)))
+                .collect();
+            if let ConnectionState::Disconnected { browse_params } = &mut connection.state {
+                *browse_params = Some(protected);
+            }
+            indicate_browse_need_data(string_length_ptr);
+            return Ok(BrowseOutcome::NeedData);
+        }
+
+        if let ConnectionState::Disconnected { browse_params } = &mut connection.state {
+            *browse_params = None;
+        }
+        let completed_conn_str = SensitiveString::from(serialize_connection_string(&accumulated));
+        (params, driver_section, dsn_name, completed_conn_str)
+    };
+    connect_with_params(connection_handle, params, driver_section, dsn_name)?;
 
     // `None` warnings: SQLBrowseConnect signals a short buffer via SQL_NEED_DATA,
     // not a `01004` warning. `*string_length_ptr` still receives the full length.
     let truncated = write_string_chars::<E>(
-        &connection_string,
+        completed_conn_str.reveal(),
         out_connection_string,
         buffer_length,
         string_length_ptr,
@@ -490,8 +526,8 @@ fn connect_with_params(
     // available to `SQLGetInfo(SQL_DRIVER_NAME)` even if the connection
     // itself fails partway through. Connection-string parsing has
     // already validated the strings; we just retain them verbatim.
+    let dbc = conn_from_handle(connection_handle)?;
     {
-        let dbc = conn_from_handle(connection_handle)?;
         let mut conn = dbc.connection.lock();
         conn.driver_section = driver_section;
         conn.dsn_name = dsn_name;
@@ -514,7 +550,6 @@ fn connect_with_params(
         .entry("LOGOUT_ERROR_STRATEGY".to_owned())
         .or_insert_with(|| "best_effort".to_owned().into());
 
-    let dbc = conn_from_handle(connection_handle)?;
     // Read pre-connection data under lock, then release before the async call.
     let (pre_connection_attrs, login_timeout_in_options, login_timeout_in_attrs) = {
         let connection = dbc.connection.lock();
@@ -902,17 +937,24 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
 /// connection is still marked Disconnected and `Warning::DisconnectError`
 /// (SQLSTATE 01002) is recorded so the caller can return
 /// `SQL_SUCCESS_WITH_INFO` (SNOW-3240576).
+///
+/// A handle that still has pending `SQLBrowseConnect` attributes (never
+/// connected) succeeds and clears that state. A handle that was never
+/// browsed still returns 08003.
 pub fn disconnect(connection_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
     let dbc = conn_from_handle(connection_handle)?;
     let mut connection = dbc.connection.lock();
-    let (db_handle, conn_handle) = match &connection.state {
+    let (db_handle, conn_handle) = match &mut connection.state {
         ConnectionState::Connected {
             db_handle,
             conn_handle,
         } => (*db_handle, *conn_handle),
-        ConnectionState::Disconnected => {
+        ConnectionState::Disconnected { browse_params } => {
+            if browse_params.take().is_some() {
+                return Ok(());
+            }
             return DisconnectedSnafu.fail();
         }
     };
@@ -1033,7 +1075,10 @@ pub fn native_sql<E: OdbcEncoding>(
     }
 
     let dbc = conn_from_handle(connection_handle)?;
-    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
+    if matches!(
+        dbc.connection.lock().state,
+        ConnectionState::Disconnected { .. }
+    ) {
         return crate::api::error::DisconnectedSnafu.fail();
     }
 
@@ -1171,7 +1216,7 @@ fn commit_or_rollback(dbc: &Dbc, op: TxnOp) -> OdbcResult<()> {
     let mut connection = dbc.connection.lock();
     let conn_handle = match &connection.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+        ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     };
 
     let g = global().context(OdbcRuntimeSnafu)?;
@@ -1311,7 +1356,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             // Transaction state tracking requires server-side awareness — deferred to SNOW-3240589.
             let maybe_conn_handle = match &connection.state {
                 ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
-                ConnectionState::Disconnected => None,
+                ConnectionState::Disconnected { .. } => None,
             };
             match maybe_conn_handle {
                 Some(conn_handle) => {
@@ -1393,7 +1438,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
         ConnectionAttribute::CurrentCatalog => {
             let conn_handle = match &connection.state {
                 ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-                ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+                ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
             };
             let g = global().context(OdbcRuntimeSnafu)?;
             // Return 24000 if any statement has an open cursor.
@@ -1548,7 +1593,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             // The cache is the authoritative source when disconnected.
             let maybe_conn_handle = match &connection.state {
                 ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
-                ConnectionState::Disconnected => None,
+                ConnectionState::Disconnected { .. } => None,
             };
             let cached = connection.cached_autocommit;
             drop(connection);
@@ -1639,7 +1684,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             // The current catalog is a server-side session property, so it is
             // indeterminate without an open connection: return 08003 when
             // disconnected (SNOW-3235557) rather than a stale/empty cached value.
-            if matches!(connection.state, ConnectionState::Disconnected) {
+            if matches!(connection.state, ConnectionState::Disconnected { .. }) {
                 return DisconnectedSnafu.fail();
             }
             drop(connection);
@@ -1696,7 +1741,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
         ConnectionAttribute::ConnectionDead => {
             let dead = match connection.state {
                 ConnectionState::Connected { .. } => SQL_CD_FALSE,
-                ConnectionState::Disconnected => SQL_CD_TRUE,
+                ConnectionState::Disconnected { .. } => SQL_CD_TRUE,
             };
             drop(connection);
             if !value_ptr.is_null() {
@@ -1851,7 +1896,7 @@ fn current_database(dbc: &HandleGuard<Dbc>) -> OdbcResult<Option<String>> {
         let conn = dbc.connection.lock();
         let ch = match conn.state {
             ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
-            ConnectionState::Disconnected => None,
+            ConnectionState::Disconnected { .. } => None,
         };
         (ch, conn.current_catalog.clone())
     };
@@ -1961,7 +2006,7 @@ pub fn get_info<E: OdbcEncoding>(
             // `SQLDriverConnect` (Excel does) still succeed.
             let conn_handle = match dbc.connection.lock().state {
                 ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
-                ConnectionState::Disconnected => None,
+                ConnectionState::Disconnected { .. } => None,
             };
             let version = match conn_handle {
                 Some(handle) => global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
@@ -1988,7 +2033,7 @@ pub fn get_info<E: OdbcEncoding>(
             // that probe this attribute pre-`SQLConnect` still succeed.
             let conn_handle = match dbc.connection.lock().state {
                 ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
-                ConnectionState::Disconnected => None,
+                ConnectionState::Disconnected { .. } => None,
             };
             let user = match conn_handle {
                 Some(handle) => global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
@@ -2533,7 +2578,10 @@ pub fn get_functions(
 
     let dbc = conn_from_handle(connection_handle)?;
 
-    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
+    if matches!(
+        dbc.connection.lock().state,
+        ConnectionState::Disconnected { .. }
+    ) {
         return DisconnectedSnafu.fail();
     }
 
@@ -3322,6 +3370,86 @@ mod tests {
 
         assert_eq!(config_string(&options, "private_key"), Some("attr-key"));
         assert!(!options.contains_key("private_key_file"));
+    }
+
+    #[test]
+    fn accumulate_browse_params_merges_later_keys_over_stored() {
+        let stored = Some(HashMap::from([
+            ("DRIVER".to_owned(), SensitiveString::from("/lib/sf.so")),
+            ("UID".to_owned(), SensitiveString::from("old")),
+        ]));
+        let incoming = HashMap::from([
+            ("UID".to_owned(), "new".to_owned()),
+            ("PWD".to_owned(), "secret".to_owned()),
+        ]);
+        let merged = accumulate_browse_params(stored.as_ref(), incoming);
+        assert_eq!(merged.get("DRIVER").map(String::as_str), Some("/lib/sf.so"));
+        assert_eq!(merged.get("UID").map(String::as_str), Some("new"));
+        assert_eq!(merged.get("PWD").map(String::as_str), Some("secret"));
+    }
+
+    #[test]
+    fn browse_connect_has_locator_requires_account_host_or_server() {
+        assert!(!browse_connect_has_locator(&HashMap::from([(
+            "DRIVER".to_owned(),
+            "/lib/sf.so".to_owned()
+        )])));
+        assert!(!browse_connect_has_locator(&HashMap::from([(
+            "ACCOUNT".to_owned(),
+            String::new()
+        )])));
+        assert!(browse_connect_has_locator(&HashMap::from([(
+            "ACCOUNT".to_owned(),
+            "xy12345".to_owned()
+        )])));
+        assert!(browse_connect_has_locator(&HashMap::from([(
+            "HOST".to_owned(),
+            "example.snowflakecomputing.com".to_owned()
+        )])));
+        assert!(browse_connect_has_locator(&HashMap::from([(
+            "SERVER".to_owned(),
+            "example.snowflakecomputing.com".to_owned()
+        )])));
+    }
+
+    #[test]
+    fn serialize_connection_string_keeps_keys_from_all_browse_rounds() {
+        let stored = Some(HashMap::from([(
+            "DRIVER".to_owned(),
+            SensitiveString::from("/lib/sf.so"),
+        )]));
+        let incoming = HashMap::from([
+            ("ACCOUNT".to_owned(), "xy12345".to_owned()),
+            ("UID".to_owned(), "user".to_owned()),
+        ]);
+        let merged = accumulate_browse_params(stored.as_ref(), incoming);
+        let s = serialize_connection_string(&merged);
+        assert!(s.contains("DRIVER=/lib/sf.so"), "{s}");
+        assert!(s.contains("ACCOUNT=xy12345"), "{s}");
+        assert!(s.contains("UID=user"), "{s}");
+    }
+
+    #[test]
+    fn completed_connection_string_includes_driver_from_earlier_browse_round() {
+        let params = HashMap::from([
+            ("ACCOUNT".to_owned(), "xy12345".to_owned()),
+            ("UID".to_owned(), "user".to_owned()),
+        ]);
+        let out = completed_connection_string(&params, Some("/lib/sf.so"), None);
+        let s = out.reveal();
+        assert!(s.contains("DRIVER=/lib/sf.so"), "{s}");
+        assert!(s.contains("ACCOUNT=xy12345"), "{s}");
+        assert!(s.contains("UID=user"), "{s}");
+        assert!(!s.contains("DSN="), "{s}");
+    }
+
+    #[test]
+    fn completed_connection_string_restores_dsn_after_merge_strip() {
+        let params = HashMap::from([("ACCOUNT".to_owned(), "xy12345".to_owned())]);
+        let out = completed_connection_string(&params, None, Some("MyDsn"));
+        let s = out.reveal();
+        assert!(s.contains("DSN=MyDsn"), "{s}");
+        assert!(s.contains("ACCOUNT=xy12345"), "{s}");
     }
 
     #[test_case("UID=admin;SERVER=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "basic")]

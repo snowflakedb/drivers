@@ -288,7 +288,7 @@ pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResu
     }
     let dbc = guard.conn()?;
     let conn = dbc.connection.lock();
-    if matches!(conn.state, ConnectionState::Disconnected) {
+    if matches!(conn.state, ConnectionState::Disconnected { .. }) {
         tracing::error!("fetch: connection is disconnected");
         return DisconnectedSnafu.fail();
     }
@@ -619,7 +619,7 @@ pub fn extended_fetch(
     }
     let dbc = guard.conn()?;
     let conn = dbc.connection.lock();
-    if matches!(conn.state, ConnectionState::Disconnected) {
+    if matches!(conn.state, ConnectionState::Disconnected { .. }) {
         tracing::error!("extended_fetch: connection is disconnected");
         return DisconnectedSnafu.fail();
     }
