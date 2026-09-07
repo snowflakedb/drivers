@@ -1,10 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import ErrorCode from '../../src/constants/ErrorCode.js';
-import { getSnowflakeSDK } from './utils/index.js';
+import { snowflake } from './utils/index.js';
 
 describe('SDK Constants', () => {
-  const snowflake = getSnowflakeSDK();
-
   it('exports ocspModes', () => {
     expect(snowflake.ocspModes).toEqual({
       FAIL_CLOSED: 'FAIL_CLOSED',

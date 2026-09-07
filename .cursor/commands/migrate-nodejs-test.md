@@ -105,9 +105,9 @@ Apply these rules — they are the migration spec, follow them literally.
 
 #### Connection lifecycle
 
-- Replace `testUtil.createConnection(overrides?)` with `createTestConnection(snowflake, overrides?)` from
-  `tests/e2e/utils`. The first arg is the SDK handle from `getSnowflakeSDK()` (so the same test runs
-  against either the old or the new driver depending on `SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER`).
+- Replace `testUtil.createConnection(overrides?)` with `createTestConnection(overrides?)` from
+  `tests/e2e/utils`. It builds on the exported `snowflake` handle, which resolves to the old or the new
+  driver depending on `SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER`, so the same test runs against either.
   Default connection parameters (`SNOWFLAKE_TEST_ACCOUNT`, `SNOWFLAKE_TEST_USER`, `SNOWFLAKE_TEST_PASSWORD`,
   `SNOWFLAKE_TEST_WAREHOUSE`, `SNOWFLAKE_TEST_DATABASE`, `SNOWFLAKE_TEST_SCHEMA`, `SNOWFLAKE_TEST_ROLE`)
   **should already be built in** — pass only overrides. If a parameter is missing, add it to
@@ -259,7 +259,7 @@ For style examples, see:
 - `nodejs/tests/e2e/query-cancellation.test.ts` — minimal shared-connection shape, callback API
   wrapped with inline `new Promise` (`statement.cancel`).
 - `nodejs/tests/e2e/connection-serialization.test.ts` — `it.skip` with TODO link for known driver
-  bugs; using `getSnowflakeSDK()` directly.
+  bugs; using the exported `snowflake` handle directly.
 - `nodejs/tests/e2e/multi-statement.test.ts` — multi-statement iteration via `hasNext()` /
   `NextResult()`.
 - `nodejs/tests/e2e/concurrent-execution.test.ts` — fan-out via `Promise.all`, distinct expected
@@ -267,7 +267,7 @@ For style examples, see:
 - `nodejs/tests/e2e/query-execution-async.test.ts` — nested `describe`s grouped by SDK method,
   `executeAsync` reused inside the test body for queryId setup, `beforeEach` to lift duplicated
   setup, `expect(...).rejects.toMatchObject({ code: ErrorCode.... })` for error-path assertions.
-- `nodejs/tests/e2e/utils/index.ts` (helpers — `createTestConnection(snowflake, overrides?)`,
+- `nodejs/tests/e2e/utils/index.ts` (helpers — `createTestConnection(overrides?)`,
   `destroyConnectionAsync(conn)`, `executeAsync(conn, sqlText, options?)`, `sleepAsync(ms)`,
-  `getSnowflakeSDK()`, `isRunningForOldDriver()`, `TEST_CONNECTION_OPTIONS`). There is no
+  `snowflake`, `isRunningForOldDriver()`, `TEST_CONNECTION_OPTIONS`). There is no
   `connectAsync` helper — call `await connection.connectAsync()` directly.

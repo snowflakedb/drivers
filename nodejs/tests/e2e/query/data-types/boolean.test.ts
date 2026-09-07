@@ -5,18 +5,16 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getStatementColumn,
-  getSnowflakeSDK,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
   randomizeName,
 } from '../../utils/index.js';
 import { withNullPreservingConnection } from '../utils.js';
 
 describe('BOOLEAN data type', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 
@@ -249,7 +247,7 @@ describe('BOOLEAN data type', () => {
     });
 
     it('should render a NULL BOOLEAN cell as null when representNullAsStringNull is disabled', async () => {
-      await withNullPreservingConnection(snowflake, async (nullPreservingConnection) => {
+      await withNullPreservingConnection(async (nullPreservingConnection) => {
         const { rows } = await executeAsync(nullPreservingConnection, 'SELECT NULL::BOOLEAN', {
           fetchAsString: ['Boolean'],
         });

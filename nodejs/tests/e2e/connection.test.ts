@@ -3,16 +3,13 @@ import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
-  getSnowflakeSDK,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
   isRunningNewDriverWithBD,
 } from './utils/index.js';
 
 describe('Connection', () => {
-  const snowflake = getSnowflakeSDK();
-
   it('.connect() connects on valid parameters', async () => {
-    const connection = createTestConnection(snowflake);
+    const connection = createTestConnection();
     try {
       await new Promise<void>((resolve, reject) => {
         connection.connect((err) => (err ? reject(err) : resolve()));
@@ -27,7 +24,7 @@ describe('Connection', () => {
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
     '.connect() surfaces an error on invalid parameters',
     async () => {
-      const connection = createTestConnection(snowflake, {
+      const connection = createTestConnection({
         username: 'incorrect-username',
       });
       const error = await new Promise<Error | undefined>((resolve) => {
@@ -39,7 +36,7 @@ describe('Connection', () => {
   );
 
   it('.connectAsync() connects on valid parameters', async () => {
-    const connection = createTestConnection(snowflake);
+    const connection = createTestConnection();
     try {
       await connection.connectAsync();
       expect(connection.isUp()).toBe(true);
@@ -51,7 +48,7 @@ describe('Connection', () => {
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
     '.connectAsync() surfaces an error on invalid parameters',
     async () => {
-      const connection = createTestConnection(snowflake, {
+      const connection = createTestConnection({
         username: 'incorrect-username',
       });
       if (isRunningNewDriverWithBD('BD#11')) {
@@ -67,33 +64,34 @@ describe('Connection', () => {
   );
 
   it('destroys the connection and transitions to a disconnected state', async () => {
-    const connection = createTestConnection(snowflake);
+    const connection = createTestConnection();
     await connection.connectAsync();
     await destroyConnectionAsync(connection);
     expect(connection.isUp()).toBe(false);
   });
 
-  it('should report a connection as valid after connect', async () => {
-    const connection = createTestConnection(snowflake);
-    try {
+  describe('isValidAsync', () => {
+    it('should report a connection as valid after connect', async () => {
+      const connection = createTestConnection();
+      try {
+        await connection.connectAsync();
+        await expect(connection.isValidAsync()).resolves.toBe(true);
+      } finally {
+        await destroyConnectionAsync(connection);
+      }
+    });
+
+    it('should report a connection as invalid after destroy', async () => {
+      const connection = createTestConnection();
       await connection.connectAsync();
-      await expect(connection.isValidAsync()).resolves.toBe(true);
-    } finally {
       await destroyConnectionAsync(connection);
-    }
-  });
-
-  it('should report a connection as invalid after destroy', async () => {
-    const connection = createTestConnection(snowflake);
-    await connection.connectAsync();
-    await destroyConnectionAsync(connection);
-
-    await expect(connection.isValidAsync()).resolves.toBe(false);
+      await expect(connection.isValidAsync()).resolves.toBe(false);
+    });
   });
 
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('attaches a query tag from the connection', async () => {
     const expectedQueryTag = 'test_query_tag';
-    const connection = createTestConnection(snowflake, { queryTag: expectedQueryTag });
+    const connection = createTestConnection({ queryTag: expectedQueryTag });
     try {
       await connection.connectAsync();
       const { rows } = await executeAsync(

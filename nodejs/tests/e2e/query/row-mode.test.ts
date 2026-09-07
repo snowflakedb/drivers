@@ -1,11 +1,6 @@
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import type { Connection, RowMode } from '../../types/sdk-types.js';
-import {
-  createTestConnection,
-  destroyConnectionAsync,
-  executeAsync,
-  getSnowflakeSDK,
-} from '../utils/index.js';
+import { createTestConnection, destroyConnectionAsync, executeAsync } from '../utils/index.js';
 
 const SQL = `select 1 as id, 'name1' as name, 'name2' as name`;
 
@@ -17,10 +12,8 @@ const EXPECTED_BY_MODE = {
 const ROW_MODES = Object.keys(EXPECTED_BY_MODE) as RowMode[];
 
 describe('Query Row Mode', () => {
-  const snowflake = getSnowflakeSDK();
-
   it('defaults to object when neither connection nor statement set rowMode', async () => {
-    const connection = createTestConnection(snowflake);
+    const connection = createTestConnection();
     try {
       await connection.connectAsync();
       const { rows } = await executeAsync(connection, SQL);
@@ -32,7 +25,7 @@ describe('Query Row Mode', () => {
 
   describe('Connection rowMode', () => {
     it.each(ROW_MODES)('shapes rows according to connection rowMode = %s', async (rowMode) => {
-      const connection = createTestConnection(snowflake, { rowMode });
+      const connection = createTestConnection({ rowMode });
       try {
         await connection.connectAsync();
         const { rows } = await executeAsync(connection, SQL);
@@ -47,7 +40,7 @@ describe('Query Row Mode', () => {
     let connection: Connection;
 
     beforeAll(async () => {
-      connection = createTestConnection(snowflake);
+      connection = createTestConnection();
       await connection.connectAsync();
     });
 
@@ -62,7 +55,7 @@ describe('Query Row Mode', () => {
   });
 
   it('statement rowMode overrides connection rowMode', async () => {
-    const connection = createTestConnection(snowflake, { rowMode: 'array' });
+    const connection = createTestConnection({ rowMode: 'array' });
     try {
       await connection.connectAsync();
       const { rows } = await executeAsync(connection, SQL, { rowMode: 'object' });

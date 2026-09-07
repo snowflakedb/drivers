@@ -2,7 +2,7 @@ import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import type { Connection, Pool } from '../types/sdk-types.js';
 import {
   executeAsync,
-  getSnowflakeSDK,
+  snowflake,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
   TEST_CONNECTION_OPTIONS,
 } from './utils/index.js';
@@ -13,7 +13,6 @@ async function executeSelect(connection: Connection, numValue: number): Promise<
 }
 
 describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Pool', () => {
-  const snowflake = getSnowflakeSDK();
   let pool: Pool<Connection>;
 
   beforeAll(() => {

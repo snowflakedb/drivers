@@ -4,16 +4,14 @@ import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
-  getSnowflakeSDK,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
 describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Multi Statement', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
     await executeAsync(connection, 'alter session set MULTI_STATEMENT_COUNT=0');
   });

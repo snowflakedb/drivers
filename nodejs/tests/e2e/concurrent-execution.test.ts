@@ -4,7 +4,6 @@ import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
-  getSnowflakeSDK,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from './utils/index.js';
 
@@ -25,11 +24,9 @@ function streamRowCount(stmt: RowStatement): Promise<number> {
 }
 
 describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Concurrent Execution', () => {
-  const snowflake = getSnowflakeSDK();
-
   it('runs many concurrent select queries on a single connection', async () => {
     const expectedRowCounts = [2837, 6104, 1592, 8471, 3963];
-    const connection = createTestConnection(snowflake);
+    const connection = createTestConnection();
     await connection.connectAsync();
 
     try {
@@ -47,7 +44,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Concurrent Execution', () => {
 
   it('runs concurrent select queries on independent connections', async () => {
     const expectedRowCounts = [4218, 1736, 7905, 2649, 5380];
-    const connections = expectedRowCounts.map(() => createTestConnection(snowflake));
+    const connections = expectedRowCounts.map(() => createTestConnection());
 
     try {
       await Promise.all(connections.map((c) => c.connectAsync()));

@@ -14,7 +14,6 @@ import {
   destroyConnectionAsync,
   executeAsync,
   expectColumnsNames,
-  getSnowflakeSDK,
   isRunningNewDriverWithBD,
   randomizeName,
 } from './utils/index.js';
@@ -59,11 +58,10 @@ const compressionCases = [
 ];
 
 describe('PUT GET', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 

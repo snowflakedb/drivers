@@ -5,16 +5,15 @@ import {
   destroyConnectionAsync,
   executeAsync,
   getStatementColumn,
-  getSnowflakeSDK,
+  snowflake,
   isRunningNewDriverWithBD,
 } from './utils/index.js';
 
 describe('Query returning variant data types', () => {
-  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection(snowflake);
+    connection = createTestConnection();
     await connection.connectAsync();
   });
 

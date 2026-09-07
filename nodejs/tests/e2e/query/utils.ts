@@ -2,7 +2,6 @@ import type { Connection } from '../../types/sdk-types.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
-  getSnowflakeSDK,
   isRunningNewDriverWithBD,
 } from '../utils/index.js';
 
@@ -15,16 +14,15 @@ import {
  * resets it. The new driver scopes the option to the connection (BD#22) and needs no reset.
  */
 export async function withNullPreservingConnection(
-  snowflake: ReturnType<typeof getSnowflakeSDK>,
   useConnection: (connection: Connection) => Promise<void>,
 ): Promise<void> {
-  const connection = createTestConnection(snowflake, { representNullAsStringNull: false });
+  const connection = createTestConnection({ representNullAsStringNull: false });
   try {
     await connection.connectAsync();
     await useConnection(connection);
   } finally {
     if (!isRunningNewDriverWithBD('BD#22')) {
-      createTestConnection(snowflake, { representNullAsStringNull: true });
+      createTestConnection({ representNullAsStringNull: true });
     }
     await destroyConnectionAsync(connection);
   }
