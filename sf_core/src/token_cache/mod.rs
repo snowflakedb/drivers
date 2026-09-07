@@ -323,10 +323,13 @@ pub enum TokenCacheError {
         location: Location,
     },
 
-    #[snafu(display("Insufficient permissions on cache file: {}", path.display()))]
+    #[snafu(display(
+        "Cache file has incorrect permissions: {} (mode: {mode:04o}, expected: 0600)",
+        path.display()
+    ))]
     InsufficientPermissions {
         path: PathBuf,
-        source: Box<dyn std::error::Error + Send + Sync>,
+        mode: u32,
         #[snafu(implicit)]
         location: Location,
     },
