@@ -1,3 +1,9 @@
+---
+paths:
+  - "nodejs/tests/e2e/**/*.ts"
+  - "tests/definitions/**/*.feature"
+---
+
 # Node.js Gherkin E2E Tests
 
 How to translate a shared Gherkin feature (`tests/definitions/**/*.feature`) into a
@@ -143,5 +149,6 @@ npm run test:e2e -- <file>.test.ts              # non-skipped scenarios pass on 
 `NOT_IMPLEMENTED_IN_NEW_DRIVER === false`, so the skip-for-new blocks actually run.
 
 <!-- sync-target: .cursor/rules/nodejs-gherkin-e2e-tests.mdc carries this body verbatim plus
-     Cursor frontmatter. TO UPDATE: edit this file, copy it below the .mdc frontmatter,
+     Cursor frontmatter (`globs` matching `paths` above). TO UPDATE: edit this file,
+     copy the body (below the closing ---) into the .mdc file below its frontmatter,
      then run bash scripts/check-ai-rules-sync.sh (also a pre-commit hook). -->

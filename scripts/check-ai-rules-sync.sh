@@ -2,11 +2,12 @@
 # Two checks in one script:
 #
 # 1. RULE SYNC — verifies .cursor/rules/*.mdc body is byte-for-byte identical to the
-#    corresponding .claude/rules/*.md canonical source (after stripping frontmatter).
+#    corresponding .claude/rules/*.md canonical source (after stripping YAML frontmatter
+#    from both sides). Claude uses `paths:`; Cursor uses `globs:` / `alwaysApply:`.
 #    alwaysApply rules must carry full content in both files; a pointer file places the
 #    body in tool-call history where context compaction can drop it mid-session.
-#    TO FIX: edit .claude/rules/<name>.md, copy its full contents into the body of
-#    .cursor/rules/<name>.mdc (below the closing --- of the Cursor frontmatter).
+#    TO FIX: edit .claude/rules/<name>.md, copy the body (below any closing ---) into
+#    .cursor/rules/<name>.mdc (below the Cursor frontmatter).
 #
 # 2. SKILL MIRROR — verifies every .claude/skills/*/SKILL.md has a matching pointer
 #    file at .cursor/skills/*/SKILL.md. Skills fire on demand so a pointer is safe,
@@ -20,31 +21,35 @@ set -euo pipefail
 
 FAIL=0
 
+# Strip YAML frontmatter using a state machine: if the file starts with '---',
+# transition out on the second '---', then print everything including any '---'
+# horizontal rules in the body. A single blank line immediately after the closing
+# '---' is conventional and not part of the canonical body, so drop it. Files
+# with no frontmatter are passed through unchanged. Done in awk (not piped
+# through sed) so the script works on both GNU and BSD sed.
+strip_frontmatter() {
+    awk '
+        BEGIN { done=0; n=0; skipped_blank=0 }
+        NR==1 && !/^---$/ { done=1; skipped_blank=1; print; next }
+        /^---$/ && !done { n++; if (n==2) { done=1 }; next }
+        done && !skipped_blank && /^[[:space:]]*$/ { skipped_blank=1; next }
+        done { print }
+    ' "$1"
+}
+
 # ── 1. Rule sync ──────────────────────────────────────────────────────────────
 for claude_file in .claude/rules/*.md; do
     base=$(basename "$claude_file" .md)
     cursor_file=".cursor/rules/${base}.mdc"
     [[ -f "$cursor_file" ]] || continue
 
-    # Strip YAML frontmatter from the .mdc file using a state machine:
-    # transition out of frontmatter on the second '---', then print everything
-    # including any '---' horizontal rules in the body. A single blank line
-    # immediately after the closing '---' is conventional and not part of the
-    # canonical body, so drop it. Done in awk (not piped through sed) so the
-    # script works on both GNU and BSD sed.
-    cursor_body=$(awk '
-        BEGIN { done=0; n=0; skipped_blank=0 }
-        /^---$/ && !done { n++; if (n==2) { done=1 }; next }
-        done && !skipped_blank && /^[[:space:]]*$/ { skipped_blank=1; next }
-        done { print }
-    ' "$cursor_file")
-
-    claude_body=$(cat "$claude_file")
+    cursor_body=$(strip_frontmatter "$cursor_file")
+    claude_body=$(strip_frontmatter "$claude_file")
 
     if [[ "$cursor_body" != "$claude_body" ]]; then
         echo "FAIL: $cursor_file body has drifted from canonical $claude_file"
-        echo "      Edit $claude_file first, then copy its full contents into the"
-        echo "      body of $cursor_file (below the closing --- of the frontmatter)."
+        echo "      Edit $claude_file first, then copy the body (below any closing ---)"
+        echo "      into $cursor_file below the Cursor frontmatter."
         echo "Diff (< canonical  > cursor):"
         diff <(echo "$claude_body") <(echo "$cursor_body") || true
         FAIL=1

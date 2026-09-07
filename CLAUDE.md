@@ -15,14 +15,17 @@ lifecycle (author → generate-eval → check → eval → iterate).
 Two types of agent-config files live in this repo, with different sync rules:
 
 **Rules** (`.claude/rules/*.md` ↔ `.cursor/rules/*.mdc`)
-Both files carry identical body content. `alwaysApply` rules are injected into
-the agent system prompt at session start; a pointer file would place the body in
-tool-call history where context compaction can silently drop it mid-session.
-Edit the `.claude/rules/*.md` file (canonical source), then copy its full body
-into the matching `.cursor/rules/*.mdc` (below the Cursor frontmatter). The
-pre-commit hook `ai-rules-sync` (or `bash scripts/check-ai-rules-sync.sh`) will
-catch any drift. See the `sync-target` comment at the bottom of each
-`.claude/rules/*.md` file for per-file instructions.
+Both files carry identical body content. Path-scoped rules use YAML frontmatter
+(`paths:` in `.claude/rules/`, matching `globs:` in `.cursor/rules/`) and load
+only when Claude works with matching files. `alwaysApply` rules have no `paths:`
+and are injected into the agent system prompt at session start; a pointer file
+would place the body in tool-call history where context compaction can silently
+drop it mid-session. Edit the `.claude/rules/*.md` file (canonical source), then
+copy the body (below any closing `---`) into the matching `.cursor/rules/*.mdc`
+(below the Cursor frontmatter). The pre-commit hook `ai-rules-sync` (or
+`bash scripts/check-ai-rules-sync.sh`) will catch any drift. See the
+`sync-target` comment at the bottom of each `.claude/rules/*.md` file for
+per-file instructions.
 
 **Skills** (`.claude/skills/*/SKILL.md` ↔ `.cursor/skills/*/SKILL.md`)
 Canonical definition lives in `.claude/skills/`. The `.cursor/skills/` files are

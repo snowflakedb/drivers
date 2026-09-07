@@ -1,3 +1,8 @@
+---
+paths:
+  - "nodejs/tests/**/*.ts"
+---
+
 # Node.js Test Standards
 
 ### Code Rules
@@ -16,5 +21,6 @@ point of the change. Editing a file for an unrelated reason is not a licence to
 rename its tests — that turns a small diff into a wide one.
 
 <!-- sync-target: .cursor/rules/nodejs-test-standards.mdc carries this body verbatim plus
-     Cursor frontmatter. TO UPDATE: edit this file, copy it below the .mdc frontmatter,
+     Cursor frontmatter (`globs` matching `paths` above). TO UPDATE: edit this file,
+     copy the body (below the closing ---) into the .mdc file below its frontmatter,
      then run bash scripts/check-ai-rules-sync.sh (also a pre-commit hook). -->
