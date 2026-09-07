@@ -1,5 +1,6 @@
 import type { RowStatement as OldRowStatement } from 'snowflake-sdk-old';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:net';
 import newSnowflakeSDK from 'snowflake-sdk';
 import oldSnowflakeSDK from 'snowflake-sdk-old';
 import type {
@@ -11,7 +12,12 @@ import type {
 } from '../../types/sdk-types.js';
 import getTestParameter from './getTestParameter.js';
 
-const IS_RUNNING_FOR_OLD_DRIVER = !!process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER;
+/**
+ * Tests should NOT read this directly — use `NOT_IMPLEMENTED_IN_NEW_DRIVER` to skip, or
+ * `isRunningNewDriverWithBD('BD#N')` for a documented difference.
+ * This raw flag is for non-behavioral cases only (e.g. package version).
+ */
+export const IS_RUNNING_FOR_OLD_DRIVER = !!process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER;
 
 // A var to use in .skipIf() vitest conditionals while some features are not implemented in the new driver
 export const NOT_IMPLEMENTED_IN_NEW_DRIVER = !IS_RUNNING_FOR_OLD_DRIVER;
@@ -120,6 +126,26 @@ export function getStatementColumn(statement: RowStatement, id: string | number)
 
 export function sleepAsync(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, () => {
+      const address = server.address();
+      if (address && typeof address === 'object') {
+        const { port } = address;
+        server.close(() => {
+          resolve(port);
+        });
+      } else {
+        server.close(() => {
+          reject(new Error('Failed to acquire a free port'));
+        });
+      }
+    });
+  });
 }
 
 export function randomizeName(prefix: string): string {
