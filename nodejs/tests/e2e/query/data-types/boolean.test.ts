@@ -122,7 +122,7 @@ describe('BOOLEAN data type', () => {
       }
     });
 
-    describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('parameter binding', () => {
+    describe('parameter binding', () => {
       it('should select boolean using parameter binding', async () => {
         // Given Snowflake client is logged in
         void connection;

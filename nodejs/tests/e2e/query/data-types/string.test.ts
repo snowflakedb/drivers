@@ -177,14 +177,12 @@ describe('STRING data type', () => {
       }
     });
 
-    describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('parameter binding', () => {
+    describe('parameter binding', () => {
       it('should select string literals using parameter binding', async () => {
         // Given Snowflake client is logged in
         void connection;
 
         // When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed with bound string values ['hello', 'Hello World', '日本語テスト']
-        // Without the aliases all three columns are named `?::VARCHAR` and collapse into one
-        // key in object row mode.
         const { rows } = await executeAsync(
           connection,
           'SELECT ?::VARCHAR AS COL1, ?::VARCHAR AS COL2, ?::VARCHAR AS COL3',
@@ -195,21 +193,20 @@ describe('STRING data type', () => {
         expect(Object.values(rows[0])).toEqual(['hello', 'Hello World', '日本語テスト']);
       });
 
-      it.each(CORNER_CASES)(
-        'should select corner case string values using parameter binding ($name)',
-        async ({ expected }) => {
-          // Given Snowflake client is logged in
-          void connection;
+      it('should select corner case string values using parameter binding', async () => {
+        // Given Snowflake client is logged in
+        void connection;
 
+        for (const { name, expected } of CORNER_CASES) {
           // When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
           const { rows } = await executeAsync(connection, 'SELECT ?::VARCHAR', {
             binds: [expected],
           });
 
           // Then the result should match the bound corner case value
-          expect(Object.values(rows[0])).toEqual([expected]);
-        },
-      );
+          expect(Object.values(rows[0]), name).toEqual([expected]);
+        }
+      });
 
       it('should insert and select back hardcoded string values using parameter binding', async () => {
         // Given Snowflake client is logged in

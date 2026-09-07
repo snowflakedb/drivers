@@ -4,8 +4,8 @@ use crate::session_params::KnownSessionParameters;
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use sf_core::apis::database_driver_v1::ApiError;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity;
+use sf_core::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use sf_core::apis::operation_ctx::OperationCtx;
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
@@ -17,6 +17,20 @@ use std::sync::atomic::{AtomicU8, Ordering};
 pub struct Connection {
     handle: Handle,
     state: ConnectionState,
+}
+
+#[napi]
+pub enum QueryBindingFormat {
+    Json,
+    Csv,
+}
+
+/// Bind parameters handed down from the wrapper. `data` is either a JSON object
+/// of `{ "1": { type, value }, ... }` or CSV text, selected by `format`.
+#[napi(object)]
+pub struct QueryBindings {
+    pub format: QueryBindingFormat,
+    pub data: String,
 }
 
 /// Tracked here because the core cannot answer for it: `destroy` releases the
@@ -153,7 +167,12 @@ impl Connection {
     }
 
     #[napi]
-    pub fn execute(&self, env: &Env, query: String) -> Result<Statement> {
+    pub fn execute(
+        &self,
+        env: &Env,
+        query: String,
+        bindings: Option<QueryBindings>,
+    ) -> Result<Statement> {
         if let Some(unusable) = self.state.unusable() {
             return Ok(Statement::refused(unusable));
         }
@@ -165,10 +184,18 @@ impl Connection {
             self.handle,
             Some(operation_ctx.clone()),
             async move {
+                let binding_bytes = bindings.map(|b| (b.format, b.data.into_bytes()));
                 let result = async {
                     DRIVER.statement_set_sql_query(stmt_handle, query).await?;
+                    let bindings = binding_bytes.as_ref().map(|(format, bytes)| {
+                        let ptr = DataPtr::new(bytes.as_ptr(), bytes.len() as i64);
+                        match format {
+                            QueryBindingFormat::Csv => BindingType::Csv(ptr),
+                            QueryBindingFormat::Json => BindingType::Json(ptr),
+                        }
+                    });
                     DRIVER
-                        .statement_execute_query(Some(&operation_ctx), stmt_handle, None, None)
+                        .statement_execute_query(Some(&operation_ctx), stmt_handle, bindings, None)
                         .await
                 }
                 .await;

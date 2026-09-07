@@ -13,6 +13,7 @@ import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import {
   CoreConnection,
+  CoreQueryBindingFormat,
   type CoreConnectionInstance,
   type CoreStatementInstance,
 } from './core/index.js';
@@ -23,10 +24,16 @@ import {
   type CustomParser,
   type XMlParserConfigOption,
 } from './global-config.js';
+import { buildBindsMap, type Binds, type InsertBinds, type Bind } from './query-result/binds.js';
 import { collectRows } from './query-result/rows.js';
 import { RowStatement, FileAndStageBindStatement } from './query-result/RowStatement.js';
 
+// TODO:
+// consider exporting directly from files so its easier to understand where the type comes from
 export {
+  type Bind,
+  type Binds,
+  type InsertBinds,
   type RowStatement,
   type StatementCallback,
   type StreamOptions,
@@ -70,6 +77,30 @@ export interface StatementOption {
   streamResult?: boolean;
   rowMode?: RowMode;
   fetchAsString?: DataType[];
+  /**
+   * Values for the placeholders in {@link StatementOption.sqlText}. Write `?` (or
+   * `:1`, `:2`, ...) in the SQL, and list the values here in the same order. The
+   * driver sends them as bind parameters, so they are safe from SQL injection.
+   *
+   * Pass one row of values to run the statement once:
+   *
+   * @example
+   * connection.execute({
+   *   sqlText: 'SELECT c1 FROM t WHERE c1 = ?',
+   *   binds: [1],
+   * });
+   *
+   * Pass an array of rows to run a bulk `INSERT` (one row per inner array):
+   *
+   * @example
+   * connection.execute({
+   *   sqlText: 'INSERT INTO t(c1, c2, c3) VALUES(?, ?, ?)',
+   *   binds: [[1, 'string1', 2.0], [2, 'string2', 4.0]],
+   * });
+   *
+   * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
+   */
+  binds?: Binds;
 }
 
 export interface FetchResultOptions {
@@ -130,7 +161,14 @@ export class Connection {
   }
 
   execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
-    return this.#runStatement(this.#core.execute(options.sqlText), {
+    const bindings =
+      options.binds && options.binds.length > 0
+        ? {
+            format: CoreQueryBindingFormat.Json,
+            data: JSON.stringify(buildBindsMap(options.binds)),
+          }
+        : undefined;
+    return this.#runStatement(this.#core.execute(options.sqlText, bindings), {
       complete: options.complete,
       streamResult: options.streamResult,
       rowOptions: {

@@ -44,7 +44,12 @@ Ensure the public API of the statement returned by `connection.execute` is fully
 
 - `integration/testArrayBind.js` — _TBD_
 - `integration/testArrayBindCustomerTable.js` — _TBD_
-- `integration/testBind.js` — _TBD_
+- `integration/testBind.js` — partially migrated. Scalar and multi-row `?`-bind insert/select
+  (`testBindWithQmark`, `testBindArrayWithQmark`) moved to the "parameter binding" describes in
+  `nodejs/tests/e2e/query/data-types/{boolean,string}.test.ts` and `nodejs/tests/unit/query-result/binds.test.ts`.
+  Still pending: `:n` named-placeholder binding, bind error codes (`testWrongBinds`), statement
+  reuse (`testBindsSameSQLWithDifferentValue`), SQL-injection safety (`testBindMaliciousString`),
+  per-type binding (`testBindingWithDifferentDataType`)
 
 ### Query execution
 

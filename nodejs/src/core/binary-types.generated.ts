@@ -34,7 +34,7 @@ export declare class Connection {
   connect(): Promise<undefined>
   isUp(): boolean
   getSessionParameters(): KnownSessionParameters
-  execute(query: string): Statement
+  execute(query: string, bindings?: QueryBindings | undefined | null): Statement
   getQueryResult(queryId: string): Statement
   destroy(): Promise<undefined>
 }
@@ -70,4 +70,18 @@ export interface KnownSessionParameters {
   timeOutputFormat: string
   jsTreatIntegerAsBigInt: boolean
   clientStageArrayBindingThreshold: number
+}
+
+export declare enum QueryBindingFormat {
+  Json = 0,
+  Csv = 1
+}
+
+/**
+ * Bind parameters handed down from the wrapper. `data` is either a JSON object
+ * of `{ "1": { type, value }, ... }` or CSV text, selected by `format`.
+ */
+export interface QueryBindings {
+  format: QueryBindingFormat
+  data: string
 }
