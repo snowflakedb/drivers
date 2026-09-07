@@ -30,6 +30,7 @@ CASES = cases(SIZES, SUFFIXES)
 NODEJS_CASES = cases(SIZES, NODEJS_SUFFIXES, id_suffix="_nodejs")
 
 
+@pytest.mark.supports_json
 @pytest.mark.iterations(15)
 @pytest.mark.warmup_iterations(1)
 @pytest.mark.parametrize("row_count,name,fetch_mode,bind_mode", CASES + NODEJS_CASES)

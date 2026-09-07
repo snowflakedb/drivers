@@ -34,6 +34,7 @@ CASES = cases(SIZES, SUFFIXES, infix="_arrow")
 NODEJS_CASES = cases(SIZES, NODEJS_SUFFIXES, infix="_arrow", id_suffix="_nodejs")
 
 
+@pytest.mark.supports_json
 @pytest.mark.iterations(8)
 @pytest.mark.warmup_iterations(1)
 @pytest.mark.parametrize("dtype", TYPES)

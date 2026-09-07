@@ -24,6 +24,7 @@ from benchstore.client.quickstore import Quickstore
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from runner.container import get_resource_limits
+from runner.result_format import comparable_tags_for_upload, read_result_format_tag
 from runner.utils import perf_tests_root, collect_node_info
 
 logger = logging.getLogger(__name__)
@@ -553,6 +554,7 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
         runtime_language_version = metadata.get('runtime_language_version', 'NA')
         
         driver_tag_value = f"{driver}_old" if driver_type == "old" else driver
+        result_format_tag = read_result_format_tag(results_dir)
         
         tags = [
             f"BUILD_NUMBER={build_number}",
@@ -566,6 +568,7 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             f"RUNTIME_LANGUAGE_VERSION={runtime_language_version}",
             f"CLOUD_PROVIDER={cloud_provider}",
             f"REGION={region}",
+            f"RESULT_FORMAT={result_format_tag}",
             f"TRIGGER_TYPE={trigger_type}",
             f"JENKINS_NODE={jenkins_node}",
             f"DOCKER_MEMORY={docker_memory}",
@@ -582,7 +585,7 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             tags.append(f"NODE_INSTANCE_TYPE={node_info['node_instance_type']}")
         
         tags = [_sanitize_tag(t) for t in tags]
-        default_comparable_tags = list(tags)
+        default_comparable_tags = comparable_tags_for_upload(tags, result_format_tag)
         
         quickstore_input = benchstore_pb2.QuickstoreInput(
             benchmark_name_lookup=benchstore_pb2.BenchmarkNameLookup(
@@ -726,7 +729,10 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                         total_uploaded += timeline_uploaded
                         logger.info(f"  Uploaded {timeline_uploaded} memory timeline samples for {test_name}")
             
-            logger.critical(f"✓ Uploaded {driver} ({driver_type}) [{architecture}/{os_info}] driver data to Benchstore")
+            logger.critical(
+                f"✓ Uploaded {driver} ({driver_type}) [{architecture}/{os_info}] "
+                f"RESULT_FORMAT={result_format_tag}"
+            )
                 
         except Exception as e:
             logger.error(f"Failed to upload {driver} ({driver_type}): {e}")

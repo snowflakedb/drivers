@@ -53,6 +53,8 @@ def _fetch_arrow_batches(cursor):
     return row_count
 
 
+_logged_observed_format = False
+
 _FETCH_STRATEGIES = {
     "fetchmany": _fetch_many_chunks,
     "fetchone": _fetch_one_by_one,
@@ -172,6 +174,11 @@ def _execute_query(cursor, sql, fetch_fn):
     query_start = time.time()
     cursor.execute(sql)
     query_time = time.time() - query_start
+    global _logged_observed_format
+    observed = getattr(cursor, "_query_result_format", None)
+    if observed and not _logged_observed_format:
+        print(f"QUERY_RESULT_FORMAT_OBSERVED={observed}")
+        _logged_observed_format = True
 
     if _PERF_ENABLED:
         sf_core_python.reset_perf_metrics()
