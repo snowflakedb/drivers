@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import newSnowflakeSDK from 'snowflake-sdk';
 import oldSnowflakeSDK from 'snowflake-sdk-old';
+import { expect } from 'vitest';
 import type {
   Connection,
   ConnectionOptions,
@@ -122,6 +123,17 @@ export function getStatementColumn(statement: RowStatement, id: string | number)
     return statement.getColumn(id)!;
   }
   return (statement as OldRowStatement).getColumn(id);
+}
+
+export function expectColumnsNames(statement: RowStatement, expectedNames: string[]): void {
+  const columns = statement.getColumns() ?? [];
+  expect(columns.map((column) => column.getName())).toEqual(expectedNames);
+
+  for (const name of expectedNames) {
+    const byName = getStatementColumn(statement, name);
+    expect(byName, `getColumn('${name}') should find a column`).toBeDefined();
+    expect(byName.getName()).toBe(name);
+  }
 }
 
 export function sleepAsync(ms: number): Promise<void> {

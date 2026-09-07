@@ -496,3 +496,66 @@ behavior_differences:
     status_rationale: |
       A connection option that silently persists across unrelated connections in the same process
       is a bug, not a contract worth preserving; scoping it to the connection is the fix.
+
+  23:
+    name: 'PUT reports the encrypted file size in targetSize'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `targetSize` is the size of the file the driver handed to the storage client, measured after
+      optional gzip and before client-side encryption (`meta.uploadSize`, from
+      `getDigestAndSizeForFile`).
+    new_driver_behavior: |
+      `targetSize` is the number of bytes that land in the stage: the ciphertext length for
+      client-side encryption, or the source length otherwise.
+    description: |
+      Preset-controlled behavior; it can be changed easily via presets (JDBC reports the
+      pre-encryption source length instead).
+    status_rationale: |
+      Reporting the size of the object in the stage is the unified default behavior of the new
+      driver: Python, ODBC and Node.js all take the ciphertext length (the `_` arm of the flavor
+      match), and only JDBC overrides it via its preset.
+
+  24:
+    name: 'PUT reports sourceCompression for an already-compressed file'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When the source file is already compressed (its extension names the format, e.g. `.gz`),
+      `sourceCompression` is reported as `null`.
+    new_driver_behavior: |
+      `sourceCompression` is the detected compression token (e.g. `GZIP`, `ZSTD`), matching the
+      format named by the extension, so it equals `targetCompression` when the file is passed
+      through untouched (`sf_core/src/file_manager/mod.rs`).
+    description: |
+      Preset-controlled behavior; it can be changed easily via presets (ODBC lower-cases the token).
+    status_rationale: |
+      Reporting the detected format is the unified default behavior of the new driver: Python,
+      JDBC and Node.js all report the uppercase token, and only ODBC changes the casing via its
+      preset.
+
+  25:
+    name: 'PUT/GET report an empty message on success'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The PUT/GET result `message` column carries `errorDetails`, which is `undefined` for a
+      successful transfer.
+    new_driver_behavior: |
+      The `message` column is an empty string on success (`sf_core/src/file_manager`), reserving a
+      populated message for the error/skip cases.
+    description: |
+      Preset-controlled behavior; it can be changed easily via presets (ODBC emits a "SKIPPED"
+      message for skipped uploads).
+    status_rationale: |
+      An empty message on success is the unified default behavior of the new driver: Python,
+      JDBC and Node.js all use it, and only ODBC's skip case differs via its preset.

@@ -23,7 +23,7 @@ pub use connection::Connection;
 pub use session_params::KnownSessionParameters;
 pub use statement::{Column, Statement};
 
-use sf_core::apis::database_driver_v1::DatabaseDriverV1;
+use sf_core::apis::database_driver_v1::{DatabaseDriverV1, DriverProviders, WrapperPresets};
 use std::sync::LazyLock;
 
 pub(crate) static DRIVER: LazyLock<DatabaseDriverV1> = LazyLock::new(|| {
@@ -33,5 +33,8 @@ pub(crate) static DRIVER: LazyLock<DatabaseDriverV1> = LazyLock::new(|| {
         .with_writer(std::io::stderr)
         .with_max_level(tracing::Level::DEBUG)
         .try_init();
-    DatabaseDriverV1::new()
+    DatabaseDriverV1::with_providers(DriverProviders {
+        wrapper_presets: WrapperPresets::nodejs(),
+        ..Default::default()
+    })
 });
