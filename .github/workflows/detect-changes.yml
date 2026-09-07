@@ -538,3 +538,49 @@ jobs:
           echo "| Rust Core | ${{ steps.computed.outputs.rust_core_wanted }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | ${{ steps.computed.outputs.nodejs_wanted }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dotnet | ${{ steps.computed.outputs.dotnet_wanted }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Write detected-scope artifact
+        run: |
+          mkdir -p scope-artifact
+          cat > scope-artifact/detected-scope.json <<EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": ${{ github.run_attempt }},
+            "event_name": "${{ github.event_name }}",
+            "core": ${{ steps.filter.outputs.core }},
+            "dotnet": ${{ steps.filter.outputs.dotnet }},
+            "jdbc": ${{ steps.filter.outputs.jdbc }},
+            "nodejs": ${{ steps.filter.outputs.nodejs }},
+            "odbc": ${{ steps.filter.outputs.odbc }},
+            "python": ${{ steps.filter.outputs.python }},
+            "python_packaging": ${{ steps.filter.outputs.python_packaging }},
+            "shared": ${{ steps.filter.outputs.shared }},
+            "no_build_impact": ${{ steps.computed.outputs.no_build_impact }},
+            "run_dotnet": ${{ steps.computed.outputs.run_dotnet }},
+            "run_jdbc": ${{ steps.computed.outputs.run_jdbc }},
+            "run_odbc": ${{ steps.computed.outputs.run_odbc }},
+            "run_nodejs": ${{ steps.computed.outputs.run_nodejs }},
+            "run_python": ${{ steps.computed.outputs.run_python }},
+            "run_python_packaging": ${{ steps.computed.outputs.run_python_packaging }},
+            "run_rust_core": ${{ steps.computed.outputs.run_rust_core }},
+            "run_dotnet_reference": ${{ steps.computed.outputs.run_dotnet_reference }},
+            "run_jdbc_reference": ${{ steps.computed.outputs.run_jdbc_reference }},
+            "run_odbc_reference": ${{ steps.computed.outputs.run_odbc_reference }},
+            "run_python_reference": ${{ steps.computed.outputs.run_python_reference }},
+            "run_nodejs_reference": ${{ steps.computed.outputs.run_nodejs_reference }},
+            "run_odbc_packaging": ${{ steps.computed.outputs.run_odbc_packaging }},
+            "python_wanted": ${{ steps.computed.outputs.python_wanted }},
+            "jdbc_wanted": ${{ steps.computed.outputs.jdbc_wanted }},
+            "odbc_wanted": ${{ steps.computed.outputs.odbc_wanted }},
+            "rust_core_wanted": ${{ steps.computed.outputs.rust_core_wanted }},
+            "nodejs_wanted": ${{ steps.computed.outputs.nodejs_wanted }},
+            "dotnet_wanted": ${{ steps.computed.outputs.dotnet_wanted }}
+          }
+          EOF
+
+      - name: Upload detected-scope artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: detected-scope-${{ github.run_attempt }}
+          path: scope-artifact/detected-scope.json
+          retention-days: 90
