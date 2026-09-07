@@ -33,21 +33,10 @@ export declare class Connection {
   constructor(options: Record<string, string>, sessionParameters: Record<string, string>)
   connect(): Promise<undefined>
   isUp(): boolean
-  getSessionParameter(name: string): SessionParameter | null
+  getSessionParameters(): KnownSessionParameters
   execute(query: string): Statement
   getQueryResult(queryId: string): Statement
   destroy(): Promise<undefined>
-}
-
-export declare class SessionParameter {
-  getString(): string | null
-  getBool(): boolean | null
-  /**
-   * Integers reach JavaScript as `number`, so values beyond 2^53 lose
-   * precision. Session parameters rarely carry numbers that large.
-   */
-  getInt(): number | null
-  getDouble(): number | null
 }
 
 export declare class Statement {
@@ -70,4 +59,15 @@ export declare class Statement {
   getColumn(identifier: string | number): Column | null
   close(): void
   cancel(): Promise<void>
+}
+
+/**
+ * The session parameters the Node.js driver reads and knows the type of. Every
+ * field is resolved from the server-provided parameter set, so the parameters
+ * are always present; a missing key surfaces as an error rather than a default.
+ */
+export interface KnownSessionParameters {
+  timeOutputFormat: string
+  jsTreatIntegerAsBigInt: boolean
+  clientStageArrayBindingThreshold: number
 }

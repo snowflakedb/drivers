@@ -1,6 +1,6 @@
 use crate::DRIVER;
 use crate::error::{ToJsError, UnusableConnection, async_to_js};
-use crate::session_params::SessionParameter;
+use crate::session_params::KnownSessionParameters;
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -147,14 +147,9 @@ impl Connection {
     }
 
     #[napi]
-    pub fn get_session_parameter(
-        &self,
-        env: &Env,
-        name: String,
-    ) -> Result<Option<SessionParameter>> {
-        let setting = block_on(DRIVER.connection_get_parameter(self.handle, name))
-            .map_err(|e| e.to_js_error(*env))?;
-        Ok(setting.map(SessionParameter::from))
+    pub fn get_session_parameters(&self, env: &Env) -> Result<KnownSessionParameters> {
+        block_on(KnownSessionParameters::from_connection(self.handle))
+            .map_err(|e| e.to_js_error(*env))
     }
 
     #[napi]

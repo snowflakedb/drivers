@@ -1,9 +1,9 @@
 use super::stream_state::StreamState;
 use crate::error::BridgeError;
-use crate::session_params::SessionParams;
+use crate::session_params::KnownSessionParameters;
 use napi::bindgen_prelude::spawn;
 use napi::tokio::sync::{Notify, OnceCell};
-use sf_core::apis::database_driver_v1::{ApiError, ResultSetDescriptor};
+use sf_core::apis::database_driver_v1::ResultSetDescriptor;
 use sf_core::handle_manager::Handle;
 use std::future::Future;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub(super) struct ResultData {
     pub(super) result_set_handle: Handle,
     pub(super) result_set_descriptor: ResultSetDescriptor,
-    pub(super) session_params: Arc<SessionParams>,
+    pub(super) session_params: Arc<KnownSessionParameters>,
     pub(super) stream_state: Arc<StreamState>,
 }
 
@@ -30,7 +30,7 @@ pub(super) struct StatementResult {
 
 impl StatementResult {
     pub(super) fn from_future(
-        future: impl Future<Output = Result<ResultData, ApiError>> + Send + 'static,
+        future: impl Future<Output = Result<ResultData, BridgeError>> + Send + 'static,
     ) -> Self {
         let cell = Arc::new(OnceCell::new());
         let ready = Arc::new(Notify::new());
@@ -39,7 +39,7 @@ impl StatementResult {
             let cell = Arc::clone(&cell);
             let ready = Arc::clone(&ready);
             async move {
-                let _ = cell.set(future.await.map_err(BridgeError::from));
+                let _ = cell.set(future.await);
                 ready.notify_waiters();
             }
         });

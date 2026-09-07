@@ -1,96 +1,77 @@
 use crate::DRIVER;
+use crate::error::BridgeError;
 use napi_derive::napi;
-use sf_core::apis::database_driver_v1::{ApiError, Setting};
+use sf_core::apis::database_driver_v1::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
-use std::sync::Arc;
 
-#[napi]
-pub struct SessionParameter {
-    value: Setting,
+/// The session parameters the Node.js driver reads and knows the type of. Every
+/// field is resolved from the server-provided parameter set, so the parameters
+/// are always present; a missing key surfaces as an error rather than a default.
+#[napi(object)]
+pub struct KnownSessionParameters {
+    pub time_output_format: String,
+    pub js_treat_integer_as_big_int: bool,
+    pub client_stage_array_binding_threshold: i64,
 }
 
-impl From<Setting> for SessionParameter {
-    fn from(value: Setting) -> Self {
-        Self { value }
-    }
-}
-
-// TODO: create unified way of fetching session parameters in bridge and in NodeJs
-#[napi]
-impl SessionParameter {
-    #[napi]
-    pub fn get_string(&self) -> Option<String> {
-        match &self.value {
-            Setting::String(value) => Some(value.clone()),
-            _ => None,
-        }
-    }
-
-    #[napi]
-    pub fn get_bool(&self) -> Option<bool> {
-        match &self.value {
-            Setting::Bool(value) => Some(*value),
-            _ => None,
-        }
-    }
-
-    /// Integers reach JavaScript as `number`, so values beyond 2^53 lose
-    /// precision. Session parameters rarely carry numbers that large.
-    #[napi]
-    pub fn get_int(&self) -> Option<i64> {
-        match &self.value {
-            Setting::Int(value) => Some(*value),
-            _ => None,
-        }
-    }
-
-    #[napi]
-    pub fn get_double(&self) -> Option<f64> {
-        match &self.value {
-            Setting::Double(value) => Some(*value),
-            _ => None,
-        }
-    }
-}
-
-/// Snowflake's documented default for `TIME_OUTPUT_FORMAT` when the session
-/// parameter is unset.
-const DEFAULT_TIME_OUTPUT_FORMAT: &str = "HH24:MI:SS";
-
-#[derive(Debug, Clone)]
-pub(crate) struct SessionParams {
-    pub(crate) time_format: Arc<str>,
-}
-
-impl SessionParams {
-    pub(crate) async fn from_connection(conn_handle: Handle) -> Result<Self, ApiError> {
+impl KnownSessionParameters {
+    pub(crate) async fn from_connection(conn_handle: Handle) -> Result<Self, BridgeError> {
         let params = DRIVER.connection_get_all_parameters(conn_handle).await?;
         Ok(Self {
-            time_format: get_uppercase_or_default(
+            time_output_format: required_string(&params, "TIME_OUTPUT_FORMAT")?,
+            js_treat_integer_as_big_int: required_bool(&params, "JS_TREAT_INTEGER_AS_BIGINT")?,
+            client_stage_array_binding_threshold: required_int(
                 &params,
-                "TIME_OUTPUT_FORMAT",
-                DEFAULT_TIME_OUTPUT_FORMAT,
-            ),
+                "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD",
+            )?,
         })
     }
 }
 
-/// Upper-cased because the format renderers match tokens like `"HH24"`
-/// case-sensitively, and nothing upstream normalizes value case.
-fn get_uppercase_or_default(
-    params: &HashMap<String, Setting>,
-    key: &str,
-    default: &str,
-) -> Arc<str> {
-    Arc::from(
-        params
-            .get(key)
-            .and_then(|setting| match setting {
-                Setting::String(value) => Some(value.as_str()),
-                _ => None,
-            })
-            .unwrap_or(default)
-            .to_uppercase(),
-    )
+#[cfg(test)]
+impl KnownSessionParameters {
+    /// Builds a value carrying Snowflake's documented defaults, for tests that
+    /// need a `KnownSessionParameters` to exercise a code path that does not
+    /// depend on the parameter values themselves.
+    pub(crate) fn test_defaults() -> Self {
+        Self {
+            time_output_format: "HH24:MI:SS".to_string(),
+            js_treat_integer_as_big_int: false,
+            client_stage_array_binding_threshold: 0,
+        }
+    }
+}
+
+fn missing(key: &str) -> BridgeError {
+    BridgeError::Message(format!(
+        "session parameter {key} is missing or has an unexpected type"
+    ))
+}
+
+fn required_string(params: &HashMap<String, Setting>, key: &str) -> Result<String, BridgeError> {
+    match params.get(key) {
+        Some(Setting::String(value)) => Ok(value.clone()),
+        _ => Err(missing(key)),
+    }
+}
+
+fn required_bool(params: &HashMap<String, Setting>, key: &str) -> Result<bool, BridgeError> {
+    match params.get(key) {
+        Some(Setting::Bool(value)) => Ok(*value),
+        Some(Setting::String(value)) => match value.to_lowercase().as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(missing(key)),
+        },
+        _ => Err(missing(key)),
+    }
+}
+
+fn required_int(params: &HashMap<String, Setting>, key: &str) -> Result<i64, BridgeError> {
+    match params.get(key) {
+        Some(Setting::Int(value)) => Ok(*value),
+        Some(Setting::String(value)) => value.parse().map_err(|_| missing(key)),
+        _ => Err(missing(key)),
+    }
 }

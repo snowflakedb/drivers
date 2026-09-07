@@ -11,7 +11,6 @@ import type {
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
 import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
-import SessionParameterName from './constants/SessionParameterName.js';
 import {
   CoreConnection,
   type CoreConnectionInstance,
@@ -108,7 +107,7 @@ export class Connection {
       }),
       jsTreatIntegerAsBigInt === undefined
         ? {}
-        : { [SessionParameterName.JS_TREAT_INTEGER_AS_BIGINT]: String(jsTreatIntegerAsBigInt) },
+        : { JS_TREAT_INTEGER_AS_BIGINT: String(jsTreatIntegerAsBigInt) },
     );
   }
 

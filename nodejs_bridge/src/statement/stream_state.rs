@@ -1,9 +1,9 @@
 use super::column_reader::ColumnReader;
-use crate::session_params::SessionParams;
+use crate::session_params::KnownSessionParameters;
 use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::error::ArrowError;
 use napi::bindgen_prelude::{Array as JsArray, Env};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Splits a result set's iteration across two threads: batches are pulled and
 /// prepared on a worker, rows are decoded into JS values on the Node.js main
@@ -38,7 +38,7 @@ impl StreamState {
     /// between this and [`next_row`](Self::next_row) without making progress.
     pub(super) fn fetch_next_batch(
         &self,
-        session_params: &SessionParams,
+        session_params: &Arc<KnownSessionParameters>,
     ) -> Result<bool, ArrowError> {
         let prepared = {
             let mut reader = self.reader.lock().unwrap();
@@ -94,7 +94,10 @@ struct CurrentBatch {
 }
 
 impl CurrentBatch {
-    fn from_batch(batch: &RecordBatch, session_params: &SessionParams) -> Result<Self, ArrowError> {
+    fn from_batch(
+        batch: &RecordBatch,
+        session_params: &Arc<KnownSessionParameters>,
+    ) -> Result<Self, ArrowError> {
         let column_readers = batch
             .schema()
             .fields()
@@ -145,11 +148,9 @@ mod tests {
     }
 
     /// BOOLEAN columns ignore the format; `fetch_next_batch` still requires
-    /// a `SessionParams` to build the resident batch's column readers.
-    fn session_params() -> SessionParams {
-        SessionParams {
-            time_format: Arc::from("HH24:MI:SS"),
-        }
+    /// `KnownSessionParameters` to build the resident batch's column readers.
+    fn session_params() -> Arc<KnownSessionParameters> {
+        Arc::new(KnownSessionParameters::test_defaults())
     }
 
     fn boolean_batch(schema: &Arc<Schema>, values: Vec<bool>) -> RecordBatch {
