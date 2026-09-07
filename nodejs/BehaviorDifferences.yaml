@@ -559,3 +559,22 @@ behavior_differences:
     status_rationale: |
       An empty message on success is the unified default behavior of the new driver: Python,
       JDBC and Node.js all use it, and only ODBC's skip case differs via its preset.
+
+  26:
+    name: 'A connection-level arrayBindingThreshold no longer overrides a later ALTER SESSION of CLIENT_STAGE_ARRAY_BINDING_THRESHOLD'
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The arrayBindingThreshold connection option is stored on the connection and takes strict
+      precedence when the driver picks between the inline and stage bind paths, so it wins over the
+      server's CLIENT_STAGE_ARRAY_BINDING_THRESHOLD even after an ALTER SESSION changes that
+      parameter mid-session.
+    new_driver_behavior: |
+      arrayBindingThreshold is applied as the initial value of the CLIENT_STAGE_ARRAY_BINDING_THRESHOLD
+      session parameter at connect time rather than held separately on the connection. Threshold
+      resolution reads the current session-parameter value from sf_core's per-connection cache (see
+      BD#21), so a later ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD overwrites the
+      connection option and the stage path is chosen by the ALTER'd value instead.

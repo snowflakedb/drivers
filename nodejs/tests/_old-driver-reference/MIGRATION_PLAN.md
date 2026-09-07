@@ -42,14 +42,28 @@ Ensure the public API of the statement returned by `connection.execute` is fully
 
 ### Query binding
 
-- `integration/testArrayBind.js` — _TBD_
-- `integration/testArrayBindCustomerTable.js` — _TBD_
+- `integration/testArrayBind.js` — partially migrated. The bulk single-column string stage bind
+  (`testBindWithLargeArray`) moved to `nodejs/tests/e2e/query/binds.test.ts`, which covers the
+  stage/CSV mechanic (upload above `arrayBindingThreshold`, CSV quoting/NULL, stage-vs-inline
+  parity) for string columns. Still pending: per-type stage binding (DATE/TIME/TIMESTAMP_*/BINARY/
+  BOOLEAN/VARIANT — `testArrayBind`, `testArrayBindWillNull`, `testBindWithJson`,
+  `testBindWithArray`), fully-qualified table names on the stage path (`Test Array Bind - full
+  path`), stage-upload failure handling (`Test Array Bind Force Error on Upload file` — the new
+  driver surfaces the error instead of falling back to inline), and cancelling an in-flight
+  stage-bind insert (`Test Array Bind - full path with cancel`).
+- `integration/testArrayBindCustomerTable.js` — migrated and deleted. Its single test was a
+  large-scale (10000-row, 23-column) all-VARCHAR/FLOAT bulk stage bind asserting the insert
+  succeeds; the stage/CSV mechanic is covered by `nodejs/tests/e2e/query/binds.test.ts` and the
+  large-row-count behaviour lives in `sf_core` (shared `query/large_bindings.feature`).
 - `integration/testBind.js` — partially migrated. Scalar and multi-row `?`-bind insert/select
   (`testBindWithQmark`, `testBindArrayWithQmark`) moved to the "parameter binding" describes in
-  `nodejs/tests/e2e/query/data-types/{boolean,string}.test.ts` and `nodejs/tests/unit/query-result/binds.test.ts`.
-  Still pending: `:n` named-placeholder binding, bind error codes (`testWrongBinds`), statement
-  reuse (`testBindsSameSQLWithDifferentValue`), SQL-injection safety (`testBindMaliciousString`),
-  per-type binding (`testBindingWithDifferentDataType`)
+  `nodejs/tests/e2e/query/data-types/{boolean,string}.test.ts` and
+  `nodejs/tests/unit/query-result/binds.test.ts`. The string-column stage/CSV parity is covered by
+  `nodejs/tests/e2e/query/binds.test.ts`; the `Verify stage binding and array binding` timezone
+  matrix stays as a gap (TIMESTAMP_NTZ/LTZ/TZ + DATE inline-vs-stage parity across four
+  timezones). Still pending: `:n` named-placeholder binding, bind error codes (`testWrongBinds`),
+  statement reuse (`testBindsSameSQLWithDifferentValue`), SQL-injection safety
+  (`testBindMaliciousString`), per-type binding (`testBindingWithDifferentDataType`)
 
 ### Query execution
 

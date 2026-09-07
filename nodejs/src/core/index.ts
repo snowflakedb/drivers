@@ -57,3 +57,5 @@ export const CoreQueryBindingFormat = core.QueryBindingFormat;
 export type CoreConnectionInstance = InstanceType<typeof CoreConnection>;
 export type CoreStatementInstance = InstanceType<typeof CoreStatement>;
 export type CoreColumnInstance = InstanceType<typeof CoreColumn>;
+export type CoreQueryBindings = CoreBinary.QueryBindings;
+export type CoreKnownSessionParameters = CoreBinary.KnownSessionParameters;
