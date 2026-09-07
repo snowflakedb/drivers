@@ -3244,6 +3244,7 @@ dependencies = [
  "napi-derive",
  "sf_core",
  "sf_types",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
