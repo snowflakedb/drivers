@@ -1,7 +1,7 @@
 use arrow::array::{
     Array, ArrowNumericType, BinaryArray, BooleanArray, Decimal128Array, Float32Array,
     Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, PrimitiveArray, StringArray,
-    StringBuilder, StructArray,
+    StructArray,
 };
 use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type};
 use chrono::NaiveTime;
@@ -54,14 +54,32 @@ pub(crate) enum ColumnReader {
     TimeI64(PrimitiveArray<Int64Type>, TimeMeta),
     Variant(StringArray),
     Text(StringArray),
-    FixedI8 { array: Int8Array, scale: u32 },
-    FixedI16 { array: Int16Array, scale: u32 },
-    FixedI32 { array: Int32Array, scale: u32 },
-    FixedI64 { array: Int64Array, scale: u32 },
-    FixedDecimal { array: Decimal128Array, scale: u32 },
+    FixedI8 {
+        array: Int8Array,
+        scale: u32,
+    },
+    FixedI16 {
+        array: Int16Array,
+        scale: u32,
+    },
+    FixedI32 {
+        array: Int32Array,
+        scale: u32,
+    },
+    FixedI64 {
+        array: Int64Array,
+        scale: u32,
+    },
+    FixedDecimal {
+        array: Decimal128Array,
+        scale: u32,
+    },
     RealF32(Float32Array),
     RealF64(Float64Array),
-    Decfloat(StringArray),
+    Decfloat {
+        array: StructArray,
+        precision: usize,
+    },
 }
 
 impl ColumnReader {
@@ -211,33 +229,12 @@ impl ColumnReader {
                     field.name()
                 )),
             },
-            // TODO: DECFLOAT iterates over rows in `for_field`, making its `read` arm a
-            // plain lookup like every other variant. Worth revisiting whether the
-            // for_field/read split should just collapse into one eager step for all.
             Some("DECFLOAT") => {
-                let struct_array = column
-                    .as_any()
-                    .downcast_ref::<StructArray>()
-                    .cloned()
-                    .ok_or_else(|| {
-                        "Arrow column could not be downcast to StructArray".to_string()
-                    })?;
+                let array = downcast_array(column, "StructArray")?;
                 let precision = usize_from_metadata(field, "precision")?;
-                let decfloat_column = sf_types::DecfloatColumn::try_new(&struct_array)
+                sf_types::DecfloatColumn::try_new(&array)
                     .map_err(|e| format!("DECFLOAT column: {e}"))?;
-
-                let mut builder = StringBuilder::new();
-                for row in 0..struct_array.len() {
-                    if struct_array.is_null(row) {
-                        builder.append_null();
-                    } else {
-                        let (sig, exp) = decfloat_column
-                            .value(row)
-                            .map_err(|e| format!("DECFLOAT at row {row}: {e}"))?;
-                        builder.append_value(format_decfloat(sig, exp, precision));
-                    }
-                }
-                Ok(Self::Decfloat(builder.finish()))
+                Ok(Self::Decfloat { array, precision })
             }
             Some(logical_type) => Err(format!(
                 "no decoder registered for logicalType {logical_type:?}"
@@ -310,9 +307,7 @@ impl ColumnReader {
             }),
             Self::RealF32(array) => read_real(array, row_index),
             Self::RealF64(array) => read_real(array, row_index),
-            Self::Decfloat(array) => read_cell(array, row_index, || {
-                JsCell::Str(Cow::Borrowed(array.value(row_index)))
-            }),
+            Self::Decfloat { array, precision } => read_decfloat(array, row_index, *precision),
         }
     }
 }
@@ -388,6 +383,17 @@ where
             .read_arrow_type(array, row_index)
             .unwrap_or_else(|_| unreachable!("non-null REAL cell always decodes to an f64"));
         JsCell::Number(value)
+    })
+}
+
+fn read_decfloat(array: &StructArray, row_index: usize, precision: usize) -> JsCell<'_> {
+    read_cell(array, row_index, || {
+        let (sig, exp) = sf_types::SnowflakeDecfloat
+            .read_arrow_type(array, row_index)
+            .unwrap_or_else(|_| {
+                unreachable!("non-null DECFLOAT cell always decodes to a significand and exponent")
+            });
+        JsCell::Str(Cow::Owned(format_decfloat(sig, exp, precision)))
     })
 }
 
@@ -824,7 +830,7 @@ mod tests {
         );
         let reader = reader(&field, &array);
         assert!(
-            matches!(reader, ColumnReader::Decfloat(_)),
+            matches!(reader, ColumnReader::Decfloat { .. }),
             "DECFLOAT should route to the Decfloat arm"
         );
         assert_eq!(reader.read(0), str_cell("123.456"));
