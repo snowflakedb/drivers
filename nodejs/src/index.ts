@@ -36,6 +36,7 @@ import { RowStatement, FileAndStageBindStatement } from './query-result/RowState
 // TODO:
 // consider exporting directly from files so its easier to understand where the type comes from
 export {
+  type SnowflakeError,
   type Bind,
   type Binds,
   type InsertBinds,
@@ -95,6 +96,7 @@ export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connect
 export interface StatementOption {
   sqlText: string;
   complete?: StatementCallback;
+  asyncExec?: boolean;
   streamResult?: boolean;
   rowMode?: RowMode;
   fetchAsString?: DataType[];
@@ -186,6 +188,10 @@ export class Connection {
     return this.#core.connect();
   }
 
+  serialize(): string {
+    throw new Error('Not implemented');
+  }
+
   isUp(): boolean {
     return this.#core.isUp();
   }
@@ -225,6 +231,18 @@ export class Connection {
     });
   }
 
+  getQueryStatus(): string {
+    throw new Error('Not implemented');
+  }
+
+  isStillRunning(): boolean {
+    throw new Error('Not implemented');
+  }
+
+  isAnError(): boolean {
+    throw new Error('Not implemented');
+  }
+
   fetchResult(options: FetchResultOptions): RowStatement | FileAndStageBindStatement {
     return this.#runStatement(this.#core.getQueryResult(options.queryId), {
       complete: options.complete,
@@ -237,6 +255,10 @@ export class Connection {
         ...(options.fetchAsString && { fetchAsString: options.fetchAsString }),
       },
     });
+  }
+
+  getResultsFromQueryId(): RowStatement | FileAndStageBindStatement {
+    throw new Error('Not implemented');
   }
 
   #runStatement(
