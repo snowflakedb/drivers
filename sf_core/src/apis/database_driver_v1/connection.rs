@@ -2631,6 +2631,23 @@ impl DatabaseDriverV1 {
         Ok(conn.close_state.load(Ordering::SeqCst) == CloseState::Closed)
     }
 
+    /// Check if a login has completed on a connection.
+    ///
+    /// Not a latch: a completed close clears the session this is derived from, so
+    /// it reports `false` both before a login and after a close. Callers that need
+    /// to tell those apart read it with [`Self::connection_is_closed`].
+    pub async fn connection_is_initialized(&self, conn_handle: Handle) -> Result<bool, ApiError> {
+        let conn_ptr = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+
+        let conn = conn_ptr.lock().await;
+        Ok(conn.is_post_connect())
+    }
+
     /// Check if the connection's master token has expired.
     ///
     /// Returns `true` when the server returned GS code 390114 or a time-based
@@ -3063,6 +3080,63 @@ mod tests {
             "unexpected error: {error}"
         );
         driver.connection_release(conn_handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_report_a_connection_as_not_initialized_before_a_login() {
+        let driver = DatabaseDriverV1::new();
+        let handle = driver.connection_new();
+
+        assert!(!driver.connection_is_initialized(handle).await.unwrap());
+
+        driver.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_report_a_connection_as_initialized_once_the_transport_is_ready() {
+        let driver = DatabaseDriverV1::new();
+        let handle = driver.connection_new();
+        if let Some(c) = driver.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+        }
+
+        assert!(driver.connection_is_initialized(handle).await.unwrap());
+
+        driver.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_report_a_closed_connection_as_not_initialized() {
+        let driver = DatabaseDriverV1::new();
+        let handle = driver.connection_new();
+        if let Some(c) = driver.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+        }
+
+        driver.connection_close(handle).await.unwrap();
+
+        assert!(!driver.connection_is_initialized(handle).await.unwrap());
+        assert!(driver.connection_is_closed(handle).await.unwrap());
+
+        driver.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_reject_an_initialized_read_for_an_unknown_handle() {
+        let driver = DatabaseDriverV1::new();
+        let missing = Handle {
+            id: u64::MAX,
+            magic: 0,
+        };
+
+        let error = driver.connection_is_initialized(missing).await.unwrap_err();
+
+        assert!(
+            error.to_string().contains("Connection handle not found"),
+            "unexpected error: {error}"
+        );
     }
 
     // `enable_put_get()` reads the two flags only; the JDBC-only scoping lives in
