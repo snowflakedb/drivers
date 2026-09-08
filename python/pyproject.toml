@@ -350,10 +350,9 @@ install-wheel = [
   "uv pip install {env:WHEEL_PATH:dist/*.whl}",
   "python hatch_native_arrow.py",
 ]
-# BOOLEAN, REAL, TEXT, and BINARY converters are live. Table, insert, and
-# large-result generator cases that also emit a NUMBER id column are
-# deselected until NUMBER can serve those rows.
-cov = "pytest tests/e2e/types/test_boolean.py tests/e2e/types/test_float.py tests/e2e/types/test_string.py tests/e2e/types/test_binary.py --deselect tests/e2e/types/test_boolean.py::TestBooleanTable --deselect tests/e2e/types/test_boolean.py::TestBooleanBinding::test_should_insert_boolean_using_parameter_binding --deselect tests/e2e/types/test_float.py::TestFloatTable --deselect tests/e2e/types/test_float.py::TestFloatBinding::test_should_insert_float_using_parameter_binding_for_float_and_synonyms --deselect tests/e2e/types/test_string.py::TestStringTable --deselect tests/e2e/types/test_string.py::TestStringBinding::test_should_insert_and_select_back_hardcoded_string_values_using_parameter_binding --deselect tests/e2e/types/test_string.py::TestStringMultipleChunks::test_should_download_string_data_in_multiple_chunks --deselect tests/e2e/types/test_binary.py::TestBinaryTable --deselect tests/e2e/types/test_binary.py::TestBinaryBinding::test_should_insert_binary_using_parameter_binding --deselect tests/e2e/types/test_binary.py::TestBinaryVarbinarySynonym --deselect tests/e2e/types/test_binary.py::TestBinaryMultipleChunks::test_should_download_binary_data_in_multiple_chunks_from_table --deselect tests/e2e/types/test_binary.py::TestBinaryMultipleChunks::test_should_download_binary_data_in_multiple_chunks_using_generator --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+# BOOLEAN, REAL, TEXT, BINARY, and NUMBER converters are live. Table and
+# insert cases can run because execute_query status rows are NUMBER.
+cov = "pytest tests/e2e/types/test_boolean.py tests/e2e/types/test_float.py tests/e2e/types/test_string.py tests/e2e/types/test_binary.py tests/e2e/types/test_number.py tests/e2e/types/test_int.py --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # Pandas-specific CI test environment
 [tool.hatch.envs.test-pandas]

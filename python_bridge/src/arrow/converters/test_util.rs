@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyByteArray, PyFloat, PyString};
+use pyo3::types::{PyBool, PyByteArray, PyFloat, PyInt, PyString};
 
 pub(crate) fn assert_py_bool(value: &Bound<'_, PyAny>, expected: bool) {
     assert!(
@@ -26,6 +26,25 @@ pub(crate) fn assert_py_str(value: &Bound<'_, PyAny>, expected: &str) {
         value.get_type().name().unwrap()
     );
     assert_eq!(value.extract::<String>().unwrap(), expected);
+}
+
+pub(crate) fn assert_py_int(value: &Bound<'_, PyAny>, expected: i64) {
+    assert!(
+        value.is_instance_of::<PyInt>(),
+        "expected Python int, got {}",
+        value.get_type().name().unwrap()
+    );
+    assert_eq!(value.extract::<i64>().unwrap(), expected);
+}
+
+pub(crate) fn assert_py_decimal(value: &Bound<'_, PyAny>, expected: &str) {
+    assert_eq!(
+        value.get_type().name().unwrap(),
+        "Decimal",
+        "expected decimal.Decimal, got {}",
+        value.get_type().name().unwrap()
+    );
+    assert_eq!(value.str().unwrap().to_string(), expected);
 }
 
 pub(crate) fn assert_py_bytes(value: &Bound<'_, PyAny>, expected: &[u8]) {

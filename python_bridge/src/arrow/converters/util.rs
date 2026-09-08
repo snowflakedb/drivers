@@ -1,8 +1,11 @@
-use arrow::array::{Array, ArrayRef};
+use arrow::array::{
+    Array, ArrayRef, Decimal128Array, Int8Array, Int16Array, Int32Array, Int64Array,
+};
 use arrow::datatypes::DataType;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyNone;
+use sf_types::{ReadArrowError, ReadArrowType, SnowflakeFixed};
 
 use crate::arrow::plan::SnowflakeFieldType;
 
@@ -22,6 +25,37 @@ pub(super) fn downcast_column<T: Array + Clone + 'static>(
         .downcast_ref::<T>()
         .cloned()
         .ok_or_else(|| logical_mismatch_err(field_type, array.data_type()))
+}
+
+pub(super) enum IntColumn {
+    I8(Int8Array),
+    I16(Int16Array),
+    I32(Int32Array),
+    I64(Int64Array),
+    Decimal128(Decimal128Array),
+}
+
+impl IntColumn {
+    pub(super) fn from_fixed(array: &ArrayRef, field_type: &SnowflakeFieldType) -> PyResult<Self> {
+        Ok(match array.data_type() {
+            DataType::Int8 => Self::I8(downcast_column(array, field_type)?),
+            DataType::Int16 => Self::I16(downcast_column(array, field_type)?),
+            DataType::Int32 => Self::I32(downcast_column(array, field_type)?),
+            DataType::Int64 => Self::I64(downcast_column(array, field_type)?),
+            DataType::Decimal128(_, _) => Self::Decimal128(downcast_column(array, field_type)?),
+            other => return Err(logical_mismatch_err(field_type, other)),
+        })
+    }
+
+    pub(super) fn get(&self, row: usize) -> Result<i128, ReadArrowError> {
+        match self {
+            Self::I8(array) => SnowflakeFixed.read_arrow_type(array, row),
+            Self::I16(array) => SnowflakeFixed.read_arrow_type(array, row),
+            Self::I32(array) => SnowflakeFixed.read_arrow_type(array, row),
+            Self::I64(array) => SnowflakeFixed.read_arrow_type(array, row),
+            Self::Decimal128(array) => SnowflakeFixed.read_arrow_type(array, row),
+        }
+    }
 }
 
 #[inline]
