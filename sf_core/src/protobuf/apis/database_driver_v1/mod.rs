@@ -1272,13 +1272,21 @@ impl DatabaseDriver for DatabaseDriverImpl {
         // `ProxyConfig` from. Closing that gap needs new proxy-config
         // plumbing independent of any connection handle. Tracked under
         // SNOW-2912540.
+        // No `ensure_crypto_provider()` needed here: this is a method on
+        // `DatabaseDriverImpl`, which only exists via `new`/`new_with` ->
+        // `DatabaseDriverV1::with_providers`, and that installs the provider as
+        // its first statement (global_state.rs) -- same invariant as the CRL
+        // cache fallback. `create_attestation` additionally re-pins the
+        // provider and applies the fail-closed FIPS gate at its entry, so this
+        // plain client cannot carry attestation traffic on a non-FIPS provider
+        // in a `fips` build.
         let client = reqwest::Client::new();
         // This client has no request timeout, so for the AWS/Azure/GCP providers
         // — which each await a cloud metadata or IdP endpoint — `operation_ctx` is the only
         // thing that can end the call short of the endpoint answering. The OIDC
         // provider makes no request and so has nothing to observe.
         let create = async {
-            workload_identity::create_attestation(&client, &config)
+            workload_identity::create_attestation(&client, None, &config)
                 .await
                 .context(WorkloadIdentityAttestationSnafu)
         };

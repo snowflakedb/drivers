@@ -13,6 +13,7 @@ mod oidc;
 
 use crate::config::rest_parameters::{WifProvider, WorkloadIdentityConfig};
 use crate::sensitive::SensitiveString;
+use crate::tls::aws_http_client::AwsSdkReqwestClient;
 use host_allowlist::is_snowflake_host_for_workload_identity;
 use snafu::{Location, ResultExt, Snafu};
 
@@ -70,6 +71,18 @@ pub enum AttestationError {
     DisallowedHost {
         host: String,
         reason: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    /// Raised before any provider is dispatched, in `fips` builds whose
+    /// process-global rustls provider is not FIPS. All providers exchange
+    /// authentication material over the caller-supplied clients, so the same
+    /// fail-closed gate the TLS factories apply belongs here too -- notably
+    /// for the `wif_create_attestation` RPC, whose plain client is not built
+    /// through those factories.
+    #[snafu(display("Refusing Workload Identity attestation"))]
+    CryptoProvider {
+        source: crate::tls::error::TlsError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -143,14 +156,40 @@ impl Default for AttestationEndpoints {
 ///
 /// Dispatches to the provider-specific module and returns the raw token
 /// together with the provider label expected by GS.
-pub async fn create_attestation(
+///
+/// `aws_sdk_http` backs the AWS provider's STS calls (which need the
+/// SDK-constrained transport, see `tls::aws_http_client`). Pass a
+/// connection-scoped client so those calls honour the connection's TLS
+/// policy; `None` builds a default-TLS one, for callers with no connection
+/// context (the `wif_create_attestation` RPC). The other providers only use
+/// `client`.
+pub(crate) async fn create_attestation(
     client: &reqwest::Client,
+    aws_sdk_http: Option<&AwsSdkReqwestClient>,
     config: &WorkloadIdentityConfig,
 ) -> Result<Attestation, AttestationError> {
+    // Every provider exchanges authentication material over the supplied
+    // clients. Pinning and gating the crypto backend at this single entry
+    // point gives a caller-built plain client (the `wif_create_attestation`
+    // RPC) the same fail-closed FIPS behaviour as clients built by the TLS
+    // factories, which run both calls in `configure_tls_builder`. Redundant
+    // for the login path -- both calls are `Once`-cheap and idempotent.
+    crate::tls::ensure_crypto_provider();
+    crate::tls::require_fips_provider().context(CryptoProviderSnafu)?;
     let endpoints = AttestationEndpoints::default();
     match config.provider {
         WifProvider::Aws => {
-            let token = aws::get_attestation_token(client, config, &endpoints)
+            let default_sdk_http;
+            let sdk_http = match aws_sdk_http {
+                Some(sdk_http) => sdk_http,
+                None => {
+                    default_sdk_http = AwsSdkReqwestClient::with_default_tls()
+                        .context(aws::SdkHttpClientSnafu)
+                        .context(AwsAttestationSnafu)?;
+                    &default_sdk_http
+                }
+            };
+            let token = aws::get_attestation_token(sdk_http, config, &endpoints)
                 .await
                 .context(AwsAttestationSnafu)?;
             Ok(Attestation {
