@@ -9,6 +9,7 @@ use std::collections::HashMap;
 /// field is resolved from the server-provided parameter set, so the parameters
 /// are always present; a missing key surfaces as an error rather than a default.
 #[napi(object)]
+#[derive(Clone)]
 pub struct KnownSessionParameters {
     pub time_output_format: String,
     pub js_treat_integer_as_big_int: bool,

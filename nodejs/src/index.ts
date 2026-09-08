@@ -282,18 +282,14 @@ export class Connection {
     },
   ): RowStatement | FileAndStageBindStatement {
     const { complete, streamResult, rowOptions } = options;
-    const statement = new RowStatement(this.#core, coreStatement, rowOptions);
+    const statement = new RowStatement(coreStatement, rowOptions);
     (async () => {
       try {
         if (streamResult === true) {
           await coreStatement.waitForCompletion();
           complete?.(undefined, statement, undefined);
         } else {
-          complete?.(
-            undefined,
-            statement,
-            await collectRows(this.#core, coreStatement, rowOptions),
-          );
+          complete?.(undefined, statement, await collectRows(coreStatement, rowOptions));
         }
       } catch (err) {
         complete?.(err as SnowflakeError, statement, undefined);

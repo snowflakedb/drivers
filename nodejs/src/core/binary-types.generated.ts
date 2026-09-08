@@ -56,6 +56,11 @@ export declare class Statement {
   getNextRow(): unknown[] | null
   getQueryId(): string | null
   getNumRows(): number | null
+  /**
+   * Not part of the driver's public API. Callers are suposed toinvoke this only after the
+   * statement has finished, so a result that is not yet ready is a programming error
+   */
+  getSessionParametersSnapshot(): KnownSessionParameters
   getColumns(): Array<Column> | null
   getColumn(identifier: string | number): Column | null
   close(): void

@@ -1,4 +1,4 @@
-import type { CoreColumnInstance, CoreConnectionInstance } from '../core/index.js';
+import type { CoreColumnInstance, CoreKnownSessionParameters } from '../core/index.js';
 import type { CellConverter, ConversionContext, DataType, RowOptions } from './types.js';
 import { resolveColumnNames } from './column-names.js';
 import {
@@ -70,7 +70,7 @@ interface ColumnConverter {
 
 interface RowFormatterOptions {
   columns: CoreColumnInstance[];
-  connection: CoreConnectionInstance;
+  sessionParameters: CoreKnownSessionParameters;
   rowOptions: RowOptions;
 }
 
@@ -78,14 +78,13 @@ type RowFormatter = (rawRow: unknown[]) => unknown[] | Record<string, unknown>;
 
 export function createRowFormatter({
   columns,
-  connection,
+  sessionParameters,
   rowOptions,
 }: RowFormatterOptions): RowFormatter {
   const columnNames = resolveColumnNames(columns, rowOptions.rowMode);
   const asStringColumnTypes = new Set(
     rowOptions.fetchAsString.flatMap((token) => COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN[token]),
   );
-  const { jsTreatIntegerAsBigInt: treatIntegerAsBigInt } = connection.getSessionParameters();
 
   const columnConverters: ColumnConverter[] = [];
   for (const column of columns) {
@@ -96,7 +95,10 @@ export function createRowFormatter({
       columnConverters.push({
         index: column.getIndex(),
         convert,
-        context: { scale: column.getScale(), treatIntegerAsBigInt },
+        context: {
+          scale: column.getScale(),
+          treatIntegerAsBigInt: sessionParameters.jsTreatIntegerAsBigInt,
+        },
       });
     }
   }

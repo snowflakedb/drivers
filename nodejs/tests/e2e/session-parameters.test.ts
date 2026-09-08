@@ -123,7 +123,7 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
     }
   });
 
-  it('decodes a streamed result with the setting current when its rows are first read', async () => {
+  it('should decode a streamed result with the snapshot of session parameter when statement is run', async () => {
     connection = createTestConnection();
     await connection.connectAsync();
     const { statement } = await executeAsync(connection, 'SELECT 7::INT AS INT_COLUMN', {
@@ -134,10 +134,6 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
     const rows = await collectStreamedRows(statement as RowStatement);
 
     expect(rows).toHaveLength(1);
-    if (isRunningNewDriverWithBD('BD#21')) {
-      expectBigInt(rows[0].INT_COLUMN, '7');
-    } else {
-      expect(rows[0].INT_COLUMN).toBe(7);
-    }
+    expect(rows[0].INT_COLUMN).toBe(7);
   });
 });

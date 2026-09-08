@@ -1,5 +1,5 @@
 import type { Readable } from 'node:stream';
-import type { CoreConnectionInstance, CoreStatementInstance } from '../core/index.js';
+import type { CoreStatementInstance } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
 import type {
   Column,
@@ -16,16 +16,10 @@ import { createRowStream } from './rows.js';
 // driver methods from Rust or that using so many FFI calls won't be efficient.
 // Refactor if that won't be the case.
 export class RowStatement {
-  #connection: CoreConnectionInstance;
   #core: CoreStatementInstance;
   #rowOptions: RowOptions;
 
-  constructor(
-    connection: CoreConnectionInstance,
-    core: CoreStatementInstance,
-    rowOptions: RowOptions,
-  ) {
-    this.#connection = connection;
+  constructor(core: CoreStatementInstance, rowOptions: RowOptions) {
     this.#core = core;
     this.#rowOptions = rowOptions;
   }
@@ -54,14 +48,14 @@ export class RowStatement {
   // and the result is already drained. (would suggest a BCR with error)
   // oxlint-disable-next-line no-unused-vars
   streamRows(options?: StreamOptions): Readable {
-    return createRowStream(this.#connection, this.#core, {
+    return createRowStream(this.#core, {
       ...this.#rowOptions,
       fetchAsString: options?.fetchAsString ?? this.#rowOptions.fetchAsString,
     });
   }
 
   fetchRows(options: FetchRowsOptions): void {
-    const stream = createRowStream(this.#connection, this.#core, this.#rowOptions);
+    const stream = createRowStream(this.#core, this.#rowOptions);
     let finished = false;
 
     const onComplete = (err: SnowflakeError | undefined) => {
@@ -95,11 +89,7 @@ export class RowStatement {
 
 export class FileAndStageBindStatement extends RowStatement {
   constructor() {
-    super(
-      undefined as unknown as CoreConnectionInstance,
-      undefined as unknown as CoreStatementInstance,
-      undefined as unknown as RowOptions,
-    );
+    super(undefined as unknown as CoreStatementInstance, undefined as unknown as RowOptions);
     throw new Error('FileAndStageBindStatement is not implemented');
   }
 }
