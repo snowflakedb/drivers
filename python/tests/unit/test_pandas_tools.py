@@ -119,10 +119,20 @@ class TestConvertValueToSqlOption:
         assert _convert_value_to_sql_option("my_volume") == "'my_volume'"
 
     def test_already_quoted_string(self):
-        assert _convert_value_to_sql_option("'my_volume'") == "'my_volume'"
+        assert _convert_value_to_sql_option("'my_volume'") == "'''my_volume'''"
+
+    def test_string_with_quotes_and_equals_is_one_literal(self):
+        value = "'x' CATALOG='evil'"
+        assert _convert_value_to_sql_option(value) == "'" + value.replace("'", "''") + "'"
 
     def test_string_with_single_quote(self):
         assert _convert_value_to_sql_option("it's") == "'it''s'"
+
+    def test_trailing_backslash_is_doubled(self):
+        assert _convert_value_to_sql_option("vol\\") == "'vol\\\\'"
+
+    def test_backslash_is_doubled_before_quotes(self):
+        assert _convert_value_to_sql_option("vol\\'") == "'vol\\\\'''"
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +354,20 @@ class TestBuildCopyIntoSql:
         result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
         assert '$1:"A" AS A' in result["operation"]
         assert '"A" AS "A"' not in result["operation"]
+
+    def test_escapes_double_quotes_in_column_name(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=['A"B']))
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        quoted = quote_identifier('A"B')
+        assert '$1:"A""B"' in result["operation"]
+        assert '$1:"A"B"' not in result["operation"]
+        assert f"$1:{quoted} AS {quoted}" in result["operation"]
+
+    def test_escapes_double_quotes_in_column_name_without_quote_identifiers(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=['A"B']), quote_identifiers=False)
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        assert '$1:"A""B" AS A"B' in result["operation"]
+        assert '$1:"A"B"' not in result["operation"]
 
     def test_with_vectorized_scanner(self):
         op: WritePandasOperation = _make_op(use_vectorized_scanner=True)

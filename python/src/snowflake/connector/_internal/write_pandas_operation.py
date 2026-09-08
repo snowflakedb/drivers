@@ -84,11 +84,15 @@ def _sql_bool(value: bool) -> str:
 
 
 def _convert_value_to_sql_option(value: str | bool | int | float) -> str:
-    """Convert a Python value to a SQL option literal for iceberg config."""
+    """Convert a Python value to a SQL option literal for iceberg config.
+
+    String values are always emitted as one escaped single-quoted literal,
+    including values that already start and end with quotes. Backslashes are
+    doubled before quotes because Snowflake treats ``\\`` as an escape inside
+    ``'...'``.
+    """
     if isinstance(value, str):
-        if len(value) > 1 and value.startswith("'") and value.endswith("'"):
-            return value
-        escaped = value.replace("'", "''")
+        escaped = value.replace("\\", "\\\\").replace("'", "''")
         return f"'{escaped}'"
     return str(value)
 
@@ -308,7 +312,9 @@ class WritePandasMixin:
             col_name = quote_identifier(col) if cfg.quote_identifiers else col
             target_cols.append(col_name)
 
-            parquet_ref = f'$1:"{col}"'
+            # `$1:"field"` path syntax does not support IDENTIFIER(?) or ? bindings.
+            # quote_identifier() escapes the name; the path stays quoted even when quote_identifiers is False.
+            parquet_ref = f"$1:{quote_identifier(col)}"
             if column_type_map and col.upper() in column_type_map:
                 parquet_ref += f"::{column_type_map[col.upper()]}"
             select_exprs.append(f"{parquet_ref} AS {col_name}")
