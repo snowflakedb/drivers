@@ -6,8 +6,8 @@ import {
   executeAsync,
   getStatementColumn,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
-  randomizeName,
 } from '../../utils/index.js';
+import { withTemporaryTable } from '../../utils/query.js';
 import { withNullPreservingConnection } from '../utils.js';
 
 describe('BOOLEAN data type', () => {
@@ -74,23 +74,20 @@ describe('BOOLEAN data type', () => {
       void connection;
 
       // And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
-      const tableName = randomizeName('BOOLEAN_TEST');
-      await executeAsync(
+      await withTemporaryTable(
         connection,
-        `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (C1 BOOLEAN, C2 BOOLEAN, C3 BOOLEAN)`,
+        'C1 BOOLEAN, C2 BOOLEAN, C3 BOOLEAN',
+        async (tableName) => {
+          // And Row (TRUE, FALSE, TRUE) is inserted
+          await executeAsync(connection, `INSERT INTO ${tableName} VALUES (TRUE, FALSE, TRUE)`);
+
+          // When Query "SELECT * FROM <table>" is executed
+          const { rows } = await executeAsync(connection, `SELECT * FROM ${tableName}`);
+
+          // Then Result should contain [TRUE, FALSE, TRUE]
+          expect(Object.values(rows[0])).toEqual([true, false, true]);
+        },
       );
-      try {
-        // And Row (TRUE, FALSE, TRUE) is inserted
-        await executeAsync(connection, `INSERT INTO ${tableName} VALUES (TRUE, FALSE, TRUE)`);
-
-        // When Query "SELECT * FROM <table>" is executed
-        const { rows } = await executeAsync(connection, `SELECT * FROM ${tableName}`);
-
-        // Then Result should contain [TRUE, FALSE, TRUE]
-        expect(Object.values(rows[0])).toEqual([true, false, true]);
-      } finally {
-        await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
-      }
     });
 
     it('should handle NULL values from table', async () => {
@@ -98,12 +95,7 @@ describe('BOOLEAN data type', () => {
       void connection;
 
       // And Table with BOOLEAN column exists
-      const tableName = randomizeName('BOOLEAN_NULL_TEST');
-      await executeAsync(
-        connection,
-        `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (ID NUMBER, VAL BOOLEAN)`,
-      );
-      try {
+      await withTemporaryTable(connection, 'ID NUMBER, VAL BOOLEAN', async (tableName) => {
         // And Rows [NULL, TRUE, FALSE] are inserted
         await executeAsync(
           connection,
@@ -115,9 +107,7 @@ describe('BOOLEAN data type', () => {
 
         // Then Result should contain [NULL, TRUE, FALSE] in any order
         expect(rows.map((row) => row.VAL)).toEqual([null, true, false]);
-      } finally {
-        await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
-      }
+      });
     });
 
     describe('parameter binding', () => {
@@ -141,7 +131,9 @@ describe('BOOLEAN data type', () => {
         void connection;
 
         // When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
-        const { rows } = await executeAsync(connection, 'SELECT ?::BOOLEAN', { binds: [null] });
+        const { rows } = await executeAsync(connection, 'SELECT ?::BOOLEAN', {
+          binds: [null],
+        });
 
         // Then Result should contain [NULL]
         expect(Object.values(rows[0])).toEqual([null]);
@@ -152,12 +144,7 @@ describe('BOOLEAN data type', () => {
         void connection;
 
         // And Table with BOOLEAN column exists
-        const tableName = randomizeName('BOOLEAN_BIND_TEST');
-        await executeAsync(
-          connection,
-          `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (ID NUMBER, VAL BOOLEAN)`,
-        );
-        try {
+        await withTemporaryTable(connection, 'ID NUMBER, VAL BOOLEAN', async (tableName) => {
           // When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
           await executeAsync(connection, `INSERT INTO ${tableName} (ID, VAL) VALUES (?, ?)`, {
             binds: [
@@ -173,9 +160,7 @@ describe('BOOLEAN data type', () => {
             `SELECT VAL FROM ${tableName} ORDER BY ID`,
           );
           expect(rows.map((row) => row.VAL)).toEqual([true, false, null]);
-        } finally {
-          await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
-        }
+        });
       });
     });
 
@@ -203,12 +188,7 @@ describe('BOOLEAN data type', () => {
         void connection;
 
         // And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
-        const tableName = randomizeName('BOOLEAN_CHUNK_TEST');
-        await executeAsync(
-          connection,
-          `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (COL BOOLEAN)`,
-        );
-        try {
+        await withTemporaryTable(connection, 'COL BOOLEAN', async (tableName) => {
           await executeAsync(
             connection,
             `INSERT INTO ${tableName}
@@ -222,9 +202,7 @@ describe('BOOLEAN data type', () => {
           const trueCount = rows.filter((row) => row.COL === true).length;
           expect(trueCount).toBe(HALF);
           expect(rows.length - trueCount).toBe(HALF);
-        } finally {
-          await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
-        }
+        });
       });
     });
   });

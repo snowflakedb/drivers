@@ -1,5 +1,19 @@
 import type { Connection } from '../../types/sdk-types.js';
-import { executeAsync } from './index.js';
+import { executeAsync, randomizeName } from './index.js';
+
+export async function withTemporaryTable<T>(
+  connection: Connection,
+  columns: string,
+  body: (tableName: string) => Promise<T>,
+): Promise<T> {
+  const tableName = randomizeName('nodejs_');
+  await executeAsync(connection, `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (${columns})`);
+  try {
+    return await body(tableName);
+  } finally {
+    await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
+  }
+}
 
 export async function getSessionParameterFromServer(
   connection: Connection,
