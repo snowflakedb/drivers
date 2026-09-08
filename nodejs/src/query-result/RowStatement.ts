@@ -30,6 +30,10 @@ export class RowStatement {
     this.#rowOptions = rowOptions;
   }
 
+  getSqlText(): string {
+    throw new Error('Not implemented');
+  }
+
   getNumRows(): number | undefined {
     return this.#core.getNumRows() ?? undefined;
   }
