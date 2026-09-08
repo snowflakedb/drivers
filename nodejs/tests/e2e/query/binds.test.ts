@@ -1,29 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { Connection, Binds } from '../../types/sdk-types.js';
-import {
-  executeAsync,
-  isRunningNewDriverWithBD,
-  randomizeName,
-  withConnection,
-} from '../utils/index.js';
+import { executeAsync, isRunningNewDriverWithBD, withConnection } from '../utils/index.js';
+import { withTemporaryTable } from '../utils/query.js';
 
 const LOW_THRESHOLD = 3;
 const HIGH_THRESHOLD = 1_000_000;
 
 describe('Query Binds', () => {
   async function insertRowsAndSelect(connection: Connection, binds: Binds): Promise<unknown[]> {
-    const tableName = randomizeName('BIND_TEST');
-    await executeAsync(
-      connection,
-      `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (ID NUMBER, VAL STRING)`,
-    );
-    try {
+    return withTemporaryTable(connection, 'ID NUMBER, VAL STRING', async (tableName) => {
       await executeAsync(connection, `INSERT INTO ${tableName} (ID, VAL) VALUES (?, ?)`, { binds });
       const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName} ORDER BY ID`);
       return rows.map((row) => row.VAL);
-    } finally {
-      await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
-    }
+    });
   }
 
   async function expectStagePathUsed(connection: Connection): Promise<void> {

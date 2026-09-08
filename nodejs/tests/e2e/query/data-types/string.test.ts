@@ -6,8 +6,8 @@ import {
   executeAsync,
   getStatementColumn,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
-  randomizeName,
 } from '../../utils/index.js';
+import { withTemporaryTable } from '../../utils/query.js';
 import { withNullPreservingConnection } from '../utils.js';
 
 // Snowflake resolves backslash escapes such as `\t` and `\u26c4` inside single-quoted
@@ -119,12 +119,7 @@ describe('STRING data type', () => {
       void connection;
 
       // And A temporary table with VARCHAR column is created
-      const tableName = randomizeName('STRING_TEST');
-      await executeAsync(
-        connection,
-        `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (ID NUMBER, VAL VARCHAR)`,
-      );
-      try {
+      await withTemporaryTable(connection, 'ID NUMBER, VAL VARCHAR', async (tableName) => {
         // And The table is populated with string values
         await executeAsync(
           connection,
@@ -141,9 +136,7 @@ describe('STRING data type', () => {
           'Hello World',
           'Snowflake Driver Test',
         ]);
-      } finally {
-        await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
-      }
+      });
     });
 
     it('should select corner case string values from table', async () => {
@@ -151,12 +144,7 @@ describe('STRING data type', () => {
       void connection;
 
       // And A temporary table with VARCHAR column is created
-      const tableName = randomizeName('STRING_CORNER_CASE_TEST');
-      await executeAsync(
-        connection,
-        `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (ID NUMBER, VAL VARCHAR)`,
-      );
-      try {
+      await withTemporaryTable(connection, 'ID NUMBER, VAL VARCHAR', async (tableName) => {
         // And The table is populated with corner case string values
         await executeAsync(
           connection,
@@ -170,9 +158,7 @@ describe('STRING data type', () => {
 
         // Then the result should contain the inserted corner case string values
         expect(rows.map((row) => row.VAL)).toEqual(CORNER_CASES.map(({ expected }) => expected));
-      } finally {
-        await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
-      }
+      });
     });
 
     describe('parameter binding', () => {
@@ -211,12 +197,7 @@ describe('STRING data type', () => {
         void connection;
 
         // And A temporary table with VARCHAR column is created
-        const tableName = randomizeName('STRING_BIND_TEST');
-        await executeAsync(
-          connection,
-          `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (VAL VARCHAR)`,
-        );
-        try {
+        await withTemporaryTable(connection, 'VAL VARCHAR', async (tableName) => {
           // When String value 'Test binding value 日本語' is inserted using parameter binding
           await executeAsync(connection, `INSERT INTO ${tableName} (VAL) VALUES (?)`, {
             binds: ['Test binding value 日本語'],
@@ -227,9 +208,7 @@ describe('STRING data type', () => {
 
           // Then the result should contain the bound string value 'Test binding value 日本語'
           expect(rows.map((row) => row.VAL)).toEqual(['Test binding value 日本語']);
-        } finally {
-          await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);
-        }
+        });
       });
     });
 
