@@ -578,3 +578,25 @@ behavior_differences:
       resolution reads the current session-parameter value from sf_core's per-connection cache (see
       BD#21), so a later ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD overwrites the
       connection option and the stage path is chosen by the ALTER'd value instead.
+
+  27:
+    name: 'destroy() issued while a connect is in flight is refused rather than queued'
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A connection whose login is still running is in its own connecting state, and a destroy
+      reaching it is put on a queue and run once the login settles
+      (StateConnecting.destroy -> enqueueRequest). The caller sees the outcome of that later
+      destroy: success when the login succeeded, ClientError 406502 when it failed.
+    new_driver_behavior: |
+      A destroy waits on the same lifecycle lock the connect holds, so one that reaches the lock
+      second behaves as the old driver does. One that reaches it first, before the connect has
+      begun, sees a connection that is still pristine and is refused with ClientError 406501.
+      Which of the two happens depends on the order the two operations reach the lock.
+    status_rationale: |
+      Closing this needs the connecting state the connect error family (405501/405502/405503)
+      introduces, so that a destroy can tell a login in flight from one that never started and
+      wait for it. The window is only reachable by calling destroy without awaiting connect.

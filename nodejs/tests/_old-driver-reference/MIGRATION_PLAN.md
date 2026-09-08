@@ -248,6 +248,9 @@ called out explicitly.
 
 - [`unit/snowflake_test.js`](./unit/snowflake_test.js) — useful scenarios that belong as e2e
   tests in the new driver. After beta, map each case to existing e2e tests and fill the gaps.
+  Partially migrated: the `connection.destroy()` refusals in the pristine and disconnected
+  states now live in `nodejs/tests/e2e/connection-state-errors.test.ts`. The remaining case in
+  that block, destroy while a login is in flight, is BD#27.
 
 ### Authentication
 

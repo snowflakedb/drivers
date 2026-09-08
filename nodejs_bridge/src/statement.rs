@@ -11,7 +11,7 @@ pub use column::Column;
 
 use crate::DRIVER;
 use crate::connection::Handles;
-use crate::error::{BridgeError, ToJsError, UnusableConnection, async_to_js};
+use crate::error::{BridgeError, ConnectionOperation, ToJsError, UnusableConnection, async_to_js};
 use crate::session_params::KnownSessionParameters;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -33,7 +33,10 @@ pub struct Statement {
 impl Statement {
     pub(crate) fn refused(connection: UnusableConnection) -> Self {
         Self {
-            result: StatementResult::from_error(BridgeError::UnusableConnection(connection)),
+            result: StatementResult::from_error(BridgeError::UnusableConnection(
+                ConnectionOperation::Request,
+                connection,
+            )),
             operation_ctx: None,
         }
     }
