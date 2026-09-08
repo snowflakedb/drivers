@@ -2641,20 +2641,22 @@ behavior_differences:
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
-      SQLColumns COLUMN_SIZE and BUFFER_LENGTH for VARIANT / OBJECT / ARRAY are
-      hardcoded to 134217728 (128 MB, SQL_SF_TEXT_COLUMN_LEN), independent of
-      the session VARCHAR max.
+      SQLColumns COLUMN_SIZE, BUFFER_LENGTH, and CHAR_OCTET_LENGTH for
+      VARIANT / OBJECT / ARRAY are hardcoded to 134217728 (128 MB,
+      SQL_SF_TEXT_COLUMN_LEN), independent of the session VARCHAR max.
     new_driver_behavior: |
-      SQLColumns COLUMN_SIZE and BUFFER_LENGTH for VARIANT / OBJECT / ARRAY
-      follow the session VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT (the same max
-      unbounded TEXT reports). SHOW COLUMNS' 128 MB charLength is ignored so
-      the catalog size tracks the session parameter, not the historical TEXT
-      constant. The default is 16777216. Raising the session parameter raises
-      the catalog size. Query-result SQLColAttribute for these types is
-      unchanged.
+      SQLColumns COLUMN_SIZE, BUFFER_LENGTH, and CHAR_OCTET_LENGTH for
+      VARIANT / OBJECT / ARRAY follow the session
+      VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT (the same max unbounded TEXT
+      reports). CHAR_OCTET_LENGTH equals BUFFER_LENGTH and is not NULL.
+      SHOW COLUMNS' 128 MB charLength is ignored so the catalog size tracks
+      the session parameter, not the historical TEXT constant. The default
+      is 16777216. Raising the session parameter raises the catalog size.
+      Query-result SQLColAttribute for these types is unchanged.
     description: |
       For non-standard ODBC SQL types advertising the session VARCHAR
-      max is more accurate.
+      max is more accurate. CHAR_OCTET_LENGTH is specified as NULL only for
+      non-character/non-binary types; these rows report SQL_VARCHAR.
 
   131:
     name: "PUT resolves relative source paths to absolute canonical form before upload"

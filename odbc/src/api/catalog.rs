@@ -3317,10 +3317,9 @@ fn catalog_char_octet_length(
 /// carry a maximum byte length; everything else reports NULL.
 fn catalog_char_octet_length_applies(logical_type: &str) -> bool {
     match logical_type {
-        "TEXT" | "BINARY" => true,
+        "TEXT" | "BINARY" | "VARIANT" | "OBJECT" | "ARRAY" => true,
         "FIXED" | "DECFLOAT" | "REAL" | "BOOLEAN" | "DATE" | "TIME" | "TIMESTAMP"
-        | "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" | "VARIANT" | "OBJECT" | "ARRAY"
-        | "VECTOR" => false,
+        | "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" | "VECTOR" => false,
         // Absent logical type is corrupt metadata, not an unknown type name.
         "" => false,
         _ => true,
@@ -5096,7 +5095,16 @@ mod procedure_columns_tests {
 
     #[test]
     fn catalog_char_octet_length_applies_to_character_and_unsupported_types() {
-        for lt in ["TEXT", "BINARY", "GEOGRAPHY", "GEOMETRY", "INTERVAL"] {
+        for lt in [
+            "TEXT",
+            "BINARY",
+            "VARIANT",
+            "OBJECT",
+            "ARRAY",
+            "GEOGRAPHY",
+            "GEOMETRY",
+            "INTERVAL",
+        ] {
             assert!(
                 catalog_char_octet_length_applies(lt),
                 "{lt} is reported as a character type and must carry CHAR_OCTET_LENGTH"
@@ -5112,15 +5120,47 @@ mod procedure_columns_tests {
             "TIMESTAMP_NTZ",
             "TIMESTAMP_LTZ",
             "TIMESTAMP_TZ",
-            "VARIANT",
-            "OBJECT",
-            "ARRAY",
             "VECTOR",
             "",
         ] {
             assert!(
                 !catalog_char_octet_length_applies(lt),
                 "{lt} must report NULL CHAR_OCTET_LENGTH"
+            );
+        }
+    }
+
+    #[test]
+    fn semi_structured_procedure_arg_reports_char_octet_equal_to_buffer_length() {
+        let ns = NumericSettings::default();
+        for (param, type_str) in [
+            ("V VARIANT", "VARIANT"),
+            ("O OBJECT", "OBJECT"),
+            ("A ARRAY", "ARRAY"),
+        ] {
+            let mut rows = Vec::new();
+            append_procedure_column_rows(
+                &mut rows,
+                &Some("CAT".to_string()),
+                &Some("SCHEM".to_string()),
+                &Some("SEMIPROC".to_string()),
+                &format!("({param})"),
+                "VARCHAR",
+                None,
+                &ns,
+            );
+            let name = param.split_whitespace().next().unwrap();
+            let row = rows
+                .iter()
+                .find(|r| r.col_name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("{type_str} argument row"));
+            assert!(
+                row.char_octet.is_some(),
+                "{type_str} argument must report CHAR_OCTET_LENGTH, got NULL"
+            );
+            assert_eq!(
+                row.char_octet, row.buf_len,
+                "{type_str} CHAR_OCTET_LENGTH must equal BUFFER_LENGTH"
             );
         }
     }
@@ -5361,6 +5401,42 @@ mod procedure_columns_tests {
             assert!(
                 catalog_uses_snowflake_text_byte_length(logical_type),
                 "{logical_type} maps to SQL_VARCHAR and takes the 4× byte length"
+            );
+        }
+    }
+
+    #[test]
+    fn sqlcolumns_char_octet_for_semi_structured_equals_buffer_length_not_128m() {
+        let ns = NumericSettings::default();
+        const LEGACY_128M: i64 = 134_217_728;
+        for lt in ["VARIANT", "OBJECT", "ARRAY"] {
+            let char_len = catalog_char_length_for_sqlcolumns(lt, Some(LEGACY_128M));
+            let field = rehydrate_field(lt, None, None, char_len, Some(LEGACY_128M), true);
+            let buf = catalog_buffer_length(lt, &field, &ns);
+            let octet = catalog_char_octet_length(lt, &field, &ns);
+            assert_eq!(
+                octet, buf,
+                "{lt} CHAR_OCTET_LENGTH must equal BUFFER_LENGTH"
+            );
+            assert!(octet.is_some(), "{lt} CHAR_OCTET_LENGTH must not be NULL");
+            assert_ne!(
+                octet,
+                Some(LEGACY_128M as i32),
+                "{lt} must not keep SHOW COLUMNS 128M"
+            );
+            let col_size = column_size_from_field(&field, &ns)
+                .ok()
+                .and_then(|s| i32::try_from(s).ok());
+            if let (Some(o), Some(cs)) = (octet, col_size) {
+                assert_ne!(
+                    o,
+                    cs.saturating_mul(4),
+                    "{lt} must not use TEXT UTF-8 × 4 for CHAR_OCTET_LENGTH"
+                );
+            }
+            assert!(
+                !catalog_uses_snowflake_text_byte_length(lt),
+                "{lt} must stay off the TEXT byteLength / ×4 BUFFER_LENGTH path"
             );
         }
     }
