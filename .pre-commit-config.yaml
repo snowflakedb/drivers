@@ -79,10 +79,10 @@ repos:
         language: system
     -   id: uv-lock-update
         name: Update uv.lock
-        description: Updates uv.lock file
-        entry: bash -c 'cd python && uv lock'
+        description: Updates uv.lock from PyPI
+        entry: bash scripts/update-python-uv-lock.sh
         pass_filenames: false
-        files: ^python/(pyproject\.toml|uv\.lock)$
+        files: ^python/(pyproject\.toml|uv\.lock|uv\.toml)$
         language: system
     -   id: no-snowflake-namespace-init
         name: No __init__.py in snowflake namespace package

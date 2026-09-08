@@ -1,7 +1,7 @@
 {
   "REPO_NAME": "drivers",
   "MIRROR_REPO_NAME": "",
-  "EXTRA_EXCLUDED_PATHS": "",
+  "EXTRA_EXCLUDED_PATHS": ".github/workflows/build-conda-packages.yml,.github/workflows/_build-conda-packages.yml",
   "EXTRA_EXCLUDED_PATH_OVERRIDES": "",
   "EXTRA_IMPORT_EXCLUDED_PATHS": "",
   "EXTRA_IMPORT_OVERRIDES": ".github/workflows/pre-commit.yml,.github/workflows/validations.yml,.github/actions/cargo-cache/action.yml,.github/workflows/mirror-test-rust-core.yml,.github/workflows/mirror-test-odbc.yml,.github/workflows/mirror-test-python.yml,.github/actions/setup-odbc-build-env/action.yml",

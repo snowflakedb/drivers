@@ -84,6 +84,8 @@ EXCLUDED_PATHS = NOMIRROR_PATHS + [
     ".github/workflows/security-label.yml",
     ".github/security-partners.yml",
     "tests/bugs_analysis/**",
+    ".github/workflows/build-conda-packages.yml",
+    ".github/workflows/_build-conda-packages.yml",
 ]
 
 # Per-path overrides that re-include specific files from inside an EXCLUDED_PATHS

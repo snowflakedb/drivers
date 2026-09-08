@@ -1,0 +1,84 @@
+{% set name = "snowflake-connector-python" %}
+{% set version_match = load_file_regex(load_file='../../../src/snowflake/connector/version.py', regex_pattern='__version__\s*=\s*"([^"]+)"', from_recipe_dir=True) %}
+{% set version = os.environ.get('SNOWFLAKE_CONNECTOR_PYTHON_VERSION', version_match.group(1) if version_match else '0.0.0') %}
+{% set build_number = os.environ.get('UNIVERSAL_DRIVER_BUILD_NUMBER', 0) %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  path: ../../../..
+
+build:
+  number: {{ build_number }}
+  string: "py{{ py }}_{{ build_number }}"
+  script:
+    - export PROTOC="${BUILD_PREFIX}/bin/protoc"                          # [unix]
+    - export PATH="${PREFIX}/bin:${PATH}"                                 # [unix]
+    - cd python                                                           # [unix]
+    - {{ PYTHON }} -m pip install . --no-build-isolation --no-deps -vvv    # [unix]
+  ignore_run_exports:      # [linux]
+    - libgcc               # [linux]
+    - libstdcxx            # [linux]
+  script_env:
+    - SKIP_CORE_BUILD
+    - SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSIONS
+    - SKIP_PROTO_GENERATION
+    - CORE_CARGO_TARGET_DIR
+    - PROTO_CARGO_TARGET_DIR
+    - CARGO_NET_OFFLINE
+    - SF_PERF_METRICS
+
+requirements:
+  build:
+    - {{ compiler("c") }}
+    - {{ compiler("cxx") }}
+    - {{ stdlib("c") }}
+    - rust >=1.94
+    # Snowflake's in-platform channel currently provides protobuf 6.33.5.
+    - libprotobuf >=6.32.1,<6.34
+  host:
+    - python {{ python }}
+    - pip
+    - hatchling
+    - editables
+    - cython
+    - setuptools >=40.6.0
+    - wheel
+    - mypy-protobuf >=5.0,<6
+    - protobuf >=6.32.1,<7
+  run:
+    {% if py == 310 %}
+    - python >=3.10,<3.11.0a0
+    {% elif py == 311 %}
+    - python >=3.11,<3.12.0a0
+    {% elif py == 312 %}
+    - python >=3.12,<3.13.0a0
+    {% elif py == 313 %}
+    - python >=3.13,<3.14.0a0
+    {% elif py == 314 %}
+    - python >=3.14,<3.15.0a0
+    {% else %}
+    - python
+    {% endif %}
+    - cryptography >=46.0.5
+    - protobuf >=6.32.1,<7
+    - pytz
+    - tomlkit >=0.13
+
+test:
+  requires:
+    - pip
+  imports:
+    - snowflake
+    - snowflake.connector
+    - snowflake.connector._core.sf_core_python                  # [unix]
+    - snowflake.connector._internal.arrow_stream_iterator       # [unix]
+  commands:
+    - pip check
+
+about:
+  home: https://github.com/snowflakedb/drivers
+  license: Apache-2.0
+  summary: Snowflake Connector for Python (universal driver, Rust core)

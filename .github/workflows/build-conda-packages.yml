@@ -1,0 +1,44 @@
+name: Build Conda Packages
+
+on:
+  pull_request:
+    paths:
+      - 'python/ci/anaconda/**'
+      - 'python/pyproject.toml'
+      - 'python/hatch_build.py'
+      - 'python/src/snowflake/connector/version.py'
+      - '.github/workflows/build-conda-packages.yml'
+      - '.github/workflows/_build-conda-packages.yml'
+  workflow_dispatch:
+    inputs:
+      python-versions:
+        type: string
+        required: false
+        default: "3.12"
+        description: 'Space-separated Python versions, e.g. "3.11 3.12 3.13"'
+      architectures:
+        type: string
+        required: false
+        default: '["linux-64","linux-aarch64"]'
+        description: 'JSON array of conda subdirs: linux-64, linux-aarch64'
+      package-version:
+        type: string
+        required: false
+        default: ""
+        description: 'Override package version (default: __version__ from version.py)'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_conda_packages:
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+      || startsWith(github.ref, 'refs/heads/release/')
+    uses: ./.github/workflows/_build-conda-packages.yml
+    with:
+      python-versions: ${{ inputs.python-versions || '3.12' }}
+      architectures: ${{ inputs.architectures || '["linux-64","linux-aarch64"]' }}
+      package-version: ${{ inputs.package-version || '' }}

@@ -1,0 +1,330 @@
+name: Build Conda Packages
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        type: string
+        required: false
+        default: "3.12"
+        description: >
+          Space-separated Python versions to build, e.g. "3.11 3.12 3.13".
+          Each version produces one package per architecture.
+      architectures:
+        type: string
+        required: false
+        default: '["linux-64","linux-aarch64"]'
+        description: >
+          JSON array of conda subdirs to build. Supported: linux-64, linux-aarch64.
+          Both are needed for a stage channel usable on x86 and ARM SUTs, because
+          Snowflake computes the frozen solve per architecture.
+      package-version:
+        type: string
+        required: false
+        default: ""
+        description: >
+          Override the package version. Defaults to __version__ in
+          python/src/snowflake/connector/version.py.
+    outputs:
+      package-version:
+        description: "The version the packages were stamped with"
+        value: ${{ jobs.configure.outputs.package-version }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    outputs:
+      build-matrix: ${{ steps.expand.outputs.build-matrix }}
+      package-version: ${{ steps.resolve_version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.9.28"
+
+      - name: Validate recipe run deps match pyproject
+        working-directory: python
+        run: >
+          uv run --no-project --python 3.13 --with pyyaml
+          python ci/anaconda/NOMIRROR/validate_deps_sync.py
+
+      - name: Resolve package version
+        id: resolve_version
+        run: |
+          if [[ -n "${{ inputs.package-version }}" ]]; then
+            version="${{ inputs.package-version }}"
+          else
+            version="$(
+              grep -Eo '__version__[[:space:]]*=[[:space:]]*"[^"]+"' \
+                python/src/snowflake/connector/version.py \
+                | head -n1 | sed -E 's/.*"([^"]+)".*/\1/'
+            )"
+          fi
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not resolve package version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building version $version"
+
+      - name: Expand architectures into a build matrix
+        id: expand
+        shell: python3 {0}
+        run: |
+          import json, os
+
+          RUNNERS = {
+              "linux-64": "ubuntu-latest",
+              "linux-aarch64": "ubuntu-24.04-arm",
+          }
+
+          requested = json.loads("""${{ inputs.architectures }}""")
+          unknown = [a for a in requested if a not in RUNNERS]
+          if unknown:
+              raise ValueError(f"Unknown architectures: {unknown}. Supported: {list(RUNNERS)}")
+
+          matrix = [{"subdir": a, "os": RUNNERS[a]} for a in requested]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"build-matrix={json.dumps(matrix)}\n")
+
+          print("build-matrix:", json.dumps(matrix, indent=2))
+
+  build:
+    needs: configure
+    if: fromJSON(needs.configure.outputs.build-matrix)[0] != null
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.configure.outputs.build-matrix) }}
+    runs-on: ${{ matrix.os }}
+    name: build (${{ matrix.subdir }})
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Remove any pre-existing cargo target dir
+        run: rm -rf target/
+
+      - name: Restore cargo registry cache
+        continue-on-error: true
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.subdir }}-conda-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.subdir }}-conda-cargo-registry-
+
+      - name: Restore cargo target caches
+        continue-on-error: true
+        uses: actions/cache@v6
+        with:
+          path: |
+            conda-core-target
+            conda-proto-target
+          key: ${{ runner.os }}-${{ matrix.subdir }}-conda-targets-v1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.subdir }}-conda-targets-v1-
+
+      - name: Set up Miniforge
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          channels: conda-forge
+          conda-remove-defaults: "true"
+          auto-update-conda: true
+
+      - name: Install conda-build toolchain
+        run: |
+          conda install -n base -y -c conda-forge conda-build conda-index
+          conda info
+          conda build --version
+
+      - name: Report free disk space
+        run: df -h /
+
+      - name: Place conda-bld outside the source tree
+        run: echo "CONDA_BLD_PATH=${RUNNER_TEMP}/conda-bld" >> "$GITHUB_ENV"
+
+      - name: Build conda packages
+        env:
+          UNIVERSAL_DRIVER_DIR: ${{ github.workspace }}
+          PYTHON_VERSIONS: ${{ inputs.python-versions }}
+          SNOWFLAKE_CONNECTOR_PYTHON_VERSION: ${{ needs.configure.outputs.package-version }}
+          UNIVERSAL_DRIVER_BUILD_NUMBER: ${{ github.run_number }}
+          CORE_CARGO_TARGET_DIR: ${{ github.workspace }}/conda-core-target
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/conda-proto-target
+        run: bash python/ci/anaconda/NOMIRROR/package_builder.sh
+
+      - name: List built packages
+        if: always()
+        run: |
+          find "$CONDA_BLD_PATH" -maxdepth 2 -name 'snowflake-connector-python-*' -print | sort || true
+          df -h /
+
+      - name: Verify expected subdir was produced
+        run: |
+          dir="$CONDA_BLD_PATH/${{ matrix.subdir }}"
+          if [[ ! -d "$dir" ]]; then
+            echo "::error::Expected $dir to exist; conda-build wrote:"
+            ls -la "$CONDA_BLD_PATH/" || true
+            exit 1
+          fi
+          count="$(find "$dir" \
+            -name 'snowflake-connector-python-*' \
+            \( -name '*.conda' -o -name '*.tar.bz2' \) | wc -l)"
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::No packages found in $dir"
+            ls -la "$dir"
+            exit 1
+          fi
+          echo "Found $count package file(s) in $dir"
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: conda-packages-${{ matrix.subdir }}
+          path: ${{ env.CONDA_BLD_PATH }}/${{ matrix.subdir }}/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Trim cargo target dirs
+        if: always()
+        continue-on-error: true
+        run: |
+          rm -rf conda-core-target/release/incremental conda-proto-target/release/incremental
+          du -sh conda-core-target conda-proto-target 2>/dev/null || true
+
+  stage_channel:
+    needs: [configure, build]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download x86 packages
+        if: contains(fromJSON(inputs.architectures), 'linux-64')
+        uses: actions/download-artifact@v8
+        with:
+          name: conda-packages-linux-64
+          path: downloaded/linux-64
+
+      - name: Download ARM packages
+        if: contains(fromJSON(inputs.architectures), 'linux-aarch64')
+        uses: actions/download-artifact@v8
+        with:
+          name: conda-packages-linux-aarch64
+          path: downloaded/linux-aarch64
+
+      - name: Set up Miniforge
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          channels: conda-forge
+          conda-remove-defaults: "true"
+
+      - name: Install conda-index
+        run: conda install -n base -y -c conda-forge conda-build conda-index
+
+      - name: Assemble stage channel
+        run: |
+          args=()
+          if [[ -d downloaded/linux-64 ]]; then
+            args+=(--x86 downloaded/linux-64)
+          fi
+          if [[ -d downloaded/linux-aarch64 ]]; then
+            args+=(--arm downloaded/linux-aarch64)
+          fi
+          bash python/ci/anaconda/NOMIRROR/prepare_stage_channel.sh \
+            "${args[@]}" \
+            --output "${GITHUB_WORKSPACE}/stage-channel"
+
+      - name: Verify channel metadata
+        shell: bash
+        run: |
+          failed=0
+          for subdir in linux-64 linux-aarch64; do
+            dir="stage-channel/$subdir"
+            [[ -d "$dir" ]] || continue
+            for f in repodata.json repodata_merged.json; do
+              if [[ ! -s "$dir/$f" ]]; then
+                echo "::error::Missing or empty $dir/$f"
+                failed=1
+              fi
+            done
+            if [[ -s "$dir/repodata.json" ]] \
+               && python3 -c "import json,sys; sys.exit('packages.conda' in json.load(open('$dir/repodata.json')))"; then
+              echo "$dir/repodata.json: .tar.bz2 only, as expected"
+            else
+              echo "::error::$dir/repodata.json still has a packages.conda section"
+              failed=1
+            fi
+          done
+          exit $failed
+
+      - name: Upload stage channel
+        uses: actions/upload-artifact@v7
+        with:
+          name: conda-stage-channel
+          path: stage-channel/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize
+        run: |
+          {
+            echo "### Conda stage channel"
+            echo
+            echo "Version: \`${{ needs.configure.outputs.package-version }}\`"
+            echo "Build number: \`${{ github.run_number }}\`"
+            echo "Python versions: \`${{ inputs.python-versions }}\`"
+            echo
+            echo '```'
+            find stage-channel -type f | sort
+            echo '```'
+            echo
+            echo "Download the \`conda-stage-channel\` artifact, then:"
+            echo
+            echo '```sql'
+            echo "CREATE STAGE mystage;"
+            echo "PUT file://.../linux-64/*      @mystage/linux-64      auto_compress=false;"
+            echo "PUT file://.../linux-aarch64/* @mystage/linux-aarch64 auto_compress=false;"
+            echo "ALTER SESSION SET conda_stage_channel_for_testing = 'MYDB.MYSCHEMA.MYSTAGE';"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  conda_status:
+    needs: [configure, build, stage_channel]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          echo "=== Conda Package Build Status ==="
+          echo "  configure:     ${{ needs.configure.result }}"
+          echo "  build:         ${{ needs.build.result }}"
+          echo "  stage_channel: ${{ needs.stage_channel.result }}"
+
+          if [[ "${{ needs.configure.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.build.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.stage_channel.result }}" =~ ^(failure|cancelled)$ ]]; then
+            echo "FAILED"
+            exit 1
+          fi
+
+          echo "PASSED"
