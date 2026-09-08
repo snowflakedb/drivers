@@ -10,7 +10,7 @@ pub trait ToJsError {
 #[derive(Clone)]
 pub(crate) enum BridgeError {
     Core(Arc<ApiError>),
-    UnusableConnection(UnusableConnection),
+    UnusableConnection(ConnectionOperation, UnusableConnection),
     Message(String),
 }
 
@@ -18,6 +18,12 @@ pub(crate) enum BridgeError {
 pub(crate) enum UnusableConnection {
     NeverEstablished,
     Terminated,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ConnectionOperation {
+    Request,
+    Destroy,
 }
 
 enum ErrorCode {
@@ -47,24 +53,36 @@ impl ClientError {
         }
     }
 
-    fn of_unusable_connection(connection: UnusableConnection) -> Self {
-        let (code, message, is_fatal) = match connection {
-            UnusableConnection::NeverEstablished => (
+    /// The old driver's SQL-state table covers only the 405xxx and 407xxx families.
+    fn of_unusable_connection(
+        operation: ConnectionOperation,
+        connection: UnusableConnection,
+    ) -> Self {
+        let (code, message, sql_state, is_fatal) = match (operation, connection) {
+            (ConnectionOperation::Request, UnusableConnection::NeverEstablished) => (
                 407001,
                 "Unable to perform operation because a connection was never established.",
+                Some("08003"),
                 false,
             ),
-            UnusableConnection::Terminated => (
+            (ConnectionOperation::Request, UnusableConnection::Terminated) => (
                 407002,
                 "Unable to perform operation using terminated connection.",
+                Some("08003"),
                 true,
             ),
+            (ConnectionOperation::Destroy, UnusableConnection::NeverEstablished) => {
+                (406501, "Not connected, so nothing to destroy.", None, false)
+            }
+            (ConnectionOperation::Destroy, UnusableConnection::Terminated) => {
+                (406502, "Already disconnected.", None, false)
+            }
         };
         Self {
             name: Some("ClientError"),
             message: message.to_string(),
             code: Some(ErrorCode::Driver(code)),
-            sql_state: Some("08003".to_string()),
+            sql_state: sql_state.map(str::to_string),
             cause: None,
             is_fatal,
         }
@@ -115,8 +133,8 @@ impl ToJsError for BridgeError {
     fn to_js_error(&self, env: Env) -> napi::Error {
         match self {
             BridgeError::Core(error) => error.to_js_error(env),
-            BridgeError::UnusableConnection(connection) => {
-                ClientError::of_unusable_connection(*connection)
+            BridgeError::UnusableConnection(operation, connection) => {
+                ClientError::of_unusable_connection(*operation, *connection)
                     .build(env)
                     .unwrap_or_else(|err| {
                         napi::Error::from_reason(format!("failed to construct JS error: {err}"))
@@ -183,8 +201,11 @@ mod tests {
     }
 
     #[test]
-    fn a_connection_that_was_never_established_is_not_fatal() {
-        let error = ClientError::of_unusable_connection(UnusableConnection::NeverEstablished);
+    fn a_request_on_a_connection_that_was_never_established_is_not_fatal() {
+        let error = ClientError::of_unusable_connection(
+            ConnectionOperation::Request,
+            UnusableConnection::NeverEstablished,
+        );
 
         assert_eq!(error.name, Some("ClientError"));
         assert_eq!(code_of(&error), Some("407001".to_string()));
@@ -193,12 +214,43 @@ mod tests {
     }
 
     #[test]
-    fn a_terminated_connection_is_fatal() {
-        let error = ClientError::of_unusable_connection(UnusableConnection::Terminated);
+    fn a_request_on_a_terminated_connection_is_fatal() {
+        let error = ClientError::of_unusable_connection(
+            ConnectionOperation::Request,
+            UnusableConnection::Terminated,
+        );
 
         assert_eq!(error.name, Some("ClientError"));
         assert_eq!(code_of(&error), Some("407002".to_string()));
         assert_eq!(error.sql_state.as_deref(), Some("08003"));
         assert!(error.is_fatal);
+    }
+
+    #[test]
+    fn destroying_a_connection_that_was_never_established_carries_no_sql_state() {
+        let error = ClientError::of_unusable_connection(
+            ConnectionOperation::Destroy,
+            UnusableConnection::NeverEstablished,
+        );
+
+        assert_eq!(error.name, Some("ClientError"));
+        assert_eq!(code_of(&error), Some("406501".to_string()));
+        assert_eq!(error.message, "Not connected, so nothing to destroy.");
+        assert_eq!(error.sql_state, None);
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn destroying_a_terminated_connection_is_not_fatal() {
+        let error = ClientError::of_unusable_connection(
+            ConnectionOperation::Destroy,
+            UnusableConnection::Terminated,
+        );
+
+        assert_eq!(error.name, Some("ClientError"));
+        assert_eq!(code_of(&error), Some("406502".to_string()));
+        assert_eq!(error.message, "Already disconnected.");
+        assert_eq!(error.sql_state, None);
+        assert!(!error.is_fatal);
     }
 }

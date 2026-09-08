@@ -1398,20 +1398,10 @@ describe('snowflake.isAnError()', function () {
 });
 
 describe('connection.destroy()', function () {
-  it('destroy without connecting', function (done) {
-    const connection = snowflake.createConnection(connectionOptions);
-    connection.destroy(function (err, conn) {
-      assert.ok(err);
-      assert.strictEqual(err.code, ErrorCodes.ERR_CONN_DESTROY_STATUS_PRISTINE);
-      assert.strictEqual(
-        conn,
-        connection,
-        'the logout() callback should be invoked with the connection',
-      );
-      done();
-    });
-  });
-
+  // "destroy without connecting" and "destroy while disconnected" moved to
+  // nodejs/tests/e2e/connection-state-errors.test.ts. The case below stays: the new driver
+  // has no connecting state, so a destroy issued during a login can be refused with 406501
+  // instead of being queued (BD#27).
   it('destroy while connecting', function (done) {
     const connection = snowflake.createConnection(connectionOptions);
 
@@ -1458,53 +1448,6 @@ describe('connection.destroy()', function () {
     setImmediate(tryDestroy);
   });
 
-  it('destroy while disconnected', function (done) {
-    const connection = snowflake.createConnection(connectionOptions);
-
-    async.series(
-      [
-        function (callback) {
-          connection.connect(function (err, conn) {
-            assert.ok(!err, 'there should be no error');
-            assert.strictEqual(
-              conn,
-              connection,
-              'the connect() callback should be invoked with the connection',
-            );
-            callback();
-          });
-        },
-        function (callback) {
-          connection.destroy(function (err, conn) {
-            assert.ok(!err, 'there should be no error');
-            assert.strictEqual(
-              conn,
-              connection,
-              'the logout() callback should be invoked with the connection',
-            );
-            callback();
-          });
-        },
-        function (callback) {
-          // connection.destroy() should fail at this point because the
-          // connection has been destroyed
-          connection.destroy(function (err, conn) {
-            assert.ok(err, 'there should be an error');
-            assert.strictEqual(
-              conn,
-              connection,
-              'the connect() callback should be invoked with the connection',
-            );
-            assert.strictEqual(err.code, ErrorCodes.ERR_CONN_DESTROY_STATUS_DISCONNECTED);
-            callback();
-          });
-        },
-      ],
-      function () {
-        done();
-      },
-    );
-  });
 });
 
 describe('snowflake.createConnection() SERVICE_NAME', function () {

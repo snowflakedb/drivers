@@ -1,5 +1,5 @@
 use crate::DRIVER;
-use crate::error::{BridgeError, ToJsError, UnusableConnection, async_to_js};
+use crate::error::{BridgeError, ConnectionOperation, ToJsError, UnusableConnection, async_to_js};
 use crate::session_params::KnownSessionParameters;
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
@@ -329,6 +329,14 @@ impl Connection {
             // Teardown now always runs against a settled connection: either
             // fully established, or one that never came up.
             let _lifecycle = lifecycle.lock().await;
+            // Under the lock, so a destroy that waited out a connect answers for
+            // the session that connect left behind.
+            if let Some(unusable) = state.unusable() {
+                return Err(BridgeError::UnusableConnection(
+                    ConnectionOperation::Destroy,
+                    unusable,
+                ));
+            }
             let close = DRIVER.connection_close(handles.connection).await;
             if close.is_ok() {
                 // Only once core confirms the session is gone. A failed close is
@@ -341,7 +349,7 @@ impl Connection {
                 handles.release();
                 state.mark_terminated();
             }
-            close
+            close.map_err(BridgeError::from)
         })
     }
 }
