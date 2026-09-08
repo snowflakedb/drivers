@@ -64,8 +64,10 @@ inline std::string retrieve_oauth_access_token(const std::string& token_url, con
     ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
   }
 
+  // `-w` appends the status code on its own trailing line, which is otherwise
+  // unavailable here: curl exits 0 for an HTTP error response.
   std::stringstream cmd;
-  cmd << "curl -s -X POST " << shell_single_quote(token_url)
+  cmd << "curl -s -w \"\\n%{http_code}\" -X POST " << shell_single_quote(token_url)
       << " -H \"Content-Type: application/x-www-form-urlencoded;charset=UTF-8\"" << " -u "
       << shell_single_quote(client_id + ":" + client_secret) << " --data-urlencode "
       << shell_single_quote("username=" + user) << " --data-urlencode " << shell_single_quote("password=" + password)
@@ -73,16 +75,23 @@ inline std::string retrieve_oauth_access_token(const std::string& token_url, con
       << shell_single_quote("scope=session:role:" + lower_role);
 
   std::string response = platform::exec_command(cmd.str());
+  std::string body = response;
+  std::string status = "unknown";
+  const auto status_separator = response.find_last_of('\n');
+  if (status_separator != std::string::npos) {
+    body = response.substr(0, status_separator);
+    status = response.substr(status_separator + 1);
+  }
 
   picojson::value json;
-  std::string err = picojson::parse(json, response);
+  std::string err = picojson::parse(json, body);
   if (!err.empty() || !json.is<picojson::object>()) {
-    FAIL("Failed to parse OAuth token response: " << err << " | body: " << response);
+    FAIL("Failed to parse OAuth token response (HTTP " << status << "): " << err << " | body: " << body);
   }
   const auto& obj = json.get<picojson::object>();
   auto it = obj.find("access_token");
   if (it == obj.end() || !it->second.is<std::string>()) {
-    FAIL("OAuth token response missing 'access_token': " << response);
+    FAIL("OAuth token response missing 'access_token' (HTTP " << status << "): " << body);
   }
   return it->second.get<std::string>();
 }
