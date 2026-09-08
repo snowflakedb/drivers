@@ -285,10 +285,11 @@ pub struct PrepareResult {
 impl DatabaseDriverV1 {
     /// Describe a statement without producing rows (`describe_only`), returning
     /// the column and bind metadata.
-    pub async fn statement_prepare(
+    pub async fn statement_prepare<'a>(
         &self,
         operation_ctx: Option<&OperationCtx>,
         stmt_handle: Handle,
+        bindings: Option<BindingType<'a>>,
     ) -> Result<PrepareResult, ApiError> {
         let stmt_ptr =
             self.statements
@@ -310,7 +311,14 @@ impl DatabaseDriverV1 {
                 info: rs_info,
                 request_id: Some(request_id),
             } = self
-                .execute_query_internal(operation_ctx, &report, &mut stmt, None, Some(true), None)
+                .execute_query_internal(
+                    operation_ctx,
+                    &report,
+                    &mut stmt,
+                    bindings,
+                    Some(true),
+                    None,
+                )
                 .await?
             else {
                 return InvalidArgumentSnafu {
