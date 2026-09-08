@@ -368,11 +368,13 @@ impl DatabaseDriverV1 {
                     if let Some(v) =
                         resolved.get_int(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY)
                     {
+                        let clamped_frequency =
+                            compute_heartbeat_interval(None, u64::try_from(v).ok()).as_secs();
                         login_session_params.insert(
                             param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY
                                 .as_str()
                                 .to_string(),
-                            v.to_string(),
+                            clamped_frequency.to_string(),
                         );
                     }
                     if let Some(v) = resolved.get_int(param_names::CLIENT_PREFETCH_THREADS) {
