@@ -361,9 +361,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 raise
             raise ProgrammingError(msg=f"Failed to fetch result set for query_id={query_id}: {exc}") from exc
 
-    def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult | None:
+    def _prepare(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> PrepareResult | None:
         try:
-            return core_driver.statement_prepare(stmt_handle=stmt_handle).result
+            return core_driver.statement_prepare(stmt_handle=stmt_handle, bindings=bindings).result
         except ProgrammingError as exc:
             self._query_result = QueryResult.from_programming_error(exc)
             raise
@@ -473,7 +473,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         # This mirrors how JDBC (describeSqlIfNotTried) and the C/ODBC driver
         # (_snowflake_execute_ex describe-only request) gate batch execution.
         with statement(self.connection.conn_handle, operation) as stmt_handle:  # type: ignore[arg-type]
-            prepare_result = self._prepare(stmt_handle)
+            prepare_result = self._prepare(stmt_handle, None)
 
         if prepare_result is None or not prepare_result.array_bind_supported:
             # Per-row fallback: server does not support array binding for this
@@ -510,11 +510,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             - Updates cursor.description with the column metadata
         """
         self.reset()
-        query, _ = self._prepare_query(operation, parameters)
+        query, binding_params = self._prepare_query(operation, parameters)
 
         prepare_result: PrepareResult | None = None
         with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
-            prepare_result = self._prepare(stmt_handle)
+            bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
+            prepare_result = self._prepare(stmt_handle, bindings)
 
         self._query_result = QueryResult.from_prepare_result(prepare_result)
 
@@ -542,10 +543,11 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
         self.reset()
-        query, _ = self._prepare_query(operation, parameters)
+        query, binding_params = self._prepare_query(operation, parameters)
         prepare_result: PrepareResult | None = None
         with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
-            prepare_result = self._prepare(stmt_handle)
+            bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
+            prepare_result = self._prepare(stmt_handle, bindings)
         self._query_result = QueryResult.from_prepare_result(prepare_result)
         if self._query_result.description:
             self._rownumber = -1

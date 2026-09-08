@@ -538,8 +538,10 @@ class CoreDriver:
         request = StatementExecuteAsyncRequest(stmt_handle=stmt_handle, bindings=bindings)
         return self.client.statement_execute_async(request)
 
-    def statement_prepare(self, stmt_handle: StatementHandle) -> StatementPrepareResponse:
-        request = StatementPrepareRequest(stmt_handle=stmt_handle)
+    def statement_prepare(
+        self, stmt_handle: StatementHandle, bindings: QueryBindings | None = None
+    ) -> StatementPrepareResponse:
+        request = StatementPrepareRequest(stmt_handle=stmt_handle, bindings=bindings)
         return self.client.statement_prepare(request)
 
     # =====================================================================
@@ -891,8 +893,10 @@ class AsyncCoreDriver:
             StatementExecuteAsyncRequest(stmt_handle=stmt_handle, bindings=bindings)
         )
 
-    async def statement_prepare(self, stmt_handle: StatementHandle) -> StatementPrepareResponse:
-        return await self.client.statement_prepare(StatementPrepareRequest(stmt_handle=stmt_handle))
+    async def statement_prepare(
+        self, stmt_handle: StatementHandle, bindings: QueryBindings | None = None
+    ) -> StatementPrepareResponse:
+        return await self.client.statement_prepare(StatementPrepareRequest(stmt_handle=stmt_handle, bindings=bindings))
 
     # =====================================================================
     # Connection result-set access (multi-statement / async-query paths)

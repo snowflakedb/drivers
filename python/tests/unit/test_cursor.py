@@ -2090,6 +2090,33 @@ class TestDescribe:
 
         assert cursor._request_id == "550e8400-e29b-41d4-a716-446655440000"
 
+    def test_describe_forwards_parameters_as_bindings(self, cursor, mock_connection, mock_core_client):
+        """describe() must forward bind parameters to statement_prepare, not just describe
+
+        placeholder shape. SNOW-4072351: describing a parameterized statement nested one
+        level deep in a subquery (as Snowpark does for `.select()`/`.filter()`/`.sort()`
+        on a `session.sql(..., params=...)` DataFrame) needs the actual bind values to
+        resolve the inner statement's schema; a bind-less describe fails server-side with
+        "Bind variable ... not set".
+        """
+        mock_connection.paramstyle = ParamStyle.QMARK
+        self._setup_prepare(mock_core_client, columns=[])
+
+        cursor.describe("SELECT * FROM (CALL identifier(?)(?, ?))", ("my_proc", "tmpl", "args"))
+
+        request = mock_core_client.statement_prepare.call_args.args[0]
+        assert request.HasField("bindings")
+        assert request.bindings.WhichOneof("binding_type") is not None
+
+    def test_describe_without_parameters_sends_no_bindings(self, cursor, mock_core_client):
+        """describe() of a statement with no bind params sends bindings=None, unchanged."""
+        self._setup_prepare(mock_core_client, columns=[])
+
+        cursor.describe("SELECT 1")
+
+        request = mock_core_client.statement_prepare.call_args.args[0]
+        assert not request.HasField("bindings")
+
 
 class TestQueryResult:
     """Unit tests for Cursor.query_result method."""
@@ -3375,6 +3402,95 @@ class TestDescribeInternal:
             cursor._describe_internal("SELECT 1", params=[42])
 
         assert spy.call_args.args[1] == [42]
+
+    def test_forwards_parameters_as_bindings(self, cursor, mock_connection, mock_core_client):
+        """_describe_internal must forward bind parameters to statement_prepare.
+
+        SNOW-4072351: this is the exact contract Snowpark's `run_new_describe` relies on
+        to resolve the schema of a parameterized statement nested one level deep in a
+        subquery (`.select()`/`.filter()`/`.sort()` on a `session.sql(..., params=...)`
+        DataFrame) — a bind-less describe fails server-side with "Bind variable ... not set".
+        """
+        mock_connection.paramstyle = ParamStyle.QMARK
+        self._setup_prepare(mock_core_client, columns=[])
+
+        cursor._describe_internal("SELECT * FROM (CALL identifier(?)(?, ?))", ("my_proc", "tmpl", "args"))
+
+        request = mock_core_client.statement_prepare.call_args.args[0]
+        assert request.HasField("bindings")
+        assert request.bindings.WhichOneof("binding_type") is not None
+
+    def test_without_parameters_sends_no_bindings(self, cursor, mock_core_client):
+        """_describe_internal of a statement with no bind params sends bindings=None, unchanged."""
+        self._setup_prepare(mock_core_client, columns=[])
+
+        cursor._describe_internal("SELECT 1")
+
+        request = mock_core_client.statement_prepare.call_args.args[0]
+        assert not request.HasField("bindings")
+
+
+class TestDescribeAsync:
+    """Async-cursor counterpart of TestDescribe, covering SNOW-4072351 for `describe()`."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return AsyncSnowflakeCursor(mock_connection)
+
+    @pytest.fixture
+    def async_mock_core_client(self):
+        """Mock (statement RPCs as AsyncMock) patched into async_core_driver.client."""
+        mock = MagicMock()
+        mock.statement_new = AsyncMock(return_value=MagicMock(stmt_handle=StatementHandle(id=1)))
+        mock.statement_set_sql_query = AsyncMock()
+        mock.statement_release = AsyncMock()
+        mock.statement_prepare = AsyncMock()
+        old = async_core_driver._client
+        async_core_driver.client = mock
+        yield mock
+        async_core_driver.client = old
+
+    @staticmethod
+    def _setup_prepare(async_mock_core_client, columns=None):
+        result = MagicMock()
+        result.columns = columns or []
+        result.stream.value = (42).to_bytes(8, byteorder="little", signed=False)
+        result.query_id = ""
+        result.query = ""
+        result.sql_state = None
+        result.request_id = ""
+        async_mock_core_client.statement_prepare.return_value = MagicMock(result=result)
+        return result
+
+    def test_describe_forwards_parameters_as_bindings(self, cursor, mock_connection, async_mock_core_client):
+        """describe() on the async cursor must forward bind parameters to statement_prepare,
+        mirroring the sync-cursor regression test for SNOW-4072351."""
+        mock_connection.paramstyle = ParamStyle.QMARK
+        self._setup_prepare(async_mock_core_client, columns=[])
+
+        with patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"):
+            asyncio.run(cursor.describe("SELECT * FROM (CALL identifier(?)(?, ?))", ("my_proc", "tmpl", "args")))
+
+        request = async_mock_core_client.statement_prepare.call_args.args[0]
+        assert request.HasField("bindings")
+        assert request.bindings.WhichOneof("binding_type") is not None
+
+    def test_describe_without_parameters_sends_no_bindings(self, cursor, async_mock_core_client):
+        """describe() on the async cursor with no bind params sends bindings=None, unchanged."""
+        self._setup_prepare(async_mock_core_client, columns=[])
+
+        with patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"):
+            asyncio.run(cursor.describe("SELECT 1"))
+
+        request = async_mock_core_client.statement_prepare.call_args.args[0]
+        assert not request.HasField("bindings")
 
 
 class TestExecutemanyMultirowInsertRewrite:
