@@ -861,6 +861,7 @@ async fn cancelling_an_in_flight_prepare_aborts_it_server_side() {
         "query-request",
         StatementPrepareRequest {
             stmt_handle: Some(stmt),
+            bindings: None,
         }
         .encode_to_vec(),
     )

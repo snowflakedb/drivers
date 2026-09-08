@@ -745,6 +745,7 @@ message PrepareResult {
 
 message StatementPrepareRequest {
   StatementHandle stmt_handle = 1;
+  optional QueryBindings bindings = 2;
 }
 
 message StatementPrepareResponse {
