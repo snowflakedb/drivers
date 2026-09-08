@@ -9,34 +9,16 @@
 //!
 //! * forward connection-string keys consistently
 //!   ([`canonical_name`], consumed by `connection::normalize_connection_string_option`),
-//! * never persist OAuth secrets to the DSN registry
+//! * never persist sensitive keys to the DSN registry
 //!   ([`should_persist_to_dsn`], consumed by `setup_common::write_dsn_values`),
-//! * redact OAuth secrets from logs
+//! * redact sensitive keys from logs
 //!   ([`redacted_param_map`], consumed by `connection::connect_with_params`).
-//!
-//! The wrapper composes its connection-string-level redaction list
-//! ([`SENSITIVE_LOGGING_KEYS`]) from both the legacy PWD-style secrets
-//! and the OAuth secret list so [`redacted_param_map`] is the single
-//! place to update when a new sensitive key joins either family.
 //!
 //! The key list mirrors the cross-driver configuration matrix and
 //! matches the `param_registry` aliases in
 //! `sf_core::config::param_registry`. All ODBC keys here are the
 //! `JDBC/ODBC` SCREAMING_SNAKE form and resolve via `sf_core` to the
 //! lowercase canonical name shown in the doc comment for each constant.
-//!
-//! TODO(SNOW-3552555): consolidate the redaction / canonical-name
-//! policy into `sf_core::config::param_registry`. The registry already
-//! models every OAuth `ParamDef` with `sensitive: bool` and the ODBC
-//! SCREAMING_SNAKE form as an alias; exposing
-//! `param_registry::is_sensitive(key)` and
-//! `param_registry::canonical_name(key)` lookups would let
-//! [`OAUTH_CANONICAL_NAMES`] and the OAuth half of
-//! [`SENSITIVE_LOGGING_KEYS`] disappear. The legacy PWD-family entries
-//! must keep living here because they are aliases the wrapper redacts
-//! BEFORE `sf_core` normalization happens on the raw connection-string
-//! map. [`ALL_OAUTH_KEYS`] would stay too (it is consumed by the ODBC
-//! SQLSTATE classifier in `api::error`).
 
 /// `OAUTH_CLIENT_ID` (canonical: `oauth_client_id`).
 ///
@@ -102,15 +84,6 @@ pub const OAUTH_ENABLE_DPOP: &str = "OAUTH_ENABLE_DPOP";
 /// EXTERNALBROWSER `console_login` form.
 pub const OAUTH_DISABLE_CONSOLE_LOGIN: &str = "OAUTH_DISABLE_CONSOLE_LOGIN";
 
-/// `TOKEN` (canonical: `token`).
-///
-/// Pre-acquired access token used by the legacy
-/// `AUTHENTICATOR=OAUTH` mode (pre-acquired access token). **Sensitive** —
-/// listed in [`SENSITIVE_LOGGING_KEYS`] so [`redacted_param_map`]
-/// hides it from `tracing` sinks, and rejected by
-/// [`should_persist_to_dsn`] so the Windows DSN-write path skips it.
-pub const TOKEN: &str = "TOKEN";
-
 /// All ODBC DSN/connection-string keys defined by the OAuth feature.
 /// Consumed by [`api::error`](crate::api::error) to extend the
 /// SQLSTATE-`28000` classifier with every OAuth parameter so missing
@@ -172,69 +145,31 @@ pub fn canonical_name(key: &str) -> Option<&'static str> {
         .map(|(_, canonical)| *canonical)
 }
 
-/// Returns `false` when `key` is an OAuth secret that must never
-/// reach the on-disk DSN registry (secrets must not be persisted). Returns
-/// `true` for all non-secret OAuth keys and for any non-OAuth key
-/// (callers compose this with their own DSN-skip rules for `PWD`,
-/// `DSN`, etc.). Case-insensitive in `key`.
+/// Returns `false` for every key the parameter registry marks sensitive, so no
+/// secret reaches the on-disk DSN registry. Keys unknown to the registry are
+/// persisted, so callers compose this with their own DSN-skip rules (`DSN`).
+/// Case-insensitive in `key`.
 #[allow(dead_code)] // consumed by setup_common.rs (windows-only DSN write path)
 pub fn should_persist_to_dsn(key: &str) -> bool {
-    // TODO(SNOW-3552555): replace with
-    // `!sf_core::config::param_registry::is_sensitive(key)` once that
-    // predicate is exposed. The two OAuth secrets enumerated below
-    // already carry `sensitive: true` in their `ParamDef`.
-    !key.eq_ignore_ascii_case(OAUTH_CLIENT_SECRET) && !key.eq_ignore_ascii_case(TOKEN)
+    use sf_core::config::param_registry::{Wrapper, registry};
+    !registry().is_sensitive_for(Wrapper::Odbc, key)
 }
 
-// TODO(SNOW-3552555): collapse the OAuth half of this list into a
-// `sf_core::config::param_registry::sensitive_aliases()` iterator
-// once the registry exposes sensitivity by alias. The legacy
-// PWD-family entries must keep living here because they are matched
-// against the raw ODBC connection-string map BEFORE `sf_core`
-// normalization — at that boundary the keys are still the
-// SCREAMING_SNAKE wrapper aliases (`PWD`, `PRIV_KEY_FILE_PWD`, …),
-// not the lowercase canonical names that `sf_core` would key on.
-/// Combined list of connection-string keys that must be redacted at
-/// the wrapper's logging boundary (`connect_with_params`). It joins
-/// the legacy PWD-style secrets recognised by the ODBC layer with the
-/// OAuth secret list, so adding a new sensitive OAuth key here
-/// automatically flows through to log redaction without touching
-/// `connection.rs`.
-pub const SENSITIVE_LOGGING_KEYS: &[&str] = &[
-    // Pre-OAuth keys: kept here verbatim so the wrapper has a single
-    // grep target for "things that must never appear in logs".
-    "PWD",
-    "PRIV_KEY_FILE_PWD",
-    "PRIV_KEY_PWD",
-    "PRIV_KEY_BASE64",
-    "PASSCODE",
-    // OAuth keys (OAUTH_CLIENT_SECRET + TOKEN). TOKEN was already in
-    // the legacy redaction list; routing it through the OAuth list
-    // keeps the source of truth in one place.
-    OAUTH_CLIENT_SECRET,
-    TOKEN,
-];
-
-/// Returns a borrowed view of `params` with the value of every
-/// sensitive key (OAuth secrets + legacy PWD-style secrets) replaced
-/// by `"****"`. Non-sensitive entries borrow their value from
-/// `params`; redacted entries use the static `"****"` placeholder, so
-/// no allocation is performed in either branch.
+/// Returns a borrowed view of `params` with the value of every key the
+/// parameter registry marks sensitive replaced by `"****"`; no allocation is
+/// performed in either branch.
 ///
-/// Use this at every connection-string logging boundary so OAuth
-/// client secrets and access tokens never reach `tracing` sinks.
-/// Centralising the policy here means future additions to
-/// [`SENSITIVE_LOGGING_KEYS`] update every call site automatically.
+/// Use this at every connection-string logging boundary so secrets never reach
+/// `tracing` sinks.
 pub fn redacted_param_map(
     params: &std::collections::HashMap<String, String>,
 ) -> std::collections::HashMap<&String, std::borrow::Cow<'_, str>> {
+    use sf_core::config::param_registry::{Wrapper, registry};
+    let registry = registry();
     params
         .iter()
         .map(|(k, v)| {
-            let is_sensitive = SENSITIVE_LOGGING_KEYS
-                .iter()
-                .any(|r| k.eq_ignore_ascii_case(r));
-            let value: std::borrow::Cow<'_, str> = if is_sensitive {
+            let value: std::borrow::Cow<'_, str> = if registry.is_sensitive_for(Wrapper::Odbc, k) {
                 std::borrow::Cow::Borrowed("****")
             } else {
                 std::borrow::Cow::Borrowed(v.as_str())
@@ -291,6 +226,7 @@ mod tests {
         assert!(!should_persist_to_dsn("OAUTH_CLIENT_SECRET"));
         assert!(!should_persist_to_dsn("oauth_client_secret"));
         assert!(!should_persist_to_dsn("TOKEN"));
+        assert!(!should_persist_to_dsn("PROXY"));
         assert!(should_persist_to_dsn("OAUTH_CLIENT_ID"));
         assert!(should_persist_to_dsn("OAUTH_REDIRECT_URI"));
         assert!(should_persist_to_dsn("OAUTH_SCOPE"));
@@ -327,7 +263,15 @@ mod tests {
                 .map(|v| v.as_ref()),
             Some("abc")
         );
-        for sensitive in SENSITIVE_LOGGING_KEYS {
+        for sensitive in [
+            "PWD",
+            "PRIV_KEY_FILE_PWD",
+            "PRIV_KEY_PWD",
+            "PRIV_KEY_BASE64",
+            "PASSCODE",
+            "OAUTH_CLIENT_SECRET",
+            "TOKEN",
+        ] {
             let key = sensitive.to_string();
             assert_eq!(
                 redacted.get(&key).map(|v| v.as_ref()),
@@ -413,36 +357,6 @@ mod tests {
             assert!(
                 !should_persist_to_dsn(variant),
                 "{variant} must never be persisted to the DSN registry"
-            );
-        }
-    }
-
-    /// `SENSITIVE_LOGGING_KEYS` is the single authoritative list of
-    /// connection-string keys that must never reach `tracing` sinks.
-    /// Verify both that every OAuth secret is in the list AND that
-    /// the legacy PWD-style keys are still covered after the
-    /// refactor — guards against accidental policy regression when a
-    /// future contributor edits `SENSITIVE_LOGGING_KEYS`.
-    #[test]
-    fn sensitive_logging_keys_covers_oauth_secrets_and_legacy_pwd_family() {
-        for legacy in [
-            "PWD",
-            "PRIV_KEY_FILE_PWD",
-            "PRIV_KEY_PWD",
-            "PRIV_KEY_BASE64",
-            "PASSCODE",
-        ] {
-            assert!(
-                SENSITIVE_LOGGING_KEYS
-                    .iter()
-                    .any(|k| k.eq_ignore_ascii_case(legacy)),
-                "legacy sensitive key {legacy} dropped from SENSITIVE_LOGGING_KEYS"
-            );
-        }
-        for oauth_secret in [OAUTH_CLIENT_SECRET, TOKEN] {
-            assert!(
-                SENSITIVE_LOGGING_KEYS.contains(&oauth_secret),
-                "OAuth secret {oauth_secret} not in SENSITIVE_LOGGING_KEYS"
             );
         }
     }
