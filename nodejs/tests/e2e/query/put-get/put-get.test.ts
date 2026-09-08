@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type { Connection, RowStatement } from '../types/sdk-types.js';
+import type { Connection, RowStatement } from '../../../types/sdk-types.js';
 import {
   createRandomFileName,
   createTestDir,
   deletePathIgnoringErrors,
   toFileUrl,
-} from './utils/files.js';
-import getTestParameter from './utils/getTestParameter.js';
+} from '../../utils/files.js';
+import getTestParameter from '../../utils/getTestParameter.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
@@ -16,7 +16,7 @@ import {
   expectColumnsNames,
   isRunningNewDriverWithBD,
   randomizeName,
-} from './utils/index.js';
+} from '../../utils/index.js';
 
 const DATABASE_NAME = getTestParameter('SNOWFLAKE_TEST_DATABASE');
 const SCHEMA_NAME = getTestParameter('SNOWFLAKE_TEST_SCHEMA');

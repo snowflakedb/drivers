@@ -2,6 +2,22 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Resolves the shared directory that the cross-driver Gherkin features reference
+ */
+export function sharedTestDataDir(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  while (dir !== path.dirname(dir)) {
+    const candidate = path.join(dir, 'tests', 'test_data', 'generated_test_data');
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    dir = path.dirname(dir);
+  }
+  throw new Error('Could not locate tests/test_data/generated_test_data');
+}
 
 export function createRandomFileName(options: { prefix?: string; postfix?: string } = {}): string {
   return `${options.prefix ?? ''}${randomUUID()}${options.postfix ?? ''}`;
