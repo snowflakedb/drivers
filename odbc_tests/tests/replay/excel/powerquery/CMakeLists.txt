@@ -1,3 +1,4 @@
 cmake_minimum_required(VERSION 4.0)
 
 add_subdirectory(raw_sql)
+add_subdirectory(navigator)
