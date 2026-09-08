@@ -537,6 +537,12 @@ fn connect_with_params(
         oauth::redacted_param_map(&params)
     );
 
+    // The caller supplied literally no connection-identifying details (no
+    // UID/PWD, no connection-string keys, and any named DSN resolved to
+    // nothing beyond Driver/DSN/Description -- merge_dsn_config_impl already
+    // strips those).
+    let no_connection_details = params.is_empty();
+
     // Stash the ini-identity hints on the DBC up front so they are
     // available to `SQLGetInfo(SQL_DRIVER_NAME)` even if the connection
     // itself fails partway through. Connection-string parsing has
@@ -588,9 +594,7 @@ fn connect_with_params(
             .connection_set_options(ConnectionSetOptionsRequest {
                 conn_handle: Some(conn_handle),
                 options,
-                // ODBC always connects via a connection string / DSN, so there
-                // is no bare-connect default-profile fallback to trigger.
-                no_connection_details: false,
+                no_connection_details,
             })
             .await?;
 
@@ -3684,6 +3688,28 @@ mod tests {
             let err = result.unwrap_err();
             let msg = err.to_string();
             assert!(msg.contains("Missing"), "error should name the DSN: {msg}");
+        }
+
+        #[test]
+        fn should_strip_to_empty_for_bare_driver_only_connect() {
+            let explicit = HashMap::from([("Driver".to_owned(), "Snowflake ODBC".to_owned())]);
+            let result = merge_dsn_config_impl(explicit, None, err_lookup()).unwrap();
+            assert!(
+                result.is_empty(),
+                "a bare Driver-only connect must strip to an empty map so \
+                 connect_with_params signals no_connection_details=true, got: {result:?}"
+            );
+        }
+
+        #[test]
+        fn should_not_be_empty_when_extra_param_present() {
+            let explicit = HashMap::from([
+                ("Driver".to_owned(), "Snowflake ODBC".to_owned()),
+                ("role".to_owned(), "sysadmin".to_owned()),
+            ]);
+            let result = merge_dsn_config_impl(explicit, None, err_lookup()).unwrap();
+            assert!(!result.is_empty());
+            assert_eq!(result.get("role").unwrap(), "sysadmin");
         }
     }
 
