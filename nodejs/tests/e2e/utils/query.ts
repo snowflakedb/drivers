@@ -19,3 +19,7 @@ export async function setSessionParameter(
 ): Promise<void> {
   await executeAsync(connection, `ALTER SESSION SET ${name} = ${value}`);
 }
+
+export async function unsetSessionParameter(connection: Connection, name: string): Promise<void> {
+  await executeAsync(connection, `ALTER SESSION UNSET ${name}`);
+}

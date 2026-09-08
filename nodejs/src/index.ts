@@ -98,6 +98,12 @@ export interface StatementOption {
   complete?: StatementCallback;
   asyncExec?: boolean;
   streamResult?: boolean;
+  /**
+   * Parameters scoped to this single statement, sent with the execute request
+   * rather than applied to the whole session. Keys are Snowflake statement-level
+   * parameter names (e.g. `TIME_OUTPUT_FORMAT`);
+   */
+  parameters?: Record<string, unknown>;
   rowMode?: RowMode;
   fetchAsString?: DataType[];
   /**
@@ -220,7 +226,13 @@ export class Connection {
       // Ignore the error
     }
 
-    return this.#runStatement(this.#core.execute(options.sqlText, bindings), {
+    const parameters = options.parameters
+      ? Object.fromEntries(
+          Object.entries(options.parameters).map(([key, value]) => [key, String(value)]),
+        )
+      : null;
+
+    return this.#runStatement(this.#core.execute(options.sqlText, bindings, parameters), {
       complete: options.complete,
       streamResult: options.streamResult,
       rowOptions: {
