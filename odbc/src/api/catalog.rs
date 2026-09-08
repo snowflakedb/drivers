@@ -2107,13 +2107,8 @@ fn append_procedure_column_rows(
         );
         let sql_dt_sub_val =
             sql_datetime_sub_from_logical_type(logical_type).map(|s| s.to_string());
-        let char_octet_val = if catalog_char_octet_length_applies(logical_type) {
-            octet_length_from_field(&field, numeric_settings)
-                .ok()
-                .map(|s| s.to_string())
-        } else {
-            None
-        };
+        let char_octet_val = catalog_char_octet_length(logical_type, &field, numeric_settings)
+            .map(|s| s.to_string());
         let is_result_set_col = if column_type == SQL_RESULT_COL {
             SQL_TRUE
         } else {
@@ -3229,6 +3224,44 @@ fn catalog_num_prec_radix(
         .and_then(|s| if s == 0 { None } else { i32::try_from(s).ok() })
 }
 
+/// Catalog BUFFER_LENGTH / CHAR_OCTET_LENGTH for TEXT use this
+/// rather than `narrow_char_byte_width()`.
+const CATALOG_TEXT_MAX_BYTES_PER_CHAR: i32 = 4;
+
+fn catalog_uses_snowflake_text_byte_length(logical_type: &str) -> bool {
+    match logical_type.to_ascii_uppercase().as_str() {
+        // BINARY reports 1× byte length; semi-structured types follow the
+        // session VARCHAR max rather than SHOW COLUMNS byteLength.
+        "BINARY" | "VARIANT" | "OBJECT" | "ARRAY" => false,
+        // Fixed transfer sizes (struct or precision-derived).
+        "FIXED" | "DECFLOAT" | "REAL" | "BOOLEAN" | "DATE" | "TIME" | "TIMESTAMP"
+        | "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" | "VECTOR" => false,
+        "" => false,
+        _ => true,
+    }
+}
+
+fn catalog_text_byte_length(field: &Field, numeric_settings: &NumericSettings) -> Option<i32> {
+    if let Some(bl) = field
+        .metadata()
+        .get("byteLength")
+        .and_then(|s| s.parse::<i64>().ok())
+        .and_then(|v| i32::try_from(v).ok())
+    {
+        return Some(bl);
+    }
+    // A procedure signature carries no byteLength, so COLUMN_SIZE is scaled
+    // instead. Scaling that would be incorrect.
+    let max_bytes = i32::try_from(numeric_settings.max_varchar_size).unwrap_or(i32::MAX);
+    column_size_from_field(field, numeric_settings)
+        .ok()
+        .and_then(|s| i32::try_from(s).ok())
+        .map(|n| {
+            n.saturating_mul(CATALOG_TEXT_MAX_BYTES_PER_CHAR)
+                .min(max_bytes)
+        })
+}
+
 /// Catalog-only `BUFFER_LENGTH` for `SQLColumns` / `SQLProcedureColumns`.
 ///
 /// Exact numerics (`FIXED` / `DECFLOAT` → `SQL_DECIMAL` / `SQL_NUMERIC`) report
@@ -3237,6 +3270,9 @@ fn catalog_num_prec_radix(
 /// https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
 /// (e.g. `NUMERIC(10,3)` → 12). Unicode doubling does not apply: this driver's
 /// default C type for Decimal is narrow `SQL_C_CHAR`.
+///
+/// TEXT, and every type that maps to `SQL_VARCHAR` because the driver does not
+/// model it report `byteLength` when present, otherwise `COLUMN_SIZE * 4`.
 ///
 /// This is deliberately **separate** from `SnowflakeFieldType::octet_length`
 /// (the `SQLColAttribute(SQL_DESC_OCTET_LENGTH / DISPLAY_SIZE)` path on query
@@ -3257,9 +3293,24 @@ fn catalog_buffer_length(
             .and_then(|s| i32::try_from(s).ok())
             .map(|p| p.saturating_add(2));
     }
+    if catalog_uses_snowflake_text_byte_length(logical_type) {
+        return catalog_text_byte_length(field, numeric_settings);
+    }
     octet_length_from_field(field, numeric_settings)
         .ok()
         .and_then(|s| i32::try_from(s).ok())
+}
+
+fn catalog_char_octet_length(
+    logical_type: &str,
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Option<i32> {
+    if catalog_char_octet_length_applies(logical_type) {
+        catalog_buffer_length(logical_type, field, numeric_settings)
+    } else {
+        None
+    }
 }
 
 /// Whether `CHAR_OCTET_LENGTH` applies to `logical_type`. Character and binary types
@@ -3365,13 +3416,7 @@ fn flat_row_from_descriptor(
             .unwrap_or(odbc_sys::SqlDataType::VARCHAR.0),
     );
     let sql_dt_sub_val = sql_datetime_sub_from_logical_type(&desc.logical_type);
-    let char_octet_val = if catalog_char_octet_length_applies(&desc.logical_type) {
-        octet_length_from_field(&field, numeric_settings)
-            .ok()
-            .and_then(|s| i32::try_from(s).ok())
-    } else {
-        None
-    };
+    let char_octet_val = catalog_char_octet_length(&desc.logical_type, &field, numeric_settings);
 
     let nullable_val: i16 = if desc.nullable { 1 } else { 0 };
     let is_nullable_str = if desc.nullable { "YES" } else { "NO" };
@@ -5190,15 +5235,134 @@ mod procedure_columns_tests {
         // DECFLOAT is also exact-numeric (SQL_NUMERIC); same formula.
         let decfloat = rehydrate_field("DECFLOAT", Some(38), None, None, None, true);
         assert_eq!(catalog_buffer_length("DECFLOAT", &decfloat, &ns), Some(40));
+    }
 
-        // Non-numeric still delegates to shared octet_length.
-        let text_field = rehydrate_field("TEXT", None, None, Some(100), None, true);
+    #[test]
+    fn catalog_buffer_length_for_text_is_byte_length_not_locale() {
+        let ns = NumericSettings::default();
+
+        let text_no_byte_len = rehydrate_field("TEXT", None, None, Some(100), None, true);
         assert_eq!(
-            catalog_buffer_length("TEXT", &text_field, &ns),
-            octet_length_from_field(&text_field, &ns)
-                .ok()
-                .and_then(|s| i32::try_from(s).ok())
+            catalog_buffer_length("TEXT", &text_no_byte_len, &ns),
+            Some(400),
+            "VARCHAR without byteLength → charLength * 4"
         );
+        assert_eq!(
+            catalog_char_octet_length("TEXT", &text_no_byte_len, &ns),
+            catalog_buffer_length("TEXT", &text_no_byte_len, &ns),
+            "CHAR_OCTET_LENGTH must match BUFFER_LENGTH for TEXT"
+        );
+        let col_attr = octet_length_from_field(&text_no_byte_len, &ns).ok();
+        #[cfg(windows)]
+        assert_eq!(
+            col_attr,
+            Some(100),
+            "Windows ColAttribute octet_length stays single-byte"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            col_attr,
+            Some(if crate::api::encoding::is_ascii_locale() {
+                100
+            } else {
+                400
+            }),
+            "Unix ColAttribute octet_length stays locale-based"
+        );
+
+        let text_with_byte_len = rehydrate_field("TEXT", None, None, Some(16), Some(64), true);
+        assert_eq!(
+            catalog_buffer_length("TEXT", &text_with_byte_len, &ns),
+            Some(64),
+            "SHOW COLUMNS byteLength wins over charLength * 4"
+        );
+        assert_eq!(
+            catalog_char_octet_length("TEXT", &text_with_byte_len, &ns),
+            Some(64)
+        );
+
+        let binary = rehydrate_field("BINARY", None, None, None, Some(10), true);
+        assert_eq!(
+            catalog_buffer_length("BINARY", &binary, &ns),
+            Some(10),
+            "BINARY catalog sizes stay 1× byte length"
+        );
+        assert_eq!(catalog_char_octet_length("BINARY", &binary, &ns), Some(10));
+
+        let date = rehydrate_field("DATE", None, None, None, None, true);
+        assert_eq!(catalog_char_octet_length("DATE", &date, &ns), None);
+        assert_eq!(
+            catalog_buffer_length("DATE", &date, &ns),
+            Some(6),
+            "DATE BUFFER_LENGTH stays SQL_DATE_STRUCT size"
+        );
+
+        // Stands in for the whole category of logical types the driver does not
+        // model.
+        let unmodelled = rehydrate_field("NOT_A_SNOWFLAKE_TYPE", None, None, Some(100), None, true);
+        assert_eq!(
+            catalog_buffer_length("NOT_A_SNOWFLAKE_TYPE", &unmodelled, &ns),
+            Some(400),
+            "types that fall back to SQL_VARCHAR use the same 4× catalog byte length"
+        );
+        assert_eq!(
+            catalog_char_octet_length("NOT_A_SNOWFLAKE_TYPE", &unmodelled, &ns),
+            Some(400)
+        );
+        for logical_type in ["VARIANT", "OBJECT", "ARRAY"] {
+            assert!(
+                !catalog_uses_snowflake_text_byte_length(logical_type),
+                "{logical_type} must not use TEXT catalog byte-length rules"
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_buffer_length_for_varchar_is_capped_at_the_varchar_byte_maximum() {
+        let ns = NumericSettings::default();
+        let max_bytes = i32::try_from(ns.max_varchar_size).unwrap_or(i32::MAX);
+
+        // A procedure signature carries no byteLength, so BUFFER_LENGTH scales
+        // COLUMN_SIZE. An unsized VARCHAR takes COLUMN_SIZE from the session
+        // byte maximum, and scaling that would exceed what a VARCHAR can hold.
+        let unsized_varchar = field_from_sql_type_string("VARCHAR", &ns);
+        assert_eq!(
+            catalog_buffer_length("TEXT", &unsized_varchar, &ns),
+            Some(max_bytes),
+            "unsized VARCHAR BUFFER_LENGTH stays at the VARCHAR byte maximum"
+        );
+
+        let sized_varchar = field_from_sql_type_string("VARCHAR(100)", &ns);
+        assert_eq!(
+            catalog_buffer_length("TEXT", &sized_varchar, &ns),
+            Some(400),
+            "a sized VARCHAR is well under the maximum and still scales by 4"
+        );
+    }
+
+    #[test]
+    fn catalog_byte_length_exclusions_fold_case() {
+        for logical_type in [
+            "binary",
+            "variant",
+            "object",
+            "array",
+            "fixed",
+            "date",
+            "timestamp_ntz",
+            "vector",
+        ] {
+            assert!(
+                !catalog_uses_snowflake_text_byte_length(logical_type),
+                "{logical_type} must stay excluded whatever case SHOW COLUMNS reports"
+            );
+        }
+        for logical_type in ["text", "TEXT", "not_a_snowflake_type"] {
+            assert!(
+                catalog_uses_snowflake_text_byte_length(logical_type),
+                "{logical_type} maps to SQL_VARCHAR and takes the 4× byte length"
+            );
+        }
     }
 
     #[test]
