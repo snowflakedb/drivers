@@ -1,5 +1,6 @@
 #include "CArrowStreamTableIterator.hpp"
 
+#include <exception>
 #include <memory>
 #include <string>
 
@@ -13,6 +14,25 @@ Logger* CArrowStreamTableIterator::logger =
 namespace {
   void releaseStream(ArrowArrayStream* s) {
     if (s && s->release) s->release(s);
+  }
+
+  /**
+   * Invokes @p convert, translating any C++ exception into a Python
+   * exception. The Cython declarations of the methods below carry no
+   * `except +`, so an escaping C++ exception reaches a caller that cannot
+   * handle it and terminates the process. py::setPyError() acquires the GIL
+   * on its own, so this is usable inside a Py_BEGIN_ALLOW_THREADS block.
+   */
+  template <typename Fn>
+  void runTranslatingCxxExceptions(Fn&& convert) {
+    try {
+      convert();
+    } catch (const std::exception& e) {
+      py::setPyError(PyExc_Exception, e.what());
+    } catch (...) {
+      py::setPyError(PyExc_Exception,
+                     "[Snowflake Exception] unknown error while converting Arrow columns");
+    }
   }
 }  // namespace
 
@@ -121,10 +141,13 @@ uintptr_t CArrowStreamTableIterator::getConvertedSchemaPtr() {
     return 0;
   }
 
-  for (int64_t col = 0; col < m_columnCount; col++) {
-    m_converter->convertIfNeeded(m_streamSchemaExport->children[col], emptyView->children[col]);
-    if (py::checkPyError()) return 0;
-  }
+  runTranslatingCxxExceptions([this, &emptyView] {
+    for (int64_t col = 0; col < m_columnCount; col++) {
+      m_converter->convertIfNeeded(m_streamSchemaExport->children[col], emptyView->children[col]);
+      if (py::checkPyError()) return;
+    }
+  });
+  if (py::checkPyError()) return 0;
 
   return reinterpret_cast<uintptr_t>(m_streamSchemaExport.get());
 }
@@ -202,10 +225,12 @@ void CArrowStreamTableIterator::convertBatch() {
 
   {
     Py_BEGIN_ALLOW_THREADS
-    for (int64_t col = 0; col < m_columnCount; col++) {
-      m_converter->convertIfNeeded(m_exportSchema->children[col],
-                                   m_currentArrayView->children[col]);
-    }
+    runTranslatingCxxExceptions([this] {
+      for (int64_t col = 0; col < m_columnCount; col++) {
+        m_converter->convertIfNeeded(m_exportSchema->children[col],
+                                     m_currentArrayView->children[col]);
+      }
+    });
     Py_END_ALLOW_THREADS
   }
   // GIL is held again - surface any error set via py::setPyError
