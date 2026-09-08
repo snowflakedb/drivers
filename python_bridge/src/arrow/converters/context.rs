@@ -9,6 +9,7 @@ use crate::arrow::plan::{LogicalPlan, SnowflakeFieldType};
 use super::Column;
 use super::binary;
 use super::boolean;
+use super::number;
 use super::real;
 use super::text;
 
@@ -41,11 +42,13 @@ impl ConversionContext {
     ) -> PyResult<Column> {
         match *field_type {
             SnowflakeFieldType::Boolean => boolean::from_column(array, field_type),
+            SnowflakeFieldType::Number { scale, .. } => {
+                number::from_column(array, field_type, scale)
+            }
             SnowflakeFieldType::Real => real::from_column(array, field_type),
             SnowflakeFieldType::Varchar { .. } => text::from_column(array, field_type),
             SnowflakeFieldType::Binary { .. } => binary::from_column(array, field_type),
-            SnowflakeFieldType::Number { .. }
-            | SnowflakeFieldType::Date
+            SnowflakeFieldType::Date
             | SnowflakeFieldType::Time { .. }
             | SnowflakeFieldType::TimestampNtz { .. }
             | SnowflakeFieldType::TimestampLtz { .. }
