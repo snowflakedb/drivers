@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: "select \"ROWKIND\",\r\n    \"INTVAL\",\r\n    \"NUM18S6\",\r\n    \"VARCHARVAL\",\r\n    \"BOOLVAL\",\r\n    \"DATEVAL\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"ALLDATATYPESNAV\"\r\nwhere \"DATEVAL\" > ?\r\norder by \"VARCHARVAL\""
+  mapped: "select \"ROWKIND\",\r\n    \"INTVAL\",\r\n    \"NUM18S6\",\r\n    \"VARCHARVAL\",\r\n    \"BOOLVAL\",\r\n    \"DATEVAL\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"ALLDATATYPESNAV\"\r\nwhere \"DATEVAL\" > ?\r\norder by \"VARCHARVAL\""
+- index: 1
+  original: "select \"ROWKIND\",\r\n    \"INTVAL\",\r\n    \"NUM18S6\",\r\n    \"VARCHARVAL\",\r\n    \"BOOLVAL\",\r\n    \"DATEVAL\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"ALLDATATYPESNAV\"\r\nwhere \"DATEVAL\" > ?\r\norder by \"VARCHARVAL\""
+  mapped: "select \"ROWKIND\",\r\n    \"INTVAL\",\r\n    \"NUM18S6\",\r\n    \"VARCHARVAL\",\r\n    \"BOOLVAL\",\r\n    \"DATEVAL\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"ALLDATATYPESNAV\"\r\nwhere \"DATEVAL\" > ?\r\norder by \"VARCHARVAL\""
