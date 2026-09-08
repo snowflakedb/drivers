@@ -106,7 +106,11 @@ Review when working on structured-types support in the new driver:
 Review these files together. We want a much smaller suite (most logic belongs in `sf_core`), but
 it must still cover the different API usages — wildcards, streaming vs. regular execution, etc.
 
-- `integration/testPutGet.js`
+- `integration/testPutGet.js` — partially migrated. The `PUT GET test` compression roundtrip block
+  moved to `nodejs/tests/e2e/query/put-get/put-get.test.ts` and the `PUT GET overwrite test` block
+  moved to `nodejs/tests/e2e/query/put-get/put-get-overwrite.test.ts`; both were removed from the
+  snapshot. The remaining blocks (GCS downscoped credential, multiple files, without compress,
+  different size, relative path with `cwd`, error cases) are not yet migrated.
 - `integration/testPutSmallFiles.js`
 
 ### OCSP
