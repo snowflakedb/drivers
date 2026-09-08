@@ -94,7 +94,7 @@ def test_skip_json_unsupported_skips_unmarked(monkeypatch):
 def test_skip_json_unsupported_skips_nodejs_even_when_marked(monkeypatch):
     monkeypatch.delenv("PERF_RESULT_FORMAT", raising=False)
     monkeypatch.delenv("PERF_DRIVER", raising=False)
-    with pytest.raises(pytest.skip.Exception, match="JavaScript"):
+    with pytest.raises(pytest.skip.Exception, match="nodejs not supported"):
         _skip_json_unsupported(
             _FakeItem(markers=("supports_json",), driver="nodejs")
         )
