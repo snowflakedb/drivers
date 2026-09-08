@@ -337,7 +337,23 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
     }
 
     case SnowflakeType::Type::MAP: {
-      converter = std::make_shared<sf::MapConverter>(&schemaView, array, context, useNumpy);
+      switch (schemaView.type) {
+        case NANOARROW_TYPE_STRING:
+          converter = std::make_shared<sf::StringConverter>(array);
+          break;
+        case NANOARROW_TYPE_MAP:
+          converter = std::make_shared<sf::MapConverter>(&schemaView, array, context, useNumpy);
+          break;
+        default: {
+          std::string errorInfo = Logger::formatString(
+              "[Snowflake Exception] unknown arrow internal data type(%s) "
+              "for MAP data in %s",
+              NANOARROW_TYPE_ENUM_STRING[schemaView.type], schemaView.schema->name);
+          logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
+          PyErr_SetString(PyExc_Exception, errorInfo.c_str());
+          break;
+        }
+      }
       break;
     }
 

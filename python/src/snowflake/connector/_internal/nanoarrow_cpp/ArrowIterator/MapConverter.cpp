@@ -48,6 +48,13 @@ MapConverter::MapConverter(ArrowSchemaView* schemaView, ArrowArrayView* array, P
 }
 
 PyObject* MapConverter::toPyObject(int64_t rowIndex) const {
+  if (m_key_converter == nullptr || m_value_converter == nullptr) {
+    this->generateError(
+        "[Snowflake Exception] map column has no key/value converters; its arrow "
+        "schema was rejected while the converter was built");
+    return nullptr;
+  }
+
   if (ArrowArrayViewIsNull(m_array, rowIndex)) {
     Py_RETURN_NONE;
   }
