@@ -3243,6 +3243,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "sf_core",
+ "sf_output_format",
  "sf_types",
  "tokio",
  "tracing",
@@ -3583,6 +3584,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sf_core",
+ "sf_output_format",
  "sf_types",
  "snafu 0.8.9",
  "strum",
@@ -5109,6 +5111,10 @@ version = "0.0.1"
 dependencies = [
  "sf_mini_core",
 ]
+
+[[package]]
+name = "sf_output_format"
+version = "0.1.0"
 
 [[package]]
 name = "sf_params_codegen"

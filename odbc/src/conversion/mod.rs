@@ -21,6 +21,9 @@ mod decfloat_tests;
 mod getdata_probe_tests;
 mod int_fmt;
 mod interval;
+mod interval_result;
+#[cfg(test)]
+mod interval_result_tests;
 mod interval_str;
 #[cfg(test)]
 mod interval_str_tests;
@@ -481,6 +484,8 @@ enum SnowflakeFieldType {
     Real(real::SnowflakeReal),
     Decfloat(decfloat::SnowflakeDecfloat),
     Vector(vector::SnowflakeVector),
+    IntervalYearMonth(interval_result::IntervalYearMonthReader),
+    IntervalDayTime(interval_result::IntervalDayTimeReader),
 }
 
 impl SnowflakeFieldType {
@@ -551,6 +556,15 @@ impl SnowflakeFieldType {
             "DECFLOAT" => {
                 let precision = get_field_metadata(field, "precision")?;
                 Ok(Self::Decfloat(decfloat::SnowflakeDecfloat { precision }))
+            }
+            "INTERVAL_YEAR_MONTH" => Ok(Self::IntervalYearMonth(
+                interval_result::IntervalYearMonthReader,
+            )),
+            "INTERVAL_DAY_TIME" => {
+                let scale = get_field_metadata(field, "scale")?;
+                Ok(Self::IntervalDayTime(
+                    interval_result::IntervalDayTimeReader { scale },
+                ))
             }
             "OBJECT" | "ARRAY" | "VARIANT" => {
                 let len = match get_field_metadata(field, "charLength") {
@@ -641,6 +655,8 @@ impl SnowflakeFieldType {
             Self::Real(t) => t.sql_type(),
             Self::Decfloat(t) => t.sql_type(),
             Self::Vector(t) => t.sql_type(),
+            Self::IntervalYearMonth(t) => t.sql_type(),
+            Self::IntervalDayTime(t) => t.sql_type(),
         }
     }
 
@@ -658,6 +674,8 @@ impl SnowflakeFieldType {
             Self::Real(t) => t.column_size(),
             Self::Decfloat(t) => t.column_size(),
             Self::Vector(t) => t.column_size(),
+            Self::IntervalYearMonth(t) => t.column_size(),
+            Self::IntervalDayTime(t) => t.column_size(),
         }
     }
 
@@ -682,6 +700,8 @@ impl SnowflakeFieldType {
             Self::Real(t) => t.decimal_digits(),
             Self::Decfloat(t) => t.decimal_digits(),
             Self::Vector(t) => t.decimal_digits(),
+            Self::IntervalYearMonth(t) => t.decimal_digits(),
+            Self::IntervalDayTime(t) => t.decimal_digits(),
         }
     }
 
@@ -699,6 +719,8 @@ impl SnowflakeFieldType {
             Self::Real(_) => "DOUBLE",
             Self::Decfloat(_) => "NUMERIC",
             Self::Vector(_) => "VECTOR",
+            Self::IntervalYearMonth(_) => "INTERVAL YEAR TO MONTH",
+            Self::IntervalDayTime(_) => "INTERVAL DAY TO SECOND",
         }
     }
 
@@ -715,6 +737,8 @@ impl SnowflakeFieldType {
             Self::Binary(t) => 2 * t.len as odbc_sys::Len,
             Self::Real(_) => 24,
             Self::Vector(t) => t.column_size as odbc_sys::Len,
+            Self::IntervalYearMonth(t) => t.column_size() as odbc_sys::Len + 1,
+            Self::IntervalDayTime(t) => t.column_size() as odbc_sys::Len + 1,
         }
     }
 
@@ -731,6 +755,9 @@ impl SnowflakeFieldType {
             Self::Binary(t) => t.len as odbc_sys::Len,
             Self::Real(_) => 8,
             Self::Vector(t) => (t.column_size as odbc_sys::Len) * narrow_char_byte_width(),
+            Self::IntervalYearMonth(_) | Self::IntervalDayTime(_) => {
+                std::mem::size_of::<odbc_sys::IntervalStruct>() as odbc_sys::Len
+            }
         }
     }
 
@@ -775,7 +802,9 @@ impl SnowflakeFieldType {
             | Self::Time(_)
             | Self::TimestampNtz(_)
             | Self::TimestampLtz(_)
-            | Self::TimestampTz(_) => "'",
+            | Self::TimestampTz(_)
+            | Self::IntervalYearMonth(_)
+            | Self::IntervalDayTime(_) => "'",
             Self::Binary(_) => "0x",
             _ => "",
         }
@@ -788,7 +817,9 @@ impl SnowflakeFieldType {
             | Self::Time(_)
             | Self::TimestampNtz(_)
             | Self::TimestampLtz(_)
-            | Self::TimestampTz(_) => "'",
+            | Self::TimestampTz(_)
+            | Self::IntervalYearMonth(_)
+            | Self::IntervalDayTime(_) => "'",
             _ => "",
         }
     }
@@ -876,6 +907,48 @@ pub fn make_converter(
         SnowflakeFieldType::Vector(snowflake_type) => {
             make_converter!(arrow::array::FixedSizeListArray, snowflake_type, nullable)
         }
+        SnowflakeFieldType::IntervalYearMonth(snowflake_type) => match field.data_type() {
+            DataType::Int8 => {
+                make_primitive_data_converter!(Int8Type, snowflake_type, nullable)
+            }
+            DataType::Int16 => {
+                make_primitive_data_converter!(Int16Type, snowflake_type, nullable)
+            }
+            DataType::Int32 => {
+                make_primitive_data_converter!(Int32Type, snowflake_type, nullable)
+            }
+            DataType::Int64 => {
+                make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
+            }
+            DataType::Decimal128(_, _) => {
+                make_primitive_data_converter!(Decimal128Type, snowflake_type, nullable)
+            }
+            dt => UnsupportedArrowDataTypeSnafu {
+                data_type: dt.clone(),
+            }
+            .fail(),
+        },
+        SnowflakeFieldType::IntervalDayTime(snowflake_type) => match field.data_type() {
+            DataType::Int8 => {
+                make_primitive_data_converter!(Int8Type, snowflake_type, nullable)
+            }
+            DataType::Int16 => {
+                make_primitive_data_converter!(Int16Type, snowflake_type, nullable)
+            }
+            DataType::Int32 => {
+                make_primitive_data_converter!(Int32Type, snowflake_type, nullable)
+            }
+            DataType::Int64 => {
+                make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
+            }
+            DataType::Decimal128(_, _) => {
+                make_primitive_data_converter!(Decimal128Type, snowflake_type, nullable)
+            }
+            dt => UnsupportedArrowDataTypeSnafu {
+                data_type: dt.clone(),
+            }
+            .fail(),
+        },
     }
 }
 

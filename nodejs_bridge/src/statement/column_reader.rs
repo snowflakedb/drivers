@@ -3,7 +3,7 @@ use arrow::array::{
     Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, PrimitiveArray, StringArray,
     StructArray,
 };
-use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type};
+use arrow::datatypes::{ArrowPrimitiveType, DataType, Date32Type, Field, Int32Type, Int64Type};
 use chrono::NaiveTime;
 
 use super::column_reader_util::{
@@ -13,6 +13,7 @@ use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
 use super::time_format;
 use crate::session_params::KnownSessionParameters;
+use sf_output_format::{format_day_time, format_year_month};
 use sf_types::ReadArrowType;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -21,6 +22,9 @@ use std::sync::Arc;
 /// `TIME(9)`). A local naming choice, not an established convention —
 /// `odbc`'s and `sf_core`'s equivalent arithmetic leave this bare.
 const MAX_TIME_SCALE: u32 = 9;
+/// Snowflake's maximum `INTERVAL DAY TO SECOND` fractional-second precision,
+/// bounding the fraction width [`format_day_time`] emits.
+const MAX_INTERVAL_DAY_TIME_SCALE: u32 = 9;
 /// Seconds in a day — the exclusive upper bound for a valid
 /// `secs_since_midnight` component of the `secs * 10^scale + frac` TIME
 /// encoding (see [`validate_time_range`]).
@@ -79,6 +83,31 @@ pub(crate) enum ColumnReader {
     Decfloat {
         array: StructArray,
         precision: usize,
+    },
+    IntervalYearMonthI8(Int8Array),
+    IntervalYearMonthI16(Int16Array),
+    IntervalYearMonthI32(Int32Array),
+    IntervalYearMonthI64(Int64Array),
+    IntervalYearMonthDecimal(Decimal128Array),
+    IntervalDayTimeI8 {
+        array: Int8Array,
+        scale: u32,
+    },
+    IntervalDayTimeI16 {
+        array: Int16Array,
+        scale: u32,
+    },
+    IntervalDayTimeI32 {
+        array: Int32Array,
+        scale: u32,
+    },
+    IntervalDayTimeI64 {
+        array: Int64Array,
+        scale: u32,
+    },
+    IntervalDayTimeDecimal {
+        array: Decimal128Array,
+        scale: u32,
     },
 }
 
@@ -236,6 +265,68 @@ impl ColumnReader {
                     .map_err(|e| format!("DECFLOAT column: {e}"))?;
                 Ok(Self::Decfloat { array, precision })
             }
+            Some("INTERVAL_YEAR_MONTH") => match column.data_type() {
+                DataType::Int8 => Ok(Self::IntervalYearMonthI8(downcast_array(
+                    column,
+                    "Int8Array",
+                )?)),
+                DataType::Int16 => Ok(Self::IntervalYearMonthI16(downcast_array(
+                    column,
+                    "Int16Array",
+                )?)),
+                DataType::Int32 => Ok(Self::IntervalYearMonthI32(downcast_array(
+                    column,
+                    "Int32Array",
+                )?)),
+                DataType::Int64 => Ok(Self::IntervalYearMonthI64(downcast_array(
+                    column,
+                    "Int64Array",
+                )?)),
+                DataType::Decimal128(_, _) => Ok(Self::IntervalYearMonthDecimal(downcast_array(
+                    column,
+                    "Decimal128Array",
+                )?)),
+                other => Err(format!(
+                    "INTERVAL_YEAR_MONTH column {:?} has unsupported Arrow type {other}",
+                    field.name()
+                )),
+            },
+            Some("INTERVAL_DAY_TIME") => {
+                let scale = usize_from_metadata(field, "scale")? as u32;
+                if scale > MAX_INTERVAL_DAY_TIME_SCALE {
+                    return Err(format!(
+                        "column {:?} has INTERVAL scale {scale} exceeding maximum of \
+                         {MAX_INTERVAL_DAY_TIME_SCALE}",
+                        field.name()
+                    ));
+                }
+                match column.data_type() {
+                    DataType::Int8 => Ok(Self::IntervalDayTimeI8 {
+                        array: downcast_array(column, "Int8Array")?,
+                        scale,
+                    }),
+                    DataType::Int16 => Ok(Self::IntervalDayTimeI16 {
+                        array: downcast_array(column, "Int16Array")?,
+                        scale,
+                    }),
+                    DataType::Int32 => Ok(Self::IntervalDayTimeI32 {
+                        array: downcast_array(column, "Int32Array")?,
+                        scale,
+                    }),
+                    DataType::Int64 => Ok(Self::IntervalDayTimeI64 {
+                        array: downcast_array(column, "Int64Array")?,
+                        scale,
+                    }),
+                    DataType::Decimal128(_, _) => Ok(Self::IntervalDayTimeDecimal {
+                        array: downcast_array(column, "Decimal128Array")?,
+                        scale,
+                    }),
+                    other => Err(format!(
+                        "INTERVAL_DAY_TIME column {:?} has unsupported Arrow type {other}",
+                        field.name()
+                    )),
+                }
+            }
             Some(logical_type) => Err(format!(
                 "no decoder registered for logicalType {logical_type:?}"
             )),
@@ -308,6 +399,26 @@ impl ColumnReader {
             Self::RealF32(array) => read_real(array, row_index),
             Self::RealF64(array) => read_real(array, row_index),
             Self::Decfloat { array, precision } => read_decfloat(array, row_index, *precision),
+            Self::IntervalYearMonthI8(array) => read_interval_year_month(array, row_index),
+            Self::IntervalYearMonthI16(array) => read_interval_year_month(array, row_index),
+            Self::IntervalYearMonthI32(array) => read_interval_year_month(array, row_index),
+            Self::IntervalYearMonthI64(array) => read_interval_year_month(array, row_index),
+            Self::IntervalYearMonthDecimal(array) => read_interval_year_month(array, row_index),
+            Self::IntervalDayTimeI8 { array, scale } => {
+                read_interval_day_time(array, row_index, *scale)
+            }
+            Self::IntervalDayTimeI16 { array, scale } => {
+                read_interval_day_time(array, row_index, *scale)
+            }
+            Self::IntervalDayTimeI32 { array, scale } => {
+                read_interval_day_time(array, row_index, *scale)
+            }
+            Self::IntervalDayTimeI64 { array, scale } => {
+                read_interval_day_time(array, row_index, *scale)
+            }
+            Self::IntervalDayTimeDecimal { array, scale } => {
+                read_interval_day_time(array, row_index, *scale)
+            }
         }
     }
 }
@@ -408,6 +519,36 @@ where
             unreachable!("non-null, range-validated TIME cell always decodes to a NaiveTime")
         });
     time_format::render(time, meta.scale, &meta.params.time_output_format)
+}
+
+fn read_interval_year_month<T>(array: &PrimitiveArray<T>, row_index: usize) -> JsCell<'_>
+where
+    T: ArrowPrimitiveType,
+    T::Native: Into<i128>,
+{
+    read_cell(array, row_index, || {
+        let months = sf_types::SnowflakeIntervalYearMonth
+            .read_arrow_type(array, row_index)
+            .unwrap_or_else(|_| {
+                unreachable!("non-null interval cell always decodes to an integer")
+            });
+        JsCell::Str(Cow::Owned(format_year_month(months)))
+    })
+}
+
+fn read_interval_day_time<T>(array: &PrimitiveArray<T>, row_index: usize, scale: u32) -> JsCell<'_>
+where
+    T: ArrowPrimitiveType,
+    T::Native: Into<i128>,
+{
+    read_cell(array, row_index, || {
+        let nanos = sf_types::SnowflakeIntervalDayTime
+            .read_arrow_type(array, row_index)
+            .unwrap_or_else(|_| {
+                unreachable!("non-null interval cell always decodes to an integer")
+            });
+        JsCell::Str(Cow::Owned(format_day_time(nanos, scale)))
+    })
 }
 
 #[cfg(test)]
@@ -835,5 +976,121 @@ mod tests {
         );
         assert_eq!(reader.read(0), str_cell("123.456"));
         assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn interval_year_month_int64_reads_ansi_literal_and_null() {
+        let field = field("INTERVAL_YEAR_MONTH", DataType::Int64, &[]);
+        let array = Int64Array::from(vec![Some(27), Some(-27), Some(0), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::IntervalYearMonthI64(_)),
+            "INTERVAL_YEAR_MONTH should route to the IntervalYearMonthI64 arm"
+        );
+        assert_eq!(reader.read(0), str_cell("2-03"));
+        assert_eq!(reader.read(1), str_cell("-2-03"));
+        assert_eq!(reader.read(2), str_cell("0-00"));
+        assert_eq!(reader.read(3), JsCell::Null);
+    }
+
+    #[test]
+    fn interval_narrow_integers_keep_physical_type() {
+        let i8_field = field("INTERVAL_YEAR_MONTH", DataType::Int8, &[]);
+        let i8 = Int8Array::from(vec![Some(14i8)]);
+        let i8_reader = reader(&i8_field, &i8);
+        assert!(
+            matches!(i8_reader, ColumnReader::IntervalYearMonthI8(_)),
+            "Int8 INTERVAL_YEAR_MONTH should keep the IntervalYearMonthI8 arm, not widen to Int64"
+        );
+        assert_eq!(i8_reader.read(0), str_cell("1-02"));
+
+        let i16_field = field("INTERVAL_YEAR_MONTH", DataType::Int16, &[]);
+        let i16 = Int16Array::from(vec![Some(13i16)]);
+        let i16_reader = reader(&i16_field, &i16);
+        assert!(
+            matches!(i16_reader, ColumnReader::IntervalYearMonthI16(_)),
+            "Int16 INTERVAL_YEAR_MONTH should keep the IntervalYearMonthI16 arm, not widen to Int64"
+        );
+        assert_eq!(i16_reader.read(0), str_cell("1-01"));
+
+        let i32_field = field("INTERVAL_YEAR_MONTH", DataType::Int32, &[]);
+        let i32 = Int32Array::from(vec![Some(13)]);
+        let i32_reader = reader(&i32_field, &i32);
+        assert!(
+            matches!(i32_reader, ColumnReader::IntervalYearMonthI32(_)),
+            "Int32 INTERVAL_YEAR_MONTH should keep the IntervalYearMonthI32 arm, not widen to Int64"
+        );
+        assert_eq!(i32_reader.read(0), str_cell("1-01"));
+
+        let dt32_field = field("INTERVAL_DAY_TIME", DataType::Int32, &[("scale", "0")]);
+        let dt32 = Int32Array::from(vec![Some(2_000_000_000)]);
+        let dt32_reader = reader(&dt32_field, &dt32);
+        assert!(
+            matches!(dt32_reader, ColumnReader::IntervalDayTimeI32 { .. }),
+            "Int32 INTERVAL_DAY_TIME should keep the IntervalDayTimeI32 arm, not widen to Int64"
+        );
+        assert_eq!(dt32_reader.read(0), str_cell("0 00:00:02"));
+    }
+
+    #[test]
+    fn interval_year_month_decimal128() {
+        let field = field("INTERVAL_YEAR_MONTH", DataType::Decimal128(38, 0), &[]);
+        let array = Decimal128Array::from(vec![Some(25i128)])
+            .with_precision_and_scale(38, 0)
+            .unwrap();
+        assert_eq!(reader(&field, &array).read(0), str_cell("2-01"));
+    }
+
+    #[test]
+    fn interval_day_time_int64_scale_nine_and_null() {
+        let field = field("INTERVAL_DAY_TIME", DataType::Int64, &[("scale", "9")]);
+        let nanos: i64 = (86_400 + 2 * 3_600 + 3 * 60 + 4) * 1_000_000_000 + 500_000_000;
+        let array = Int64Array::from(vec![Some(nanos), None]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::IntervalDayTimeI64 { .. }),
+            "INTERVAL_DAY_TIME should route to the IntervalDayTimeI64 arm"
+        );
+        assert_eq!(reader.read(0), str_cell("1 02:03:04.500000000"));
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn interval_day_time_scale_zero_omits_fraction() {
+        let field = field("INTERVAL_DAY_TIME", DataType::Int64, &[("scale", "0")]);
+        let array = Int64Array::from(vec![Some(4 * 1_000_000_000)]);
+        assert_eq!(reader(&field, &array).read(0), str_cell("0 00:00:04"));
+    }
+
+    #[test]
+    fn interval_day_time_decimal128_beyond_i64() {
+        let field = field(
+            "INTERVAL_DAY_TIME",
+            DataType::Decimal128(38, 0),
+            &[("scale", "9")],
+        );
+        let beyond = i64::MAX as i128 + 1;
+        let array = Decimal128Array::from(vec![Some(beyond)])
+            .with_precision_and_scale(38, 0)
+            .unwrap();
+        assert_eq!(
+            reader(&field, &array).read(0),
+            str_cell("106751 23:47:16.854775808")
+        );
+    }
+
+    #[test]
+    fn interval_day_time_rejects_scale_above_nine() {
+        let field = field("INTERVAL_DAY_TIME", DataType::Int64, &[("scale", "10")]);
+        let array = Int64Array::from(vec![Some(0)]);
+        let err = expect_err(ColumnReader::for_field(
+            &field,
+            &array,
+            &session_params("HH24:MI:SS"),
+        ));
+        assert!(
+            err.contains("scale 10"),
+            "error should name the invalid scale, got: {err}"
+        );
     }
 }
