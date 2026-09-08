@@ -45,6 +45,7 @@ ENV AWS_LC_FIPS_SYS_CC=clang
 COPY Cargo.toml Cargo.lock build_common.rs ./
 COPY sf_core/ ./sf_core/
 COPY sf_types/ ./sf_types/
+COPY sf_output_format/ ./sf_output_format/
 COPY sf_params_spec/ ./sf_params_spec/
 COPY sf_params_codegen/ ./sf_params_codegen/
 COPY sf_mini_core/ ./sf_mini_core/
