@@ -1,0 +1,7 @@
+# XP requires the oldest conda-forge sysroot available on both target architectures.
+channel_sources:
+  - conda-forge
+c_stdlib:
+  - sysroot
+c_stdlib_version:
+  - "2.17"

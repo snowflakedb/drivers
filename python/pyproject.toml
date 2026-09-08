@@ -25,7 +25,12 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "cryptography>=46.0.5",
-    "protobuf>=6.32.1",
+    # Snowflake's in-platform Anaconda channel (Python UDF / stored-procedure
+    # resolve) tops out at protobuf 6.33.5; 7.x is not mirrored. A 7.x protoc
+    # bakes gencode that fails sproc import with
+    # VersionError: gencode 7.x runtime 6.33.5. Cap here so conda recipe run
+    # deps stay in lockstep (validate_deps_sync.py) and pip cannot pull 7.x.
+    "protobuf>=6.32.1,<7",
     "pytz",
     "tomlkit>=0.13",
 ]
@@ -245,7 +250,7 @@ dependencies = [
     # Keep in sync with `[project].dependencies` plus numpy (referenced by
     # arrow_context.py type hints).
     "cryptography>=46.0.5",
-    "protobuf>=6.32.1",
+    "protobuf>=6.32.1,<7",
     "pytz",
     "tomlkit>=0.13",
     # Cap < 2.3 to match the mypy `python_version = "3.10"` target: numpy 2.3
