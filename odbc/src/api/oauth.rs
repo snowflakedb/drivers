@@ -85,11 +85,14 @@ pub const OAUTH_ENABLE_DPOP: &str = "OAUTH_ENABLE_DPOP";
 pub const OAUTH_DISABLE_CONSOLE_LOGIN: &str = "OAUTH_DISABLE_CONSOLE_LOGIN";
 
 /// All ODBC DSN/connection-string keys defined by the OAuth feature.
-/// Consumed by [`api::error`](crate::api::error) to extend the
-/// SQLSTATE-`28000` classifier with every OAuth parameter so missing
-/// or invalid OAuth keys map to an auth-class SQLSTATE instead of the
-/// generic `HY000`. Also serves as the iteration list for the
-/// canonical-name guard tests.
+///
+/// The SQLSTATE classifier in [`api::error`](crate::api::error) no longer reads
+/// this — it asks the registry's `auth` flag instead — so the only remaining
+/// consumer is the canonical-name guard tests, which iterate it to prove every
+/// OAuth key round-trips through [`canonical_name`]. It disappears with
+/// [`OAUTH_CANONICAL_NAMES`] once the connection-string normalizer resolves
+/// keys through the registry directly (TODO(SNOW-3552555)).
+#[allow(dead_code)] // test-only consumer; see doc comment
 pub const ALL_OAUTH_KEYS: &[&str] = &[
     OAUTH_CLIENT_ID,
     OAUTH_CLIENT_SECRET,
