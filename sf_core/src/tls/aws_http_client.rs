@@ -4,17 +4,33 @@
 //! trust store — no min/max protocol-version knob, no CRL hook, no custom root
 //! store — so it cannot honour the connection's full [`TlsConfig`]. This adapter
 //! instead hands the AWS SDK an [`HttpClient`] over the same `reqwest::Client`
-//! Azure and GCS transfers build via [`configure_storage_client_builder`], so S3
-//! inherits one implementation of the connection's TLS policy (version window,
-//! CRL, custom root store), proxy handling (`proxy_host`/`proxy_port`/`no_proxy`/
-//! `use_proxy_env`, HTTPS CONNECT-tunnelling, `HTTP_PROXY`/`HTTPS_PROXY` fallback),
-//! and gzip disabled so response bodies arrive exactly as they were on the wire.
+//! stack that Azure and GCS transfers build via [`configure_tls_builder`], so every
+//! AWS SDK consumer (S3 transfers, the WIF STS calls, platform detection's STS
+//! probe) inherits one implementation of the connection's TLS policy (version
+//! window, CRL, custom root store) and proxy handling (`proxy_host`/
+//! `proxy_port`/`no_proxy`/`use_proxy_env`, HTTPS CONNECT-tunnelling,
+//! `HTTP_PROXY`/`HTTPS_PROXY` fallback).
+//!
+//! It stops one step short of [`configure_storage_client_builder`](crate::tls::client::configure_storage_client_builder), the storage
+//! clients' entry point, which is that function plus `.no_gzip()`. Gzip has to
+//! be off here too — the driver treats downloaded bytes as opaque, so digest,
+//! Content-Length and ranged-offset math all assume wire bytes are body bytes
+//! (SNOW-4073008) — but [`AwsSdkReqwestClient::with_default_tls`] has no
+//! connection `TlsConfig` and so cannot route through the storage builder at
+//! all. Applying it alongside the other two adjustments keeps one place
+//! responsible for all three, on both constructors.
 //!
 //! Two further `reqwest` defaults are adjusted for the SDK:
 //! - redirect following — the SDK owns signing and retries, and a SigV4-signed
 //!   request cannot be redirected without re-signing;
 //! - HTTP version — pinned to HTTP/1.1 to match the AWS SDK's default connector
 //!   rather than negotiating HTTP/2 via the enabled `http2` feature.
+//!
+//! Those adjustments are builder-level, so they cannot be applied to an
+//! already-built general-purpose client. [`AwsSdkReqwestClient`] makes that
+//! constraint structural: it is the only type [`reqwest_aws_http_client`]
+//! accepts, and its constructors are the only way to obtain one, so a client
+//! with reqwest's general defaults cannot back the SDK adapter.
 
 use aws_smithy_runtime_api::client::http::{
     HttpClient, HttpConnector, HttpConnectorFuture, HttpConnectorSettings, SharedHttpConnector,
@@ -26,44 +42,90 @@ use aws_smithy_types::body::SdkBody;
 use snafu::ResultExt;
 
 use crate::crl::worker::SharedCrlWorker;
-use crate::tls::client::configure_storage_client_builder;
+use crate::tls::client::configure_tls_builder;
 use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::error::{ClientBuildSnafu, TlsError};
 
-/// Builds the `reqwest::Client` that backs the S3 [`HttpClient`] adapter.
-///
-/// Delegates to [`configure_storage_client_builder`] — the exact TLS + proxy +
-/// `.no_gzip()` path Azure and GCS transfers use — so S3 gets identical
-/// `TlsConfig`/`ProxyConfig` handling and wire-byte bodies, then chains two
-/// S3-only `reqwest` options the AWS SDK must own itself: redirect following
-/// (SigV4 re-signing) and HTTP/1.1 (`http1_only`) so this client matches the
-/// AWS SDK's own default connector rather than negotiating HTTP/2 via the
-/// enabled `http2` feature. Pinning those here, at the S3-specific call site,
-/// leaves the shared Azure/GCS path untouched. No request-level `.timeout()` is
-/// set: the SDK's `TimeoutConfig` (`operation_attempt_timeout`/`operation_timeout`)
-/// governs S3 request timing.
-///
-/// Connection-pool tuning is deliberately left at `reqwest`'s defaults (no
-/// `pool_idle_timeout`/`pool_max_idle_per_host`/`tcp_keepalive`), matching
-/// Azure/GCS on this shared entry point; only the GS/REST client tunes the pool
-/// (via `configure_http_client`).
-pub(crate) fn build_s3_reqwest_client(
-    tls_config: &TlsConfig,
-    proxy: Option<&ProxyConfig>,
-    crl_worker: SharedCrlWorker,
-) -> Result<reqwest::Client, TlsError> {
-    configure_storage_client_builder(reqwest::Client::builder(), tls_config, proxy, crl_worker)?
-        .redirect(reqwest::redirect::Policy::none())
-        .http1_only()
-        .build()
-        .context(ClientBuildSnafu)
+/// A `reqwest::Client` carrying the three SDK-owned transport adjustments
+/// (no redirect following, no gzip auto-decompression, HTTP/1.1 only — see the
+/// module docs for why each matters). Constructing one is the only way to back
+/// [`reqwest_aws_http_client`], which is what keeps a general-purpose client —
+/// whose builder-level defaults cannot be un-done after `build()` — out of the
+/// AWS SDK transport.
+#[derive(Clone, Debug)]
+pub(crate) struct AwsSdkReqwestClient(reqwest::Client);
+
+impl AwsSdkReqwestClient {
+    /// Builds the SDK-backing client for a connection context.
+    ///
+    /// Delegates to [`configure_tls_builder`] — the TLS + proxy core that the
+    /// Azure and GCS transfers also reach, through the `.no_gzip()` wrapper
+    /// [`configure_storage_client_builder`](crate::tls::client::configure_storage_client_builder) — so the SDK gets identical
+    /// `TlsConfig`/`ProxyConfig` handling, then applies the SDK adjustments
+    /// (gzip among them, see the module docs).
+    /// No request-level `.timeout()` is set: the SDK's `TimeoutConfig`
+    /// (`operation_attempt_timeout`/`operation_timeout`) governs request
+    /// timing.
+    ///
+    /// Connection-pool tuning is deliberately left at `reqwest`'s defaults (no
+    /// `pool_idle_timeout`/`pool_max_idle_per_host`/`tcp_keepalive`), matching
+    /// Azure/GCS on this shared entry point; only the GS/REST client tunes the
+    /// pool (via `configure_http_client`).
+    pub(crate) fn build(
+        tls_config: &TlsConfig,
+        proxy: Option<&ProxyConfig>,
+        crl_worker: SharedCrlWorker,
+    ) -> Result<Self, TlsError> {
+        Self::finish(configure_tls_builder(
+            reqwest::Client::builder(),
+            tls_config,
+            proxy,
+            crl_worker,
+        )?)
+    }
+
+    /// Builds an SDK-backing client with reqwest's default TLS (no connection
+    /// `TlsConfig` to honour), for contexts that have no connection: the
+    /// `wif_create_attestation` RPC (no `conn_handle`, see SNOW-2912540) and
+    /// platform detection's STS probe. Proxy env vars
+    /// (`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`) are still auto-detected, same
+    /// as a plain `reqwest::Client::new()`.
+    ///
+    /// Installs the process crypto provider itself (this can be the first
+    /// client the process builds) and applies the same fail-closed FIPS gate
+    /// as [`configure_tls_builder`].
+    pub(crate) fn with_default_tls() -> Result<Self, TlsError> {
+        crate::tls::ensure_crypto_provider();
+        crate::tls::require_fips_provider()?;
+        Self::finish(reqwest::Client::builder())
+    }
+
+    fn finish(builder: reqwest::ClientBuilder) -> Result<Self, TlsError> {
+        builder
+            .redirect(reqwest::redirect::Policy::none())
+            .no_gzip()
+            .http1_only()
+            .build()
+            .context(ClientBuildSnafu)
+            .map(Self)
+    }
+
+    /// Unwraps the client so tests can probe it directly (TLS version window,
+    /// ALPN pinning). One-directional escape hatch: a constrained client used
+    /// generally is harmless, while the reverse — a general client backing the
+    /// SDK — is what the newtype exists to prevent. Test-gated because no
+    /// production path unwraps.
+    #[cfg(test)]
+    pub(crate) fn into_inner(self) -> reqwest::Client {
+        self.0
+    }
 }
 
-/// Wraps a `reqwest::Client` in an [`HttpClient`] the AWS SDK can consume via
-/// `aws_config::defaults(...).http_client(...)`.
-pub(crate) fn reqwest_aws_http_client(client: reqwest::Client) -> impl HttpClient + 'static {
+/// Wraps an [`AwsSdkReqwestClient`] in an [`HttpClient`] the AWS SDK can
+/// consume via `aws_config::defaults(...).http_client(...)`.
+pub(crate) fn reqwest_aws_http_client(client: AwsSdkReqwestClient) -> impl HttpClient + 'static {
     ReqwestHttpClient {
-        connector: SharedHttpConnector::new(ReqwestConnector { client }),
+        connector: SharedHttpConnector::new(ReqwestConnector { client: client.0 }),
     }
 }
 
@@ -143,8 +205,9 @@ mod tests {
     use tokio::net::TcpListener;
 
     fn default_client() -> reqwest::Client {
-        build_s3_reqwest_client(&TlsConfig::default(), None, CrlWorker::new_lazy())
-            .expect("default S3 reqwest client must build")
+        AwsSdkReqwestClient::build(&TlsConfig::default(), None, CrlWorker::new_lazy())
+            .expect("default SDK reqwest client must build")
+            .into_inner()
     }
 
     /// Serves exactly one HTTP/1.1 request on a fresh loopback port, replying
@@ -206,7 +269,7 @@ mod tests {
             },
             ..TlsConfig::default()
         };
-        build_s3_reqwest_client(&cfg, None, CrlWorker::new_lazy())
+        AwsSdkReqwestClient::build(&cfg, None, CrlWorker::new_lazy())
             .expect("TLS 1.3-only window must build");
     }
 
@@ -219,7 +282,7 @@ mod tests {
             },
             ..TlsConfig::default()
         };
-        build_s3_reqwest_client(&cfg, None, CrlWorker::new_lazy())
+        AwsSdkReqwestClient::build(&cfg, None, CrlWorker::new_lazy())
             .expect("TLS 1.2-only window must build");
     }
 
@@ -230,7 +293,7 @@ mod tests {
             port: Some(3128),
             ..Default::default()
         };
-        build_s3_reqwest_client(&TlsConfig::default(), Some(&proxy), CrlWorker::new_lazy())
+        AwsSdkReqwestClient::build(&TlsConfig::default(), Some(&proxy), CrlWorker::new_lazy())
             .expect("explicit-proxy client must build");
     }
 
@@ -371,7 +434,7 @@ mod tests {
 
         // A TLS 1.3-only floor against a server that only offers TLS 1.2 must
         // fail the handshake.
-        let narrow_client = build_s3_reqwest_client(
+        let narrow_client = AwsSdkReqwestClient::build(
             &TlsConfig {
                 custom_root_store_path: Some(cert_file.path().to_path_buf()),
                 versions: TlsVersions {
@@ -383,7 +446,8 @@ mod tests {
             None,
             CrlWorker::new_lazy(),
         )
-        .expect("client must build");
+        .expect("client must build")
+        .into_inner();
         let resp = narrow_client.get(&url).send().await;
         assert!(
             resp.is_err(),
@@ -394,7 +458,7 @@ mod tests {
         // default window (which includes TLS 1.2), must succeed — proving the
         // rejection above is specifically the version floor, not a cert or
         // connectivity problem.
-        let permissive_client = build_s3_reqwest_client(
+        let permissive_client = AwsSdkReqwestClient::build(
             &TlsConfig {
                 custom_root_store_path: Some(cert_file.path().to_path_buf()),
                 ..TlsConfig::default()
@@ -402,7 +466,8 @@ mod tests {
             None,
             CrlWorker::new_lazy(),
         )
-        .expect("client must build");
+        .expect("client must build")
+        .into_inner();
         let resp = permissive_client.get(&url).send().await;
         assert!(
             resp.is_ok(),
@@ -472,7 +537,7 @@ mod tests {
         (addr, cert_pem, alpn_rx)
     }
 
-    /// `build_s3_reqwest_client` pins the client to HTTP/1.1 (`.http1_only()`) so
+    /// `AwsSdkReqwestClient` pins the client to HTTP/1.1 (`.http1_only()`) so
     /// it never negotiates HTTP/2 with S3, even though the `http2` feature is
     /// compiled in. Against a TLS server offering both `h2` (preferred) and
     /// `http/1.1`, a client that still advertised `h2` would negotiate it — so
@@ -486,7 +551,7 @@ mod tests {
         cert_file.write_all(cert_pem.as_bytes()).expect("write pem");
         cert_file.flush().expect("flush");
 
-        let client = build_s3_reqwest_client(
+        let client = AwsSdkReqwestClient::build(
             &TlsConfig {
                 custom_root_store_path: Some(cert_file.path().to_path_buf()),
                 ..TlsConfig::default()
@@ -494,7 +559,8 @@ mod tests {
             None,
             CrlWorker::new_lazy(),
         )
-        .expect("client must build");
+        .expect("client must build")
+        .into_inner();
 
         let url = format!("https://127.0.0.1:{}/", addr.port());
         let response =

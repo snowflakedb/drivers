@@ -33,6 +33,7 @@ use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::collections::BTreeMap;
 
 use crate::config::rest_parameters::WorkloadIdentityConfig;
+use crate::tls::aws_http_client::AwsSdkReqwestClient;
 
 use super::AttestationEndpoints;
 
@@ -51,6 +52,12 @@ type HmacSha256 = Hmac<Sha256>;
 pub enum AwsAttestationError {
     #[snafu(display("No AWS credentials provider configured"))]
     NoCredentialsProvider {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to build the AWS SDK HTTP client"))]
+    SdkHttpClient {
+        source: crate::tls::error::TlsError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -110,14 +117,14 @@ pub enum AwsAttestationError {
 /// `workload_identity_aws_use_outbound_token=true` or
 /// `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN=true`.
 pub(super) async fn get_attestation_token(
-    client: &reqwest::Client,
+    sdk_http: &AwsSdkReqwestClient,
     config: &WorkloadIdentityConfig,
     endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
     if enable_outbound_token(config) {
-        get_web_identity_token(client, config, endpoints).await
+        get_web_identity_token(sdk_http, config, endpoints).await
     } else {
-        get_caller_identity_token(config, endpoints).await
+        get_caller_identity_token(sdk_http, config, endpoints).await
     }
 }
 
@@ -138,11 +145,12 @@ fn enable_outbound_token(config: &WorkloadIdentityConfig) -> bool {
 /// Build a pre-signed STS `GetCallerIdentity` request and return it
 /// base64-encoded as `{"url":…,"method":"POST","headers":{…}}`.
 async fn get_caller_identity_token(
+    sdk_http: &AwsSdkReqwestClient,
     config: &WorkloadIdentityConfig,
     endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
     let region = resolve_region(endpoints).await;
-    let credentials = resolve_credentials(config, &region).await?;
+    let credentials = resolve_credentials(sdk_http, config, &region).await?;
 
     let now = chrono::Utc::now();
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
@@ -241,22 +249,19 @@ fn build_signed_caller_identity_request(
 ///
 /// Only called when `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN=true`.
 async fn get_web_identity_token(
-    _client: &reqwest::Client,
+    sdk_http: &AwsSdkReqwestClient,
     config: &WorkloadIdentityConfig,
     endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
     let region = resolve_region(endpoints).await;
-    let sdk_config = aws_config::defaults(BehaviorVersion::latest())
-        .region(Region::new(region.clone()))
-        .load()
-        .await;
+    let sdk_config = sdk_config_with_shared_transport(sdk_http, &region, None).await;
 
     let sts_client = StsClient::new(&sdk_config);
 
     let credentials = if config.impersonation_path.is_empty() {
         None
     } else {
-        Some(chain_assume_role(&region, &config.impersonation_path).await?)
+        Some(chain_assume_role(sdk_http, &region, &config.impersonation_path).await?)
     };
 
     let final_sts_client = if let Some(creds) = credentials {
@@ -306,17 +311,45 @@ fn sts_sdk_error_status<E>(err: &aws_sdk_sts::error::SdkError<E>) -> Option<u16>
     }
 }
 
+/// Builds an AWS SDK config whose HTTP client is the driver's shared reqwest
+/// transport, the same adapter S3 transfers use.
+///
+/// Without this the AWS SDK falls back to `aws-smithy-http-client`'s own
+/// bundled TLS stack, which honours none of the connection's `TlsConfig` --
+/// no protocol-version window, no CRL revocation checking, no custom root
+/// store -- and none of its proxy settings. Routing STS through the shared
+/// transport keeps WIF on one implementation of the connection's TLS policy
+/// and keeps the crypto backend consistent with the rest of the driver.
+///
+/// Takes [`AwsSdkReqwestClient`] rather than a bare `reqwest::Client` because
+/// these are SigV4-signed SDK calls: the transport must not follow redirects,
+/// auto-decompress, or negotiate HTTP/2 (see `tls::aws_http_client`), and the
+/// newtype is what guarantees a general-purpose client cannot end up here.
+async fn sdk_config_with_shared_transport(
+    sdk_http: &AwsSdkReqwestClient,
+    region: &str,
+    credentials: Option<&Credentials>,
+) -> aws_config::SdkConfig {
+    let mut loader = aws_config::defaults(BehaviorVersion::latest())
+        .region(Region::new(region.to_string()))
+        .http_client(crate::tls::aws_http_client::reqwest_aws_http_client(
+            sdk_http.clone(),
+        ));
+    if let Some(creds) = credentials {
+        loader = loader.credentials_provider(SharedCredentialsProvider::new(creds.clone()));
+    }
+    loader.load().await
+}
+
 /// Resolve final credentials: load ambient creds and optionally walk an
 /// impersonation chain via `sts:AssumeRole`.
 async fn resolve_credentials(
+    sdk_http: &AwsSdkReqwestClient,
     config: &WorkloadIdentityConfig,
     region: &str,
 ) -> Result<Credentials, AwsAttestationError> {
     if config.impersonation_path.is_empty() {
-        let sdk_config = aws_config::defaults(BehaviorVersion::latest())
-            .region(Region::new(region.to_string()))
-            .load()
-            .await;
+        let sdk_config = sdk_config_with_shared_transport(sdk_http, region, None).await;
         let provider = sdk_config
             .credentials_provider()
             .context(NoCredentialsProviderSnafu)?;
@@ -326,7 +359,7 @@ async fn resolve_credentials(
             .boxed()
             .context(CredentialsLoadSnafu)
     } else {
-        chain_assume_role(region, &config.impersonation_path).await
+        chain_assume_role(sdk_http, region, &config.impersonation_path).await
     }
 }
 
@@ -348,6 +381,7 @@ trait AssumeRoleProvider: Send + Sync {
 /// Production [`AssumeRoleProvider`]: issues a real `sts:AssumeRole` call
 /// via `aws_sdk_sts::Client`.
 struct StsAssumeRoleProvider {
+    sdk_http: AwsSdkReqwestClient,
     region: String,
 }
 
@@ -358,12 +392,8 @@ impl AssumeRoleProvider for StsAssumeRoleProvider {
         credentials: Option<&'a Credentials>,
     ) -> BoxFuture<'a, Result<Credentials, AwsAttestationError>> {
         async move {
-            let mut loader = aws_config::defaults(BehaviorVersion::latest())
-                .region(Region::new(self.region.clone()));
-            if let Some(creds) = credentials {
-                loader = loader.credentials_provider(SharedCredentialsProvider::new(creds.clone()));
-            }
-            let sdk_config = loader.load().await;
+            let sdk_config =
+                sdk_config_with_shared_transport(&self.sdk_http, &self.region, credentials).await;
             let client = StsClient::new(&sdk_config);
 
             let session_name = format!("snowflake-wif-{}", std::process::id());
@@ -410,10 +440,12 @@ impl AssumeRoleProvider for StsAssumeRoleProvider {
 /// Walk an impersonation chain via `sts:AssumeRole`, returning the
 /// credentials obtained after assuming all roles in `region`.
 async fn chain_assume_role(
+    sdk_http: &AwsSdkReqwestClient,
     region: &str,
     role_arns: &[String],
 ) -> Result<Credentials, AwsAttestationError> {
     let provider = StsAssumeRoleProvider {
+        sdk_http: sdk_http.clone(),
         region: region.to_string(),
     };
     chain_assume_role_via(&provider, role_arns).await
@@ -460,6 +492,7 @@ async fn resolve_region(endpoints: &AttestationEndpoints) -> String {
 }
 
 async fn try_imds_region(imds_base_url: &str) -> Option<String> {
+    crate::tls::ensure_crypto_provider();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
@@ -779,7 +812,9 @@ mod tests {
                 ("AWS_EC2_METADATA_DISABLED", Some("true")),
             ],
             async {
-                let err = resolve_credentials(&config, "us-east-1")
+                let sdk_http = AwsSdkReqwestClient::with_default_tls()
+                    .expect("default-TLS SDK client must build");
+                let err = resolve_credentials(&sdk_http, &config, "us-east-1")
                     .await
                     .expect_err("expected no ambient AWS credentials to be found");
                 assert!(

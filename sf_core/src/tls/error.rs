@@ -48,6 +48,15 @@ pub enum TlsError {
         location: Location,
     },
 
+    #[snafu(display(
+        "driver was built with the `fips-tls` feature but the active rustls crypto provider \
+         is not in FIPS mode; refusing to create a TLS client"
+    ))]
+    FipsModeUnavailable {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to build WebPki verifier"))]
     VerifierBuild {
         source: Box<dyn std::error::Error + Send + Sync>,

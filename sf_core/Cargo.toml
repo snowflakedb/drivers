@@ -11,7 +11,20 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["protobuf", "sonic-json"]
 sonic-json = ["sonic-rs"]
-fips = ["rustls/fips"]
+# Swaps the TLS backend to aws-lc-fips-sys. `aws-lc-rs/fips` is named explicitly
+# rather than left to cargo feature unification: `tls::x509_utils` calls
+# `aws_lc_rs::signature::*` directly for CRL verification, and those calls must
+# run against the FIPS module by declaration, not by accident of the resolver
+# happening to unify rustls's transitive activation into the same crate.
+#
+# Named `fips-tls` rather than `fips` because it covers TLS only. JWT signing,
+# stage file encryption, DPoP and key parsing still run on OpenSSL, which has no
+# FIPS-validated provider -- and under `vendored-openssl` that unvalidated copy
+# is statically linked where a customer cannot replace it. An artifact built
+# from this feature is therefore not a FIPS artifact, and the narrower name is
+# what keeps the two apart: `fips` is left unclaimed for the complete thing,
+# once the non-TLS crypto is ported off OpenSSL.
+fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
 protobuf = ["prost", "proto_utils"]
 vendored-openssl = ["openssl/vendored"]
 auth_mfa_e2e = []
@@ -37,11 +50,23 @@ bytes = "1"
 # rustls is the driver's only TLS backend. `default-features = false` drops
 # reqwest's `default-tls` (native-tls/OpenSSL/SChannel) so it is not compiled in
 # at all and rustls becomes the default backend uniformly (the CRL path and the
-# storage clients already use rustls). `rustls-tls-native-roots` keeps the OS
-# trust store as the default root source, matching the prior native-tls
-# behaviour. `charset`/`http2`/`macos-system-configuration` are re-added from
-# reqwest's default set (only `default-tls` is intentionally dropped).
-reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "gzip", "stream", "http2", "charset", "macos-system-configuration"] }
+# storage clients already use rustls). The root store is bundled webpki roots
+# plus the OS trust store: `rustls-tls-webpki-roots-no-provider` +
+# `rustls-tls-native-roots-no-provider` is the same composition the previous
+# `rustls-tls` (an alias for `rustls-tls-webpki-roots`) + `rustls-tls-native-roots`
+# selection produced. `charset`/`http2`/`macos-system-configuration` are
+# re-added from reqwest's default set (only `default-tls` is intentionally
+# dropped).
+#
+# The `-no-provider` variants are deliberate: plain `rustls-tls` /
+# `rustls-tls-native-roots` pull reqwest's `__rustls-ring`, which links `ring`
+# and -- more importantly -- makes reqwest silently fall back to
+# `rustls::crypto::ring::default_provider()` for any client built before a
+# process default is installed. `ring` is not a FIPS-validated module, so that
+# fallback would quietly defeat `--features fips-tls`. Without it reqwest instead
+# panics ("No provider set"), which is why every client construction path calls
+# `tls::ensure_crypto_provider()` first.
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls-no-provider", "rustls-tls-native-roots-no-provider", "rustls-tls-webpki-roots-no-provider", "gzip", "stream", "http2", "charset", "macos-system-configuration"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value"] }
 futures = "0.3"
@@ -59,7 +84,13 @@ arrow-ipc = ">=54.0.0, <59"
 flate2 = "1.1.2"
 openssl = "0.10.73"
 jwt = { version = "0.16.0", features = ["openssl"] }
-oauth2 = { version = "5", features = ["timing-resistant-secret-traits"] }
+# `default-features = false` drops oauth2's `rustls-tls`, which is only a
+# forwarder to `reqwest/rustls-tls` -- and that pulls `__rustls-ring`, which via
+# cargo feature unification would re-arm reqwest's silent ring fallback for the
+# whole build and defeat the `-no-provider` selection above. The `reqwest`
+# feature is kept; oauth2 still gets a TLS-capable reqwest because sf_core
+# selects reqwest's rustls features directly.
+oauth2 = { version = "5", default-features = false, features = ["reqwest", "timing-resistant-secret-traits"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 webbrowser = "1"
 http = "1"
@@ -99,7 +130,6 @@ glob = "0.3.3"
 # CRL and TLS dependencies
 rustls = { version = "0.23.20", features = ["aws_lc_rs"] }
 rustls-pemfile = "2.2.0"
-rustls-webpki = "0.102"
 rustls-native-certs = "0.8"
 thiserror = "1.0.69"
 aws-lc-rs = "1.13.2"
@@ -149,7 +179,12 @@ flate2 = "1.1.2"
 test-case = "3.3.1"
 # Dev/test reqwest: also rustls-only so test builds don't re-introduce
 # native-tls (feature unification would otherwise pull `default-tls` back in).
-reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "json", "rustls-tls", "rustls-tls-native-roots", "http2", "charset"] }
+# Mirrors the `-no-provider` selection above for the same reason: feature
+# unification means a `rustls-tls` here would re-arm the silent ring fallback
+# for the lib under test too. Consequence: raw `reqwest::Client`s panic with
+# "No provider set" unless a provider is installed first, which is why the
+# test harnesses install one in a ctor (see below).
+reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "json", "rustls-tls-no-provider", "rustls-tls-native-roots-no-provider", "rustls-tls-webpki-roots-no-provider", "http2", "charset"] }
 wiremock = "0.6"
 rcgen = "0.13"
 tokio-rustls = "0.26"
@@ -157,6 +192,23 @@ tracing-test = { version = "0.2", features = ["no-env-filter"] }
 criterion = { version = "0.5", features = ["async_tokio"] }
 temp-env = { version = "0.3.6", features = ["async_closure"] }
 scopeguard = "1.2"
+# These two entries serve the test-harness provider installs: with the
+# `-no-provider` reqwest features above, any test binary that builds raw
+# `reqwest::Client`s (local plain-HTTP test servers, telemetry fakes) must
+# install a crypto provider itself before the first client is constructed.
+# `ctor` is test-only; `rustls` is also a production dependency above -- this
+# dev entry just lets test code name it directly. The initializers live in
+# src/lib.rs (`#[cfg(test)]`, for the lib unit-test binary) and
+# tests/common/crypto_provider.rs, which integration_tests picks up through
+# tests/common/mod.rs and logging_query_tests includes directly.
+#
+# Ordering note for the `fips-tls` lane: aws-lc-fips runs its power-on self-test
+# from its own library constructor, and these initializers add a second one.
+# Ordering between translation units is unspecified, so the two are only safe
+# together because `install_default` just stores an `Arc` and touches no
+# primitive. If that lane ever aborts without explanation, look here first.
+rustls = "0.23"
+ctor = "1"
 
 [target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }

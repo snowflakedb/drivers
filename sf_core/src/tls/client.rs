@@ -55,6 +55,17 @@ pub(crate) fn build_tls_client_and_rustls_config(
     crl_worker: SharedCrlWorker,
     connect_timeout: Option<Duration>,
 ) -> Result<(Client, Arc<rustls::ClientConfig>), TlsError> {
+    // Must precede every `Client::build()` below, including the insecure
+    // early-return: reqwest resolves its crypto backend at build time, and
+    // with the `-no-provider` feature selection it has no fallback to resolve
+    // to, so a client built before the provider is installed panics with
+    // "No provider set".
+    super::ensure_crypto_provider();
+    // Fail closed rather than serve traffic on a non-approved module: in `fips`
+    // builds this refuses to build a client when the provider that won the
+    // process-global slot is not FIPS. Compiles away without the feature.
+    super::require_fips_provider()?;
+
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
         let builder = apply_reqwest_tls_versions(
@@ -71,7 +82,6 @@ pub(crate) fn build_tls_client_and_rustls_config(
         return Ok((client, build_insecure_rustls_config()));
     }
 
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let protocol_versions = tls_config.versions.enabled_rustls_versions();
 
     let root_certificates = load_root_certificates(tls_config)?;
@@ -183,6 +193,11 @@ pub(crate) fn configure_tls_builder(
     proxy: Option<&ProxyConfig>,
     crl_worker: SharedCrlWorker,
 ) -> Result<ClientBuilder, TlsError> {
+    // Same ordering constraint as `build_tls_client_and_rustls_config`: the
+    // returned builder is `.build()`-ed by the caller, so the provider has to
+    // be in place before this function hands the builder back.
+    super::ensure_crypto_provider();
+    super::require_fips_provider()?;
     let builder = apply_proxy_to_builder(builder, proxy)?;
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
@@ -190,8 +205,6 @@ pub(crate) fn configure_tls_builder(
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true));
     }
-
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let root_certificates = load_root_certificates(tls_config)?;
 
@@ -306,7 +319,7 @@ fn build_plain_rustls_client_config(
 /// false-negative TLS failures in environments with custom or self-signed CAs, which is
 /// exactly the case where users reach for `verify_certificates=false`.
 pub(crate) fn build_insecure_rustls_config() -> Arc<rustls::ClientConfig> {
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    super::ensure_crypto_provider();
     Arc::new(
         rustls::ClientConfig::builder()
             .dangerous()
