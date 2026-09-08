@@ -618,6 +618,17 @@ void ArrowTableConverter::convertTimeColumn_nanoarrow(
 // Nanosecond timestamp overflow helper
 // ---------------------------------------------------------------------------
 
+/**
+ * Reports whether the column has to be emitted at microsecond precision,
+ * which is the case once a nanosecond value overflows int64 while every
+ * fraction stays microsecond-aligned.
+ *
+ * A value that overflows and also carries sub-microsecond digits fits no
+ * supported timestamp unit; that case sets a Python exception, which the
+ * caller surfaces through py::checkPyError(). Throwing instead would
+ * terminate the process, as the Cython caller has no handler for a C++
+ * exception.
+ */
 static bool _checkNanosecondTimestampOverflowAndDownscale(
     ArrowArrayView* columnArray, ArrowArrayView* epochArray,
     ArrowArrayView* fractionArray) {
@@ -630,13 +641,15 @@ static bool _checkNanosecondTimestampOverflowAndDownscale(
           epoch < (INT64_MIN / powTenSB4)) {
         if (fraction % 1000 != 0) {
           std::string errorInfo = Logger::formatString(
-              "The total number of nanoseconds %d%d overflows int64 range. "
-              "If you use a timestamp with the nanosecond part over 6-digits "
-              "in the Snowflake database, the timestamp must be between "
-              "'1677-09-21 00:12:43.145224192' and '2262-04-11 "
-              "23:47:16.854775807' to not overflow.",
-              epoch, fraction);
-          throw std::overflow_error(errorInfo.c_str());
+              "The total number of nanoseconds %lld%09lld overflows int64 "
+              "range. If you use a timestamp with the nanosecond part over "
+              "6-digits in the Snowflake database, the timestamp must be "
+              "between '1677-09-21 00:12:43.145224192' and '2262-04-11 "
+              "23:47:16.854775807' to not overflow. Pass "
+              "force_microsecond_precision=True to truncate to microseconds "
+              "instead.",
+              static_cast<long long>(epoch), static_cast<long long>(fraction));
+          py::setPyError(PyExc_OverflowError, errorInfo.c_str());
         }
         return true;
       }
@@ -678,6 +691,7 @@ void ArrowTableConverter::convertTimestampColumn_nanoarrow(
     }
     has_overflow = _checkNanosecondTimestampOverflowAndDownscale(
         columnArray, epochArray, fractionArray);
+    if (py::checkPyError()) return;
   }
 
   if (scale <= 6) {
@@ -827,6 +841,7 @@ void ArrowTableConverter::convertTimestampTZColumn_nanoarrow(
   if (!m_force_microsecond_precision && scale > 6 && byteLength == 16) {
     has_overflow = _checkNanosecondTimestampOverflowAndDownscale(
         columnArray, epochArray, fractionArray);
+    if (py::checkPyError()) return;
   }
 
   auto timeunit = NANOARROW_TIME_UNIT_SECOND;
