@@ -1506,7 +1506,7 @@ mod tests {
             oidc_token: None,
         };
         let client = reqwest::Client::new();
-        let source = workload_identity::create_attestation(&client, &config)
+        let source = workload_identity::create_attestation(&client, None, &config)
             .await
             .expect_err("OIDC provider with no token must fail");
 

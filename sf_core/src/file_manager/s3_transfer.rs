@@ -1702,7 +1702,7 @@ async fn create_s3_client(
     // store) and proxy handling (explicit proxy, `no_proxy`, `use_proxy_env`)
     // through one shared implementation. Fails the build on a bad custom root
     // store or CRL verifier, matching Azure/GCS.
-    let http_client = crate::tls::aws_http_client::build_s3_reqwest_client(
+    let http_client = crate::tls::aws_http_client::AwsSdkReqwestClient::build(
         &stage_info.tls_config,
         Some(&stage_info.proxy_config),
         stage_info.crl_worker.clone(),

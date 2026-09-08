@@ -675,6 +675,7 @@ pub async fn auth_request_data(
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
+    crl_worker: SharedCrlWorker,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
     data.spcs_token = login_parameters.spcs_token.clone();
@@ -810,9 +811,33 @@ pub async fn auth_request_data(
             // fetching cloud credentials. See workload_identity::host_allowlist.
             workload_identity::ensure_allowed_host(&login_parameters.server_url)
                 .context(WorkloadIdentityAttestationSnafu)?;
-            let attestation = workload_identity::create_attestation(client, cfg)
-                .await
-                .context(WorkloadIdentityAttestationSnafu)?;
+            // AWS STS calls need the SDK-constrained transport (see
+            // `tls::aws_http_client`), which is a builder-level property the
+            // already-built `client` cannot provide -- so build a second client
+            // from the same connection TLS/proxy inputs, but only for the AWS
+            // provider: the other providers never touch it, and should neither
+            // pay for nor be able to fail on its construction. The connection's
+            // shared CRL worker is threaded in so a CRL-enabled login reuses
+            // the existing worker thread instead of spawning its own.
+            let aws_sdk_http = if matches!(
+                cfg.provider,
+                crate::config::rest_parameters::WifProvider::Aws
+            ) {
+                Some(
+                    crate::tls::aws_http_client::AwsSdkReqwestClient::build(
+                        &login_parameters.client_info.tls_config,
+                        Some(&login_parameters.client_info.proxy_config),
+                        crl_worker,
+                    )
+                    .context(CrlValidationSnafu)?,
+                )
+            } else {
+                None
+            };
+            let attestation =
+                workload_identity::create_attestation(client, aws_sdk_http.as_ref(), cfg)
+                    .await
+                    .context(WorkloadIdentityAttestationSnafu)?;
             data.authenticator = Some(authenticator::WORKLOAD_IDENTITY.to_string());
             data.provider = Some(attestation.provider.to_string());
             data.token = Some(attestation.token);
@@ -1012,7 +1037,7 @@ pub async fn snowflake_login(
     session_parameters: Option<&HashMap<String, String>>,
     crl_worker: SharedCrlWorker,
 ) -> Result<LoginResult, RestError> {
-    let client = build_tls_http_client(&login_parameters.client_info, crl_worker)?;
+    let client = build_tls_http_client(&login_parameters.client_info, crl_worker.clone())?;
     let policy = RetryPolicy::default();
     snowflake_login_with_client(
         &client,
@@ -1022,6 +1047,7 @@ pub async fn snowflake_login(
         None,
         &policy,
         None,
+        crl_worker,
     )
     .await
 }
@@ -1033,10 +1059,12 @@ pub async fn snowflake_login(
         session_parameters,
         token_cache,
         retry_policy,
-        xp_backend
+        xp_backend,
+        crl_worker
     ),
     fields(account_name, login_name)
 )]
+#[allow(clippy::too_many_arguments)]
 pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -1045,6 +1073,7 @@ pub async fn snowflake_login_with_client(
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
     xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
+    crl_worker: SharedCrlWorker,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -1176,6 +1205,7 @@ pub async fn snowflake_login_with_client(
         token_cache.clone(),
         prompt_locks,
         retry_policy,
+        crl_worker.clone(),
     )
     .await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
@@ -1235,6 +1265,7 @@ pub async fn snowflake_login_with_client(
                     token_cache.clone(),
                     prompt_locks,
                     retry_policy,
+                    crl_worker.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
@@ -1291,6 +1322,7 @@ pub async fn snowflake_login_with_client(
                     token_cache.clone(),
                     prompt_locks,
                     retry_policy,
+                    crl_worker.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
@@ -3095,6 +3127,7 @@ mod tests {
             None,
             &RetryPolicy::default(),
             Some(&backend),
+            crate::crl::worker::CrlWorker::shared_lazy(),
         )
         .await;
 
@@ -3603,6 +3636,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -3637,6 +3671,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -3664,6 +3699,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -3689,6 +3725,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -3719,6 +3756,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -3759,6 +3797,7 @@ mod tests {
                     None,
                     None,
                     &RetryPolicy::default(),
+                    crate::crl::worker::CrlWorker::shared_lazy(),
                 ))
                 .unwrap();
             assert_eq!(
@@ -3782,6 +3821,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -3804,6 +3844,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -4651,6 +4692,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                crate::crl::worker::CrlWorker::shared_lazy(),
             )
             .await
             .expect_err("disallowed WIF host must fail closed");
@@ -4684,6 +4726,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                crate::crl::worker::CrlWorker::shared_lazy(),
             )
             .await
             .expect_err("missing OIDC token must fail");
