@@ -2782,3 +2782,25 @@ behavior_differences:
       SNOW-3704981. The old Python connector already logs this exact message
       (`file_transfer_agent.py`'s `basename_counts` check); the new driver now emits it for every
       wrapper, including ODBC, which previously had no such warning.
+
+  136:
+    name: "Bare Driver-only connect loads the connections.toml default profile"
+    status: fixed
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: high
+    old_driver_behavior: |
+      A SQLDriverConnect with only Driver=SnowflakeDSIIDriver (no account or other
+      locator params) loads the [default] profile from ~/.snowflake/connections.toml
+      (directory overridable via SNOWFLAKE_HOME) and honors
+      SNOWFLAKE_DEFAULT_CONNECTION_NAME to select an alternate profile. Passing any extra
+      connection-string param (for example role=sysadmin) suppresses that fallback.
+    new_driver_behavior: |
+      The same bare Driver=-only connect loads the default connections.toml profile and
+      honors SNOWFLAKE_DEFAULT_CONNECTION_NAME. Extra params still suppress the fallback.
+    description: |
+      Restores the old driver's TomlConfigurationTest matrix. The wrapper now sets
+      no_connection_details from an empty post-merge param map so the shared resolver
+      can load the default profile. Explicit connection_name in the connection string
+      already resolved via the param registry; only the no-args fallback was missing.
