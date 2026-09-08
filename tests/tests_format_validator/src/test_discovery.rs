@@ -1,6 +1,7 @@
 use crate::utils::{to_pascal_case, to_snake_case};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Language {
@@ -409,22 +410,29 @@ impl TestDiscovery {
                     .join(format!("{}Test.cs", pascal_name)),
             ],
             Language::JavaScript => {
-                // Type features are migrating to one file each under query/data-types/, named in
-                // kebab-case (string.feature -> query/data-types/string.test.ts). date, time and
-                // semi_structured still live inline in the shared query-data-types*.test.ts
-                // files and map there until they move; both mappings were verified
-                // scenario-by-scenario, and an entry added without that check would report
-                // false-positive coverage. The flat candidate covers the non-type features,
-                // which sit directly in e2e/.
+                // date, time and semi_structured still live inline in the shared
+                // query-data-types*.test.ts files rather than a per-feature file, so they are
+                // mapped explicitly. Every other feature maps to a `<feature>.test.ts` file
+                // located anywhere under e2e/
                 let e2e_dir = self.workspace_root.join("nodejs/tests/e2e");
                 let kebab_name = snake_name.replace('_', "-");
                 match snake_name.as_str() {
                     "date" | "time" => vec![e2e_dir.join("query-data-types.test.ts")],
                     "semi_structured" => vec![e2e_dir.join("query-data-types-variant.test.ts")],
-                    _ => vec![
-                        e2e_dir.join(format!("query/data-types/{kebab_name}.test.ts")),
-                        e2e_dir.join(format!("{kebab_name}.test.ts")),
-                    ],
+                    _ => {
+                        let target = format!("{kebab_name}.test.ts");
+                        let mut matches: Vec<PathBuf> = WalkDir::new(&e2e_dir)
+                            .into_iter()
+                            .filter_map(|entry| entry.ok())
+                            .map(|entry| entry.into_path())
+                            .filter(|path| {
+                                path.file_name().and_then(|name| name.to_str())
+                                    == Some(target.as_str())
+                            })
+                            .collect();
+                        matches.sort();
+                        matches
+                    }
                 }
             }
         }
@@ -434,6 +442,8 @@ impl TestDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     fn discovery() -> TestDiscovery {
         TestDiscovery::new(PathBuf::from("/workspace"))
@@ -448,35 +458,52 @@ mod tests {
         )
     }
 
+    fn js_candidates_in(root: &Path, feature_name: &str) -> Vec<PathBuf> {
+        TestDiscovery::new(root.to_path_buf()).generate_test_file_candidates_with_level(
+            feature_name,
+            None,
+            &Language::JavaScript,
+            TestLevel::E2E,
+        )
+    }
+
+    fn touch(path: &Path) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "").unwrap();
+    }
+
     #[test]
-    fn should_map_string_feature_to_per_type_file_then_flat_fallback() {
-        let candidates = js_candidates("string");
+    fn should_find_test_file_in_any_e2e_subdirectory() {
+        let tmp = TempDir::new().unwrap();
+        let e2e = tmp.path().join("nodejs/tests/e2e");
+        let expected = e2e.join("query/put-get/put-get-overwrite.test.ts");
+        touch(&expected);
 
         assert_eq!(
-            candidates,
-            vec![
-                PathBuf::from("/workspace/nodejs/tests/e2e/query/data-types/string.test.ts"),
-                PathBuf::from("/workspace/nodejs/tests/e2e/string.test.ts"),
-            ]
+            js_candidates_in(tmp.path(), "put_get_overwrite"),
+            vec![expected]
         );
     }
 
     #[test]
     fn should_kebab_case_multiword_feature_names() {
-        let candidates = js_candidates("connection_pool");
+        let tmp = TempDir::new().unwrap();
+        let e2e = tmp.path().join("nodejs/tests/e2e");
+        let expected = e2e.join("query/data-types/connection-pool.test.ts");
+        touch(&expected);
 
         assert_eq!(
-            candidates.first(),
-            Some(&PathBuf::from(
-                "/workspace/nodejs/tests/e2e/query/data-types/connection-pool.test.ts"
-            ))
+            js_candidates_in(tmp.path(), "connection_pool"),
+            vec![expected]
         );
-        assert_eq!(
-            candidates.get(1),
-            Some(&PathBuf::from(
-                "/workspace/nodejs/tests/e2e/connection-pool.test.ts"
-            ))
-        );
+    }
+
+    #[test]
+    fn should_return_no_candidates_when_no_matching_test_file_exists() {
+        let tmp = TempDir::new().unwrap();
+        touch(&tmp.path().join("nodejs/tests/e2e/query/put-get/put-get-overwrite.test.ts"));
+
+        assert!(js_candidates_in(tmp.path(), "put_get_wildcards").is_empty());
     }
 
     #[test]
