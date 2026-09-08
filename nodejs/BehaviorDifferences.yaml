@@ -600,3 +600,27 @@ behavior_differences:
       Closing this needs the connecting state the connect error family (405501/405502/405503)
       introduces, so that a destroy can tell a login in flight from one that never started and
       wait for it. The window is only reachable by calling destroy without awaiting connect.
+
+  28:
+    name: 'The core silently drops non-whitelisted statement-level parameters'
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      execute()'s parameters option is copied onto the execute request body
+      (statement.js: json.parameters = statementContext.parameters), so a session parameter passed
+      per-statement -- e.g. { parameters: { TIME_OUTPUT_FORMAT: 'HH24:MI:SS.FF9' } } -- is honored
+      for that one query without altering the session.
+    new_driver_behavior: |
+      execute() forwards parameters to the core (index.ts -> bridge statement_set_options), but the
+      core sends only the QUERY_PARAMETER_NAMES whitelist (QUERY_TAG, MULTI_STATEMENT_COUNT) in the
+      query request; a non-whitelisted key is accepted without error and then silently dropped, so
+      the statement runs under the session default instead of the requested value.
+    description: |
+      The drop is in sf_core: build_query_parameters (apis/database_driver_v1/statement.rs) copies
+      only the QUERY_PARAMETER_NAMES whitelist from the statement's settings into the query request,
+      discarding every other key. statement_set_options accepts unknown keys (validation returns Ok
+      when the registry has no definition), which is why the value is taken but never sent. Fixing
+      this means broadening what the core forwards to the query request.

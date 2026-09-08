@@ -261,6 +261,7 @@ impl Connection {
         env: &Env,
         query: String,
         bindings: Option<QueryBindings>,
+        parameters: Option<HashMap<String, String>>,
     ) -> Result<Statement> {
         if let Some(unusable) = self.state.unusable() {
             return Ok(Statement::refused(unusable));
@@ -276,6 +277,13 @@ impl Connection {
                 let binding_bytes = bindings.map(|b| (b.format, b.data.into_bytes()));
                 let result = async {
                     DRIVER.statement_set_sql_query(stmt_handle, query).await?;
+                    if let Some(parameters) = parameters {
+                        let options = parameters
+                            .into_iter()
+                            .map(|(k, v)| (k, Setting::String(v)))
+                            .collect();
+                        DRIVER.statement_set_options(stmt_handle, options).await?;
+                    }
                     let bindings = binding_bytes.as_ref().map(|(format, bytes)| {
                         let ptr = DataPtr::new(bytes.as_ptr(), bytes.len() as i64);
                         match format {

@@ -35,7 +35,7 @@ export declare class Connection {
   isUp(): boolean
   isValidAsync(): Promise<boolean>
   getSessionParameters(): KnownSessionParameters
-  execute(query: string, bindings?: QueryBindings | undefined | null): Statement
+  execute(query: string, bindings?: QueryBindings | undefined | null, parameters?: Record<string, string> | undefined | null): Statement
   getQueryResult(queryId: string): Statement
   destroy(): Promise<undefined>
 }
