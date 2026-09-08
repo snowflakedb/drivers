@@ -2392,6 +2392,14 @@ impl ParamRegistry {
         self.resolve(key).is_some_and(|d| d.sensitive)
     }
 
+    /// Whether the parameter is marked sensitive under wrapper-scoped
+    /// resolution. Wrappers redacting raw wire spellings (ODBC `PWD`,
+    /// `PRIV_KEY_FILE_PWD`) need this: those aliases are scoped and so are
+    /// invisible to the global [`Self::is_sensitive`].
+    pub fn is_sensitive_for(&self, wrapper: Wrapper, key: impl AsRef<str>) -> bool {
+        self.resolve_for(wrapper, key).is_some_and(|d| d.sensitive)
+    }
+
     /// Return all registered parameter definitions.
     pub fn all_params(&self) -> &[ParamDef] {
         self.params
@@ -2476,6 +2484,32 @@ mod tests {
             assert!(
                 r.resolve(name).is_some(),
                 "canonical spelling {name:?} must also resolve globally"
+            );
+        }
+    }
+
+    #[test]
+    fn is_sensitive_for_sees_wrapper_scoped_secret_aliases() {
+        let r = registry();
+        for scoped_secret in [
+            "PWD",
+            "PRIV_KEY_FILE_PWD",
+            "PRIV_KEY_PWD",
+            "PRIV_KEY_BASE64",
+        ] {
+            assert!(
+                r.is_sensitive_for(Wrapper::Odbc, scoped_secret),
+                "{scoped_secret:?} must be sensitive under the ODBC flavor"
+            );
+            assert!(
+                !r.is_sensitive(scoped_secret),
+                "{scoped_secret:?} is an Odbc-scoped alias and must not resolve globally"
+            );
+        }
+        for not_secret in ["SERVER", "user", "totally_unknown_key"] {
+            assert!(
+                !r.is_sensitive_for(Wrapper::Odbc, not_secret),
+                "{not_secret:?} must not be classified sensitive"
             );
         }
     }

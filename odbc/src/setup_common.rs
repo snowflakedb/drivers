@@ -85,10 +85,10 @@ pub(crate) unsafe fn read_dsn_value(dsn: &str, key: &str) -> String {
 ///
 /// Skips `DSN` and `PWD` keys (DSN is implicit in the section name;
 /// PWD must never be persisted).  Also delegates to
-/// [`oauth::should_persist_to_dsn`] so OAuth secrets
-/// (`OAUTH_CLIENT_SECRET`, `TOKEN`) never reach the on-disk registry —
-/// they are only ever read from the dialog into the in-memory test
-/// connection string.  Returns `false` if any write fails.
+/// [`oauth::should_persist_to_dsn`] so no key the parameter registry marks
+/// sensitive reaches the on-disk registry — those are only ever read from the
+/// dialog into the in-memory test connection string.  Returns `false` if any
+/// write fails.
 pub(crate) unsafe fn write_dsn_values(
     dsn: &str,
     driver: &str,
