@@ -1,0 +1,103 @@
+id: universal-driver-auth-browser-diagnostics
+friendly_name: "Universal Driver Auth-Browser Diagnostics Inventory"
+status: enabled
+# Category: Coding
+#
+# Dedicated ruleset so the auth-browser parameter inventory stays in sync with
+# the suites that read it, without widening `universal-driver-tests.yaml`
+# (Gherkin "Scenario: should …") onto the auth-browser wrapper scripts.
+allowed_folders:
+  - "tests/auth"
+  - "python/tests/e2e/authentication"
+  - "jdbc/src/test/java/net/snowflake/jdbc/e2e/authentication"
+  - "odbc_tests/tests/e2e/authentication"
+  # Not present yet on every branch — the auth-browser Node.js suite lands later.
+  - "nodejs/tests/e2e/authentication"
+excluded_folders:
+  - "tests/auth/__pycache__"
+allowed_file_extensions:
+  - ".py"
+  - ".java"
+  - ".cpp"
+  - ".hpp"
+  - ".ts"
+  - ".js"
+  - ".sh"
+rules:
+  - id: ud-auth-browser-diagnostics-keys
+    rule: |
+      **OBJECTIVE**: The Jenkins auth-browser job prints a parameter inventory
+      from `KEYS` in `tests/auth/auth_browser_param_diagnostics.py` (each key
+      reported as present / empty / absent per parameters.json section, never
+      its value). The report only covers keys listed in `KEYS`, so a new
+      parameters.json key that the auth-browser suites read shows up nowhere in
+      the console — and a missing overlay key then looks identical to a decode
+      miss. Do not equate a missing key with a silently skipped suite: live
+      tests that read a missing Okta key throw. Keeping `KEYS` complete is what
+      makes present / empty / absent distinguishable from a decode miss in the
+      Jenkins log alone.
+
+      **REQUIREMENT**: If the PR adds a new parameter name (`SNOWFLAKE_TEST_*`
+      or similar) that is **read by an auth-browser e2e test or by a
+      `tests/auth` wrapper script**, that exact key MUST also be added to
+      `KEYS` in `tests/auth/auth_browser_param_diagnostics.py` in the same PR.
+      Flag when the new key appears in those suites but not in `KEYS`.
+
+      Auth-browser suites for this rule are the authentication e2e directories
+      driven by `tests/auth/auth_browser_*.sh`: `python/tests/e2e/authentication`,
+      `jdbc/src/test/java/net/snowflake/jdbc/e2e/authentication`,
+      `odbc_tests/tests/e2e/authentication`, and
+      `nodejs/tests/e2e/authentication`.
+
+      **HOW TO FLAG**: Post **one** comment per PR naming each new key that is
+      missing from `KEYS`, and ask the author to add it there so the job's
+      inventory reports it. This is a diagnostics/reporting requirement — do not
+      ask the author to make the Jenkins job fail on a missing key, and do not
+      ask for a required-key gate. Skip-all while `SF_TEST_HEADLESS_BROWSER` is
+      unset is a later `auth_browser_nodejs.sh` post-vitest check and is out of
+      scope for this rule.
+
+      ❌ **BAD** — a new OAuth parameter is read by the auth-browser suites but
+      the inventory never mentions it:
+      ```python
+      # python/tests/e2e/authentication/test_oauth.py
+      client_id = os.environ["SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID"]
+      ```
+      ```java
+      // jdbc/src/test/java/net/snowflake/jdbc/e2e/authentication/OauthTests.java
+      String clientId = System.getenv("SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID");
+      ```
+      ```cpp
+      // odbc_tests/tests/e2e/authentication/oauth.cpp
+      const char* clientId = std::getenv("SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID");
+      ```
+      ```typescript
+      // nodejs/tests/e2e/authentication/oauth.test.ts
+      const clientId = process.env.SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID;
+      ```
+      …with `tests/auth/auth_browser_param_diagnostics.py` left unchanged.
+
+      ✅ **GOOD** — the same PR extends the inventory:
+      ```python
+      # tests/auth/auth_browser_param_diagnostics.py
+      KEYS: tuple[str, ...] = (
+          ...
+          "SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL",
+          "SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID",
+          ...
+      )
+      ```
+
+      **EXEMPTIONS** — do NOT flag when:
+      - The key is already listed in `KEYS`.
+      - The key only appears in a comment, docstring, or documentation text.
+      - The key is read only by tests outside the auth-browser suites — for
+        example workload-identity (WIF), VPN-only, or `auth_no_mfa_*` jobs that
+        never run in the auth-browser container. Those jobs do not consume this
+        inventory.
+      - The PR changes a key's *value*, default, or surrounding assertions
+        without introducing a new key name.
+      - The PR renames a key and updates `KEYS` to match.
+
+      **CONSOLIDATION**: One comment per PR listing every missing key. Do not
+      post a separate finding per test file.

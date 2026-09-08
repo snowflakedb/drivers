@@ -93,8 +93,14 @@ def retrieve_oauth_access_token(
         headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
         auth=HTTPBasicAuth(client_id, client_secret),
     )
-    response.raise_for_status()
-    return response.json()["access_token"]
+    if not response.ok:
+        # The IdP names the reason (invalid_grant, invalid_scope, invalid_client)
+        # only in the body; the status alone does not distinguish them.
+        raise RuntimeError(f"OAuth token request failed with HTTP {response.status_code}: {response.text}")
+    payload = response.json()
+    if not payload.get("access_token"):
+        raise RuntimeError(f"OAuth token response has no access_token, keys: {sorted(payload)}")
+    return payload["access_token"]
 
 
 def clean_browser_processes():
