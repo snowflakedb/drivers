@@ -2,6 +2,8 @@
 Integration tests for PEP 249 Cursor objects.
 """
 
+import json
+import os
 import uuid
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -3100,6 +3102,20 @@ class TestCursorDescribeInternal:
             assert v1_col.is_nullable == v2_col.is_nullable
 
 
+def structured_map_as_dict(cell):
+    """Return a structured MAP cell as a dict, asserting the representation of the result format in use.
+
+    An Arrow result set materializes a MAP column as a dict. A JSON result set
+    delivers it as the JSON text the server sent, the way structured OBJECT and
+    ARRAY columns arrive.
+    """
+    if os.getenv("QUERY_RESULT_FORMAT", "").upper() == "JSON":
+        assert isinstance(cell, str)
+        return json.loads(cell)
+    assert isinstance(cell, dict)
+    return cell
+
+
 class TestCursorDescribeInternalStructuredTypes:
     """Nested `fields` metadata for structured OBJECT and ARRAY columns.
 
@@ -3188,14 +3204,20 @@ class TestCursorDescribeInternalStructuredTypes:
 
         Regression test for SNOW-4052969: reading a MAP column used to raise
         InternalError("Unsupported column type 'MAP'") before any row was read.
+        On a JSON result set the column arrives as text, which used to crash the
+        interpreter because the MAP converter dereferenced key/value converters
+        it had never built.
         """
         sql = "SELECT {'a':1}::MAP(VARCHAR, INT) AS m"
 
         structured_cursor.execute(sql)
-        assert structured_cursor.fetchone() == ({"a": 1},)
+        (cell,) = structured_cursor.fetchone()
+        assert structured_map_as_dict(cell) == {"a": 1}
 
         structured_cursor.execute(sql)
-        assert structured_cursor.fetchmany(1) == [({"a": 1},)]
+        [(cell,)] = structured_cursor.fetchmany(1)
+        assert structured_map_as_dict(cell) == {"a": 1}
 
         structured_cursor.execute(sql)
-        assert structured_cursor.fetchall() == [({"a": 1},)]
+        [(cell,)] = structured_cursor.fetchall()
+        assert structured_map_as_dict(cell) == {"a": 1}
