@@ -1,12 +1,10 @@
 use std::{
-    collections::HashSet,
     str::Utf8Error,
     string::{FromUtf8Error, FromUtf16Error},
-    sync::LazyLock,
 };
 
 use crate::{
-    api::{InfoType, SqlState, diagnostic::DiagnosticRecord, oauth},
+    api::{InfoType, SqlState, diagnostic::DiagnosticRecord},
     conversion::error::BindingError,
     conversion::{ConversionError, error::WriteOdbcError},
 };
@@ -647,27 +645,22 @@ impl<T> Required<T> for Option<T> {
     }
 }
 
-static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
-    let mut set = HashSet::new();
-    set.insert("PRIV_KEY_FILE".to_string());
-    set.insert("PRIVATE_KEY_FILE".to_string());
-    set.insert("PRIV_KEY_FILE_PWD".to_string());
-    set.insert("PRIV_KEY_BASE64".to_string());
-    set.insert("PRIV_KEY_PWD".to_string());
-    set.insert("PRIVATE_KEY".to_string());
-    set.insert("PRIVATE_KEY_PASSWORD".to_string());
-    set.insert("TOKEN".to_string());
-    set.insert("AUTHENTICATOR".to_string());
-    set.insert("USER".to_string());
-    set.insert("PASSWORD".to_string());
-    // Pull every recognised OAuth DSN key from the OAuth helper so a
-    // future addition to `oauth::ALL_OAUTH_KEYS` automatically updates
-    // the set used for SQLSTATE classification of auth-time errors.
-    for &k in oauth::ALL_OAUTH_KEYS {
-        set.insert(k.to_string());
-    }
-    set
-});
+/// Whether `parameter` is an authentication parameter, per the shared
+/// `sf_core` registry (see [`ParamDef::auth`](sf_core::config::param_registry)).
+///
+/// Drives SQLSTATE classification of core-reported invalid/missing-parameter
+/// errors: an auth parameter maps to `28000` (invalid authorization
+/// specification) rather than the generic connection-string-attribute state.
+/// Core names the parameter canonically on every path that raises those two
+/// kinds, so `parameter` is a canonical name; the lookup is wrapper-scoped and
+/// case-insensitive so that a raw ODBC DSN spelling resolves too — the
+/// connection-string normalizer forwards `UID`, `PWD` and `SERVER` verbatim for
+/// core-side alias resolution, and only canonicalizes the OAuth keys and a
+/// handful of `PRIV_KEY_*` spellings up front.
+fn is_authenticator_parameter(parameter: &str) -> bool {
+    use sf_core::config::param_registry::{Wrapper, registry};
+    registry().is_auth_for(Wrapper::Odbc, parameter)
+}
 
 /// Returns `true` when `state` is a syntactically valid ANSI/ODBC SQLSTATE:
 /// exactly five characters, each an ASCII digit (`0-9`) or uppercase letter
@@ -1082,9 +1075,10 @@ impl OdbcError {
                         k if k == ProtoErrorKind::InvalidParameterValue as i32
                             || k == ProtoErrorKind::MissingParameter as i32 =>
                         {
-                            if parameter.as_ref().is_some_and(|p| {
-                                AUTHENTICATOR_PARAMETERS.contains(&p.to_uppercase())
-                            }) {
+                            if parameter
+                                .as_ref()
+                                .is_some_and(|p| is_authenticator_parameter(p))
+                            {
                                 SqlState::InvalidAuthorizationSpecification
                             } else {
                                 SqlState::InvalidConnectionStringAttribute
@@ -1939,6 +1933,64 @@ mod tests {
                 SqlState::InvalidAuthorizationSpecification,
                 "reauthentication_required={reauthentication_required}"
             );
+        }
+    }
+
+    fn core_parameter_error(kind: ProtoErrorKind, parameter: &str) -> OdbcError {
+        OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                message: "configuration rejected".to_string(),
+                kind: kind as i32,
+                error_trace: vec![],
+                sql_state: None,
+                vendor_code: None,
+                query_id: None,
+                parameter: Some(parameter.to_owned()),
+                location: loc(),
+            }),
+            location: loc(),
+        }
+    }
+
+    const PARAMETER_ERROR_KINDS: [ProtoErrorKind; 2] = [
+        ProtoErrorKind::InvalidParameterValue,
+        ProtoErrorKind::MissingParameter,
+    ];
+
+    /// `UID` and `PWD` land here through the `Odbc`-scoped aliases on `user`
+    /// and `password`; the hardcoded set that preceded the registry lookup
+    /// carried only the canonical spellings, so those two reported 01S00.
+    /// Every core path that raises these two kinds names its parameter
+    /// canonically, so no diagnostic changes today — the alias arm covers the
+    /// spelling a wrapper-side raise would use.
+    #[test]
+    fn auth_parameter_errors_map_to_28000() {
+        for kind in PARAMETER_ERROR_KINDS {
+            for parameter in [
+                "user",
+                "UID",
+                "password",
+                "PWD",
+                "authenticator",
+                "private_key",
+                "PRIV_KEY_BASE64",
+                "private_key_file",
+                "PRIV_KEY_FILE",
+                "private_key_password",
+                "PRIV_KEY_FILE_PWD",
+                "PRIV_KEY_PWD",
+                "token",
+                "TOKEN",
+                "token_file_path",
+                "oauth_client_id",
+                "OAUTH_CLIENT_SECRET",
+            ] {
+                assert_eq!(
+                    core_parameter_error(kind, parameter).to_sql_state(),
+                    SqlState::InvalidAuthorizationSpecification,
+                    "kind={kind:?}, parameter={parameter}"
+                );
+            }
         }
     }
 }
