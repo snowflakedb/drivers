@@ -889,6 +889,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
                         operation,
                         StatementPrepareRequest {
                             stmt_handle: Some(stmt_handle),
+                            bindings: None,
                         },
                     )
                     .await?;
