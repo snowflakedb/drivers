@@ -50,6 +50,7 @@ Bug fixes:
 - Fixed a client-side query timeout to abort the query on the server instead of giving up locally and leaving it running. (snowflake-eng/drivers#1491)
 - Fixed JSON-format decode of timestamps just before the Unix epoch so the fractional second does not shift the instant forward by one second. (snowflake-eng/drivers#1498)
 - Fixed PUT with overwrite disabled to skip an existing stage object instead of replacing it. (snowflake-eng/drivers#1434)
+- Fixed `SQLColumns` and `SQLProcedureColumns` `BUFFER_LENGTH` and `CHAR_OCTET_LENGTH` for `VARCHAR`/`TEXT` to report Snowflake `byteLength`, falling back to 4× `COLUMN_SIZE` capped at the session VARCHAR byte maximum where no `byteLength` is available; query-result `SQLColAttribute` octet length is unchanged. (snowflake-eng/drivers#1503)
 
 ## v4.0.0-rc1
 

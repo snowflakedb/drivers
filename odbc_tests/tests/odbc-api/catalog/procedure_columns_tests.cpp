@@ -285,6 +285,78 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: BUFFER_LENGTH is p
   }
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLProcedureColumns: unsized VARCHAR BUFFER_LENGTH stays at the VARCHAR byte maximum",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::MULTI_PARAM_PROC), SQL_NTS, sqlchar("PNAME"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER columnSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+  SQLLEN columnSizeInd = SQL_NULL_DATA;
+  ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &columnSize, 0, &columnSizeInd);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(columnSizeInd == sizeof(SQLINTEGER));
+
+  SQLINTEGER bufferLength = static_cast<SQLINTEGER>(0x7FFFFFFF);
+  SQLLEN bufferLengthInd = SQL_NULL_DATA;
+  ret = SQLGetData(stmt_handle(), 9, SQL_C_SLONG, &bufferLength, 0, &bufferLengthInd);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(bufferLengthInd == sizeof(SQLINTEGER));
+
+  SQLINTEGER charOctetLength = static_cast<SQLINTEGER>(0x7FFFFFFF);
+  SQLLEN charOctetLengthInd = SQL_NULL_DATA;
+  ret = SQLGetData(stmt_handle(), 17, SQL_C_SLONG, &charOctetLength, 0, &charOctetLengthInd);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(charOctetLengthInd == sizeof(SQLINTEGER));
+
+  REQUIRE(columnSize > 0);
+  CHECK(bufferLength == columnSize);
+  CHECK(charOctetLength == bufferLength);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLProcedureColumns: TABLE result VARCHAR BUFFER_LENGTH stays at the VARCHAR byte maximum",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::TABLE_PROC), SQL_NTS, sqlchar("NAME"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER columnSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+  SQLLEN columnSizeInd = SQL_NULL_DATA;
+  ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &columnSize, 0, &columnSizeInd);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(columnSizeInd == sizeof(SQLINTEGER));
+
+  SQLINTEGER bufferLength = static_cast<SQLINTEGER>(0x7FFFFFFF);
+  SQLLEN bufferLengthInd = SQL_NULL_DATA;
+  ret = SQLGetData(stmt_handle(), 9, SQL_C_SLONG, &bufferLength, 0, &bufferLengthInd);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(bufferLengthInd == sizeof(SQLINTEGER));
+
+  SQLINTEGER charOctetLength = static_cast<SQLINTEGER>(0x7FFFFFFF);
+  SQLLEN charOctetLengthInd = SQL_NULL_DATA;
+  ret = SQLGetData(stmt_handle(), 17, SQL_C_SLONG, &charOctetLength, 0, &charOctetLengthInd);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(charOctetLengthInd == sizeof(SQLINTEGER));
+
+  REQUIRE(columnSize > 0);
+  CHECK(bufferLength == columnSize);
+  CHECK(charOctetLength == bufferLength);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: DATA_TYPE reflects the VARCHAR return type",
                  "[odbc-api][procedurecolumns][catalog]") {
   // BASIC_PROC(p1 VARCHAR) RETURNS VARCHAR: the return value row (fetched first)

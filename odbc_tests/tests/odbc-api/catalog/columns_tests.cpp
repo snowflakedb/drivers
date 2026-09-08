@@ -7,6 +7,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -680,6 +681,72 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: BUFFER_LENGTH is 6 for DATE
     INFO("column " << column);
     NEW_DRIVER_ONLY("BD#133") { CHECK(it->second == wantNew); }
     OLD_DRIVER_ONLY("BD#133") { CHECK(it->second == expectBufLenOld.at(column)); }
+  }
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLColumns: BUFFER_LENGTH and CHAR_OCTET_LENGTH are 4x COLUMN_SIZE for VARCHAR",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(READONLY_SECOND_SCHEMA_NAME),
+                             SQL_NTS, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const std::vector<std::string> varcharColumns = {"VARCHARVAL", "CHARVAL", "TEXTVAL"};
+  const std::vector<std::string> binaryColumns = {"BINARYVAL", "VARBINARYVAL"};
+
+  std::map<std::string, std::tuple<SQLINTEGER, SQLINTEGER, SQLINTEGER>> actual;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+    const bool isVarchar =
+        std::find(varcharColumns.begin(), varcharColumns.end(), columnName.text) != varcharColumns.end();
+    const bool isBinary = std::find(binaryColumns.begin(), binaryColumns.end(), columnName.text) != binaryColumns.end();
+    if (!isVarchar && !isBinary) {
+      continue;
+    }
+
+    SQLINTEGER colSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN colSizeInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 7, SQL_C_SLONG, &colSize, 0, &colSizeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(colSizeInd == sizeof(SQLINTEGER));
+
+    SQLINTEGER bufLen = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN bufLenInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &bufLen, 0, &bufLenInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(bufLenInd == sizeof(SQLINTEGER));
+
+    SQLINTEGER charOctet = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN charOctetInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 16, SQL_C_SLONG, &charOctet, 0, &charOctetInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(charOctetInd == sizeof(SQLINTEGER));
+
+    actual.emplace(columnName.text, std::make_tuple(colSize, bufLen, charOctet));
+  }
+
+  for (const auto& column : varcharColumns) {
+    const auto it = actual.find(column);
+    REQUIRE(it != actual.end());
+    const auto [colSize, bufLen, charOctet] = it->second;
+    INFO("column " << column << " COLUMN_SIZE=" << colSize);
+    REQUIRE(colSize > 0);
+    CHECK(bufLen == colSize * 4);
+    CHECK(charOctet == bufLen);
+  }
+
+  for (const auto& column : binaryColumns) {
+    const auto it = actual.find(column);
+    REQUIRE(it != actual.end());
+    const auto [colSize, bufLen, charOctet] = it->second;
+    INFO("column " << column << " COLUMN_SIZE=" << colSize);
+    REQUIRE(colSize > 0);
+    CHECK(bufLen == colSize);
+    CHECK(charOctet == bufLen);
   }
 }
 
