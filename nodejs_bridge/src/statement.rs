@@ -121,6 +121,20 @@ impl Statement {
         }
     }
 
+    /// Not part of the driver's public API. Callers are suposed toinvoke this only after the
+    /// statement has finished, so a result that is not yet ready is a programming error
+    #[napi]
+    pub fn get_session_parameters_snapshot(&self, env: &Env) -> Result<KnownSessionParameters> {
+        match self.result.get() {
+            None => Err(BridgeError::Message(
+                "session parameters snapshot requested before the statement finished".to_string(),
+            )
+            .to_js_error(*env)),
+            Some(Ok(data)) => Ok((*data.session_params).clone()),
+            Some(Err(error)) => Err(error.to_js_error(*env)),
+        }
+    }
+
     #[napi]
     pub fn get_columns(&self, env: &Env) -> Result<Option<Vec<Column>>> {
         match self.result.get() {
