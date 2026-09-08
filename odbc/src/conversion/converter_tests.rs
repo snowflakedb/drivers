@@ -2,7 +2,7 @@
 mod tests {
     use crate::conversion::error::ConversionError;
     use crate::conversion::{Binding, NumericSettings, column_size_from_field, make_converter};
-    use arrow::array::{ArrayRef, Int32Array, Int64Array};
+    use arrow::array::{ArrayRef, Int8Array, Int16Array, Int32Array, Int64Array};
     use arrow::datatypes::{DataType, Field};
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -143,6 +143,79 @@ mod tests {
             err,
             ConversionError::UnsupportedArrowDataType { .. }
         ));
+    }
+
+    fn interval_year_month_field(data_type: DataType) -> Field {
+        let md: HashMap<String, String> =
+            [("logicalType".to_string(), "INTERVAL_YEAR_MONTH".to_string())]
+                .into_iter()
+                .collect();
+        Field::new("col", data_type, true).with_metadata(md)
+    }
+
+    fn interval_day_time_field(scale: u32, data_type: DataType) -> Field {
+        let md: HashMap<String, String> = [
+            ("logicalType".to_string(), "INTERVAL_DAY_TIME".to_string()),
+            ("scale".to_string(), scale.to_string()),
+        ]
+        .into_iter()
+        .collect();
+        Field::new("col", data_type, true).with_metadata(md)
+    }
+
+    fn char_of_value(
+        converter: &dyn crate::conversion::ColumnConverter,
+        array: &ArrayRef,
+    ) -> String {
+        let mut buffer = vec![0u8; 32];
+        let mut str_len: odbc_sys::Len = 0;
+        let binding = crate::conversion::test_utils::helpers::binding_for_char_buffer(
+            crate::api::CDataType::Char,
+            &mut buffer,
+            &mut str_len,
+        );
+        converter
+            .convert_arrow_value(array.as_ref(), 0, &binding, &mut None)
+            .expect("interval column must convert without downcast errors");
+        String::from_utf8(buffer[..str_len as usize].to_vec()).unwrap()
+    }
+
+    /// `INTERVAL YEAR(2) TO MONTH` arrives as a SmallIntVector (Int16), the
+    /// smallest Arrow width Snowflake emits for the year-month family. The
+    /// converter selects its downcast target from the field's data type.
+    #[test]
+    fn interval_year_month_int16_field_accepts_int16_array() {
+        let field = interval_year_month_field(DataType::Int16);
+        let ns = NumericSettings::default();
+        let converter =
+            make_converter(&field, &ns).expect("converter for INTERVAL_YEAR_MONTH Int16");
+
+        let array: ArrayRef = Arc::new(Int16Array::from(vec![Some(14i16)]));
+        assert_eq!(char_of_value(converter.as_ref(), &array), "1-02");
+    }
+
+    #[test]
+    fn interval_year_month_int8_field_accepts_int8_array() {
+        let field = interval_year_month_field(DataType::Int8);
+        let ns = NumericSettings::default();
+        let converter =
+            make_converter(&field, &ns).expect("converter for INTERVAL_YEAR_MONTH Int8");
+
+        let array: ArrayRef = Arc::new(Int8Array::from(vec![Some(14i8)]));
+        assert_eq!(char_of_value(converter.as_ref(), &array), "1-02");
+    }
+
+    /// The day-time arm accepts widths narrower than Int64 (matching the
+    /// reader's `Into<i128>` bound); a two-second interval fits in Int32
+    /// nanoseconds.
+    #[test]
+    fn interval_day_time_int32_field_accepts_int32_array() {
+        let field = interval_day_time_field(0, DataType::Int32);
+        let ns = NumericSettings::default();
+        let converter = make_converter(&field, &ns).expect("converter for INTERVAL_DAY_TIME Int32");
+
+        let array: ArrayRef = Arc::new(Int32Array::from(vec![Some(2_000_000_000i32)]));
+        assert_eq!(char_of_value(converter.as_ref(), &array), "0 00:00:02");
     }
 
     // Multi-row block-cursor striding: `convert_arrow_range` must write each

@@ -2,7 +2,8 @@ use odbc_sys as sql;
 
 use crate::api::CDataType;
 use crate::conversion::error::{
-    IntervalFieldOverflowSnafu, NumericValueOutOfRangeSnafu, WriteOdbcError,
+    IntervalFieldOverflowSnafu, NumericValueOutOfRangeSnafu, UnsupportedOdbcTypeSnafu,
+    WriteOdbcError,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::warning::{Warning, Warnings};
@@ -240,6 +241,121 @@ pub fn write_interval_second(
         is_source_negative,
         binding,
     ))
+}
+
+/// Coerces an already-integral value into the scalar C numeric targets shared
+/// by integer-valued converters: the fixed-width integer types, `SQL_C_BIT`,
+/// `SQL_C_NUMERIC`, and `SQL_C_BINARY`. `has_fractional` carries a truncation
+/// that happened while reducing the source to `int_value` and surfaces as
+/// 01S07. Targets outside this set — including any interval C type — return
+/// 07006, so callers handle string and interval targets before delegating.
+pub fn write_integer_as_numeric(
+    target_type: CDataType,
+    int_value: i128,
+    has_fractional: bool,
+    binding: &Binding,
+) -> Result<Warnings, WriteOdbcError> {
+    match target_type {
+        CDataType::Short | CDataType::SShort => {
+            check_integer_range(int_value, i16::MIN as i128, i16::MAX as i128)?;
+            binding.write_fixed(int_value as i16);
+            Ok(fractional_warning(has_fractional))
+        }
+        CDataType::UShort => {
+            check_integer_range(int_value, 0, u16::MAX as i128)?;
+            binding.write_fixed(int_value as u16);
+            Ok(fractional_warning(has_fractional))
+        }
+        CDataType::TinyInt | CDataType::STinyInt => {
+            check_integer_range(int_value, i8::MIN as i128, i8::MAX as i128)?;
+            binding.write_fixed(int_value as i8);
+            Ok(fractional_warning(has_fractional))
+        }
+        CDataType::UTinyInt => {
+            check_integer_range(int_value, 0, u8::MAX as i128)?;
+            binding.write_fixed(int_value as u8);
+            Ok(fractional_warning(has_fractional))
+        }
+        CDataType::Long | CDataType::SLong => {
+            check_integer_range(int_value, i32::MIN as i128, i32::MAX as i128)?;
+            binding.write_fixed(int_value as i32);
+            Ok(fractional_warning(has_fractional))
+        }
+        CDataType::ULong => {
+            check_integer_range(int_value, 0, u32::MAX as i128)?;
+            binding.write_fixed(int_value as u32);
+            Ok(fractional_warning(has_fractional))
+        }
+        CDataType::SBigInt => {
+            check_integer_range(int_value, i64::MIN as i128, i64::MAX as i128)?;
+            binding.write_fixed(int_value as i64);
+            Ok(fractional_warning(has_fractional))
+        }
+        CDataType::UBigInt => {
+            check_integer_range(int_value, 0, u64::MAX as i128)?;
+            binding.write_fixed(int_value as u64);
+            Ok(fractional_warning(has_fractional))
+        }
+        CDataType::Bit => {
+            if !(0..=1).contains(&int_value) {
+                return NumericValueOutOfRangeSnafu {
+                    reason: format!(
+                        "Value out of range for SQL_C_BIT (must be 0 or 1, got {int_value})"
+                    ),
+                }
+                .fail();
+            }
+            binding.write_fixed(int_value as u8);
+            Ok(fractional_warning(has_fractional))
+        }
+        CDataType::Numeric => {
+            let digits = int_value.unsigned_abs().to_string().len().max(1) as i16;
+            let target_precision = binding.precision.unwrap_or(digits);
+            let target_scale = binding.scale.unwrap_or(0);
+            let abs = int_value.unsigned_abs();
+
+            let (unscaled, truncated) = if target_scale >= 0 {
+                match 10u128
+                    .checked_pow(target_scale as u32)
+                    .and_then(|f| abs.checked_mul(f))
+                {
+                    Some(v) => (v, false),
+                    None => {
+                        return NumericValueOutOfRangeSnafu {
+                            reason: "Value out of range for SQL_C_NUMERIC".to_string(),
+                        }
+                        .fail();
+                    }
+                }
+            } else {
+                match 10u128.checked_pow((-target_scale) as u32) {
+                    Some(divisor) => (abs / divisor, !abs.is_multiple_of(divisor)),
+                    None => (0, abs != 0),
+                }
+            };
+
+            let numeric = sql::Numeric {
+                precision: target_precision as u8,
+                scale: target_scale as i8,
+                sign: if int_value < 0 { 0 } else { 1 },
+                val: unscaled.to_le_bytes(),
+            };
+            binding.write_fixed(numeric);
+            Ok(fractional_warning(has_fractional || truncated))
+        }
+        CDataType::Binary => {
+            let digits = int_value.unsigned_abs().to_string().len().max(1) as u8;
+            let numeric = sql::Numeric {
+                precision: digits,
+                scale: 0,
+                sign: if int_value < 0 { 0 } else { 1 },
+                val: int_value.unsigned_abs().to_le_bytes(),
+            };
+            write_numeric_as_binary(&numeric, binding)?;
+            Ok(fractional_warning(has_fractional))
+        }
+        _ => UnsupportedOdbcTypeSnafu { target_type }.fail(),
+    }
 }
 
 pub fn reject_multi_field_interval(target_type: CDataType) -> Result<Warnings, WriteOdbcError> {

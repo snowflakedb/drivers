@@ -3,6 +3,7 @@
 members = [
     "sf_core",
     "sf_types",
+    "sf_output_format",
     "sf_params_spec",
     "sf_params_codegen",
     "sf_mini_core",
