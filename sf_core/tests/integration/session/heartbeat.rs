@@ -10,10 +10,11 @@ use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::rest::snowflake::SessionTokens;
 use sf_core::sensitive::SensitiveString;
 use tokio::sync::RwLock as AsyncRwLock;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_partial_json, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::common::mocks::auth::mount_jwt_login_with_keep_alive;
+use crate::common::private_key_helper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[tokio::test]
@@ -433,6 +434,62 @@ async fn connection_close_cancels_heartbeat() {
     assert_eq!(
         count_at_close, count_after,
         "No heartbeats should be sent after connection close"
+    );
+}
+
+#[tokio::test]
+async fn should_clamp_login_heartbeat_frequency_to_minimum() {
+    assert_login_heartbeat_frequency_is_clamped(100, 900).await;
+}
+
+#[tokio::test]
+async fn should_clamp_login_heartbeat_frequency_to_maximum() {
+    assert_login_heartbeat_frequency_is_clamped(9_000, 3_600).await;
+}
+
+async fn assert_login_heartbeat_frequency_is_clamped(requested: i64, expected: i64) {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request.*"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "SNOWFLAKE_JWT",
+                "SESSION_PARAMETERS": {
+                    "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY": expected.to_string()
+                }
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "token": "mock_token",
+                "masterToken": "mock_master_token",
+                "sessionId": 12345
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let server_uri = server.uri();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+        let temp_key_file = private_key_helper::get_test_private_key_file()
+            .expect("failed to create test private key file");
+        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+        client
+            .set_connection_option_int("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY", requested);
+        let result = client.connection_init_blocking();
+        client.set_temp_key_file(temp_key_file);
+        result
+    })
+    .await
+    .expect("connection task panicked");
+
+    assert!(
+        result.is_ok(),
+        "connection should succeed with heartbeat frequency {requested} clamped to {expected}: {result:?}"
     );
 }
 
