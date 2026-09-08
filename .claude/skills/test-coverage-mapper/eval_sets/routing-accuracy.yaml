@@ -60,6 +60,9 @@ should_not_trigger:
   - prompt: "before I open this PR, can you review the changes and check for issues?"
     reason: "end-of-task-self-review — pre-PR quality checklist, not a cross-driver test mapping task."
 
+  - prompt: "old driver compat check before I push"
+    reason: "behavior-compatibility-review — current-diff old-driver contract self-review, not suite YAML mapping."
+
   - prompt: "check if my new feature has adequate test coverage — did I miss any cases?"
     reason: "general conversation / no skill — asking about coverage of new code being written, not about mapping legacy driver tests to UD equivalents. Shares 'test coverage' vocabulary but different purpose."
 
