@@ -39,6 +39,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed `SQLColumns` and `SQLProcedureColumns` `CHAR_OCTET_LENGTH` for `VARIANT`/`OBJECT`/`ARRAY` to report the session VARCHAR max (equal to `BUFFER_LENGTH`) instead of NULL. (snowflake-eng/drivers#1522)
 - Fixed `SQLColumns` `COLUMN_SIZE` and `BUFFER_LENGTH` for unrecognized Snowflake types such as `GEOGRAPHY`/`GEOMETRY` to report the varchar metrics implied by their `SQL_VARCHAR` `DATA_TYPE` instead of NULL. (snowflake-eng/drivers#1431)
 - Fixed `SQLProcedureColumns` `TYPE_NAME` for unsupported types such as `GEOGRAPHY`/`GEOMETRY` to report the Snowflake type name while `DATA_TYPE` remains `SQL_VARCHAR`. (snowflake-eng/drivers#1432)
 - Fixed `SQLColumns` and `SQLProcedureColumns` `CHAR_OCTET_LENGTH` for unsupported types such as `GEOGRAPHY`/`GEOMETRY` to report a byte length instead of NULL, matching the `SQL_VARCHAR` they report as `DATA_TYPE`. (snowflake-eng/drivers#1432)

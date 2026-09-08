@@ -759,7 +759,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: VARIANT/OBJECT/ARRAY size f
   const std::vector<std::string> semiStructured = {"VARIANTVAL", "OBJECTVAL", "ARRAYVAL"};
   constexpr SQLINTEGER kLegacySemiStructuredSize = 134217728;
 
-  std::map<std::string, std::pair<SQLINTEGER, SQLINTEGER>> actual;
+  std::map<std::string, std::tuple<SQLINTEGER, SQLINTEGER, SQLINTEGER>> actual;
   while (true) {
     ret = SQLFetch(stmt_handle());
     if (ret == SQL_NO_DATA) break;
@@ -781,24 +781,33 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: VARIANT/OBJECT/ARRAY size f
     ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &bufLen, 0, &bufLenInd);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(bufLenInd == sizeof(SQLINTEGER));
-    actual.emplace(columnName.text, std::make_pair(colSize, bufLen));
+
+    SQLINTEGER charOctet = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN charOctetInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 16, SQL_C_SLONG, &charOctet, 0, &charOctetInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(charOctetInd == sizeof(SQLINTEGER));
+    actual.emplace(columnName.text, std::make_tuple(colSize, bufLen, charOctet));
   }
 
   for (const auto& column : semiStructured) {
     const auto it = actual.find(column);
     REQUIRE(it != actual.end());
+    const auto [colSize, bufLen, charOctet] = it->second;
     INFO("column " << column);
     NEW_DRIVER_ONLY("BD#130") {
       // Session VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT is 16 MB by default and
       // 128 MB on accounts that raise it. Do not compare to TEXTVAL: unbounded
       // TEXT's SHOW COLUMNS length is often still 16 MB.
-      CHECK((it->second.first == 16777216 || it->second.first == 134217728));
-      CHECK(it->second.second == it->second.first);
-      CHECK(it->second.first == actual.at("VARIANTVAL").first);
+      CHECK((colSize == 16777216 || colSize == 134217728));
+      CHECK(bufLen == colSize);
+      CHECK(charOctet == bufLen);
+      CHECK(colSize == std::get<0>(actual.at("VARIANTVAL")));
     }
     OLD_DRIVER_ONLY("BD#130") {
-      CHECK(it->second.first == kLegacySemiStructuredSize);
-      CHECK(it->second.second == kLegacySemiStructuredSize);
+      CHECK(colSize == kLegacySemiStructuredSize);
+      CHECK(bufLen == kLegacySemiStructuredSize);
+      CHECK(charOctet == kLegacySemiStructuredSize);
     }
   }
 }
