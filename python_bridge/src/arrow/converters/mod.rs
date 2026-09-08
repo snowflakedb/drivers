@@ -1,25 +1,31 @@
+mod binary;
 mod boolean;
 mod context;
 mod decode;
 mod real;
+mod text;
 mod util;
 
 #[cfg(test)]
 mod test_util;
 
-use arrow::array::{BooleanArray, Float64Array};
+use arrow::array::{BinaryArray, BooleanArray, Float64Array, StringArray};
 use pyo3::prelude::*;
-use sf_types::{SnowflakeBoolean, SnowflakeReal};
+use sf_types::{SnowflakeBinary, SnowflakeBoolean, SnowflakeReal, SnowflakeText};
 
+use self::binary::BinaryMaterializer;
 use self::boolean::BoolMaterializer;
 use self::decode::TypedColumn;
 use self::real::RealMaterializer;
+use self::text::TextMaterializer;
 
 pub(crate) use context::ConversionContext;
 
 pub(crate) enum Column {
     Bool(TypedColumn<BooleanArray, SnowflakeBoolean, BoolMaterializer>),
     Real(TypedColumn<Float64Array, SnowflakeReal, RealMaterializer>),
+    Text(TypedColumn<StringArray, SnowflakeText, TextMaterializer>),
+    Binary(TypedColumn<BinaryArray, SnowflakeBinary, BinaryMaterializer>),
 }
 
 impl Column {
@@ -27,6 +33,8 @@ impl Column {
         match self {
             Self::Bool(column) => column.to_py(py, row),
             Self::Real(column) => column.to_py(py, row),
+            Self::Text(column) => column.to_py(py, row),
+            Self::Binary(column) => column.to_py(py, row),
         }
     }
 }

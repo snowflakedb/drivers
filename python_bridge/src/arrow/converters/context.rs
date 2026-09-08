@@ -7,8 +7,10 @@ use crate::arrow::batch_converter::BatchConverter;
 use crate::arrow::plan::{LogicalPlan, SnowflakeFieldType};
 
 use super::Column;
+use super::binary;
 use super::boolean;
 use super::real;
+use super::text;
 
 pub(crate) struct ConversionContext {
     plan: LogicalPlan,
@@ -40,14 +42,14 @@ impl ConversionContext {
         match *field_type {
             SnowflakeFieldType::Boolean => boolean::from_column(array, field_type),
             SnowflakeFieldType::Real => real::from_column(array, field_type),
-            SnowflakeFieldType::Varchar { .. }
-            | SnowflakeFieldType::Number { .. }
+            SnowflakeFieldType::Varchar { .. } => text::from_column(array, field_type),
+            SnowflakeFieldType::Binary { .. } => binary::from_column(array, field_type),
+            SnowflakeFieldType::Number { .. }
             | SnowflakeFieldType::Date
             | SnowflakeFieldType::Time { .. }
             | SnowflakeFieldType::TimestampNtz { .. }
             | SnowflakeFieldType::TimestampLtz { .. }
             | SnowflakeFieldType::TimestampTz { .. }
-            | SnowflakeFieldType::Binary { .. }
             | SnowflakeFieldType::Decfloat { .. }
             | SnowflakeFieldType::Vector { .. } => Err(PyNotImplementedError::new_err(format!(
                 "native Arrow conversion is not implemented for logical type {}",
