@@ -86,7 +86,10 @@ CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_ve
 FROM base AS old
 
 COPY --from=old_installer /usr/lib/snowflake/ /usr/lib/snowflake/
-RUN echo "N/A" > /etc/rust_version
+RUN ODBC_LIB_DIR=$(find /usr/lib -name 'libodbcinst.so.2' -printf '%h' -quit) && \
+    sed -i "s,ODBCInstLib=.*,ODBCInstLib=${ODBC_LIB_DIR}/libodbcinst.so.2,g" \
+      /usr/lib/snowflake/odbc/lib/simba.snowflake.ini && \
+    echo "N/A" > /etc/rust_version
 
 ENV DRIVER_TYPE=old
 
@@ -99,7 +102,7 @@ CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_ve
         INI_ORIG=/usr/lib/snowflake/odbc/lib/simba.snowflake.ini; \
         INI=/tmp/simba.snowflake.wiremock.ini; \
         if [ -f "$INI_ORIG" ]; then cp "$INI_ORIG" "$INI"; else : > "$INI"; fi; \
-        printf '\n[Driver]\nCABundleFile=%s\nDisableOCSPCheck=true\nErrorMessagesPath=/usr/lib/snowflake/odbc/ErrorMessages/\nODBCInstLib=libodbcinst.so\n' "$CACERT" >> "$INI"; \
+        printf '\n[Driver]\nCABundleFile=%s\nDisableOCSPCheck=true\nErrorMessagesPath=/usr/lib/snowflake/odbc/ErrorMessages/\n' "$CACERT" >> "$INI"; \
         export SIMBAINI="$INI"; \
     fi && \
     /workdir/build/odbc-perf-driver
