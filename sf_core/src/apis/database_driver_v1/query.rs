@@ -1178,6 +1178,7 @@ fn stub_ctx() -> StageInfoRefreshContext {
             log_max_query_length: 100,
             log_query_text: false,
             log_query_parameters: false,
+            include_retry_reason: false,
         },
         conn: Arc::new(Mutex::new(Connection::new())),
     }

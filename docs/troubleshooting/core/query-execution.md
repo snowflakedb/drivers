@@ -67,9 +67,13 @@ Any 5xx is retryable (`sf_core/src/http/retry.rs`). The query
 retried.
 
 **Dedup safety.** A query POST reuses one stable `requestId` UUID across all retry
-attempts; attempts ≥ 2 carry `retry=true`. The server uses `requestId` to detect
-replays — if the first attempt reached Snowflake before the 503, the retry joins
-the already-running query instead of launching a duplicate.
+attempts; attempts ≥ 2 carry `retryCount` and, by default, `retryReason` (the HTTP
+status code that triggered the retry, e.g. `retryReason=503`). The server uses
+`requestId` to detect replays — if the first attempt reached Snowflake before the
+503, the retry joins the already-running query instead of launching a duplicate.
+Set `include_retry_reason` to `false` to suppress the `retryReason` parameter;
+`retryCount` is always sent regardless of this setting. Both parameters apply only
+to query-request retries — login and other non-query endpoints carry neither.
 
 **Default retry policy** (`sf_core/src/config/retry.rs`) — now **configurable**
 per connection:
@@ -82,6 +86,7 @@ per connection:
 | Backoff cap | 16 000 ms | `retry_backoff_cap_ms` |
 | Jitter | decorrelated | `retry_backoff_jitter` |
 | Overall time budget | *none* | `retry_timeout` |
+| Include retry reason | true | `include_retry_reason` |
 
 By default there is **no overall elapsed-time budget** — the loop retries up to
 `retry_max_attempts` with decorrelated-jitter backoff. Set `retry_timeout` to
@@ -100,7 +105,7 @@ throttling. Reduce submission rate at the application layer.
 
 **Retry-storm amplification.** The driver has no built-in concurrency limiter. N
 concurrent queries each retrying up to `retry_max_attempts` can hit the service
-with up to `N × retry_max_attempts` requests. `requestId` + `retry=true` prevents
+with up to `N × retry_max_attempts` requests. `requestId` + `retryCount` prevents
 double-execution but does not reduce request *volume*. Rate-limit or pool
 connections at the application layer.
 

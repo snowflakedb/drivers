@@ -79,6 +79,59 @@ pub enum HttpError {
     },
 }
 
+/// State passed to `build_request` on each attempt inside [`execute_with_retry`].
+///
+/// Callers that need to append retry metadata (e.g. `retryCount`, `retryReason`)
+/// to the outgoing request can read these fields. Callers that don't need retry
+/// context simply ignore the parameter.
+///
+/// Constructed internally by the retry loop with `attempt` starting at 0 and
+/// incremented to 1 before the first use, so closures always observe 1-based
+/// values.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RetryState {
+    /// Attempt number as seen by `build_request`: 1 on the first try, 2 on the
+    /// first retry, etc. Initialized to 0 and pre-incremented by the retry loop
+    /// before each call.
+    attempt: u32,
+    /// HTTP status code that caused the previous attempt to be retried.
+    /// `LastStatus::None` on the first attempt. `LastStatus::Transport` for
+    /// transport errors where no HTTP response was received.
+    last_status: LastStatus,
+}
+
+impl RetryState {
+    pub fn new_for_retry_after_error(attempt: u32, last_status_code: u16) -> Self {
+        Self {
+            attempt,
+            last_status: LastStatus::Code(last_status_code),
+        }
+    }
+
+    pub fn new_for_retry_after_transport_error(attempt: u32) -> Self {
+        Self {
+            attempt,
+            last_status: LastStatus::Transport,
+        }
+    }
+
+    pub fn get_last_status(&self) -> LastStatus {
+        self.last_status
+    }
+
+    pub fn get_attempt(&self) -> u32 {
+        self.attempt
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub enum LastStatus {
+    #[default]
+    None,
+    Transport,
+    Code(u16),
+}
+
 /// Calculate effective timeout for a request attempt.
 ///
 /// When `max_elapsed` is set, returns `min(per_request_timeout, remaining_budget)`.
@@ -96,26 +149,45 @@ fn calculate_request_timeout(
     }
 }
 
-pub async fn execute_with_retry<T, B, F, H>(
+pub fn execute_with_retry<T, B, F, H>(
+    build_request: B,
+    http_ctx: &HttpContext,
+    policy: &RetryPolicy,
+    on_response: H,
+) -> impl Future<Output = Result<T, HttpError>>
+where
+    B: Fn() -> reqwest::RequestBuilder,
+    F: Future<Output = Result<T, HttpError>>,
+    H: Fn(Response) -> F,
+{
+    execute_with_retry_state(
+        move |_: &RetryState| build_request(),
+        http_ctx,
+        policy,
+        on_response,
+    )
+}
+
+pub async fn execute_with_retry_state<T, B, F, H>(
     build_request: B,
     http_ctx: &HttpContext,
     policy: &RetryPolicy,
     on_response: H,
 ) -> Result<T, HttpError>
 where
-    B: Fn() -> reqwest::RequestBuilder,
-    F: std::future::Future<Output = Result<T, HttpError>>,
+    B: Fn(&RetryState) -> reqwest::RequestBuilder,
+    F: Future<Output = Result<T, HttpError>>,
     H: Fn(Response) -> F,
 {
-    let mut attempt: u32 = 0;
     let mut sleep_ms: f64 = policy.backoff.base.as_millis() as f64;
+    let mut retry_state = RetryState::default();
     let start = Instant::now();
 
     let backoff = &policy.backoff;
     let max_attempts = policy.max_attempts;
 
     loop {
-        attempt += 1;
+        retry_state.attempt += 1;
 
         // When max_elapsed is set, enforce the internal deadline.
         let remaining = if let Some(budget) = policy.max_elapsed {
@@ -133,10 +205,10 @@ where
         };
 
         let timeout = calculate_request_timeout(policy.per_request_timeout, remaining);
-        let mut req_builder = build_request();
+        let mut req_builder = build_request(&retry_state);
         if let Some(t) = timeout {
             tracing::debug!(
-                attempt,
+                attempt = retry_state.attempt,
                 timeout_secs = t.as_secs(),
                 remaining_secs = remaining.map(|r| r.as_secs()),
                 "Applying per-request timeout"
@@ -153,7 +225,7 @@ where
         tracing::info!(
             method = %http_ctx.method,
             path = %log_path,
-            attempt,
+            attempt = retry_state.attempt,
             "outbound HTTP call"
         );
 
@@ -170,15 +242,16 @@ where
                     return on_response(resp).await;
                 }
 
-                if attempt >= max_attempts {
+                if retry_state.attempt >= max_attempts {
                     return MaxAttemptsSnafu {
-                        attempts: attempt,
+                        attempts: retry_state.attempt,
                         last_status: resp.status(),
                     }
                     .fail();
                 }
 
                 let retry_after = parse_retry_after(&resp);
+                retry_state.last_status = LastStatus::Code(resp.status().as_u16());
                 sleep_ms = next_delay_ms(sleep_ms, backoff);
                 let delay = retry_after.unwrap_or(Duration::from_millis(sleep_ms as u64));
                 if let Some(rem) = remaining
@@ -197,9 +270,10 @@ where
                 if !is_retryable_transport(&e) || !allow_retry(http_ctx, &policy.http) {
                     return Err(TransportSnafu.into_error(e));
                 }
-                if attempt >= max_attempts {
+                if retry_state.attempt >= max_attempts {
                     return Err(TransportSnafu.into_error(e));
                 }
+                retry_state.last_status = LastStatus::Transport;
                 sleep_ms = next_delay_ms(sleep_ms, backoff);
                 let delay = Duration::from_millis(sleep_ms as u64);
                 if let Some(rem) = remaining
@@ -356,6 +430,18 @@ where
         })
     })
     .await
+}
+
+#[cfg(test)]
+mod retry_state_tests {
+    use super::*;
+
+    #[test]
+    fn default_retry_state_is_pre_first_attempt() {
+        let state = RetryState::default();
+        assert_eq!(state.attempt, 0);
+        assert!(matches!(state.last_status, LastStatus::None));
+    }
 }
 
 #[cfg(test)]

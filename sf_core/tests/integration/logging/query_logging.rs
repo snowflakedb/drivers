@@ -39,6 +39,7 @@ fn query_params(
     server_url: &str,
     log_query_text: bool,
     log_query_parameters: bool,
+    include_retry_reason: bool,
 ) -> QueryParameters {
     QueryParameters {
         server_url: server_url.to_string(),
@@ -46,6 +47,7 @@ fn query_params(
         log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
         log_query_text,
         log_query_parameters,
+        include_retry_reason,
     }
 }
 
@@ -77,7 +79,7 @@ async fn sync_query_emits_info_log_without_sql_when_flag_off() {
     let client = reqwest::Client::new();
     let result = snowflake_query_with_client(
         &client,
-        query_params(&server.uri(), false, false),
+        query_params(&server.uri(), false, false, false),
         "test-token",
         QueryInput::new(SQL_LONG),
         QueryOptions::default(),
@@ -117,7 +119,7 @@ async fn sync_query_emits_info_log_with_sql_when_text_flag_on() {
     // truncation happens at the configured boundary.
     let result = snowflake_query_with_client(
         &client,
-        query_params(&server.uri(), true, false),
+        query_params(&server.uri(), true, false, false),
         "test-token",
         QueryInput::new(SQL_LONG),
         QueryOptions::default(),
@@ -161,7 +163,7 @@ async fn sync_query_emits_info_log_with_sql_and_bindings_when_both_flags_on() {
     let client = reqwest::Client::new();
     let result = snowflake_query_with_client(
         &client,
-        query_params(&server.uri(), true, true),
+        query_params(&server.uri(), true, true, false),
         "test-token",
         input,
         QueryOptions::default(),
@@ -303,7 +305,7 @@ async fn async_submit_emits_info_log_with_sql_when_text_flag_on() {
     let client = reqwest::Client::new();
     let result = snowflake_query_with_client(
         &client,
-        query_params(&server.uri(), true, false),
+        query_params(&server.uri(), true, false, false),
         "test-token",
         QueryInput::new(SQL_LONG),
         QueryOptions {

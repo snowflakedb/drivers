@@ -139,6 +139,7 @@ pub mod param_names {
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
     pub const DISABLE_PARALLEL_USER_PROMPT: ParamKey = ParamKey("disable_parallel_user_prompt");
     pub const DISABLE_QUERY_CONTEXT_CACHE: ParamKey = ParamKey("disable_query_context_cache");
+    pub const INCLUDE_RETRY_REASON: ParamKey = ParamKey("include_retry_reason");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
     pub const LOG_QUERY_TEXT: ParamKey = ParamKey("log_query_text");
     pub const LOG_QUERY_PARAMETERS: ParamKey = ParamKey("log_query_parameters");
@@ -914,6 +915,28 @@ static PARAM_DEFS: &[ParamDef] = &[
         deprecated_by: None,
         scopes: &[ParamScope::Connection],
         used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::INCLUDE_RETRY_REASON.as_str(),
+        aliases: &[
+            Alias::scoped(Wrapper::Odbc, "includeRetryReason"),
+            Alias::scoped(Wrapper::DotNet, "INCLUDERETRYREASON"),
+            Alias::scoped(Wrapper::NodeJs, "includeRetryReason"),
+            Alias::scoped(Wrapper::Python, "enable_retry_reason_in_query_response"),
+        ],
+        auth: false,
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(DefaultValue::Bool(true)),
+        sensitive: false,
+        description: "When true, appends retryReason (the HTTP status code that triggered \
+                      the retry, or 0 for transport errors with no HTTP response) \
+                      alongside retryCount on retried query requests.",
+        deprecated_by: None,
+        scopes: &[ParamScope::Connection],
+        used_at_connect: true,
         mutable_after_connect: false,
     },
     ParamDef {

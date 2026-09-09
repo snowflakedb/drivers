@@ -63,6 +63,11 @@ pub fn resolve_log_query_parameters(settings: &dyn Settings) -> bool {
     settings.get_bool_or(param_names::LOG_QUERY_PARAMETERS.as_str(), false)
 }
 
+/// Read `include_retry_reason` from a settings bag, accepting bool/int/string values.
+pub fn resolve_include_retry_reason(settings: &dyn Settings) -> bool {
+    settings.get_bool_or(param_names::INCLUDE_RETRY_REASON.as_str(), true)
+}
+
 #[derive(Clone)]
 pub struct QueryParameters {
     pub server_url: String,
@@ -73,6 +78,9 @@ pub struct QueryParameters {
     /// Include the (truncated) JSON bindings in INFO query logs (only honored
     /// when [`Self::log_query_text`] is also true).
     pub log_query_parameters: bool,
+    /// When true, retried query requests include `retryReason=<status_code>` in
+    /// addition to `retryCount=N`. Defaults to `true`.
+    pub include_retry_reason: bool,
 }
 
 impl QueryParameters {
@@ -87,6 +95,7 @@ impl QueryParameters {
             log_max_query_length: resolve_log_max_query_length(settings),
             log_query_text: resolve_log_query_text(settings),
             log_query_parameters: resolve_log_query_parameters(settings),
+            include_retry_reason: resolve_include_retry_reason(settings),
         })
     }
 }
@@ -2083,10 +2092,11 @@ mod tests {
     // ── log_query_text / log_query_parameters resolvers ──────────────
 
     #[test]
-    fn test_resolve_log_query_text_default_false() {
+    fn test_resolve_log_query_text_default() {
         let settings = create_test_settings(vec![]);
         assert!(!resolve_log_query_text(&settings));
         assert!(!resolve_log_query_parameters(&settings));
+        assert!(resolve_include_retry_reason(&settings));
     }
 
     #[test]
@@ -2134,12 +2144,72 @@ mod tests {
         assert!(!resolve_log_query_text(&settings));
     }
 
+    // ── include_retry_reason / log_query_parameters resolvers ──────────────
+
+    #[test]
+    fn test_resolve_retry_reason_query_parameters_from_bool() {
+        let settings = create_test_settings(vec![("include_retry_reason", Setting::Bool(true))]);
+        assert!(resolve_include_retry_reason(&settings));
+    }
+
+    #[test]
+    fn test_resolve_retry_reason_query_parameters_from_string_true() {
+        let settings = create_test_settings(vec![(
+            "include_retry_reason",
+            Setting::String("true".into()),
+        )]);
+        assert!(resolve_include_retry_reason(&settings));
+    }
+
+    #[test]
+    fn test_resolve_retry_reason_query_parameters_from_string_uppercase() {
+        let settings = create_test_settings(vec![(
+            "include_retry_reason",
+            Setting::String("TRUE".into()),
+        )]);
+        assert!(resolve_include_retry_reason(&settings));
+    }
+
+    #[test]
+    fn test_resolve_retry_reason_query_parameters_from_string_one() {
+        let settings =
+            create_test_settings(vec![("include_retry_reason", Setting::String("1".into()))]);
+        assert!(resolve_include_retry_reason(&settings));
+    }
+
+    #[test]
+    fn test_resolve_retry_reason_query_parameters_from_string_false() {
+        let settings = create_test_settings(vec![(
+            "include_retry_reason",
+            Setting::String("false".into()),
+        )]);
+        assert!(!resolve_include_retry_reason(&settings));
+    }
+
+    #[test]
+    fn test_resolve_retry_reason_query_parameters_from_int_one() {
+        let settings = create_test_settings(vec![("include_retry_reason", Setting::Int(1))]);
+        assert!(resolve_include_retry_reason(&settings));
+    }
+
+    #[test]
+    fn test_resolve_retry_reason_query_parameters_from_int_zero() {
+        let settings = create_test_settings(vec![("include_retry_reason", Setting::Int(0))]);
+        assert!(!resolve_include_retry_reason(&settings));
+    }
+
     #[test]
     fn test_resolve_log_query_parameters_independent_of_text_flag() {
-        // The resolver itself just reads the boolean; the text-flag gating is
-        // enforced by `query_log_fields`, not by the resolver.
         let settings = create_test_settings(vec![("log_query_parameters", Setting::Bool(true))]);
         assert!(resolve_log_query_parameters(&settings));
+        assert!(!resolve_log_query_text(&settings));
+    }
+
+    #[test]
+    fn test_resolve_retry_reason_independent_of_other_flags() {
+        let settings = create_test_settings(vec![("include_retry_reason", Setting::Bool(true))]);
+        assert!(resolve_include_retry_reason(&settings));
+        assert!(!resolve_log_query_parameters(&settings));
         assert!(!resolve_log_query_text(&settings));
     }
 
@@ -2152,10 +2222,12 @@ mod tests {
             ),
             ("log_query_text", Setting::Bool(true)),
             ("log_query_parameters", Setting::String("1".into())),
+            ("include_retry_reason", Setting::String("1".into())),
         ]);
         let params = QueryParameters::from_settings(&settings).unwrap();
         assert!(params.log_query_text);
         assert!(params.log_query_parameters);
+        assert!(params.include_retry_reason);
     }
 
     // -------------------------------------------------------------------------

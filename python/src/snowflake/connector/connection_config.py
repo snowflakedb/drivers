@@ -142,6 +142,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     host: str | None = None
     """Snowflake server hostname"""
 
+    include_retry_reason: bool | None = True
+    """When true, appends retryReason (the HTTP status code that triggered the retry, or 0 for transport errors with no
+    HTTP response) alongside retryCount on retried query requests..
+
+    Default: True
+    """
+
     log_max_query_length: int | None = 80
     """Maximum number of characters of a query string to include in log messages. Default: 80"""
 
@@ -414,6 +421,7 @@ class ConnectionConfig(ConnectionConfigMixin):
     """Default warehouse to use"""
 
     _ALIAS_MAP: ClassVar[dict[str, str]] = {
+        "enable_retry_reason_in_query_response": "include_retry_reason",
         "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
         "passcodeinpassword": "passcode_in_password",
         "private_key_file_pwd": "private_key_password",

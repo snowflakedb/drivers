@@ -1,10 +1,13 @@
-//! Integration tests for sync query retry with requestId.
+//! Integration tests for sync query execution and transport-level retry.
 //!
 //! Tests verify that:
 //! - Sync queries include requestId parameter
-//! - Connection failures trigger retry with retry=true
-//! - Retry uses the same requestId for server-side idempotency
+//! - Connection reset triggers retry with the same requestId and retryReason=0
 //! - Sync mode is the default execution mode
+//! - Statement timeout propagates in request body
+//!
+//! HTTP-status retryReason/retryCount scenarios (503, 429, disabled, multi-retry)
+//! live in `integration/query/retry_reason.rs` behind a WireMock fixture.
 
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::config::rest_parameters::{DEFAULT_LOG_MAX_QUERY_LENGTH, QueryParameters};
@@ -117,7 +120,7 @@ async fn should_retry_sync_query_on_connection_reset() {
     assert!(result.is_ok(), "Query should succeed after retry");
     server.await.ok();
 
-    // And the retry should include retry=true parameter
+    // And the retry should include retryCount/retryReason parameters
     let requests = captured_requests.lock().unwrap();
     assert!(requests.len() >= 2, "Should have at least 2 requests");
 
@@ -134,8 +137,13 @@ async fn should_retry_sync_query_on_connection_reset() {
         "Retry should use same requestId"
     );
     assert!(
-        second_request.contains("retry=true"),
-        "Retry request should include retry=true: {}",
+        second_request.contains("retryCount=1"),
+        "Retry request should include retryCount=1: {}",
+        second_request
+    );
+    assert!(
+        second_request.contains("retryReason=0"),
+        "Retry request should include retryReason=0 (transport error): {}",
         second_request
     );
 }
@@ -309,6 +317,7 @@ fn test_query_params(addr: &SocketAddr) -> QueryParameters {
         log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
         log_query_text: false,
         log_query_parameters: false,
+        include_retry_reason: true,
     }
 }
 
