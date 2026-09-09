@@ -48,14 +48,14 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                           Table operations                                  #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select semi-structured values from table
     Given Snowflake client is logged in
     And Table with VARIANT, OBJECT, and ARRAY columns exists with JSON values
     When Query "SELECT * FROM <table>" is executed
     Then Data should contain the expected semi-structured values
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should handle NULL semi-structured values from table
     Given Snowflake client is logged in
     And Table with VARIANT column exists containing NULLs and values
@@ -78,7 +78,7 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
     When Query "SELECT PARSE_JSON('[]')" is executed
     Then Result should be an empty JSON array
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should round-trip empty JSON containers through a table
     Given Snowflake client is logged in
     And Table with VARIANT, OBJECT, and ARRAY columns exists with empty containers
@@ -115,19 +115,19 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   #                           Parameter binding                                 #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select variant using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT PARSE_JSON(?)" is executed with bound JSON string '{"bound":true}'
     Then Result should contain a value with "bound" key
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select NULL variant using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT PARSE_JSON(?)" is executed with bound NULL value
     Then Result should be NULL
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should insert variant using parameter binding
     Given Snowflake client is logged in
     And Table with VARIANT column exists
