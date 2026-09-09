@@ -34,6 +34,7 @@ mod text;
 mod time;
 mod timestamp;
 mod traits;
+mod vector;
 
 pub use binary::SnowflakeBinary;
 pub use boolean::SnowflakeBoolean;
@@ -53,3 +54,4 @@ pub use timestamp::{
     TZ_OFFSET_MAX_RAW, TzInstant, read_scaled_timestamp, read_struct_timestamp, split_scaled_epoch,
 };
 pub use traits::{ReadArrowType, SnowflakeType};
+pub use vector::{SnowflakeVector, VectorCell};

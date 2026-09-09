@@ -1,28 +1,20 @@
-use arrow::array::{Array, FixedSizeListArray, Float32Array, Int32Array};
+use arrow::array::FixedSizeListArray;
 use odbc_sys as sql;
+use sf_types::VectorCell;
 
 use crate::api::CDataType;
-use crate::conversion::error::{
-    InvalidArrowValueSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
-};
+use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::traits::{Binding, ReadArrowType, SnowflakeType, WriteODBCType};
 use crate::conversion::warning::Warnings;
-
-/// The numeric element type within a Snowflake VECTOR column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VectorElementType {
-    Int32,
-    Float32,
-}
 
 /// Snowflake VECTOR type — serializes to a compact JSON array string.
 ///
 /// The wire value from sf_core is an Arrow `FixedSizeListArray` of `Int32` or
-/// `Float32` primitives. ODBC exposes it as a JSON string (e.g. `[1,2,3]`)
-/// via `SQL_C_CHAR` / `SQL_C_WCHAR` / `SQL_C_BINARY`, matching the ARRAY /
-/// VARIANT precedent.
+/// `Float32` primitives, decoded by `sf_types::SnowflakeVector`. ODBC exposes
+/// it as a JSON string (e.g. `[1,2,3]`) via `SQL_C_CHAR` / `SQL_C_WCHAR` /
+/// `SQL_C_BINARY`, matching the ARRAY / VARIANT precedent. The element type is
+/// discovered from the Arrow child, so it is not carried on this struct.
 pub(crate) struct SnowflakeVector {
-    pub element_type: VectorElementType,
     pub column_size: u32,
 }
 
@@ -36,57 +28,31 @@ impl ReadArrowType<FixedSizeListArray> for SnowflakeVector {
         array: &'a FixedSizeListArray,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        if array.is_null(row_idx) {
-            return Err(ReadArrowError::NullValue {
-                location: snafu::location!(),
-            });
-        }
-        let values = array.value(row_idx);
-        let json = match self.element_type {
-            VectorElementType::Int32 => {
-                let ints = values
-                    .as_any()
-                    .downcast_ref::<Int32Array>()
-                    .ok_or_else(|| {
-                        InvalidArrowValueSnafu {
-                            reason: format!(
-                                "expected Int32Array child for VECTOR(INT), got {:?}",
-                                values.data_type()
-                            ),
-                        }
-                        .build()
-                    })?;
-                let mut s = String::with_capacity(ints.len() * 4 + 2);
+        let json = match sf_types::ReadArrowType::read_arrow_type(
+            &sf_types::SnowflakeVector,
+            array,
+            row_idx,
+        )? {
+            VectorCell::Int32(values) => {
+                let mut s = String::with_capacity(values.len() * 4 + 2);
                 s.push('[');
-                for i in 0..ints.len() {
+                for (i, v) in values.iter().enumerate() {
                     if i > 0 {
                         s.push(',');
                     }
-                    s.push_str(&ints.value(i).to_string());
+                    s.push_str(&v.to_string());
                 }
                 s.push(']');
                 s
             }
-            VectorElementType::Float32 => {
-                let floats = values
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .ok_or_else(|| {
-                        InvalidArrowValueSnafu {
-                            reason: format!(
-                                "expected Float32Array child for VECTOR(FLOAT), got {:?}",
-                                values.data_type()
-                            ),
-                        }
-                        .build()
-                    })?;
-                let mut s = String::with_capacity(floats.len() * 8 + 2);
+            VectorCell::Float32(values) => {
+                let mut s = String::with_capacity(values.len() * 8 + 2);
                 s.push('[');
-                for i in 0..floats.len() {
+                for (i, v) in values.iter().enumerate() {
                     if i > 0 {
                         s.push(',');
                     }
-                    s.push_str(&format_f32(floats.value(i)));
+                    s.push_str(&format_f32(*v));
                 }
                 s.push(']');
                 s

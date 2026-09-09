@@ -598,3 +598,35 @@ behavior_differences:
       discarding every other key. statement_set_options accepts unknown keys (validation returns Ok
       when the registry has no definition), which is why the value is taken but never sent. Fixing
       this means broadening what the core forwards to the query request.
+
+  29:
+    name: 'VECTOR columns decode to a native number[], except FLOAT32 smallest-normal values, which arrive as zero'
+    status: todo
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The legacy snowflake-connector-nodejs has no VECTOR SQL type: data_types.js lists no VECTOR in
+      sqlTypes.values and MAP_SQL_TO_NATIVE has no entry for it, so toNativeType('vector') returns
+      undefined. A VECTOR column has no native-type mapping and no converter, and none of the is*()
+      predicates recognize it.
+    new_driver_behavior: |
+      nodejs_bridge decodes a VECTOR column (an Arrow FixedSizeList) to a native number[]:
+      VECTOR(INT) reads the Int32 child and VECTOR(FLOAT) the Float32 child, both widened to a JS
+      number (column_reader.rs, js_cell.rs). The TS layer has no vector converter, so the bridge's
+      number[] passes through unchanged (cell-mapping.ts). This matches the Python driver, which
+      returns VECTOR as a native list. One value does not survive the round trip: the smallest IEEE
+      754 single-precision normal (1.1754944e-38) comes back as 0.
+    description: |
+      The underflow is server-side, not a decode bug. GS serves JSON result sets to clients that
+      identify as JavaScript, and its JSON serialization flushes FLOAT32 smallest-normal to zero;
+      the Arrow encoding preserves the bit pattern. Python and JDBC keep the value because their
+      Arrow jobs receive Arrow, and both skip the case on their JSON jobs
+      (skip_for_json_result_set / @SkipForJSONResultSet). Node cannot make that choice per test --
+      an ALTER SESSION requesting ARROW does not change what GS sends for a JavaScript client -- so
+      `should preserve FLOAT smallest-normal` in tests/definitions/shared/types/vector.feature
+      carries no @nodejs_e2e tag. The decode path itself is covered by the nodejs_bridge unit test
+      vector_float_reads_number_array_and_preserves_smallest_normal, which feeds f32::MIN_POSITIVE
+      through the Arrow reader. Closing this needs GS to honor a result-format request from
+      JavaScript clients.

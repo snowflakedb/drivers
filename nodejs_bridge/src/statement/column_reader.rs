@@ -1,6 +1,6 @@
 use arrow::array::{
-    Array, ArrowNumericType, BinaryArray, BooleanArray, Float32Array, Float64Array, PrimitiveArray,
-    StringArray, StructArray,
+    Array, ArrowNumericType, BinaryArray, BooleanArray, FixedSizeListArray, Float32Array,
+    Float64Array, PrimitiveArray, StringArray, StructArray,
 };
 use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type};
 use chrono::NaiveTime;
@@ -67,6 +67,7 @@ pub(crate) enum ColumnReader {
         array: StructArray,
         precision: usize,
     },
+    Vector(FixedSizeListArray),
     IntervalYearMonth(IntColumn),
     IntervalDayTime {
         values: IntColumn,
@@ -206,6 +207,34 @@ impl ColumnReader {
                     .map_err(|e| format!("DECFLOAT column: {e}"))?;
                 Ok(Self::Decfloat { array, precision })
             }
+            Some("VECTOR") => {
+                let child_type = match column.data_type() {
+                    DataType::FixedSizeList(child_field, _) => child_field.data_type().clone(),
+                    other => {
+                        return Err(format!(
+                            "VECTOR column {:?} has non-FixedSizeList Arrow type {other}",
+                            field.name()
+                        ));
+                    }
+                };
+                match child_type {
+                    DataType::Int32 | DataType::Float32 => {}
+                    other => {
+                        return Err(format!(
+                            "VECTOR column {:?} has unsupported child type {other}",
+                            field.name()
+                        ));
+                    }
+                }
+                let array = column
+                    .as_any()
+                    .downcast_ref::<FixedSizeListArray>()
+                    .cloned()
+                    .ok_or_else(|| {
+                        "Arrow column could not be downcast to FixedSizeListArray".to_string()
+                    })?;
+                Ok(Self::Vector(array))
+            }
             Some("INTERVAL_YEAR_MONTH") => Ok(Self::IntervalYearMonth(IntColumn::from_column(
                 column,
                 "INTERVAL_YEAR_MONTH",
@@ -295,6 +324,26 @@ impl ColumnReader {
             Self::RealF32(array) => read_real(array, row_index),
             Self::RealF64(array) => read_real(array, row_index),
             Self::Decfloat { array, precision } => read_decfloat(array, row_index, *precision),
+            Self::Vector(array) => read_cell(array, row_index, || {
+                // `read_cell` already dropped NULL. `for_field` admits only
+                // Int32/Float32 children, so `sf_types` cannot return
+                // `InvalidArrowValue` here; the JS mapping is `NumberArray`
+                // of `f64`.
+                let cell = sf_types::SnowflakeVector
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!("non-null VECTOR cell always decodes to a numeric slice")
+                    });
+                let numbers = match cell {
+                    sf_types::VectorCell::Int32(values) => {
+                        values.iter().map(|&v| v as f64).collect()
+                    }
+                    sf_types::VectorCell::Float32(values) => {
+                        values.iter().map(|&v| v as f64).collect()
+                    }
+                };
+                JsCell::NumberArray(numbers)
+            }),
             Self::IntervalYearMonth(values) => read_int(values, row_index, format_year_month),
             Self::IntervalDayTime { values, scale } => {
                 read_int(values, row_index, |nanos| format_day_time(nanos, *scale))
@@ -403,8 +452,8 @@ where
 mod tests {
     use super::*;
     use arrow::array::{
-        BinaryArray, BooleanArray, Decimal128Array, Float32Array, Float64Array, Int8Array,
-        Int16Array, Int32Array, Int64Array, StringArray, StructArray,
+        BinaryArray, BooleanArray, Decimal128Array, FixedSizeListArray, Float32Array, Float64Array,
+        Int8Array, Int16Array, Int32Array, Int64Array, StringArray, StructArray,
     };
     use arrow::buffer::NullBuffer;
     use arrow::datatypes::{DataType, Field};
@@ -491,6 +540,109 @@ mod tests {
         );
         assert_eq!(reader.read(0), JsCell::Date(date.and_time(NaiveTime::MIN)));
         assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    fn vector_field(child: DataType, dimension: i32) -> Field {
+        let child_field = Arc::new(Field::new("item", child, false));
+        field(
+            "VECTOR",
+            DataType::FixedSizeList(child_field, dimension),
+            &[],
+        )
+    }
+
+    fn int_vector_array(rows: &[Option<Vec<i32>>], dimension: i32) -> FixedSizeListArray {
+        let child_field = Arc::new(Field::new("item", DataType::Int32, false));
+        let flat: Vec<i32> = rows
+            .iter()
+            .flat_map(|row| row.clone().unwrap_or_else(|| vec![0; dimension as usize]))
+            .collect();
+        let nulls = NullBuffer::from(rows.iter().map(Option::is_some).collect::<Vec<bool>>());
+        FixedSizeListArray::try_new(
+            child_field,
+            dimension,
+            Arc::new(Int32Array::from(flat)),
+            Some(nulls),
+        )
+        .unwrap()
+    }
+
+    fn float_vector_array(rows: &[Option<Vec<f32>>], dimension: i32) -> FixedSizeListArray {
+        let child_field = Arc::new(Field::new("item", DataType::Float32, false));
+        let flat: Vec<f32> = rows
+            .iter()
+            .flat_map(|row| row.clone().unwrap_or_else(|| vec![0.0; dimension as usize]))
+            .collect();
+        let nulls = NullBuffer::from(rows.iter().map(Option::is_some).collect::<Vec<bool>>());
+        FixedSizeListArray::try_new(
+            child_field,
+            dimension,
+            Arc::new(Float32Array::from(flat)),
+            Some(nulls),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn vector_int_reads_number_array_and_null() {
+        let field = vector_field(DataType::Int32, 3);
+        let array = int_vector_array(&[Some(vec![1, 2, 3]), None, Some(vec![4, 5, 6])], 3);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::Vector(_)),
+            "VECTOR should route to the Vector arm"
+        );
+        assert_eq!(reader.read(0), JsCell::NumberArray(vec![1.0, 2.0, 3.0]));
+        assert_eq!(reader.read(1), JsCell::Null);
+        assert_eq!(reader.read(2), JsCell::NumberArray(vec![4.0, 5.0, 6.0]));
+    }
+
+    #[test]
+    fn vector_float_reads_number_array_and_preserves_smallest_normal() {
+        let field = vector_field(DataType::Float32, 4);
+        let array = float_vector_array(&[Some(vec![1.5, -3.5, 0.0, f32::MIN_POSITIVE])], 4);
+        let reader = reader(&field, &array);
+        assert_eq!(
+            reader.read(0),
+            JsCell::NumberArray(vec![1.5, -3.5, 0.0, f64::from(f32::MIN_POSITIVE)])
+        );
+    }
+
+    #[test]
+    fn vector_float_passes_non_finite_as_native_numbers() {
+        let field = vector_field(DataType::Float32, 3);
+        let array =
+            float_vector_array(&[Some(vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY])], 3);
+        match reader(&field, &array).read(0) {
+            JsCell::NumberArray(values) => {
+                assert!(values[0].is_nan());
+                assert_eq!(values[1], f64::INFINITY);
+                assert_eq!(values[2], f64::NEG_INFINITY);
+            }
+            other => panic!("expected NumberArray, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vector_rejects_unsupported_child_type() {
+        let field = vector_field(DataType::Int64, 3);
+        let child_field = Arc::new(Field::new("item", DataType::Int64, false));
+        let array = FixedSizeListArray::try_new(
+            child_field,
+            3,
+            Arc::new(Int64Array::from(vec![1i64, 2, 3])),
+            None,
+        )
+        .unwrap();
+        let err = expect_err(ColumnReader::for_field(
+            &field,
+            &array,
+            &session_params("HH24:MI:SS"),
+        ));
+        assert!(
+            err.contains("unsupported child type"),
+            "expected unsupported-child-type error, got: {err}"
+        );
     }
 
     fn time_field(scale: &str) -> Field {

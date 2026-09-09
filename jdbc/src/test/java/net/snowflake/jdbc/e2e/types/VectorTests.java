@@ -117,7 +117,7 @@ class VectorTests extends SnowflakeIntegrationTestBase implements WithQueryUtils
   }
 
   @Test
-  void shouldHandleNullVectorValues() throws Exception {
+  void shouldHandleNullVectorValuesFromLiterals() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 

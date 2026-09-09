@@ -208,13 +208,12 @@ mod tests {
     }
 
     use crate::conversion::ReadArrowType;
-    use crate::conversion::vector::{SnowflakeVector, VectorElementType};
+    use crate::conversion::vector::SnowflakeVector;
 
     #[test]
     fn should_serialize_int_vector_to_json_string() {
         let arr = make_int_vector_array(&[Some(vec![1, 3, -5])], 3);
         let sv = SnowflakeVector {
-            element_type: VectorElementType::Int32,
             column_size: 134_217_728,
         };
         let result = sv.read_arrow_type(&arr, 0).unwrap();
@@ -225,7 +224,6 @@ mod tests {
     fn should_serialize_float_vector_to_json_string() {
         let arr = make_float_vector_array(&[Some(vec![1.5f32, -3.5f32, 0.0f32])], 3);
         let sv = SnowflakeVector {
-            element_type: VectorElementType::Float32,
             column_size: 134_217_728,
         };
         let result = sv.read_arrow_type(&arr, 0).unwrap();
@@ -246,7 +244,6 @@ mod tests {
     fn should_return_null_value_error_for_null_row() {
         let arr = make_int_vector_array(&[None], 3);
         let sv = SnowflakeVector {
-            element_type: VectorElementType::Int32,
             column_size: 134_217_728,
         };
         let result = sv.read_arrow_type(&arr, 0);
@@ -265,7 +262,6 @@ mod tests {
         let smallest = f32::MIN_POSITIVE;
         let arr = make_float_vector_array(&[Some(vec![smallest])], 1);
         let sv = SnowflakeVector {
-            element_type: VectorElementType::Float32,
             column_size: 134_217_728,
         };
         let result = sv.read_arrow_type(&arr, 0).unwrap();
@@ -282,7 +278,6 @@ mod tests {
         let arr =
             make_float_vector_array(&[Some(vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY])], 3);
         let sv = SnowflakeVector {
-            element_type: VectorElementType::Float32,
             column_size: 134_217_728,
         };
         // Non-finite floats use the Snowflake ecosystem spellings (old ODBC picojson,
@@ -297,7 +292,6 @@ mod tests {
     fn should_serialize_int_boundary_values() {
         let arr = make_int_vector_array(&[Some(vec![i32::MIN, i32::MAX, 0])], 3);
         let sv = SnowflakeVector {
-            element_type: VectorElementType::Int32,
             column_size: 134_217_728,
         };
         let result = sv.read_arrow_type(&arr, 0).unwrap();
@@ -308,7 +302,6 @@ mod tests {
     fn should_serialize_non_null_rows_from_mixed_batch() {
         let arr = make_int_vector_array(&[Some(vec![1, 2, 3]), None, Some(vec![4, 5, 6])], 3);
         let sv = SnowflakeVector {
-            element_type: VectorElementType::Int32,
             column_size: 134_217_728,
         };
         assert_eq!(sv.read_arrow_type(&arr, 0).unwrap(), "[1,2,3]");

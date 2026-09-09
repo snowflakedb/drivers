@@ -37,19 +37,12 @@ PyObject* FixedSizeListConverter::toPyObject(int64_t rowIndex) const {
   const int64_t startIndexWithoutOffset = rowIndex * fixedSizeArrayLength;
   for (int64_t i = 0; i < fixedSizeArrayLength; ++i) {
     const auto bufferIndexWithoutOffset = startIndexWithoutOffset + i;
-    // Currently, the backend only sends back INT32 and FLOAT32, but the
-    // remaining types are enumerated for future use.
     switch (elements->storage_type) {
-      case NANOARROW_TYPE_INT8:
-      case NANOARROW_TYPE_INT16:
-      case NANOARROW_TYPE_INT32:
-      case NANOARROW_TYPE_INT64: {
+      case NANOARROW_TYPE_INT32: {
         const auto value = ArrowArrayViewGetIntUnsafe(elements, bufferIndexWithoutOffset);
         PyList_SetItem(list, i, PyLong_FromLongLong(value));
       } break;
-      case NANOARROW_TYPE_HALF_FLOAT:
-      case NANOARROW_TYPE_FLOAT:
-      case NANOARROW_TYPE_DOUBLE: {
+      case NANOARROW_TYPE_FLOAT: {
         const auto value = ArrowArrayViewGetDoubleUnsafe(elements, bufferIndexWithoutOffset);
         PyList_SetItem(list, i, PyFloat_FromDouble(value));
       } break;
