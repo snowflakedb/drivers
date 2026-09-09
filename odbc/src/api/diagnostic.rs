@@ -9,8 +9,8 @@ use crate::{
         encoding::{OdbcEncoding, write_string_bytes, write_string_chars},
         env_from_handle,
         error::{
-            InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
-            NoMoreDataSnafu,
+            InvalidBufferLengthSnafu, InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu,
+            InvalidRecordNumberSnafu, NoMoreDataSnafu,
         },
         query_type::QueryType,
         stmt_from_handle,
@@ -538,7 +538,6 @@ pub unsafe fn get_diag_rec<E: OdbcEncoding>(
     text_length_ptr: *mut sql::SmallInt,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    use crate::api::error::InvalidBufferLengthSnafu;
     if buffer_length < 0 {
         return InvalidBufferLengthSnafu {
             length: buffer_length as i64,
@@ -623,6 +622,24 @@ pub fn get_diag_field<E: OdbcEncoding>(
         .fail();
     }
 
+    if buffer_length < 0
+        && matches!(
+            diag_id,
+            DiagIdentifier::SqlState
+                | DiagIdentifier::MessageText
+                | DiagIdentifier::DynamicFunction
+                | DiagIdentifier::ClassOrigin
+                | DiagIdentifier::SubclassOrigin
+                | DiagIdentifier::ConnectionName
+                | DiagIdentifier::ServerName
+        )
+    {
+        return InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
+    }
+
     if rec_number == 0 {
         match diag_id {
             DiagIdentifier::Number => {
@@ -686,7 +703,7 @@ pub fn get_diag_field<E: OdbcEncoding>(
                 }
                 Ok(())
             }
-            _ => NoMoreDataSnafu.fail(),
+            _ => InvalidRecordNumberSnafu { number: rec_number }.fail(),
         }
     } else {
         if rec_number > diagnostic_info.records.len() as i16 {
@@ -793,7 +810,7 @@ pub fn get_diag_field<E: OdbcEncoding>(
                 }
                 Ok(())
             }
-            _ => NoMoreDataSnafu.fail(),
+            _ => Ok(()),
         }
     }
 }
@@ -946,5 +963,75 @@ mod tests {
             subclass_origin_for_sqlstate("01S00"),
             ClassOrigin::Odbc3_0
         ));
+    }
+
+    const SQL_DIAG_SQLSTATE: sql::SmallInt = 4;
+    const SQL_DIAG_NUMBER: sql::SmallInt = 2;
+
+    fn env_with_one_record() -> sql::Handle {
+        let env = crate::api::handle_allocation::alloc_environment().expect("alloc_environment");
+        let seed: OdbcResult<()> = crate::api::error::NullPointerSnafu.fail();
+        set_diag_info_from_result(sql::HandleType::Env, env, &seed);
+        env
+    }
+
+    #[test]
+    fn record_field_with_rec_number_zero_returns_sql_error() {
+        let env = env_with_one_record();
+        let mut buf = [0u8; 32];
+        let mut str_len: sql::SmallInt = 0;
+        let mut warnings: Warnings = Vec::new();
+        let result = get_diag_field::<crate::api::encoding::Narrow>(
+            sql::HandleType::Env,
+            env,
+            0,
+            SQL_DIAG_SQLSTATE,
+            buf.as_mut_ptr() as sql::Pointer,
+            buf.len() as sql::SmallInt,
+            &mut str_len,
+            &mut warnings,
+        );
+        assert_eq!(result.to_sql_code(), sql::SqlReturn::ERROR.0);
+        crate::api::handle_allocation::free_environment(env).expect("free_environment");
+    }
+
+    #[test]
+    fn header_field_with_positive_rec_number_returns_sql_success() {
+        let env = env_with_one_record();
+        let mut out: sql::Integer = 0;
+        let mut str_len: sql::SmallInt = 0;
+        let mut warnings: Warnings = Vec::new();
+        let result = get_diag_field::<crate::api::encoding::Narrow>(
+            sql::HandleType::Env,
+            env,
+            1,
+            SQL_DIAG_NUMBER,
+            &mut out as *mut sql::Integer as sql::Pointer,
+            0,
+            &mut str_len,
+            &mut warnings,
+        );
+        assert_eq!(result.to_sql_code(), sql::SqlReturn::SUCCESS.0);
+        crate::api::handle_allocation::free_environment(env).expect("free_environment");
+    }
+
+    #[test]
+    fn negative_buffer_length_for_string_field_returns_sql_error() {
+        let env = env_with_one_record();
+        let mut buf = [0u8; 32];
+        let mut str_len: sql::SmallInt = 0;
+        let mut warnings: Warnings = Vec::new();
+        let result = get_diag_field::<crate::api::encoding::Narrow>(
+            sql::HandleType::Env,
+            env,
+            1,
+            SQL_DIAG_SQLSTATE,
+            buf.as_mut_ptr() as sql::Pointer,
+            -1,
+            &mut str_len,
+            &mut warnings,
+        );
+        assert_eq!(result.to_sql_code(), sql::SqlReturn::ERROR.0);
+        crate::api::handle_allocation::free_environment(env).expect("free_environment");
     }
 }

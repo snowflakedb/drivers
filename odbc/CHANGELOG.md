@@ -10,6 +10,9 @@ New features:
 - Added native AKS Workload Identity support for Azure: when the Azure Workload Identity webhook injects `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE` into a pod and the projected token file exists on disk, `WORKLOAD_IDENTITY_PROVIDER=AZURE` exchanges that federated token for an Entra ID access token directly. `WORKLOAD_IDENTITY_IMPERSONATION_PATH` is not supported in this environment. (snowflake-eng/drivers#1367)
 - Added a `WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN` connection parameter for AWS Workload Identity Federation. When set to true, attestation uses outbound STS `GetWebIdentityToken` instead of the default pre-signed `GetCallerIdentity` token; the connection parameter takes precedence over `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN`. (snowflake-eng/drivers#1551)
 
+Bug fixes:
+- Fixed `SQLGetDiagField` return codes for three edge cases: a record field requested with `RecNumber=0` now returns `SQL_ERROR` instead of `SQL_NO_DATA`, a header field requested with a positive `RecNumber` now returns `SQL_SUCCESS` instead of `SQL_NO_DATA`, and a negative `BufferLength` for a string field now returns `SQL_ERROR`. (snowflake-eng/drivers#1878)
+
 ## v4.0.0-rc2
 
 Breaking changes:
