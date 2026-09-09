@@ -6,7 +6,7 @@ NULL -> NaN. Special values (NaN, inf, -inf) are preserved.
 
 from __future__ import annotations
 
-from math import inf, nan
+from math import inf, isnan, nan
 
 import pytest
 
@@ -349,3 +349,28 @@ class TestFetchPandasFloatBinding:
         df = execute_and_fetch(cursor, f"SELECT * FROM {table_name} ORDER BY col")
         assert_dtypes(df, [is_float])
         assert get_column(df, 0) == pytest.approx([-789.012, 0.0, 123.456, NULL_FLOAT], nan_ok=True)
+
+    @float_type_parametrize
+    def test_should_insert_non_finite_float_values_using_parameter_binding_for_float_and_synonyms(
+        self, execute_query, executemany_insert, cursor, tmp_schema, float_type
+    ):
+        # Given Snowflake client is logged in
+        pass
+
+        # And Table with <type> column exists
+        table_name = f"{tmp_schema}.pd_float_bind_non_finite_{float_type.replace(' ', '_').lower()}"
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
+
+        # When Float values [0.0, 123.456, -789.012, NULL, NaN, inf, -inf] are bulk-inserted
+        # using multirow binding
+        test_data = [(0.0,), (123.456,), (-789.012,), (None,), (nan,), (inf,), (-inf,)]
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_data)
+
+        # Then Result should contain the same values including NULL and the special values
+        df = execute_and_fetch(cursor, f"SELECT * FROM {table_name} ORDER BY col")
+        assert_dtypes(df, [is_float])
+        col = get_column(df, 0)
+        assert len(col) == len(test_data)
+        non_nan_col = [v for v in col if not isnan(v)]
+        assert non_nan_col == pytest.approx([-inf, -789.012, 0.0, 123.456, inf])
+        assert sum(1 for v in col if isnan(v)) == 2  # real NaN plus NULL -> NaN

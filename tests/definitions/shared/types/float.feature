@@ -129,5 +129,11 @@ Feature: FLOAT type support
     Given Snowflake client is logged in
     And Table with <type> column exists
     When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
-    # Note: NaN, inf, -inf cannot be bound — Snowflake rejects them as bind values.
     Then Result should contain the same values including NULL
+
+  @python_e2e
+  Scenario: should insert non-finite float values using parameter binding for float and synonyms
+    Given Snowflake client is logged in
+    And Table with <type> column exists
+    When Float values [0.0, 123.456, -789.012, NULL, NaN, inf, -inf] are bulk-inserted using multirow binding
+    Then Result should contain the same values including NULL and the special values
