@@ -1,8 +1,8 @@
-# Keyword net for the pre-disclosure sign-off gate.
+# Keyword + path net for the pre-disclosure sign-off gate.
 #
 # Scans each PR's title and body against the action's built-in keyword net
-# (its keywords.yml — a reviewable list of case-insensitive RE2 patterns owned
-# by the security partners) and adds `security-signoff-required` on a match.
+# (plus repo-specific keyword-patterns below) and matches changed filenames
+# against path-patterns. Adds `security-signoff-required` on either hit.
 #
 # This is the complement to .github/workflows/security-signoff.yml, not a
 # replacement for it: the gate is authoritative once the label is present, and
@@ -25,8 +25,8 @@ name: Security label
 on:
   # pull_request_target, not pull_request, so the token can write labels on
   # PRs from forks — same reason .github/workflows/labeler.yml uses it. This is
-  # safe because the action only reads the PR title, body, and diff as text
-  # through the API; it never checks out or executes PR head code.
+  # safe because the action only reads the PR title, body, and filenames as
+  # text through the API; it never checks out or executes PR head code.
   pull_request_target:
     # ready_for_review is required because drafts are skipped below: without
     # it, marking a PR ready would not scan until the next push or edit.
@@ -56,10 +56,56 @@ jobs:
       - uses: snowflake-eng/security-signoff-action@v0
         with:
           mode: label
-          # scan-diff is left off (default false): title and body only. Turning
-          # it on raises recall further at the cost of more false positives —
-          # revisit once we have seen how the built-in net behaves here.
-          #
-          # keyword-patterns can extend the built-in net with repo-specific
-          # RE2 patterns. Extension is add-only: a repo can strengthen the
-          # shared net but cannot remove an entry from it.
+          # scan-diff stays off: title/body + filenames only.
+          keyword-patterns: |
+            patterns:
+              - 'secret\s*detector'
+              - '\bredact'
+              - '(mask|redact).{0,40}(secret|password|token|credential|key)'
+              - '(secret|password|token|credential).{0,40}(mask|redact)'
+              - 'private_key_file'
+              - 'programmatic\s*access\s*token'
+              # Not bare 'allowlist': that substring hits Actions-allowlist
+              # docs and this workflow's own comments. WIF host files are
+              # also on the path net.
+              - '(host|domain|url|endpoint|ocsp|proxy)\s*allowlist'
+              - 'SensitiveString'
+              - '\bGHSA-'
+              - 'proxy\s*(credential|password)'
+              - 'threat\s*model'
+          path-patterns: |
+            paths:
+              - 'sf_core/src/rest/snowflake/workload_identity/**'
+              - '**/oauth/**'
+              - '**/external_browser.rs'
+              - '**/native_okta.rs'
+              - '**/configured_redirect_uri.rs'
+              - '**/spcs_token.rs'
+              - 'sf_core/src/auth.rs'
+              - 'sf_core/src/rest/snowflake/auth.rs'
+              - 'sf_core/src/rest/snowflake/browser.rs'
+              - 'sf_core/src/rest/snowflake/logout.rs'
+              - 'sf_core/src/config/logout.rs'
+              - '**/config/token.rs'
+              - 'odbc/src/api/oauth.rs'
+              - 'sf_core/src/sensitive.rs'
+              # Directory *and* single-file module form so a collapse to
+              # crl.rs / token_cache.rs / tls.rs does not drop coverage.
+              - '**/crl/**'
+              - '**/crl.rs'
+              - '**/token_cache/**'
+              - '**/token_cache.rs'
+              - '**/tls/**'
+              - '**/tls.rs'
+              - '**/*private_key*'
+              # No in-tree file is named this today (legacy JDBC class);
+              # keep so a port is labeled. Redaction lives in sensitive.rs.
+              - '**/*secret_detector*'
+              - '**/*SecretDetector*'
+              - '**/*secret*'
+              - 'sf_core/src/logging/**'
+              - '**/file_manager/encryption.rs'
+              # Gate + outbound publish policy: these decide what becomes public.
+              - 'ci/mirroring/**'
+              - '.github/security-partners.yml'
+              - '.github/workflows/security-*.yml'

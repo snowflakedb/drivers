@@ -13,8 +13,8 @@ That hold is the `security-signoff` gate, implemented by
 ## How it works
 
 1. A PR that may need security scrutiny gets the
-   `security-signoff-required` label — from a human, or from the keyword net
-   in `.github/workflows/security-label.yml`.
+   `security-signoff-required` label — from a human, or from the keyword and
+   path nets in `.github/workflows/security-label.yml`.
 2. On PR and review events, `.github/workflows/security-signoff.yml`
    evaluates the PR and publishes a `security-signoff` **commit status**.
    Draft PRs are skipped — the gate starts when the author marks the PR
@@ -62,20 +62,21 @@ when the author marks the PR ready.
 Two independent sources, and the gate treats them identically — it only cares
 whether the label is present.
 
-- **The keyword net.** `.github/workflows/security-label.yml` scans each PR's
-  title and body against the action's built-in `keywords.yml` and adds the
-  label on a match. It is **add-only**, so it never strips a label someone
-  applied deliberately, and **fail-open**: a false positive costs one extra
-  partner review, while a miss risks premature disclosure, so the net favours
-  recall. An unnecessary label is cheap to remove by hand.
+- **The keyword and path nets.** `.github/workflows/security-label.yml` scans
+  each PR's title and body against the action's built-in patterns plus
+  repo-specific `keyword-patterns`, and matches changed filenames against
+  `path-patterns`. Either hit adds the label. It is **add-only**, so it never
+  strips a label someone applied deliberately, and **fail-open**: a false
+  positive costs one extra partner review, while a miss risks premature
+  disclosure. An unnecessary label is cheap to remove by hand.
 - **A human.** Anyone can add the label to escalate a PR the net missed.
 
 There is deliberately no *path*-based net in `.github/labeler.yml`:
 `.github/workflows/labeler.yml` runs `actions/labeler` with
 `sync-labels: true`, which removes any configured label as soon as its globs
 stop matching — it would strip this label out from under a reviewer on the
-next push. Adding one would require a second labeler invocation with
-`sync-labels: false` and its own config file.
+next push. Path globs for this gate live in the sign-off action's label mode
+instead (`path-patterns`), which never removes the label.
 
 
 ## How to use it
@@ -171,6 +172,12 @@ a change described in neutral terms still slips through. This is the likeliest
 way the gate fails to fire, and it deserves more attention than any of the
 mechanical gaps below.
 
+**The path net lists at most 3000 files.** Label mode pages
+`/pulls/{n}/files` to 30×100, which is GitHub's documented ceiling for that
+API. A refactor larger than that is not scored by filename; keyword matching
+on title and body still runs. Low likelihood, and not worth raising the cap
+in the action.
+
 **Bypass actors can merge past a red status.** Both rulesets grant bypass to
 repository role id 5 — `bypass_mode: pull_request` on "Protect main", `always`
 on "Protect release branch". Resolving that id to a role name over the API
@@ -220,7 +227,7 @@ whole sync rather than quietly omitting one file.
 ## Files involved
 
 - `.github/workflows/security-signoff.yml` — the gate; publishes the status.
-- `.github/workflows/security-label.yml` — the keyword net; adds the label.
+- `.github/workflows/security-label.yml` — keyword + path nets; adds the label.
 - `.github/security-partners.yml` — the roster.
 - `ci/mirroring/copy.bara.sky` — mirror exclusions.
 - `.ai/review/universal-driver-security-disclosure.yaml` — the ArcticOwl
@@ -255,9 +262,7 @@ publishes a verdict that nothing enforces.
   clear it. Branches cut from `main` afterwards inherit it.
 - **Test the revoke-after-queueing case** from "Known limits" above — one
   throwaway PR settles it.
-- **Tune the keyword net.** Watch what it labels over the first few weeks. If
-  it misses changes whose title and body say nothing security-relevant, the
-  next levers are `scan-diff: 'true'` (scan the diff too — higher recall,
-  noisier) and `keyword-patterns` for repo-specific additions; both extend the
-  shared net and neither can remove an entry from it. A path-based net is the
-  other option, with the `sync-labels` caveat in "How the label gets applied".
+- **Watch the keyword and path nets.** Repo-specific `keyword-patterns` and
+  `path-patterns` are configured in `.github/workflows/security-label.yml`.
+  Leave `scan-diff` off unless filename matching is not enough; scanning
+  diffs is noisier. Do not add this label to `.github/labeler.yml`.
