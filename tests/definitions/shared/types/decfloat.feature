@@ -1,11 +1,11 @@
-@python @odbc @jdbc @core_not_needed
+@python @odbc @jdbc @nodejs @core_not_needed
 Feature: DECFLOAT type support
 
   # =========================================================================== #
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should cast decfloat values to appropriate type
     # Python: Values should be cast to 'Decimal' type with 38-digit precision
     Given Snowflake client is logged in
@@ -17,19 +17,19 @@ Feature: DECFLOAT type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select decfloat literals
     Given Snowflake client is logged in
     When Query "SELECT 0::DECFLOAT, 1.5::DECFLOAT, -1.5::DECFLOAT, 123.456789::DECFLOAT, -987.654321::DECFLOAT" is executed
     Then Result should contain exact decimals [0, 1.5, -1.5, 123.456789, -987.654321]
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should handle full 38-digit precision values from literals
     Given Snowflake client is logged in
     When Query "SELECT '12345678901234567890123456789012345678'::DECFLOAT, '1.2345678901234567890123456789012345678E+100'::DECFLOAT, '1.2345678901234567890123456789012345678E-100'::DECFLOAT" is executed
     Then Result should preserve all 38 digits for each value
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario Outline: should handle <case> exponent values from literals
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -40,7 +40,7 @@ Feature: DECFLOAT type support
       | max positive and min positive     | '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT        | 1E+16384, 1E-16383        |
       | large negative and small positive | '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT | -1.234E+8000, 9.876E-8000 |
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should handle NULL values from literals
     Given Snowflake client is logged in
     When Query "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT" is executed
@@ -68,28 +68,28 @@ Feature: DECFLOAT type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select decfloats from table
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists with values [0, 123.456, -789.012, 1.23e20, -9.87e-15]
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain exact decimals [0, 123.456, -789.012, 1.23e20, -9.87e-15]
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should handle full 38-digit precision values from table
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists with values [12345678901234567890123456789012345678, 1.2345678901234567890123456789012345678E+100, 1.2345678901234567890123456789012345678E-100]
     When Query "SELECT * FROM <table>" is executed
     Then Result should preserve all 38 digits for each value
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should handle extreme exponent values from table
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists with values [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should handle NULL values from table
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists with values [NULL, 123.456, NULL, -789.012]
@@ -107,19 +107,19 @@ Feature: DECFLOAT type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @nodejs_e2e
   Scenario: should select decfloat using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed with bound DECFLOAT values [123.456, -789.012, 42.0]
     Then Result should contain [123.456, -789.012, 42.0]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select null decfloat using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
     Then Result should contain [NULL]
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario Outline: should select <case> decfloat using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
@@ -130,14 +130,14 @@ Feature: DECFLOAT type support
       | max exponent            | 1E+16384       | 1E+16384        |
       | large negative exponent | -1.234E+8000   | -1.234E+8000    |
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should insert decfloat using parameter binding
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists
     When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
     Then SELECT should return the same exact values
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should insert extreme decfloat values using parameter binding
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists
