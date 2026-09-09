@@ -618,18 +618,22 @@ void ArrowTableConverter::convertTimeColumn_nanoarrow(
 // Nanosecond timestamp overflow helper
 // ---------------------------------------------------------------------------
 
+enum class NanoTsCheck { InRange, Downscale, Error };
+
 /**
  * Reports whether the column has to be emitted at microsecond precision,
  * which is the case once a nanosecond value overflows int64 while every
  * fraction stays microsecond-aligned.
  *
  * A value that overflows and also carries sub-microsecond digits fits no
- * supported timestamp unit; that case sets a Python exception, which the
- * caller surfaces through py::checkPyError(). Throwing instead would
- * terminate the process, as the Cython caller has no handler for a C++
- * exception.
+ * supported timestamp unit; that case sets a Python exception via
+ * setPyError and returns Error. convertBatch surfaces it after the GIL is
+ * reacquired. This returns a C++ discriminant instead of reading
+ * PyErr_Occurred, because convertBatch releases the GIL around the column
+ * loop. Throwing instead would terminate the process, as the Cython caller
+ * has no handler for a C++ exception.
  */
-static bool _checkNanosecondTimestampOverflowAndDownscale(
+static NanoTsCheck _checkNanosecondTimestampOverflowAndDownscale(
     ArrowArrayView* columnArray, ArrowArrayView* epochArray,
     ArrowArrayView* fractionArray) {
   int powTenSB4 = sf::internal::powTenSB4[9];
@@ -650,12 +654,13 @@ static bool _checkNanosecondTimestampOverflowAndDownscale(
               "instead.",
               static_cast<long long>(epoch), static_cast<long long>(fraction));
           py::setPyError(PyExc_OverflowError, errorInfo.c_str());
+          return NanoTsCheck::Error;
         }
-        return true;
+        return NanoTsCheck::Downscale;
       }
     }
   }
-  return false;
+  return NanoTsCheck::InRange;
 }
 
 // ---------------------------------------------------------------------------
@@ -689,9 +694,10 @@ void ArrowTableConverter::convertTimestampColumn_nanoarrow(
       else if (std::strcmp(name, internal::FIELD_NAME_FRACTION.c_str()) == 0)
         fractionArray = columnArray->children[i];
     }
-    has_overflow = _checkNanosecondTimestampOverflowAndDownscale(
+    auto check = _checkNanosecondTimestampOverflowAndDownscale(
         columnArray, epochArray, fractionArray);
-    if (py::checkPyError()) return;
+    if (check == NanoTsCheck::Error) return;
+    has_overflow = (check == NanoTsCheck::Downscale);
   }
 
   if (scale <= 6) {
@@ -839,9 +845,10 @@ void ArrowTableConverter::convertTimestampTZColumn_nanoarrow(
 
   bool has_overflow = m_force_microsecond_precision;
   if (!m_force_microsecond_precision && scale > 6 && byteLength == 16) {
-    has_overflow = _checkNanosecondTimestampOverflowAndDownscale(
+    auto check = _checkNanosecondTimestampOverflowAndDownscale(
         columnArray, epochArray, fractionArray);
-    if (py::checkPyError()) return;
+    if (check == NanoTsCheck::Error) return;
+    has_overflow = (check == NanoTsCheck::Downscale);
   }
 
   auto timeunit = NANOARROW_TIME_UNIT_SECOND;
