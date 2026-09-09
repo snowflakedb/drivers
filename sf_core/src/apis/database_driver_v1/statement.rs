@@ -1268,9 +1268,9 @@ fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde
         }
     }
     for (key, setting) in settings.iter() {
-        if is_unregistered_param(key) {
+        if is_unregistered_param(key) && !matches!(setting, Setting::Bytes(_)) {
             params
-                .entry(key.to_ascii_uppercase())
+                .entry(key.to_uppercase())
                 .or_insert_with(|| setting_to_json_value(setting));
         }
     }
@@ -1519,9 +1519,6 @@ mod tests {
         );
     }
 
-    // SNOW-4072350: statement options with no entry in the param registry
-    // (e.g. DATE_INPUT_FORMAT) were silently dropped by QUERY_PARAMETER_NAMES'
-    // allowlist instead of reaching GS.
     #[test]
     fn unregistered_statement_option_is_forwarded_to_gs() {
         let mut settings = ParamStore::new();
@@ -1605,9 +1602,16 @@ mod tests {
         assert!(params.contains_key("DATE_INPUT_FORMAT"));
     }
 
-    // Known gap tracked separately from SNOW-4072350: a registered but
-    // Session-only statement option (never Statement-scoped) still hard-errors
-    // instead of falling through as passthrough.
+    #[test]
+    fn unregistered_statement_option_bytes_value_is_not_forwarded() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "SF_PARTNER".to_string(),
+            Setting::Bytes(vec![0x01, 0x02, 0x03]),
+        );
+        assert_eq!(build_query_parameters(&settings), None);
+    }
+
     #[tokio::test]
     async fn registered_session_only_statement_option_still_errors() {
         let ds = DatabaseDriverV1::new();
