@@ -23,6 +23,7 @@ from ..._internal.connection import (
     ConnectionMixin,
     clamp_client_prefetch_threads,
     requires_open,
+    validate_query_id,
 )
 from ..._internal.connection.freezable_proxy import ConnectionInfoProxy as _ConnectionInfoProxy
 from ..._internal.connection.freezable_proxy import SessionParametersProxy as _SessionParametersProxy
@@ -422,6 +423,7 @@ class Connection(ConnectionMixin[CursorInstance]):
     async def _get_query_status_with_response(
         self, sf_qid: str
     ) -> tuple[QueryStatus, ConnectionGetQueryStatusResponse]:
+        validate_query_id(sf_qid)
         if self.conn_handle is None or self.is_closed():
             return QueryStatus.DISCONNECTED, ConnectionGetQueryStatusResponse()
         response = await async_core_driver.connection_get_query_status(

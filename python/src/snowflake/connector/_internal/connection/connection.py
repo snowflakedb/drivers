@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
 
@@ -46,6 +48,14 @@ def clamp_client_prefetch_threads(value: int) -> int:
     if value > MAX_CLIENT_PREFETCH_THREADS:
         return MAX_CLIENT_PREFETCH_THREADS
     return value
+
+
+def validate_query_id(sf_qid: str) -> None:
+    """Raise ValueError if ``sf_qid`` is not a valid UUID, matching the legacy connector's validation."""
+    try:
+        uuid.UUID(sf_qid)
+    except ValueError as err:
+        raise ValueError(f"Invalid UUID: '{sf_qid}'") from err
 
 
 def _session_param_is_true(value: bool | str | None) -> bool:

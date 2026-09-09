@@ -26,6 +26,7 @@ from .._internal.connection import (
     ConnectionMixin,
     clamp_client_prefetch_threads,
     requires_open,
+    validate_query_id,
 )
 from .._internal.connection.freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
 from .._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
@@ -555,6 +556,7 @@ class Connection(ConnectionMixin[CursorInstance]):
 
     def _get_query_status_with_response(self, sf_qid: str) -> tuple[QueryStatus, ConnectionGetQueryStatusResponse]:
         """Fetch query status from the server and map the status name to a QueryStatus enum value."""
+        validate_query_id(sf_qid)
         if self.is_closed():
             return QueryStatus.DISCONNECTED, ConnectionGetQueryStatusResponse()
         response = core_driver.connection_get_query_status(conn_handle=self.conn_handle, query_id=sf_qid)  # type: ignore[arg-type]
