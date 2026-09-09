@@ -494,19 +494,17 @@ behavior_differences:
       match), and only JDBC overrides it via its preset.
 
   24:
-    name: 'PUT reports sourceCompression for an already-compressed file'
+    name: 'PUT reports sourceCompression as a token instead of null'
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      When the source file is already compressed (its extension names the format, e.g. `.gz`),
-      `sourceCompression` is reported as `null`.
+      `sourceCompression` is always reported as `null`, whether AUTO_COMPRESS is TRUE or FALSE.
     new_driver_behavior: |
-      `sourceCompression` is the detected compression token (e.g. `GZIP`, `ZSTD`), matching the
-      format named by the extension, so it equals `targetCompression` when the file is passed
-      through untouched (`sf_core/src/file_manager/mod.rs`).
+      `sourceCompression` is the detected compression token: `NONE` for an uncompressed source, or
+      the format named by the extension (e.g. `GZIP`, `ZSTD`) for an already-compressed one.
     description: |
       Preset-controlled behavior; it can be changed easily via presets (ODBC lower-cases the token).
     status_rationale: |

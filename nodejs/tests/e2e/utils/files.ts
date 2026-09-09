@@ -79,7 +79,7 @@ export class TempDir {
     return p.split(path.sep).join('/');
   }
 
-  resolve(relativePath: string): string {
+  resolve(relativePath = ''): string {
     return this.#toPosix(path.join(this.path, relativePath));
   }
 
@@ -102,7 +102,7 @@ export class TempDir {
     return link;
   }
 
-  fileUrl(relativePath: string): string {
+  fileUrl(relativePath = ''): string {
     return this.#toPosix(toFileUrl(this.resolve(relativePath)));
   }
 
