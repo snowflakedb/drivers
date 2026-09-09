@@ -1,5 +1,6 @@
 import { onTestFinished } from 'vitest';
 import { Connection, ConnectionOptions } from '../../types/sdk-types.js';
+import { TempDir, type TempDirOptions } from './files.js';
 import {
   destroyConnectionAsync,
   executeAsync,
@@ -42,4 +43,17 @@ export async function createTemporaryTable(
     });
   }
   return tableName;
+}
+
+export function createTempDir(
+  options: TempDirOptions = {},
+  shouldCleanupAfterTest = true,
+): TempDir {
+  const tempDir = new TempDir(options);
+  if (shouldCleanupAfterTest) {
+    onTestFinished(() => {
+      tempDir.cleanup();
+    });
+  }
+  return tempDir;
 }
