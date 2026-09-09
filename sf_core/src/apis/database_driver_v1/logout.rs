@@ -9,8 +9,8 @@
 //! - `prepare_logout_from_conn()`: Synchronous; called while holding the connection lock
 //! - `send_logout_request()`: Async; called after the lock is released. The
 //!   caller applies its `ErrorStrategy`, so it can drive close state from the raw
-//!   outcome while still honouring `best_effort` in what it returns.
-//! - `send_logout_request()`: Sends the HTTP logout request
+//!   outcome while still honouring `best_effort` in what it returns. Skips HTTP
+//!   when a host backend owns the session.
 
 use super::async_query_registry::AsyncQueryRegistry;
 use super::connection::{Connection, RefreshContext};
@@ -226,6 +226,11 @@ pub(super) fn prepare_logout_from_conn(
 /// Calls `execute_with_refresh` directly (not `with_valid_session`) because logout
 /// uses `RefreshContext::new()` (no `is_closed` check — logout runs after close).
 pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError> {
+    if data.refresh_ctx.host_backend_active() {
+        tracing::info!("Skipping logout HTTP; host owns the session");
+        return Ok(());
+    }
+
     let mut refresh_ctx = data.refresh_ctx;
 
     let result = refresh_ctx
@@ -410,6 +415,33 @@ mod tests {
             LogoutDecision::Send,
             "Should send logout when auto-detection disabled"
         );
+    }
+
+    #[tokio::test]
+    async fn send_logout_request_skips_http_when_host_backend_active() {
+        use std::sync::atomic::AtomicBool;
+        use tokio::sync::RwLock as AsyncRwLock;
+
+        let backend: std::sync::Arc<dyn crate::xp_backend::SnowflakeBackend> =
+            std::sync::Arc::new(crate::xp_backend::TestBackend);
+        let refresh_ctx = RefreshContext::from_parts(
+            std::sync::Arc::new(AsyncRwLock::new(None)),
+            reqwest::Client::new(),
+            "http://127.0.0.1:1".into(),
+            crate::config::rest_parameters::test_fixtures::test_client_info(),
+            std::sync::Arc::new(AtomicBool::new(false)),
+            Some(backend),
+        );
+        let data = LogoutData {
+            client: reqwest::Client::new(),
+            url: "http://127.0.0.1:1".into(),
+            info: crate::config::rest_parameters::test_fixtures::test_client_info(),
+            retry_policy: RetryPolicy::default(),
+            refresh_ctx,
+        };
+        send_logout_request(data)
+            .await
+            .expect("XP logout must not send HTTP");
     }
 
     #[test]

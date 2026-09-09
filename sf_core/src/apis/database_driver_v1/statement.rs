@@ -391,14 +391,19 @@ impl DatabaseDriverV1 {
         retry_policy: &RetryPolicy,
         csv_bytes: &[u8],
     ) -> Result<String, ApiError> {
-        let (use_s3_regional_url_session_param, flags, put_get_policy) = {
+        let (use_s3_regional_url_session_param, flags, put_get_policy, xp_backend) = {
             let conn = conn_arc.lock().await;
             let regional = conn.use_s3_regional_url_session_param().await;
             let flags = crate::stage_binding::StageBindingFlags {
                 stage_state: conn.stage_state.clone(),
             };
             let put_get_policy = RetryPolicy::put_get(&conn.effective_settings());
-            (regional, flags, put_get_policy)
+            (
+                regional,
+                flags,
+                put_get_policy,
+                conn.xp_backend_arc().context(QuerySnafu)?,
+            )
         };
 
         let mut upload_refresh = RefreshContext::from_arc(conn_arc).await?;
@@ -413,6 +418,7 @@ impl DatabaseDriverV1 {
             use_s3_regional_url_session_param,
             crl_worker: self.crl_worker.clone(),
             cleanup: operation_ctx.map(OperationCtx::cleanup_scope),
+            xp_backend,
         };
         let request_id = uuid::Uuid::new_v4();
         crate::stage_binding::upload_csv_bindings(&stage_ctx, &flags, request_id, csv_bytes)
@@ -453,7 +459,8 @@ impl DatabaseDriverV1 {
         self.ensure_file_transfer_allowed(&query, &stmt.conn)
             .await?;
 
-        let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
+        let (query_parameters, http_client, retry_policy, xp_backend) =
+            query_context(&stmt.conn).await?;
 
         let execution_mode = stmt.execution_mode(Some(&query));
 
@@ -562,6 +569,7 @@ impl DatabaseDriverV1 {
                             execution_mode,
                             request_id: Some(request_id),
                         },
+                        xp_backend.as_deref(),
                     );
                     let result = if let Some((budget, deadline)) = query_deadline {
                         match tokio::time::timeout_at(deadline, query_call).await {
@@ -708,6 +716,20 @@ impl DatabaseDriverV1 {
     ) -> Result<query_response::RowsetData, ApiError> {
         match data.command.as_deref() {
             Some(command) => {
+                {
+                    let conn = conn.lock().await;
+                    if conn.xp_backend_arc().context(QuerySnafu)?.is_some() {
+                        let operation = match command {
+                            "UPLOAD" => "upload_stream",
+                            "DOWNLOAD" => "download_stream",
+                            _ => "file_transfer",
+                        };
+                        return Err(crate::rest::snowflake::RestError::from(
+                            crate::xp_backend::BackendError::unsupported(operation),
+                        ))
+                        .context(QuerySnafu);
+                    }
+                }
                 // PUT/GET refresh context: lets the file manager re-issue
                 // this SQL when stage credentials expire mid-transfer.
                 let stage_info_refresh_context =
@@ -801,7 +823,8 @@ impl DatabaseDriverV1 {
             self.ensure_file_transfer_allowed(&query, &stmt.conn)
                 .await?;
 
-            let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
+            let (query_parameters, http_client, retry_policy, xp_backend) =
+                query_context(&stmt.conn).await?;
             let mut query_parameter_map = build_query_parameters(&stmt.settings);
             let conn_arc = stmt.conn.clone();
 
@@ -888,6 +911,7 @@ impl DatabaseDriverV1 {
                             &query_input,
                             request_id,
                             &retry_policy,
+                            xp_backend.as_deref(),
                         )
                         .await
                         {
@@ -980,8 +1004,7 @@ impl DatabaseDriverV1 {
             // is disabled for this path.
             let refresh_sql = match data.command.as_deref() {
                 Some(_) => {
-                    let (query_parameters, _http_client, _retry_policy) =
-                        query_context(&conn_ptr).await?;
+                    let (query_parameters, ..) = query_context(&conn_ptr).await?;
                     match data.sql_text.clone() {
                         Some(sql) => Some((sql, query_parameters)),
                         None => {
@@ -1028,15 +1051,22 @@ impl DatabaseDriverV1 {
                         argument: "Connection handle not found".to_string(),
                     })?;
 
-            let (query_parameters, http_client, _) = query_context(&conn_ptr).await?;
+            let (query_parameters, http_client, _, xp_backend) = query_context(&conn_ptr).await?;
 
             with_valid_session(&conn_ptr, |token| {
                 let http_client = &http_client;
                 let query_parameters = &query_parameters;
                 let query_id = &query_id;
+                let xp_backend = xp_backend.clone();
                 async move {
-                    snowflake_abort_query(http_client, query_parameters, token.reveal(), query_id)
-                        .await
+                    snowflake_abort_query(
+                        http_client,
+                        query_parameters,
+                        token.reveal(),
+                        query_id,
+                        xp_backend.as_deref(),
+                    )
+                    .await
                 }
             })
             .await
@@ -1095,13 +1125,14 @@ async fn abort_query_by_request_id(
     request_id: String,
     sql_text: String,
 ) -> Result<AbortOutcome, ApiError> {
-    let (query_parameters, http_client, _) = query_context(conn_arc).await?;
+    let (query_parameters, http_client, _, xp_backend) = query_context(conn_arc).await?;
 
     let cancel = with_valid_session(conn_arc, |token| {
         let http_client = &http_client;
         let query_parameters = &query_parameters;
         let request_id = &request_id;
         let sql_text = &sql_text;
+        let xp_backend = xp_backend.clone();
         async move {
             snowflake_cancel_query(
                 http_client,
@@ -1109,6 +1140,7 @@ async fn abort_query_by_request_id(
                 token.reveal(),
                 request_id,
                 sql_text,
+                xp_backend.as_deref(),
             )
             .await
         }
@@ -1138,7 +1170,15 @@ async fn abort_query_by_request_id(
 /// Also rejects query execution if close() has already been called on the connection.
 pub(super) async fn query_context(
     conn: &Arc<Mutex<Connection>>,
-) -> Result<(QueryParameters, reqwest::Client, RetryPolicy), ApiError> {
+) -> Result<
+    (
+        QueryParameters,
+        reqwest::Client,
+        RetryPolicy,
+        Option<std::sync::Arc<dyn crate::xp_backend::SnowflakeBackend>>,
+    ),
+    ApiError,
+> {
     let conn = conn.lock().await;
     // Reject query execution if close() has been called
     // `Closing` rejects new work too: the logout is already on its way.
@@ -1151,6 +1191,7 @@ pub(super) async fn query_context(
             .clone()
             .context(ConnectionNotInitializedSnafu)?,
         RetryPolicy::query(&conn.effective_settings()),
+        conn.xp_backend_arc().context(QuerySnafu)?,
     ))
 }
 
@@ -2205,7 +2246,7 @@ mod tests {
         conn.retry_policy = RetryPolicy::default();
         let conn = Arc::new(Mutex::new(conn));
 
-        let (params, _client, _retry) = query_context(&conn).await.unwrap();
+        let (params, _client, _retry, _xp) = query_context(&conn).await.unwrap();
         assert_eq!(params.server_url, "https://account.snowflakecomputing.com");
     }
 

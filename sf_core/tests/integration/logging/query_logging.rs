@@ -83,6 +83,7 @@ async fn sync_query_emits_info_log_without_sql_when_flag_off() {
         "test-token",
         QueryInput::new(SQL_LONG),
         QueryOptions::default(),
+        None,
     )
     .await;
 
@@ -123,6 +124,7 @@ async fn sync_query_emits_info_log_with_sql_when_text_flag_on() {
         "test-token",
         QueryInput::new(SQL_LONG),
         QueryOptions::default(),
+        None,
     )
     .await;
 
@@ -167,6 +169,7 @@ async fn sync_query_emits_info_log_with_sql_and_bindings_when_both_flags_on() {
         "test-token",
         input,
         QueryOptions::default(),
+        None,
     )
     .await;
 
@@ -312,6 +315,7 @@ async fn async_submit_emits_info_log_with_sql_when_text_flag_on() {
             execution_mode: QueryExecutionMode::Async,
             ..Default::default()
         },
+        None,
     )
     .await;
 

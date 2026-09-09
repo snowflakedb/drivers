@@ -107,6 +107,10 @@ fn kind_from_query_response(value: &QueryResponseProcessingError) -> ErrorKind {
             _ => ErrorKind::Io,
         },
         QueryResponseProcessingError::RemoteFileNotFound { .. } => ErrorKind::RemoteFileNotFound,
+        QueryResponseProcessingError::BatchRead {
+            source: super::query::ReadBatchesError::Backend { source, .. },
+            ..
+        } => kind_from_backend_error(source),
         // no wildcard - explicit empty arms
         QueryResponseProcessingError::UploadResultsConversion { .. }
         | QueryResponseProcessingError::DownloadResultsConversion { .. }
@@ -117,9 +121,19 @@ fn kind_from_query_response(value: &QueryResponseProcessingError) -> ErrorKind {
 }
 
 /// Classify a REST failure that escaped through `ApiError::Query`.
+fn kind_from_backend_error(source: &crate::xp_backend::BackendError) -> ErrorKind {
+    match source.code {
+        crate::xp_backend::error_codes::UNSUPPORTED => ErrorKind::NotImplemented,
+        crate::xp_backend::error_codes::INVALID_ARGUMENT => ErrorKind::InvalidArgument,
+        code if code > 0 => ErrorKind::QueryFailed,
+        _ => ErrorKind::InternalError,
+    }
+}
+
 fn kind_from_query_rest_error(err: &RestError) -> ErrorKind {
     match err {
         RestError::QueryFailed { .. } => ErrorKind::QueryFailed,
+        RestError::Backend { source, .. } => kind_from_backend_error(source),
         RestError::OperationTimeout { .. } => ErrorKind::Timeout,
         RestError::Communication { .. } | RestError::HttpRetry { .. } => ErrorKind::Io,
         RestError::Authentication { .. }
@@ -167,6 +181,7 @@ fn kind_of(error: &ApiError) -> ErrorKind {
             } => ErrorKind::AuthenticationError,
             RestError::LoginError { .. } => ErrorKind::LoginError,
             RestError::OperationTimeout { .. } => ErrorKind::Timeout,
+            RestError::Backend { source, .. } => kind_from_backend_error(source),
             _ => ErrorKind::AuthenticationError,
         },
         ApiError::TlsClientCreation { .. }
@@ -312,6 +327,59 @@ mod tests {
             location: loc(),
         });
         assert_eq!(err.kind(), ErrorKind::Io);
+    }
+
+    #[test]
+    fn batch_read_backend_unsupported_projects_not_implemented() {
+        let err = ApiError::QueryResponseProcess {
+            location: loc(),
+            source: Box::new(QueryResponseProcessingError::BatchRead {
+                source: crate::apis::database_driver_v1::query::ReadBatchesError::Backend {
+                    source: crate::xp_backend::BackendError::unsupported("download_query_chunk"),
+                    location: loc(),
+                },
+                location: loc(),
+            }),
+        };
+        assert_eq!(err.kind(), ErrorKind::NotImplemented);
+    }
+
+    #[test]
+    fn backend_error_kind_preserves_actionable_categories() {
+        for (code, expected) in [
+            (
+                crate::xp_backend::error_codes::UNSUPPORTED,
+                ErrorKind::NotImplemented,
+            ),
+            (
+                crate::xp_backend::error_codes::INVALID_ARGUMENT,
+                ErrorKind::InvalidArgument,
+            ),
+            (1003, ErrorKind::QueryFailed),
+            (
+                crate::xp_backend::error_codes::PROTOCOL,
+                ErrorKind::InternalError,
+            ),
+        ] {
+            let err = query(RestError::Backend {
+                source: crate::xp_backend::BackendError::new(code, "backend error"),
+                location: loc(),
+            });
+            assert_eq!(err.kind(), expected);
+        }
+    }
+
+    #[test]
+    fn login_backend_error_kind_preserves_actionable_categories() {
+        let err = ApiError::Login {
+            source: Box::new(RestError::Backend {
+                source: crate::xp_backend::BackendError::invalid_argument("invalid login input"),
+                location: loc(),
+            }),
+            location: loc(),
+        };
+
+        assert_eq!(err.kind(), ErrorKind::InvalidArgument);
     }
 
     #[test]

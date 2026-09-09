@@ -81,7 +81,7 @@ impl DatabaseDriverV1 {
         nullable_flags: &[bool],
         row_types: Vec<RowType>,
     ) -> Result<Box<FFI_ArrowArrayStream>, ApiError> {
-        let (client, prefetch_config) = match conn_handle {
+        let (client, prefetch_config, xp_backend) = match conn_handle {
             Some(conn_handle) => {
                 let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
                     InvalidArgumentSnafu {
@@ -96,7 +96,8 @@ impl DatabaseDriverV1 {
                     .ok_or_else(|| ConnectionNotInitializedSnafu.build())?;
                 let session_params = conn.session_parameters.read().await;
                 let prefetch_config = PrefetchConfig::from_session_params(&session_params);
-                (client, prefetch_config)
+                let xp_backend = conn.xp_backend_arc().context(QuerySnafu)?;
+                (client, prefetch_config, xp_backend)
             }
             None => {
                 // TODO(SNOW-3801967): when no conn handle, we fall back to a fresh TLS client and
@@ -107,9 +108,19 @@ impl DatabaseDriverV1 {
                     self.crl_worker.clone(),
                 )
                 .context(TlsClientCreationSnafu)?;
-                (client, PrefetchConfig::default())
+                (client, PrefetchConfig::default(), None)
             }
         };
+        if xp_backend.is_some()
+            && chunks
+                .iter()
+                .any(|chunk| matches!(chunk, FetchChunkInput::Remote(_)))
+        {
+            return Err(crate::rest::snowflake::RestError::from(
+                crate::xp_backend::BackendError::unsupported("download_query_chunk"),
+            ))
+            .context(QuerySnafu);
+        }
         let reader = fetch_chunks_reader(
             chunks,
             chunk_format,

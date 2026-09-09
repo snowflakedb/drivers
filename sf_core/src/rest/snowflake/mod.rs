@@ -1021,6 +1021,7 @@ pub async fn snowflake_login(
         None,
         None,
         &policy,
+        None,
     )
     .await
 }
@@ -1031,7 +1032,8 @@ pub async fn snowflake_login(
         login_parameters,
         session_parameters,
         token_cache,
-        retry_policy
+        retry_policy,
+        xp_backend
     ),
     fields(account_name, login_name)
 )]
@@ -1042,11 +1044,19 @@ pub async fn snowflake_login_with_client(
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
+    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
     // Record key fields in the span
     tracing::Span::current().record("account_name", &login_parameters.account_name);
+
+    if let Some(backend) = xp_backend {
+        tracing::info!("Delegating login to the registered host backend");
+        return Ok(backend
+            .authenticate(login_parameters, session_parameters)
+            .await?);
+    }
 
     // Optional settings
     tracing::debug!(
@@ -1687,6 +1697,7 @@ pub async fn snowflake_query<'a>(
         session_token,
         query_input,
         options,
+        None,
     )
     .await
 }
@@ -1697,7 +1708,14 @@ pub async fn snowflake_query<'a>(
 /// mode, caller-supplied `requestId`); every field defaults to the common
 /// case, so most callers pass `QueryOptions::default()`.
 #[tracing::instrument(
-    skip(client, query_parameters, session_token, query_input, options),
+    skip(
+        client,
+        query_parameters,
+        session_token,
+        query_input,
+        options,
+        xp_backend
+    ),
     fields(sql)
 )]
 pub async fn snowflake_query_with_client<'a>(
@@ -1706,6 +1724,7 @@ pub async fn snowflake_query_with_client<'a>(
     session_token: impl AsRef<str>,
     query_input: QueryInput<'a>,
     options: QueryOptions,
+    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<query_response::Response, RestError> {
     let QueryOptions {
         retry_policy,
@@ -1714,6 +1733,16 @@ pub async fn snowflake_query_with_client<'a>(
     } = options;
     let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
     let session_token = session_token.as_ref();
+
+    if let Some(backend) = xp_backend {
+        let backend_options = crate::xp_backend::BackendQueryOptions {
+            execution_mode,
+            request_id,
+        };
+        return Ok(backend
+            .execute_query(&query_input, &query_parameters, backend_options)
+            .await?);
+    }
 
     // Async mode path (legacy, opt-in)
     if matches!(execution_mode, QueryExecutionMode::Async) {
@@ -2001,15 +2030,20 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
 /// Issues `GET /queries/{query_id}/result` using the connection's session token,
 /// validates the response, and returns the parsed query response on success.
 /// Returns `RestError` so callers can use `RefreshContext` for token refresh.
-#[tracing::instrument(skip(client, query_parameters, session_token))]
+#[tracing::instrument(skip(client, query_parameters, session_token, xp_backend))]
 pub async fn snowflake_get_query_result(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
     query_id: &str,
     retry_policy: &RetryPolicy,
+    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<query_response::Response, RestError> {
     tracing::info!(query_id = query_id, "Fetching query result");
+
+    if let Some(backend) = xp_backend {
+        return Ok(backend.get_query_result(query_id).await?);
+    }
 
     let result_url = format!(
         "{}/queries/{}/result",
@@ -2054,7 +2088,7 @@ pub struct QueryStatusResult {
 const MONITORING_QUERIES_PATH: &str = "/monitoring/queries/";
 
 /// Check the status of a query by its ID via the `/monitoring/queries/{query_id}` endpoint.
-#[tracing::instrument(skip(client, client_info, session_token))]
+#[tracing::instrument(skip(client, client_info, session_token, xp_backend))]
 pub async fn get_query_status(
     client: &reqwest::Client,
     server_url: &str,
@@ -2062,8 +2096,28 @@ pub async fn get_query_status(
     session_token: &SensitiveString,
     query_id: &str,
     retry_policy: &RetryPolicy,
+    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<QueryStatusResult, RestError> {
     use crate::http::retry::{HttpContext, execute_with_retry};
+
+    if let Some(backend) = xp_backend {
+        let body = backend.get_query_status(query_id).await?;
+        let parsed: QueryStatusResponse = match serde_json::from_str(&body) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                return Err(crate::xp_backend::BackendError::protocol(format!(
+                    "backend operation `get_query_status` returned a monitoring body the driver \
+                 could not parse: {error}"
+                ))
+                .into());
+            }
+        };
+        let ids = QueryIds {
+            request_id: None,
+            query_id: Some(query_id.to_owned()),
+        };
+        return query_status_from_monitoring_body(parsed, &ids);
+    }
 
     let mut url = Url::parse(server_url)
         .and_then(|base| base.join(MONITORING_QUERIES_PATH))
@@ -2253,13 +2307,29 @@ pub enum AbortOutcome {
 /// (the query was not running — e.g. already completed, or never started) —
 /// this is a normal outcome, not an error. Transport, parse, and
 /// session-token errors still propagate as `Err`.
-#[tracing::instrument(skip(client, query_parameters, session_token))]
+fn abort_outcome_from_backend(outcome: crate::xp_backend::BackendCancelOutcome) -> AbortOutcome {
+    match outcome {
+        crate::xp_backend::BackendCancelOutcome::Cancelled => AbortOutcome::Aborted,
+        crate::xp_backend::BackendCancelOutcome::NotRunning => AbortOutcome::NotRunning,
+    }
+}
+
+#[tracing::instrument(skip(client, query_parameters, session_token, xp_backend))]
 pub async fn snowflake_abort_query(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
     query_id: &str,
+    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<AbortOutcome, RestError> {
+    if let Some(backend) = xp_backend {
+        return Ok(abort_outcome_from_backend(
+            backend
+                .cancel_query(crate::xp_backend::BackendCancelTarget::QueryId(query_id))
+                .await?,
+        ));
+    }
+
     let abort_url = format!(
         "{}/queries/{}/abort-request",
         query_parameters.server_url, query_id
@@ -2307,14 +2377,26 @@ pub async fn snowflake_abort_query(
 /// error. Session-token expiry (`390112`) and other transport/parse failures
 /// still propagate as `Err` (`read_response_json` maps `390112` to
 /// `SessionExpired` centrally so `with_valid_session` can renew-and-retry).
-#[tracing::instrument(skip(client, query_parameters, session_token, sql_text))]
+#[tracing::instrument(skip(client, query_parameters, session_token, sql_text, xp_backend))]
 pub async fn snowflake_cancel_query(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
     request_id: &str,
     sql_text: &str,
+    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<AbortOutcome, RestError> {
+    if let Some(backend) = xp_backend {
+        return Ok(abort_outcome_from_backend(
+            backend
+                .cancel_query(crate::xp_backend::BackendCancelTarget::RequestId {
+                    request_id,
+                    sql_text,
+                })
+                .await?,
+        ));
+    }
+
     let abort_url = Url::parse(query_parameters.server_url.as_str())
         .and_then(|base| base.join(ABORT_REQUEST_PATH))
         .context(UrlJoinSnafu {
@@ -2711,6 +2793,14 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("{}", source.message))]
+    #[snafu(visibility(pub(crate)))]
+    #[snafu(context(false))]
+    Backend {
+        source: crate::xp_backend::BackendError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
@@ -2764,6 +2854,7 @@ mod tests {
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn is_reauthentication_required_covers_id_token_and_oauth_codes() {
@@ -2913,6 +3004,200 @@ mod tests {
             spcs_token: None,
             disable_parallel_user_prompt: false,
         }
+    }
+
+    fn test_query_params() -> QueryParameters {
+        QueryParameters {
+            server_url: "http://127.0.0.1:1".to_string(),
+            client_info: test_client_info(),
+            log_max_query_length: 1024,
+            log_query_text: false,
+            log_query_parameters: false,
+            include_retry_reason: false,
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingBackend {
+        authenticate_calls: AtomicUsize,
+        execute_query_calls: AtomicUsize,
+        get_query_status_calls: AtomicUsize,
+        get_query_result_calls: AtomicUsize,
+        cancel_query_calls: AtomicUsize,
+    }
+
+    impl RecordingBackend {
+        fn failure() -> crate::xp_backend::BackendError {
+            crate::xp_backend::BackendError::protocol("backend invoked")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::xp_backend::SnowflakeBackend for RecordingBackend {
+        async fn authenticate(
+            &self,
+            _params: &LoginParameters,
+            _session_parameters: Option<&HashMap<String, String>>,
+        ) -> crate::xp_backend::BackendResult<LoginResult> {
+            self.authenticate_calls.fetch_add(1, Ordering::Relaxed);
+            Err(Self::failure())
+        }
+
+        async fn execute_query(
+            &self,
+            _input: &QueryInput<'_>,
+            _params: &QueryParameters,
+            _options: crate::xp_backend::BackendQueryOptions,
+        ) -> crate::xp_backend::BackendResult<query_response::Response> {
+            self.execute_query_calls.fetch_add(1, Ordering::Relaxed);
+            Err(Self::failure())
+        }
+
+        async fn get_query_status(
+            &self,
+            _query_id: &str,
+        ) -> crate::xp_backend::BackendResult<String> {
+            self.get_query_status_calls.fetch_add(1, Ordering::Relaxed);
+            Err(Self::failure())
+        }
+
+        async fn get_query_result(
+            &self,
+            _query_id: &str,
+        ) -> crate::xp_backend::BackendResult<query_response::Response> {
+            self.get_query_result_calls.fetch_add(1, Ordering::Relaxed);
+            Err(Self::failure())
+        }
+
+        async fn cancel_query(
+            &self,
+            _target: crate::xp_backend::BackendCancelTarget<'_>,
+        ) -> crate::xp_backend::BackendResult<crate::xp_backend::BackendCancelOutcome> {
+            self.cancel_query_calls.fetch_add(1, Ordering::Relaxed);
+            Err(Self::failure())
+        }
+
+        async fn get_session_parameters(
+            &self,
+        ) -> crate::xp_backend::BackendResult<HashMap<String, String>> {
+            Err(Self::failure())
+        }
+    }
+
+    #[tokio::test]
+    async fn login_uses_backend_without_http() {
+        let backend = RecordingBackend::default();
+        let result = snowflake_login_with_client(
+            &reqwest::Client::new(),
+            &test_login_params(),
+            None,
+            None,
+            None,
+            &RetryPolicy::default(),
+            Some(&backend),
+        )
+        .await;
+
+        assert!(matches!(result, Err(RestError::Backend { .. })));
+        assert_eq!(backend.authenticate_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn sync_query_uses_backend_without_http() {
+        let backend = RecordingBackend::default();
+        let result = snowflake_query_with_client(
+            &reqwest::Client::new(),
+            test_query_params(),
+            "token",
+            QueryInput::new("select 1"),
+            QueryOptions::default(),
+            Some(&backend),
+        )
+        .await;
+
+        assert!(matches!(result, Err(RestError::Backend { .. })));
+        assert_eq!(backend.execute_query_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn async_submit_uses_backend_without_http() {
+        let backend = RecordingBackend::default();
+        let result = async_exec::submit_statement_async(
+            &reqwest::Client::new(),
+            &test_query_params(),
+            "token",
+            &QueryInput::new("select 1"),
+            Uuid::new_v4(),
+            &RetryPolicy::default(),
+            Some(&backend),
+        )
+        .await;
+
+        assert!(matches!(result, Err(RestError::Backend { .. })));
+        assert_eq!(backend.execute_query_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn query_result_uses_backend_without_http() {
+        let backend = RecordingBackend::default();
+        let result = snowflake_get_query_result(
+            &reqwest::Client::new(),
+            &test_query_params(),
+            "token",
+            "query-id",
+            &RetryPolicy::default(),
+            Some(&backend),
+        )
+        .await;
+
+        assert!(matches!(result, Err(RestError::Backend { .. })));
+        assert_eq!(backend.get_query_result_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn query_status_uses_backend_without_http() {
+        let backend = RecordingBackend::default();
+        let params = test_query_params();
+        let result = get_query_status(
+            &reqwest::Client::new(),
+            &params.server_url,
+            &params.client_info,
+            &SensitiveString::from("token"),
+            "query-id",
+            &RetryPolicy::default(),
+            Some(&backend),
+        )
+        .await;
+
+        assert!(matches!(result, Err(RestError::Backend { .. })));
+        assert_eq!(backend.get_query_status_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn both_cancel_paths_use_backend_without_http() {
+        let backend = RecordingBackend::default();
+        let params = test_query_params();
+        let abort = snowflake_abort_query(
+            &reqwest::Client::new(),
+            &params,
+            "token",
+            "query-id",
+            Some(&backend),
+        )
+        .await;
+        let cancel = snowflake_cancel_query(
+            &reqwest::Client::new(),
+            &params,
+            "token",
+            "request-id",
+            "select 1",
+            Some(&backend),
+        )
+        .await;
+
+        assert!(matches!(abort, Err(RestError::Backend { .. })));
+        assert!(matches!(cancel, Err(RestError::Backend { .. })));
+        assert_eq!(backend.cancel_query_calls.load(Ordering::Relaxed), 2);
     }
 
     mod token_cache_helpers_tests {
@@ -3619,6 +3904,7 @@ mod tests {
                 &query_parameters(server.uri()),
                 "mock_session_token",
                 "01abcdef-0000-0000-0000-000000000000",
+                None,
             )
             .await;
 
@@ -3650,6 +3936,7 @@ mod tests {
                 &query_parameters(server.uri()),
                 "mock_session_token",
                 "01abcdef-0000-0000-0000-000000000000",
+                None,
             )
             .await;
 
@@ -3674,6 +3961,7 @@ mod tests {
                 &query_parameters(server.uri()),
                 "mock_session_token",
                 "01abcdef-0000-0000-0000-000000000000",
+                None,
             )
             .await;
 
@@ -3705,6 +3993,7 @@ mod tests {
                 &query_parameters(server.uri()),
                 "mock_session_token",
                 "01abcdef-0000-0000-0000-000000000000",
+                None,
             )
             .await;
 
@@ -3754,6 +4043,7 @@ mod tests {
                 "mock_session_token",
                 "running-request-id",
                 "SELECT 1",
+                None,
             )
             .await;
 
@@ -3786,6 +4076,7 @@ mod tests {
                 "mock_session_token",
                 "running-request-id",
                 "SELECT 1",
+                None,
             )
             .await;
 
@@ -3811,6 +4102,7 @@ mod tests {
                 "mock_session_token",
                 "running-request-id",
                 "SELECT 1",
+                None,
             )
             .await;
 
@@ -3843,6 +4135,7 @@ mod tests {
                 "mock_session_token",
                 "running-request-id",
                 "SELECT 1",
+                None,
             )
             .await;
 

@@ -5000,6 +5000,7 @@ dependencies = [
  "arrow",
  "arrow-ipc",
  "arrow_deserialize_macro",
+ "async-trait",
  "aws-config",
  "aws-credential-types",
  "aws-lc-rs",

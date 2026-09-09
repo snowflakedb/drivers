@@ -45,6 +45,7 @@ use crate::rest::snowflake::{
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::config::ProxyConfig;
+use crate::xp_backend::{SnowflakeBackend, XpSlot};
 
 /// Whether `execute_session_sql` should refresh the connection's local
 /// session-state cache (`session_parameters`, `final_session_names`) from
@@ -239,6 +240,7 @@ impl DatabaseDriverV1 {
             .clone()
             .context(ConnectionNotInitializedSnafu)?;
         let retry_policy = conn.retry_policy.clone();
+        let xp_backend = conn.xp_backend_arc().context(QuerySnafu)?;
 
         let mut refresh_ctx = RefreshContext::new(conn)?;
         let mut last_error = None;
@@ -253,6 +255,7 @@ impl DatabaseDriverV1 {
                     retry_policy: retry_policy.clone(),
                     ..Default::default()
                 },
+                xp_backend.as_deref(),
             )
             .await
             {
@@ -523,6 +526,10 @@ impl DatabaseDriverV1 {
                 };
 
                 let retry_policy = RetryPolicy::login(&resolved_snapshot);
+                let xp_backend = {
+                    let conn = conn_ptr.lock().await;
+                    conn.xp_backend_arc().context(LoginSnafu)?
+                };
 
                 let login_fut = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,
@@ -531,6 +538,7 @@ impl DatabaseDriverV1 {
                     token_cache,
                     Some(&self.prompt_locks),
                     &retry_policy,
+                    xp_backend.as_deref(),
                 );
 
                 let login_result = if let Some(budget) = timeout_config.login_timeout {
@@ -685,7 +693,7 @@ impl DatabaseDriverV1 {
                         crate::telemetry::record_session_init(&env_info);
                     }
 
-                    if keep_alive {
+                    if keep_alive && conn.xp_backend_arc().context(LoginSnafu)?.is_none() {
                         let interval = compute_heartbeat_interval(
                             conn.tokens
                                 .read()
@@ -890,6 +898,7 @@ impl DatabaseDriverV1 {
 
     pub fn connection_new(&self) -> Handle {
         let mut conn = Connection::new();
+        conn.xp_slot = Arc::clone(&self.xp_slot);
         self.seed_log_defaults_into(&mut conn.connection_seed);
         self.connections.add_handle(Mutex::new(conn))
     }
@@ -1155,6 +1164,7 @@ pub struct Connection {
     /// `CLIENT_STAGE_ARRAY_BINDING_THRESHOLD` — when deciding whether to send
     /// CSV bindings.
     pub stage_state: Arc<AtomicStageState>,
+    pub(crate) xp_slot: Arc<XpSlot>,
 }
 
 impl Default for Connection {
@@ -1193,7 +1203,12 @@ impl Connection {
             session_id: None,
             heartbeat_handle: None,
             stage_state: Arc::new(AtomicStageState::new(StageState::Unknown)),
+            xp_slot: Arc::new(XpSlot::new(false, None)),
         }
+    }
+
+    pub(crate) fn xp_backend_arc(&self) -> Result<Option<Arc<dyn SnowflakeBackend>>, RestError> {
+        Ok(self.xp_slot.active()?.cloned())
     }
 
     /// `true` after a successful [`Connection::initialize`] (post-login transport is ready).
@@ -1533,6 +1548,7 @@ pub struct RefreshContext {
     /// Shared expired flag; set to `true` when master token expiry is detected
     /// during a refresh attempt so the owning `Connection` exposes it publicly.
     is_master_token_expired: Arc<AtomicBool>,
+    xp_backend: Option<Arc<dyn SnowflakeBackend>>,
 }
 
 impl RefreshContext {
@@ -1564,6 +1580,7 @@ impl RefreshContext {
         server_url: String,
         client_info: ClientInfo,
         is_master_token_expired: Arc<AtomicBool>,
+        xp_backend: Option<Arc<dyn SnowflakeBackend>>,
     ) -> Self {
         Self {
             tokens_lock,
@@ -1572,6 +1589,7 @@ impl RefreshContext {
             client_info,
             state: RefreshState::Initial,
             is_master_token_expired,
+            xp_backend,
         }
     }
 
@@ -1597,7 +1615,29 @@ impl RefreshContext {
                 .context(ConnectionNotInitializedSnafu)?,
             state: RefreshState::Initial,
             is_master_token_expired: conn.is_master_token_expired.clone(),
+            xp_backend: conn.xp_backend_arc().context(QuerySnafu)?,
         })
+    }
+
+    async fn renew_session_tokens(
+        &self,
+        tokens: &SessionTokens,
+    ) -> Result<SessionTokens, RestError> {
+        if self.xp_backend.is_some() {
+            tracing::info!("Skipping session refresh HTTP; host owns the session");
+            return Ok(tokens.clone());
+        }
+        snowflake::refresh_session(
+            &self.http_client,
+            &self.server_url,
+            &self.client_info,
+            tokens,
+        )
+        .await
+    }
+
+    pub(crate) fn host_backend_active(&self) -> bool {
+        self.xp_backend.is_some()
     }
 
     /// Get a valid session token, optionally refreshing if the previous call failed.
@@ -1673,14 +1713,7 @@ impl RefreshContext {
                     }
 
                     // Refresh session (still holding write lock to prevent concurrent refreshes)
-                    let new_tokens = match snowflake::refresh_session(
-                        &self.http_client,
-                        &self.server_url,
-                        &self.client_info,
-                        &tokens,
-                    )
-                    .await
-                    {
+                    let new_tokens = match self.renew_session_tokens(&tokens).await {
                         Ok(new_tokens) => new_tokens,
                         Err(refresh_err) => {
                             // GS 390113/390114/390115 from the refresh endpoint mean
@@ -1837,14 +1870,7 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
             }
 
             tracing::info!("Session expired, attempting refresh");
-            let new_tokens = match snowflake::refresh_session(
-                &self.http_client,
-                &self.server_url,
-                &self.client_info,
-                &tokens,
-            )
-            .await
-            {
+            let new_tokens = match self.renew_session_tokens(&tokens).await {
                 Ok(new_tokens) => new_tokens,
                 Err(refresh_err) => {
                     // The refresh endpoint can itself return GS 390113/390114/
@@ -2129,7 +2155,7 @@ impl DatabaseDriverV1 {
                         argument: "Connection handle not found".to_string(),
                     })?;
 
-            let (http_client, server_url, client_info, retry_policy) = {
+            let (http_client, server_url, client_info, retry_policy, xp_backend) = {
                 let conn = conn_ptr.lock().await;
                 (
                     conn.http_client
@@ -2142,6 +2168,7 @@ impl DatabaseDriverV1 {
                         .clone()
                         .context(ConnectionNotInitializedSnafu)?,
                     conn.retry_policy.clone(),
+                    conn.xp_backend_arc().context(QuerySnafu)?,
                 )
             };
 
@@ -2150,6 +2177,7 @@ impl DatabaseDriverV1 {
                 let server_url = &server_url;
                 let client_info = &client_info;
                 let retry_policy = &retry_policy;
+                let xp_backend = xp_backend.clone();
                 async move {
                     snowflake::get_query_status(
                         http_client,
@@ -2158,6 +2186,7 @@ impl DatabaseDriverV1 {
                         &token,
                         query_id,
                         retry_policy,
+                        xp_backend.as_deref(),
                     )
                     .await
                 }
@@ -2515,6 +2544,10 @@ impl DatabaseDriverV1 {
 
             let mut last_error: Option<RestError> = None;
 
+            if refresh_ctx.host_backend_active() {
+                return Ok(true);
+            }
+
             loop {
                 let token = match refresh_ctx.refresh_token(last_error.take()).await {
                     Ok(t) => t,
@@ -2574,7 +2607,7 @@ impl DatabaseDriverV1 {
                 })?;
 
             // Extract needed fields under the lock, then release before network I/O
-            let (http_client, server_url, client_info, tokens) = {
+            let (http_client, server_url, client_info, tokens, xp_backend) = {
                 let conn = conn_ptr.lock().await;
 
                 let http_client = conn
@@ -2597,9 +2630,18 @@ impl DatabaseDriverV1 {
                     .as_ref()
                     .context(ConnectionNotInitializedSnafu)?
                     .clone();
+                let xp_backend = conn.xp_backend_arc().context(TokenRequestSnafu)?;
 
-                (http_client, server_url, client_info, tokens)
+                (http_client, server_url, client_info, tokens, xp_backend)
             };
+
+            if xp_backend.is_some() {
+                tracing::info!("Skipping token request HTTP; host owns the session");
+                return Ok(snowflake::TokenRequestResult {
+                    session_token: tokens.session_token,
+                    validity_in_seconds: None,
+                });
+            }
 
             snowflake::token_request(
                 &http_client,
@@ -4156,6 +4198,80 @@ mod tests {
         assert!(!valid, "heartbeat should return false on network error");
 
         ds.connection_release(handle).unwrap();
+    }
+
+    async fn attach_host_backend(ds: &DatabaseDriverV1, handle: Handle) {
+        if let Some(c) = ds.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.xp_slot = Arc::new(XpSlot::new(
+                true,
+                Some(Arc::new(crate::xp_backend::TestBackend)),
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn heartbeat_skips_http_when_host_backend_active() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_heartbeat_tests(&ds, &format!("http://{addr}")).await;
+        attach_host_backend(&ds, handle).await;
+
+        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        assert!(valid, "XP heartbeat must not contact the session endpoint");
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn token_request_skips_http_when_host_backend_active() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_heartbeat_tests(&ds, &format!("http://{addr}")).await;
+        attach_host_backend(&ds, handle).await;
+
+        let result = ds
+            .connection_token_request(None, handle, "ISSUE".into())
+            .await
+            .expect("XP token request must not send HTTP");
+        assert_eq!(result.session_token.reveal(), "test-session-token");
+        assert!(result.validity_in_seconds.is_none());
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn session_refresh_skips_http_when_host_backend_active() {
+        let tokens = SessionTokens {
+            session_token: "keep-session".into(),
+            master_token: "keep-master".into(),
+            session_id: 7,
+            session_expires_at: None,
+            master_expires_at: None,
+            master_validity: None,
+        };
+        let backend: Arc<dyn SnowflakeBackend> = Arc::new(crate::xp_backend::TestBackend);
+        let ctx = RefreshContext::from_parts(
+            Arc::new(AsyncRwLock::new(Some(tokens.clone()))),
+            reqwest::Client::new(),
+            "http://127.0.0.1:1".into(),
+            crate::config::rest_parameters::test_fixtures::test_client_info(),
+            Arc::new(AtomicBool::new(false)),
+            Some(backend),
+        );
+        let renewed = ctx
+            .renew_session_tokens(&tokens)
+            .await
+            .expect("XP refresh must not send HTTP");
+        assert_eq!(renewed.session_token.reveal(), "keep-session");
+        assert_eq!(renewed.master_token.reveal(), "keep-master");
+        assert_eq!(renewed.session_id, 7);
     }
 
     #[tokio::test]

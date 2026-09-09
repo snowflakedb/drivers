@@ -189,7 +189,26 @@ pub async fn submit_statement_async<'a>(
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
+    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<SubmitOk, RestError> {
+    if let Some(backend) = xp_backend {
+        let response = backend
+            .execute_query(
+                query_input,
+                params,
+                crate::xp_backend::BackendQueryOptions {
+                    execution_mode: crate::rest::snowflake::QueryExecutionMode::Async,
+                    request_id,
+                },
+            )
+            .await?;
+        return Ok(SubmitOk {
+            query_id: response.data.query_id.clone(),
+            get_result_url: response.data.get_result_url.clone(),
+            response,
+        });
+    }
+
     let server_url = &params.server_url;
     let endpoint = join_server_path(server_url, QUERY_REQUEST_PATH)?;
     // query logging guarded with: log_query_text, log_query_parameters
@@ -290,6 +309,7 @@ pub(super) async fn execute_blocking_with_async<'a>(
         query_input,
         request_id,
         policy,
+        None,
     )
     .await?;
     metrics.record_submit(submit_start.elapsed());

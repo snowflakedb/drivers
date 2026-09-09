@@ -145,6 +145,7 @@ async fn heartbeat_loop(
             server_url.to_string(),
             client_info.clone(),
             is_master_token_expired.clone(),
+            None,
         );
         let mut last_error: Option<RestError> = None;
         loop {
