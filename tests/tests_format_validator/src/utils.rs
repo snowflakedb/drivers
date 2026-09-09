@@ -43,8 +43,29 @@ pub fn strings_match_normalized(s1: &str, s2: &str) -> bool {
     normalize_for_matching(s1) == normalize_for_matching(s2)
 }
 
-pub fn string_contains_normalized(string: &str, substring: &str) -> bool {
-    normalize_for_matching(string).contains(&normalize_for_matching(substring))
+/// Match a JS `it` title to a Gherkin scenario name.
+///
+/// Titles match after normalization. Parameterized `it.each` titles also
+/// match after stripping one trailing parenthesized group (`(%s)`,
+/// `($name)`, `(0x00)`). That strip is used instead of substring matching
+/// so a shorter scenario name is not accepted as a prefix of a longer
+/// title (e.g. "should select binary literals" vs "... using parameter
+/// binding").
+pub fn js_title_matches_scenario(title: &str, scenario_name: &str) -> bool {
+    if strings_match_normalized(title, scenario_name) {
+        return true;
+    }
+    match strip_trailing_paren_group(title) {
+        Some(base) => strings_match_normalized(base, scenario_name),
+        None => false,
+    }
+}
+
+fn strip_trailing_paren_group(title: &str) -> Option<&str> {
+    let trimmed = title.trim_end();
+    let without_close = trimmed.strip_suffix(')')?;
+    let open = without_close.rfind('(')?;
+    Some(without_close[..open].trim_end())
 }
 
 pub fn line_index_at_offset(content: &str, offset: usize) -> usize {
@@ -175,26 +196,38 @@ mod tests {
     }
 
     #[test]
-    fn test_string_contains_normalized_matches_substring_ignoring_separators() {
-        assert!(string_contains_normalized(
+    fn test_js_title_matches_scenario_plain_title() {
+        assert!(js_title_matches_scenario(
+            "should select binary literals",
+            "should select binary literals",
+        ));
+    }
+
+    #[test]
+    fn test_js_title_matches_scenario_with_placeholder_suffix() {
+        assert!(js_title_matches_scenario(
             "should cast string values to appropriate type (%s)",
             "should cast string values to appropriate type",
         ));
-    }
-
-    #[test]
-    fn test_string_contains_normalized_matches_across_case_and_separators() {
-        assert!(string_contains_normalized(
-            "Should_Cast-String Values",
-            "cast string values",
+        assert!(js_title_matches_scenario(
+            "should bind corner case binary values ($name)",
+            "should bind corner case binary values",
         ));
     }
 
     #[test]
-    fn test_string_contains_normalized_rejects_non_substring() {
-        assert!(!string_contains_normalized(
+    fn test_js_title_matches_scenario_rejects_prefix_of_longer_title() {
+        assert!(!js_title_matches_scenario(
+            "should select binary literals using parameter binding",
+            "should select binary literals",
+        ));
+    }
+
+    #[test]
+    fn test_js_title_matches_scenario_rejects_unrelated_title() {
+        assert!(!js_title_matches_scenario(
             "should select hardcoded string literals",
-            "cast string values",
+            "should cast string values",
         ));
     }
 

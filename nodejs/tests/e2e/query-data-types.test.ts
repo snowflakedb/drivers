@@ -25,40 +25,6 @@ describe('Query returning data types', () => {
     await destroyConnectionAsync(connection);
   });
 
-  // NOTE: BINARY_OUTPUT_FORMAT (HEX or BASE64) does not affect results.
-  // The server always returns HEX and it is always converted to Buffer.
-  it('returns BINARY as Buffer', async () => {
-    const { statement, rows } = await executeAsync(
-      connection,
-      "SELECT X'ABCDEF'::BINARY as BINARY_COLUMN, NULL::BINARY as NULL_BINARY_COLUMN",
-    );
-    const expectedValue = Buffer.from('ABCDEF', 'hex');
-    const receivedValue = rows![0].BINARY_COLUMN as Buffer;
-    const binaryColumn = getStatementColumn(statement, 0);
-    const nullBinaryColumn = getStatementColumn(statement, 1);
-    expect(binaryColumn.getType()).toBe('binary');
-    expect(binaryColumn.isBinary()).toBe(true);
-    expect(nullBinaryColumn.getType()).toBe('binary');
-    expect(nullBinaryColumn.isBinary()).toBe(true);
-    expect(rows![0].NULL_BINARY_COLUMN).toBe(null);
-    // Old-driver Buffers carry extra .toStringSf() / .getFormat() methods that make
-    // vitest's .toEqual fail; the new driver returns a plain Buffer (BD#12).
-    if (isRunningNewDriverWithBD('BD#12')) {
-      expect(receivedValue).toEqual(expectedValue);
-    } else {
-      expect(receivedValue.equals(expectedValue)).toBe(true);
-    }
-  });
-
-  it('returns BINARY as upper-case hex when fetchAsString is set', async () => {
-    const { rows } = await executeAsync(connection, "SELECT X'ABCDEF'::BINARY, NULL::BINARY", {
-      fetchAsString: ['Buffer'],
-    });
-    expect(Object.values(rows![0])).toEqual(['ABCDEF', 'NULL']);
-  });
-
-  it.todo('returns BINARY as base64 when fetchAsString is set and BINARY_OUTPUT_FORMAT is BASE64');
-
   // NOTE: DATE_OUTPUT_FORMAT does not affect results, we always convert to Date
   it('returns DATE as Date', async () => {
     const { statement, rows } = await executeAsync(

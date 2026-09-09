@@ -77,6 +77,23 @@ it('should <scenario name copied verbatim>', async () => {
 });
 ```
 
+## Scenario disposition (which bucket a scenario lands in)
+
+Every scenario the feature marks for Node maps to exactly one of these. Pick the row,
+then follow the detailed section below.
+
+| Situation | Test form | `@nodejs_e2e` on the scenario | Difference recorded in |
+| --- | --- | --- | --- |
+| Runs on both drivers | `it(...)` | yes | — |
+| New driver cannot do it yet | `describe`/`it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)` | no | — |
+| Drivers differ by design | `it(...)` + `isRunningNewDriverWithBD('BD#N')` | yes | `nodejs/BehaviorDifferences.yaml` |
+| Broken in both drivers (bug, no fix yet) | `it.todo(...)`, step comments kept | yes | `nodejs/BCR_LOG.md` |
+
+The last row keeps the `// Given` / `// When` / `// Then` comments in the `it.todo` body
+so scenario matching still resolves it (matching keys off the step comments, above); the
+`todo` marks it claimed-but-not-yet-passing. Log the bug in `nodejs/BCR_LOG.md` rather
+than writing an assertion that passes on the wrong value.
+
 ## Feature tags
 
 - Add `@nodejs` to the `Feature:` line and `@nodejs_e2e` to exactly the scenarios the
@@ -94,6 +111,8 @@ it('should <scenario name copied verbatim>', async () => {
   multi-chunk download, plus anything with an open gap) are wrapped in
   `describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)` (or `it.skipIf(...)`). `skipIf`
   already states the new driver cannot run them, so no comment restates that.
+- A scenario broken in **both** drivers is `it.todo`, not `skipIf` (which runs under the
+  old driver and would then fail) — see the disposition table.
 - Those blocks still run and must pass under `npm run test:e2e-old-driver`; they are
   skipped under `npm run test:e2e`. Everything else runs on both drivers.
 
@@ -105,6 +124,10 @@ When the old and new drivers legitimately differ, branch on
 only the old-driver value hides the difference. Cite `BD#N` only where the code reads
 `isRunningNewDriverWithBD('BD#N')`; when both drivers agree, the registry entry carries
 the cross-driver story, not a comment.
+
+A *bug* neither driver gets right is not a `BD#N`: mark that scenario `it.todo` and log
+it in `nodejs/BCR_LOG.md` (disposition table), rather than adding a difference entry for
+behavior no driver has decided on yet.
 
 ## SQL safety & determinism
 
