@@ -1,13 +1,14 @@
 /*
 Jenkinsfile for authentication E2E tests requiring a headless browser.
 Runs inside the snowdrivers-test-external-browser-universal-driver Docker image
-which provides headless Chromium + Playwright + Rust + Python.
+which provides headless Chromium + Playwright + Rust + language toolchains.
 
 Local usage (requires parameters_preprod.json in repo root):
   ./scripts/decode_secrets.sh preprod parameters_preprod.json
   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh python
   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh odbc
   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh jdbc
+  DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh nodejs
 
 Or build & run locally without a pre-built image:
   ./tests/auth/run_auth_browser_local.sh python
@@ -34,13 +35,37 @@ def isMergeQueue() {
 @Field def runPython = false
 @Field def runOdbc = false
 @Field def runJdbc = false
+@Field def runNodejs = false
+
+@Field String FULL_AUTH_SUITE_LABEL = 'run_full_auth_tests'
+
+boolean prHasLabel(String name) {
+  if (env.CHANGE_ID == null) {
+    return false
+  }
+  try {
+    return pullRequest.labels.contains(name)
+  } catch (Throwable ignored) {
+    echo "Could not read pullRequest.labels; treating '${name}' as absent"
+    return false
+  }
+}
+
+def runAllLanes(String reason) {
+  runPython = true
+  runOdbc = true
+  runJdbc = true
+  runNodejs = true
+  echo "Running the full auth-browser suite: ${reason}"
+}
 
 def detectChanges() {
-  // For main branch builds (and cron), run everything.
   if (env.CHANGE_ID == null) {
-    runPython = true
-    runOdbc = true
-    runJdbc = true
+    runAllLanes("non-PR build of ${env.BRANCH_NAME}")
+    return
+  }
+  if (prHasLabel(FULL_AUTH_SUITE_LABEL)) {
+    runAllLanes("${FULL_AUTH_SUITE_LABEL} label on the PR")
     return
   }
 
@@ -64,6 +89,7 @@ def detectChanges() {
       runPython = true
       runOdbc = true
       runJdbc = true
+      runNodejs = true
       break
     }
     // Job definition or the shared container scripts affect all wrappers.
@@ -73,6 +99,7 @@ def detectChanges() {
       runPython = true
       runOdbc = true
       runJdbc = true
+      runNodejs = true
     }
     // The Python connector / tests.
     if (file.startsWith('python/') ||
@@ -89,12 +116,18 @@ def detectChanges() {
         file.startsWith('jdbc_bridge/')) {
       runJdbc = true
     }
+    // The Node.js connector / bridge / tests.
+    if (file.startsWith('nodejs/') ||
+        file.startsWith('nodejs_bridge/')) {
+      runNodejs = true
+    }
   }
 
   echo "=== Auth Browser Tests Change Detection ==="
   echo "  Run Python: ${runPython}"
   echo "  Run ODBC: ${runOdbc}"
   echo "  Run JDBC: ${runJdbc}"
+  echo "  Run Node.js: ${runNodejs}"
 }
 
 def authenticateDocker() {
@@ -149,7 +182,7 @@ pipeline {
 
     stage('Auth Browser Tests') {
       when {
-        expression { !isMergeQueue() && (runPython || runOdbc || runJdbc) }
+        expression { !isMergeQueue() && (runPython || runOdbc || runJdbc || runNodejs) }
       }
       // Each language stage locks exactly one user from the shared MFA_POOL_LABEL pool
       // instead of the old single all-encompassing lock, so stages that draw different
@@ -259,6 +292,29 @@ pipeline {
                   DOCKER_RUN_EXTRA_ARGS='-e JENKINS_HOME' \\
                   ./tests/auth/run_auth_browser.sh jdbc reference
                 """
+              }
+            }
+          }
+        }
+        stage('Node.js') {
+          when {
+            expression { runNodejs }
+          }
+          agent { label 'build-node-extra-large' }
+          stages {
+            stage('Setup') {
+              steps {
+                script {
+                  authenticateDocker()
+                  withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
+                  }
+                }
+              }
+            }
+            stage('Universal') {
+              steps {
+                sh label: 'Run Node.js OAuth test (universal)', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh nodejs universal"
               }
             }
           }

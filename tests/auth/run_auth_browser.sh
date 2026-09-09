@@ -8,7 +8,7 @@
 #   - parameters_preprod.json in repo root (from ./scripts/decode_secrets.sh preprod parameters_preprod.json)
 #
 # Usage:
-#   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh <python|odbc|jdbc> [mode]
+#   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh <python|odbc|jdbc|nodejs> [mode]
 #
 # The optional mode selects which driver to test (default: universal):
 #   universal   The universal driver (new). Default.
@@ -32,7 +32,7 @@ source "${SCRIPT_DIR}/auth_browser_common.sh"
 
 WRAPPER="${1:-}"
 if [ -z "$WRAPPER" ] || [ ! -f "${SCRIPT_DIR}/auth_browser_${WRAPPER}.sh" ]; then
-    echo "Usage: $0 <python|odbc|jdbc> [universal|reference]" >&2
+    echo "Usage: $0 <python|odbc|jdbc|nodejs> [universal|reference]" >&2
     exit 1
 fi
 
