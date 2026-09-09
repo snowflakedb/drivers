@@ -1093,6 +1093,17 @@ class PythonMatrixTests(unittest.TestCase):
             self.assertEqual(r["os"], "ubuntu-latest")
             self.assertEqual(r["cloud_provider"], "aws")
 
+    def test_json_variant_runs_on_pr_gate(self) -> None:
+        pr_json_rows = [
+            r for r in self.gha
+            if r.get("result_format") == "json" and r["trigger_level"] == "pr"
+        ]
+        self.assertEqual(
+            {r["hatch_env"] for r in pr_json_rows}, {"test", "test-pandas"},
+            f"expected both json cells at trigger_level='pr'; got: "
+            f"{[r['name'] for r in self.gha if r.get('result_format') == 'json']}",
+        )
+
     def test_required_keys_on_every_row(self) -> None:
         required = {"name", "os", "cloud_provider", "trigger_level", "py", "hatch_env"}
         for r in self.gha:
@@ -1321,8 +1332,10 @@ class JsonVariantRegressionTests(unittest.TestCase):
     """
     Locks the JSON cell count at push-to-main scope across odbc + python.
 
-    ODBC has 1 json cell (trigger_level="pr", appears at all cumulative scopes).
-    Python has 2 json cells (trigger_level="merge", gated on push-to-main).
+    ODBC has 1 json cell (trigger_level="merge", gated on push-to-main).
+    Python has 2 json cells, both at trigger_level="pr" — cumulative
+    filtering means a "pr" row also appears at merge_queue, merge, and
+    nightly scope, so no separate nightly entry is needed.
     Total at push-to-main scope: 3.
     """
 

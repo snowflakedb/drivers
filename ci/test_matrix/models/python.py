@@ -88,10 +88,10 @@ MERGE_QUEUE_CELLS = [
 ]
 
 JSON_CELLS = {
-    "pr": [],
-    "merge": [
+    "pr": [
         {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws", "PyVersion": "3.13", "HatchEnv": "test"},
         {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws", "PyVersion": "3.13", "HatchEnv": "test-pandas"},
     ],
+    "merge": [],
     "nightly": [],
 }

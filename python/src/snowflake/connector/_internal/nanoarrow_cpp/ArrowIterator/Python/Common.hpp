@@ -17,7 +17,6 @@
 namespace sf {
 
 namespace py {
-inline bool checkPyError() { return UNLIKELY(PyErr_Occurred()); }
 
 /**
  * A RAII class to wrap the PyObject*. The semantics are like std::unique_ptr.
@@ -98,6 +97,18 @@ class PyUniqueLock {
 inline void setPyError(PyObject* excType, const char* msg) {
   PyUniqueLock gilGuard;
   PyErr_SetString(excType, msg);
+}
+
+/**
+ * Check whether a Python exception is set, from a thread that may not
+ * currently hold the GIL. PyErr_Occurred() reads the current thread's
+ * error indicator, which is only valid while the GIL is held; calling it
+ * inside a Py_BEGIN_ALLOW_THREADS block without this guard dereferences an
+ * invalid thread state.
+ */
+inline bool checkPyError() {
+  PyUniqueLock gilGuard;
+  return UNLIKELY(PyErr_Occurred());
 }
 
 }  // namespace py
