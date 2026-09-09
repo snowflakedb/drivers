@@ -36,7 +36,6 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 
 ### statement.getColumn() API
 
-- The methods `getRowValue(row: object)` and `getRowValueAsString(row: object)` are publicly documented in `index.d.ts`, but they were never covered by tests and do not work as intended. The `(row: object)` parameter requires a special internal row class that is not exposed to users. The public API returns rows as `externalizeRow`, so calling these methods will result in a runtime error.
 - The `is*` methods (e.g. `isString()`) do not cover every data type value that can be returned by `.getType()`. For example, `decfloat` is not covered by any `is*` method. The new driver adds `isDecfloat()` to close this specific gap; old driver has no equivalent method.
 - The `isArray` and `isObject` methods are bugged and return false because server doesn't return `fieldsMetadata`
 
@@ -46,10 +45,8 @@ TIME is a clock (`14:45:30`), not a date. The old format converter has no `MMMM`
 
 ## Known bugs in both drivers
 
-- Binding `"42.0"` to a DECFLOAT column returns `"42"`, dropping the trailing zero. The
-  `decfloat.feature` "should select decfloat using parameter binding" scenario specifies
-  `42.0` as the returned value, so both drivers deviate from the shared spec; the tests
-  assert the observed `"42"` and cite this entry.
+- Binary data type doesn't honor BINARY_OUTPUT_FORMAT when fetchAsString is used (should behave similar to timestamp output formats)
+- Binding `"42.0"` to a DECFLOAT column returns `"42"`, dropping the trailing zero. The `decfloat.feature` "should select decfloat using parameter binding" scenario specifies `42.0` as the returned value, so both drivers deviate from the shared spec; the tests assert the observed `"42"` and cite this entry.
 
 ## Future Breaking Changes (BCRs)
 

@@ -1,6 +1,6 @@
 use crate::test_discovery::Language;
 use crate::utils::{
-    clean_method_name, line_index_at_offset, string_contains_normalized, strings_match_normalized,
+    clean_method_name, js_title_matches_scenario, line_index_at_offset, strings_match_normalized,
     to_pascal_case, to_snake_case,
 };
 use anyhow::{Context, Result};
@@ -26,11 +26,25 @@ static JAVA_METHOD_DECL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// Rust test attributes like `#[test]`, `#[tokio::test]`, `#[tokio::test(...)]`
 static RUST_TEST_ATTR_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$").unwrap());
-/// Matches an `it`/`test` (optionally `.each([...])`) declaration and captures its title.
-/// The title is the call's first argument, so only whitespace precedes it (`\(\s*['"]…`):
-/// a greedy gap there lets one `it` reach across a later block to a distant title.
+/// Chain of Vitest/Jest modifiers that may sit between the base `it`/`test` name and the
+/// title call. Bare modifiers (`.skip`, `.only`, `.todo`, `.concurrent`, `.fails`,
+/// `.sequential`) carry no argument list of their own — their `(` opens the title call —
+/// while argument-taking modifiers (`.each([...])`, `.skipIf(cond)`, `.runIf(cond)`) own a
+/// `(...)` before the title call. Enumerating the two kinds keeps a bare `.skip('title')`
+/// from being read as a call modifier that swallows the title. `it.todo('…')` is a
+/// sanctioned disposition for a scenario broken in both drivers, so it must resolve like a
+/// plain `it('…')`.
+const JS_TEST_MODIFIERS: &str =
+    r"(?:\.(?:skip|only|todo|concurrent|fails|sequential)|\.(?:each|skipIf|runIf)\s*\([\s\S]*?\))*";
+
+/// Matches an `it`/`test` declaration and captures its title. The title is the call's first
+/// argument, so only whitespace precedes it (`\(\s*['"]…`): a greedy gap there lets one `it`
+/// reach across a later block to a distant title.
 static JS_TEST_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"\b(?:it|test)(?:\.each\s*\([\s\S]*?\))?\s*\(\s*['"]([^'"]+)['"]"#).unwrap()
+    Regex::new(&format!(
+        r#"\b(?:it|test){JS_TEST_MODIFIERS}\s*\(\s*['"]([^'"]+)['"]"#
+    ))
+    .unwrap()
 });
 
 /// Returns true if the trimmed line is a recognized xUnit C# test attribute.
@@ -132,7 +146,8 @@ impl LanguageConfig {
             method_pattern: |method_name| {
                 // Mirrors JS_TEST_REGEX with a fixed title in place of the capture group.
                 format!(
-                    r"\b(?:it|test)(?:\.each\s*\([\s\S]*?\))?\s*\(\s*['\x22]{}['\x22]",
+                    r"\b(?:it|test){}\s*\(\s*['\x22]{}['\x22]",
+                    JS_TEST_MODIFIERS,
                     regex::escape(method_name)
                 )
             },
@@ -1164,7 +1179,7 @@ impl StepFinder {
 
         for captures in JS_TEST_REGEX.captures_iter(content) {
             let test_name = &captures[1];
-            if string_contains_normalized(test_name, scenario_name) {
+            if js_title_matches_scenario(test_name, scenario_name) {
                 let decl_offset = captures.get(0).map(|m| m.start()).unwrap_or(0);
                 let line_number = line_index_at_offset(content, decl_offset) + 1;
                 methods.push((test_name.to_string(), line_number));
@@ -1376,6 +1391,84 @@ class TestFetchAll:
             "should cast string values to appropriate type for string and synonyms (%s)"
         );
         assert_eq!(methods[0].1, 2);
+    }
+
+    #[test]
+    fn test_javascript_it_todo_matches_scenario() {
+        let finder = StepFinder::new(Language::JavaScript);
+        let content = r#"
+    it.todo('should encode binary as BASE64 string when BINARY_OUTPUT_FORMAT is set to BASE64 for the query', async () => {
+      // Given Snowflake client is logged in
+      void connection;
+    });
+"#;
+
+        let methods = finder
+            .find_javascript_test_methods_with_lines(
+                content,
+                "should encode binary as BASE64 string when BINARY_OUTPUT_FORMAT is set to BASE64 for the query",
+            )
+            .expect("Should scan JS methods");
+
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0].1, 2);
+    }
+
+    #[test]
+    fn test_javascript_it_skip_and_only_match_scenario() {
+        let finder = StepFinder::new(Language::JavaScript);
+        let content = r#"
+    it.skip('should skip this scenario', async () => {});
+    it.only('should focus this scenario', async () => {});
+    it.skipIf(NOT_IMPLEMENTED)('should conditionally skip this scenario', async () => {});
+"#;
+
+        for title in [
+            "should skip this scenario",
+            "should focus this scenario",
+            "should conditionally skip this scenario",
+        ] {
+            let methods = finder
+                .find_javascript_test_methods_with_lines(content, title)
+                .expect("Should scan JS methods");
+            assert_eq!(methods.len(), 1, "expected to match {title}");
+            assert_eq!(methods[0].0, title);
+        }
+    }
+
+    #[test]
+    fn test_javascript_it_todo_boundaries_found() {
+        let content = r#"
+    it.todo('should encode binary as BASE64 string', async () => {
+      // Given Snowflake client is logged in
+      void connection;
+
+      // When Query is executed
+      const rows = run();
+
+      // Then the string should be 'ASNFZ4mrze8='
+      expect(rows).toBe('ASNFZ4mrze8=');
+    });
+"#;
+        let title = "should encode binary as BASE64 string";
+
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::javascript());
+        let (start, end) = boundary_finder
+            .find_method_boundaries(content, title)
+            .expect("Should locate boundaries")
+            .expect("The it.todo declaration should be found");
+
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(
+            lines[start].contains("it.todo("),
+            "start line should be the it.todo opener"
+        );
+
+        let body: String = lines[start..=end.min(lines.len() - 1)].join("\n");
+        assert!(
+            body.contains("// When Query is executed") && body.contains("// Then the string"),
+            "the body must span the it.todo declaration so its When/Then steps are seen"
+        );
     }
 
     #[test]

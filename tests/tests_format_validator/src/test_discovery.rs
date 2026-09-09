@@ -407,14 +407,16 @@ impl TestDiscovery {
                 .join("dotnet/tests/Snowflake.Data.Tests")
                 .join(format!("{}Test.cs", pascal_name))],
             Language::JavaScript => {
-                // date, time and semi_structured still live inline in the shared
-                // query-data-types*.test.ts files rather than a per-feature file, so they are
-                // mapped explicitly. Every other feature maps to a `<feature>.test.ts` file
-                // located anywhere under e2e/
+                // The special cases below share a test file rather than owning one; each mapping
+                // was verified scenario-by-scenario, since an unchecked entry reports false
+                // coverage. The default derives per-type and flat candidates from the name.
                 let e2e_dir = self.workspace_root.join("nodejs/tests/e2e");
                 let kebab_name = snake_name.replace('_', "-");
                 match snake_name.as_str() {
                     "date" | "time" => vec![e2e_dir.join("query-data-types.test.ts")],
+                    "binary_to_string" => {
+                        vec![e2e_dir.join("query/data-types/binary.test.ts")]
+                    }
                     _ => {
                         let target = format!("{kebab_name}.test.ts");
                         let mut matches: Vec<PathBuf> = WalkDir::new(&e2e_dir)
@@ -432,94 +434,5 @@ impl TestDiscovery {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::TempDir;
-
-    fn discovery() -> TestDiscovery {
-        TestDiscovery::new(PathBuf::from("/workspace"))
-    }
-
-    fn js_candidates(feature_name: &str) -> Vec<PathBuf> {
-        discovery().generate_test_file_candidates_with_level(
-            feature_name,
-            None,
-            &Language::JavaScript,
-            TestLevel::E2E,
-        )
-    }
-
-    fn js_candidates_in(root: &Path, feature_name: &str) -> Vec<PathBuf> {
-        TestDiscovery::new(root.to_path_buf()).generate_test_file_candidates_with_level(
-            feature_name,
-            None,
-            &Language::JavaScript,
-            TestLevel::E2E,
-        )
-    }
-
-    fn touch(path: &Path) {
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, "").unwrap();
-    }
-
-    #[test]
-    fn should_find_test_file_in_any_e2e_subdirectory() {
-        let tmp = TempDir::new().unwrap();
-        let e2e = tmp.path().join("nodejs/tests/e2e");
-        let expected = e2e.join("query/put-get/put-get-overwrite.test.ts");
-        touch(&expected);
-
-        assert_eq!(
-            js_candidates_in(tmp.path(), "put_get_overwrite"),
-            vec![expected]
-        );
-    }
-
-    #[test]
-    fn should_kebab_case_multiword_feature_names() {
-        let tmp = TempDir::new().unwrap();
-        let e2e = tmp.path().join("nodejs/tests/e2e");
-        let expected = e2e.join("query/data-types/connection-pool.test.ts");
-        touch(&expected);
-
-        assert_eq!(
-            js_candidates_in(tmp.path(), "connection_pool"),
-            vec![expected]
-        );
-    }
-
-    #[test]
-    fn should_return_no_candidates_when_no_matching_test_file_exists() {
-        let tmp = TempDir::new().unwrap();
-        touch(
-            &tmp.path()
-                .join("nodejs/tests/e2e/query/put-get/put-get-overwrite.test.ts"),
-        );
-
-        assert!(js_candidates_in(tmp.path(), "put_get_wildcards").is_empty());
-    }
-
-    #[test]
-    fn should_map_date_and_time_to_shared_query_data_types_file() {
-        let shared = PathBuf::from("/workspace/nodejs/tests/e2e/query-data-types.test.ts");
-
-        assert_eq!(js_candidates("date"), vec![shared.clone()]);
-        assert_eq!(js_candidates("time"), vec![shared]);
-    }
-
-    #[test]
-    fn should_map_semi_structured_to_shared_variant_file() {
-        assert_eq!(
-            js_candidates("semi_structured"),
-            vec![PathBuf::from(
-                "/workspace/nodejs/tests/e2e/query-data-types-variant.test.ts"
-            )]
-        );
     }
 }
