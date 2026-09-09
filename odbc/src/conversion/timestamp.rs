@@ -200,21 +200,6 @@ fn check_sql_year(dt: &NaiveDateTime) -> Result<(), ConversionError> {
     Ok(())
 }
 
-fn read_struct_timestamp(
-    array: &StructArray,
-    row_idx: usize,
-) -> Result<NaiveDateTime, ReadArrowError> {
-    Ok(sf_types::read_struct_timestamp(array, row_idx)?)
-}
-
-fn read_scaled_timestamp(
-    array: &PrimitiveArray<Int64Type>,
-    row_idx: usize,
-    scale: u32,
-) -> Result<NaiveDateTime, ReadArrowError> {
-    Ok(sf_types::read_scaled_timestamp(array, row_idx, scale)?)
-}
-
 // =============================================================================
 // ODBC write/read helpers (shared by all three timestamp types)
 // =============================================================================
@@ -686,7 +671,7 @@ fn write_timestamp_tz_wire(value: TzInstant) -> Result<String, BindingError> {
 // =============================================================================
 // Macro to generate the trait impls shared by TIMESTAMP_NTZ and TIMESTAMP_LTZ.
 //
-// Both variants share identical readers and the same `wallclock_string` bind
+// Both variants share identical `sf_types` readers and the same bind
 // path: `write_wire` emits a bare wall-clock literal string tagged `type=TEXT`
 // so the server interprets it in the session timezone (see
 // `write_timestamp_wire_wallclock`). NTZ was realigned onto this path to match
@@ -699,45 +684,10 @@ fn write_timestamp_tz_wire(value: TzInstant) -> Result<String, BindingError> {
 // =============================================================================
 
 macro_rules! impl_snowflake_timestamp {
-    // LTZ (and NTZ WRITE): bare wall-clock literal string tagged `type=TEXT`
-    // so the server coerces it under the session timezone. NTZ READ now
-    // delegates to `sf_types::SnowflakeTimestampNtz`; LTZ still uses the
-    // local Level-2 wrappers. See BD#74.
-    ($name:ident, wallclock_string) => {
-        impl_snowflake_timestamp!(@struct_array_standard $name);
-        impl_snowflake_timestamp!(@common $name);
-        impl_snowflake_timestamp!(@write_wire_wallclock $name);
-    };
-
     ($name:ident, wallclock_odbc_write) => {
         impl_snowflake_timestamp!(@odbc_value_and_write $name);
         impl_snowflake_timestamp!(@write_wire_wallclock $name);
-    };
-
-    (@struct_array_standard $name:ident) => {
-        impl ReadArrowType<StructArray> for $name {
-            fn read_arrow_type<'a>(
-                &self,
-                array: &'a StructArray,
-                row_idx: usize,
-            ) -> Result<Self::Representation<'a>, ReadArrowError> {
-                read_struct_timestamp(array, row_idx)
-            }
-        }
-    };
-
-    (@common $name:ident) => {
-        impl_snowflake_timestamp!(@odbc_value_and_write $name);
-
-        impl ReadArrowType<PrimitiveArray<Int64Type>> for $name {
-            fn read_arrow_type<'a>(
-                &self,
-                array: &'a PrimitiveArray<Int64Type>,
-                row_idx: usize,
-            ) -> Result<Self::Representation<'a>, ReadArrowError> {
-                read_scaled_timestamp(array, row_idx, self.scale)
-            }
-        }
+        impl_snowflake_timestamp!(@read_arrow_sf_types $name);
     };
 
     (@odbc_value_and_write $name:ident) => {
@@ -803,6 +753,37 @@ macro_rules! impl_snowflake_timestamp {
             }
         }
     };
+
+    // Shared by NTZ + LTZ: decode via the matching `sf_types` Kind-1 type.
+    (@read_arrow_sf_types $name:ident) => {
+        impl ReadArrowType<StructArray> for $name {
+            fn read_arrow_type<'a>(
+                &self,
+                array: &'a StructArray,
+                row_idx: usize,
+            ) -> Result<Self::Representation<'a>, ReadArrowError> {
+                Ok(sf_types::ReadArrowType::read_arrow_type(
+                    &sf_types::$name { scale: self.scale },
+                    array,
+                    row_idx,
+                )?)
+            }
+        }
+
+        impl ReadArrowType<PrimitiveArray<Int64Type>> for $name {
+            fn read_arrow_type<'a>(
+                &self,
+                array: &'a PrimitiveArray<Int64Type>,
+                row_idx: usize,
+            ) -> Result<Self::Representation<'a>, ReadArrowError> {
+                Ok(sf_types::ReadArrowType::read_arrow_type(
+                    &sf_types::$name { scale: self.scale },
+                    array,
+                    row_idx,
+                )?)
+            }
+        }
+    };
 }
 
 // =============================================================================
@@ -815,39 +796,11 @@ pub(crate) struct SnowflakeTimestampNtz {
 
 impl_snowflake_timestamp!(SnowflakeTimestampNtz, wallclock_odbc_write);
 
-impl ReadArrowType<StructArray> for SnowflakeTimestampNtz {
-    fn read_arrow_type<'a>(
-        &self,
-        array: &'a StructArray,
-        row_idx: usize,
-    ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        Ok(sf_types::ReadArrowType::read_arrow_type(
-            &sf_types::SnowflakeTimestampNtz { scale: self.scale },
-            array,
-            row_idx,
-        )?)
-    }
-}
-
-impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTimestampNtz {
-    fn read_arrow_type<'a>(
-        &self,
-        array: &'a PrimitiveArray<Int64Type>,
-        row_idx: usize,
-    ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        Ok(sf_types::ReadArrowType::read_arrow_type(
-            &sf_types::SnowflakeTimestampNtz { scale: self.scale },
-            array,
-            row_idx,
-        )?)
-    }
-}
-
 pub(crate) struct SnowflakeTimestampLtz {
     pub(crate) scale: u32,
 }
 
-impl_snowflake_timestamp!(SnowflakeTimestampLtz, wallclock_string);
+impl_snowflake_timestamp!(SnowflakeTimestampLtz, wallclock_odbc_write);
 
 pub(crate) struct SnowflakeTimestampTz {
     pub(crate) scale: u32,

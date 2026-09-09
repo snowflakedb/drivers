@@ -276,8 +276,9 @@ drivers.
 - TIMESTAMP_TZ: Level 1 (`sf_types::SnowflakeTimestampTz`) plus Level-2 epoch
   split (`split_scaled_epoch`, `read_struct_timestamp`, `read_scaled_timestamp`).
   Biased offsets outside `0..=2880` are decode errors. ODBC WRITE/policy and
-  Node `toJSON` stay in the wrappers. NTZ/LTZ Level-1 types are not extracted
-  yet; they call the shared Level-2 helpers.
+  Node `toJSON` stay in the wrappers. NTZ and LTZ Level-1 types
+  (`SnowflakeTimestampNtz`, `SnowflakeTimestampLtz`) share the same epoch
+  helpers; session `TIMEZONE` stays on the wrapper WRITE side.
 - BOOLEAN: Level 1 shared (`sf_types::SnowflakeBoolean`). Like DATE it is
   self-describing — a `BooleanArray` bit read with no column metadata — so there
   is no Kind-1 metadata and no Level-2 primitive (a `bool` is not a split of a

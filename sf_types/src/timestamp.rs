@@ -75,6 +75,38 @@ impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTimestampNtz {
     }
 }
 
+/// Snowflake TIMESTAMP_LTZ Arrow reader (Kind-1: `scale` only).
+///
+/// Same physical encoding as NTZ. Session `TIMEZONE` is Kind-2 WRITE and
+/// does not belong on this type.
+pub struct SnowflakeTimestampLtz {
+    pub scale: u32,
+}
+
+impl SnowflakeType for SnowflakeTimestampLtz {
+    type Representation<'a> = NaiveDateTime;
+}
+
+impl ReadArrowType<StructArray> for SnowflakeTimestampLtz {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a StructArray,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        SnowflakeTimestampNtz { scale: self.scale }.read_arrow_type(array, row_idx)
+    }
+}
+
+impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTimestampLtz {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a PrimitiveArray<Int64Type>,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        SnowflakeTimestampNtz { scale: self.scale }.read_arrow_type(array, row_idx)
+    }
+}
+
 /// Snowflake TIMESTAMP_TZ Arrow reader (Kind-1: `scale` only).
 pub struct SnowflakeTimestampTz {
     pub scale: u32,
@@ -606,5 +638,40 @@ mod tests {
             .unwrap();
         assert_eq!(value.and_utc().timestamp(), -1);
         assert_eq!(value.and_utc().timestamp_subsec_nanos(), 500_000_000);
+    }
+
+    #[test]
+    fn should_read_ltz_the_same_as_ntz_for_flat_int64() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(1_453_386_764_000)]);
+        let ntz = SnowflakeTimestampNtz { scale: 3 }
+            .read_arrow_type(&array, 0)
+            .unwrap();
+        let ltz = SnowflakeTimestampLtz { scale: 3 }
+            .read_arrow_type(&array, 0)
+            .unwrap();
+        assert_eq!(ltz, ntz);
+        assert_eq!(ltz.and_utc().timestamp(), 1_453_386_764);
+        assert_eq!(ltz.and_utc().timestamp_subsec_nanos(), 0);
+    }
+
+    #[test]
+    fn should_read_ltz_the_same_as_ntz_for_2col_struct() {
+        let array = make_ntz_struct_array(1_453_386_764, 0);
+        let ntz = SnowflakeTimestampNtz { scale: 9 }
+            .read_arrow_type(&array, 0)
+            .unwrap();
+        let ltz = SnowflakeTimestampLtz { scale: 9 }
+            .read_arrow_type(&array, 0)
+            .unwrap();
+        assert_eq!(ltz, ntz);
+    }
+
+    #[test]
+    fn should_report_ltz_null_flat_int64_as_null_value_error() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![None::<i64>]);
+        let err = SnowflakeTimestampLtz { scale: 0 }
+            .read_arrow_type(&array, 0)
+            .unwrap_err();
+        assert!(matches!(err, ReadArrowError::NullValue { .. }));
     }
 }
