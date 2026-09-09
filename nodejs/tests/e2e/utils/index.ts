@@ -23,6 +23,11 @@ export const IS_RUNNING_FOR_OLD_DRIVER = !!process.env.SNOWFLAKE_NODEJS_E2E_USE_
 // A var to use in .skipIf() vitest conditionals while some features are not implemented in the new driver
 export const NOT_IMPLEMENTED_IN_NEW_DRIVER = !IS_RUNNING_FOR_OLD_DRIVER;
 
+// Auth tests are skipped by default via this flag as they require a custom docker container.
+// tests/auth/* scripts set this flag when executing.
+// TODO(SNOW-3996212): fail the wrapper when this skip leaves zero tests executed (#1786).
+export const NO_BROWSER_AVAILABLE = process.env.SF_TEST_HEADLESS_BROWSER !== 'true';
+
 /**
  * Marks a documented behavior difference between the old and new Node.js
  * driver, letting a test branch its assertions on which driver is under test.
@@ -38,7 +43,7 @@ export function isRunningNewDriverWithBD(bdRef: `BD#${number}`): boolean {
 
 export const snowflake = IS_RUNNING_FOR_OLD_DRIVER ? oldSnowflakeSDK : newSnowflakeSDK;
 
-const baseConnectionOptions = {
+export const baseConnectionOptions = {
   account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
   host: getTestParameter('SNOWFLAKE_TEST_HOST'),
   username: getTestParameter('SNOWFLAKE_TEST_USER'),
