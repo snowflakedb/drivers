@@ -202,6 +202,43 @@ class TestConvertValueScalars:
         assert bytes_value == bytearray_value
 
 
+class TestConvertValueNonFiniteFloats:
+    """Regression tests for SNOW-4073005: non-finite floats must serialize
+    to the capitalized literals the server's bind-value parser requires."""
+
+    def test_float_positive_infinity_serializes_as_full_word_infinity(self):
+        _, value = JsonBindingConverter._convert_value(float("inf"))
+        assert value == "Infinity"
+
+    def test_float_negative_infinity_serializes_as_full_word_with_sign(self):
+        _, value = JsonBindingConverter._convert_value(float("-inf"))
+        assert value == "-Infinity"
+
+    def test_float_nan_serializes_as_capital_n_a_n(self):
+        _, value = JsonBindingConverter._convert_value(float("nan"))
+        assert value == "NaN"
+
+    def test_float_type_is_still_real_for_non_finite_values(self):
+        snowflake_type, _ = JsonBindingConverter._convert_value(float("inf"))
+        assert snowflake_type == "REAL"
+
+    def test_numpy_float64_infinity_serializes_as_infinity(self):
+        _, value = JsonBindingConverter._convert_value(np.float64("inf"))
+        assert value == "Infinity"
+
+    def test_numpy_float32_negative_infinity_serializes_with_sign(self):
+        _, value = JsonBindingConverter._convert_value(np.float32("-inf"))
+        assert value == "-Infinity"
+
+    def test_numpy_float16_nan_serializes_as_capital_n_a_n(self):
+        _, value = JsonBindingConverter._convert_value(np.float16("nan"))
+        assert value == "NaN"
+
+    def test_finite_float_unaffected(self):
+        _, value = JsonBindingConverter._convert_value(3.14)
+        assert value == "3.14"
+
+
 class TestConvertValueDatetime:
     """Test datetime/date/time value conversion."""
 
@@ -438,6 +475,11 @@ class TestConvertArray:
         assert snowflake_type == "FIXED"
         assert values == ["1.1", "2.2"]
 
+    def test_float_array_with_infinity_and_nan(self):
+        snowflake_type, values = JsonBindingConverter._convert_array([1.0, float("inf"), float("-inf"), float("nan")])
+        assert snowflake_type == "REAL"
+        assert values == ["1.0", "Infinity", "-Infinity", "NaN"]
+
 
 class TestProcessParams:
     """Test _process_params with positional parameters."""
@@ -561,6 +603,18 @@ class TestSerializeParameters:
         assert parsed["1"]["value"] == ["1", "2", "3"]
         assert parsed["2"]["type"] == "TEXT"
         assert parsed["2"]["value"] == ["a", "b", "c"]
+
+    def test_serialize_infinity_and_nan_as_scalars(self):
+        json_str, _ = JsonBindingConverter.serialize_parameters([float("inf"), float("-inf"), float("nan")])
+        parsed = json.loads(json_str)
+        assert parsed["1"] == {"type": "REAL", "value": "Infinity"}
+        assert parsed["2"] == {"type": "REAL", "value": "-Infinity"}
+        assert parsed["3"] == {"type": "REAL", "value": "NaN"}
+
+    def test_serialize_infinity_and_nan_as_array_binding(self):
+        json_str, _ = JsonBindingConverter.serialize_parameters([[1.0, float("inf"), float("nan")]])
+        parsed = json.loads(json_str)
+        assert parsed["1"] == {"type": "REAL", "value": ["1.0", "Infinity", "NaN"]}
 
 
 class TestReferenceConnectorParity:
@@ -921,6 +975,15 @@ class TestQuote:
 
     def test_float_quoted_bare(self):
         assert ClientSideBindingConverter.quote(3.14) == "3.14"
+
+    def test_infinity_quoted_bare(self):
+        assert ClientSideBindingConverter.quote(float("inf")) == "Infinity"
+
+    def test_negative_infinity_quoted_bare(self):
+        assert ClientSideBindingConverter.quote(float("-inf")) == "-Infinity"
+
+    def test_nan_quoted_bare(self):
+        assert ClientSideBindingConverter.quote(float("nan")) == "NaN"
 
     def test_decimal_quoted_bare(self):
         assert ClientSideBindingConverter.quote(Decimal("99.99")) == "99.99"
@@ -1310,6 +1373,11 @@ class TestJsonBindingConverterNumpy:
         assert parsed["2"]["type"] == "REAL"
         assert parsed["2"]["value"] == "3.14"
 
+    def test_numpy_float64_infinity_serialize_parameters(self):
+        json_str, _ = JsonBindingConverter.serialize_parameters([np.float64("inf")])
+        parsed = json.loads(json_str)
+        assert parsed["1"] == {"type": "REAL", "value": "Infinity"}
+
 
 class TestClientSideBindingConverterNumpy:
     """Test that ClientSideBindingConverter handles numpy types via _is_numeric."""
@@ -1344,6 +1412,12 @@ class TestClientSideBindingConverterNumpy:
         query = "SELECT * FROM t WHERE x = %s"
         result = ClientSideBindingConverter.interpolate_query(query, [np.float64(3.14)])
         assert result == "SELECT * FROM t WHERE x = 3.14"
+
+    def test_numpy_float64_infinity_quoted_bare(self):
+        assert ClientSideBindingConverter.quote(np.float64("inf")) == "Infinity"
+
+    def test_numpy_float32_nan_quoted_bare(self):
+        assert ClientSideBindingConverter.quote(np.float32("nan")) == "NaN"
 
 
 class TestCsvBindingConverter:
@@ -1394,6 +1468,22 @@ class TestCsvBindingConverter:
     def test_csv_binary_is_lowercase_hex(self):
         csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([bytes.fromhex("deadbeef")],))
         assert self._rows(csv_bytes) == [["deadbeef"]]
+
+    def test_csv_float_infinity_and_negative_infinity(self):
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([float("inf")], [float("-inf")]))
+        assert self._rows(csv_bytes) == [["Infinity", "-Infinity"]]
+
+    def test_csv_float_nan(self):
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([float("nan")],))
+        assert self._rows(csv_bytes) == [["NaN"]]
+
+    def test_csv_float_array_with_infinity_and_nan(self):
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([1.0, float("inf"), float("-inf"), float("nan")],))
+        assert self._rows(csv_bytes) == [["1.0"], ["Infinity"], ["-Infinity"], ["NaN"]]
+
+    def test_csv_numpy_float64_infinity(self):
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([np.float64("inf")],))
+        assert self._rows(csv_bytes) == [["Infinity"]]
 
     def test_csv_boolean_is_lowercase(self):
         csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([True, False],))

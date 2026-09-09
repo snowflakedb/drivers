@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import binascii
 import json
+import math
 import time as time_module
 
 from collections.abc import Mapping, Sequence
@@ -113,10 +114,26 @@ if not isinstance(np, MissingOptionalDependency):
     _NUMPY_BOOL_TYPES = (np.bool_,)
     _NUMPY_FLOAT_TYPES = (np.float16, np.float32, np.float64)
 
+_FLOAT_TYPES: tuple[type, ...] = (float,) + _NUMPY_FLOAT_TYPES
+
 
 def _is_numeric(value: Any) -> bool:
     """Check if value is a numeric type."""
     return isinstance(value, _NUM_DATA_TYPES)
+
+
+def _format_float(value: Any) -> str:
+    """Format a float-like value for Snowflake REAL/DOUBLE binding.
+
+    The server's bind-value parser requires the capitalized literals
+    "NaN"/"Infinity"/"-Infinity"; str() on a float produces the lowercase
+    short forms "nan"/"inf"/"-inf", which the parser rejects.
+    """
+    if math.isnan(value):
+        return "NaN"
+    if math.isinf(value):
+        return "Infinity" if value > 0 else "-Infinity"
+    return str(value)
 
 
 def _is_binary(value: Any) -> bool:
@@ -276,6 +293,8 @@ class BindingConverterBase:
         elif isinstance(value, time_module.struct_time):
             dt = datetime.fromtimestamp(time_module.mktime(value))
             converted = cls._convert_datetime_to_epoch_nanoseconds(dt)
+        elif isinstance(value, _FLOAT_TYPES):
+            converted = _format_float(value)
         elif _is_numeric(value):
             converted = str(value)
         elif isinstance(value, str):
@@ -521,6 +540,8 @@ class ClientSideBindingConverter:
             return "NULL"
         elif isinstance(value, bool):
             return "TRUE" if value else "FALSE"
+        elif isinstance(value, _FLOAT_TYPES):
+            return _format_float(value)
         elif _is_numeric(value):
             return str(value)
         elif _is_binary(value):

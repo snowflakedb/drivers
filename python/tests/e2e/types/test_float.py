@@ -8,7 +8,7 @@ All tests are parameterized to run with each type synonym to verify they behave 
 All type synonyms are treated as 64-bit IEEE 754 double precision.
 """
 
-from math import inf, isinf, nan
+from math import inf, isinf, isnan, nan
 
 import pytest
 
@@ -380,8 +380,6 @@ class TestFloatBinding:
         execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
 
         # When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
-
-        # Note: NaN, inf, -inf cannot be bound — Snowflake rejects them as bind values.
         test_rows = [(0.0,), (123.456,), (-789.012,), (None,)]
         rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
 
@@ -394,3 +392,28 @@ class TestFloatBinding:
         non_null_expected = {0.0, 123.456, -789.012}
         assert non_null_result == non_null_expected
         assert result.count(None) == 1
+
+    @float_type_parametrize
+    def test_should_insert_non_finite_float_values_using_parameter_binding_for_float_and_synonyms(
+        self, execute_query, executemany_insert, tmp_schema, float_type
+    ):
+        # Given Snowflake client is logged in
+        pass
+
+        # And Table with <type> column exists
+        table_name = f"{tmp_schema}.float_bind_non_finite_table_{float_type.replace(' ', '_').lower()}"
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
+
+        # When Float values [0.0, 123.456, -789.012, NULL, NaN, inf, -inf] are bulk-inserted
+        # using multirow binding
+        test_rows = [(0.0,), (123.456,), (-789.012,), (None,), (nan,), (inf,), (-inf,)]
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
+
+        # Then Result should contain the same values including NULL and the special values
+        result = [row[0] for row in rows]
+        assert len(result) == len(test_rows)
+        assert_type(result, float, can_be_none=True)
+        non_null_non_nan_result = {v for v in result if v is not None and not isnan(v)}
+        assert non_null_non_nan_result == {0.0, 123.456, -789.012, inf, -inf}
+        assert result.count(None) == 1
+        assert sum(1 for v in result if v is not None and isnan(v)) == 1
