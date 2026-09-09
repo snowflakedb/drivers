@@ -107,6 +107,7 @@ pub mod param_names {
     pub const SECONDARY_ROLES: ParamKey = ParamKey("secondary_roles");
     pub const CONNECTION_NAME: ParamKey = ParamKey("connection_name");
     pub const CUSTOM_ROOT_STORE_PATH: ParamKey = ParamKey("custom_root_store_path");
+    pub const EXTRA_ROOT_STORE_PATH: ParamKey = ParamKey("extra_root_store_path");
     pub const VERIFY_HOSTNAME: ParamKey = ParamKey("verify_hostname");
     pub const VERIFY_CERTIFICATES: ParamKey = ParamKey("verify_certificates");
     pub const TLS_SKIP_VERIFY: ParamKey = ParamKey("tls_skip_verify");
@@ -1270,6 +1271,21 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         auth: false,
         description: "Path to custom root certificate store",
+        deprecated_by: None,
+        scopes: &[ParamScope::Connection],
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::EXTRA_ROOT_STORE_PATH.as_str(),
+        aliases: aliases![],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        auth: false,
+        description: "Path to root certificates added to the default root store",
         deprecated_by: None,
         scopes: &[ParamScope::Connection],
         used_at_connect: true,

@@ -31,11 +31,11 @@ pub(crate) struct CrlServerCertVerifier {
 impl CrlServerCertVerifier {
     pub(crate) fn new_with_root_store(
         crl_config: CrlConfig,
-        custom_root_store: Option<rustls::RootCertStore>,
+        root_store_override: Option<rustls::RootCertStore>,
         verify_hostname: bool,
         crl_worker: SharedCrlWorker,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let root_store = match custom_root_store {
+        let root_store = match root_store_override {
             Some(store) => store,
             None => load_system_root_store()
                 .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { Box::new(err) })?,

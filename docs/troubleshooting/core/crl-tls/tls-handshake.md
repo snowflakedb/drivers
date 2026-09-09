@@ -17,6 +17,7 @@ create_tls_client_with_proxy()          tls/client.rs
   ├─ verify_certificates=false ──────── accepts invalid certs AND invalid hostnames (see A4)
   ├─ crl_check_mode=DISABLED ────────── default TLS path
   │    optional: custom_root_store_path (replaces system roots)
+  │    optional: extra_root_store_path (extends system roots)
   │    optional: verify_hostname=false
   └─ crl_check_mode=ENABLED|ADVISORY ── CRL-aware verifier
        WebPkiServerVerifier (chain + hostname) + CRL revocation

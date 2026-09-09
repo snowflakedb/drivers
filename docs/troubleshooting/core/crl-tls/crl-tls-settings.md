@@ -19,6 +19,7 @@ Related: [tls-handshake.md](tls-handshake.md) · [cert-chain.md](cert-chain.md) 
 | `verify_certificates` | bool | `true` | `false` disables **all** validation (also forces `verify_hostname=false`) — debug only |
 | `verify_hostname` | bool | `true` | `false` disables the hostname check only |
 | `custom_root_store_path` | path | — | PEM bundle used **instead of** the system roots (replaces, not adds) |
+| `extra_root_store_path` | path | — | PEM bundle added to the system roots |
 | `min_tls_version` | string | `tls12` | Lowest protocol version to offer (`tls12` / `tls13`) |
 | `max_tls_version` | string | `tls13` | Highest protocol version to offer; must be ≥ `min_tls_version` |
 
