@@ -2870,6 +2870,9 @@ behavior_differences:
     name: "External-browser IDP-user-mismatch has no distinct error message; surfaces as the generic auth-failure code"
     status: unknown
     type: enhancement
+    name: "GET result 'file' value now matches the old driver's basename"
+    status: fixed
+    type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
@@ -2885,3 +2888,12 @@ behavior_differences:
     description: |
       Login is still denied. Only the diagnostic text is less specific than on the
       old driver.
+      The `file` column of a GET result reports the local file's basename — the source key
+      reduced to its final path segment.
+    new_driver_behavior: |
+      The `file` column of a GET result reports the local file's basename, matching the old
+      driver.
+    description: |
+      The new driver previously reported the full, un-stripped source key (including any
+      stage subdirectory prefix) in this column instead of the basename it already used for
+      the local file name written to disk. This entry documents that the gap is closed.

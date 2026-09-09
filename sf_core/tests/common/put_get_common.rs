@@ -77,6 +77,21 @@ pub fn upload_to_stage_with_options(
     client.execute_query(&put_sql)
 }
 
+/// `PUT`s `file_pattern` into `@{stage_name}/{prefix}` instead of the stage
+/// root, for tests that need to `GET` back a stage subdirectory rather than
+/// a bare file.
+pub fn upload_to_stage_prefix(
+    client: &SnowflakeTestClient,
+    stage_name: &str,
+    prefix: &str,
+    file_pattern: &str,
+) -> ResultSetGetStreamResponse {
+    client.create_temporary_stage(stage_name);
+    let resolved = path_to_sql_uri(std::path::Path::new(file_pattern));
+    let put_sql = format!("PUT 'file://{resolved}' @{stage_name}/{prefix}");
+    client.execute_query(&put_sql)
+}
+
 pub fn get_file_from_stage(
     client: &SnowflakeTestClient,
     stage_name: &str,

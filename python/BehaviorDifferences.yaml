@@ -1377,3 +1377,24 @@ behavior_differences:
     description: |
       The cursor-level counterpart of entry 18, which records the same capability on
       `ResultBatch`.
+  95:
+    name: "GET result 'file' value for a multi-level stage subdirectory"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      For a GET where the source key has more than one directory level (e.g.
+      `prefix/subdir/file.csv`), the `file` column of the result strips only the first path
+      segment, leaving the remaining segments in the value (`subdir/file.csv`).
+    new_driver_behavior: |
+      The `file` column of a GET result always reports the local file's basename
+      (`file.csv`), regardless of how many directory levels the source key had.
+    description: |
+      For a source key with a single directory level — a stage path with one prefix
+      segment, the common case — both drivers already reported the same basename value;
+      the new driver previously reported the full, un-stripped source key including every
+      directory level, which was a defect fixed by this change. The residual difference
+      documented here is limited to source keys with two or more directory levels, where
+      the old driver's single-segment strip still leaves part of the path in the value.

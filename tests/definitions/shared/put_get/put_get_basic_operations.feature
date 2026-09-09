@@ -56,3 +56,9 @@ Feature: PUT/GET basic operations
     When All files are downloaded from stage using GET command
     Then File should be downloaded flat into the local directory
     And Have correct content
+
+  @core_e2e
+  Scenario: should return local basename for get from stage subdirectory
+    Given File is uploaded to a stage subdirectory
+    When The subdirectory is downloaded using GET command
+    Then The file column reports the local basename, not the stage-relative path
