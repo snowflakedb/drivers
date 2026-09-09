@@ -1216,7 +1216,11 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::SECONDARY_ROLES.as_str(),
-        aliases: &[],
+        // Legacy ODBC's `SecondaryRoles` connection attribute has no separator,
+        // so the connection-string parser uppercases it to `SECONDARYROLES`
+        // (not `SECONDARY_ROLES`); scope that spelling to ODBC so the wrapper
+        // canonicalizes it to `secondary_roles`.
+        aliases: aliases![Odbc; "SECONDARYROLES"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1337,6 +1341,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         // Python uses the `cert_revocation_check_mode` legacy kwarg, rewritten
         // wrapper-side by `_LEGACY_REWRITES`.
         aliases: aliases![Odbc; "CRL_MODE", "CRL_ENABLED"],
+        // Free-form string in core: the ODBC wrapper maps its `CRL_MODE` /
+        // `CRL_ENABLED` wire spellings to the `DISABLED` / `ENABLED` / `ADVISORY`
+        // tokens that `build_crl_config` accepts before the value reaches core.
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -2693,6 +2700,9 @@ mod tests {
             // Legacy Python kwarg spelling; the canonical camelCase name does
             // not match it case-insensitively, so the TOML loader needs it.
             ("PASSCODE_IN_PASSWORD", "passcodeInPassword", &[Python]),
+            // Legacy ODBC `SecondaryRoles` DSN attribute: the parser uppercases
+            // the separator-less key to `SECONDARYROLES`.
+            ("SECONDARYROLES", "secondary_roles", &[Odbc]),
             // UD-ODBC's own CRL DSN keys (legacy spelled the family `CRL_CHECK`).
             ("CRL_MODE", "crl_check_mode", &[Odbc]),
             ("CRL_ENABLED", "crl_check_mode", &[Odbc]),
