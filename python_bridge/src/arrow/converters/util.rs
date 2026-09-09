@@ -1,12 +1,15 @@
 use arrow::array::{
-    Array, ArrayRef, Decimal128Array, Int8Array, Int16Array, Int32Array, Int64Array,
+    Array, ArrayRef, Decimal128Array, Int8Array, Int16Array, Int32Array, Int64Array, StructArray,
 };
 use arrow::datatypes::DataType;
+use chrono::NaiveDateTime;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyNone, PyTuple};
-use sf_types::{ReadArrowError, ReadArrowType, SnowflakeFixed};
+use sf_types::{
+    ReadArrowError, ReadArrowType, SnowflakeFixed, read_scaled_timestamp, read_struct_timestamp,
+};
 
 use crate::arrow::plan::SnowflakeFieldType;
 
@@ -55,6 +58,28 @@ impl IntColumn {
             Self::I32(array) => SnowflakeFixed.read_arrow_type(array, row),
             Self::I64(array) => SnowflakeFixed.read_arrow_type(array, row),
             Self::Decimal128(array) => SnowflakeFixed.read_arrow_type(array, row),
+        }
+    }
+}
+
+pub(super) enum TimestampColumn {
+    Int64(Int64Array),
+    Struct(StructArray),
+}
+
+impl TimestampColumn {
+    pub(super) fn from_array(array: &ArrayRef, field_type: &SnowflakeFieldType) -> PyResult<Self> {
+        Ok(match array.data_type() {
+            DataType::Int64 => Self::Int64(downcast_column(array, field_type)?),
+            DataType::Struct(_) => Self::Struct(downcast_column(array, field_type)?),
+            other => return Err(logical_mismatch_err(field_type, other)),
+        })
+    }
+
+    pub(super) fn get(&self, row: usize, scale: u32) -> Result<NaiveDateTime, ReadArrowError> {
+        match self {
+            Self::Int64(array) => read_scaled_timestamp(array, row, scale),
+            Self::Struct(array) => read_struct_timestamp(array, row),
         }
     }
 }

@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{
-    PyBool, PyByteArray, PyDate, PyDateAccess, PyFloat, PyInt, PyString, PyTime, PyTimeAccess,
+    PyBool, PyByteArray, PyDate, PyDateAccess, PyDateTime, PyFloat, PyInt, PyString, PyTime,
+    PyTimeAccess, PyTzInfoAccess,
 };
 
 pub(crate) fn assert_py_bool(value: &Bound<'_, PyAny>, expected: bool) {
@@ -96,5 +97,35 @@ pub(crate) fn assert_py_time(
             time.get_microsecond()
         ),
         (hour, minute, second, microsecond)
+    );
+}
+
+pub(crate) fn assert_py_datetime(
+    value: &Bound<'_, PyAny>,
+    date: (i32, u8, u8),
+    time: (u8, u8, u8, u32),
+) {
+    assert!(
+        value.is_instance_of::<PyDateTime>(),
+        "expected datetime.datetime, got {}",
+        value.get_type().name().unwrap()
+    );
+    let datetime = value.cast::<PyDateTime>().unwrap();
+    assert_eq!(
+        (
+            datetime.get_year(),
+            datetime.get_month(),
+            datetime.get_day(),
+            datetime.get_hour(),
+            datetime.get_minute(),
+            datetime.get_second(),
+            datetime.get_microsecond()
+        ),
+        (date.0, date.1, date.2, time.0, time.1, time.2, time.3)
+    );
+    assert!(
+        datetime.get_tzinfo().is_none(),
+        "expected naive datetime, got tzinfo {:?}",
+        datetime.get_tzinfo()
     );
 }
