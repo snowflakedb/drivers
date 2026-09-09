@@ -9,6 +9,7 @@ use crate::arrow::plan::{LogicalPlan, SnowflakeFieldType};
 use super::Column;
 use super::binary;
 use super::boolean;
+use super::date;
 use super::decfloat;
 use super::number;
 use super::real;
@@ -50,8 +51,8 @@ impl ConversionContext {
             SnowflakeFieldType::Varchar { .. } => text::from_column(array, field_type),
             SnowflakeFieldType::Binary { .. } => binary::from_column(array, field_type),
             SnowflakeFieldType::Decfloat { .. } => decfloat::from_column(array, field_type),
-            SnowflakeFieldType::Date
-            | SnowflakeFieldType::Time { .. }
+            SnowflakeFieldType::Date => date::from_column(array, field_type),
+            SnowflakeFieldType::Time { .. }
             | SnowflakeFieldType::TimestampNtz { .. }
             | SnowflakeFieldType::TimestampLtz { .. }
             | SnowflakeFieldType::TimestampTz { .. }

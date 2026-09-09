@@ -1,6 +1,7 @@
 mod binary;
 mod boolean;
 mod context;
+mod date;
 mod decfloat;
 mod decode;
 mod number;
@@ -11,14 +12,18 @@ mod util;
 #[cfg(test)]
 mod test_util;
 
-use arrow::array::{BinaryArray, BooleanArray, Float64Array, StringArray, StructArray};
+use arrow::array::{
+    BinaryArray, BooleanArray, Date32Array, Float64Array, StringArray, StructArray,
+};
 use pyo3::prelude::*;
 use sf_types::{
-    SnowflakeBinary, SnowflakeBoolean, SnowflakeDecfloat, SnowflakeReal, SnowflakeText,
+    SnowflakeBinary, SnowflakeBoolean, SnowflakeDate, SnowflakeDecfloat, SnowflakeReal,
+    SnowflakeText,
 };
 
 use self::binary::BinaryMaterializer;
 use self::boolean::BoolMaterializer;
+use self::date::DateMaterializer;
 use self::decfloat::DecfloatMaterializer;
 use self::decode::TypedColumn;
 use self::number::NumberColumn;
@@ -34,6 +39,7 @@ pub(crate) enum Column {
     Text(TypedColumn<StringArray, SnowflakeText, TextMaterializer>),
     Binary(TypedColumn<BinaryArray, SnowflakeBinary, BinaryMaterializer>),
     Decfloat(TypedColumn<StructArray, SnowflakeDecfloat, DecfloatMaterializer>),
+    Date(TypedColumn<Date32Array, SnowflakeDate, DateMaterializer>),
 }
 
 impl Column {
@@ -45,6 +51,7 @@ impl Column {
             Self::Text(column) => column.to_py(py, row),
             Self::Binary(column) => column.to_py(py, row),
             Self::Decfloat(column) => column.to_py(py, row),
+            Self::Date(column) => column.to_py(py, row),
         }
     }
 }
