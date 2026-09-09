@@ -60,6 +60,9 @@ export const TEST_CONNECTION_OPTIONS: ConnectionOptions = getTestParameter('SNOW
       privateKeyPass: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD'),
     };
 
+/**
+ * @deprecated Use `createConnection` from fixtures.ts instead.
+ */
 export function createTestConnection(overrides: Partial<ConnectionOptions> = {}): Connection {
   return snowflake.createConnection({
     ...TEST_CONNECTION_OPTIONS,
@@ -67,32 +70,10 @@ export function createTestConnection(overrides: Partial<ConnectionOptions> = {})
   });
 }
 
-/**
- * Destroys a connection that is up, and skips one that is not. Both drivers refuse to
- * destroy a connection that never connected (406501) or is already gone (406502), and that
- * refusal in a `finally` would replace whatever failure ended the test. A test asserting
- * the refusal itself calls `connection.destroy` directly.
- */
 export async function destroyConnectionAsync(connection: Connection): Promise<void> {
-  if (!connection.isUp()) {
-    return;
-  }
   await new Promise<void>((resolve, reject) => {
     connection.destroy((err) => (err ? reject(err) : resolve()));
   });
-}
-
-export async function withConnection(
-  overrides: Record<string, unknown>,
-  body: (connection: Connection) => Promise<void>,
-): Promise<void> {
-  const connection = createTestConnection(overrides);
-  try {
-    await connection.connectAsync();
-    await body(connection);
-  } finally {
-    await destroyConnectionAsync(connection);
-  }
 }
 
 export function executeAsync(

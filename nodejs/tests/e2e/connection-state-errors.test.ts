@@ -1,43 +1,40 @@
 import { describe, it, expect } from 'vitest';
-import type { Connection } from '../types/sdk-types.js';
-import { createTestConnection, destroyConnectionAsync, executeAsync } from './utils/index.js';
+import { Connection } from '../types/sdk-types.js';
+import { createConnection, createLiveConnection } from './utils/fixtures.js';
+import { destroyConnectionAsync, executeAsync, isRunningNewDriverWithBD } from './utils/index.js';
+
+function connectAsyncWithErrorBD(connection: Connection) {
+  if (isRunningNewDriverWithBD('BD#11')) {
+    return connection.connectAsync();
+  } else {
+    return new Promise((resolve, reject) => {
+      connection.connect((error: unknown) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(void 0);
+        }
+      });
+    });
+  }
+}
 
 describe('Connection State Errors', () => {
-  const failLogin = async (connection: Connection): Promise<void> => {
-    // connectAsync reports login failures differently on the two drivers (BD#11).
-    const loginError = await new Promise<unknown>((resolve) => {
-      connection.connect((error) => resolve(error));
-    });
-    expect(loginError).toBeInstanceOf(Error);
-  };
-
-  const destroyError = (connection: Connection): Promise<unknown> =>
-    new Promise((resolve) => {
-      connection.destroy((error) => resolve(error));
-    });
-
   it('rejects a statement issued before the connection is established', async () => {
-    const connection = createTestConnection();
-
-    try {
-      await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
-        error: {
-          name: 'ClientError',
-          code: 407001,
-          sqlState: '08003',
-          message: 'Unable to perform operation because a connection was never established.',
-        },
-      });
-    } finally {
-      await destroyConnectionAsync(connection);
-    }
+    const connection = createConnection();
+    await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
+      error: {
+        name: 'ClientError',
+        code: 407001,
+        sqlState: '08003',
+        message: 'Unable to perform operation because a connection was never established.',
+      },
+    });
   });
 
   it('rejects a statement issued after the connection is destroyed', async () => {
-    const connection = createTestConnection();
-    await connection.connectAsync();
+    const connection = await createLiveConnection({}, false);
     await destroyConnectionAsync(connection);
-
     await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
       error: {
         name: 'ClientError',
@@ -50,30 +47,24 @@ describe('Connection State Errors', () => {
   });
 
   it('rejects a statement issued after the login failed', async () => {
-    const connection = createTestConnection({
+    const connection = createConnection({
       username: 'no_such_user_for_e2e',
     });
-    await failLogin(connection);
-
-    try {
-      await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
-        error: {
-          name: 'ClientError',
-          code: 407002,
-          sqlState: '08003',
-          message: 'Unable to perform operation using terminated connection.',
-          isFatal: true,
-        },
-      });
-    } finally {
-      await destroyConnectionAsync(connection);
-    }
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toThrow();
+    await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
+      error: {
+        name: 'ClientError',
+        code: 407002,
+        sqlState: '08003',
+        message: 'Unable to perform operation using terminated connection.',
+        isFatal: true,
+      },
+    });
   });
 
   it('should refuse to destroy a connection that was never established', async () => {
-    const connection = createTestConnection();
-
-    await expect(destroyError(connection)).resolves.toMatchObject({
+    const connection = createConnection();
+    await expect(destroyConnectionAsync(connection)).rejects.toMatchObject({
       name: 'ClientError',
       code: 406501,
       message: 'Not connected, so nothing to destroy.',
@@ -81,11 +72,9 @@ describe('Connection State Errors', () => {
   });
 
   it('should refuse to destroy a connection that is already destroyed', async () => {
-    const connection = createTestConnection();
-    await connection.connectAsync();
+    const connection = await createLiveConnection({}, false);
     await destroyConnectionAsync(connection);
-
-    await expect(destroyError(connection)).resolves.toMatchObject({
+    await expect(destroyConnectionAsync(connection)).rejects.toMatchObject({
       name: 'ClientError',
       code: 406502,
       message: 'Already disconnected.',
@@ -93,12 +82,11 @@ describe('Connection State Errors', () => {
   });
 
   it('should refuse to destroy a connection whose login failed', async () => {
-    const connection = createTestConnection({
+    const connection = createConnection({
       username: 'no_such_user_for_e2e',
     });
-    await failLogin(connection);
-
-    await expect(destroyError(connection)).resolves.toMatchObject({
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toThrow();
+    await expect(destroyConnectionAsync(connection)).rejects.toMatchObject({
       name: 'ClientError',
       code: 406502,
       message: 'Already disconnected.',

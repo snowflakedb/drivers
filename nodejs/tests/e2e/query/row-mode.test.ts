@@ -1,6 +1,7 @@
-import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import type { Connection, RowMode } from '../../types/sdk-types.js';
-import { createTestConnection, destroyConnectionAsync, executeAsync } from '../utils/index.js';
+import { describe, it, expect } from 'vitest';
+import type { RowMode } from '../../types/sdk-types.js';
+import { createLiveConnection } from '../utils/fixtures.js';
+import { executeAsync } from '../utils/index.js';
 
 const SQL = `select 1 as id, 'name1' as name, 'name2' as name`;
 
@@ -13,55 +14,30 @@ const ROW_MODES = Object.keys(EXPECTED_BY_MODE) as RowMode[];
 
 describe('Query Row Mode', () => {
   it('defaults to object when neither connection nor statement set rowMode', async () => {
-    const connection = createTestConnection();
-    try {
-      await connection.connectAsync();
-      const { rows } = await executeAsync(connection, SQL);
-      expect(rows[0]).toEqual(EXPECTED_BY_MODE.object);
-    } finally {
-      await destroyConnectionAsync(connection);
-    }
+    const connection = await createLiveConnection();
+    const { rows } = await executeAsync(connection, SQL);
+    expect(rows[0]).toEqual(EXPECTED_BY_MODE.object);
   });
 
   describe('Connection rowMode', () => {
     it.each(ROW_MODES)('shapes rows according to connection rowMode = %s', async (rowMode) => {
-      const connection = createTestConnection({ rowMode });
-      try {
-        await connection.connectAsync();
-        const { rows } = await executeAsync(connection, SQL);
-        expect(rows[0]).toEqual(EXPECTED_BY_MODE[rowMode]);
-      } finally {
-        await destroyConnectionAsync(connection);
-      }
+      const connection = await createLiveConnection({ rowMode });
+      const { rows } = await executeAsync(connection, SQL);
+      expect(rows[0]).toEqual(EXPECTED_BY_MODE[rowMode]);
     });
   });
 
   describe('Statement rowMode', () => {
-    let connection: Connection;
-
-    beforeAll(async () => {
-      connection = createTestConnection();
-      await connection.connectAsync();
-    });
-
-    afterAll(async () => {
-      await destroyConnectionAsync(connection);
-    });
-
     it.each(ROW_MODES)('shapes rows according to statement rowMode = %s', async (rowMode) => {
+      const connection = await createLiveConnection();
       const { rows } = await executeAsync(connection, SQL, { rowMode });
       expect(rows[0]).toEqual(EXPECTED_BY_MODE[rowMode]);
     });
   });
 
   it('statement rowMode overrides connection rowMode', async () => {
-    const connection = createTestConnection({ rowMode: 'array' });
-    try {
-      await connection.connectAsync();
-      const { rows } = await executeAsync(connection, SQL, { rowMode: 'object' });
-      expect(rows[0]).toEqual(EXPECTED_BY_MODE.object);
-    } finally {
-      await destroyConnectionAsync(connection);
-    }
+    const connection = await createLiveConnection({ rowMode: 'array' });
+    const { rows } = await executeAsync(connection, SQL, { rowMode: 'object' });
+    expect(rows[0]).toEqual(EXPECTED_BY_MODE.object);
   });
 });

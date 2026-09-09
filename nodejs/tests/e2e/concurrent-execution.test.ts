@@ -1,11 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { RowStatement } from '../types/sdk-types.js';
-import {
-  createTestConnection,
-  destroyConnectionAsync,
-  executeAsync,
-  NOT_IMPLEMENTED_IN_NEW_DRIVER,
-} from './utils/index.js';
+import { createLiveConnection } from './utils/fixtures.js';
+import { executeAsync, NOT_IMPLEMENTED_IN_NEW_DRIVER } from './utils/index.js';
 
 const selectRows = (rowCount: number) => `select true from table(generator(rowcount=>${rowCount}))`;
 
@@ -26,37 +22,25 @@ function streamRowCount(stmt: RowStatement): Promise<number> {
 describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Concurrent Execution', () => {
   it('runs many concurrent select queries on a single connection', async () => {
     const expectedRowCounts = [2837, 6104, 1592, 8471, 3963];
-    const connection = createTestConnection();
-    await connection.connectAsync();
-
-    try {
-      const rowCounts = await Promise.all(
-        expectedRowCounts.map(async (expected) => {
-          const { statement } = await executeAsync(connection, selectRows(expected));
-          return streamRowCount(statement as RowStatement);
-        }),
-      );
-      expect(rowCounts).toEqual(expectedRowCounts);
-    } finally {
-      await destroyConnectionAsync(connection);
-    }
+    const connection = await createLiveConnection();
+    const rowCounts = await Promise.all(
+      expectedRowCounts.map(async (expected) => {
+        const { statement } = await executeAsync(connection, selectRows(expected));
+        return streamRowCount(statement as RowStatement);
+      }),
+    );
+    expect(rowCounts).toEqual(expectedRowCounts);
   });
 
   it('runs concurrent select queries on independent connections', async () => {
     const expectedRowCounts = [4218, 1736, 7905, 2649, 5380];
-    const connections = expectedRowCounts.map(() => createTestConnection());
-
-    try {
-      await Promise.all(connections.map((c) => c.connectAsync()));
-      const rowCounts = await Promise.all(
-        connections.map(async (c, i) => {
-          const { statement } = await executeAsync(c, selectRows(expectedRowCounts[i]));
-          return streamRowCount(statement as RowStatement);
-        }),
-      );
-      expect(rowCounts).toEqual(expectedRowCounts);
-    } finally {
-      await Promise.all(connections.map((c) => destroyConnectionAsync(c).catch(() => undefined)));
-    }
+    const connections = await Promise.all(expectedRowCounts.map(() => createLiveConnection()));
+    const rowCounts = await Promise.all(
+      connections.map(async (connection, i) => {
+        const { statement } = await executeAsync(connection, selectRows(expectedRowCounts[i]));
+        return streamRowCount(statement as RowStatement);
+      }),
+    );
+    expect(rowCounts).toEqual(expectedRowCounts);
   });
 });
