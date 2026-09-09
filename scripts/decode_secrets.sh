@@ -50,14 +50,19 @@ echo "Decoding secrets with GPG..."
 
 # Auto-detect CI vs local execution.
 # CI: GitHub Actions sets GITHUB_ACTIONS=true; Jenkins sets BUILD_NUMBER.
-# Local: use parameters_<cloud>_local.json.gpg (preserves sfctest0 access for dev).
+# Local: use parameters_aws_local.json.gpg (preserves sfctest0 access for dev).
 # CI:    use parameters_<cloud>.json.gpg (dedicated prod accounts).
+# Only aws has a _local bundle; gcp, azure and preprod use the same file in both
+# environments.
 if [[ "${GITHUB_ACTIONS:-}" == "true" || -n "${BUILD_NUMBER:-}" ]]; then
     GPG_SUFFIX=""
     echo "  CI environment detected — using dedicated prod account credentials"
-else
+elif [[ "${CLOUD}" == "aws" ]]; then
     GPG_SUFFIX="_local"
     echo "  Local environment detected — using local/sfctest0 credentials"
+else
+    GPG_SUFFIX=""
+    echo "  Local environment detected — no local bundle for ${CLOUD}, using shared credentials"
 fi
 
 GPG_FILE="./.github/secrets/parameters_${CLOUD}${GPG_SUFFIX}.json.gpg"
