@@ -9,7 +9,7 @@ use crate::api::error::{
     InternalSnafu, InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCursorNameSnafu,
     InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
     InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu,
-    JsonBindingSnafu, NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu,
+    JsonBindingSnafu, NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcError,
     OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
     StillExecutingSnafu, UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
 };
@@ -169,62 +169,78 @@ fn exec_direct_impl(
             // which falls through to the threshold check.
             None,
         )?;
-        let (bindings, bindings_owner, bind_warnings) = inner.with_effective_apd(|apd| {
-            apply_parameter_bindings(apd, &inner.ipd, false, None, binding_mode)
-        })?;
-        warnings.extend(bind_warnings);
         let stmt_handle = guard.stmt_handle;
         let query_timeout = inner.query_timeout;
-        let effective_query = statement_text.to_string();
         let multi_statement_count = inner.multi_statement_count;
         let async_enabled = inner.async_enabled;
 
-        match run_cancellable(&guard, async_enabled, |client, operation| async move {
-            let _bindings_owner = bindings_owner;
-            if multi_statement_count >= 0 {
-                let mut options = std::collections::HashMap::new();
-                options.insert(
-                    "multi_statement_count".to_string(),
-                    ConfigSetting {
-                        value: Some(config_setting::Value::IntValue(
-                            multi_statement_count as i64,
-                        )),
-                    },
-                );
-                client
-                    .statement_set_options(StatementSetOptionsRequest {
-                        stmt_handle: Some(stmt_handle),
-                        options,
+        let execution = {
+            let mut dispatch = |mode: BindingMode| -> OdbcResult<Execution<ExecDirectOutcome>> {
+                let (bindings, bindings_owner, bind_warnings) =
+                    inner.with_effective_apd(|apd| {
+                        apply_parameter_bindings(apd, &inner.ipd, false, None, mode)
+                    })?;
+                warnings.extend(bind_warnings);
+                let effective_query = statement_text.to_string();
+
+                run_cancellable(&guard, async_enabled, |client, operation| async move {
+                    let _bindings_owner = bindings_owner;
+                    if multi_statement_count >= 0 {
+                        let mut options = std::collections::HashMap::new();
+                        options.insert(
+                            "multi_statement_count".to_string(),
+                            ConfigSetting {
+                                value: Some(config_setting::Value::IntValue(
+                                    multi_statement_count as i64,
+                                )),
+                            },
+                        );
+                        client
+                            .statement_set_options(StatementSetOptionsRequest {
+                                stmt_handle: Some(stmt_handle),
+                                options,
+                            })
+                            .await?;
+                    }
+
+                    client
+                        .statement_set_sql_query(StatementSetSqlQueryRequest {
+                            stmt_handle: Some(stmt_handle),
+                            query: effective_query,
+                        })
+                        .await?;
+
+                    let response = client
+                        .statement_execute_query_cancellable(
+                            operation,
+                            StatementExecuteQueryRequest {
+                                stmt_handle: Some(stmt_handle),
+                                bindings,
+                                timeout_seconds: if query_timeout > 0 {
+                                    Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                                } else {
+                                    None
+                                },
+                            },
+                        )
+                        .await?;
+                    Ok(ExecDirectOutcome {
+                        response,
+                        conn_handle,
                     })
-                    .await?;
-            }
-
-            client
-                .statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    query: effective_query,
                 })
-                .await?;
+            };
 
-            let response = client
-                .statement_execute_query_cancellable(
-                    operation,
-                    StatementExecuteQueryRequest {
-                        stmt_handle: Some(stmt_handle),
-                        bindings,
-                        timeout_seconds: if query_timeout > 0 {
-                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                        } else {
-                            None
-                        },
-                    },
-                )
-                .await?;
-            Ok(ExecDirectOutcome {
-                response,
-                conn_handle,
-            })
-        }) {
+            let first = dispatch(binding_mode);
+            match &first {
+                Err(e) if should_retry_with_inline_json(binding_mode, e) => {
+                    dispatch(BindingMode::Json)
+                }
+                _ => first,
+            }
+        };
+
+        match execution {
             Ok(Execution::Completed(outcome)) => outcome,
             Ok(Execution::Spawned(join_handle)) => {
                 inner
@@ -1058,60 +1074,76 @@ pub fn execute(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRe
             effective_cells,
             inner.prepared_array_bind_supported,
         )?;
-        let (bindings, bindings_owner, bind_warnings) = inner.with_effective_apd(|apd| {
-            apply_parameter_bindings(
-                apd,
-                &inner.ipd,
-                is_prepared,
-                inner.prepared_param_count,
-                binding_mode,
-            )
-        })?;
-        warnings.extend(bind_warnings);
 
         let stmt_handle = guard.stmt_handle;
         let query_timeout = inner.query_timeout;
         let multi_statement_count = inner.multi_statement_count;
         let async_enabled = inner.async_enabled;
 
-        let outcome = match run_cancellable(&guard, async_enabled, |client, operation| async move {
-            let _bindings_owner = bindings_owner;
-            if multi_statement_count >= 0 {
-                let mut options = std::collections::HashMap::new();
-                options.insert(
-                    "multi_statement_count".to_string(),
-                    ConfigSetting {
-                        value: Some(config_setting::Value::IntValue(
-                            multi_statement_count as i64,
-                        )),
-                    },
-                );
-                client
-                    .statement_set_options(StatementSetOptionsRequest {
-                        stmt_handle: Some(stmt_handle),
-                        options,
+        let execution = {
+            let mut dispatch = |mode: BindingMode| -> OdbcResult<Execution<ExecuteOutcome>> {
+                let (bindings, bindings_owner, bind_warnings) =
+                    inner.with_effective_apd(|apd| {
+                        apply_parameter_bindings(
+                            apd,
+                            &inner.ipd,
+                            is_prepared,
+                            inner.prepared_param_count,
+                            mode,
+                        )
+                    })?;
+                warnings.extend(bind_warnings);
+
+                run_cancellable(&guard, async_enabled, |client, operation| async move {
+                    let _bindings_owner = bindings_owner;
+                    if multi_statement_count >= 0 {
+                        let mut options = std::collections::HashMap::new();
+                        options.insert(
+                            "multi_statement_count".to_string(),
+                            ConfigSetting {
+                                value: Some(config_setting::Value::IntValue(
+                                    multi_statement_count as i64,
+                                )),
+                            },
+                        );
+                        client
+                            .statement_set_options(StatementSetOptionsRequest {
+                                stmt_handle: Some(stmt_handle),
+                                options,
+                            })
+                            .await?;
+                    }
+                    let response = client
+                        .statement_execute_query_cancellable(
+                            operation,
+                            StatementExecuteQueryRequest {
+                                stmt_handle: Some(stmt_handle),
+                                bindings,
+                                timeout_seconds: if query_timeout > 0 {
+                                    Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                                } else {
+                                    None
+                                },
+                            },
+                        )
+                        .await?;
+                    Ok(ExecuteOutcome {
+                        response,
+                        conn_handle,
                     })
-                    .await?;
+                })
+            };
+
+            let first = dispatch(binding_mode);
+            match &first {
+                Err(e) if should_retry_with_inline_json(binding_mode, e) => {
+                    dispatch(BindingMode::Json)
+                }
+                _ => first,
             }
-            let response = client
-                .statement_execute_query_cancellable(
-                    operation,
-                    StatementExecuteQueryRequest {
-                        stmt_handle: Some(stmt_handle),
-                        bindings,
-                        timeout_seconds: if query_timeout > 0 {
-                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                        } else {
-                            None
-                        },
-                    },
-                )
-                .await?;
-            Ok(ExecuteOutcome {
-                response,
-                conn_handle,
-            })
-        }) {
+        };
+
+        let outcome = match execution {
             Ok(Execution::Completed(outcome)) => outcome,
             Ok(Execution::Spawned(join_handle)) => {
                 inner.state.set(StatementState::AsyncExecute {
@@ -1534,6 +1566,60 @@ fn stage_binding_threshold_value(raw: Option<&ConfigSetting>) -> u32 {
     raw.and_then(config_setting_u64)
         .and_then(|v| u32::try_from(v).ok())
         .unwrap_or(65280)
+}
+
+/// Only a CSV (stage) attempt can hit `ErrorKind::StageBinding` — that upload
+/// only happens for [`BindingMode::Csv`], so a JSON attempt is excluded even
+/// though `is_stage_binding_disabled` would report `true` for it.
+pub(crate) fn should_retry_with_inline_json(binding_mode: BindingMode, error: &OdbcError) -> bool {
+    binding_mode == BindingMode::Csv && error.is_stage_binding_disabled()
+}
+
+#[cfg(test)]
+mod should_retry_with_inline_json_tests {
+    use super::{BindingMode, should_retry_with_inline_json};
+    use crate::api::error::{CoreProtobufError, OdbcError};
+    use sf_core::protobuf::generated::database_driver_v1::ErrorKind as ProtoErrorKind;
+
+    fn application_error(kind: ProtoErrorKind) -> OdbcError {
+        OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                message: "boom".to_string(),
+                kind: kind as i32,
+                error_trace: vec![],
+                sql_state: None,
+                vendor_code: None,
+                query_id: None,
+                parameter: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        }
+    }
+
+    #[test]
+    fn csv_binding_with_stage_binding_error_retries() {
+        let error = application_error(ProtoErrorKind::StageBinding);
+        assert!(should_retry_with_inline_json(BindingMode::Csv, &error));
+    }
+
+    #[test]
+    fn csv_binding_with_other_error_does_not_retry() {
+        let error = application_error(ProtoErrorKind::Timeout);
+        assert!(!should_retry_with_inline_json(BindingMode::Csv, &error));
+    }
+
+    #[test]
+    fn json_binding_with_stage_binding_error_does_not_retry() {
+        let error = application_error(ProtoErrorKind::StageBinding);
+        assert!(!should_retry_with_inline_json(BindingMode::Json, &error));
+    }
+
+    #[test]
+    fn json_binding_with_other_error_does_not_retry() {
+        let error = application_error(ProtoErrorKind::Timeout);
+        assert!(!should_retry_with_inline_json(BindingMode::Json, &error));
+    }
 }
 
 fn effective_param_count(
@@ -3536,26 +3622,12 @@ fn execute_dae(
             return Err(e);
         }
     };
-    let (bindings, _bindings_owner, _bind_warnings) = match apply_parameter_bindings(
-        &temp_apd,
-        &inner.ipd,
-        is_prepared,
-        inner.prepared_param_count,
-        binding_mode,
-    ) {
-        Ok(b) => b,
-        Err(e) => {
-            inner.state.set(restored);
-            return Err(e);
-        }
-    };
 
     let query_timeout = inner.query_timeout;
-    let deferred_query = dae_context.deferred_query;
-    // Capture the SQL (if any) before `deferred_query` is moved into the
-    // async block, so the post-execute refresh can detect `ALTER SESSION`.
-    // `None` for prepared DAE executes, matching the `execute` path.
-    let last_sql = deferred_query.clone();
+    // Capture the SQL (if any) before it is moved into the async block, so the
+    // post-execute refresh can detect `ALTER SESSION`. `None` for prepared DAE
+    // executes, matching the `execute` path.
+    let last_sql = dae_context.deferred_query.clone();
 
     let globals = match global().context(OdbcRuntimeSnafu) {
         Err(e) => {
@@ -3564,34 +3636,49 @@ fn execute_dae(
         }
         Ok(globals) => globals,
     };
-    let operation = globals.client().register_operation();
-    let _operation_guard = OperationGuard::arm(operation_slot, operation);
 
-    // Explicit type: with no `tokio::select!` arm left to pin it, the closure's
-    // error type is only fixed by this annotation.
-    let response: OdbcResult<ExecuteQueryResponse> = globals.block_on(async |c| {
-        if let Some(query) = deferred_query {
-            c.statement_set_sql_query(StatementSetSqlQueryRequest {
-                stmt_handle: Some(stmt_handle),
-                query,
-            })
-            .await?;
-        }
-        c.statement_execute_query_cancellable(
-            operation,
-            StatementExecuteQueryRequest {
-                stmt_handle: Some(stmt_handle),
-                bindings,
-                timeout_seconds: if query_timeout > 0 {
-                    Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                } else {
-                    None
+    let dispatch = |mode: BindingMode| -> OdbcResult<ExecuteQueryResponse> {
+        let (bindings, _bindings_owner, _bind_warnings) = apply_parameter_bindings(
+            &temp_apd,
+            &inner.ipd,
+            is_prepared,
+            inner.prepared_param_count,
+            mode,
+        )?;
+        let deferred_query = dae_context.deferred_query.clone();
+        let operation = globals.client().register_operation();
+        let _operation_guard = OperationGuard::arm(operation_slot, operation);
+
+        globals.block_on(async |c| {
+            if let Some(query) = deferred_query {
+                c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    query,
+                })
+                .await?;
+            }
+            c.statement_execute_query_cancellable(
+                operation,
+                StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings,
+                    timeout_seconds: if query_timeout > 0 {
+                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                    } else {
+                        None
+                    },
                 },
-            },
-        )
-        .await
-        .map_err(Into::into)
-    });
+            )
+            .await
+            .map_err(Into::into)
+        })
+    };
+
+    let first = dispatch(binding_mode);
+    let response = match &first {
+        Err(e) if should_retry_with_inline_json(binding_mode, e) => dispatch(BindingMode::Json),
+        _ => first,
+    };
 
     let response = match response {
         Ok(r) => r,
