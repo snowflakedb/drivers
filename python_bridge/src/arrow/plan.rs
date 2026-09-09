@@ -130,7 +130,13 @@ impl SnowflakeFieldType {
             }),
             "DATE" => Ok(Self::Date),
             "TIME" => Ok(Self::Time {
-                scale: get_field_metadata(field, "scale")?,
+                // C++ nanoarrow TIME conversion uses scale 9 when the Arrow
+                // field has no metadata; this uses that default when `scale` is absent.
+                scale: match get_field_metadata(field, "scale") {
+                    Ok(scale) => scale,
+                    Err(PlanError::MissingMetadata { .. }) => 9,
+                    Err(e) => return Err(e),
+                },
             }),
             "TIMESTAMP_NTZ" => Ok(Self::TimestampNtz {
                 scale: timestamp_scale(field)?,
@@ -355,17 +361,31 @@ mod tests {
     }
 
     #[test]
-    fn from_schema_errors_on_missing_scale() {
+    fn from_schema_defaults_missing_time_scale_to_nine() {
         let schema = Schema::new(vec![field_with_metadata(
             "t",
             DataType::Int64,
             logical_meta("TIME", &[]),
         )]);
+        let plan = LogicalPlan::from_schema(&schema).unwrap();
+        assert_eq!(
+            plan.field_types,
+            vec![SnowflakeFieldType::Time { scale: 9 }]
+        );
+    }
+
+    #[test]
+    fn from_schema_errors_on_missing_scale() {
+        let schema = Schema::new(vec![field_with_metadata(
+            "n",
+            DataType::Int64,
+            logical_meta("FIXED", &[("precision", "38")]),
+        )]);
         let err = LogicalPlan::from_schema(&schema).unwrap_err();
         match err {
             PlanError::MissingMetadata { key, column, .. } => {
                 assert_eq!(key, "scale");
-                assert_eq!(column, "t");
+                assert_eq!(column, "n");
             }
             other => panic!("unexpected error: {other:?}"),
         }

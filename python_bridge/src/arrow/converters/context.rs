@@ -14,6 +14,7 @@ use super::decfloat;
 use super::number;
 use super::real;
 use super::text;
+use super::time;
 
 pub(crate) struct ConversionContext {
     plan: LogicalPlan,
@@ -52,8 +53,8 @@ impl ConversionContext {
             SnowflakeFieldType::Binary { .. } => binary::from_column(array, field_type),
             SnowflakeFieldType::Decfloat { .. } => decfloat::from_column(array, field_type),
             SnowflakeFieldType::Date => date::from_column(array, field_type),
-            SnowflakeFieldType::Time { .. }
-            | SnowflakeFieldType::TimestampNtz { .. }
+            SnowflakeFieldType::Time { scale } => time::from_column(array, field_type, scale),
+            SnowflakeFieldType::TimestampNtz { .. }
             | SnowflakeFieldType::TimestampLtz { .. }
             | SnowflakeFieldType::TimestampTz { .. }
             | SnowflakeFieldType::Vector { .. } => Err(PyNotImplementedError::new_err(format!(

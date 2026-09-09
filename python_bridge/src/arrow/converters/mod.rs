@@ -7,6 +7,7 @@ mod decode;
 mod number;
 mod real;
 mod text;
+mod time;
 mod util;
 
 #[cfg(test)]
@@ -29,6 +30,7 @@ use self::decode::TypedColumn;
 use self::number::NumberColumn;
 use self::real::RealMaterializer;
 use self::text::TextMaterializer;
+use self::time::TimeColumn;
 
 pub(crate) use context::ConversionContext;
 
@@ -40,6 +42,7 @@ pub(crate) enum Column {
     Binary(TypedColumn<BinaryArray, SnowflakeBinary, BinaryMaterializer>),
     Decfloat(TypedColumn<StructArray, SnowflakeDecfloat, DecfloatMaterializer>),
     Date(TypedColumn<Date32Array, SnowflakeDate, DateMaterializer>),
+    Time(TimeColumn),
 }
 
 impl Column {
@@ -52,6 +55,7 @@ impl Column {
             Self::Binary(column) => column.to_py(py, row),
             Self::Decfloat(column) => column.to_py(py, row),
             Self::Date(column) => column.to_py(py, row),
+            Self::Time(column) => column.to_py(py, row),
         }
     }
 }

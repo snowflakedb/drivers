@@ -349,9 +349,9 @@ install-wheel = [
   "uv pip install {env:WHEEL_PATH:dist/*.whl}",
   "python hatch_native_arrow.py",
 ]
-# BOOLEAN, REAL, TEXT, BINARY, NUMBER, DECFLOAT, and DATE converters are live.
+# BOOLEAN, REAL, TEXT, BINARY, NUMBER, DECFLOAT, DATE, and TIME converters are live.
 # Table and insert cases can run because execute_query status rows are NUMBER.
-cov = "pytest tests/e2e/types/test_boolean.py tests/e2e/types/test_float.py tests/e2e/types/test_string.py tests/e2e/types/test_binary.py tests/e2e/types/test_number.py tests/e2e/types/test_int.py tests/e2e/types/test_decfloat.py tests/e2e/types/test_date.py --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+cov = "pytest tests/e2e/types/test_boolean.py tests/e2e/types/test_float.py tests/e2e/types/test_string.py tests/e2e/types/test_binary.py tests/e2e/types/test_number.py tests/e2e/types/test_int.py tests/e2e/types/test_decfloat.py tests/e2e/types/test_date.py tests/e2e/types/test_time.py --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # Pandas-specific CI test environment
 [tool.hatch.envs.test-pandas]
