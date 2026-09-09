@@ -4,7 +4,8 @@ use arrow::array::{
 use arrow::datatypes::DataType;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyNone;
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyNone, PyTuple};
 use sf_types::{ReadArrowError, ReadArrowType, SnowflakeFixed};
 
 use crate::arrow::plan::SnowflakeFieldType;
@@ -61,6 +62,38 @@ impl IntColumn {
 #[inline]
 pub(super) fn py_none(py: Python<'_>) -> Bound<'_, PyAny> {
     PyNone::get(py).to_owned().into_any()
+}
+
+pub(super) fn py_decimal_from_coeff_exp<'py>(
+    py: Python<'py>,
+    coefficient: i128,
+    exponent: i32,
+) -> PyResult<Bound<'py, PyAny>> {
+    let sign = u8::from(coefficient.is_negative());
+    let mut digits = [0u8; 39];
+    let mut n = coefficient.unsigned_abs();
+    let mut start = digits.len();
+    if n == 0 {
+        start -= 1;
+    } else {
+        while n > 0 {
+            start -= 1;
+            digits[start] = (n % 10) as u8;
+            n /= 10;
+        }
+    }
+    let coeff = PyTuple::new(py, digits[start..].iter().copied())?;
+    // CPython has no PyDecimal C API today; this constructs Decimal((sign, digits, exponent)).
+    decimal_type(py)?.call1(((sign, coeff, exponent),))
+}
+
+fn decimal_type(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
+    static DECIMAL: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+    let ty = DECIMAL.get_or_try_init(py, || {
+        let decimal = py.import("decimal")?.getattr("Decimal")?.unbind();
+        Ok::<_, PyErr>(decimal)
+    })?;
+    Ok(ty.bind(py))
 }
 
 #[cfg(test)]
