@@ -3432,6 +3432,20 @@ class TestFileStreamUpload:
         assert sent == payload  # full payload forwarded, in order
         mock_core_client.connection_upload_stream_abort.assert_not_called()
 
+    def test_rewinds_a_stream_left_at_a_non_zero_position(self, cursor, mock_core_client):
+        """Reproduces Snowpark passing a file_stream left at a non-zero position (SNOW-4072349)."""
+        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
+            upload_handle=UploadStreamHandle(id=3, magic=1)
+        )
+        payload = b"a" * (CHUNK_SIZE + 100)
+        stream = io.BytesIO(payload)
+        stream.seek(0, io.SEEK_END)
+        with patch.object(SnowflakeCursor, "_apply_result_set"):
+            cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=stream)
+
+        sent = b"".join(c.args[0].data for c in mock_core_client.connection_upload_stream_chunk.call_args_list)
+        assert sent == payload
+
     def test_empty_stream_finishes_without_chunks(self, cursor, mock_core_client):
         mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
             upload_handle=UploadStreamHandle(id=3, magic=1)
@@ -3508,6 +3522,22 @@ class TestFileStreamUpload:
         assert sent == payload
         async_mock_core_client.connection_upload_stream_finish.assert_awaited_once()
         async_mock_core_client.connection_upload_stream_abort.assert_not_awaited()
+
+    def test_async_rewinds_a_stream_left_at_a_non_zero_position(self, async_mock_core_client):
+        """Async counterpart of test_rewinds_a_stream_left_at_a_non_zero_position."""
+        conn = MagicMock()
+        conn.is_closed = MagicMock(return_value=False)
+        conn.conn_handle = ConnectionHandle(id=1)
+        cursor = AsyncSnowflakeCursor(conn)
+
+        payload = b"b" * (CHUNK_SIZE + 50)
+        stream = io.BytesIO(payload)
+        stream.seek(0, io.SEEK_END)
+        with patch.object(AsyncSnowflakeCursor, "_apply_result_set", new=MagicMock()):
+            asyncio.run(cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=stream))
+
+        sent = b"".join(c.args[0].data for c in async_mock_core_client.connection_upload_stream_chunk.call_args_list)
+        assert sent == payload
 
 
 def _dl_chunk(data: bytes, eof: bool):
