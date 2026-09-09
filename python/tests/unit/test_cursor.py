@@ -2491,6 +2491,30 @@ class TestExecuteAsync:
 
         assert result["queryId"] is None
 
+    def test_num_statements_plumbed_as_multi_statement_count(self, cursor, mock_core_client):
+        """execute_async forwards num_statements as MULTI_STATEMENT_COUNT to the server."""
+        cursor.execute_async("SELECT 1; SELECT 2", num_statements=2)
+
+        mock_core_client.statement_set_options.assert_called_once()
+        request = mock_core_client.statement_set_options.call_args.args[0]
+        setting = request.options.get(StatementParameterName.MULTI_STATEMENT_COUNT)
+        assert setting is not None
+        assert setting.int_value == 2
+        assert StatementParameterName.MULTI_STATEMENT_COUNT not in cursor._statement_parameters
+
+    def test_num_statements_does_not_persist_across_async_calls(self, cursor, mock_core_client):
+        """num_statements on one execute_async call must not bleed into the next."""
+        cursor.execute_async("SELECT 1; SELECT 2", num_statements=2)
+        mock_core_client.statement_set_options.reset_mock()
+
+        cursor.execute_async("SELECT 1")
+
+        if mock_core_client.statement_set_options.called:
+            request = mock_core_client.statement_set_options.call_args.args[0]
+            assert StatementParameterName.MULTI_STATEMENT_COUNT not in request.options, (
+                "second execute_async must NOT inherit MULTI_STATEMENT_COUNT from the first call"
+            )
+
 
 class TestExecuteSkipUploadOnContentMatch:
     """`_skip_upload_on_content_match` is a private execute() kwarg routed
@@ -3830,3 +3854,52 @@ class TestAsyncExecuteStatementParams:
                 )
             )
         assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 2
+
+
+class TestAsyncCursorExecuteAsync:
+    """Async cursor: execute_async plumbs num_statements into the per-call channel."""
+
+    @pytest.fixture
+    def cursor(self):
+        conn = MagicMock()
+        conn.is_closed = MagicMock(return_value=False)
+        return AsyncSnowflakeCursor(conn)
+
+    @staticmethod
+    def _capture_per_call():
+        captured = {}
+
+        async def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return {"queryId": "fake-id"}
+
+        return captured, side_effect
+
+    def test_num_statements_plumbed_as_multi_statement_count(self, cursor):
+        """execute_async forwards num_statements as MULTI_STATEMENT_COUNT."""
+        captured, side_effect = self._capture_per_call()
+        with (
+            patch.object(cursor, "_execute_async", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            asyncio.run(cursor.execute_async("SELECT 1; SELECT 2", num_statements=2))
+        assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 2
+        assert StatementParameterName.MULTI_STATEMENT_COUNT not in cursor._statement_parameters
+
+    def test_num_statements_does_not_persist_across_async_calls(self, cursor):
+        """num_statements on one execute_async call must not bleed into the next."""
+        with (
+            patch.object(cursor, "_execute_async", new=AsyncMock(return_value={"queryId": "fake-id"})),
+            patch.object(cursor, "reset"),
+        ):
+            asyncio.run(cursor.execute_async("SELECT 1; SELECT 2", num_statements=2))
+
+        captured, side_effect = self._capture_per_call()
+        with (
+            patch.object(cursor, "_execute_async", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            asyncio.run(cursor.execute_async("SELECT 1"))
+        assert StatementParameterName.MULTI_STATEMENT_COUNT not in captured, (
+            "second execute_async must NOT inherit MULTI_STATEMENT_COUNT from the first call"
+        )

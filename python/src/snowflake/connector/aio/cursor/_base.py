@@ -885,6 +885,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self,
         command: str,
         params: Sequence[Any] | dict[str, Any] | None = None,
+        num_statements: int | None = None,
+        *,
+        _statement_params: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, str | None]:
         """Submit a query for async execution and return immediately with the query ID.
@@ -904,21 +907,33 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Args:
             command: SQL statement to execute.
             params: Parameters for the operation (sequence or dict).
-            **kwargs: Unused, accepted for backward compatibility.
+            num_statements: Number of statements in a multistatement query.
+            _statement_params: Extra per-statement parameters (e.g. ``QUERY_TAG``)
+                sent to Snowflake with this query only. Never persisted on the cursor.
 
         Returns:
             dict with a ``queryId`` key containing the Snowflake Query ID.
         """
+        statement_parameters = self._collect_statement_params(
+            skip_upload_on_content_match=False,
+            num_statements=num_statements,
+            statement_params=_statement_params,
+        )
         # TODO: deprecate returning the dict, return just the sfqid itself
         self.reset()
-        return await self._execute_async(command, params)
+        return await self._execute_async(command, params, statement_parameters=statement_parameters)
 
     async def _execute_async(
-        self, command: str, params: Sequence[Any] | dict[str, Any] | None
+        self,
+        command: str,
+        params: Sequence[Any] | dict[str, Any] | None,
+        *,
+        statement_parameters: dict[str, Any] | None = None,
     ) -> dict[str, str | None]:
         query, binding_params = self._prepare_query(command, params)
 
         async with async_statement(self._connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
+            self._apply_statement_parameters(stmt_handle, statement_parameters)
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = await async_core_driver.statement_execute_async(stmt_handle=stmt_handle, bindings=bindings)
         query_id = response.query_id or None
