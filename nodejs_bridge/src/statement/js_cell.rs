@@ -10,6 +10,7 @@ pub(crate) enum JsCell<'a> {
     Bool(bool),
     Str(Cow<'a, str>),
     Number(f64),
+    NumberArray(Vec<f64>),
     Buffer(&'a [u8]),
     Date(NaiveDateTime),
 }
@@ -21,6 +22,7 @@ impl<'a> ToNapiValue for JsCell<'a> {
             JsCell::Bool(val) => unsafe { bool::to_napi_value(env, val) },
             JsCell::Str(val) => unsafe { ToNapiValue::to_napi_value(env, val.as_ref()) },
             JsCell::Number(val) => unsafe { f64::to_napi_value(env, val) },
+            JsCell::NumberArray(vals) => unsafe { Vec::<f64>::to_napi_value(env, vals) },
             JsCell::Buffer(bytes) => unsafe { Buffer::to_napi_value(env, bytes.to_vec().into()) },
             JsCell::Date(date) => unsafe { NaiveDateTime::to_napi_value(env, date) },
         }

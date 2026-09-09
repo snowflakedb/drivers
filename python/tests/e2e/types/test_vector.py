@@ -100,7 +100,7 @@ class TestVectorLiteral:
             assert result[0] == expected_value
             assert_type(result[0], int)
 
-    def test_should_handle_null_vector_values(self, execute_query):
+    def test_should_handle_null_vector_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
         pass
 

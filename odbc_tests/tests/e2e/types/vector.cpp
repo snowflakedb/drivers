@@ -81,7 +81,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select <subtype> vector literal", "[
 // NULL HANDLING (shared @odbc_e2e)
 // ============================================================================
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL vector values", "[datatype][vector]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL vector values from literals", "[datatype][vector]") {
   SKIP_OLD_DRIVER("BD#119", "Reference driver has no VECTOR support");
 
   // Given Snowflake client is logged in

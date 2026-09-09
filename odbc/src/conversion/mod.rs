@@ -582,12 +582,9 @@ impl SnowflakeFieldType {
                 }))
             }
             "VECTOR" => {
-                // VECTOR columns arrive from sf_core as FixedSizeListArray of Int32 or Float32.
-                // Determine the child element type from the Arrow DataType.
-                let element_type = match field.data_type() {
+                match field.data_type() {
                     DataType::FixedSizeList(child_field, _) => match child_field.data_type() {
-                        DataType::Int32 => vector::VectorElementType::Int32,
-                        DataType::Float32 => vector::VectorElementType::Float32,
+                        DataType::Int32 | DataType::Float32 => {}
                         dt => {
                             return IncompatibleFieldMetadataSnafu {
                                 logical_type: format!("VECTOR with unsupported child type {dt:?}"),
@@ -603,7 +600,7 @@ impl SnowflakeFieldType {
                         }
                         .fail();
                     }
-                };
+                }
                 let column_size = match get_field_metadata(field, "charLength") {
                     Ok(len) => len,
                     Err(ConversionError::MissingFieldMetadata { .. }) => {
@@ -611,10 +608,7 @@ impl SnowflakeFieldType {
                     }
                     Err(e) => return Err(e),
                 };
-                Ok(Self::Vector(vector::SnowflakeVector {
-                    element_type,
-                    column_size,
-                }))
+                Ok(Self::Vector(vector::SnowflakeVector { column_size }))
             }
             // Missing logicalType is corrupt metadata.
             "" => IncompatibleFieldMetadataSnafu {
