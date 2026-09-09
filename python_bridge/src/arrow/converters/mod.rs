@@ -8,6 +8,7 @@ mod number;
 mod real;
 mod text;
 mod time;
+mod timestamp_ntz;
 mod util;
 
 #[cfg(test)]
@@ -31,6 +32,7 @@ use self::number::NumberColumn;
 use self::real::RealMaterializer;
 use self::text::TextMaterializer;
 use self::time::TimeColumn;
+use self::timestamp_ntz::TimestampNtzColumn;
 
 pub(crate) use context::ConversionContext;
 
@@ -43,6 +45,7 @@ pub(crate) enum Column {
     Decfloat(TypedColumn<StructArray, SnowflakeDecfloat, DecfloatMaterializer>),
     Date(TypedColumn<Date32Array, SnowflakeDate, DateMaterializer>),
     Time(TimeColumn),
+    TimestampNtz(TimestampNtzColumn),
 }
 
 impl Column {
@@ -56,6 +59,7 @@ impl Column {
             Self::Decfloat(column) => column.to_py(py, row),
             Self::Date(column) => column.to_py(py, row),
             Self::Time(column) => column.to_py(py, row),
+            Self::TimestampNtz(column) => column.to_py(py, row),
         }
     }
 }
