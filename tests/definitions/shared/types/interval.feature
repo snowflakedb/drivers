@@ -53,6 +53,20 @@ Feature: INTERVAL datatype handling
     Then all INTERVAL values should be returned as appropriate type for the driver
 
   # ============================================================================
+  # COLUMN METADATA
+  # ============================================================================
+
+  @python_e2e
+  Scenario: should report INTERVAL columns with dedicated type codes
+    # cursor.description[i].type_code reports INTERVAL_YEAR_MONTH for the
+    # YEAR TO MONTH family (including its YEAR/MONTH subtypes) and
+    # INTERVAL_DAY_TIME for the DAY TO SECOND family, matching the codes
+    # legacy snowflake-connector-python assigns, instead of falling back to TEXT
+    Given Snowflake client is logged in
+    When Query "SELECT '1-2'::INTERVAL YEAR TO MONTH, '1'::INTERVAL YEAR, '0 0:0:1.2'::INTERVAL DAY TO SECOND" is executed
+    Then columns 0 and 1 should report type code INTERVAL_YEAR_MONTH and column 2 should report type code INTERVAL_DAY_TIME
+
+  # ============================================================================
   # SELECT LITERALS
   # ============================================================================
 

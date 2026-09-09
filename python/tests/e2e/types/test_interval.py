@@ -34,6 +34,7 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from snowflake.connector import InterfaceError
+from snowflake.connector.constants import FIELD_ID_TO_NAME
 
 from ...conftest import with_paramstyle
 from .utils import assert_sequential_values, assert_type, batch_insert
@@ -76,6 +77,31 @@ class TestIntervalTypeCasting:
         assert result[1] == "+999999999-11"
         assert result[2] == timedelta(seconds=1, microseconds=200000)
         assert result[3] == timedelta(days=99999, hours=23, minutes=59, seconds=59, microseconds=999999)
+
+
+# =============================================================================
+# COLUMN METADATA
+# =============================================================================
+
+
+class TestIntervalMetadata:
+    """Tests for INTERVAL column metadata."""
+
+    def test_should_report_interval_columns_with_dedicated_type_codes(self, execute_query, cursor):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT '1-2'::INTERVAL YEAR TO MONTH, '1'::INTERVAL YEAR,
+        #   '0 0:0:1.2'::INTERVAL DAY TO SECOND" is executed
+        sql = "SELECT '1-2'::INTERVAL YEAR TO MONTH, '1'::INTERVAL YEAR, '0 0:0:1.2'::INTERVAL DAY TO SECOND"
+        result = execute_query(sql, single_row=True)
+
+        # Then columns 0 and 1 should report type code INTERVAL_YEAR_MONTH and column 2
+        #   should report type code INTERVAL_DAY_TIME
+        assert FIELD_ID_TO_NAME[cursor.description[0].type_code] == "INTERVAL_YEAR_MONTH"
+        assert FIELD_ID_TO_NAME[cursor.description[1].type_code] == "INTERVAL_YEAR_MONTH"
+        assert FIELD_ID_TO_NAME[cursor.description[2].type_code] == "INTERVAL_DAY_TIME"
+        assert result == ("+1-02", "+1", timedelta(seconds=1, microseconds=200000))
 
 
 # =============================================================================
