@@ -15,6 +15,8 @@ from decimal import Decimal
 
 import pytest
 
+from snowflake.connector.constants import FIELD_ID_TO_NAME
+
 from ...conftest import with_paramstyle
 from .utils import assert_sequential_values, assert_type
 
@@ -416,3 +418,24 @@ class TestDecfloatBinding:
         result = [row[0] for row in rows]
         assert_type(result, Decimal)
         assert set(result) == set(extreme_values)
+
+
+class TestDecfloatArithmeticTypeMetadata:
+    """Arithmetic on a DECFLOAT column reports FIXED type_code, not TEXT."""
+
+    def test_should_report_fixed_type_code_for_decfloat_arithmetic_result(self, execute_query, cursor, tmp_schema):
+        # Given Snowflake client is logged in
+        pass
+
+        # And Table with a DECFLOAT column and a DOUBLE column exists with one row
+        table_name = f"{tmp_schema}.decfloat_arithmetic_table"
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (e DECFLOAT, c DOUBLE)")
+        execute_query(f"INSERT INTO {table_name} VALUES (4.4, 2.2)")
+
+        # When Query "SELECT e + c AS new_e FROM <table>" is executed
+        execute_query(f"SELECT e + c AS new_e FROM {table_name}")
+
+        # Then The reported type of the arithmetic result column should be FIXED with no scale
+        new_e = cursor.description[0]
+        assert FIELD_ID_TO_NAME[new_e.type_code] == "FIXED"
+        assert new_e.scale is None
