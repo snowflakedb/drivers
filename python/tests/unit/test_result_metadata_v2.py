@@ -133,6 +133,13 @@ class TestResultMetadataV2FromColumn:
         v2 = ResultMetadataV2.from_column(col)
         assert FIELD_ID_TO_NAME[v2.type_code] == "MAP"
 
+    def test_decfloat_type_code_matches_old_driver(self):
+        """A DECFLOAT column's type_code is FIXED with scale=None, matching the old driver."""
+        col = _column(col_type="DECFLOAT", precision=38)
+        v2 = ResultMetadataV2.from_column(col)
+        assert FIELD_ID_TO_NAME[v2.type_code] == "FIXED"
+        assert v2.scale is None
+
 
 class TestResultMetadataV2CreateDescription:
     def test_returns_none_for_none_result(self):

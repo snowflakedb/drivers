@@ -89,6 +89,13 @@ Feature: DECFLOAT type support
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
 
+  @python_e2e
+  Scenario: should report fixed type code for decfloat arithmetic result
+    Given Snowflake client is logged in
+    And Table with a DECFLOAT column and a DOUBLE column exists with one row
+    When Query "SELECT e + c AS new_e FROM <table>" is executed
+    Then The reported type of the arithmetic result column should be FIXED with no scale
+
   @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should handle NULL values from table
     Given Snowflake client is logged in
