@@ -45,6 +45,22 @@ Helpers should:
 Do not substitute a similar-looking utility blindly. For example, null-or-empty checks preserve
 whitespace while `isBlank` usually does not; changing between them is a behavior change.
 
+## Prefer direct collection operations
+
+Use the collection API that directly expresses an unchanged bulk operation:
+
+```java
+Properties resolved = new Properties();
+resolved.putAll(parsed.getParameters());
+
+Set<ResultSet> snapshot = new LinkedHashSet<>(openResultSets);
+```
+
+Prefer `putAll`, `addAll`, or a copy constructor when a loop only copies every entry or element
+unchanged. Keep the loop when it filters, transforms, validates, accumulates failures, performs
+per-item side effects, or depends on iteration order. Confirm that null handling, duplicate-key
+behavior, destination type, and failure semantics remain compatible before simplifying.
+
 ## Do not over-refactor
 
 Do not extract:

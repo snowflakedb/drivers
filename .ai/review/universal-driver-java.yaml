@@ -52,6 +52,42 @@ rules:
 
       **PRIORITY**: Medium when mixed responsibilities materially obscure control flow or make behavior-preserving review difficult; otherwise stay silent.
 
+  - id: ud-java-prefer-direct-bulk-collection-operation
+    rule: |
+      **OBJECTIVE**: Express unchanged collection copies with the Java collection API instead of manual population code.
+
+      **REQUIREMENT**: In newly added or modified code, when a loop or multi-statement sequence does nothing except copy every source entry or element unchanged into a destination, prefer the direct bulk operation:
+      - `target.putAll(source)` for maps;
+      - `target.addAll(source)` for collections;
+      - `new ArrayList<>(source)`, `new LinkedHashSet<>(source)`, or the matching copy constructor when creating a defensive copy.
+
+      ❌ **BAD:**
+      ```java
+      Properties resolved = new Properties();
+      for (Map.Entry<String, Object> entry : parameters.entrySet()) {
+          resolved.put(entry.getKey(), entry.getValue());
+      }
+
+      Set<ResultSet> snapshot = new LinkedHashSet<>();
+      snapshot.addAll(openResultSets);
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      Properties resolved = new Properties();
+      resolved.putAll(parameters);
+
+      Set<ResultSet> snapshot = new LinkedHashSet<>(openResultSets);
+      ```
+
+      **SEMANTIC-EQUIVALENCE GATE**: Stay silent when the loop filters, transforms, validates, accumulates failures, performs per-item side effects, or depends on iteration order. Before commenting, verify compatible null handling, duplicate-key behavior, destination type and ordering, synchronization scope, and failure semantics. Do not replace a loop when partial destination mutation on failure is observable.
+
+      **DIFF SCOPE**: Flag only newly added or modified code. Do not report equivalent legacy loops outside the PR diff.
+
+      **CONSOLIDATION**: Emit at most one finding per copy operation and propose the single direct replacement.
+
+      **PRIORITY**: Low. This is a readability improvement; never present it as a correctness defect.
+
   - id: ud-java-try-with-resources-required
     rule: |
       **OBJECTIVE**: Prevent JDBC resource leaks and connection blocking in tests and production code.
