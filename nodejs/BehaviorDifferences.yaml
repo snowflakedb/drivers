@@ -630,3 +630,38 @@ behavior_differences:
       vector_float_reads_number_array_and_preserves_smallest_normal, which feeds f32::MIN_POSITIVE
       through the Arrow reader. Closing this needs GS to honor a result-format request from
       JavaScript clients.
+
+  30:
+    name: 'PUT of a symlinked source reports the target basename'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The PUT result `target` uses the symlink's own name (e.g. `link.csv`).
+    new_driver_behavior: |
+      The PUT result `target` uses the real name of the object the symlink points to
+      (e.g. `real.csv`).
+    description: |
+      Matches the Python (BD#81) and JDBC (BD#57) new-driver behavior for the same scenario.
+    status_rationale: |
+      Canonicalizing the source is the unified default behavior of the new driver: Python, JDBC and
+      Node.js all report the symlink target's basename via shared `sf_core`.
+
+  31:
+    name: 'PUT expands a leading ~ in the source path'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      A source path beginning with `~` is not expanded to the home directory; the PUT fails
+      client-side before contacting the server with `Error: undefined is not a directory`.
+    new_driver_behavior: |
+      A leading `~` is expanded to the home directory, so the file is located and uploaded
+      successfully.
+    status_rationale: |
+      Matches the Python and JDBC drivers, whose old drivers already expanded `~`;
+      Tilde expansion is the unified behavior of the new driver across languages;
