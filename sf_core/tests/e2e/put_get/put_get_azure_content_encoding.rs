@@ -21,6 +21,7 @@ fn should_download_uncompressed_stage_file_byte_for_byte_from_azure() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = random_stage_name("TEST_AZURE_GET_UNCOMPRESSED");
 
+    // Given an uncompressed file is uploaded to an Azure stage
     let upload_dir = tempfile::TempDir::new().unwrap();
     let filename = "unicode_data.csv";
     let local_path = create_test_file(upload_dir.path(), filename, CONTENT);
@@ -32,10 +33,12 @@ fn should_download_uncompressed_stage_file_byte_for_byte_from_azure() {
         "AUTO_COMPRESS=FALSE OVERWRITE=TRUE",
     );
 
+    // When the file is downloaded from the Azure stage
     let (_get_result, download_dir) = get_file_from_stage(&client, &stage_name, filename);
     let downloaded_path = download_dir.path().join(filename);
     let downloaded_bytes = fs::read(&downloaded_path).expect("downloaded file should exist");
 
+    // Then the downloaded bytes must be byte-for-byte identical to what was staged
     let downloaded_text = String::from_utf8(downloaded_bytes)
         .expect("downloaded bytes must be valid UTF-8, not corrupted/transport-decoded bytes");
     assert_eq!(
@@ -51,6 +54,7 @@ fn should_download_compressed_stage_file_and_decompress_to_original_content_from
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = random_stage_name("TEST_AZURE_GET_COMPRESSED");
 
+    // Given a file is uploaded to an Azure stage with default (gzip) compression
     let upload_dir = tempfile::TempDir::new().unwrap();
     let filename = "unicode_data.csv";
     let local_path = create_test_file(upload_dir.path(), filename, CONTENT);
@@ -62,11 +66,13 @@ fn should_download_compressed_stage_file_and_decompress_to_original_content_from
         "OVERWRITE=TRUE",
     );
 
+    // When the compressed file is downloaded from the Azure stage
     let (_get_result, download_dir) = get_file_from_stage(&client, &stage_name, filename);
     let downloaded_path = download_dir.path().join(format!("{filename}.gz"));
     let decompressed = crate::common::file_utils::decompress_gzipped_file(&downloaded_path)
         .expect("downloaded file must be valid gzip");
 
+    // Then decompressing it must reproduce the original content exactly
     assert_eq!(
         decompressed, CONTENT,
         "decompressed content must exactly match what was staged"
