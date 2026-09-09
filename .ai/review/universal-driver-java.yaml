@@ -9,6 +9,49 @@ excluded_folders:
 allowed_file_extensions:
   - ".java"
 rules:
+  - id: ud-java-method-single-abstraction-level
+    rule: |
+      **OBJECTIVE**: Keep changed Java methods readable as cohesive units while preserving their observable behavior.
+
+      **REQUIREMENT**: Flag a newly added or materially expanded method when it mixes several distinct domain phases inline — for example input guards, parsing/resolution, validation, credential decisions, result construction, and side effects — and named helpers would make the entry method read as orchestration at one abstraction level.
+
+      Method length alone is never a finding. Before commenting, identify at least two concrete responsibilities that can be extracted into cohesive, accurately named helpers. Recommend the narrowest useful boundary: a `private static` helper for stateless class-local logic, or a package-private collaborator only when logic owns dependencies/state, is reused, or merits focused tests. Do not recommend widening visibility merely for tests.
+
+      **ESTABLISHED UTILITIES**: During a refactor, reuse existing project utilities for repeated canonical predicates and conversions when their semantics match exactly. In JDBC code, prefer `net.snowflake.client.internal.util.StringUtil.isNullOrEmpty(value)` over spelling `value == null || value.isEmpty()` repeatedly. Do not suggest adding Apache Commons or another dependency for an operation already covered by the repository. Do not replace null-or-empty behavior with whitespace-aware `isBlank` behavior.
+
+      **BEHAVIOR-PRESERVATION GATE**: The proposed extraction MUST preserve public signatures, validation and exception precedence, side-effect and cleanup order, null/empty handling, and input mutation. If those guarantees cannot be established from the diff and tests, ask for characterization tests instead of proposing a mechanical extraction.
+
+      **DIFF SCOPE**: Review only methods added or materially expanded by the PR. Do not flag untouched legacy methods or refactors that already leave the entry method as clear orchestration.
+
+      **CONSOLIDATION**: Emit at most one finding per method. Describe the mixed responsibilities and one cohesive extraction plan; do not create separate comments for each candidate helper.
+
+      ❌ **BAD:**
+      ```java
+      DriverPropertyInfo[] getPropertyInfo(String url, Properties info) throws SQLException {
+          // resolve and parse properties inline
+          // validate every supported property inline
+          // apply credential and proxy rules inline
+          // construct the result inline
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      DriverPropertyInfo[] getPropertyInfo(String url, Properties info) throws SQLException {
+          Properties resolved = resolveProperties(url, info);
+          validate(resolved);
+          return findMissingProperties(resolved);
+      }
+      ```
+
+      **DO NOT FLAG**:
+      - A long but cohesive table, switch, or protocol mapping where extraction would hide rather than clarify the contract.
+      - Small helpers whose further extraction would create trivial forwarding methods.
+      - Methods with multiple branches that all implement one domain decision at the same abstraction level.
+      - Pure formatting or generated code.
+
+      **PRIORITY**: Medium when mixed responsibilities materially obscure control flow or make behavior-preserving review difficult; otherwise stay silent.
+
   - id: ud-java-try-with-resources-required
     rule: |
       **OBJECTIVE**: Prevent JDBC resource leaks and connection blocking in tests and production code.
