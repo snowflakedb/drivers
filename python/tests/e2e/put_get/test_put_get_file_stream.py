@@ -8,6 +8,7 @@ Exercised here against a live Snowflake account.
 import gzip
 import io
 import tempfile
+import zipfile
 
 from pathlib import Path
 
@@ -82,6 +83,48 @@ def test_should_file_stream_content_round_trip(connection):
             downloaded = download_dir / dest_filename
             assert downloaded.exists(), f"missing downloaded file: {downloaded}"
             assert downloaded.read_bytes() == payload, "round-trip content mismatch"
+
+
+def test_should_file_stream_upload_a_stream_left_at_a_non_zero_position(connection):
+    """Reproduces Snowpark passing a file_stream left at a non-zero position (SNOW-4072349)."""
+    dest_filename = "snow4072349_repro.zip"
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("payload.py", "def compute():\n    return 42\n")
+    # Left at EOF from the writes above -- mirrors Snowpark exactly, no seek(0).
+    payload = zip_buf.getvalue()
+
+    with connection.cursor() as cursor:
+        # Given A temporary stage
+        stage_name = create_temporary_stage(cursor, "TEST_FILE_STREAM_NONZERO_POS")
+
+        # When The stream, left at a non-zero position, is uploaded via file_stream
+        # PUT stage-path args don't support ? bindings; neither value here is user input, so interpolation is safe.
+        cursor.execute(
+            f"PUT file://{dest_filename} @{stage_name} AUTO_COMPRESS=FALSE SOURCE_COMPRESSION=DEFLATE OVERWRITE=TRUE",
+            file_stream=zip_buf,
+        )
+        put_row = cursor.fetchone()
+        assert put_row is not None, "PUT returned no rows"
+        assert put_row[6] == "UPLOADED", f"expected UPLOADED, got {put_row[6]!r}: {put_row}"
+
+        # Then The full payload, not just the bytes after the stream's position, is uploaded
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            download_dir = Path(tmp_dir)
+            get_row = get_file_from_stage(cursor, stage_name, dest_filename, download_dir)
+
+            assert get_row is not None, "GET returned no rows"
+            assert get_row[2] == "DOWNLOADED", f"GET status: {get_row[2]!r}"
+
+            downloaded = download_dir / dest_filename
+            downloaded_bytes = downloaded.read_bytes()
+            assert downloaded_bytes == payload, (
+                f"expected the full {len(payload)}-byte payload, got {len(downloaded_bytes)} bytes "
+                f"-- the stream's un-rewound position leaked into the upload"
+            )
+            with zipfile.ZipFile(io.BytesIO(downloaded_bytes)) as zf:
+                assert zf.read("payload.py") == b"def compute():\n    return 42\n"
 
 
 def test_should_file_stream_auto_compress(connection):

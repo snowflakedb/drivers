@@ -259,6 +259,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         memory to one chunk. A failure after begin aborts the session
         server-side before re-raising.
         """
+        # Callers commonly hand over a stream whose position is not at the start.
+        file_stream.seek(0)
         upload_handle = (
             await async_core_driver.upload_stream_begin(
                 conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
