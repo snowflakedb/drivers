@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import newSnowflakeSDK from 'snowflake-sdk';
 import oldSnowflakeSDK from 'snowflake-sdk-old';
+import { resetGlobalConfig as resetGlobalConfigInNewDriver } from 'snowflake-sdk/dist/global-config.js';
 import { expect } from 'vitest';
 import type {
   Connection,
@@ -64,6 +65,16 @@ export const TEST_CONNECTION_OPTIONS: ConnectionOptions = getTestParameter('SNOW
       privateKey: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS'),
       privateKeyPass: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD'),
     };
+
+// The old driver exposes no reset export, so this no-ops for it.
+// Resetting the old driver's global config would require adding such an export to the old driver.
+export function resetGlobalConfig(): void {
+  if (IS_RUNNING_FOR_OLD_DRIVER) {
+    return;
+  } else {
+    resetGlobalConfigInNewDriver();
+  }
+}
 
 /**
  * @deprecated Use `createConnection` from fixtures.ts instead.

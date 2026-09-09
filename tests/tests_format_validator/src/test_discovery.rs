@@ -63,9 +63,7 @@ impl TestDiscovery {
                 "python" | "python_e2e" | "python_int" | "pep249" => {
                     languages.push(Language::Python)
                 }
-                "dotnet" | "dotnet_e2e" | "dotnet_int" => {
-                    languages.push(Language::Dotnet)
-                }
+                "dotnet" | "dotnet_e2e" | "dotnet_int" => languages.push(Language::Dotnet),
                 "nodejs" | "nodejs_e2e" | "nodejs_int" => languages.push(Language::JavaScript),
                 // Note: _not_needed tags are NOT included here - they explicitly exclude tests
                 _ => {} // Unknown tag, ignore
@@ -404,11 +402,10 @@ impl TestDiscovery {
                     base_path.join(format!("{}.py", snake_name)),
                 ]
             }
-            Language::Dotnet => vec![
-                self.workspace_root
-                    .join("dotnet/tests/Snowflake.Data.Tests")
-                    .join(format!("{}Test.cs", pascal_name)),
-            ],
+            Language::Dotnet => vec![self
+                .workspace_root
+                .join("dotnet/tests/Snowflake.Data.Tests")
+                .join(format!("{}Test.cs", pascal_name))],
             Language::JavaScript => {
                 // date, time and semi_structured still live inline in the shared
                 // query-data-types*.test.ts files rather than a per-feature file, so they are
@@ -418,7 +415,6 @@ impl TestDiscovery {
                 let kebab_name = snake_name.replace('_', "-");
                 match snake_name.as_str() {
                     "date" | "time" => vec![e2e_dir.join("query-data-types.test.ts")],
-                    "semi_structured" => vec![e2e_dir.join("query-data-types-variant.test.ts")],
                     _ => {
                         let target = format!("{kebab_name}.test.ts");
                         let mut matches: Vec<PathBuf> = WalkDir::new(&e2e_dir)
@@ -501,7 +497,10 @@ mod tests {
     #[test]
     fn should_return_no_candidates_when_no_matching_test_file_exists() {
         let tmp = TempDir::new().unwrap();
-        touch(&tmp.path().join("nodejs/tests/e2e/query/put-get/put-get-overwrite.test.ts"));
+        touch(
+            &tmp.path()
+                .join("nodejs/tests/e2e/query/put-get/put-get-overwrite.test.ts"),
+        );
 
         assert!(js_candidates_in(tmp.path(), "put_get_wildcards").is_empty());
     }
