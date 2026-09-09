@@ -1240,7 +1240,8 @@ fn create_azure_client(stage_info: &StageInfo) -> Result<reqwest::Client, AzureR
             detail: e.to_string(),
         }
         .build()
-    })?;
+    })?
+    .no_gzip();
     builder.build().map_err(|e| {
         HttpSnafu {
             detail: e.to_string(),
