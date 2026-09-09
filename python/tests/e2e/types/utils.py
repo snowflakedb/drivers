@@ -8,6 +8,14 @@ from collections.abc import Iterable
 from datetime import datetime, time
 from datetime import tzinfo as tzinfo_type
 from math import isinf, isnan
+from typing import Any
+
+
+def parse_json_value(value: str | None) -> Any:
+    """Parse a JSON string value returned by Snowflake, returning None for SQL NULLs."""
+    if value is None:
+        return None
+    return json.loads(value)
 
 
 def assert_geojson(value: str, expected_type: str, expected_coords: list) -> None:
