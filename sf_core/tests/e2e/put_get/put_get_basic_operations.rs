@@ -4,7 +4,9 @@ use crate::common::put_get_common::GetResult;
 use crate::common::put_get_common::PutResult;
 use crate::common::put_get_common::assert_file_exists;
 use crate::common::put_get_common::get_file_from_stage;
+use crate::common::put_get_common::get_from_stage_with_parallel;
 use crate::common::put_get_common::upload_to_stage;
+use crate::common::put_get_common::upload_to_stage_prefix;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use arrow::datatypes::Field;
 use std::fs;
@@ -119,6 +121,34 @@ fn should_return_correct_rowset_for_get() {
 
     assert_eq!(get_result.file, "test_data.csv.gz");
     assert_eq!(get_result.size, 26);
+    assert_eq!(get_result.status, "DOWNLOADED");
+    assert_eq!(get_result.message, "");
+}
+
+#[test]
+fn should_return_local_basename_for_get_from_stage_subdirectory() {
+    // Given File is uploaded to a stage subdirectory
+    let client = SnowflakeTestClient::connect_with_default_auth();
+    let stage_name = "TEST_STAGE_GET_SUBDIR_ROWSET";
+    let (filename, test_file_path) = test_file();
+    upload_to_stage_prefix(
+        &client,
+        stage_name,
+        "some_prefix",
+        test_file_path.to_str().unwrap(),
+    );
+
+    // When The subdirectory is downloaded using GET command
+    let (get_result, _download_dir) =
+        get_from_stage_with_parallel(&client, &format!("{stage_name}/some_prefix"), 4);
+
+    // Then The file column reports the local basename, not the stage-relative path
+    let mut arrow_helper = ArrowResultHelper::from_result(get_result);
+    let get_result: GetResult = arrow_helper
+        .fetch_one()
+        .expect("Failed to fetch GET result");
+
+    assert_eq!(get_result.file, format!("{filename}.gz"));
     assert_eq!(get_result.status, "DOWNLOADED");
     assert_eq!(get_result.message, "");
 }
