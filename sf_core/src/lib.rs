@@ -14,6 +14,7 @@ mod compression_types;
 pub mod config;
 pub mod crl;
 mod fs_lock;
+pub mod xp_backend;
 // Public for integration tests; only `types` and specific transfer functions are re-exported.
 pub mod file_manager;
 pub mod fs_adapter;

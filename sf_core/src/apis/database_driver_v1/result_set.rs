@@ -179,6 +179,7 @@ pub struct ChunkDataWithDescriptor {
 pub(super) struct ReaderContext {
     pub http_client: reqwest::Client,
     pub prefetch_config: PrefetchConfig,
+    pub xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 }
 
 /// A handle-managed result set. The Arrow stream is built lazily from the stored
@@ -419,6 +420,7 @@ pub(super) async fn resolve_reader_ctx(
     Ok(ReaderContext {
         http_client,
         prefetch_config,
+        xp_backend: conn_guard.xp_backend_arc().context(QuerySnafu)?,
     })
 }
 
@@ -428,7 +430,7 @@ pub(super) async fn fetch_query_response_data(
     conn_ptr: &Arc<Mutex<Connection>>,
     query_id: &str,
 ) -> Result<Data, ApiError> {
-    let (query_parameters, http_client, retry_policy) = {
+    let (query_parameters, http_client, retry_policy, xp_backend) = {
         let conn = conn_ptr.lock().await;
         (
             conn.query_transport_parameters()?,
@@ -436,6 +438,7 @@ pub(super) async fn fetch_query_response_data(
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
             conn.retry_policy.clone(),
+            conn.xp_backend_arc().context(QuerySnafu)?,
         )
     };
 
@@ -450,6 +453,7 @@ pub(super) async fn fetch_query_response_data(
                 session_token.reveal(),
                 query_id,
                 &retry_policy,
+                xp_backend.as_deref(),
             )
             .await
             {
@@ -484,6 +488,7 @@ struct ReaderInputs {
     http_client: reqwest::Client,
     prefetch_config: PrefetchConfig,
     nullable_flags: Option<Vec<bool>>,
+    xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 }
 
 /// Resolves `result_handle` and snapshots the inputs needed to lazily build a
@@ -506,6 +511,7 @@ async fn snapshot_reader_inputs(
         http_client: rs.reader_ctx.http_client.clone(),
         prefetch_config: rs.reader_ctx.prefetch_config.clone(),
         nullable_flags: Some(nullable_flags).filter(|f| !f.is_empty()),
+        xp_backend: rs.reader_ctx.xp_backend.clone(),
     })
 }
 
@@ -533,6 +539,7 @@ impl DatabaseDriverV1 {
             &inputs.prefetch_config,
             &self.wrapper_presets,
             inputs.nullable_flags.as_deref(),
+            inputs.xp_backend,
         )
         .await
         .context(QueryResponseProcessSnafu)
@@ -551,6 +558,7 @@ impl DatabaseDriverV1 {
             &inputs.prefetch_config,
             &self.wrapper_presets,
             inputs.nullable_flags.as_deref(),
+            inputs.xp_backend,
         )
         .await
     }
@@ -666,6 +674,7 @@ impl DatabaseDriverV1 {
         let reader_ctx = ReaderContext {
             http_client,
             prefetch_config: PrefetchConfig::default(),
+            xp_backend: None,
         };
 
         let handle = self.create_result_set(descriptor.clone(), data, reader_ctx);
@@ -803,6 +812,7 @@ mod tests {
         let reader_ctx = ReaderContext {
             http_client: reqwest::Client::new(),
             prefetch_config: PrefetchConfig::default(),
+            xp_backend: None,
         };
         let handle = driver.create_result_set(descriptor, data.into_rowset_data(), reader_ctx);
 
@@ -824,6 +834,7 @@ mod tests {
         let reader_ctx = ReaderContext {
             http_client: reqwest::Client::new(),
             prefetch_config: PrefetchConfig::default(),
+            xp_backend: None,
         };
         // `ArrowMultiChunk` routes through `PrefetchChunkReader` (the
         // `blocking_recv` path in `prefetch.rs`), unlike `ArrowSingleChunk`,
@@ -882,6 +893,7 @@ mod tests {
         let reader_ctx = ReaderContext {
             http_client: reqwest::Client::new(),
             prefetch_config: PrefetchConfig::default(),
+            xp_backend: None,
         };
         let handle = driver.create_result_set(descriptor, rowset_data, reader_ctx);
         let stream = driver
@@ -958,6 +970,7 @@ mod tests {
         let reader_ctx = ReaderContext {
             http_client: reqwest::Client::new(),
             prefetch_config: PrefetchConfig::default(),
+            xp_backend: None,
         };
         let handle = driver.create_result_set(
             response_to_descriptor(&arrow_data, &WrapperPresets::default()),

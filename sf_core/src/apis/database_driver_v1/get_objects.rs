@@ -571,7 +571,7 @@ async fn execute_show(
     conn_ptr: &Arc<Mutex<Connection>>,
     sql: &str,
 ) -> Result<Vec<Vec<(String, String)>>, ApiError> {
-    let (query_parameters, http_client, retry_policy, prefetch_config) = {
+    let (query_parameters, http_client, retry_policy, prefetch_config, xp_backend) = {
         let conn = conn_ptr.lock().await;
         let http_client = conn
             .http_client
@@ -581,7 +581,13 @@ async fn execute_show(
         let retry_policy = conn.retry_policy.clone();
         let session_params = conn.session_parameters.read().await;
         let prefetch_config = PrefetchConfig::from_session_params(&session_params);
-        (query_parameters, http_client, retry_policy, prefetch_config)
+        (
+            query_parameters,
+            http_client,
+            retry_policy,
+            prefetch_config,
+            conn.xp_backend_arc().context(QuerySnafu)?,
+        )
     };
 
     let sql_owned = sql.to_string();
@@ -592,6 +598,7 @@ async fn execute_show(
         let query_parameters = query_parameters.clone();
         let query_input = query_input.clone();
         let retry_policy = retry_policy.clone();
+        let xp_backend = xp_backend.clone();
         async move {
             snowflake_query_with_client(
                 &http_client,
@@ -602,6 +609,7 @@ async fn execute_show(
                     retry_policy,
                     ..Default::default()
                 },
+                xp_backend.as_deref(),
             )
             .await
         }
@@ -620,14 +628,15 @@ async fn execute_show(
     // Account-wide `SHOW OBJECTS` spills to external chunks; parsing only the
     // inline rowset here would silently drop most rows.
     let rowset_data = response.data.into_rowset_data();
-    let reader = super::query::read_batches(rowset_data, http_client, &prefetch_config, None)
-        .await
-        .map_err(|e| {
-            InvalidArgumentSnafu {
-                argument: format!("SHOW result read failed: {e}"),
-            }
-            .build()
-        })?;
+    let reader =
+        super::query::read_batches(rowset_data, http_client, &prefetch_config, None, xp_backend)
+            .await
+            .map_err(|e| {
+                InvalidArgumentSnafu {
+                    argument: format!("SHOW result read failed: {e}"),
+                }
+                .build()
+            })?;
     // The reader drains chunks via `blocking_recv`, which panics if polled on a
     // runtime worker; drain it on a blocking thread while downloads progress on
     // the async workers.

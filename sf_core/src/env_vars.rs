@@ -10,6 +10,11 @@ pub const SNOWFLAKE_DEFAULT_CONNECTION_NAME: &str = "SNOWFLAKE_DEFAULT_CONNECTIO
 /// and auto-reading of the connection env vars below.
 pub const SNOWFLAKE_RUNNING_INSIDE_SPCS: &str = "SNOWFLAKE_RUNNING_INSIDE_SPCS";
 
+/// Set by Snowflake's execution platform (XP) to signal the process is running
+/// inside a stored-procedure sandbox. Presence, including an empty value, enables
+/// the backend XP registers; it is never read from connection parameters.
+pub const SNOWFLAKE_RUNNING_INSIDE_XP: &str = "SNOWFLAKE_RUNNING_INSIDE_XP";
+
 /// Connection parameters injected by SPCS into the container environment.
 /// Only read when `SNOWFLAKE_RUNNING_INSIDE_SPCS` is set.
 pub const SNOWFLAKE_ACCOUNT: &str = "SNOWFLAKE_ACCOUNT";

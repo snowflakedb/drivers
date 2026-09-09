@@ -559,13 +559,15 @@ async fn fetch_fresh_stage_info_with_sql(
         .context(QueryFailedSnafu)?;
     // `from_arc` already validates that `http_client` is present (via the
     // is_closed check + `RefreshContext::new`), so this lookup just clones it.
-    let http_client = stage_refresh_ctx
-        .conn
-        .lock()
-        .await
-        .http_client
-        .clone()
-        .expect("http_client present after RefreshContext::from_arc succeeded");
+    let (http_client, xp_slot) = {
+        let conn = stage_refresh_ctx.conn.lock().await;
+        (
+            conn.http_client
+                .clone()
+                .expect("http_client present after RefreshContext::from_arc succeeded"),
+            std::sync::Arc::clone(&conn.xp_slot),
+        )
+    };
 
     let query_input = rest::snowflake::QueryInput::new(sql.to_string());
     let response = refresh_ctx
@@ -573,13 +575,16 @@ async fn fetch_fresh_stage_info_with_sql(
             let http_client = http_client.clone();
             let query_parameters = stage_refresh_ctx.query_parameters.clone();
             let query_input = query_input.clone();
+            let xp_slot = std::sync::Arc::clone(&xp_slot);
             async move {
+                let xp_backend = xp_slot.active()?.cloned();
                 rest::snowflake::snowflake_query_with_client(
                     &http_client,
                     query_parameters,
                     session_token.reveal(),
                     query_input,
                     rest::snowflake::QueryOptions::default(),
+                    xp_backend.as_deref(),
                 )
                 .await
             }
@@ -612,6 +617,7 @@ pub(super) async fn build_reader_from_rowset_data(
     prefetch_config: &PrefetchConfig,
     wrapper_presets: &WrapperPresets,
     nullable_flags: Option<&[bool]>,
+    xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     Ok(into_sync_reader(
         open_rowset_data(
@@ -620,6 +626,7 @@ pub(super) async fn build_reader_from_rowset_data(
             prefetch_config,
             wrapper_presets,
             nullable_flags,
+            xp_backend,
         )
         .await?,
         nullable_flags,
@@ -631,11 +638,18 @@ pub(super) async fn read_batches(
     http_client: Client,
     prefetch_config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
+    xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     Ok(into_sync_reader(
-        read_query_rowset(data, http_client, prefetch_config, nullable_flags)
-            .await
-            .context(BatchReadSnafu)?,
+        read_query_rowset(
+            data,
+            http_client,
+            prefetch_config,
+            nullable_flags,
+            xp_backend,
+        )
+        .await
+        .context(BatchReadSnafu)?,
         nullable_flags,
     ))
 }
@@ -646,6 +660,7 @@ pub(super) async fn build_async_stream(
     prefetch_config: &PrefetchConfig,
     wrapper_presets: &WrapperPresets,
     nullable_flags: Option<&[bool]>,
+    xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 ) -> Result<super::AsyncArrowBatchFetcher, ApiError> {
     into_async_fetcher(
         open_rowset_data(
@@ -654,6 +669,7 @@ pub(super) async fn build_async_stream(
             prefetch_config,
             wrapper_presets,
             nullable_flags,
+            xp_backend,
         )
         .await
         .context(QueryResponseProcessSnafu)?,
@@ -674,6 +690,7 @@ async fn open_rowset_data(
     prefetch_config: &PrefetchConfig,
     wrapper_presets: &WrapperPresets,
     nullable_flags: Option<&[bool]>,
+    xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 ) -> Result<OpenedBatches, QueryResponseProcessingError> {
     match data {
         RowsetData::Upload(put_results) => Ok(OpenedBatches::Reader(
@@ -684,9 +701,15 @@ async fn open_rowset_data(
             download_results_reader(&get_results, wrapper_presets)
                 .context(DownloadResultsConversionSnafu)?,
         )),
-        other => read_query_rowset(other, http_client, prefetch_config, nullable_flags)
-            .await
-            .context(BatchReadSnafu),
+        other => read_query_rowset(
+            other,
+            http_client,
+            prefetch_config,
+            nullable_flags,
+            xp_backend,
+        )
+        .await
+        .context(BatchReadSnafu),
     }
 }
 
@@ -695,7 +718,11 @@ async fn read_query_rowset(
     http_client: Client,
     prefetch_config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
+    xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 ) -> Result<OpenedBatches, ReadBatchesError> {
+    if xp_backend.is_some() && rowset_has_remote_chunks(&data) {
+        return Err(crate::xp_backend::BackendError::unsupported("download_query_chunk").into());
+    }
     match data {
         RowsetData::Upload(_) | RowsetData::Download(_) => UnexpectedPutGetRowsetSnafu.fail(),
         RowsetData::ArrowSingleChunk { chunk_base64 } => Ok(OpenedBatches::Reader(
@@ -801,6 +828,19 @@ fn parsed_json_rowset(
     Ok(row_types)
 }
 
+fn rowset_has_remote_chunks(data: &RowsetData) -> bool {
+    match data {
+        RowsetData::ArrowMultiChunk {
+            chunk_download_data,
+            ..
+        }
+        | RowsetData::JsonMultiChunk {
+            chunk_download_data,
+            ..
+        } => !chunk_download_data.is_empty(),
+        _ => false,
+    }
+}
 fn parse_row_types(rowtype: &[query_response::RowType]) -> Result<Vec<RowType>, ReadBatchesError> {
     rowtype
         .iter()
@@ -1140,6 +1180,13 @@ pub enum ReadBatchesError {
     },
     #[snafu(display("PUT/GET rowset cannot be read as query batches"))]
     UnexpectedPutGetRowset {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("{}", source))]
+    #[snafu(context(false))]
+    Backend {
+        source: crate::xp_backend::BackendError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -1851,6 +1898,41 @@ mod tests {
             fetch_calls.load(Ordering::SeqCst),
             2,
             "failed refresh must not stamp the window; the second call must re-fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_chunks_fail_closed_in_xp_instead_of_http() {
+        let data = RowsetData::ArrowMultiChunk {
+            initial_base64_opt: None,
+            chunk_download_data: vec![crate::chunks::ChunkDownloadData {
+                url: "http://127.0.0.1:1/chunk".into(),
+                row_count: 1,
+                uncompressed_size: 1,
+                compressed_size: 1,
+                headers: Default::default(),
+            }],
+        };
+        let backend: Arc<dyn crate::xp_backend::SnowflakeBackend> =
+            Arc::new(crate::xp_backend::TestBackend);
+        let result = read_query_rowset(
+            data,
+            Client::new(),
+            &PrefetchConfig::default(),
+            None,
+            Some(backend),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("XP mode must not download result chunks over HTTP");
+        };
+        assert!(
+            matches!(
+                err,
+                ReadBatchesError::Backend { ref source, .. }
+                    if source.code == crate::xp_backend::error_codes::UNSUPPORTED
+            ),
+            "got {err:?}"
         );
     }
 }

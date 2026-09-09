@@ -125,6 +125,10 @@ impl RestError {
             RestError::MasterTokenTerminal { code, .. } => {
                 SnowflakeErrorContext::gs_connection_not_established(*code)
             }
+            RestError::Backend { source, .. } if source.code > 0 => SnowflakeErrorContext {
+                vendor_code: Some(source.code),
+                ..Default::default()
+            },
             RestError::HttpRetry { ids, .. }
             | RestError::AsyncPollResultNotFound { ids, .. }
             | RestError::MissingResultUrl { ids, .. }
@@ -148,7 +152,8 @@ impl RestError {
             | RestError::MissingResponseField { .. }
             | RestError::Logout { .. }
             | RestError::InvalidUrl { .. }
-            | RestError::PayloadEncode { .. } => SnowflakeErrorContext::default(),
+            | RestError::PayloadEncode { .. }
+            | RestError::Backend { .. } => SnowflakeErrorContext::default(),
         };
         snowflake_ctx.with_sql_state_fallback()
     }
@@ -186,6 +191,26 @@ mod tests {
                 request_id: Some(request_id.to_string()),
             }
         );
+    }
+
+    #[test]
+    fn backend_server_code_is_exposed_as_vendor_code() {
+        let err = RestError::Backend {
+            source: crate::xp_backend::BackendError::new(1003, "syntax error"),
+            location: loc(),
+        };
+
+        assert_eq!(err.snowflake_context().vendor_code, Some(1003));
+    }
+
+    #[test]
+    fn backend_driver_code_is_not_exposed_as_vendor_code() {
+        let err = RestError::Backend {
+            source: crate::xp_backend::BackendError::unsupported("upload_stream"),
+            location: loc(),
+        };
+
+        assert_eq!(err.snowflake_context().vendor_code, None);
     }
 
     #[test]

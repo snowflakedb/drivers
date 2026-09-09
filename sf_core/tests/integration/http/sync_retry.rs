@@ -42,6 +42,7 @@ async fn should_include_request_id_in_query_parameters() {
         "test-token",
         QueryInput::new("SELECT 1"),
         QueryOptions::default(),
+        None,
     )
     .await;
 
@@ -113,6 +114,7 @@ async fn should_retry_sync_query_on_connection_reset() {
         "test-token",
         QueryInput::new("SELECT 1"),
         QueryOptions::default(),
+        None,
     )
     .await;
 
@@ -172,6 +174,7 @@ async fn should_use_sync_mode_by_default() {
         "test-token",
         QueryInput::new("SELECT 1"),
         QueryOptions::default(),
+        None,
     )
     .await;
 
@@ -236,6 +239,7 @@ async fn should_include_statement_timeout_in_parameters_when_set() {
             query_context: query_request::QueryContext::default(),
         },
         QueryOptions::default(),
+        None,
     )
     .await;
 
@@ -291,6 +295,7 @@ async fn should_not_include_parameters_when_timeout_not_set() {
         "test-token",
         QueryInput::new("SELECT 1"),
         QueryOptions::default(),
+        None,
     )
     .await;
 

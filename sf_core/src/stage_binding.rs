@@ -126,6 +126,7 @@ pub struct StageBindingContext<'a> {
     /// payload at or above the multipart threshold, which has an abort to register;
     /// a single PUT is discarded by the cloud when the connection is torn down.
     pub cleanup: Option<&'a CleanupScope>,
+    pub xp_backend: Option<std::sync::Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 }
 
 #[derive(Clone)]
@@ -169,6 +170,7 @@ async fn ensure_stage(
             retry_policy: stage_binding_ctx.retry_policy.clone(),
             ..Default::default()
         },
+        stage_binding_ctx.xp_backend.as_deref(),
     )
     .await;
 
@@ -207,6 +209,7 @@ async fn issue_put_query(
             retry_policy: stage_binding_ctx.retry_policy.clone(),
             ..Default::default()
         },
+        stage_binding_ctx.xp_backend.as_deref(),
     )
     .await
     .context(PutQuerySnafu)
@@ -217,6 +220,12 @@ async fn upload_blob(
     csv_bytes: &[u8],
     data: &Data,
 ) -> Result<(), StageBindingError> {
+    if stage_binding_ctx.xp_backend.is_some() {
+        return Err(RestError::from(
+            crate::xp_backend::BackendError::unsupported("upload_stream"),
+        ))
+        .context(PutQuerySnafu);
+    }
     // This path builds `StageInfo` outside `perform_put_get_transfer`, so the
     // connection's TLS, proxy, and CRL settings are threaded here via
     // `StageTransport` — the same three the file-path path threads.

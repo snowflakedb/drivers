@@ -21,6 +21,7 @@ use crate::rest::snowflake::prompt_lock::PromptLockMap;
 use crate::telemetry::platform_detection::{DetectionConfig, detect_platforms};
 use crate::telemetry::snowflake_exporter::SessionRegistry;
 use crate::token_cache::{KeyringTokenCache, TokenCache, TokenCacheError};
+use crate::xp_backend::{SnowflakeBackend, XpSlot};
 
 /// Which shape the PUT/GET result set should take.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -202,6 +203,12 @@ pub struct DriverProviders {
     /// instances reuse the same background thread. Production code always uses
     /// `..Default::default()` and gets a fresh lazy handle.
     pub crl_worker: Option<SharedCrlWorker>,
+    /// Host-owned query/login transport. Production XP hosts register after
+    /// construction via [`DatabaseDriverV1::register_xp_backend`].
+    pub xp_backend: Option<Arc<dyn SnowflakeBackend>>,
+    /// When `None`, [`DatabaseDriverV1::with_providers`] reads
+    /// [`crate::env_vars::SNOWFLAKE_RUNNING_INSIDE_XP`].
+    pub running_inside_xp: Option<bool>,
 }
 
 pub struct DatabaseDriverV1 {
@@ -230,6 +237,7 @@ pub struct DatabaseDriverV1 {
     pub(crate) prompt_locks: Arc<PromptLockMap>,
     /// Lazy CRL worker shared across all connections on this driver instance.
     pub(crate) crl_worker: SharedCrlWorker,
+    pub(crate) xp_slot: Arc<XpSlot>,
 }
 
 impl Default for DatabaseDriverV1 {
@@ -260,7 +268,26 @@ impl DatabaseDriverV1 {
                 .prompt_locks
                 .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(HashMap::new()))),
             crl_worker: providers.crl_worker.unwrap_or_else(CrlWorker::new_lazy),
+            xp_slot: Arc::new(match providers.running_inside_xp {
+                Some(inside) => XpSlot::new(inside, providers.xp_backend),
+                None => XpSlot::from_env(providers.xp_backend),
+            }),
         }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn register_xp_backend(
+        &self,
+        backend: Arc<dyn SnowflakeBackend>,
+    ) -> Result<(), crate::xp_backend::BackendError> {
+        self.xp_slot.register(backend)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn xp_backend(
+        &self,
+    ) -> Result<Option<&Arc<dyn SnowflakeBackend>>, crate::xp_backend::BackendError> {
+        self.xp_slot.active()
     }
 
     /// Returns the session registry if telemetry was configured via `DriverProviders`.
@@ -384,6 +411,7 @@ impl DatabaseDriverV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::xp_backend::TestBackend;
 
     #[test]
     fn token_cache_lazy_init_succeeds() {
@@ -520,5 +548,80 @@ mod tests {
             resolved.get_bool(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL),
             Some(false)
         );
+    }
+
+    #[test]
+    fn xp_mode_without_backend_fails_closed() {
+        let driver = DatabaseDriverV1::with_providers(DriverProviders {
+            running_inside_xp: Some(true),
+            ..Default::default()
+        });
+        let err = match driver.xp_backend() {
+            Err(err) => err,
+            Ok(_) => panic!("XP mode should require a backend"),
+        };
+        assert_eq!(err.code, crate::xp_backend::error_codes::NOT_REGISTERED);
+    }
+
+    #[test]
+    fn http_mode_has_no_backend() {
+        let driver = DatabaseDriverV1::with_providers(DriverProviders {
+            running_inside_xp: Some(false),
+            ..Default::default()
+        });
+        assert!(driver.xp_backend().unwrap().is_none());
+    }
+
+    #[test]
+    fn injected_backend_is_active_in_xp() {
+        let backend: Arc<dyn SnowflakeBackend> = Arc::new(TestBackend);
+        let driver = DatabaseDriverV1::with_providers(DriverProviders {
+            running_inside_xp: Some(true),
+            xp_backend: Some(Arc::clone(&backend)),
+            ..Default::default()
+        });
+        let active = match driver.xp_backend() {
+            Ok(Some(active)) => active,
+            Ok(None) => panic!("XP mode should use the backend"),
+            Err(err) => panic!("registered backend should be active: {err}"),
+        };
+        assert!(Arc::ptr_eq(active, &backend));
+    }
+
+    #[test]
+    fn register_xp_backend_attaches_after_construction() {
+        let driver = DatabaseDriverV1::with_providers(DriverProviders {
+            running_inside_xp: Some(true),
+            ..Default::default()
+        });
+        let backend: Arc<dyn SnowflakeBackend> = Arc::new(TestBackend);
+        driver
+            .register_xp_backend(Arc::clone(&backend))
+            .expect("registration should succeed");
+        let active = match driver.xp_backend() {
+            Ok(Some(active)) => active,
+            Ok(None) => panic!("XP mode should use the backend"),
+            Err(err) => panic!("registered backend should be active: {err}"),
+        };
+        assert!(Arc::ptr_eq(active, &backend));
+    }
+
+    #[tokio::test]
+    async fn connection_new_shares_the_driver_slot() {
+        let backend: Arc<dyn SnowflakeBackend> = Arc::new(TestBackend);
+        let driver = DatabaseDriverV1::with_providers(DriverProviders {
+            running_inside_xp: Some(true),
+            xp_backend: Some(Arc::clone(&backend)),
+            ..Default::default()
+        });
+        let handle = driver.connection_new();
+        let conn = driver.connections.get_obj(handle).unwrap();
+        let conn = conn.lock().await;
+        let active = match conn.xp_slot.active() {
+            Ok(Some(active)) => active,
+            Ok(None) => panic!("XP mode should use the backend"),
+            Err(err) => panic!("connection should see the driver backend: {err}"),
+        };
+        assert!(Arc::ptr_eq(active, &backend));
     }
 }

@@ -275,7 +275,8 @@ impl DatabaseDriverV1 {
                 .fail();
             }
 
-            let (query_parameters, http_client, retry_policy) = query_context(&conn_ptr).await?;
+            let (query_parameters, http_client, retry_policy, xp_backend) =
+                query_context(&conn_ptr).await?;
 
             let response = run_sql_against_gs(
                 &conn_ptr,
@@ -283,6 +284,7 @@ impl DatabaseDriverV1 {
                 &query_parameters,
                 &retry_policy,
                 sql.clone(),
+                xp_backend.as_deref(),
             )
             .await?;
 
@@ -327,6 +329,13 @@ impl DatabaseDriverV1 {
                     },
                 )
             };
+
+            if xp_backend.is_some() {
+                return Err(crate::rest::snowflake::RestError::from(
+                    crate::xp_backend::BackendError::unsupported("upload_stream"),
+                ))
+                .context(QuerySnafu);
+            }
 
             let rowset_data = build_and_upload_stream(
                 &gs_data,
@@ -393,7 +402,8 @@ impl DatabaseDriverV1 {
             let get_sql = build_get_sql(&stage_path, tmp_dir.path());
             drop(tmp_dir);
 
-            let (query_parameters, http_client, retry_policy) = query_context(&conn_ptr).await?;
+            let (query_parameters, http_client, retry_policy, xp_backend) =
+                query_context(&conn_ptr).await?;
 
             let response = run_sql_against_gs(
                 &conn_ptr,
@@ -401,6 +411,7 @@ impl DatabaseDriverV1 {
                 &query_parameters,
                 &retry_policy,
                 get_sql.clone(),
+                xp_backend.as_deref(),
             )
             .await?;
 
@@ -442,6 +453,12 @@ impl DatabaseDriverV1 {
             // `refresher` only needs to cover opening the stream — it's
             // dropped when this block returns, before the background
             // producer (which has no refresher of its own) is spawned.
+            if xp_backend.is_some() {
+                return Err(crate::rest::snowflake::RestError::from(
+                    crate::xp_backend::BackendError::unsupported("download_stream"),
+                ))
+                .context(QuerySnafu);
+            }
             let opened = file_manager::open_download_stream_for_stage(
                 &resolved.stage_info,
                 &resolved.src_location,
@@ -610,6 +627,7 @@ async fn run_sql_against_gs(
     query_parameters: &QueryParameters,
     retry_policy: &crate::config::retry::RetryPolicy,
     sql: String,
+    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<query_response::Response, ApiError> {
     let query_input = QueryInput::new(sql);
 
@@ -626,6 +644,7 @@ async fn run_sql_against_gs(
                 retry_policy: retry_policy.clone(),
                 ..Default::default()
             },
+            xp_backend,
         )
         .await
         {
