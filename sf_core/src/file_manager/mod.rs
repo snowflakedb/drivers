@@ -1034,7 +1034,12 @@ pub async fn download_files(
             // Fail-fast (`get_fastfail`) aborts the batch on the first error;
             // collect-all records an ERROR row and continues (ODBC parity,
             // SNOW-3838438).
-            Some(Err(e)) => results.push(on_download_file_error(data.get_fastfail, name, e)?),
+            Some(Err(e)) => results.push(on_download_file_error(
+                data.get_fastfail,
+                name,
+                &data.flavor,
+                e,
+            )?),
             // Skipped because fail-fast had already tripped; the error from the
             // file that tripped it is returned above.
             None => {}
@@ -1087,13 +1092,14 @@ fn unsupported_compression_error_row(data: &SingleUploadData, type_name: &str) -
 fn on_download_file_error(
     get_fastfail: bool,
     name: String,
+    flavor: &PutGetResultsetFlavor,
     error: FileManagerError,
 ) -> Result<DownloadResult, FileManagerError> {
     if get_fastfail {
         return Err(error);
     }
     Ok(DownloadResult {
-        file: name,
+        file: download_result_file(&name, flavor),
         size: 0,
         status: "ERROR".to_string(),
         message: error.to_string(),
@@ -1673,7 +1679,7 @@ async fn download_single_file_to(
     );
 
     Ok(DownloadResult {
-        file: data.src_location,
+        file: download_result_file(&data.src_location, &data.flavor),
         size: download_result_size(cloud_byte_count, output_byte_len, &data.flavor),
         status: "DOWNLOADED".to_string(),
         message: "".to_string(),
@@ -2348,6 +2354,25 @@ fn download_result_size(
     match flavor {
         PutGetResultsetFlavor::Odbc => cloud_byte_count,
         _ => output_byte_len,
+    }
+}
+
+/// Returns the `file` column value for a download, gated on the active
+/// wrapper flavor. Legacy ODBC reduces the stage-relative source key to its
+/// basename (`FileMetadataInitializer::populateSrcLocDownloadMetadata`);
+/// legacy Python does too, though only for a single leading path segment
+/// (`_init_file_metadata`'s `first_path_sep` strip). Legacy JDBC and Node.js
+/// report the source key with at most a leading separator stripped. The
+/// basename computed here always reduces to the final path segment, matching
+/// what `safe_download_file_name` already validated and wrote to disk.
+fn download_result_file(src_location: &str, flavor: &PutGetResultsetFlavor) -> String {
+    match flavor {
+        PutGetResultsetFlavor::Python | PutGetResultsetFlavor::Odbc => {
+            safe_download_file_name(src_location)
+                .unwrap_or(src_location)
+                .to_string()
+        }
+        PutGetResultsetFlavor::Jdbc | PutGetResultsetFlavor::NodeJs => src_location.to_string(),
     }
 }
 
@@ -3405,8 +3430,12 @@ mod tests {
 
     #[test]
     fn download_fail_fast_propagates_error_to_abort_batch() {
-        let result =
-            on_download_file_error(true, "@stage/f.csv".to_string(), sample_transfer_error());
+        let result = on_download_file_error(
+            true,
+            "@stage/f.csv".to_string(),
+            &PutGetResultsetFlavor::Python,
+            sample_transfer_error(),
+        );
         assert!(
             result.is_err(),
             "fail-fast must propagate the first error so download_files aborts the batch"
@@ -3415,11 +3444,15 @@ mod tests {
 
     #[test]
     fn download_collect_all_folds_failure_into_error_row() {
-        let row =
-            on_download_file_error(false, "@stage/f.csv".to_string(), sample_transfer_error())
-                .expect("collect-all must yield an ERROR row rather than abort");
+        let row = on_download_file_error(
+            false,
+            "@stage/f.csv".to_string(),
+            &PutGetResultsetFlavor::Odbc,
+            sample_transfer_error(),
+        )
+        .expect("collect-all must yield an ERROR row rather than abort");
         assert_eq!(row.status, "ERROR");
-        assert_eq!(row.file, "@stage/f.csv");
+        assert_eq!(row.file, "f.csv");
         assert_eq!(row.size, 0);
         assert!(
             !row.message.is_empty(),
@@ -3619,6 +3652,37 @@ mod tests {
                 "Python flavor must report n={n} when cloud == output",
             );
         }
+    }
+
+    // SNOW-4072355 — the `file` column for a GET from a stage subdirectory.
+    // Python and Odbc reduce to the true basename (matching, for Odbc,
+    // `FileMetadataInitializer::populateSrcLocDownloadMetadata`'s upfront
+    // `destFileName` computation, applied uniformly to success and error
+    // rows); Jdbc and NodeJs keep the untouched source key.
+    #[test]
+    fn download_result_file_python_and_odbc_use_basename() {
+        let nested = "prefix/subdir/file.csv.gz";
+        assert_eq!(
+            download_result_file(nested, &PutGetResultsetFlavor::Python),
+            "file.csv.gz",
+        );
+        assert_eq!(
+            download_result_file(nested, &PutGetResultsetFlavor::Odbc),
+            "file.csv.gz",
+        );
+    }
+
+    #[test]
+    fn download_result_file_jdbc_and_nodejs_keep_source_key_unchanged() {
+        let nested = "prefix/subdir/file.csv.gz";
+        assert_eq!(
+            download_result_file(nested, &PutGetResultsetFlavor::Jdbc),
+            nested,
+        );
+        assert_eq!(
+            download_result_file(nested, &PutGetResultsetFlavor::NodeJs),
+            nested,
+        );
     }
 
     // SNOW-3663590 — GET download path guard. Layer 1 strips to a
