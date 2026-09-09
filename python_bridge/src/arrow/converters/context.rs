@@ -9,6 +9,7 @@ use crate::arrow::plan::{LogicalPlan, SnowflakeFieldType};
 use super::Column;
 use super::binary;
 use super::boolean;
+use super::decfloat;
 use super::number;
 use super::real;
 use super::text;
@@ -48,12 +49,12 @@ impl ConversionContext {
             SnowflakeFieldType::Real => real::from_column(array, field_type),
             SnowflakeFieldType::Varchar { .. } => text::from_column(array, field_type),
             SnowflakeFieldType::Binary { .. } => binary::from_column(array, field_type),
+            SnowflakeFieldType::Decfloat { .. } => decfloat::from_column(array, field_type),
             SnowflakeFieldType::Date
             | SnowflakeFieldType::Time { .. }
             | SnowflakeFieldType::TimestampNtz { .. }
             | SnowflakeFieldType::TimestampLtz { .. }
             | SnowflakeFieldType::TimestampTz { .. }
-            | SnowflakeFieldType::Decfloat { .. }
             | SnowflakeFieldType::Vector { .. } => Err(PyNotImplementedError::new_err(format!(
                 "native Arrow conversion is not implemented for logical type {}",
                 field_type.logical_type_name()
