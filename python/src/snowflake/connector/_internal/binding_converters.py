@@ -19,9 +19,9 @@ import json
 import time as time_module
 
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from .._common.extras import MissingOptionalDependency
@@ -31,22 +31,18 @@ from .errorcode import ER_NOT_SUPPORT_DATA_TYPE
 from .type_codes import PYTHON_TO_SNOWFLAKE_TYPE
 
 
-class ParamStyle(str, Enum):
+class ParamStyle(StrEnum):
     """PEP 249 parameter binding style enumeration.
 
-    Inherits from ``str`` so members behave as their string value — this gives
-    Snowpark's ``connection.paramstyle.lower()`` for free without a hand-rolled
-    method. Supports parsing from string and determining client- vs server-side
-    binding.
+    ``StrEnum`` members behave as their string value — this gives Snowpark's
+    ``connection.paramstyle.lower()`` for free. Supports parsing from string
+    and determining client- vs server-side binding.
     """
 
     QMARK = "qmark"  # Server-side: ? placeholders
     NUMERIC = "numeric"  # Server-side: :1, :2 placeholders
     FORMAT = "format"  # Client-side: %s interpolation
     PYFORMAT = "pyformat"  # Client-side: %(name)s interpolation
-
-    def __str__(self) -> str:
-        return self.value
 
     @classmethod
     def from_string(cls, value: str) -> ParamStyle:
@@ -130,7 +126,7 @@ def _is_binary(value: Any) -> bool:
 
 # Epoch constants (timezone-independent)
 _ZERO_EPOCH_DATE = date(1970, 1, 1)
-_ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
+_ZERO_EPOCH = datetime.fromtimestamp(0, UTC).replace(tzinfo=None)
 
 
 DEFAULT_STAGE_ARRAY_BINDING_THRESHOLD = 65280
@@ -163,7 +159,7 @@ class BindingConverterBase:
         """
         if dt.tzinfo is not None:
             # Convert tz-aware datetime to UTC, then strip tzinfo
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            dt = dt.astimezone(UTC).replace(tzinfo=None)
         epoch_seconds = (dt - _ZERO_EPOCH).total_seconds()
         # Format with full precision, remove dot, append "000" for nanoseconds
         return f"{epoch_seconds:f}".replace(".", "") + "000"

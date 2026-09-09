@@ -12,7 +12,7 @@ import io
 import json
 import time as time_module
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import numpy as np
@@ -1009,7 +1009,7 @@ class TestToSnowflake:
         assert result == "2024-06-15 10:30:00.123456-08:00"
 
     def test_datetime_utc(self):
-        result = ClientSideBindingConverter.to_snowflake(datetime(2024, 6, 15, 10, 30, 0, tzinfo=timezone.utc))
+        result = ClientSideBindingConverter.to_snowflake(datetime(2024, 6, 15, 10, 30, 0, tzinfo=UTC))
         assert result == "2024-06-15 10:30:00+00:00"
 
     def test_date(self):
@@ -1460,7 +1460,7 @@ class TestCsvBindingConverter:
         # A naive datetime passed as ("TIMESTAMP_TZ", dt) should serialize
         # identically to a UTC-aware datetime — naive is treated as already UTC.
         naive = datetime(2024, 3, 15, 10, 0, 0)
-        aware = datetime(2024, 3, 15, 10, 0, 0, tzinfo=timezone.utc)
+        aware = datetime(2024, 3, 15, 10, 0, 0, tzinfo=UTC)
         csv_naive = CsvBindingConverter.serialize_parameters_to_csv(([("TIMESTAMP_TZ", naive)],))
         csv_aware = CsvBindingConverter.serialize_parameters_to_csv(([("TIMESTAMP_TZ", aware)],))
         assert csv_naive == csv_aware

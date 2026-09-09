@@ -402,7 +402,7 @@ jobs:
           path: python/dist
 
       - name: Download sdist
-        if: matrix.py == '3.10'
+        if: ${{ !matrix.wheel_artifact }}
         uses: actions/download-artifact@v8
         with:
           name: python-sdist
@@ -410,7 +410,7 @@ jobs:
 
       # sdist installs build sf_core from source, so Rust is needed
       - name: Restore Rust cache (sdist)
-        if: matrix.py == '3.10'
+        if: ${{ !matrix.wheel_artifact }}
         id: rust-cache
         # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
@@ -471,7 +471,7 @@ jobs:
           echo "CMAKE_GENERATOR_PLATFORM=ARM64" >> $env:GITHUB_ENV
 
       - name: Setup OpenSSL (Windows x86_64)
-        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
+        if: matrix.os == 'windows-latest' && !matrix.wheel_artifact
         uses: ./.github/actions/setup-windows-openssl
         with:
           arch: x86_64
@@ -706,7 +706,7 @@ jobs:
           key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
 
       - name: Save Rust cache (sdist)
-        if: always() && matrix.py == '3.10'
+        if: always() && !matrix.wheel_artifact
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20

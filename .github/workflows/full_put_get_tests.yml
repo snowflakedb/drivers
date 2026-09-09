@@ -74,7 +74,7 @@ jobs:
   # and `pip install` in seconds, instead of each one rebuilding sf_core
   # via an sdist install.
   #
-  # Cargo shared-key matches test-python.yml's py3.10 sdist-install lane
+  # Cargo shared-key matches test-python.yml's sdist-install lane
   # (same compile path: hatch_build invokes `cargo build --release
   # --package sf_core`).
   build_python_wheel:

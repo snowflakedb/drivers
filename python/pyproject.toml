@@ -16,13 +16,12 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "cryptography>=46.0.5",
     # Snowflake's in-platform Anaconda channel (Python UDF / stored-procedure
@@ -193,7 +192,7 @@ exclude_lines = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -253,10 +252,10 @@ dependencies = [
     "protobuf>=6.32.1,<7",
     "pytz",
     "tomlkit>=0.13",
-    # Cap < 2.3 to match the mypy `python_version = "3.10"` target: numpy 2.3
-    # dropped 3.10 and its stubs use PEP-695 `type` statements mypy rejects
-    # under a 3.10 target. A real 3.10 install resolves numpy <= 2.2, so this is
-    # the numpy we should type-check against.
+    # Cap < 2.3 to match the mypy `python_version = "3.11"` target: numpy 2.3+
+    # stubs use PEP-695 `type` statements, which mypy rejects below a 3.12
+    # target. A 3.11 install still resolves numpy < 2.3, so this is the numpy
+    # we should type-check against.
     "numpy>=2.1.0,<2.3",
 ]
 
@@ -294,7 +293,7 @@ PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
 SKIP_CORE_BUILD = "{env:SKIP_CORE_BUILD:1}"
 
 [[tool.hatch.envs.dev.matrix]]
-python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+python = ["3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.dev.scripts]
 # Unit / integ: on failure, once-rerun last-failed tests (cap at 5 failures)
@@ -318,7 +317,7 @@ skip-install = true
 dev-mode = false
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+python = ["3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.test.scripts]
 # Install from wheel
@@ -360,7 +359,7 @@ template = "test"
 features = ["test", "dev", "pandas"]
 
 [[tool.hatch.envs.test-pandas.matrix]]
-python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+python = ["3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.test-pandas.scripts]
 cov = "pytest tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"

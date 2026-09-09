@@ -14,7 +14,7 @@ from __future__ import annotations
 import pickle
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytz
@@ -25,7 +25,7 @@ from tests.e2e.types.utils import assert_connection_is_open, assert_timezone
 LARGE_RESULT_SET_ROW_COUNT = 100_000
 SESSION_TZ_NAME = "America/New_York"
 SESSION_TZ = pytz.timezone(SESSION_TZ_NAME)
-SEQUENTIAL_BASE_UTC = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+SEQUENTIAL_BASE_UTC = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 
 def sequential_timestamp(i: int) -> datetime:

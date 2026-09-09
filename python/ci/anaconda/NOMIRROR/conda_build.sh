@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RECIPE_DIR="${SCRIPT_DIR}/../recipe"
 PYTHON_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
-PYTHON_VERSIONS="${PYTHON_VERSIONS:-3.10 3.11 3.12 3.13 3.14}"
+PYTHON_VERSIONS="${PYTHON_VERSIONS:-3.11 3.12 3.13 3.14}"
 
 if [[ -z "${SNOWFLAKE_CONNECTOR_PYTHON_VERSION:-}" ]]; then
   VERSION_FILE="${PYTHON_DIR}/src/snowflake/connector/version.py"

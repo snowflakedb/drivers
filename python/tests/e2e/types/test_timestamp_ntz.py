@@ -11,7 +11,7 @@ deterministic without UTC normalization.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -250,7 +250,7 @@ class TestTimestampNtzBinding:
     @pytest.mark.parametrize(
         "aware_input,expected",
         [
-            (datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc), datetime(2024, 1, 15, 10, 30, 0)),
+            (datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC), datetime(2024, 1, 15, 10, 30, 0)),
             (datetime(2024, 1, 15, 12, 30, 0, tzinfo=timezone(timedelta(hours=2))), datetime(2024, 1, 15, 10, 30, 0)),
             (datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone(timedelta(hours=-5))), datetime(2024, 1, 15, 15, 30, 0)),
         ],

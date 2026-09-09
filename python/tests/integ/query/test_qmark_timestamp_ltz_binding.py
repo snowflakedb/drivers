@@ -15,7 +15,7 @@ Run against both the reference connector and the universal driver.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 import pytz
@@ -88,7 +88,7 @@ class TestQmarkExplicitLtzTuplePreservesInstant:
         (got,) = cursor.fetchone()
         assert got.tzinfo is not None
         assert _epoch(got) == pytest.approx(_epoch(AWARE_PST))
-        assert got.astimezone(timezone.utc) == AWARE_PST.astimezone(timezone.utc)
+        assert got.astimezone(UTC) == AWARE_PST.astimezone(UTC)
 
     def test_naive_insert_treats_wall_clock_as_utc_instant(self, cursor, tmp_schema):
         """Naive TIMESTAMP_LTZ binds are localized from UTC, not session wall-clock.
@@ -102,7 +102,7 @@ class TestQmarkExplicitLtzTuplePreservesInstant:
         cursor.execute(f"INSERT INTO {table} VALUES (?)", (("TIMESTAMP_LTZ", NAIVE_WALL),))
         cursor.execute(f"SELECT col FROM {table}")
         (got,) = cursor.fetchone()
-        expected_utc = NAIVE_WALL.replace(tzinfo=timezone.utc)
+        expected_utc = NAIVE_WALL.replace(tzinfo=UTC)
         assert _epoch(got) == pytest.approx(_epoch(expected_utc))
 
 

@@ -17,7 +17,7 @@ NULL values are ``pd.NaT``.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -45,13 +45,13 @@ TS_2024_JUN_STR = "2024-06-20 14:45:30 +00:00"
 TS_EPOCH_STR = "1970-01-01 00:00:00 +00:00"
 TS_WITH_MICROSECONDS_STR = "2024-01-15 10:30:00.123456 +00:00"
 
-TS_2024_JAN = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc).astimezone(SESSION_TZ)
-TS_2024_JUN = datetime(2024, 6, 20, 14, 45, 30, tzinfo=timezone.utc).astimezone(SESSION_TZ)
-TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc).astimezone(SESSION_TZ)
-TS_WITH_MICROSECONDS = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=timezone.utc).astimezone(SESSION_TZ)
+TS_2024_JAN = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC).astimezone(SESSION_TZ)
+TS_2024_JUN = datetime(2024, 6, 20, 14, 45, 30, tzinfo=UTC).astimezone(SESSION_TZ)
+TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=UTC).astimezone(SESSION_TZ)
+TS_WITH_MICROSECONDS = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=UTC).astimezone(SESSION_TZ)
 
 LARGE_RESULT_SET_SIZE = 50_000
-SEQUENTIAL_BASE_UTC = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+SEQUENTIAL_BASE_UTC = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 
 def sequential_timestamp(i):
