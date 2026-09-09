@@ -286,8 +286,8 @@ def validate_mappings(driver: str, all_combos: list[dict[str, str]]) -> None:
                 f"used by that lane (e.g. 'odbc', 'odbc-x64', 'odbc-arm64')."
             )
         # PYTHON_PLATFORM is required on every Python lane: _build_gha_row reads
-        # wheel_artifact + wheels from it. Missing rows silently drop py3.11+ cells
-        # (and emit py3.10 as sdist), so fail loud here instead.
+        # wheel_artifact + wheels from it. Missing rows silently drop cells
+        # (or emit them as sdist when the py is in SDIST_PY), so fail loud here.
         if driver == "python" and pair not in PYTHON_PLATFORM:
             raise RuntimeError(
                 f"({pair[0]}, {pair[1]}) is allowed by the Python model but missing "
@@ -385,7 +385,7 @@ def _build_gha_row(
 
     if is_python:
         # Wheel vs sdist routing:
-        #   - py in SDIST_PY (3.10): always sdist; do not set wheel_artifact.
+        #   - py in SDIST_PY: always sdist; do not set wheel_artifact.
         #   - py in PYTHON_PLATFORM[(os, arch)]["wheels"]: wheel exists.
         #   - else: no wheel built and not sdist-supported -> skip.
         platform = PYTHON_PLATFORM.get((os_, arch))
@@ -828,7 +828,7 @@ def build_targets(
     for row in active:
         artifact = row.get("wheel_artifact")
         if not artifact:
-            # py3.10 sdist rows and any other no-wheel rows are skipped: the
+            # Sdist-only rows and any other no-wheel rows are skipped: the
             # build workflow doesn't need to produce a wheel for them.
             continue
         pair = artifact_to_pair[artifact]

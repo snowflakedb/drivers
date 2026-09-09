@@ -64,12 +64,10 @@ def test_flat_constants_are_plain_strings():
 
 
 def test_authenticator_type_members_str_as_raw_value():
-    """``AuthenticatorType`` is a ``str``-mixed ``Enum``; without the
-    ``__str__`` override in ``_internal/authenticator_type.py``,
-    ``str(member)``/f-string interpolation would render
-    ``"AuthenticatorType.MEMBER"`` on Python < 3.11 instead of the raw wire
-    value, silently corrupting any downstream code that formats the
-    authenticator into a request/string rather than just comparing it.
+    """``AuthenticatorType`` is a ``StrEnum``: ``str(member)`` and f-string
+    interpolation must equal the raw wire value, not ``"AuthenticatorType.MEMBER"``.
+    Downstream code that formats the authenticator into a request would otherwise
+    send a corrupted spelling.
     """
     for member in network.AuthenticatorType:
         assert str(member) == member.value

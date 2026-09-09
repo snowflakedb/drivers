@@ -19,7 +19,7 @@ NULL scalars are ``pd.NaT``.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
@@ -45,7 +45,7 @@ TZ_MINUS_8 = timezone(timedelta(hours=-8))
 
 TS_2024_JAN = datetime(2024, 1, 15, 10, 30, 0, tzinfo=TZ_PLUS_5)
 TS_2024_JUN = datetime(2024, 6, 20, 14, 45, 30, tzinfo=TZ_MINUS_8)
-TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=UTC)
 TS_WITH_MICROSECONDS = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=TZ_PLUS_5)
 
 TS_2024_JAN_STR = "2024-01-15 10:30:00 +05:00"
@@ -54,7 +54,7 @@ TS_EPOCH_STR = "1970-01-01 00:00:00 +00:00"
 TS_WITH_MICROSECONDS_STR = "2024-01-15 10:30:00.123456 +05:00"
 
 LARGE_RESULT_SET_SIZE = 50_000
-SEQUENTIAL_BASE = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+SEQUENTIAL_BASE = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 
 def to_utc(values):
@@ -64,7 +64,7 @@ def to_utc(values):
         if pd.isna(v):
             out.append(None)
         else:
-            out.append(v.astimezone(timezone.utc))
+            out.append(v.astimezone(UTC))
     return out
 
 
@@ -75,7 +75,7 @@ def sequential_timestamp(i):
 
 def compare_ts_utc(actual, expected):
     """Compare timestamps by UTC instant (offsets may vary in representation)."""
-    return actual.astimezone(timezone.utc) == expected
+    return actual.astimezone(UTC) == expected
 
 
 @pytest.fixture(autouse=True)
@@ -91,8 +91,8 @@ LITERAL_SELECT_TEST_CASES = [
 ]
 
 EDGE_DATE_TEST_CASES = [
-    ("year 9999", "9999-12-31 23:59:59 +00:00", datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)),
-    ("year 1900", "1900-01-01 00:00:00 +00:00", datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc)),
+    ("year 9999", "9999-12-31 23:59:59 +00:00", datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)),
+    ("year 1900", "1900-01-01 00:00:00 +00:00", datetime(1900, 1, 1, 0, 0, 0, tzinfo=UTC)),
     ("pre-epoch", "1960-06-15 12:00:00 +05:00", datetime(1960, 6, 15, 12, 0, 0, tzinfo=TZ_PLUS_5)),
 ]
 
@@ -110,8 +110,7 @@ TZ_M0230 = timezone(timedelta(hours=-2, minutes=-30))
 
 # UTC instants for literals in test_should_preserve_timezone_offset_for_timestamp_tz (column order).
 PRESERVE_OFFSETS_EXPECTED_UTCS = tuple(
-    datetime(2024, 1, 15, 10, 30, tzinfo=tz).astimezone(timezone.utc)
-    for tz in (TZ_P0530, TZ_M0800, timezone.utc, TZ_P0430, TZ_M0230)
+    datetime(2024, 1, 15, 10, 30, tzinfo=tz).astimezone(UTC) for tz in (TZ_P0530, TZ_M0800, UTC, TZ_P0430, TZ_M0230)
 )
 
 
@@ -131,7 +130,7 @@ class TestFetchPandasTimestampTzTypeCasting:
         assert isinstance(val, pd.Timestamp)
         # And Values should have timezone info
         assert val.tzinfo is not None
-        assert val.astimezone(timezone.utc) == TS_2024_JAN.astimezone(timezone.utc)
+        assert val.astimezone(UTC) == TS_2024_JAN.astimezone(UTC)
 
 
 class TestFetchPandasTimestampTzLiteral:
@@ -181,7 +180,7 @@ class TestFetchPandasTimestampTzLiteral:
         assert_dtypes(df, [is_datetime64_tz for _ in range(5)])
         row = get_row(df, 0)
         for cell, exp_utc in zip(row, PRESERVE_OFFSETS_EXPECTED_UTCS, strict=True):
-            assert cell.astimezone(timezone.utc) == exp_utc
+            assert cell.astimezone(UTC) == exp_utc
             assert cell.tzinfo is not None
 
     @pytest.mark.parametrize(
@@ -199,7 +198,7 @@ class TestFetchPandasTimestampTzLiteral:
         # Then Result should contain timestamps <expected_values>
         assert_dtypes(df, [is_datetime64_tz])
         val = get_row(df, 0)[0]
-        assert val.astimezone(timezone.utc) == expected.astimezone(timezone.utc)
+        assert val.astimezone(UTC) == expected.astimezone(UTC)
         # And Values should have timezone info
         assert val.tzinfo is not None
 
@@ -216,7 +215,7 @@ class TestFetchPandasTimestampTzLiteral:
         # Then Result should contain [2024-01-15 10:30:00 +05:00, NULL]
         assert_dtypes(df, [is_datetime64_tz, is_datetime64_tz])
         row = get_row(df, 0)
-        assert to_utc(row) == [TS_2024_JAN.astimezone(timezone.utc), None]
+        assert to_utc(row) == [TS_2024_JAN.astimezone(UTC), None]
         assert row[0].tzinfo is not None
         assert row[1] is pd.NaT
 

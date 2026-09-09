@@ -164,8 +164,6 @@ for everything else.
 ```python
 def is_valid(c):
     if c["OS"] == "windows" and c["Arch"] == "arm":
-        # No CPython 3.10 build for Windows-on-ARM.
-        if c["PyVersion"] == "3.10":      return False
         # No pyarrow win_arm64 wheel.
         if c["HatchEnv"] == "test-pandas": return False
     return True

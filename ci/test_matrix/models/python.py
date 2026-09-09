@@ -4,7 +4,7 @@ PARAMS = {
     "OS":        ["ubuntu", "macos", "windows"],
     "Arch":      ["x64", "arm"],
     "Cloud":     ["aws", "gcp", "azure"],
-    "PyVersion": ["3.10", "3.11", "3.12", "3.13", "3.14"],
+    "PyVersion": ["3.11", "3.12", "3.13", "3.14"],
     "HatchEnv":  ["test", "test-pandas", "test-native-arrow"],
 }
 
@@ -13,7 +13,6 @@ PARAMS = {
 # CONSTRAINTS so it reduces both the merge pairwise pool and the nightly
 # cartesian product. All clouds are covered across Python versions.
 _CLOUD_FOR_PY = {
-    "3.10": "aws",
     "3.11": "gcp",
     "3.12": "azure",
     "3.13": "aws",
@@ -24,8 +23,6 @@ _CLOUD_FOR_PY = {
 def is_valid(c):
     """Block-list: return False to forbid a combo, fall through to allow."""
     if c["OS"] == "windows" and c["Arch"] == "arm":
-        # No CPython 3.10 build for Windows-on-ARM (tier-3 from 3.11).
-        if c["PyVersion"] == "3.10":      return False
         # No pyarrow win_arm64 wheel; source-build fails on GHA windows-11-arm
         # runner (no Arrow C++ libs).
         if c["HatchEnv"] == "test-pandas": return False

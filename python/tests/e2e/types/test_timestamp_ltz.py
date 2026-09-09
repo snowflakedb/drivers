@@ -14,7 +14,7 @@ deterministic; expected values are expressed in America/New_York.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytz
@@ -41,16 +41,16 @@ TS_WITH_MICROSECONDS_STR = "2024-01-15 10:30:00.123456 +00:00"
 # Jun 20 is EDT (UTC-4): 14:45:30 UTC -> 10:45:30 EDT
 # Epoch is EST (UTC-5): 00:00 UTC -> 1969-12-31 19:00 EST
 # =============================================================================
-TS_2024_JAN = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc).astimezone(SESSION_TZ)
-TS_2024_JUN = datetime(2024, 6, 20, 14, 45, 30, tzinfo=timezone.utc).astimezone(SESSION_TZ)
-TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc).astimezone(SESSION_TZ)
-TS_WITH_MICROSECONDS = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=timezone.utc).astimezone(SESSION_TZ)
+TS_2024_JAN = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC).astimezone(SESSION_TZ)
+TS_2024_JUN = datetime(2024, 6, 20, 14, 45, 30, tzinfo=UTC).astimezone(SESSION_TZ)
+TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=UTC).astimezone(SESSION_TZ)
+TS_WITH_MICROSECONDS = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=UTC).astimezone(SESSION_TZ)
 
 # =============================================================================
 # LARGE RESULT SET
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 50_000
-SEQUENTIAL_BASE_UTC = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+SEQUENTIAL_BASE_UTC = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 
 def sequential_timestamp(i):
@@ -229,11 +229,11 @@ class TestTimestampLtzNegativeEpochJsonResultFormat:
         [
             (
                 "SELECT '1969-12-31 23:59:59.999999999 +00:00'::TIMESTAMP_LTZ(9)",
-                datetime(1969, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc),
+                datetime(1969, 12, 31, 23, 59, 59, 999999, tzinfo=UTC),
             ),
             (
                 "SELECT '1969-12-31 23:59:58.5 +00:00'::TIMESTAMP_LTZ(3)",
-                datetime(1969, 12, 31, 23, 59, 58, 500000, tzinfo=timezone.utc),
+                datetime(1969, 12, 31, 23, 59, 58, 500000, tzinfo=UTC),
             ),
         ],
     )
@@ -248,7 +248,7 @@ class TestTimestampLtzNegativeEpochJsonResultFormat:
                 # Then Result should contain the expected sub-second values before the epoch
                 assert result is not None
                 assert result[0].tzinfo is not None
-                assert result[0].astimezone(timezone.utc) == expected
+                assert result[0].astimezone(UTC) == expected
 
 
 @with_paramstyle("qmark")

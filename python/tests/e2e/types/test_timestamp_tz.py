@@ -13,7 +13,7 @@ All SQL string literals include explicit timezone offsets to exercise offset pre
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -31,7 +31,7 @@ TZ_MINUS_8 = timezone(timedelta(hours=-8))
 
 TS_2024_JAN = datetime(2024, 1, 15, 10, 30, 0, tzinfo=TZ_PLUS_5)
 TS_2024_JUN = datetime(2024, 6, 20, 14, 45, 30, tzinfo=TZ_MINUS_8)
-TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=UTC)
 TS_WITH_MICROSECONDS = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=TZ_PLUS_5)
 
 # =============================================================================
@@ -46,12 +46,12 @@ TS_WITH_MICROSECONDS_STR = "2024-01-15 10:30:00.123456 +05:00"
 # LARGE RESULT SET
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 50_000
-SEQUENTIAL_BASE = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+SEQUENTIAL_BASE = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 
 def to_utc(values):
     """Convert datetime values to UTC, preserving None."""
-    return [v.astimezone(timezone.utc) if v is not None else None for v in values]
+    return [v.astimezone(UTC) if v is not None else None for v in values]
 
 
 def sequential_timestamp(i):
@@ -61,7 +61,7 @@ def sequential_timestamp(i):
 
 def compare_ts_utc(actual, expected):
     """Compare timestamps by converting actual to UTC."""
-    return actual.astimezone(timezone.utc) == expected
+    return actual.astimezone(UTC) == expected
 
 
 @pytest.fixture(autouse=True)
@@ -155,8 +155,8 @@ class TestTimestampTzLiteral:
             assert actual_offset == expected_offset, f"Expected offset {expected_offset}, got {actual_offset}"
 
     EDGE_DATE_TEST_CASES = [
-        ("year 9999", "9999-12-31 23:59:59 +00:00", datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)),
-        ("year 1900", "1900-01-01 00:00:00 +00:00", datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc)),
+        ("year 9999", "9999-12-31 23:59:59 +00:00", datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)),
+        ("year 1900", "1900-01-01 00:00:00 +00:00", datetime(1900, 1, 1, 0, 0, 0, tzinfo=UTC)),
         ("pre-epoch", "1960-06-15 12:00:00 +05:00", datetime(1960, 6, 15, 12, 0, 0, tzinfo=TZ_PLUS_5)),
     ]
 
@@ -174,7 +174,7 @@ class TestTimestampTzLiteral:
 
         # Then Result should contain timestamps <expected_values>
         assert_datetime_type(result)
-        assert result[0].astimezone(timezone.utc) == expected.astimezone(timezone.utc)
+        assert result[0].astimezone(UTC) == expected.astimezone(UTC)
 
         # And Values should have timezone info
         assert result[0].utcoffset() == expected.utcoffset()
@@ -191,7 +191,7 @@ class TestTimestampTzLiteral:
 
         # Then Result should contain [2024-01-15 10:30:00 +05:00, NULL]
         assert_datetime_type(result, can_be_none=True)
-        assert to_utc(result) == [TS_2024_JAN.astimezone(timezone.utc), None]
+        assert to_utc(result) == [TS_2024_JAN.astimezone(UTC), None]
 
     def test_should_download_large_result_set_with_multiple_chunks_for_timestamp_tz(self, execute_query):
         # Given Snowflake client is logged in
@@ -372,7 +372,7 @@ class TestTimestampTzPrecision:
         result = execute_query(f"SELECT '{input_str}'::TIMESTAMP_TZ", single_row=True)
 
         # Then Result should contain [<expected>]
-        assert result[0].astimezone(timezone.utc) == expected.astimezone(timezone.utc)
+        assert result[0].astimezone(UTC) == expected.astimezone(UTC)
         assert result[0].microsecond == expected.microsecond
 
         # And Values should have timezone info
@@ -398,11 +398,11 @@ class TestTimestampTzNegativeEpochJsonResultFormat:
         [
             (
                 "SELECT '1969-12-31 23:59:59.999999999 +00:00'::TIMESTAMP_TZ(9)",
-                datetime(1969, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc),
+                datetime(1969, 12, 31, 23, 59, 59, 999999, tzinfo=UTC),
             ),
             (
                 "SELECT '1969-12-31 23:59:58.5 +00:00'::TIMESTAMP_TZ(3)",
-                datetime(1969, 12, 31, 23, 59, 58, 500000, tzinfo=timezone.utc),
+                datetime(1969, 12, 31, 23, 59, 58, 500000, tzinfo=UTC),
             ),
         ],
     )
@@ -416,6 +416,6 @@ class TestTimestampTzNegativeEpochJsonResultFormat:
 
                 # Then Result should contain the expected sub-second values before the epoch
                 assert result is not None
-                assert result[0].astimezone(timezone.utc) == expected.astimezone(timezone.utc)
+                assert result[0].astimezone(UTC) == expected.astimezone(UTC)
                 assert result[0].microsecond == expected.microsecond
                 assert result[0].tzinfo is not None

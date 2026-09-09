@@ -313,19 +313,18 @@ class MergeValidSemanticsTests(unittest.TestCase):
             "    'OS':        ['ubuntu', 'macos', 'windows'],\n"
             "    'Arch':      ['x64', 'arm'],\n"
             "    'Cloud':     ['aws', 'gcp', 'azure'],\n"
-            "    'PyVersion': ['3.10', '3.11', '3.12', '3.13', '3.14'],\n"
+            "    'PyVersion': ['3.11', '3.12', '3.13', '3.14'],\n"
             "    'HatchEnv':  ['test', 'test-pandas'],\n"
             "}\n"
             "def is_valid(c):\n"
             "    if c['OS'] == 'windows' and c['Arch'] == 'arm':\n"
-            "        if c['PyVersion'] == '3.10':      return False\n"
             "        if c['HatchEnv'] == 'test-pandas': return False\n"
             "    return True\n"
             "CONSTRAINTS = [is_valid]\n"
             f"{merge_valid_block}"
             "PR_CELLS = [\n"
             "    {'OS': 'ubuntu',  'Arch': 'x64', 'Cloud': 'aws',\n"
-            "     'PyVersion': '3.10', 'HatchEnv': 'test'},\n"
+            "     'PyVersion': '3.11', 'HatchEnv': 'test'},\n"
             "    {'OS': 'macos',   'Arch': 'arm', 'Cloud': 'gcp',\n"
             "     'PyVersion': '3.12', 'HatchEnv': 'test-pandas'},\n"
             "    {'OS': 'windows', 'Arch': 'x64', 'Cloud': 'azure',\n"
@@ -394,12 +393,12 @@ class MergeValidSemanticsTests(unittest.TestCase):
         path = self._write_python_model(block)
         try:
             rows = gm.generate(path, "python")
-            # macOS-x64 has wheels for 3.11, 3.12, 3.13, 3.14 plus py3.10 sdist.
+            # macOS-x64 has wheels for 3.11, 3.12, 3.13, 3.14.
             # Without MERGE_VALID nightly emits exactly those rows; with
             # MERGE_VALID they should still appear, just at trigger_level=nightly.
             mac_x64_pys = {r["py"] for r in rows if r["os"] == "macos-15-intel"}
             self.assertEqual(
-                mac_x64_pys, {"3.10", "3.11", "3.12", "3.13", "3.14"},
+                mac_x64_pys, {"3.11", "3.12", "3.13", "3.14"},
                 f"nightly must cover every PyVersion on macos-x64; got {mac_x64_pys}",
             )
         finally:
@@ -985,16 +984,19 @@ class PythonMatrixTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.gha = gm.generate(PYTHON_PATH, "python")
 
-    def test_no_wheel_artifact_on_py310(self) -> None:
-        offenders = [r for r in self.gha if r["py"] == "3.10" and r.get("wheel_artifact")]
+    def test_sdist_py_has_no_wheel_artifact(self) -> None:
+        offenders = [
+            r for r in self.gha
+            if r["py"] in gm.SDIST_PY and r.get("wheel_artifact")
+        ]
         self.assertEqual(offenders, [])
 
-    def test_py310_present_on_main_platforms(self) -> None:
-        py310_os = {r["os"] for r in self.gha if r["py"] == "3.10"}
-        # py3.10 builds from sdist; should be on at least all wheel-target OSes
-        self.assertIn("ubuntu-latest", py310_os)
-        self.assertIn("macos-latest", py310_os)
-        self.assertIn("windows-latest", py310_os)
+    def test_no_python_310(self) -> None:
+        offenders = [r for r in self.gha if r["py"] == "3.10"]
+        self.assertEqual(
+            offenders, [],
+            "Python 3.10 was dropped; the matrix floor is 3.11",
+        )
 
     def test_macos_x64_present(self) -> None:
         # Regression test: macOS Intel (macos-15-intel runner) coverage must
@@ -1003,10 +1005,8 @@ class PythonMatrixTests(unittest.TestCase):
         intel_rows = [r for r in self.gha if r["os"] == "macos-15-intel"]
         self.assertTrue(intel_rows, "expected macos-15-intel cells in the python matrix")
         for r in intel_rows:
-            self.assertIn(r["py"], {"3.10", "3.11", "3.12", "3.13", "3.14"})
-            # py3.10 always sdist; every other py on macos-x64 must have a wheel.
-            if r["py"] != "3.10":
-                self.assertEqual(r.get("wheel_artifact"), "macosx_x86_64", r["name"])
+            self.assertIn(r["py"], {"3.11", "3.12", "3.13", "3.14"})
+            self.assertEqual(r.get("wheel_artifact"), "macosx_x86_64", r["name"])
 
     def test_windows_arm_at_merge_scope(self) -> None:
         # Regression test for the routing-aware pairwise solver. Without it,
@@ -1026,29 +1026,6 @@ class PythonMatrixTests(unittest.TestCase):
             "expected windows-11-arm cells at pr+merge scope; "
             "if missing, the pairwise solver may have regressed to the "
             "non-routing-aware path that picks routing-invalid combos.",
-        )
-
-    def test_windows_arm_excludes_py310(self) -> None:
-        # Regression test for the python.py constraint
-        #     IF [OS] = "windows" AND [Arch] = "arm" THEN [PyVersion] <> "3.10"
-        # CPython has no Windows-aarch64 build for 3.10 (Windows-on-ARM was
-        # first supported in 3.11, PEP 11 tier-3). uv fails with
-        # "No download found for request: cpython-3.10-windows-aarch64-none"
-        # if this combo reaches the matrix.
-        #
-        # Originally the constraint used `AND` in the IF clause which the
-        # in-house parser silently dropped (regex matched only single-condition
-        # IFs). A failing CI run on the merge_scope label shipped a real
-        # windows-11-arm/py3.10 cell because of that. This test guards the
-        # parser extension that supports AND clauses + `<>`/`NOT IN` ops.
-        offenders = [
-            r for r in self.gha
-            if r["os"] == "windows-11-arm" and r["py"] == "3.10"
-        ]
-        self.assertEqual(
-            offenders, [],
-            "windows-11-arm + py3.10 cells must be pruned from the matrix "
-            f"(no CPython 3.10 Windows-ARM64 build); got: {offenders}",
         )
 
     def test_windows_arm_excludes_test_pandas(self) -> None:
@@ -1518,8 +1495,8 @@ class BuildTargetsTests(unittest.TestCase):
                 )
 
     def test_sdist_py_excluded_from_targets(self) -> None:
-        # py3.10 always installs from sdist; rows have no wheel_artifact and
-        # must NOT appear in build_targets at any level.
+        # Sdist-only versions have no wheel_artifact and must NOT appear in
+        # build_targets at any level.
         for level, targets in [
             ("pr",          self.targets_pr),
             ("merge_queue", self.targets_merge_group),
@@ -1527,11 +1504,12 @@ class BuildTargetsTests(unittest.TestCase):
             ("nightly",     self.targets_nightly),
         ]:
             for cibw_key, versions in targets.items():
-                self.assertNotIn(
-                    "3.10", versions,
-                    f"[{level}] py3.10 listed under {cibw_key} in build_targets, "
-                    f"but py3.10 is sdist-only (SDIST_PY) and shouldn't be wheel-built",
-                )
+                for py in gm.SDIST_PY:
+                    self.assertNotIn(
+                        py, versions,
+                        f"[{level}] py{py} listed under {cibw_key} in build_targets, "
+                        f"but it is sdist-only (SDIST_PY) and shouldn't be wheel-built",
+                    )
 
     def test_nightly_targets_match_legacy_hardcoded_json(self) -> None:
         # Regression guard: pins nightly build_targets so a future PR can't
@@ -1540,7 +1518,6 @@ class BuildTargetsTests(unittest.TestCase):
         # each PyVersion maps to exactly one cloud, so all versions now appear at
         # nightly for every platform (each runs once against its assigned cloud).
         # Windows-arm excludes 3.13/3.14 (no CPython win-arm wheel above 3.12).
-        # 3.10 is sdist-only (no wheel built for any platform).
         legacy = {
             "linux_x86":   {"3.11", "3.12", "3.13", "3.14"},
             "linux_aarch": {"3.11", "3.12", "3.13", "3.14"},

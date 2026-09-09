@@ -25,9 +25,6 @@ CONSTRAINTS: list[Callable[[dict[str, str]], bool]]
     `return False`, and lets everything else fall through to `return True`:
 
         def is_valid(c):
-            # Forbid: Windows-on-ARM has no CPython 3.10 build.
-            if c["OS"] == "windows" and c["Arch"] == "arm" and c["PyVersion"] == "3.10":
-                return False
             # Forbid: no pyarrow win_arm64 wheel.
             if c["OS"] == "windows" and c["Arch"] == "arm" and c["HatchEnv"] == "test-pandas":
                 return False

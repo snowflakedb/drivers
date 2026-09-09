@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import warnings
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pandas as pd
@@ -165,7 +165,7 @@ class TestWritePandas:
     def test_should_round_trip_multiple_data_types_through_write_pandas(self, execute_query, connection, tmp_schema):
         table_name = _table("WP_TYPES")
         fq_table = f"{tmp_schema}.{table_name}"
-        ts_tz = datetime(2026, 4, 1, 9, 30, 29, tzinfo=timezone.utc)
+        ts_tz = datetime(2026, 4, 1, 9, 30, 29, tzinfo=UTC)
         ts_ntz = datetime(2026, 4, 2, 14, 15, 59)
         types_df = pd.DataFrame(
             {
@@ -270,7 +270,7 @@ class TestWritePandasValidation:
         assert_connection_is_open(execute_query)
 
         # And A DataFrame with a tz-aware datetime column
-        tz_df = pd.DataFrame({"ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)]})
+        tz_df = pd.DataFrame({"ts": [datetime(2024, 1, 1, tzinfo=UTC)]})
 
         # When write_pandas is called without use_logical_type=True
         with warnings.catch_warnings(record=True) as caught:

@@ -17,9 +17,8 @@ jobs:
     with:
       targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "macos_x86": ["3.11","3.12","3.13","3.14"], "macos_arm": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
-  # ── Test wheels and sdist against cloud providers ───────────────────
+  # ── Test wheels against cloud providers ─────────────────────────────
   # Each Python version tested once per env, cloud providers distributed evenly.
-  # Python 3.10 tests from sdist (builds sf_core from source), others from wheels.
   test:
     needs: build_wheels
     strategy:
@@ -27,61 +26,51 @@ jobs:
       matrix:
         include:
           # Linux — test env, cloud providers rotated across versions
-          - { os: ubuntu-latest,   py: "3.10", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: ubuntu-latest,   py: "3.11", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: ubuntu-latest,   py: "3.12", hatch_env: "test",        cloud_provider: "azure" }
           - { os: ubuntu-latest,   py: "3.13", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: ubuntu-latest,   py: "3.14", hatch_env: "test",        cloud_provider: "gcp"   }
           # Linux — test-pandas env
-          - { os: ubuntu-latest,   py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-latest,   py: "3.11", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: ubuntu-latest,   py: "3.12", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: ubuntu-latest,   py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-latest,   py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
           # Linux ARM64 — test env
-          - { os: ubuntu-24.04-arm, py: "3.10", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: ubuntu-24.04-arm, py: "3.11", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: ubuntu-24.04-arm, py: "3.12", hatch_env: "test",        cloud_provider: "azure" }
           - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test",        cloud_provider: "gcp"   }
           # Linux ARM64 — test-pandas env
-          - { os: ubuntu-24.04-arm, py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-24.04-arm, py: "3.11", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: ubuntu-24.04-arm, py: "3.12", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
           # macOS x86_64 (Intel) — test env
-          - { os: macos-15-intel,        py: "3.10", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: macos-15-intel,        py: "3.11", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: macos-15-intel,        py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: macos-15-intel,        py: "3.13", hatch_env: "test",        cloud_provider: "azure" }
           - { os: macos-15-intel,        py: "3.14", hatch_env: "test",        cloud_provider: "aws"   }
           # macOS x86_64 (Intel) — test-pandas env
-          - { os: macos-15-intel,        py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: macos-15-intel,        py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: macos-15-intel,        py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: macos-15-intel,        py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: macos-15-intel,        py: "3.14", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           # macOS ARM64 (Apple Silicon) — test env
-          - { os: macos-latest,    py: "3.10", hatch_env: "test",        cloud_provider: "azure" }
           - { os: macos-latest,    py: "3.11", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: macos-latest,    py: "3.12", hatch_env: "test",        cloud_provider: "azure" }
           - { os: macos-latest,    py: "3.13", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: macos-latest,    py: "3.14", hatch_env: "test",        cloud_provider: "gcp"   }
           # macOS ARM64 (Apple Silicon) — test-pandas env
-          - { os: macos-latest,    py: "3.10", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: macos-latest,    py: "3.11", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: macos-latest,    py: "3.12", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: macos-latest,    py: "3.13", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: macos-latest,    py: "3.14", hatch_env: "test-pandas", cloud_provider: "azure" }
           # Windows x86_64 — test env
-          - { os: windows-latest,  py: "3.10", hatch_env: "test",        cloud_provider: "azure" }
           - { os: windows-latest,  py: "3.11", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: windows-latest,  py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: windows-latest,  py: "3.13", hatch_env: "test",        cloud_provider: "azure" }
           - { os: windows-latest,  py: "3.14", hatch_env: "test",        cloud_provider: "aws"   }
           # Windows x86_64 — test-pandas env
-          - { os: windows-latest,  py: "3.10", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: windows-latest,  py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: windows-latest,  py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: windows-latest,  py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws"   }
@@ -125,43 +114,25 @@ jobs:
         run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Download wheel (Linux)
-        if: runner.os == 'Linux' && matrix.py != '3.10'
+        if: runner.os == 'Linux'
         uses: actions/download-artifact@v8
         with:
           name: ${{ (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download wheel (macOS)
-        if: runner.os == 'macOS' && matrix.py != '3.10'
+        if: runner.os == 'macOS'
         uses: actions/download-artifact@v8
         with:
           name: ${{ (matrix.os == 'macos-15-intel' && 'macosx_x86_64' || 'macosx_arm64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download wheel (Windows)
-        if: runner.os == 'Windows' && matrix.py != '3.10'
+        if: runner.os == 'Windows'
         uses: actions/download-artifact@v8
         with:
           name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || 'win_amd64') }}_py${{ matrix.py }}
           path: python/dist
-
-      - name: Download sdist
-        if: matrix.py == '3.10'
-        uses: actions/download-artifact@v8
-        with:
-          name: python-sdist
-          path: python/dist
-
-      # sdist installs build sf_core from source, so Rust is needed
-      - name: Restore Rust cache (sdist)
-        if: matrix.py == '3.10'
-        id: rust-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: sdist-test
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
@@ -185,17 +156,11 @@ jobs:
           echo "RUSTFLAGS=-C linker=rust-lld" >> $env:GITHUB_ENV
           echo "CMAKE_GENERATOR_PLATFORM=ARM64" >> $env:GITHUB_ENV
 
-      - name: Setup OpenSSL (Windows x86_64)
-        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
-        uses: ./.github/actions/setup-windows-openssl
-        with:
-          arch: x86_64
-
       - name: Install Hatch
         run: uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Install snowflake ud driver from wheel (Linux/macOS)
-        if: runner.os != 'Windows' && matrix.py != '3.10'
+        if: runner.os != 'Windows'
         working-directory: python
         run: |
           WHEELS=(dist/*.whl)
@@ -207,7 +172,7 @@ jobs:
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
       - name: Install snowflake ud driver from wheel (Windows)
-        if: runner.os == 'Windows' && matrix.py != '3.10'
+        if: runner.os == 'Windows'
         working-directory: python
         shell: pwsh
         run: |
@@ -217,35 +182,6 @@ jobs:
           }
           $env:WHEEL_PATH = $wheels[0].FullName
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
-
-      - name: Install snowflake ud driver from sdist (Linux/macOS)
-        if: runner.os != 'Windows' && matrix.py == '3.10'
-        working-directory: python
-        run: |
-          SDISTS=(dist/*.tar.gz)
-          if [[ ${#SDISTS[@]} -ne 1 ]]; then
-            echo "::error::Expected exactly 1 sdist, found ${#SDISTS[@]}"; ls -la dist/; exit 1
-          fi
-          export WHEEL_PATH="${SDISTS[0]}"
-          echo "Installing sdist: $WHEEL_PATH"
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
-        env:
-          SKIP_CORE_BUILD: "false"
-
-      - name: Install snowflake ud driver from sdist (Windows)
-        if: runner.os == 'Windows' && matrix.py == '3.10'
-        working-directory: python
-        shell: pwsh
-        run: |
-          $sdists = @(Get-ChildItem dist/*.tar.gz)
-          if ($sdists.Count -ne 1) {
-            Write-Error "Expected exactly 1 sdist, found $($sdists.Count)"; Get-ChildItem dist/; exit 1
-          }
-          $env:WHEEL_PATH = $sdists[0].FullName
-          Write-Host "Installing sdist: $($env:WHEEL_PATH)"
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
-        env:
-          SKIP_CORE_BUILD: "false"
 
       - name: Run tests (Linux/macOS)
         if: runner.os != 'Windows'
@@ -266,22 +202,6 @@ jobs:
             --junitxml=reports/release-${{ env.MATRIX_KEY }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-
-
-      - name: Save Rust cache (sdist)
-        if: always() && matrix.py == '3.10'
-        # timeout-minutes is enforced here because it isn't supported on
-        # composite action steps. Bounds slim + registry save + target save.
-        timeout-minutes: 20
-        # Cache failures (incl. timeout-induced cancellation) never fail the job.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: save
-          slim-mode: aggressive
-          shared-key: sdist-test
-          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
-          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   # ── Reference driver compatibility check ──────────────────────────
   test_reference:

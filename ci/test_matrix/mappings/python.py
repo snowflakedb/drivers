@@ -21,7 +21,8 @@ Per-row keys:
                  `targets` argument — keep in sync.
 
 SDIST_PY is a set of Python versions that always install from sdist
-(no wheels are built for them — currently 3.10).
+(no wheels are built for them). Empty: every supported Python version
+has a wheel.
 """
 
 PYTHON_PLATFORM: dict[tuple[str, str], dict] = {
@@ -33,4 +34,4 @@ PYTHON_PLATFORM: dict[tuple[str, str], dict] = {
     ("windows", "arm"): {"cibw_key": "windows_arm", "wheel_artifact": "win_arm64",        "wheels": {"3.11", "3.12"}},
 }
 
-SDIST_PY: set[str] = {"3.10"}
+SDIST_PY: set[str] = set()

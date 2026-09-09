@@ -7,11 +7,11 @@ remap_keep_alive_for_backward_compat applies the Phase 2 (SNOW-2314152) backward
 import warnings
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class LogoutOptionKeys(str, Enum):
+class LogoutOptionKeys(StrEnum):
     """Core API option key strings for logout configuration.
 
     These correspond to the option keys accepted by Core's
@@ -26,7 +26,7 @@ class LogoutOptionKeys(str, Enum):
     LOGOUT_REQUEST_TIMEOUT_SECONDS = "logout_request_timeout_seconds"
 
 
-class ErrorStrategy(str, Enum):
+class ErrorStrategy(StrEnum):
     """Error handling strategy for logout.
 
     These map directly to Core's ErrorStrategy enum variants.

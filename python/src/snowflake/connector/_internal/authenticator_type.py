@@ -32,19 +32,11 @@ paths.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class AuthenticatorType(str, Enum):
+class AuthenticatorType(StrEnum):
     """Authenticator types accepted by the Universal Driver's ``authenticator=`` connection parameter."""
-
-    def __str__(self) -> str:
-        # Plain ``str``-mixed ``Enum`` members format as ``"ClassName.MEMBER"``
-        # on Python < 3.11 (this package's floor); this override keeps
-        # ``str(AuthenticatorType.X)`` and f-string interpolation equal to the
-        # raw wire value, matching ``StrEnum`` semantics on all supported
-        # versions.
-        return str(self.value)
 
     DEFAULT = "SNOWFLAKE"
     EXTERNAL_BROWSER = "EXTERNALBROWSER"

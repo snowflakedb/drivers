@@ -12,13 +12,13 @@ using the Snowflake JDBC or ODBC drivers.
 
 The connector has **no** dependencies on JDBC or ODBC.
 It can be installed using ``pip`` on Linux, Mac OSX, and Windows platforms
-where Python 3.10.0 (or higher) is installed.
+where Python 3.11.0 (or higher) is installed.
 
 
 ## Development
 
 ### Prerequisites
-- Python 3.10+
+- Python 3.11+
 - [uv](https://docs.astral.sh/uv/) package manager
 - [Hatch](https://hatch.pypa.io/) build tool
 - Rust toolchain (for building core library)
@@ -57,7 +57,7 @@ The `dev` environment is designed for **human developers** during active develop
 - Installs from sources (`skip-install = false`)
 - Editable mode enabled (`dev-mode = true`)
 - Changes to source code are immediately available
-- Supports Python matrix: 3.10, 3.11, 3.12, 3.13, 3.14
+- Supports Python matrix: 3.11, 3.12, 3.13, 3.14
 
 **Usage:**
 ```bash
