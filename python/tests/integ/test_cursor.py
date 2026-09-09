@@ -2923,6 +2923,36 @@ class TestCursorDescribeInternal:
             assert len(result) == 1
             assert result[0].name == "number of rows inserted"
 
+    @with_paramstyle("qmark")
+    def test_describes_parameterized_call_to_table_procedure(self, cursor):
+        """Describes a parameterized CALL to a table-returning stored procedure.
+
+        This is the statement shape and calling convention Snowpark's `run_new_describe`
+        exercises for a `session.sql("CALL ...", params=...)` DataFrame: the CALL text
+        itself, unmodified, together with the real bind values (Snowpark does not embed
+        this statement in a wrapping subquery for the describe step).
+        """
+        proc_name = "test_di_call_to_table_procedure"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(a INT, b INT)
+            RETURNS TABLE(result INT)
+            LANGUAGE SQL
+            AS
+            DECLARE
+              res RESULTSET DEFAULT (SELECT :a + :b AS result);
+            BEGIN
+              RETURN TABLE(res);
+            END;
+            """
+        )
+
+        result = cursor._describe_internal(f"CALL {proc_name}(?, ?)", (2, 3))
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].name == "RESULT"
+
     def test_v2_type_codes_match_describe(self, cursor):
         """V2 type_code and name match the V1 describe() output for the same query."""
         sql = "SELECT 1::INTEGER AS a, 'x'::VARCHAR(50) AS b, 3.14::FLOAT AS c"
