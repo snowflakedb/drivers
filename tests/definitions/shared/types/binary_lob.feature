@@ -1,11 +1,11 @@
-@python @jdbc @core_not_needed
+@python @jdbc @dotnet @core_not_needed
 Feature: Binary LOB (Large Object) handling
   # Snowflake LOB feature supports these large BINARY values:
   #   - Default (pre-2025_03 bundle): Maximum 8 MB (8,388,608 bytes)
   #   - With 2025_03 bundle enabled: Maximum 64 MB (67,108,864 bytes)
   # Reference: https://docs.snowflake.com/en/release-notes/bcr-bundles/2025_03/bcr-1942
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should handle maximum default binary size
     # Default maximum binary size is 8MB (8,388,608 bytes)
     # This is the limit before enabling the 2025_03 behavior change bundle
