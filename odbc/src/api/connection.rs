@@ -46,6 +46,7 @@ use crate::api::{
 };
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
+use sf_core::config::param_registry::{Wrapper, param_names};
 use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::sensitive::SensitiveString;
 use snafu::{OptionExt, ResultExt};
@@ -82,6 +83,20 @@ fn normalize_crl_enabled_value(value: &str) -> String {
     }
 }
 
+/// Normalize a `crl_check_mode` value to the canonical token `sf_core` expects.
+///
+/// The boolean-ish `CRL_ENABLED` spelling maps `true`/`false`/`1`/`0` to
+/// `ENABLED`/`DISABLED` via [`normalize_crl_enabled_value`]; the `CRL_MODE`
+/// spelling (and any mode token supplied through either key) is simply
+/// upper-cased to match the token set.
+fn normalize_crl_value(input_key: &str, value: String) -> String {
+    if input_key.eq_ignore_ascii_case("CRL_ENABLED") {
+        normalize_crl_enabled_value(&value)
+    } else {
+        value.to_ascii_uppercase()
+    }
+}
+
 fn normalize_connection_string_options(
     connection_string_map: HashMap<String, String>,
 ) -> HashMap<String, ConfigSetting> {
@@ -91,6 +106,14 @@ fn normalize_connection_string_options(
         .collect()
 }
 
+/// Canonicalize a single connection-string key/value pair for the ODBC wrapper.
+///
+/// The wrapper owns alias→canonical resolution: every key is resolved through
+/// the `sf_core` registry under the ODBC flavor and emitted under its canonical
+/// name, so core receives canonical keys and no longer has to remap ODBC wire
+/// spellings. Keys unknown to the registry are forwarded uppercased as
+/// session/unknown parameters (matching how ODBC passes server session params
+/// through). `DRIVER` is dropped (it only names the driver library).
 fn normalize_connection_string_option(
     key: String,
     value: String,
@@ -100,74 +123,23 @@ fn normalize_connection_string_option(
         return None;
     }
 
-    // Forward known OAuth keys with their explicit `sf_core` canonical
-    // (lowercase) name instead of relying on the catch-all uppercase
-    // passthrough + alias resolution. Owning the mapping here keeps the
-    // OAuth surface self-documenting on the wrapper side.
-    if let Some(canonical) = oauth::canonical_name(&upper) {
-        return Some((canonical.to_owned(), value.into()));
-    }
+    let registry = sf_core::config::param_registry::registry();
+    let Some(def) = registry.resolve_for(Wrapper::Odbc, &upper) else {
+        return Some((upper, value.into()));
+    };
 
-    // The `LOGIN_TIMEOUT` and `PRIV_KEY_*` arms below duplicate `Odbc`-scoped
-    // aliases that `sf_params_spec` already carries, so the registry would
-    // resolve them on its own. They stay here because
-    // `apply_pre_connection_overrides` writes *canonical* keys (`private_key`,
-    // `private_key_file`, `private_key_password`, `authentication_timeout`) from
-    // SQLSetConnectAttr values before the options reach sf_core; without these
-    // arms the DSN value would still sit under its DSN spelling and the override
-    // would land beside it instead of replacing it. Collapsing the two sources
-    // of truth means teaching that override pass to resolve aliases first — a
-    // separate change.
-    //
-    // `PASSCODEINPASSWORD` is not backed by an alias at all: it lowercases to
-    // the canonical `passcodeInPassword`, so the registry matches it
-    // case-insensitively (that param's `sf_params_spec` comment says explicitly
-    // that no ODBC alias belongs there). The arm only pre-canonicalizes the
-    // spelling in `options`.
-    match upper.as_str() {
-        "PORT" => Some(("port".to_owned(), value.into())),
-        // APPLICATION carries the user-facing app name → CLIENT_ENVIRONMENT.APPLICATION.
-        // CLIENT_APP_ID stays as the wrapper-injected driver name ("ODBC").
-        "APPLICATION" => Some(("application".to_owned(), value.into())),
-        "CRL_MODE" => Some(("CRL_MODE".to_owned(), value.to_uppercase().into())),
-        "CRL_ENABLED" => Some((
-            "CRL_ENABLED".to_owned(),
-            normalize_crl_enabled_value(&value).into(),
-        )),
-        "CLIENT_STORE_TEMPORARY_CREDENTIAL" => {
-            Some(("client_store_temporary_credential".to_owned(), value.into()))
-        }
-        "DISABLE_PARALLEL_USER_PROMPT" => {
-            Some(("disable_parallel_user_prompt".to_owned(), value.into()))
-        }
-        // `AUTHENTICATION_TIMEOUT` is the canonical spelling rather than an
-        // alias, so the catch-all below would forward it uppercased and let the
-        // registry match it case-insensitively. It needs the same
-        // pre-canonicalization as `LOGIN_TIMEOUT` for the reason above: the
-        // caller's DSN value would otherwise sit under `AUTHENTICATION_TIMEOUT`
-        // while `apply_pre_connection_overrides` writes the canonical
-        // `authentication_timeout` for `SQL_ATTR_LOGIN_TIMEOUT`. The two keys
-        // would ride into `connection_set_options` side by side and only
-        // canonicalize there, where the last-writer-wins insert would silently
-        // discard one of them.
-        "AUTHENTICATION_TIMEOUT" | "LOGIN_TIMEOUT" => {
-            Some(("authentication_timeout".to_owned(), value.into()))
-        }
-        "PASSCODEINPASSWORD" => Some(("passcodeInPassword".to_owned(), value.into())),
-        "PRIV_KEY_FILE" => Some(("private_key_file".to_owned(), value.into())),
-        "PRIV_KEY_BASE64" => Some(("private_key".to_owned(), value.into())),
-        "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
-            Some(("private_key_password".to_owned(), value.into()))
-        }
-        // Legacy ODBC's `SecondaryRoles` connection attribute has no separator to
-        // preserve once the connection-string parser uppercases the key, so it
-        // collapses to `SECONDARYROLES` and would otherwise never match the
-        // shared `secondary_roles` parameter.
-        "SECONDARYROLES" => Some(("secondary_roles".to_owned(), value.into())),
-        // Forward other keys (e.g. SERVER, UID, SSL) for `sf_core` alias resolution; do not
-        // pre-canonicalize here to avoid duplicate seed keys.
-        _ => Some((upper, value.into())),
-    }
+    // `CRL_MODE`/`CRL_ENABLED` are `Odbc`-scoped aliases of `crl_check_mode`
+    // (see `sf_params_spec`) but carry legacy value spellings (`CRL_MODE`'s
+    // free-form string, `CRL_ENABLED`'s boolean-ish `1`/`0`/`true`/`false`)
+    // that need remapping onto the `DISABLED`/`ENABLED`/`ADVISORY` tokens
+    // `sf_core` accepts, so they're normalized here before handing off the
+    // canonical key.
+    let value = if def.canonical_name == param_names::CRL_CHECK_MODE.as_str() {
+        normalize_crl_value(&upper, value)
+    } else {
+        value
+    };
+    Some((def.canonical_name.to_owned(), value.into()))
 }
 
 const SF_GLOBAL_SSL_VERSION_ENV: &str = "SF_GLOBAL_SSL_VERSION";
@@ -203,18 +175,26 @@ fn resolve_global_ssl_version(raw: &str) -> Result<Option<&'static str>, String>
     }
 }
 
+/// Remove every option whose key resolves (via the `sf_core` registry, across
+/// aliases and case) to `canonical`, so a subsequent authoritative insert of
+/// `canonical` becomes the single source for that setting.
+///
+/// Because the ODBC wrapper now canonicalizes connection-string keys up front,
+/// the removed key is normally just `canonical` itself; routing the check
+/// through the registry keeps a pre-connection override authoritative no matter
+/// which alias or letter-case the connection string originally used.
+fn remove_options_resolving_to(options: &mut HashMap<String, ConfigSetting>, canonical: &str) {
+    let registry = sf_core::config::param_registry::registry();
+    options.retain(|key, _| registry.canonical_name(key.as_str()) != Some(canonical));
+}
+
 /// Pin both `min_tls_version` and `max_tls_version` to `version`, dropping any
 /// explicit MIN_TLS_VERSION / MAX_TLS_VERSION already present (resolved against
 /// the `sf_core` registry so every alias and case is caught) so the global pin
 /// is the single source of truth.
 fn pin_tls_version(options: &mut HashMap<String, ConfigSetting>, version: &str) {
-    let registry = sf_core::config::param_registry::registry();
-    options.retain(|key, _| {
-        !matches!(
-            registry.resolve(key.as_str()).map(|def| def.canonical_name),
-            Some("min_tls_version") | Some("max_tls_version")
-        )
-    });
+    remove_options_resolving_to(options, "min_tls_version");
+    remove_options_resolving_to(options, "max_tls_version");
     options.insert("min_tls_version".to_owned(), version.to_owned().into());
     options.insert("max_tls_version".to_owned(), version.to_owned().into());
 }
@@ -691,20 +671,24 @@ fn apply_pre_connection_overrides(
     attrs: &HashMap<ConnectionAttribute, String>,
     options: &mut HashMap<String, ConfigSetting>,
 ) {
-    // PrivKeyContent or PrivKeyBase64 → canonical "private_key"
-    // Suppresses connection-string private key sources.
+    // PrivKeyContent or PrivKeyBase64 → canonical "private_key".
+    // Suppresses every connection-string private-key source (both the inline
+    // key and any key file) regardless of the alias/case it arrived under.
     if let Some(content) = attrs.get(&ConnectionAttribute::PrivKeyContent) {
         use base64::{Engine as _, engine::general_purpose};
         let encoded = general_purpose::STANDARD.encode(content.as_bytes());
+        remove_options_resolving_to(options, "private_key");
+        remove_options_resolving_to(options, "private_key_file");
         options.insert("private_key".to_owned(), encoded.into());
-        options.remove("private_key_file");
     } else if let Some(b64) = attrs.get(&ConnectionAttribute::PrivKeyBase64) {
+        remove_options_resolving_to(options, "private_key");
+        remove_options_resolving_to(options, "private_key_file");
         options.insert("private_key".to_owned(), b64.clone().into());
-        options.remove("private_key_file");
     }
 
     // PrivKeyPassword overrides connection-string password keys.
     if let Some(pwd) = attrs.get(&ConnectionAttribute::PrivKeyPassword) {
+        remove_options_resolving_to(options, "private_key_password");
         options.insert("private_key_password".to_owned(), pwd.clone().into());
     }
 
@@ -712,11 +696,13 @@ fn apply_pre_connection_overrides(
     // canonical ``application`` setting. CLIENT_APP_ID stays as the
     // wrapper-injected driver name (matches the old ODBC driver).
     if let Some(app) = attrs.get(&ConnectionAttribute::Application) {
+        remove_options_resolving_to(options, "application");
         options.insert("application".to_owned(), app.clone().into());
     }
 
     // LoginTimeout -> authentication_timeout (matches old driver: used as Okta SAML budget)
     if let Some(timeout) = attrs.get(&ConnectionAttribute::LoginTimeout) {
+        remove_options_resolving_to(options, "authentication_timeout");
         options.insert("authentication_timeout".to_owned(), timeout.clone().into());
     }
 }
@@ -2700,8 +2686,11 @@ mod tests {
             "true".to_owned(),
         )]));
 
-        assert_eq!(config_string(&options, "CRL_ENABLED"), Some("ENABLED"));
-        assert!(!options.contains_key("crl_check_mode"));
+        // CRL_ENABLED is an ODBC alias for the `crl_check_mode` enum: the
+        // wrapper canonicalizes the key and maps the boolean-ish value to the
+        // ENABLED/DISABLED token.
+        assert_eq!(config_string(&options, "crl_check_mode"), Some("ENABLED"));
+        assert!(!options.contains_key("CRL_ENABLED"));
     }
 
     #[test]
@@ -2711,7 +2700,7 @@ mod tests {
             "0".to_owned(),
         )]));
 
-        assert_eq!(config_string(&options, "CRL_ENABLED"), Some("DISABLED"));
+        assert_eq!(config_string(&options, "crl_check_mode"), Some("DISABLED"));
     }
 
     #[test]
@@ -2721,24 +2710,25 @@ mod tests {
             "enabled".to_owned(),
         )]));
 
-        assert_eq!(config_string(&options, "CRL_MODE"), Some("ENABLED"));
+        assert_eq!(config_string(&options, "crl_check_mode"), Some("ENABLED"));
+        assert!(!options.contains_key("CRL_MODE"));
     }
 
     #[test]
-    fn normalize_connection_string_options_forwards_tls_version_keys_for_core_resolution() {
-        // MIN_TLS_VERSION and MAX_TLS_VERSION flow through as UPPERCASE so
-        // sf_core's registry can resolve them (case-insensitive) to the
-        // canonical min_tls_version / max_tls_version names.  Values are
-        // preserved as-is; TlsVersion::parse lowercases before matching.
+    fn normalize_connection_string_options_canonicalizes_tls_version_keys() {
+        // MIN_TLS_VERSION / MAX_TLS_VERSION resolve to their canonical
+        // min_tls_version / max_tls_version names case-insensitively; the
+        // wrapper emits the canonical key. Values are preserved as-is;
+        // TlsVersion::parse lowercases before matching.
         let options = normalize_connection_string_options(HashMap::from([
             ("MIN_TLS_VERSION".to_owned(), "tls12".to_owned()),
             ("MAX_TLS_VERSION".to_owned(), "tls13".to_owned()),
         ]));
 
-        assert_eq!(config_string(&options, "MIN_TLS_VERSION"), Some("tls12"));
-        assert_eq!(config_string(&options, "MAX_TLS_VERSION"), Some("tls13"));
-        assert!(!options.contains_key("min_tls_version"));
-        assert!(!options.contains_key("max_tls_version"));
+        assert_eq!(config_string(&options, "min_tls_version"), Some("tls12"));
+        assert_eq!(config_string(&options, "max_tls_version"), Some("tls13"));
+        assert!(!options.contains_key("MIN_TLS_VERSION"));
+        assert!(!options.contains_key("MAX_TLS_VERSION"));
     }
 
     #[test]
@@ -2799,22 +2789,25 @@ mod tests {
     }
 
     #[test]
-    fn normalize_connection_string_options_forwards_standard_keys_for_core_aliases() {
+    fn normalize_connection_string_options_canonicalizes_standard_keys() {
+        // SERVER / UID are ODBC aliases; the wrapper resolves them to their
+        // canonical host / user names before the RPC.
         let options = normalize_connection_string_options(HashMap::from([
             ("SERVER".to_owned(), "example.com".to_owned()),
             ("UID".to_owned(), "u".to_owned()),
         ]));
 
-        assert_eq!(config_string(&options, "SERVER"), Some("example.com"));
-        assert_eq!(config_string(&options, "UID"), Some("u"));
-        assert!(!options.contains_key("host"));
-        assert!(!options.contains_key("user"));
+        assert_eq!(config_string(&options, "host"), Some("example.com"));
+        assert_eq!(config_string(&options, "user"), Some("u"));
+        assert!(!options.contains_key("SERVER"));
+        assert!(!options.contains_key("UID"));
     }
 
     #[test]
-    fn normalize_connection_string_options_forwards_proxy_keys_for_core_aliases() {
-        // Proxy keys are forwarded UPPERCASE; sf_core's param registry resolves
-        // them to canonical lowercase names via the registered aliases.
+    fn normalize_connection_string_options_canonicalizes_proxy_keys() {
+        // Proxy keys resolve to their canonical lowercase names (via the
+        // registered aliases or a case-insensitive canonical match); the
+        // wrapper emits the canonical key.
         let options = normalize_connection_string_options(HashMap::from([
             ("PROXY_HOST".to_owned(), "p.example.com".to_owned()),
             ("PROXY_PORT".to_owned(), "8080".to_owned()),
@@ -2823,51 +2816,49 @@ mod tests {
             ("NO_PROXY".to_owned(), "internal,*.local".to_owned()),
         ]));
 
-        assert_eq!(config_string(&options, "PROXY_HOST"), Some("p.example.com"));
-        assert_eq!(config_string(&options, "PROXY_PORT"), Some("8080"));
-        assert_eq!(config_string(&options, "PROXY_USER"), Some("puser"));
-        assert_eq!(config_string(&options, "PROXY_PASSWORD"), Some("ppass"));
+        assert_eq!(config_string(&options, "proxy_host"), Some("p.example.com"));
+        assert_eq!(config_string(&options, "proxy_port"), Some("8080"));
+        assert_eq!(config_string(&options, "proxy_user"), Some("puser"));
+        assert_eq!(config_string(&options, "proxy_password"), Some("ppass"));
         assert_eq!(
-            config_string(&options, "NO_PROXY"),
+            config_string(&options, "no_proxy"),
             Some("internal,*.local")
         );
-        // Pre-canonicalisation is the registry's job; ODBC layer does not
-        // emit lowercase canonical keys.
-        assert!(!options.contains_key("proxy_host"));
-        assert!(!options.contains_key("no_proxy"));
+        assert!(!options.contains_key("PROXY_HOST"));
+        assert!(!options.contains_key("NO_PROXY"));
     }
 
     #[test]
-    fn normalize_connection_string_options_passes_through_legacy_proxy_url_form() {
+    fn normalize_connection_string_options_canonicalizes_legacy_proxy_url_form() {
         // Legacy ODBC DSNs use `PROXY=[scheme://][user:pass@]host[:port]`.
-        // sf_core's `ProxyConfig::from_settings` parses the URL.  The ODBC
-        // layer just forwards the value unchanged.
+        // The value (a URL) is forwarded unchanged under the canonical `proxy`
+        // key; sf_core's `ProxyConfig::from_settings` parses the URL.
         let options = normalize_connection_string_options(HashMap::from([(
             "PROXY".to_owned(),
             "http://user:pass@p.example.com:8080".to_owned(),
         )]));
 
         assert_eq!(
-            config_string(&options, "PROXY"),
+            config_string(&options, "proxy"),
             Some("http://user:pass@p.example.com:8080")
         );
     }
 
     #[test]
-    fn normalize_connection_string_options_passes_through_legacy_odbc_proxy_aliases() {
+    fn normalize_connection_string_options_canonicalizes_legacy_odbc_proxy_aliases() {
         // Legacy ODBC's proxy DSN keys are `NO_PROXY` / `ProxyWithEnv` /
-        // `AllowEmptyProxy` (`Snowflake.h`). They flow through as UPPERCASE and
-        // sf_core resolves them: `NO_PROXY` matches the canonical `no_proxy`
-        // case-insensitively, the other two via `Odbc`-scoped aliases. The
-        // separator-less `NOPROXY` was UD-only leniency and is no longer accepted.
+        // `AllowEmptyProxy` (`Snowflake.h`); the wrapper resolves each to its
+        // canonical name — `NO_PROXY` by case-insensitive canonical match, the
+        // other two via `Odbc`-scoped aliases. The separator-less `NOPROXY` was
+        // UD-only leniency and is no longer accepted.
         let options = normalize_connection_string_options(HashMap::from([
             ("NO_PROXY".to_owned(), "*.corp".to_owned()),
             ("PROXYWITHENV".to_owned(), "true".to_owned()),
             ("ALLOWEMPTYPROXY".to_owned(), "false".to_owned()),
         ]));
-        assert_eq!(config_string(&options, "NO_PROXY"), Some("*.corp"));
-        assert_eq!(config_string(&options, "PROXYWITHENV"), Some("true"));
-        assert_eq!(config_string(&options, "ALLOWEMPTYPROXY"), Some("false"));
+        assert_eq!(config_string(&options, "no_proxy"), Some("*.corp"));
+        assert_eq!(config_string(&options, "use_proxy_env"), Some("true"));
+        assert_eq!(config_string(&options, "allow_empty_proxy"), Some("false"));
     }
 
     #[test]
@@ -2973,23 +2964,39 @@ mod tests {
         );
     }
 
-    /// Belt-and-braces: every OAuth key declared in `oauth::ALL_OAUTH_KEYS`
-    /// must round-trip through `normalize_connection_string_options` to its
-    /// `sf_core` canonical lowercase name. Picks a plausible
-    /// non-secret string value for every key so the assertion is uniform.
+    /// The OAuth connection-string keys the ODBC wrapper recognises, derived
+    /// from the shared registry: every canonical parameter under the `oauth_`
+    /// prefix, rendered in its SCREAMING_SNAKE DSN spelling. OAuth key metadata
+    /// now lives in the registry, so there is no hand-maintained wrapper-side
+    /// list to iterate.
+    fn oauth_odbc_keys() -> Vec<String> {
+        sf_core::config::param_registry::registry()
+            .all_params()
+            .iter()
+            .filter(|p| p.canonical_name.starts_with("oauth_"))
+            .map(|p| p.canonical_name.to_ascii_uppercase())
+            .collect()
+    }
+
+    /// Belt-and-braces: every OAuth key must round-trip through
+    /// `normalize_connection_string_options` to its `sf_core` canonical
+    /// lowercase name. Picks a plausible non-secret string value for every key
+    /// so the assertion is uniform.
     #[test]
     fn normalize_connection_string_options_canonicalizes_every_oauth_key() {
+        let registry = sf_core::config::param_registry::registry();
         let mut input: HashMap<String, String> = HashMap::new();
-        for &key in oauth::ALL_OAUTH_KEYS {
+        for key in oauth_odbc_keys() {
             // Use the key name itself as the value: makes any leak
             // immediately greppable, and keeps every key distinct in
             // the resulting options map.
-            input.insert(key.to_owned(), format!("v-for-{key}"));
+            input.insert(key.clone(), format!("v-for-{key}"));
         }
         let options = normalize_connection_string_options(input);
 
-        for &key in oauth::ALL_OAUTH_KEYS {
-            let canonical = oauth::canonical_name(key)
+        for key in oauth_odbc_keys() {
+            let canonical = registry
+                .canonical_name_for(Wrapper::Odbc, &key)
                 .unwrap_or_else(|| panic!("missing canonical name for {key}"));
             assert_eq!(
                 config_string(&options, canonical),
@@ -2997,7 +3004,7 @@ mod tests {
                 "{key} did not round-trip to {canonical}"
             );
             assert!(
-                !options.contains_key(key),
+                !options.contains_key(&key),
                 "{key} should not survive as the SCREAMING_SNAKE form"
             );
         }
@@ -3008,10 +3015,11 @@ mod tests {
     /// `sf_core` parameter name as the SCREAMING_SNAKE form.
     #[test]
     fn normalize_connection_string_options_oauth_keys_are_case_insensitive() {
-        for &key in oauth::ALL_OAUTH_KEYS {
-            let canonical = oauth::canonical_name(key).unwrap();
+        let registry = sf_core::config::param_registry::registry();
+        for key in oauth_odbc_keys() {
+            let canonical = registry.canonical_name_for(Wrapper::Odbc, &key).unwrap();
             for variant in [
-                key.to_owned(),
+                key.clone(),
                 key.to_lowercase(),
                 key.chars()
                     .enumerate()
@@ -3056,31 +3064,13 @@ mod tests {
         ]));
 
         assert_eq!(config_string(&options, "port"), Some("9000"));
-        assert_eq!(config_string(&options, "CRL_ENABLED"), Some("ENABLED"));
+        assert_eq!(config_string(&options, "crl_check_mode"), Some("ENABLED"));
         assert_eq!(config_string(&options, "oauth_client_id"), Some("abc"));
         assert_eq!(
             config_string(&options, "client_store_temporary_credential"),
             Some("true")
         );
         assert_eq!(config_string(&options, "oauth_disable_pkce"), Some("true"));
-    }
-
-    /// Wiring guard: every OAuth key forwarded by the wrapper must be
-    /// resolvable by `sf_core::config::param_registry` to its
-    /// canonical lowercase name. Catches accidental drift between the
-    /// ODBC-side `oauth::canonical_name` map and the sf_core
-    /// `param_registry` aliases.
-    #[test]
-    fn every_oauth_canonical_name_is_known_to_sf_core_param_registry() {
-        let registry = sf_core::config::param_registry::registry();
-        for &key in oauth::ALL_OAUTH_KEYS {
-            let canonical = oauth::canonical_name(key).unwrap();
-            assert!(
-                registry.is_known(canonical),
-                "sf_core param_registry does not know {canonical} (from ODBC key {key}); \
-                 ODBC and sf_core OAuth canonicals are out of sync"
-            );
-        }
     }
 
     /// Wiring guard for `connect_with_params` redaction: building the
@@ -3143,7 +3133,7 @@ mod tests {
         let options = normalize_connection_string_options(parsed);
 
         assert_eq!(
-            config_string(&options, "AUTHENTICATOR"),
+            config_string(&options, "authenticator"),
             Some("OAUTH_AUTHORIZATION_CODE")
         );
         assert_eq!(config_string(&options, "oauth_client_id"), Some("cid-1"));
@@ -3216,11 +3206,11 @@ mod tests {
         let parsed = parse_connection_string(conn_str).expect("parse OK");
         let options = normalize_connection_string_options(parsed);
 
-        assert_eq!(config_string(&options, "SERVER"), Some("h"));
-        assert_eq!(config_string(&options, "UID"), Some("joe"));
-        assert_eq!(config_string(&options, "PWD"), Some("p"));
+        assert_eq!(config_string(&options, "host"), Some("h"));
+        assert_eq!(config_string(&options, "user"), Some("joe"));
+        assert_eq!(config_string(&options, "password"), Some("p"));
         assert_eq!(
-            config_string(&options, "AUTHENTICATOR"),
+            config_string(&options, "authenticator"),
             Some("SNOWFLAKE_JWT")
         );
     }
@@ -3244,27 +3234,45 @@ mod tests {
             Some("****")
         );
         let options = normalize_connection_string_options(raw_params);
-        assert_eq!(config_string(&options, "TOKEN"), Some("header.payload.sig"));
-        assert_eq!(config_string(&options, "AUTHENTICATOR"), Some("OAUTH"));
+        assert_eq!(config_string(&options, "token"), Some("header.payload.sig"));
+        assert_eq!(config_string(&options, "authenticator"), Some("OAUTH"));
     }
 
     #[test]
     fn normalize_connection_string_options_preserves_unrecognized_keys() {
+        // A key unknown to the registry (e.g. a Snowflake server session
+        // parameter) is forwarded uppercased and verbatim, so core can pass it
+        // through as a session/unknown parameter.
+        let options = normalize_connection_string_options(HashMap::from([(
+            "SOME_UNKNOWN_SESSION_PARAM".to_owned(),
+            "from-odbc".to_owned(),
+        )]));
+
+        assert_eq!(
+            config_string(&options, "SOME_UNKNOWN_SESSION_PARAM"),
+            Some("from-odbc")
+        );
+    }
+
+    #[test]
+    fn normalize_connection_string_options_canonicalizes_known_query_tag() {
+        // QUERY_TAG is a canonical parameter, so it resolves and is emitted
+        // under its canonical lowercase name (not forwarded uppercased).
         let options = normalize_connection_string_options(HashMap::from([(
             "QUERY_TAG".to_owned(),
             "from-odbc".to_owned(),
         )]));
 
-        assert_eq!(config_string(&options, "QUERY_TAG"), Some("from-odbc"));
+        assert_eq!(config_string(&options, "query_tag"), Some("from-odbc"));
+        assert!(!options.contains_key("QUERY_TAG"));
     }
 
-    /// Connection diagnostic params (SNOW-3864169) have no explicit mapping in
-    /// `normalize_connection_string_option`, so they fall through to the
-    /// generic uppercase passthrough — same path as `QUERY_TAG` above. This
-    /// pins that they survive normalization unmodified rather than being
-    /// dropped.
+    /// Connection diagnostic params (SNOW-3864169) are canonical registry
+    /// parameters, so the wrapper resolves them to their canonical lowercase
+    /// names. This pins that they survive normalization (under the canonical
+    /// key) rather than being dropped.
     #[test]
-    fn normalize_connection_string_options_forwards_connection_diag_keys() {
+    fn normalize_connection_string_options_canonicalizes_connection_diag_keys() {
         let options = normalize_connection_string_options(HashMap::from([
             ("ENABLE_CONNECTION_DIAG".to_owned(), "true".to_owned()),
             (
@@ -3278,15 +3286,15 @@ mod tests {
         ]));
 
         assert_eq!(
-            config_string(&options, "ENABLE_CONNECTION_DIAG"),
+            config_string(&options, "enable_connection_diag"),
             Some("true")
         );
         assert_eq!(
-            config_string(&options, "CONNECTION_DIAG_LOG_PATH"),
+            config_string(&options, "connection_diag_log_path"),
             Some("/var/log/sfdiag")
         );
         assert_eq!(
-            config_string(&options, "CONNECTION_DIAG_ALLOWLIST_PATH"),
+            config_string(&options, "connection_diag_allowlist_path"),
             Some("/var/snowflake/allowlist.json")
         );
     }
