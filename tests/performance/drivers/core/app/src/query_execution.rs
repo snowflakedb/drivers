@@ -158,7 +158,10 @@ fn assert_nonzero_row_count(count: usize) -> Result<()> {
     Ok(())
 }
 
-fn execute_iteration(rt: &DriverRuntime, stmt_handle: StatementHandle) -> Result<IterationResult> {
+pub(crate) fn execute_iteration(
+    rt: &DriverRuntime,
+    stmt_handle: StatementHandle,
+) -> Result<IterationResult> {
     use crate::resource_monitor::{get_peak_rss_mb, process_cpu_seconds};
 
     let start_query = Instant::now();

@@ -1,6 +1,7 @@
 //! Core Performance Test Driver
 
 mod arrow;
+mod cold_start;
 mod config;
 mod connection;
 mod put_execution;
@@ -40,6 +41,10 @@ fn run() -> Result<()> {
 
     let config = TestConfig::from_env()?;
 
+    if config.test_type == TestType::ColdStart {
+        return cold_start::run_cold_start(&config);
+    }
+
     let rt = DriverRuntime::new();
 
     let db_handle =
@@ -68,6 +73,7 @@ fn run() -> Result<()> {
             config.iterations,
             &config.test_name,
         )?,
+        TestType::ColdStart => unreachable!("cold start returns before this match"),
         TestType::PutGet => execute_put_get_test(
             &rt,
             conn_handle,

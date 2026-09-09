@@ -44,6 +44,21 @@ final class Results {
     return file;
   }
 
+  static Path writeColdStartCsv(List<String> rows, String testName, String driverType)
+      throws IOException {
+    Path dir = testDir(testName, driverType);
+    Files.createDirectories(dir);
+    Path file = dir.resolve(testName + "_jdbc_" + driverType + "_" + epochSeconds() + ".csv");
+    try (Writer w = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
+      w.write("timestamp_ms,e2e_s,connect_s,select1_s,cpu_time_s,peak_rss_mb\n");
+      for (String row : rows) {
+        w.write(row);
+        w.write("\n");
+      }
+    }
+    return file;
+  }
+
   static Path writePutGetCsvResults(
       List<PutExecution.IterationResult> results, String testName, String driverType)
       throws IOException {
