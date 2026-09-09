@@ -1,8 +1,9 @@
 //! Arrow-array decoding helpers shared across [`super::column_reader::ColumnReader`] arms.
 
 use super::js_cell::JsCell;
-use arrow::array::Array;
-use arrow::datatypes::Field;
+use arrow::array::{Array, Decimal128Array, Int8Array, Int16Array, Int32Array, Int64Array};
+use arrow::datatypes::{DataType, Field};
+use sf_types::{ReadArrowError, ReadArrowType, SnowflakeFixed};
 
 /// Returns [`JsCell::Null`] when the Arrow cell is null so each reader arm
 /// only needs to describe the non-null case.
@@ -40,6 +41,51 @@ pub(super) fn downcast_array<T: Array + Clone + 'static>(
         .downcast_ref::<T>()
         .cloned()
         .ok_or_else(|| format!("Arrow column could not be downcast to {target}"))
+}
+
+/// A Snowflake integer column kept on the physical Arrow width the server sent,
+/// widened to `i128` only when a cell is read. The FIXED mantissa,
+/// `INTERVAL_YEAR_MONTH` month count, and `INTERVAL_DAY_TIME` nanosecond count
+/// share this representation: all three arrive as a single signed integer whose
+/// width varies with magnitude, and differ only in how the widened value is
+/// rendered downstream.
+pub(super) enum IntColumn {
+    I8(Int8Array),
+    I16(Int16Array),
+    I32(Int32Array),
+    I64(Int64Array),
+    Decimal(Decimal128Array),
+}
+
+impl IntColumn {
+    pub(super) fn from_column(
+        column: &dyn Array,
+        logical_type: &str,
+        column_name: &str,
+    ) -> Result<Self, String> {
+        Ok(match column.data_type() {
+            DataType::Int8 => Self::I8(downcast_array(column, "Int8Array")?),
+            DataType::Int16 => Self::I16(downcast_array(column, "Int16Array")?),
+            DataType::Int32 => Self::I32(downcast_array(column, "Int32Array")?),
+            DataType::Int64 => Self::I64(downcast_array(column, "Int64Array")?),
+            DataType::Decimal128(_, _) => Self::Decimal(downcast_array(column, "Decimal128Array")?),
+            other => {
+                return Err(format!(
+                    "{logical_type} column {column_name:?} has unsupported Arrow type {other}"
+                ));
+            }
+        })
+    }
+
+    pub(super) fn get(&self, row_index: usize) -> Result<i128, ReadArrowError> {
+        match self {
+            Self::I8(array) => SnowflakeFixed.read_arrow_type(array, row_index),
+            Self::I16(array) => SnowflakeFixed.read_arrow_type(array, row_index),
+            Self::I32(array) => SnowflakeFixed.read_arrow_type(array, row_index),
+            Self::I64(array) => SnowflakeFixed.read_arrow_type(array, row_index),
+            Self::Decimal(array) => SnowflakeFixed.read_arrow_type(array, row_index),
+        }
+    }
 }
 
 pub(super) fn scale_from_metadata(field: &Field) -> Result<u32, String> {
