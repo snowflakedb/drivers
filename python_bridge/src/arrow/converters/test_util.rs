@@ -1,5 +1,7 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyByteArray, PyDate, PyDateAccess, PyFloat, PyInt, PyString};
+use pyo3::types::{
+    PyBool, PyByteArray, PyDate, PyDateAccess, PyFloat, PyInt, PyString, PyTime, PyTimeAccess,
+};
 
 pub(crate) fn assert_py_bool(value: &Bound<'_, PyAny>, expected: bool) {
     assert!(
@@ -70,5 +72,29 @@ pub(crate) fn assert_py_date(value: &Bound<'_, PyAny>, year: i32, month: u8, day
     assert_eq!(
         (date.get_year(), date.get_month(), date.get_day()),
         (year, month, day)
+    );
+}
+
+pub(crate) fn assert_py_time(
+    value: &Bound<'_, PyAny>,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    microsecond: u32,
+) {
+    assert!(
+        value.is_instance_of::<PyTime>(),
+        "expected datetime.time, got {}",
+        value.get_type().name().unwrap()
+    );
+    let time = value.cast::<PyTime>().unwrap();
+    assert_eq!(
+        (
+            time.get_hour(),
+            time.get_minute(),
+            time.get_second(),
+            time.get_microsecond()
+        ),
+        (hour, minute, second, microsecond)
     );
 }
