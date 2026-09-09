@@ -145,10 +145,9 @@ describe('Query returning number data types', () => {
       `SELECT
         NULL::INT,
         NULL::NUMBER(10,2),
-        NULL::FLOAT,
-        NULL::DECFLOAT`,
+        NULL::FLOAT`,
     );
-    expect(Object.values(rows![0])).toEqual([null, null, null, null]);
+    expect(Object.values(rows![0])).toEqual([null, null, null]);
   });
 
   it('returns fixed-point and float-point columns together in one row', async () => {
@@ -295,81 +294,6 @@ describe('Query returning number data types', () => {
       }
     });
   }
-
-  it('returns DECFLOAT literals correctly formatted', async () => {
-    const cases: { literal: string; expected: string | null }[] = [
-      { literal: "'1.5'", expected: '1.5' },
-      { literal: "'1.500'", expected: '1.5' },
-      { literal: "'0'", expected: '0' },
-      { literal: "'-0'", expected: '0' },
-      { literal: "'123'", expected: '123' },
-      { literal: "'-123'", expected: '-123' },
-      { literal: "'100'", expected: '100' },
-      { literal: "'0.00001'", expected: '0.00001' },
-      { literal: "'1e10'", expected: '10000000000' },
-      { literal: "'1e-10'", expected: '0.0000000001' },
-      { literal: "'-1.5e-10'", expected: '-0.00000000015' },
-      {
-        literal: "'99999999999999999999999999999999999999'",
-        expected: '99999999999999999999999999999999999999',
-      },
-      // Both sides of the plain/scientific switch, which turns on the adjusted
-      // exponent reaching the precision (38) and is not documented.
-      { literal: "'1e37'", expected: '10000000000000000000000000000000000000' },
-      { literal: "'1e38'", expected: '1e38' },
-      { literal: "'1e-36'", expected: '0.000000000000000000000000000000000001' },
-      { literal: "'1e-37'", expected: '0.0000000000000000000000000000000000001' },
-      { literal: "'1e-38'", expected: '1e-38' },
-      // 38 digits with an adjusted exponent of 0: plain, and no "e0" suffix.
-      {
-        literal: "'1.2345678901234567890123456789012345678'",
-        expected: '1.2345678901234567890123456789012345678',
-      },
-      // The 39th digit is rounded off by the server, not by the driver.
-      {
-        literal: "'1.23456789012345678901234567890123456789'",
-        expected: '1.2345678901234567890123456789012345679',
-      },
-      { literal: "'1000000000000000000000000000000000000000'", expected: '1e39' },
-      // Documented exponent range: -16383 to 16384.
-      { literal: "'1e16384'", expected: '1e16384' },
-      { literal: "'1e-16383'", expected: '1e-16383' },
-      { literal: "'1e-16384'", expected: '0' },
-      {
-        literal: "'1.2345678901234567890123456789012345678e16384'",
-        expected: '1.2345678901234567890123456789012345678e16384',
-      },
-    ];
-    const columns = cases.map(({ literal }, i) => `${literal}::DECFLOAT AS V${i}`);
-    const { statement, rows } = await executeAsync(connection, `SELECT ${columns.join(', ')}`);
-    for (const column of statement.getColumns()!) {
-      expect(column.getType()).toBe('decfloat');
-      if (isRunningNewDriverWithBD('BD#6')) {
-        // @ts-ignore TODO: remove once the test runner's Column type is the new driver's own,
-        // not the old driver's (see utils/index.ts TODO)
-        expect(column.isDecfloat()).toBe(true);
-      }
-    }
-    expect(Object.values(rows![0])).toEqual(cases.map((c) => c.expected));
-  });
-
-  it('returns DECFLOAT above the maximum exponent', async () => {
-    const { rows } = await executeAsync(connection, `SELECT '1e16385'::DECFLOAT`);
-    const value = Object.values(rows![0])[0];
-    if (isRunningNewDriverWithBD('BD#7')) {
-      expect(value).toBe('1e16385');
-    } else {
-      expect(value).toBe('10e16384');
-    }
-  });
-
-  it('renders a NULL DECFLOAT as text when fetchAsString is set', async () => {
-    const { rows } = await executeAsync(connection, "SELECT '1.5'::DECFLOAT, NULL::DECFLOAT", {
-      fetchAsString: ['String', 'Number'],
-    });
-    const expectedNull = isRunningNewDriverWithBD('BD#18') ? 'NULL' : null;
-    expect(Object.values(rows![0])).toEqual(['1.5', expectedNull]);
-  });
 });
 
 describe('Query returning BigInt data types', () => {

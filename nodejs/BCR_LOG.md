@@ -44,6 +44,13 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 
 TIME is a clock (`14:45:30`), not a date. The old format converter has no `MMMM` tag; it maps `MM` twice, so `MMMM` becomes moment `MMMM` (full month). Formatting TIME then prints `January` because the old driver uses Unix epoch as a fake calendar. The new TIME renderer currently copies that. Investigate whether date tokens on TIME (especially `MMMM`) should keep emitting epoch or stop pretending TIME has a month.
 
+## Known bugs in both drivers
+
+- Binding `"42.0"` to a DECFLOAT column returns `"42"`, dropping the trailing zero. The
+  `decfloat.feature` "should select decfloat using parameter binding" scenario specifies
+  `42.0` as the returned value, so both drivers deviate from the shared spec; the tests
+  assert the observed `"42"` and cite this entry.
+
 ## Future Breaking Changes (BCRs)
 
 These are potential improvements to consider after the UD release:
