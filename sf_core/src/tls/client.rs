@@ -12,6 +12,12 @@ use snafu::ResultExt;
 use std::sync::Arc;
 use std::time::Duration;
 
+enum RootCertificates {
+    Default,
+    Custom(Vec<u8>),
+    Extra(Vec<u8>),
+}
+
 /// Create a reqwest Client with TLS configuration
 ///
 /// This is the main entry point for creating HTTP clients in the application.
@@ -68,15 +74,7 @@ pub(crate) fn build_tls_client_and_rustls_config(
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let protocol_versions = tls_config.versions.enabled_rustls_versions();
 
-    let custom_pem = if let Some(pem_path) = tls_config.custom_root_store_path.as_ref() {
-        tracing::debug!(
-            "Loading custom root certificate store from: {}",
-            pem_path.display()
-        );
-        Some(std::fs::read(pem_path).context(PemParseSnafu)?)
-    } else {
-        None
-    };
+    let root_certificates = load_root_certificates(tls_config)?;
 
     match tls_config.crl_config.check_mode {
         CertRevocationCheckMode::Disabled => {
@@ -84,16 +82,10 @@ pub(crate) fn build_tls_client_and_rustls_config(
                 configure_http_client(Client::builder(), proxy)?,
                 tls_config,
             );
-            if let Some(ref pem) = custom_pem {
-                tracing::debug!("CRL disabled, applying custom root store");
-                let certs = reqwest::Certificate::from_pem_bundle(pem).context(ClientBuildSnafu)?;
-                builder = builder.tls_built_in_root_certs(false);
-                for cert in certs {
-                    builder = builder.add_root_certificate(cert);
-                }
-            } else {
+            if matches!(root_certificates, RootCertificates::Default) {
                 tracing::debug!("CRL disabled, using default system roots");
             }
+            builder = apply_reqwest_root_certificates(builder, &root_certificates)?;
             if !tls_config.verify_hostname {
                 tracing::warn!("Hostname verification disabled");
                 builder = builder.danger_accept_invalid_hostnames(true);
@@ -103,7 +95,7 @@ pub(crate) fn build_tls_client_and_rustls_config(
             }
             let client = builder.build().context(ClientBuildSnafu)?;
             let rustls_cfg = Arc::new(build_plain_rustls_client_config(
-                custom_pem.as_deref(),
+                &root_certificates,
                 &protocol_versions,
             )?);
             Ok((client, rustls_cfg))
@@ -116,13 +108,10 @@ pub(crate) fn build_tls_client_and_rustls_config(
             // `crl_config` into the builder. reqwest's min/max_tls_version are
             // ignored on the preconfigured-rustls path, so the window must be
             // baked into the rustls ClientConfig instead.
-            let custom_root_store = match &custom_pem {
-                Some(pem) => Some(create_root_store_from_pem(pem)?),
-                None => None,
-            };
+            let root_store_override = root_store_for_crl(&root_certificates)?;
             let reqwest_rustls_cfg = build_crl_rustls_config(
                 tls_config.crl_config.clone(),
-                custom_root_store,
+                root_store_override,
                 tls_config.verify_hostname,
                 &protocol_versions,
                 crl_worker,
@@ -138,7 +127,7 @@ pub(crate) fn build_tls_client_and_rustls_config(
             // the cert chain even when CRL endpoints are unreachable or slow —
             // which is exactly when a user reaches for the diagnostic tool.
             let diag_rustls_cfg = Arc::new(build_plain_rustls_client_config(
-                custom_pem.as_deref(),
+                &root_certificates,
                 &protocol_versions,
             )?);
             Ok((client, diag_rustls_cfg))
@@ -204,26 +193,12 @@ pub(crate) fn configure_tls_builder(
 
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    let custom_pem = if let Some(pem_path) = tls_config.custom_root_store_path.as_ref() {
-        tracing::debug!(
-            "Loading custom root certificate store from: {}",
-            pem_path.display()
-        );
-        Some(std::fs::read(pem_path).context(PemParseSnafu)?)
-    } else {
-        None
-    };
+    let root_certificates = load_root_certificates(tls_config)?;
 
     match tls_config.crl_config.check_mode {
         CertRevocationCheckMode::Disabled => {
             let mut b = apply_reqwest_tls_versions(builder, tls_config);
-            if let Some(ref pem) = custom_pem {
-                let certs = reqwest::Certificate::from_pem_bundle(pem).context(ClientBuildSnafu)?;
-                b = b.tls_built_in_root_certs(false);
-                for cert in certs {
-                    b = b.add_root_certificate(cert);
-                }
-            }
+            b = apply_reqwest_root_certificates(b, &root_certificates)?;
             if !tls_config.verify_hostname {
                 b = b.danger_accept_invalid_hostnames(true);
             }
@@ -232,13 +207,10 @@ pub(crate) fn configure_tls_builder(
         CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
             tracing::debug!("CRL validation enabled, configuring storage TLS client");
             let protocol_versions = tls_config.versions.enabled_rustls_versions();
-            let custom_root_store = match custom_pem {
-                Some(pem) => Some(create_root_store_from_pem(&pem)?),
-                None => None,
-            };
+            let root_store_override = root_store_for_crl(&root_certificates)?;
             let rustls_cfg = build_crl_rustls_config(
                 tls_config.crl_config.clone(),
-                custom_root_store,
+                root_store_override,
                 tls_config.verify_hostname,
                 &protocol_versions,
                 crl_worker,
@@ -253,7 +225,7 @@ pub(crate) fn configure_tls_builder(
 /// [`build_tls_client_and_rustls_config`] (connection-level client).
 fn build_crl_rustls_config(
     crl_config: CrlConfig,
-    custom_root_store: Option<rustls::RootCertStore>,
+    root_store_override: Option<rustls::RootCertStore>,
     verify_hostname: bool,
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
     crl_worker: SharedCrlWorker,
@@ -263,7 +235,7 @@ fn build_crl_rustls_config(
     }
     let crl_verifier = CrlServerCertVerifier::new_with_root_store(
         crl_config,
-        custom_root_store,
+        root_store_override,
         verify_hostname,
         crl_worker,
     )
@@ -281,22 +253,15 @@ fn build_crl_rustls_config(
         .with_no_client_auth())
 }
 
-/// Build a plain rustls [`ClientConfig`] (no CRL verifier) from system roots or
-/// a custom PEM bundle.  Used by [`build_tls_client_and_rustls_config`] (CRL-disabled
-/// branch).
+/// Build a plain rustls [`ClientConfig`] (no CRL verifier) from the configured roots.
 fn build_plain_rustls_client_config(
-    custom_pem: Option<&[u8]>,
+    root_certificates: &RootCertificates,
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
 ) -> Result<rustls::ClientConfig, TlsError> {
-    let root_store = match custom_pem {
-        Some(pem) => create_root_store_from_pem(pem)?,
-        None => {
-            let mut native = rustls_native_certs::load_native_certs();
-            native.errors.clear();
-            let mut store = rustls::RootCertStore::empty();
-            store.add_parsable_certificates(native.certs);
-            store
-        }
+    let root_store = match root_certificates {
+        RootCertificates::Default => create_native_root_store(),
+        RootCertificates::Custom(pem) => create_root_store_from_pem(pem)?,
+        RootCertificates::Extra(pem) => create_extended_root_store(pem)?,
     };
     let builder = if protocol_versions.is_empty() {
         rustls::ClientConfig::builder()
@@ -393,16 +358,102 @@ pub fn create_root_store_from_pem(pem_data: &[u8]) -> Result<rustls::RootCertSto
     let certs = rustls_pemfile::certs(&mut cursor)
         .collect::<Result<Vec<_>, _>>()
         .context(PemParseSnafu)?;
-    if certs.is_empty() {
-        return Err(TlsError::PemParse {
-            source: std::io::Error::new(std::io::ErrorKind::InvalidData, "no certs in PEM"),
-            location: snafu::Location::new(file!(), line!(), 0),
-        });
-    }
+    ensure_pem_not_empty(&certs)?;
     for cert in certs {
         root_store.add(cert).context(RootStoreAddSnafu)?;
     }
     Ok(root_store)
+}
+
+fn load_root_certificates(tls_config: &TlsConfig) -> Result<RootCertificates, TlsError> {
+    if let Some(pem_path) = tls_config.custom_root_store_path.as_ref() {
+        if let Some(extra_path) = tls_config.extra_root_store_path.as_ref() {
+            tracing::warn!(
+                custom_root_store_path = %pem_path.display(),
+                extra_root_store_path = %extra_path.display(),
+                "extra_root_store_path is ignored because custom_root_store_path is set"
+            );
+        }
+        tracing::debug!(
+            path = %pem_path.display(),
+            "loading custom root certificate store"
+        );
+        return Ok(RootCertificates::Custom(
+            std::fs::read(pem_path).context(PemParseSnafu)?,
+        ));
+    }
+    if let Some(pem_path) = tls_config.extra_root_store_path.as_ref() {
+        tracing::debug!(
+            path = %pem_path.display(),
+            "loading extra root certificates"
+        );
+        return Ok(RootCertificates::Extra(
+            std::fs::read(pem_path).context(PemParseSnafu)?,
+        ));
+    }
+    Ok(RootCertificates::Default)
+}
+
+fn apply_reqwest_root_certificates(
+    builder: ClientBuilder,
+    root_certificates: &RootCertificates,
+) -> Result<ClientBuilder, TlsError> {
+    match root_certificates {
+        RootCertificates::Default => Ok(builder),
+        RootCertificates::Custom(pem) => {
+            add_reqwest_pem_roots(builder.tls_built_in_root_certs(false), pem)
+        }
+        RootCertificates::Extra(pem) => add_reqwest_pem_roots(builder, pem),
+    }
+}
+
+fn add_reqwest_pem_roots(
+    mut builder: ClientBuilder,
+    pem: &[u8],
+) -> Result<ClientBuilder, TlsError> {
+    let certs = reqwest::Certificate::from_pem_bundle(pem).context(ClientBuildSnafu)?;
+    ensure_pem_not_empty(&certs)?;
+    for cert in certs {
+        builder = builder.add_root_certificate(cert);
+    }
+    Ok(builder)
+}
+
+fn root_store_for_crl(
+    root_certificates: &RootCertificates,
+) -> Result<Option<rustls::RootCertStore>, TlsError> {
+    match root_certificates {
+        RootCertificates::Default => Ok(None),
+        RootCertificates::Custom(pem) => create_root_store_from_pem(pem).map(Some),
+        RootCertificates::Extra(pem) => create_extended_root_store(pem).map(Some),
+    }
+}
+
+fn create_extended_root_store(pem_data: &[u8]) -> Result<rustls::RootCertStore, TlsError> {
+    let extra = create_root_store_from_pem(pem_data)?;
+    let mut root_store = create_native_root_store();
+    root_store.extend(extra.roots);
+    Ok(root_store)
+}
+
+fn create_native_root_store() -> rustls::RootCertStore {
+    let mut native = rustls_native_certs::load_native_certs();
+    native.errors.clear();
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.add_parsable_certificates(native.certs);
+    root_store
+}
+
+fn ensure_pem_not_empty<T>(certs: &[T]) -> Result<(), TlsError> {
+    if certs.is_empty() {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "no certs in PEM",
+        ))
+        .context(PemParseSnafu)
+    } else {
+        Ok(())
+    }
 }
 
 fn configure_http_client(
@@ -503,6 +554,7 @@ fn build_proxy_url(host: &str, proxy: &ProxyConfig) -> String {
 mod tests {
     use super::*;
     use crate::sensitive::SensitiveString;
+    use std::io::Write;
 
     fn proxy(
         host: Option<&str>,
@@ -517,6 +569,41 @@ mod tests {
             password: password.map(|s| SensitiveString::from(s.to_string())),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn should_prefer_custom_root_store_over_extra_root_store() {
+        let mut custom = tempfile::NamedTempFile::new().expect("custom PEM file");
+        custom.write_all(b"custom").expect("write custom PEM");
+        let mut extra = tempfile::NamedTempFile::new().expect("extra PEM file");
+        extra.write_all(b"extra").expect("write extra PEM");
+        let config = TlsConfig {
+            custom_root_store_path: Some(custom.path().to_path_buf()),
+            extra_root_store_path: Some(extra.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let roots = load_root_certificates(&config).expect("load roots");
+
+        assert!(matches!(roots, RootCertificates::Custom(pem) if pem == b"custom"));
+    }
+
+    #[test]
+    fn should_reject_empty_extra_root_store() {
+        let extra = tempfile::NamedTempFile::new().expect("extra PEM file");
+        let config = TlsConfig {
+            extra_root_store_path: Some(extra.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let result = configure_tls_builder(
+            Client::builder(),
+            &config,
+            None,
+            crate::crl::CrlWorker::shared_lazy(),
+        );
+
+        assert!(matches!(result, Err(TlsError::PemParse { .. })));
     }
 
     #[test]

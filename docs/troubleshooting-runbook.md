@@ -127,7 +127,9 @@ be set in a `connections.toml` profile — see
 **Trust store.** By default the driver uses the OS root certificate store. To
 override it, set `custom_root_store_path` to a PEM file of trusted roots (also
 accepted as `TLS_CUSTOM_ROOT_STORE_PATH` / `tls_custom_root_store_path`) — this
-**replaces** the system roots for that connection. To verify what you trust:
+**replaces** the system roots for that connection. To retain the system roots
+and add certificates from a PEM file, set `extra_root_store_path`. If both are
+set, `custom_root_store_path` takes precedence. To verify what you trust:
 inspect/list the PEM for a custom store, or use the OS trust-store tools for the
 system store. The diagnosis report ([§2.5](#25-reading-the-report)) prints the
 **server** certificate chain (subject, issuer, validity) so you can check it

@@ -4,6 +4,7 @@
 
 New features:
 
+- Added an `extra_root_store_path` connection parameter that extends the default TLS root store with certificates from a PEM bundle while preserving `custom_root_store_path` replacement behavior. (snowflakedb/drivers#1827)
 - Added `retryReason` to retried query requests, carrying the HTTP status code that triggered the retry (e.g. `retryReason=503`) or `0` for transport-level failures such as connection resets. The parameter is enabled by default alongside the existing `retryCount`; set `include_retry_reason` to `false` on the connection to suppress it. Non-query endpoints (login, token refresh) carry neither parameter. (snowflakedb/drivers#TBD)
 - Restored the `workload_identity_aws_use_outbound_token` connection parameter for AWS Workload Identity Federation. When set to true, attestation uses outbound STS `GetWebIdentityToken` instead of the default pre-signed `GetCallerIdentity` token; the connection parameter takes precedence over `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN`. (snowflakedb/drivers#1551)
 - Added native AKS Workload Identity support for Azure: when the Azure Workload Identity webhook injects `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_FEDERATED_TOKEN_FILE` into a pod and the projected token file exists on disk, `workload_identity_provider="AZURE"` now exchanges that federated token for an Entra ID access token directly, instead of requiring the projected-volume/OIDC workaround. `workload_identity_impersonation_path` is not supported in this environment. (snowflakedb/drivers#1367)

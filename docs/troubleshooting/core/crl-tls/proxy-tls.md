@@ -86,9 +86,10 @@ tls_client <URL> -vv --result-file r.json
 
 **Resolution:**
 1. Export the proxy CA as PEM.
-2. Point `custom_root_store_path` at a bundle that includes it (remember: it
-   **replaces** the system roots — include the public CAs too; see
-   [cert-chain.md](cert-chain.md#b2-custom-trust-store-empty-or-malformed)).
+2. Point `extra_root_store_path` at the proxy CA bundle to retain the system
+   roots. Use `custom_root_store_path` only when the supplied bundle should
+   replace them; see
+   [cert-chain.md](cert-chain.md#b2-custom-trust-store-empty-or-malformed).
 3. If the proxy CA rotates often, consider `crl_check_mode=ADVISORY` so a
    not-yet-cached CRL doesn't hard-fail.
 

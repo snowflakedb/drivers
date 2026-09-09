@@ -193,7 +193,13 @@ fn is_statement_only(scopes: &[ParamScope]) -> bool {
 /// them but Python never exposed them:
 ///   - `put_fastfail` / `get_fastfail` — ODBC connection-string pipeline
 ///   - `enable_put_get` — JDBC-only (legacy `enablePutGet` client property)
-const PYTHON_EXCLUDED_PARAMS: &[&str] = &["put_fastfail", "get_fastfail", "enable_put_get"];
+///   - `extra_root_store_path` — Node's `NODE_EXTRA_CA_CERTS` bridge
+const PYTHON_EXCLUDED_PARAMS: &[&str] = &[
+    "put_fastfail",
+    "get_fastfail",
+    "enable_put_get",
+    "extra_root_store_path",
+];
 
 /// Whether `canonical` is intentionally excluded from the generated Python
 /// `ConnectionConfig` (see [`PYTHON_EXCLUDED_PARAMS`]).

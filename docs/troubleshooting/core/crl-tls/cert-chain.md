@@ -42,7 +42,9 @@ previously-working connection starts failing with B1. The loader
 (`sf_core/src/tls/client.rs`) rejects a file that parses to zero certificates, or
 a DER it cannot add. Include **only CA certificates** — no end-entity certs, no
 private keys. To keep trusting the public web PKI *and* add a private CA, build a
-single bundle containing both.
+single bundle containing both, or set `extra_root_store_path` to the private CA
+bundle. When both settings are present, `custom_root_store_path` takes
+precedence.
 
 ### B3. Cross-signed intermediate chains
 
@@ -75,6 +77,7 @@ skew causes false expiry.
 | `verify_certificates` | bool | `true` | `false` disables **all** cert + hostname validation (debug only) |
 | `verify_hostname` | bool | `true` | `false` disables the hostname check only |
 | `custom_root_store_path` | path | — | PEM bundle used **instead of** the system roots |
+| `extra_root_store_path` | path | — | PEM bundle added to the system roots |
 
 Source: `sf_core/src/tls/config.rs`, `sf_core/src/config/connection_config.rs`.
 Full reference: [crl-tls-settings.md](crl-tls-settings.md).

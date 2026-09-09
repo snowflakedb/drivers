@@ -1,8 +1,8 @@
 use crate::config::ConfigError;
 use crate::config::InvalidParameterValueSnafu;
 use crate::config::param_names::{
-    CUSTOM_ROOT_STORE_PATH, MAX_TLS_VERSION, MIN_TLS_VERSION, TLS_SKIP_VERIFY, VERIFY_CERTIFICATES,
-    VERIFY_HOSTNAME,
+    CUSTOM_ROOT_STORE_PATH, EXTRA_ROOT_STORE_PATH, MAX_TLS_VERSION, MIN_TLS_VERSION,
+    TLS_SKIP_VERIFY, VERIFY_CERTIFICATES, VERIFY_HOSTNAME,
 };
 use crate::config::settings::{Setting, Settings};
 use crate::crl::config::CrlConfig;
@@ -131,7 +131,10 @@ impl TlsVersions {
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
     pub crl_config: CrlConfig,
+    /// PEM that replaces the native trust store for this connection.
     pub custom_root_store_path: Option<PathBuf>,
+    /// PEM added to the native trust store. Ignored when `custom_root_store_path` is set.
+    pub extra_root_store_path: Option<PathBuf>,
     pub verify_hostname: bool,
     pub verify_certificates: bool,
     /// TLS protocol-version window to negotiate (default `Tls12..=Tls13`).
@@ -293,6 +296,7 @@ impl TlsConfig {
         Self {
             crl_config: CrlConfig::default(),
             custom_root_store_path: None,
+            extra_root_store_path: None,
             verify_hostname: false,
             verify_certificates: false,
             versions: TlsVersions::default(),
@@ -301,13 +305,9 @@ impl TlsConfig {
 
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let crl_config = CrlConfig::from_settings(settings)?;
-        let custom_root_store_path = settings
-            .get(CUSTOM_ROOT_STORE_PATH.as_str())
-            .and_then(|s| match s {
-                Setting::String(path) => Some(path),
-                _ => None,
-            })
-            .map(PathBuf::from);
+        let custom_root_store_path =
+            optional_path_setting(settings, CUSTOM_ROOT_STORE_PATH.as_str());
+        let extra_root_store_path = optional_path_setting(settings, EXTRA_ROOT_STORE_PATH.as_str());
         let skip_tls_verify = settings.get_bool_or(TLS_SKIP_VERIFY.as_str(), false);
         if skip_tls_verify {
             tracing::warn!(
@@ -327,6 +327,7 @@ impl TlsConfig {
         Ok(Self {
             crl_config,
             custom_root_store_path,
+            extra_root_store_path,
             verify_hostname,
             verify_certificates,
             versions,
@@ -334,11 +335,22 @@ impl TlsConfig {
     }
 }
 
+fn optional_path_setting(settings: &dyn Settings, key: &str) -> Option<PathBuf> {
+    settings
+        .get(key)
+        .and_then(|s| match s {
+            Setting::String(path) => Some(path),
+            _ => None,
+        })
+        .map(PathBuf::from)
+}
+
 impl Default for TlsConfig {
     fn default() -> Self {
         Self {
             crl_config: CrlConfig::default(),
             custom_root_store_path: None,
+            extra_root_store_path: None,
             verify_hostname: true,
             verify_certificates: true,
             versions: TlsVersions::default(),
@@ -372,6 +384,22 @@ mod tests {
         let cfg = TlsConfig::from_settings(&HashMap::<String, Setting>::new()).unwrap();
         assert!(cfg.verify_hostname);
         assert!(cfg.verify_certificates);
+    }
+
+    #[test]
+    fn should_parse_extra_root_store_path() {
+        let mut settings = HashMap::new();
+        settings.insert(
+            EXTRA_ROOT_STORE_PATH.as_str().to_string(),
+            Setting::String("/tmp/extra-roots.pem".to_string()),
+        );
+
+        let cfg = TlsConfig::from_settings(&settings).unwrap();
+
+        assert_eq!(
+            cfg.extra_root_store_path,
+            Some(PathBuf::from("/tmp/extra-roots.pem"))
+        );
     }
 }
 
