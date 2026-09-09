@@ -1,21 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Connection } from '../../../types/sdk-types.js';
+import { createLiveConnection, createTemporaryTable } from '../../utils/fixtures.js';
 import {
-  createTestConnection,
   destroyConnectionAsync,
   executeAsync,
   getStatementColumn,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
-import { withTemporaryTable } from '../../utils/query.js';
-import { withNullPreservingConnection } from '../utils.js';
+import { createLiveNullPreservingConnection } from '../utils.js';
 
 describe('BOOLEAN data type', () => {
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection();
-    await connection.connectAsync();
+    connection = await createLiveConnection({}, false);
   });
 
   afterAll(async () => {
@@ -74,20 +72,19 @@ describe('BOOLEAN data type', () => {
       void connection;
 
       // And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
-      await withTemporaryTable(
+      const tableName = await createTemporaryTable(
         connection,
         'C1 BOOLEAN, C2 BOOLEAN, C3 BOOLEAN',
-        async (tableName) => {
-          // And Row (TRUE, FALSE, TRUE) is inserted
-          await executeAsync(connection, `INSERT INTO ${tableName} VALUES (TRUE, FALSE, TRUE)`);
-
-          // When Query "SELECT * FROM <table>" is executed
-          const { rows } = await executeAsync(connection, `SELECT * FROM ${tableName}`);
-
-          // Then Result should contain [TRUE, FALSE, TRUE]
-          expect(Object.values(rows[0])).toEqual([true, false, true]);
-        },
       );
+
+      // And Row (TRUE, FALSE, TRUE) is inserted
+      await executeAsync(connection, `INSERT INTO ${tableName} VALUES (TRUE, FALSE, TRUE)`);
+
+      // When Query "SELECT * FROM <table>" is executed
+      const { rows } = await executeAsync(connection, `SELECT * FROM ${tableName}`);
+
+      // Then Result should contain [TRUE, FALSE, TRUE]
+      expect(Object.values(rows[0])).toEqual([true, false, true]);
     });
 
     it('should handle NULL values from table', async () => {
@@ -95,19 +92,19 @@ describe('BOOLEAN data type', () => {
       void connection;
 
       // And Table with BOOLEAN column exists
-      await withTemporaryTable(connection, 'ID NUMBER, VAL BOOLEAN', async (tableName) => {
-        // And Rows [NULL, TRUE, FALSE] are inserted
-        await executeAsync(
-          connection,
-          `INSERT INTO ${tableName} (ID, VAL) VALUES (1, NULL), (2, TRUE), (3, FALSE)`,
-        );
+      const tableName = await createTemporaryTable(connection, 'ID NUMBER, VAL BOOLEAN');
 
-        // When Query "SELECT * FROM <table>" is executed
-        const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName} ORDER BY ID`);
+      // And Rows [NULL, TRUE, FALSE] are inserted
+      await executeAsync(
+        connection,
+        `INSERT INTO ${tableName} (ID, VAL) VALUES (1, NULL), (2, TRUE), (3, FALSE)`,
+      );
 
-        // Then Result should contain [NULL, TRUE, FALSE] in any order
-        expect(rows.map((row) => row.VAL)).toEqual([null, true, false]);
-      });
+      // When Query "SELECT * FROM <table>" is executed
+      const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName} ORDER BY ID`);
+
+      // Then Result should contain [NULL, TRUE, FALSE] in any order
+      expect(rows.map((row) => row.VAL)).toEqual([null, true, false]);
     });
 
     describe('parameter binding', () => {
@@ -144,66 +141,62 @@ describe('BOOLEAN data type', () => {
         void connection;
 
         // And Table with BOOLEAN column exists
-        await withTemporaryTable(connection, 'ID NUMBER, VAL BOOLEAN', async (tableName) => {
-          // When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
-          await executeAsync(connection, `INSERT INTO ${tableName} (ID, VAL) VALUES (?, ?)`, {
-            binds: [
-              [1, true],
-              [2, false],
-              [3, null],
-            ],
-          });
+        const tableName = await createTemporaryTable(connection, 'ID NUMBER, VAL BOOLEAN');
 
-          // Then SELECT should return the same values in any order
-          const { rows } = await executeAsync(
-            connection,
-            `SELECT VAL FROM ${tableName} ORDER BY ID`,
-          );
-          expect(rows.map((row) => row.VAL)).toEqual([true, false, null]);
+        // When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
+        await executeAsync(connection, `INSERT INTO ${tableName} (ID, VAL) VALUES (?, ?)`, {
+          binds: [
+            [1, true],
+            [2, false],
+            [3, null],
+          ],
         });
+
+        // Then SELECT should return the same values in any order
+        const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName} ORDER BY ID`);
+        expect(rows.map((row) => row.VAL)).toEqual([true, false, null]);
       });
     });
+  });
 
-    describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('multiple chunks', () => {
-      const HALF = 500_000;
+  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('multiple chunks', () => {
+    const HALF = 500_000;
 
-      it('should download large result set with multiple chunks from GENERATOR', async () => {
-        // Given Snowflake client is logged in
-        void connection;
+    it('should download large result set with multiple chunks from GENERATOR', async () => {
+      // Given Snowflake client is logged in
+      void connection;
 
-        // When Query "SELECT (id % 2 = 0)::BOOLEAN FROM <generator>" is executed
-        const { rows } = await executeAsync(
-          connection,
-          `SELECT (seq8() % 2 = 0)::BOOLEAN AS VAL FROM TABLE(GENERATOR(ROWCOUNT => ${2 * HALF})) v`,
-        );
+      // When Query "SELECT (id % 2 = 0)::BOOLEAN FROM <generator>" is executed
+      const { rows } = await executeAsync(
+        connection,
+        `SELECT (seq8() % 2 = 0)::BOOLEAN AS VAL FROM TABLE(GENERATOR(ROWCOUNT => ${2 * HALF})) v`,
+      );
 
-        // Then Result should contain 500000 TRUE and 500000 FALSE values
-        const trueCount = rows.filter((row) => row.VAL === true).length;
-        expect(trueCount).toBe(HALF);
-        expect(rows.length - trueCount).toBe(HALF);
-      });
+      // Then Result should contain 500000 TRUE and 500000 FALSE values
+      const trueCount = rows.filter((row) => row.VAL === true).length;
+      expect(trueCount).toBe(HALF);
+      expect(rows.length - trueCount).toBe(HALF);
+    });
 
-      it('should download large result set with multiple chunks from table', async () => {
-        // Given Snowflake client is logged in
-        void connection;
+    it('should download large result set with multiple chunks from table', async () => {
+      // Given Snowflake client is logged in
+      void connection;
 
-        // And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
-        await withTemporaryTable(connection, 'COL BOOLEAN', async (tableName) => {
-          await executeAsync(
-            connection,
-            `INSERT INTO ${tableName}
-             SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => ${2 * HALF})) v`,
-          );
+      // And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
+      const tableName = await createTemporaryTable(connection, 'COL BOOLEAN');
+      await executeAsync(
+        connection,
+        `INSERT INTO ${tableName}
+           SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => ${2 * HALF})) v`,
+      );
 
-          // When Query "SELECT col FROM <table>" is executed
-          const { rows } = await executeAsync(connection, `SELECT COL FROM ${tableName}`);
+      // When Query "SELECT col FROM <table>" is executed
+      const { rows } = await executeAsync(connection, `SELECT COL FROM ${tableName}`);
 
-          // Then Result should contain 500000 TRUE and 500000 FALSE values
-          const trueCount = rows.filter((row) => row.COL === true).length;
-          expect(trueCount).toBe(HALF);
-          expect(rows.length - trueCount).toBe(HALF);
-        });
-      });
+      // Then Result should contain 500000 TRUE and 500000 FALSE values
+      const trueCount = rows.filter((row) => row.COL === true).length;
+      expect(trueCount).toBe(HALF);
+      expect(rows.length - trueCount).toBe(HALF);
     });
   });
 
@@ -225,12 +218,11 @@ describe('BOOLEAN data type', () => {
     });
 
     it('should render a NULL BOOLEAN cell as null when representNullAsStringNull is disabled', async () => {
-      await withNullPreservingConnection(async (nullPreservingConnection) => {
-        const { rows } = await executeAsync(nullPreservingConnection, 'SELECT NULL::BOOLEAN', {
-          fetchAsString: ['Boolean'],
-        });
-        expect(Object.values(rows[0])).toEqual([null]);
+      const nullPreservingConnection = await createLiveNullPreservingConnection();
+      const { rows } = await executeAsync(nullPreservingConnection, 'SELECT NULL::BOOLEAN', {
+        fetchAsString: ['Boolean'],
       });
+      expect(Object.values(rows[0])).toEqual([null]);
     });
   });
 });

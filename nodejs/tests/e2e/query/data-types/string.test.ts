@@ -1,14 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Connection } from '../../../types/sdk-types.js';
+import { createLiveConnection, createTemporaryTable } from '../../utils/fixtures.js';
 import {
-  createTestConnection,
   destroyConnectionAsync,
   executeAsync,
   getStatementColumn,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
-import { withTemporaryTable } from '../../utils/query.js';
-import { withNullPreservingConnection } from '../utils.js';
+import { createLiveNullPreservingConnection } from '../utils.js';
 
 // Snowflake resolves backslash escapes such as `\t` and `\u26c4` inside single-quoted
 // constants, so `literalSql` and `expected` differ for those rows. A Snowflake Unicode escape
@@ -41,8 +40,7 @@ describe('STRING data type', () => {
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createTestConnection();
-    await connection.connectAsync();
+    connection = await createLiveConnection({}, false);
   });
 
   afterAll(async () => {
@@ -119,24 +117,20 @@ describe('STRING data type', () => {
       void connection;
 
       // And A temporary table with VARCHAR column is created
-      await withTemporaryTable(connection, 'ID NUMBER, VAL VARCHAR', async (tableName) => {
-        // And The table is populated with string values
-        await executeAsync(
-          connection,
-          `INSERT INTO ${tableName} (ID, VAL)
+      const tableName = await createTemporaryTable(connection, 'ID NUMBER, VAL VARCHAR');
+
+      // And The table is populated with string values
+      await executeAsync(
+        connection,
+        `INSERT INTO ${tableName} (ID, VAL)
            VALUES (1, 'hello'), (2, 'Hello World'), (3, 'Snowflake Driver Test')`,
-        );
+      );
 
-        // When Query "SELECT * FROM {table}" is executed
-        const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName} ORDER BY ID`);
+      // When Query "SELECT * FROM {table}" is executed
+      const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName} ORDER BY ID`);
 
-        // Then the result should contain the inserted hardcoded string values
-        expect(rows.map((row) => row.VAL)).toEqual([
-          'hello',
-          'Hello World',
-          'Snowflake Driver Test',
-        ]);
-      });
+      // Then the result should contain the inserted hardcoded string values
+      expect(rows.map((row) => row.VAL)).toEqual(['hello', 'Hello World', 'Snowflake Driver Test']);
     });
 
     it('should select corner case string values from table', async () => {
@@ -144,21 +138,20 @@ describe('STRING data type', () => {
       void connection;
 
       // And A temporary table with VARCHAR column is created
-      await withTemporaryTable(connection, 'ID NUMBER, VAL VARCHAR', async (tableName) => {
-        // And The table is populated with corner case string values
-        await executeAsync(
-          connection,
-          `INSERT INTO ${tableName} (ID, VAL) VALUES ${CORNER_CASES.map(
-            ({ literalSql }, index) => `(${index}, ${literalSql})`,
-          ).join(', ')}`,
-        );
+      const tableName = await createTemporaryTable(connection, 'ID NUMBER, VAL VARCHAR');
 
-        // When Query "SELECT * FROM {table}" is executed
-        const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName} ORDER BY ID`);
+      // And The table is populated with corner case string values
+      const values = CORNER_CASES.map(({ literalSql }, index) => `(${index}, ${literalSql})`);
+      await executeAsync(
+        connection,
+        `INSERT INTO ${tableName} (ID, VAL) VALUES ${values.join(', ')}`,
+      );
 
-        // Then the result should contain the inserted corner case string values
-        expect(rows.map((row) => row.VAL)).toEqual(CORNER_CASES.map(({ expected }) => expected));
-      });
+      // When Query "SELECT * FROM {table}" is executed
+      const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName} ORDER BY ID`);
+
+      // Then the result should contain the inserted corner case string values
+      expect(rows.map((row) => row.VAL)).toEqual(CORNER_CASES.map(({ expected }) => expected));
     });
 
     describe('parameter binding', () => {
@@ -197,18 +190,18 @@ describe('STRING data type', () => {
         void connection;
 
         // And A temporary table with VARCHAR column is created
-        await withTemporaryTable(connection, 'VAL VARCHAR', async (tableName) => {
-          // When String value 'Test binding value 日本語' is inserted using parameter binding
-          await executeAsync(connection, `INSERT INTO ${tableName} (VAL) VALUES (?)`, {
-            binds: ['Test binding value 日本語'],
-          });
+        const tableName = await createTemporaryTable(connection, 'VAL VARCHAR');
 
-          // And Query "SELECT * FROM {table}" is executed
-          const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName}`);
-
-          // Then the result should contain the bound string value 'Test binding value 日本語'
-          expect(rows.map((row) => row.VAL)).toEqual(['Test binding value 日本語']);
+        // When String value 'Test binding value 日本語' is inserted using parameter binding
+        await executeAsync(connection, `INSERT INTO ${tableName} (VAL) VALUES (?)`, {
+          binds: ['Test binding value 日本語'],
         });
+
+        // And Query "SELECT * FROM {table}" is executed
+        const { rows } = await executeAsync(connection, `SELECT VAL FROM ${tableName}`);
+
+        // Then the result should contain the bound string value 'Test binding value 日本語'
+        expect(rows.map((row) => row.VAL)).toEqual(['Test binding value 日本語']);
       });
     });
 
@@ -251,12 +244,11 @@ describe('STRING data type', () => {
     });
 
     it('should render a NULL TEXT cell as null when representNullAsStringNull is disabled', async () => {
-      await withNullPreservingConnection(async (nullPreservingConnection) => {
-        const { rows } = await executeAsync(nullPreservingConnection, 'SELECT NULL::TEXT', {
-          fetchAsString: ['String'],
-        });
-        expect(Object.values(rows[0])).toEqual([null]);
+      const nullPreservingConnection = await createLiveNullPreservingConnection();
+      const { rows } = await executeAsync(nullPreservingConnection, 'SELECT NULL::TEXT', {
+        fetchAsString: ['String'],
       });
+      expect(Object.values(rows[0])).toEqual([null]);
     });
   });
 });
