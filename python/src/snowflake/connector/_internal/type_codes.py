@@ -24,6 +24,9 @@ GEOGRAPHY = 14
 GEOMETRY = 15
 VECTOR = 16
 MAP = 17
+FILE = 18
+INTERVAL_YEAR_MONTH = 19
+INTERVAL_DAY_TIME = 20
 
 # Mapping from Snowflake type name to type code
 SNOWFLAKE_TYPE_TO_CODE = {
@@ -65,6 +68,9 @@ SNOWFLAKE_TYPE_TO_CODE = {
     "GEOMETRY": GEOMETRY,
     "VECTOR": VECTOR,
     "MAP": MAP,
+    "FILE": FILE,
+    "INTERVAL_YEAR_MONTH": INTERVAL_YEAR_MONTH,
+    "INTERVAL_DAY_TIME": INTERVAL_DAY_TIME,
 }
 
 # Python type name to Snowflake type name mapping.
@@ -126,4 +132,7 @@ FIELD_ID_TO_NAME: dict[int, str] = {
     GEOMETRY: "GEOMETRY",
     VECTOR: "VECTOR",
     MAP: "MAP",
+    FILE: "FILE",
+    INTERVAL_YEAR_MONTH: "INTERVAL_YEAR_MONTH",
+    INTERVAL_DAY_TIME: "INTERVAL_DAY_TIME",
 }

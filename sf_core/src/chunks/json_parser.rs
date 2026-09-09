@@ -374,7 +374,8 @@ impl ColumnBuilder {
             | RowType::Variant { .. }
             | RowType::Object { .. }
             | RowType::Array { .. }
-            | RowType::Map { .. } => ColumnBuilder::Text {
+            | RowType::Map { .. }
+            | RowType::File { .. } => ColumnBuilder::Text {
                 builder: arrow::array::StringBuilder::with_capacity(capacity, capacity * 8),
             },
             RowType::Geography { representation, .. }

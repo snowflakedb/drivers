@@ -246,6 +246,18 @@ pub fn create_field_with_type(
                     .with_metadata(metadata),
             )
         }
+        RowType::File { name, nullable } => {
+            // The server's own Arrow schema for a FILE column already carries VARIANT
+            // as logicalType today, not FILE — no wrapper's decoder recognizes that
+            // name, so this mirrors real wire behavior rather than inventing a label.
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "VARIANT".to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
         RowType::IntervalYearMonth {
             name,
             nullable,
@@ -1007,6 +1019,17 @@ mod tests {
             DataType::Struct(children) => assert_eq!(children.len(), 3),
             other => panic!("expected struct, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_file_field_decodes_as_variant_utf8() {
+        let field = create_field(&RowType::file("file_col", true)).unwrap();
+
+        assert_eq!(
+            field.metadata().get("logicalType"),
+            Some(&"VARIANT".to_string())
+        );
+        assert_eq!(field.data_type(), &DataType::Utf8);
     }
 
     #[test]

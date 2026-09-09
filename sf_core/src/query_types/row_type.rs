@@ -71,6 +71,10 @@ pub enum RowType {
         name: String,
         nullable: bool,
     },
+    File {
+        name: String,
+        nullable: bool,
+    },
     IntervalYearMonth {
         name: String,
         nullable: bool,
@@ -252,6 +256,13 @@ impl RowType {
 
     pub fn map(name: &str, nullable: bool) -> Self {
         RowType::Map {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn file(name: &str, nullable: bool) -> Self {
+        RowType::File {
             name: name.to_string(),
             nullable,
         }
