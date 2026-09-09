@@ -1158,6 +1158,22 @@ impl OdbcError {
         }
     }
 
+    /// `true` when this error is `sf_core` reporting that the `SYSTEM$BIND`
+    /// stage is disabled at runtime (`ERROR_KIND_STAGE_BINDING` on the wire).
+    /// Callers that just sent CSV/stage bindings can use this to decide
+    /// whether to retry the same execute with inline JSON bindings instead.
+    pub fn is_stage_binding_disabled(&self) -> bool {
+        match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Application { kind, .. } => {
+                    *kind == ProtoErrorKind::StageBinding as i32
+                }
+                CoreProtobufError::Transport { .. } => false,
+            },
+            _ => false,
+        }
+    }
+
     #[track_caller]
     pub fn from_protobuf_error(error: ProtoError<ProtoDriverException>) -> OdbcError {
         let loc = std::panic::Location::caller();
@@ -1653,6 +1669,57 @@ mod tests {
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::OperationCanceled);
         assert_eq!(odbc_err.to_sql_state().as_str(), "HY008");
+    }
+
+    #[test]
+    fn stage_binding_kind_is_reported_as_disabled() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                message: "SYSTEM$BIND stage is disabled".to_string(),
+                kind: ProtoErrorKind::StageBinding as i32,
+                error_trace: vec![],
+                sql_state: None,
+                vendor_code: None,
+                query_id: None,
+                parameter: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert!(odbc_err.is_stage_binding_disabled());
+        assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn other_kinds_are_not_reported_as_stage_binding_disabled() {
+        let non_stage_binding_kind = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                message: "Query timed out after 30s".to_string(),
+                kind: ProtoErrorKind::Timeout as i32,
+                error_trace: vec![],
+                sql_state: None,
+                vendor_code: None,
+                query_id: None,
+                parameter: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert!(!non_stage_binding_kind.is_stage_binding_disabled());
+
+        let transport_error = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Transport {
+                message: "connection reset".to_string(),
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert!(!transport_error.is_stage_binding_disabled());
+
+        let non_core_error = OdbcError::Disconnected {
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert!(!non_core_error.is_stage_binding_disabled());
     }
 
     #[test]
