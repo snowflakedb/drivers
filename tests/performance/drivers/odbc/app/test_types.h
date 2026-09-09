@@ -5,7 +5,7 @@
 #include <string>
 
 /// Enum for test types
-enum class TestType { Select, PutGet, Concurrent };
+enum class TestType { Select, PutGet, Concurrent, ColdStart };
 
 /// Convert string to TestType enum
 inline TestType parse_test_type(const std::string& str) {
@@ -18,8 +18,11 @@ inline TestType parse_test_type(const std::string& str) {
     return TestType::PutGet;
   } else if (lower == "concurrent") {
     return TestType::Concurrent;
+  } else if (lower == "cold_start") {
+    return TestType::ColdStart;
   } else {
-    throw std::invalid_argument("Unknown test type: '" + str + "'. Supported types: select, put_get, concurrent");
+    throw std::invalid_argument("Unknown test type: '" + str +
+                                "'. Supported types: select, put_get, concurrent, cold_start");
   }
 }
 
@@ -32,6 +35,8 @@ inline std::string test_type_to_string(TestType type) {
       return "put_get";
     case TestType::Concurrent:
       return "concurrent";
+    case TestType::ColdStart:
+      return "cold_start";
     default:
       throw std::logic_error("Invalid test type enum value");
   }

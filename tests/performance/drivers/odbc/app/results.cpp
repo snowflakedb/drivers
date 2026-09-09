@@ -65,6 +65,16 @@ void write_csv_results_put_get(const std::vector<PutGetResult>& results, const s
   csv->close();
 }
 
+void write_csv_results_cold_start(const std::vector<std::string>& rows, const std::string& filename) {
+  auto csv = open_csv_file(filename);
+  if (!csv) return;
+  *csv << "timestamp_ms,e2e_s,connect_s,select1_s,cpu_time_s,peak_rss_mb\n";
+  for (const auto& row : rows) {
+    *csv << row << "\n";
+  }
+  csv->close();
+}
+
 void write_memory_timeline(const std::vector<MemorySample>& samples, const std::string& test_name,
                            const std::string& driver_type, time_t timestamp) {
   if (samples.empty()) return;

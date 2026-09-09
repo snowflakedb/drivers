@@ -7,4 +7,5 @@ use strum::{Display, EnumString};
 pub enum TestType {
     Select,
     PutGet,
+    ColdStart,
 }

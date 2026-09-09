@@ -30,7 +30,7 @@ impl TestConfig {
         let test_type_str = env::var("TEST_TYPE").unwrap_or_else(|_| "select".to_string());
         let test_type = test_type_str.parse::<TestType>().map_err(|e| {
             format!(
-                "Invalid test type '{}'. Supported: select, put_get: {:?}",
+                "Invalid test type '{}'. Supported: select, put_get, cold_start: {:?}",
                 test_type_str, e
             )
         })?;

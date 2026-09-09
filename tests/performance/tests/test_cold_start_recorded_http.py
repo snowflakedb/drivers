@@ -5,9 +5,8 @@ from runner.test_types import PerfTestType
 ITERATIONS = 10
 
 
-# Cold-start is implemented only by the Python driver app; the ODBC/JDBC/Core apps
-# have no cold-start executor and abort on the unknown TEST_TYPE. Add a driver here
-# once its app gains a cold-start path.
+# Recorded-HTTP cold-start stays Python-only. Live e2e is all drivers
+# (tests/test_cold_start.py).
 @pytest.mark.iterations(ITERATIONS)
 @pytest.mark.supported_drivers("python")
 def test_cold_start_select_1_recorded_http(perf_test):

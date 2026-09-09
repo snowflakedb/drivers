@@ -50,6 +50,20 @@ pub fn print_statistics(results: &[IterationResult]) {
     print_timing_stats("Fetch", fetch_times);
 }
 
+pub fn write_csv_results_cold_start(rows: &[String], test_name: &str) -> Result<String> {
+    write_csv_file(test_name, |file| {
+        writeln!(
+            file,
+            "timestamp_ms,e2e_s,connect_s,select1_s,cpu_time_s,peak_rss_mb"
+        )
+        .map_err(|e| format!("Failed to write: {e:?}"))?;
+        for row in rows {
+            writeln!(file, "{row}").map_err(|e| format!("Failed to write: {e:?}"))?;
+        }
+        Ok(())
+    })
+}
+
 pub fn write_csv_results_put_get(results: &[PutGetResult], test_name: &str) -> Result<String> {
     write_csv_file(test_name, |file| {
         writeln!(file, "timestamp_ms,query_s,cpu_time_s,peak_rss_mb")

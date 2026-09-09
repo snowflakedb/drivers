@@ -705,11 +705,9 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
 def _skip_unsupported_driver(item):
     """Skip a test whose @pytest.mark.supported_drivers list excludes the active driver.
 
-    Some test types are only implemented by a subset of driver apps. Cold-start, for
-    example, lives only in the Python driver app; the Core/ODBC/JDBC apps have no
-    cold-start executor and abort on the unknown TEST_TYPE. Marking those tests keeps
-    the perf job green for drivers that do not (yet) support them, and the allowlist
-    grows naturally as each driver gains support.
+    Some test types are only implemented by a subset of driver apps. Recorded-HTTP
+    cold-start, for example, is Python-only. Marking those tests keeps the perf job
+    green for drivers that do not support them.
     """
     marker = item.get_closest_marker("supported_drivers")
     if marker is None:

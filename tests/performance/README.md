@@ -505,6 +505,18 @@ timestamp_ms,query_s,cpu_time_s,peak_rss_mb
 1762522288000,5.123456,0.305678,85.2
 ```
 
+**For cold-start tests (Python, Node.js):**
+```csv
+timestamp_ms,e2e_s,load_s,connect_s,select1_s,cpu_time_s,peak_rss_mb
+```
+`load_s` is module import (`import snowflake.connector` / `require('snowflake-sdk')`).
+
+**For cold-start tests (JDBC, ODBC, Core):**
+```csv
+timestamp_ms,e2e_s,connect_s,select1_s,cpu_time_s,peak_rss_mb
+```
+No import phase; each iteration is a fresh process that connects and runs `SELECT 1`.
+
 **Columns**:
 - `timestamp_ms`: Unix timestamp in milliseconds when the iteration completed
 - `query_s`: Wall-clock time to execute the query (`cursor.execute()`) and get initial response (seconds)
@@ -516,6 +528,10 @@ timestamp_ms,query_s,cpu_time_s,peak_rss_mb
 - `row_count`: Number of rows fetched — **SELECT tests only**
 - `cpu_time_s`: CPU time consumed during the fetch phase (seconds, via `time.process_time()`) — see [Metrics Reference](#metrics-reference)
 - `peak_rss_mb`: Process-wide peak Resident Set Size (MB, via `getrusage(RUSAGE_SELF).ru_maxrss`)
+- `e2e_s`: Full child-process wall time — **cold-start only**
+- `load_s`: Module import (`import snowflake.connector` / `require('snowflake-sdk')`) — **Python and Node.js cold-start only**
+- `connect_s`: Time to open a session — **cold-start only**
+- `select1_s`: Time to run `SELECT 1` and fetch the row — **cold-start only**
 
 **Notes**:
 - Each row represents one test iteration (warmup iterations are not included)

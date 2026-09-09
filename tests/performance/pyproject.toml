@@ -73,11 +73,11 @@ python-both-local = ["build-python", "build-wiremock", "PERF_LOCAL_COMPARE=1 pyt
 odbc-universal-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=odbc --driver-type=universal --preserve-mappings -s -v"]
 odbc-old-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=odbc --driver-type=old --preserve-mappings -s -v"]
 odbc-both-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=odbc --driver-type=both --preserve-mappings -s -v"]
-# JDBC (universal + old SELECT). PUT-GET/recorded-HTTP arrive in later phases.
+# JDBC (universal + old SELECT + cold-start). PUT-GET/recorded-HTTP arrive in later phases.
 jdbc-universal-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=jdbc --driver-type=universal --preserve-mappings -s -v"]
 jdbc-old-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=jdbc --driver-type=old --preserve-mappings -s -v"]
 jdbc-both-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=jdbc --driver-type=both --preserve-mappings -s -v"]
-# Node.js (universal + old SELECT only in v1; no PUT-GET/recorded-HTTP/cold-start yet)
+# Node.js (universal + old SELECT + cold-start; no PUT-GET/recorded-HTTP yet)
 nodejs-universal-local = ["build-nodejs", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=nodejs --driver-type=universal --preserve-mappings -s -v"]
 nodejs-old-local = ["build-nodejs", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=nodejs --driver-type=old --preserve-mappings -s -v"]
 nodejs-both-local = ["build-nodejs", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=nodejs --driver-type=both --preserve-mappings -s -v"]
