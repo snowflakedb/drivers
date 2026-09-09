@@ -11,23 +11,14 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-semistructured
 
 from __future__ import annotations
 
-import json
-
 from ...conftest import with_paramstyle
-from .utils import assert_type
+from .utils import assert_type, parse_json_value
 
 
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 20_000
-
-
-def parse_json_value(value):
-    """Parse a JSON string value returned by Snowflake, returning None for SQL NULLs."""
-    if value is None:
-        return None
-    return json.loads(value)
 
 
 class TestSemiStructuredTypeCasting:
