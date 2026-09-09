@@ -105,6 +105,46 @@ async fn azure_download_success_returns_data_and_metadata() {
     assert_eq!(metadata.material_desc.smk_id, "1");
 }
 
+#[tokio::test]
+async fn azure_download_does_not_auto_decompress_gzip_content_encoding() {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io::Write;
+
+    let mut wire_bytes = Vec::new();
+    let mut encoder = GzEncoder::new(&mut wire_bytes, Compression::default());
+    encoder.write_all(b"raw-wire-bytes").expect("gzip write");
+    encoder.finish().expect("gzip finish");
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(wire_bytes.clone())
+                .insert_header("content-encoding", "gzip")
+                .insert_header("x-ms-meta-sfcdigest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = azure_stage(&server.uri());
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv.gz",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        None,
+    )
+    .await;
+
+    let response = result.expect("download should succeed");
+    assert_eq!(
+        response.data, wire_bytes,
+        "the client must hand back the exact wire bytes; auto-decompressing a \
+         Content-Encoding: gzip response would silently substitute the \
+         decoded body for the actual on-cloud (possibly CSE-encrypted) bytes"
+    );
+}
+
 // ---------------------------------------------------------------
 // 403 fast-fails on GET (same as PUT) — not inline-retried
 // A 403 surfaces immediately as AzureHttp{403} so the refresh layer
