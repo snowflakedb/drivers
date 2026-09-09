@@ -22,6 +22,7 @@ use super::validation::{
     validate_session_override_write,
 };
 use super::{Setting, WrapperPresets};
+use crate::config::rest_parameters::resolve_include_retry_reason;
 use crate::config::{
     ParamStore,
     connection_config::{ConnectionConfig, DiagnosticConfig},
@@ -1331,6 +1332,7 @@ impl Connection {
             log_max_query_length: resolve_log_max_query_length(settings),
             log_query_text: resolve_log_query_text(settings),
             log_query_parameters: resolve_log_query_parameters(settings),
+            include_retry_reason: resolve_include_retry_reason(settings),
         })
     }
 

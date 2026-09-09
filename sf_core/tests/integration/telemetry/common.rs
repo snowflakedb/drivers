@@ -26,6 +26,7 @@ pub fn test_query_parameters(server_url: &str) -> QueryParameters {
         log_max_query_length: 80,
         log_query_text: false,
         log_query_parameters: false,
+        include_retry_reason: false,
     }
 }
 

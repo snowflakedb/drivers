@@ -1,11 +1,11 @@
 use crate::config::rest_parameters::{ClientInfo, QueryParameters};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
-use crate::http::retry::{HttpContext, execute_with_retry};
+use crate::http::retry::{HttpContext, RetryState, execute_with_retry, execute_with_retry_state};
 use crate::rest::snowflake::{
     AsyncPollResultNotFoundSnafu, HttpRetrySnafu, InvalidUrlSnafu, MissingQueryIdSnafu,
     MissingResultUrlSnafu, OperationTimeoutSnafu, QUERY_REQUEST_PATH, QueryIds, QueryInput,
-    RestError, UrlJoinSnafu, apply_json_content_type, apply_query_headers, into_query_result,
-    query_failed_from_response, query_log_fields, query_request, query_response,
+    RestError, UrlJoinSnafu, apply_json_content_type, apply_query_headers, get_retry_params,
+    into_query_result, query_failed_from_response, query_log_fields, query_request, query_response,
     read_response_json,
 };
 use reqwest::Method;
@@ -129,15 +129,22 @@ fn build_async_query_request<'a>(query_input: &QueryInput<'a>) -> query_request:
 fn build_submit_request(
     client: &reqwest::Client,
     endpoint: &str,
-    client_info: &ClientInfo,
+    query_parameters: &QueryParameters,
     session_token: &str,
     request_id: uuid::Uuid,
+    retry_state: &RetryState,
     payload: &query_request::Request,
 ) -> reqwest::RequestBuilder {
     let builder = client.post(endpoint);
-    apply_json_content_type(apply_query_headers(builder, client_info, session_token))
-        .query(&[("requestId", request_id.to_string())])
-        .json(payload)
+    let mut query_string_params = get_retry_params(retry_state, query_parameters);
+    query_string_params.push(("requestId", request_id.to_string()));
+    apply_json_content_type(apply_query_headers(
+        builder,
+        &query_parameters.client_info,
+        session_token,
+    ))
+    .query(query_string_params.as_slice())
+    .json(payload)
 }
 
 async fn parse_submit_response(
@@ -184,7 +191,6 @@ pub async fn submit_statement_async<'a>(
     policy: &RetryPolicy,
 ) -> Result<SubmitOk, RestError> {
     let server_url = &params.server_url;
-    let client_info = &params.client_info;
     let endpoint = join_server_path(server_url, QUERY_REQUEST_PATH)?;
     // query logging guarded with: log_query_text, log_query_parameters
     let (sql, bindings) = query_log_fields(params, query_input);
@@ -195,27 +201,29 @@ pub async fn submit_statement_async<'a>(
         "Executing async query"
     );
     let request_body = build_async_query_request(query_input);
-    let submit_request = || {
+    let submit_request = |r: &RetryState| {
         build_submit_request(
             client,
             &endpoint,
-            client_info,
+            params,
             session_token,
             request_id,
+            r,
             &request_body,
         )
     };
 
     let http_ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
-    let response = execute_with_retry(submit_request, &http_ctx, policy, |r| async move { Ok(r) })
-        .await
-        .context(HttpRetrySnafu {
-            context: "async submit",
-            ids: QueryIds {
-                request_id: Some(request_id),
-                query_id: None,
-            },
-        })?;
+    let response =
+        execute_with_retry_state(submit_request, &http_ctx, policy, |r| async move { Ok(r) })
+            .await
+            .context(HttpRetrySnafu {
+                context: "async submit",
+                ids: QueryIds {
+                    request_id: Some(request_id),
+                    query_id: None,
+                },
+            })?;
 
     parse_submit_response(server_url, response).await
 }

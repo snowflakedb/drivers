@@ -567,6 +567,8 @@ class TestClassVariables:
         # the connector it replaces.
         assert ConnectionConfig._ALIAS_MAP == {
             # legacy kwarg -> renamed field
+            "enable_retry_reason_in_query_response": "include_retry_reason",
+            # legacy kwarg -> renamed field
             "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
             # Rust canonical camelCase -> snake_case Python field
             "passcodeinpassword": "passcode_in_password",

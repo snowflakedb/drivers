@@ -236,6 +236,7 @@ mod tests {
                 log_max_query_length: 80,
                 log_query_text: false,
                 log_query_parameters: false,
+                include_retry_reason: false,
             },
             session_token: Arc::new(AsyncRwLock::new(Some(tokens))),
         })

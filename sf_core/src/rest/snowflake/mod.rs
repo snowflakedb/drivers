@@ -36,7 +36,10 @@ use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParamete
 use crate::config::retry::RetryPolicy;
 use crate::config::settings::Setting;
 use crate::crl::worker::SharedCrlWorker;
-use crate::http::retry::{HttpContext, HttpError, TransportSnafu, execute_with_retry};
+use crate::http::retry::{
+    HttpContext, HttpError, LastStatus, RetryState, TransportSnafu, execute_with_retry,
+    execute_with_retry_state,
+};
 use crate::logging::url_for_log;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
@@ -283,6 +286,33 @@ pub enum QueryExecutionMode {
     #[default]
     Blocking,
     Async,
+}
+
+/// Builds the retry-related query parameters (`retryCount` and optionally
+/// `retryReason`) to append to a request URL on retry attempts.
+///
+/// Returns an empty vec on the first attempt. On subsequent attempts the
+/// retry count is always included; the HTTP status that triggered the retry
+/// is added only when [`QueryParameters::include_retry_reason`] is set.
+fn get_retry_params(
+    retry_state: &RetryState,
+    query_parameters: &QueryParameters,
+) -> Vec<(&'static str, String)> {
+    if retry_state.get_attempt() <= 1 {
+        return Vec::new();
+    }
+
+    let retry_count_pair = ("retryCount", (retry_state.get_attempt() - 1).to_string());
+
+    if !query_parameters.include_retry_reason {
+        return vec![retry_count_pair];
+    }
+
+    let reason = match retry_state.get_last_status() {
+        LastStatus::Code(code) => code,
+        _ => 0,
+    };
+    vec![retry_count_pair, ("retryReason", reason.to_string())]
 }
 
 /// Rarely-varied knobs for a single query execution.
@@ -1827,10 +1857,9 @@ pub(super) fn into_query_result(
 /// The `requestId` is stable across every HTTP attempt inside
 /// `execute_with_retry` so that Snowflake can dedupe replays via its usual
 /// request-id machinery. The first attempt is sent as a fresh request; every
-/// replay (attempt ≥ 2) additionally carries `retry=true`, which is the
-/// Snowflake-documented hint for "look up this requestId in the dedup
-/// table". If the retry budget is exhausted the error surfaces as
-/// [`RestError::HttpRetry`].
+/// replay (attempt ≥ 2) additionally carries `retryCount` and `retryReason`,
+/// which the server uses for dedup and retry observability. If the retry
+/// budget is exhausted the error surfaces as [`RestError::HttpRetry`].
 async fn execute_sync_query<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
@@ -1872,23 +1901,19 @@ async fn execute_sync_query<'a>(
             path: QUERY_REQUEST_PATH,
         })?;
 
-    // Base query parameters. `retry=true` is added for every HTTP replay
-    // inside `execute_with_retry` below (attempt ≥ 2) — it is always safe
-    // per Snowflake docs, and when the server has already seen this
-    // `requestId` it improves dedupe accuracy.
+    // Base query parameters. `retryCount`/`retryReason` are appended for
+    // every HTTP replay inside `execute_with_retry` below (attempt ≥ 2) so
+    // the server can dedupe replays and correlate retry causes.
     let base_query_params = vec![
         ("requestId", request_id.to_string()),
-        ("request_guid", uuid::Uuid::new_v4().to_string()),
+        ("request_guid", Uuid::new_v4().to_string()),
     ];
 
     let send_start = Instant::now();
-    let attempt_counter = std::sync::atomic::AtomicU32::new(0);
-    let build_request = || {
-        let n = attempt_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let build_request = |state: &RetryState| {
         let mut params = base_query_params.clone();
-        if n >= 1 {
-            params.push(("retry", "true".to_string()));
-        }
+        let mut retry_params = get_retry_params(state, query_parameters);
+        params.append(&mut retry_params);
         apply_json_content_type(apply_query_headers(
             client.post(query_url.clone()),
             &query_parameters.client_info,
@@ -1900,7 +1925,7 @@ async fn execute_sync_query<'a>(
 
     let http_ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
 
-    let response = execute_with_retry(
+    let response = execute_with_retry_state(
         build_request,
         &http_ctx,
         retry_policy,
@@ -3573,6 +3598,7 @@ mod tests {
                 log_max_query_length: 1024,
                 log_query_text: false,
                 log_query_parameters: false,
+                include_retry_reason: true,
             }
         }
 
@@ -3706,6 +3732,7 @@ mod tests {
                 log_max_query_length: 1024,
                 log_query_text: false,
                 log_query_parameters: false,
+                include_retry_reason: false,
             }
         }
 
@@ -3886,37 +3913,99 @@ mod tests {
         }
     }
 
+    #[cfg(test)]
+    mod retry_state_tests {
+        use super::*;
+        use crate::config::rest_parameters::test_fixtures::test_client_info;
+
+        fn query_params(include_retry_reason: bool) -> QueryParameters {
+            QueryParameters {
+                server_url: "https://example.test".into(),
+                client_info: test_client_info(),
+                log_max_query_length: 80,
+                log_query_text: false,
+                log_query_parameters: false,
+                include_retry_reason,
+            }
+        }
+
+        #[test]
+        fn first_attempt_returns_no_params() {
+            let state = RetryState::default();
+            assert!(get_retry_params(&state, &query_params(true)).is_empty());
+        }
+
+        #[test]
+        fn retry_includes_count_when_reason_disabled() {
+            let state = RetryState::new_for_retry_after_error(2, 503);
+            let params = get_retry_params(&state, &query_params(false));
+            assert_eq!(params, vec![("retryCount", "1".to_string())]);
+        }
+
+        #[test]
+        fn retry_includes_count_and_reason_with_status_code() {
+            let state = RetryState::new_for_retry_after_error(3, 429);
+            let params = get_retry_params(&state, &query_params(true));
+            assert_eq!(
+                params,
+                vec![
+                    ("retryCount", "2".to_string()),
+                    ("retryReason", "429".to_string()),
+                ]
+            );
+        }
+
+        #[test]
+        fn retry_reason_is_zero_for_transport_error() {
+            let state = RetryState::new_for_retry_after_transport_error(2);
+            let params = get_retry_params(&state, &query_params(true));
+            assert_eq!(
+                params,
+                vec![
+                    ("retryCount", "1".to_string()),
+                    ("retryReason", "0".to_string()),
+                ]
+            );
+        }
+    }
+
     mod query_log_fields_tests {
         use super::*;
         use serde_json::value::RawValue;
 
-        fn make_params(log_max_query_length: usize, text: bool, params: bool) -> QueryParameters {
+        fn make_params(
+            log_max_query_length: usize,
+            text: bool,
+            params: bool,
+            retry_reason: bool,
+        ) -> QueryParameters {
             QueryParameters {
                 server_url: "https://example.test".into(),
                 client_info: test_client_info(),
                 log_max_query_length,
                 log_query_text: text,
                 log_query_parameters: params,
+                include_retry_reason: retry_reason,
             }
         }
 
         #[test]
         fn flags_off_returns_none_none() {
-            let params = make_params(80, false, false);
+            let params = make_params(80, false, false, false);
             let input = QueryInput::new("SELECT 1");
             assert_eq!(query_log_fields(&params, &input), (None, None));
         }
 
         #[test]
         fn bindings_flag_without_text_flag_is_noop() {
-            let params = make_params(80, false, true);
+            let params = make_params(80, false, true, false);
             let input = QueryInput::new("SELECT 1");
             assert_eq!(query_log_fields(&params, &input), (None, None));
         }
 
         #[test]
         fn text_only_returns_full_sql_when_within_limit() {
-            let params = make_params(80, true, false);
+            let params = make_params(80, true, false, false);
             let input = QueryInput::new("SELECT 1");
             let (sql, bindings) = query_log_fields(&params, &input);
             assert_eq!(sql.as_deref(), Some("SELECT 1"));
@@ -3925,7 +4014,7 @@ mod tests {
 
         #[test]
         fn text_only_truncates_to_log_max_query_length() {
-            let params = make_params(6, true, false);
+            let params = make_params(6, true, false, false);
             let input = QueryInput::new("SELECT * FROM t WHERE x = 1");
             let (sql, bindings) = query_log_fields(&params, &input);
             assert_eq!(sql.as_deref(), Some("SELECT"));
@@ -3936,7 +4025,7 @@ mod tests {
         fn text_only_truncates_at_char_boundary_for_multibyte() {
             // "héllo" — 'é' is 2 bytes in UTF-8 but a single `char`. With limit
             // 3 we expect "hél" (3 chars), not bytes.
-            let params = make_params(3, true, false);
+            let params = make_params(3, true, false, false);
             let input = QueryInput::new("héllo world");
             let (sql, _) = query_log_fields(&params, &input);
             assert_eq!(sql.as_deref(), Some("hél"));
@@ -3944,7 +4033,7 @@ mod tests {
 
         #[test]
         fn text_and_params_includes_bindings_json() {
-            let params = make_params(80, true, true);
+            let params = make_params(80, true, true, false);
             let raw: Box<RawValue> = serde_json::value::to_raw_value(&serde_json::json!({
                 "1": {"type": "TEXT", "value": "hello"}
             }))
@@ -3963,7 +4052,7 @@ mod tests {
 
         #[test]
         fn text_and_params_truncates_bindings_to_log_max_query_length() {
-            let params = make_params(8, true, true);
+            let params = make_params(8, true, true, false);
             let raw: Box<RawValue> = serde_json::value::to_raw_value(&serde_json::json!({
                 "1": {"type": "TEXT", "value": "abcdefghijklmnop"}
             }))
@@ -3982,7 +4071,7 @@ mod tests {
 
         #[test]
         fn text_and_params_returns_empty_string_when_no_bindings() {
-            let params = make_params(80, true, true);
+            let params = make_params(80, true, true, false);
             let input = QueryInput::new("SELECT 1");
             let (sql, bindings) = query_log_fields(&params, &input);
             assert_eq!(sql.as_deref(), Some("SELECT 1"));
@@ -4033,6 +4122,7 @@ mod tests {
                 log_max_query_length: 1024,
                 log_query_text: false,
                 log_query_parameters: false,
+                include_retry_reason: false,
             };
             let query_input = QueryInput::new("SELECT 1");
 
@@ -4059,18 +4149,18 @@ mod tests {
             let urls = captured_urls.lock().unwrap();
             assert_eq!(urls.len(), 3, "Should have captured 3 request URLs");
             assert!(
-                !urls[0].contains("retry=true"),
-                "First attempt must not include retry=true (fresh request): {}",
+                !urls[0].contains("retryCount"),
+                "First attempt must not include retryCount (fresh request): {}",
                 urls[0]
             );
             assert!(
-                urls[1].contains("retry=true"),
-                "Second attempt must include retry=true so the server dedupes: {}",
+                urls[1].contains("retryCount=1"),
+                "Second attempt must include retryCount=1: {}",
                 urls[1]
             );
             assert!(
-                urls[2].contains("retry=true"),
-                "Third attempt must include retry=true so the server dedupes: {}",
+                urls[2].contains("retryCount=2"),
+                "Third attempt must include retryCount=2: {}",
                 urls[2]
             );
 
