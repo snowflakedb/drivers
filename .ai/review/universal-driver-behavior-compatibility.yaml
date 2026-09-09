@@ -1,0 +1,178 @@
+id: universal-driver-behavior-compatibility
+friendly_name: "Universal Driver Behavior Compatibility vs Old Driver"
+status: enabled
+# Category: Contracts.
+#
+# Diff-scoped old-vs-new compatibility review. Ports the local
+# `/behavior-compatibility-review` skill to Arctic Owl so every matching PR
+# gets the same relevance-gated check.
+#
+# Do NOT duplicate (those rulesets own the finding):
+#   - "user-observable change must add a BD entry", new-entry `reviewed:
+#     false`, WrapperPresets, fixed-BD marker cleanup, BD prose:
+#     `universal-driver-behavior-differences`.
+#   - Cross-surface SQL type completeness:
+#     `universal-driver-datatypes`.
+#   - JDBC `@SkipOldDriver` / `@SkipNewDriver` requiring a BD id:
+#     `universal-driver-java`.
+#   - Gherkin `Scenario:` naming / style: `universal-driver-tests`.
+#   - Trimming superseded `nodejs/tests/_old-driver-reference/` blocks:
+#     local `old-driver-reference-coverage-trim` rule, not this file.
+#
+# Not critical: comments only. Do not set `critical: true`.
+allowed_folders:
+  - "jdbc"
+  - "jdbc_bridge"
+  - "python"
+  - "odbc"
+  - "odbc_tests"
+  - "nodejs"
+  - "nodejs_bridge"
+  - "sf_core"
+  - "dotnet"
+  - "tests/oldTestsCoverage"
+excluded_folders:
+  - "odbc_tests/build"
+  - "odbc_tests/cmake-build"
+  - "odbc_tests/cmake-build-reference"
+  - "python/tests/__pycache__"
+  - "nodejs/node_modules"
+  - "nodejs/dist"
+  - "nodejs/tests/_old-driver-reference"
+allowed_file_extensions:
+  - ".rs"
+  - ".java"
+  - ".py"
+  - ".ts"
+  - ".js"
+  - ".cpp"
+  - ".hpp"
+  - ".h"
+  - ".cs"
+  - ".yaml"
+  - ".yml"
+rules:
+  - id: ud-compat-behavior-gap-on-this-diff
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: When this PR touches a public driver surface, flag only a
+      **diff-relevant** old-vs-new behavior gap on that surface — not a
+      catalogue of unfinished Universal Driver work.
+
+      **Evidence (look these up for the surfaces this PR actually touches):**
+      - BD files: `jdbc/BehaviorDifferences.yaml`, `python/BehaviorDifferences.yaml`,
+        `odbc_tests/BehaviorDifferences.yaml`, `nodejs/BehaviorDifferences.yaml`.
+        .NET has `tests/oldTestsCoverage/dotnet.yaml` and **no** BD file; say so
+        and continue.
+      - Coverage indexes: `tests/oldTestsCoverage/{jdbc,python,odbc,nodejs,dotnet}.yaml`
+        (a file may be missing — that is `insufficient_evidence`, not a finding).
+      - Old-contract source: Node has in-tree `nodejs/tests/_old-driver-reference/`.
+        Other drivers usually have only the YAML index in this repo.
+      - Current UD tests next to the changed surface.
+
+      **`sf_core/`:** a login / option / type / wire change is a shared contract.
+      Review JDBC, Python, ODBC, Node.js, and .NET for that surface even when
+      those trees are not in the diff.
+
+      **Surfaces** means public APIs, connection/statement options, error codes,
+      wire/login fields, type conversions, and connect/execute/result paths
+      named or edited in the production or test diff.
+
+      **FLAG when ALL of these hold:**
+      1. This PR implements, stubs, skips, documents, or otherwise changes that
+         exact surface (the finding would **not** exist if this diff were empty).
+      2. Old-driver evidence (BD, coverage YAML, old snapshot, or current
+         old-driver assertion) disagrees with the new-driver implementation or
+         the new-driver test assertions on the **same** option, error code,
+         boundary value, format token, or error polarity.
+      3. The gap is one of:
+         - `unintended_bd` — new behavior diverges from old and is not an
+           existing BD for that surface.
+         - `undocumented_known_bd` — this PR encodes a known old-vs-new
+           difference that has no BD row (do **not** restate “any observable
+           change needs a BD”; that is `ud-behavior-change-requires-bd-entry`).
+         - `impl_gap` — this PR stubs, no-ops, or partially implements the
+           touched surface relative to the old contract.
+
+      Each comment must name the surface, the diff paths, the old evidence, the
+      new evidence, and `BD#N` or `none`. Compare assertions, not filenames.
+
+      **DO NOT FLAG when ANY of these hold:**
+      - The same gap would exist if this diff were empty (known unfinished API,
+        unmapped old test, suite-wide backlog).
+      - The contract is already an existing BD row (`already_tracked`). Mention
+        `BD#N` only if you would otherwise have flagged; prefer silence.
+      - Docs-only, changelog-only, CI-only, skill-only, or comment-only changes
+        with no production/test behavior change.
+      - Internal refactor with no user-observable effect.
+      - Missing old source and no BD/index row — `insufficient_evidence`. Do
+        not invent a behavior difference or a `SNOW-` key.
+      - Gherkin under `tests/definitions/` is intent, never proof of coverage
+        or of a gap.
+      - A similarly named test without the same assertions is not coverage
+        and is also not a behavior finding by itself (see the test-gap rule).
+      - Style, naming, logging, changelog, or WrapperPresets nits.
+
+      Empty findings is success. Do not pad. Do not file Jira. Do not ask the
+      author to edit BD YAML unless this PR itself introduced the undocumented
+      difference (`undocumented_known_bd`).
+
+      ❌ **BAD** — PR tightens one JDBC connection-property parser; comment lists
+      twenty other unimplemented JDBC APIs that this diff did not touch.
+
+      ❌ **BAD** — PR restates an existing `python/BehaviorDifferences.yaml` row
+      and the comment asks for a new BD.
+
+      ✅ **GOOD** — same JDBC property change, old coverage/BD describe looser
+      acceptance, no new assertion on that property: one `unintended_bd` or
+      `impl_gap` on **that property only**, with the old and new evidence cited.
+
+      ✅ **GOOD** — `sf_core` omits a login JSON field. Comment checks wrapper
+      call sites/tests for that field even if `jdbc/` / `python/` are unchanged.
+
+  - id: ud-compat-test-gap-on-this-diff
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: When this PR changes a public driver surface, flag only a
+      **diff-relevant** test gap on that surface — missing or weak new-driver
+      assertions versus the old contract.
+
+      **FLAG when ALL of these hold:**
+      1. This PR implements, stubs, skips, or tests that exact surface (the
+         finding would **not** exist if this diff were empty).
+      2. Old-driver evidence (coverage YAML, `nodejs/tests/_old-driver-reference/`
+         for Node, or current old-driver tests) asserts a specific option,
+         error code, boundary value, format token, or error polarity.
+      3. New-driver tests do not assert the same fact, **or** the only new
+         “coverage” is `it.todo` / `it.skip` / `@Disabled` / `@SkipNewDriver`
+         without a replacement assertion (`weak_test` or `test_gap`).
+      4. Wrapper-only APIs need a wrapper test. An `sf_core` unit test can
+         support the finding but does not replace the wrapper test.
+
+      Cite the old assertion and the missing/weak new assertion. One surface
+      per comment.
+
+      **DO NOT FLAG when ANY of these hold:**
+      - The old test is for an API this diff does not touch (unmapped-suite
+        inventory).
+      - A BD already records that the new driver intentionally differs, and
+        the test uses the matching `BD#N` skip/marker (that is tracked, not a
+        gap).
+      - Gherkin-only changes under `tests/definitions/` with no production
+        or language-test change.
+      - Docs / changelog / CI / skills only.
+      - Line/branch/jacoco percentages.
+      - Asking to trim `nodejs/tests/_old-driver-reference/` (owned elsewhere).
+      - Asking to add a BD entry for a generic observable change (owned by
+        `ud-behavior-change-requires-bd-entry`).
+
+      ❌ **BAD** — PR adds a Node TIME conversion; comment dumps every
+      unmapped file under `_old-driver-reference/unit/`.
+
+      ❌ **BAD** — treating a skipped `it.todo("TIME")` as coverage, or
+      treating a similarly named new test as coverage when it does not
+      assert the same format token / boundary.
+
+      ✅ **GOOD** — PR tightens JDBC connection-property validation and adds
+      no test; old coverage YAML asserts looser acceptance of that property:
+      one `test_gap` on that property only.
