@@ -94,6 +94,7 @@ class ParamStyle(StrEnum):
 # Numeric types for IS_NUMERIC check (mirrors reference connector's compat.py)
 _NUM_DATA_TYPES: tuple[type, ...] = (int, float, Decimal)
 _NUMPY_BOOL_TYPES: tuple[type, ...] = ()
+_NUMPY_DATETIME_TYPES: tuple[type, ...] = ()
 _NUMPY_FLOAT_TYPES: tuple[type, ...] = ()
 
 if not isinstance(np, MissingOptionalDependency):
@@ -112,6 +113,7 @@ if not isinstance(np, MissingOptionalDependency):
         np.bool_,
     )
     _NUMPY_BOOL_TYPES = (np.bool_,)
+    _NUMPY_DATETIME_TYPES = (np.datetime64,)
     _NUMPY_FLOAT_TYPES = (np.float16, np.float32, np.float64)
 
 _FLOAT_TYPES: tuple[type, ...] = (float,) + _NUMPY_FLOAT_TYPES
@@ -575,6 +577,8 @@ class ClientSideBindingConverter:
             return cls._timedelta_to_snowflake(value)
         elif isinstance(value, time_module.struct_time):
             return cls._struct_time_to_snowflake(value)
+        elif isinstance(value, _NUMPY_DATETIME_TYPES):
+            return str(value) + "+00:00"
         elif isinstance(value, list):
             # List for IN clause - convert each element
             return [cls.to_snowflake(v) for v in value]

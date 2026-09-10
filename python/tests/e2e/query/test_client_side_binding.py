@@ -10,6 +10,7 @@ This module tests client-side parameter interpolation functionality including:
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from ...conftest import with_paramstyle, with_paramstyles
@@ -38,6 +39,20 @@ class TestPyformatPositionalBinding:
         assert result[2] == "hello"
         assert result[3] is True
         assert result[4] is None
+
+    def test_should_bind_numpy_datetime64_with_positional_pyformat(self, cursor):
+        # Given Snowflake client is logged in with pyformat paramstyle
+        value = np.datetime64("2016-03-04T12:03:05.123456789")
+
+        # When Query "SELECT TO_VARCHAR(%s::TIMESTAMP_NTZ, 'YYYY-MM-DD HH24:MI:SS.FF9')" is executed
+        #   with a numpy.datetime64 parameter
+        cursor.execute(
+            "SELECT TO_VARCHAR(%s::TIMESTAMP_NTZ, 'YYYY-MM-DD HH24:MI:SS.FF9')",
+            (value,),
+        )
+
+        # Then Result should contain the nanosecond timestamp string
+        assert cursor.fetchone() == ("2016-03-04 12:03:05.123456789",)
 
     def test_should_bind_string_with_single_quote(self, cursor):
         """Test string binding with single quote character."""
