@@ -333,27 +333,21 @@ def _warn_future_base_change() -> None:
         pass
 
 
-# NOTE: `ProgrammingError` is deliberately NOT the PEP 249-correct base here.
-# `ud-py-pep249-error-subclass-selection` classes token expiry as environmental
-# (`OperationalError`), and PEP 249's `OperationalError` example #1 is "an
-# unexpected disconnect occurs". We subclass `ProgrammingError` anyway so that
-# `except ProgrammingError` — what legacy snowflake-connector-python raised on
-# the common mid-session path — keeps working for migrating callers. The base
-# changes to `OperationalError` in a future major release: SNOW-3965765.
+# `ProgrammingError` isn't the PEP 249-correct base for token expiry (that's
+# `OperationalError`), but it's what legacy raised, and `except ProgrammingError`
+# is how existing callers catch this. Base changes to `OperationalError` in a
+# future major release: TODO(SNOW-3965765).
 class ReauthenticationRequest(ProgrammingError):
     """Raised when the session cannot be renewed; open a new connection.
 
-    Subclasses `ProgrammingError` only for compatibility with
-    `snowflake-connector-python`; the base becomes `OperationalError` in a
-    future major release. Catch this class directly, or `DatabaseError`, to be
-    immune to that change.
+    Catch this class directly, or `DatabaseError`, to stay correct once the
+    base changes to `OperationalError`.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # `cause` matches legacy `network.ReauthenticationRequest`'s payload,
-        # which callers such as Snowpark's `_Decorator.wrap_exception` read
-        # unconditionally as `ex.cause`.
+        # Legacy's `.cause` is always a `ProgrammingError` built from the same
+        # msg/errno/sqlstate; Snowpark's wrap_exception reads `ex.cause` directly.
         self.cause = ProgrammingError(*args, **kwargs)
         _warn_future_base_change()
 

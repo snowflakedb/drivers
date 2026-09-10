@@ -19,13 +19,10 @@ which is the one place the list lives on the Python side and which carries the
 note on keeping it in sync with the Rust core. Add or change a value there, not
 here.
 
-``ReauthenticationRequest`` is the one exception to the "deprecated, unused"
-framing above: legacy defined it in this module, and consumers such as
-Snowpark still import it from here (``from snowflake.connector.network import
-ReauthenticationRequest``). It is not deprecated — the universal core raises
-it on every reauthentication path — so it is re-exported plainly, without the
-``@backward_compatibility`` warning treatment applied to the rest of this
-module. Its canonical definition lives in :mod:`snowflake.connector.errors`.
+``ReauthenticationRequest`` is the exception to that: legacy defined it here
+and Snowpark still imports it from this module, so it is re-exported plainly
+(no ``@backward_compatibility`` warning). Canonical definition lives in
+:mod:`snowflake.connector.errors`.
 """
 
 from __future__ import annotations
