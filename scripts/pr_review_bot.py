@@ -1352,11 +1352,6 @@ def cmd_assign(args: argparse.Namespace) -> int:
         for u in requested_objs
         if not _is_bot_user(u) and u["login"].lower() != author.lower()
     ]
-    if already_requested:
-        return _skip_assign(
-            f"PR #{pr_number} already has reviewers requested "
-            f"({', '.join(already_requested)}); skipping auto-assign."
-        )
 
     log.info("Reading reviewer pool from %s ...", reviewers_path)
     try:
@@ -1365,89 +1360,107 @@ def cmd_assign(args: argparse.Namespace) -> int:
         log.error("%s. Aborting assign.", e)
         return 1
 
-    full_pool = all_reviewers(rules)
-    log.info(
-        "%s defines %d rule(s) covering %d unique reviewer(s).",
-        reviewers_path,
-        len(rules),
-        len(full_pool),
-    )
-    if not full_pool:
-        log.warning(
-            "No individual @logins found in %s. Add reviewers explicitly to "
-            "enable auto-assign.",
-            reviewers_path,
-        )
-        set_gh_output("skip", "true")
-        return 0
-
-    # Label-based narrowing: prefer the experts whose rule label is on
-    # this PR. Labels live on the PR payload we already fetched, so no
-    # extra API call is needed. When no rule matches, ``select_candidates``
-    # already returns the union of every reviewer across every rule so
-    # unlabeled PRs are spread across the whole roster rather than
-    # concentrated on the ``all`` rule's tiny generalist list.
-    pr_labels = [
-        (lbl.get("name") or "").strip()
-        for lbl in pr.get("labels", []) or []
-        if isinstance(lbl, dict)
-    ]
-    pr_labels = [lbl for lbl in pr_labels if lbl]
-    log.info(
-        "PR #%d carries %d label(s): %s",
-        pr_number,
-        len(pr_labels),
-        ", ".join(pr_labels) if pr_labels else "(none)",
-    )
-    candidates = select_candidates(rules, pr_labels)
-    if not candidates:
-        # Defensive: only happens if the rules file is empty, which
-        # the ``full_pool`` check above would already have caught.
-        log.warning(
-            "No candidates from %s for labels %s; falling back to the full pool.",
-            reviewers_path,
-            pr_labels or "(none)",
-        )
-        candidates = full_pool
-    log.info(
-        "Candidate pool for PR #%d (%d): %s",
-        pr_number,
-        len(candidates),
-        ", ".join(candidates),
-    )
-
-    # Note: per-reviewer opt-outs (`notify`, `remind`) intentionally
-    # do NOT prune the candidate pool here. Every declared reviewer
-    # is always assignable; the opt-outs only suppress the
-    # corresponding Slack pings (see the post-pick `notify` check
-    # below for assign mode, and the digest filter in `cmd_remind`
-    # for the reminder pass).
-
-    # Build the display/OOO resolver early so the pick helper can
-    # pre-filter by Slack status. The resolver caches per-login
-    # lookups, so reusing it later for the picked reviewer's mention
-    # doesn't re-hit Slack. `_pick_assign_reviewer` also widens to
-    # the full roster when the label-matched pool is empty after
-    # excluding the author (one-person domain rule vs. PR author).
+    # The display/OOO resolver is shared by both branches below: the
+    # random-pick branch passes it to ``_pick_assign_reviewer`` to
+    # pre-filter candidates by Slack status, and both branches reuse it
+    # to render the picked reviewer's Slack mention. Per-login lookups
+    # are cached, so the later mention lookup doesn't re-hit Slack.
     names = ReviewerDisplay(
         repo=repo,
         slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
     )
-    reviewer = _pick_assign_reviewer(
-        candidates,
-        full_pool,
-        excluded=[author, *already_requested],
-        names=names,
-    )
-    if not reviewer:
-        return _skip_assign(
-            f"No eligible reviewer found in {reviewers_path} (author={author})."
+
+    if already_requested:
+        # A human reviewer is already on the PR. Rather than skipping,
+        # the bot reuses the existing reviewer: it reconciles the GitHub
+        # state (a PR's requested-reviewers and assignees are independent
+        # lists, so the reviewer can be present on one and missing from
+        # the other) via the idempotent ``gh_pr_assign`` below, and still
+        # announces the PR in the channel. Only the first requested
+        # reviewer is reused; any others keep their existing GitHub review
+        # request and are left untouched.
+        reviewer = already_requested[0]
+        log.info(
+            "PR #%d already has reviewer(s) requested (%s); reusing %s.",
+            pr_number,
+            ", ".join(already_requested),
+            reviewer,
+        )
+    else:
+        full_pool = all_reviewers(rules)
+        log.info(
+            "%s defines %d rule(s) covering %d unique reviewer(s).",
+            reviewers_path,
+            len(rules),
+            len(full_pool),
+        )
+        if not full_pool:
+            log.warning(
+                "No individual @logins found in %s. Add reviewers explicitly to "
+                "enable auto-assign.",
+                reviewers_path,
+            )
+            set_gh_output("skip", "true")
+            return 0
+
+        # Label-based narrowing: prefer the experts whose rule label is on
+        # this PR. Labels live on the PR payload we already fetched, so no
+        # extra API call is needed. When no rule matches, ``select_candidates``
+        # already returns the union of every reviewer across every rule so
+        # unlabeled PRs are spread across the whole roster rather than
+        # concentrated on the ``all`` rule's tiny generalist list.
+        pr_labels = [
+            (lbl.get("name") or "").strip()
+            for lbl in pr.get("labels", []) or []
+            if isinstance(lbl, dict)
+        ]
+        pr_labels = [lbl for lbl in pr_labels if lbl]
+        log.info(
+            "PR #%d carries %d label(s): %s",
+            pr_number,
+            len(pr_labels),
+            ", ".join(pr_labels) if pr_labels else "(none)",
+        )
+        candidates = select_candidates(rules, pr_labels)
+        if not candidates:
+            # Defensive: only happens if the rules file is empty, which
+            # the ``full_pool`` check above would already have caught.
+            log.warning(
+                "No candidates from %s for labels %s; falling back to the full pool.",
+                reviewers_path,
+                pr_labels or "(none)",
+            )
+            candidates = full_pool
+        log.info(
+            "Candidate pool for PR #%d (%d): %s",
+            pr_number,
+            len(candidates),
+            ", ".join(candidates),
         )
 
-    log.info("Selected reviewer: %s (author %s excluded)", reviewer, author)
+        # Note: per-reviewer opt-outs (`notify`, `remind`) intentionally
+        # do NOT prune the candidate pool here. Every declared reviewer
+        # is always assignable; the opt-outs only suppress the
+        # corresponding Slack pings (see the post-pick `notify` check
+        # below for assign mode, and the digest filter in `cmd_remind`
+        # for the reminder pass). `_pick_assign_reviewer` widens to the
+        # full roster when the label-matched pool is empty after
+        # excluding the author (one-person domain rule vs. PR author).
+        reviewer = _pick_assign_reviewer(
+            candidates,
+            full_pool,
+            excluded=[author, *already_requested],
+            names=names,
+        )
+        if not reviewer:
+            return _skip_assign(
+                f"No eligible reviewer found in {reviewers_path} (author={author})."
+            )
+        log.info("Selected reviewer: %s (author %s excluded)", reviewer, author)
+
     gh_pr_assign(repo, pr_number, reviewer)
     log.info(
-        "Requested review and added assignee %s on #%d (via gh pr edit).",
+        "Requested review and added assignee %s on #%d.",
         reviewer,
         pr_number,
     )
