@@ -52,6 +52,7 @@ pub struct ResultSetDescriptor {
     pub statement_type_id: Option<i64>,
     pub sql_state: Option<String>,
     pub stats: Option<Stats>,
+    pub query_result_format: Option<String>,
     pub number_of_binds: i32,
     pub array_bind_supported: bool,
     pub binds: Vec<ColumnMetadata>,
@@ -313,6 +314,7 @@ pub(super) fn response_to_descriptor(
         statement_type_id,
         sql_state: data.sql_state.clone(),
         stats: data.stats.clone(),
+        query_result_format: data.query_result_format.clone(),
         number_of_binds: data.number_of_binds.unwrap_or(0),
         array_bind_supported: data.array_bind_supported.unwrap_or(false),
         binds,
@@ -666,6 +668,7 @@ impl DatabaseDriverV1 {
             statement_type_id: None,
             sql_state: None,
             stats: None,
+            query_result_format: Some("arrow".to_owned()),
             number_of_binds: 0,
             array_bind_supported: false,
             binds: Vec::new(),
@@ -865,6 +868,7 @@ mod tests {
             statement_type_id: None,
             sql_state: None,
             stats: None,
+            query_result_format: None,
             number_of_binds: 0,
             array_bind_supported: false,
             binds: Vec::new(),
@@ -1027,6 +1031,33 @@ mod tests {
         let data: Data = serde_json::from_str(JSON_ROWSET).expect("fixture must deserialize");
         let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
         assert_eq!(descriptor.row_count, None);
+    }
+
+    #[test]
+    fn response_to_descriptor_carries_json_query_result_format() {
+        let data: Data = serde_json::from_str(JSON_ROWSET).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        assert_eq!(descriptor.query_result_format.as_deref(), Some("json"));
+    }
+
+    #[test]
+    fn response_to_descriptor_carries_arrow_query_result_format() {
+        let data: Data = serde_json::from_str(ARROW_DATA).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        assert_eq!(descriptor.query_result_format.as_deref(), Some("arrow"));
+    }
+
+    #[test]
+    fn response_to_descriptor_leaves_query_result_format_none_when_absent() {
+        let json = r#"{
+            "rowset": [["1"]],
+            "rowtype": [
+                {"name": "ID", "type": "FIXED", "nullable": false, "precision": 38, "scale": 0}
+            ]
+        }"#;
+        let data: Data = serde_json::from_str(json).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        assert_eq!(descriptor.query_result_format, None);
     }
 
     /// COPY status rowset: two files loading 2 and 3 rows; `total` is the file

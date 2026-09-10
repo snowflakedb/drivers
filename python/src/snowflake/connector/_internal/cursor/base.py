@@ -117,6 +117,25 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         return self._query_result.description_v2
 
     @property
+    @snowpark_compat
+    def _query_result_format(self) -> str | None:
+        """Result format the server reported for the last executed statement.
+
+        ``"arrow"`` or ``"json"``. A response that carries no format at all is
+        reported as ``"json"``, which is what the legacy connector reports for
+        it too.
+
+        ``None`` until a statement has produced a result set on this cursor.
+        That includes the window between :meth:`get_results_from_sfqid` and the
+        first fetch, where :attr:`description` and :attr:`rowcount` are equally
+        unpopulated, and the ``describe``-only path, which carries no format.
+
+        Snowpark reads this to decide whether a result set can be fetched as
+        Arrow or pandas.
+        """
+        return self._query_result.query_result_format
+
+    @property
     @pep249
     @api_telemetry
     def rowcount(self) -> int | None:
