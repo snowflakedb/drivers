@@ -15,6 +15,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -234,6 +235,85 @@ class SlackMrkdwnEscapeTests(unittest.TestCase):
         self.assertEqual(
             bot._decorate_reviewer(_MentionNames(), "alice"),
             "<@U123ABC>",
+        )
+
+
+def _open_pr(
+    *,
+    number: int = 1797,
+    author: str = "alice",
+    requested: tuple[str, ...] = ("bob",),
+    title: str = "Raise security-signoff label recall",
+) -> dict:
+    return {
+        "number": number,
+        "title": title,
+        "html_url": f"https://github.com/org/repo/pull/{number}",
+        "user": {"login": author},
+        "requested_reviewers": [
+            {"login": login, "type": "User"} for login in requested
+        ],
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+
+
+def _review(login: str, state: str, *, bot: bool = False) -> dict:
+    user = {
+        "login": f"{login}[bot]" if bot and not login.endswith("[bot]") else login,
+        "type": "Bot" if bot else "User",
+    }
+    return {"user": user, "state": state}
+
+
+class ClassifyPrForReminderTests(unittest.TestCase):
+    _now = datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc)
+    _requested_at = _now - timedelta(hours=5)
+
+    def _classify(self, pr: dict, reviews: list[dict]) -> dict | None:
+        return bot._classify_pr_for_reminder(
+            pr, reviews, first_request_time=self._requested_at, now=self._now
+        )
+
+    def test_keeps_pr_when_only_the_author_left_a_comment_review(self) -> None:
+        entry = self._classify(
+            _open_pr(author="alice", requested=("bob",)),
+            [_review("alice", "COMMENTED")],
+        )
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["number"], 1797)
+        self.assertEqual(entry["requested"], ["bob"])
+
+    def test_drops_pr_when_a_reviewer_commented(self) -> None:
+        self.assertIsNone(
+            self._classify(
+                _open_pr(author="alice", requested=("bob",)),
+                [_review("bob", "COMMENTED")],
+            )
+        )
+
+    def test_keeps_pr_when_only_bots_commented(self) -> None:
+        entry = self._classify(
+            _open_pr(author="alice", requested=("bob",)),
+            [
+                _review("snowflake-security-bot-internal", "COMMENTED", bot=True),
+                _review("ai-review-bot-1", "COMMENTED", bot=True),
+            ],
+        )
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["requested"], ["bob"])
+
+    def test_drops_pr_when_a_reviewer_approved_even_if_author_also_commented(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            self._classify(
+                _open_pr(author="alice", requested=("bob",)),
+                [
+                    _review("alice", "COMMENTED"),
+                    _review("bob", "APPROVED"),
+                ],
+            )
         )
 
 

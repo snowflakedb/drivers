@@ -64,12 +64,15 @@ Subcommands
 ``remind``
     Iterate every open non-draft PR in the repository (via ``gh``) and
     write a digest Slack payload listing PRs that are *waiting on a
-    reviewer's action* — i.e. no review with state ``APPROVED``,
-    ``CHANGES_REQUESTED`` or ``COMMENTED``. A plain comment-review
-    counts as engagement and clears the PR from the digest, so the
-    channel is not re-pinged while a reviewer is mid-discussion with
-    the author. Each entry includes the time elapsed since the
-    *initial* ``review_requested`` event.
+    reviewer's action* — i.e. no *reviewer* review with state
+    ``APPROVED``, ``CHANGES_REQUESTED`` or ``COMMENTED``. A plain
+    comment-review from a requested reviewer counts as engagement and
+    clears the PR from the digest, so the channel is not re-pinged
+    while they are mid-discussion with the author. Reviews from the
+    PR author (and from bots) do not count: an author comment-review
+    is not a substitute for a reviewer looking at the PR. Each entry
+    includes the time elapsed since the *initial* ``review_requested``
+    event.
 
     PRs whose waiting time is below :data:`MIN_WAITING_HOURS` are
     dropped from the digest so freshly-opened or freshly-requested
@@ -230,10 +233,12 @@ DEFAULT_REVIEWERS_PATH = Path(".github/reviewers.yml")
 _DEFAULT_PREFS = {"notify": True, "remind": True}
 
 # Review states that mean the reviewer has taken action on the PR.
-# ``COMMENTED`` is included so a plain comment-review counts the same as
-# an approval or change request: any human engagement clears the PR
-# from the reminder digest. This avoids re-pinging the channel while a
-# reviewer is mid-discussion with the author.
+# ``COMMENTED`` is included so a plain comment-review from a reviewer
+# counts the same as an approval or change request: any reviewer
+# engagement clears the PR from the reminder digest. This avoids
+# re-pinging the channel while a reviewer is mid-discussion with the
+# author. Author and bot reviews are ignored — they are not a
+# substitute for a reviewer having looked at the PR.
 ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED", "COMMENTED"}
 
 # Minimum age (hours since the first ``review_requested`` event, or
@@ -1520,7 +1525,11 @@ def cmd_assign(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _latest_review_state_per_user(reviews: list[dict]) -> dict[str, str]:
+def _latest_review_state_per_user(
+    reviews: list[dict],
+    *,
+    ignore_logins: Iterable[str] = (),
+) -> dict[str, str]:
     """Return ``{login: latest_review_state}`` per reviewer.
 
     All non-``PENDING`` review states count as the user having acted on
@@ -1532,14 +1541,20 @@ def _latest_review_state_per_user(reviews: list[dict]) -> dict[str, str]:
     treated as "no action taken".
 
     Bot reviews are ignored entirely: a Copilot approval or comment
-    must not count as a human having actioned the PR.
+    must not count as a human having actioned the PR. Logins in
+    *ignore_logins* (the PR author, compared case-insensitively) are
+    skipped for the same reason — an author comment-review is not a
+    reviewer having looked at the PR.
     """
+    ignored = {login.lower() for login in ignore_logins if login}
     by_user: dict[str, str] = {}
     for rv in reviews:
         user_obj = rv.get("user") or {}
         if _is_bot_user(user_obj):
             continue
         user = user_obj.get("login")
+        if user and user.lower() in ignored:
+            continue
         state = rv.get("state")
         if not user or not state:
             continue
@@ -1561,7 +1576,10 @@ def _classify_pr_for_reminder(
     first_request_time: datetime | None = None,
     now: datetime | None = None,
 ) -> dict | None:
-    states = _latest_review_state_per_user(reviews)
+    author_login = ((pr.get("user") or {}).get("login") or "").lower()
+    states = _latest_review_state_per_user(
+        reviews, ignore_logins=(author_login,)
+    )
     if any(s in ACTIONED_STATES for s in states.values()):
         return None
 
@@ -1572,7 +1590,6 @@ def _classify_pr_for_reminder(
     #    them as someone we're waiting on.
     # 2. Bot reviewers (Copilot, Dependabot, …) — not people; naming
     #    them in a Slack nudge confuses the channel.
-    author_login = ((pr.get("user") or {}).get("login") or "").lower()
     requested_users = sorted(
         {
             u["login"]
