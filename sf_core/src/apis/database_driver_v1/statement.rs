@@ -12,8 +12,8 @@ use super::result_set::{
     response_to_descriptor,
 };
 use super::validation::{
-    ValidationIssue, ValidationSeverity, canonicalize_setting_key, resolve_options,
-    validate_statement_option_write,
+    ValidationIssue, ValidationSeverity, canonicalize_setting_key, is_unregistered_param,
+    resolve_options, validate_statement_option_write,
 };
 use crate::apis::operation_ctx::{OperationCtx, run_opt, with_cleanup_opt};
 use crate::config::ParamStore;
@@ -1254,7 +1254,9 @@ fn setting_to_json_value(setting: &Setting) -> serde_json::Value {
 /// Statement-scoped options forwarded to GS in the query-request `parameters`
 /// map. Maps the local `ParamKey` to the server-side parameter name. Only
 /// registry-recognized, server-meaningful options belong here (the client-only
-/// `skip_upload_on_content_match` is intentionally excluded).
+/// `skip_upload_on_content_match` is intentionally excluded). Settings with no
+/// registry entry at all are not in this list; `build_query_parameters`
+/// forwards those separately, unchanged and unvalidated.
 const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] = &[
     (param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT"),
     (param_names::QUERY_TAG, "QUERY_TAG"),
@@ -1265,6 +1267,15 @@ fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde
     for (key, server_name) in QUERY_PARAMETER_NAMES {
         if let Some(setting) = settings.get(*key) {
             params.insert(server_name.to_string(), setting_to_json_value(setting));
+        }
+    }
+    // Keys with no registry entry reach GS unchanged: no server-side name
+    // mapping, no value validation, just an uppercased key.
+    for (key, setting) in settings.iter() {
+        if is_unregistered_param(key) && !matches!(setting, Setting::Bytes(_)) {
+            params
+                .entry(key.to_uppercase())
+                .or_insert_with(|| setting_to_json_value(setting));
         }
     }
     if params.is_empty() {
@@ -1510,6 +1521,116 @@ mod tests {
             build_query_parameters(&settings).is_none(),
             "registered client-only statement option must not be forwarded to GS"
         );
+    }
+
+    #[test]
+    fn unregistered_statement_option_is_forwarded_to_gs() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "DATE_INPUT_FORMAT".to_string(),
+            Setting::String("MM-DD-YYYY".to_string()),
+        );
+        let params =
+            build_query_parameters(&settings).expect("unregistered option should be forwarded");
+        assert_eq!(
+            params.get("DATE_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("MM-DD-YYYY".to_string()))
+        );
+    }
+
+    #[test]
+    fn unregistered_statement_option_forwarding_is_not_special_cased_to_date_formats() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "SF_PARTNER".to_string(),
+            Setting::String("FAKE_PARTNER".to_string()),
+        );
+        let params =
+            build_query_parameters(&settings).expect("unregistered option should be forwarded");
+        assert_eq!(
+            params.get("SF_PARTNER"),
+            Some(&serde_json::Value::String("FAKE_PARTNER".to_string()))
+        );
+    }
+
+    #[test]
+    fn unregistered_statement_option_key_is_uppercased_for_gs() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "date_input_format".to_string(),
+            Setting::String("MM-DD-YYYY".to_string()),
+        );
+        let params = build_query_parameters(&settings).expect("should be forwarded");
+        assert_eq!(
+            params.get("DATE_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("MM-DD-YYYY".to_string()))
+        );
+    }
+
+    #[test]
+    fn unregistered_statement_options_coexist_with_registered_ones() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "query_tag".to_string(),
+            Setting::String("stmt_tag".to_string()),
+        );
+        settings.insert(
+            "SF_PARTNER".to_string(),
+            Setting::String("FAKE_PARTNER".to_string()),
+        );
+        let params = build_query_parameters(&settings).expect("both should be forwarded");
+        assert_eq!(params.len(), 2);
+        assert_eq!(
+            params.get("QUERY_TAG"),
+            Some(&serde_json::Value::String("stmt_tag".to_string()))
+        );
+        assert_eq!(
+            params.get("SF_PARTNER"),
+            Some(&serde_json::Value::String("FAKE_PARTNER".to_string()))
+        );
+    }
+
+    #[test]
+    fn unregistered_statement_options_differing_only_in_case_do_not_panic() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "date_input_format".to_string(),
+            Setting::String("MM-DD-YYYY".to_string()),
+        );
+        settings.insert(
+            "DATE_INPUT_FORMAT".to_string(),
+            Setting::String("YYYY-MM-DD".to_string()),
+        );
+        let params = build_query_parameters(&settings).expect("should be forwarded");
+        assert_eq!(params.len(), 1);
+        assert!(params.contains_key("DATE_INPUT_FORMAT"));
+    }
+
+    #[test]
+    fn unregistered_statement_option_bytes_value_is_not_forwarded() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "SF_PARTNER".to_string(),
+            Setting::Bytes(vec![0x01, 0x02, 0x03]),
+        );
+        assert_eq!(build_query_parameters(&settings), None);
+    }
+
+    #[tokio::test]
+    async fn registered_session_only_statement_option_still_errors() {
+        let ds = DatabaseDriverV1::new();
+        let ch = ds.connection_new();
+        let sh = ds.statement_new(ch).unwrap();
+        let err = ds
+            .statement_set_option(sh, "client_prefetch_threads".into(), Setting::Int(8))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not statement-scoped"),
+            "unexpected: {err}"
+        );
+        ds.statement_release(sh).unwrap();
+        ds.connection_release(ch).unwrap();
     }
 
     #[test]
