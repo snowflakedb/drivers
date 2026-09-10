@@ -396,6 +396,7 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
             row_count: d.row_count,
             statement_type_id: d.statement_type_id,
             sql_state: d.sql_state,
+            query_result_format: d.query_result_format,
             stats: native_stats_to_proto(&d.stats),
         }
     }

@@ -117,6 +117,17 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         return self._query_result.description_v2
 
     @property
+    @snowpark_compat
+    def _query_result_format(self) -> str | None:
+        """``"arrow"`` or ``"json"`` for the last statement, or None before one
+        produced a result set. A format-less response reads as ``"json"``, as it
+        does on the legacy connector.
+
+        Snowpark reads this to decide whether results can be fetched as pandas.
+        """
+        return self._query_result.query_result_format
+
+    @property
     @pep249
     @api_telemetry
     def rowcount(self) -> int | None:
