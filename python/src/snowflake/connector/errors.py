@@ -106,20 +106,19 @@ class Error(Exception):
         return self.__str__()
 
     def __str__(self) -> str:
-        return self.msg
-
-    def _format_message(self, msg: str) -> str:
-        code_str = f"{self.errno:06d}" if isinstance(self.errno, int) and self.errno >= 0 else "------"
-        sqlstate_str = f" ({self.sqlstate})" if self.sqlstate else ""
-        base = f"{code_str}{sqlstate_str}: {msg}" if msg else ""
-        if not base:
-            return base
+        if not self.msg:
+            return self.msg
         ids = []
         if self.request_id:
             ids.append(f"request_id={self.request_id}")
         if self.sfqid:
             ids.append(f"sfqid={self.sfqid}")
-        return f"{base} ({', '.join(ids)})" if ids else base
+        return f"{self.msg} ({', '.join(ids)})" if ids else self.msg
+
+    def _format_message(self, msg: str) -> str:
+        code_str = f"{self.errno:06d}" if isinstance(self.errno, int) and self.errno >= 0 else "------"
+        sqlstate_str = f" ({self.sqlstate})" if self.sqlstate else ""
+        return f"{code_str}{sqlstate_str}: {msg}" if msg else ""
 
     # ------------------------------------------------------------------
     # Error-handler protocol (PEP 249 / backward compatible)
