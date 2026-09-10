@@ -4046,7 +4046,6 @@ class TestQueryResultFormat:
         mock_core_client.statement_execute_query.return_value = execute_response
 
     def test_query_result_format_none_before_execute(self, cursor):
-        """No statement has run, so there is no format to report."""
         assert cursor._query_result_format is None
 
     def test_query_result_format_reports_arrow(self, cursor, mock_core_client):
@@ -4064,9 +4063,20 @@ class TestQueryResultFormat:
         assert cursor._query_result_format == "json"
 
     def test_query_result_format_defaults_to_json_when_response_carries_none(self, cursor, mock_core_client):
-        """An unset field reads as "" over proto; legacy reports such responses as JSON."""
+        """An unset proto field reads as ""; legacy calls such responses JSON."""
         self._stub_execute_result(mock_core_client, "")
 
         cursor.execute("PUT file:///tmp/x.csv @stage")
 
         assert cursor._query_result_format == "json"
+
+    def test_query_result_format_runs_pending_prefetch_hook(self, cursor):
+        """A deferred async result is loaded before the format is read."""
+
+        def load() -> None:
+            cursor._query_result.query_result_format = "arrow"
+            cursor._prefetch_hook = None
+
+        cursor._prefetch_hook = MagicMock(side_effect=load)
+
+        assert cursor._query_result_format == "arrow"

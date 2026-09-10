@@ -119,19 +119,11 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
     @property
     @snowpark_compat
     def _query_result_format(self) -> str | None:
-        """Result format the server reported for the last executed statement.
+        """``"arrow"`` or ``"json"`` for the last statement, or None before one
+        produced a result set. A format-less response reads as ``"json"``, as it
+        does on the legacy connector.
 
-        ``"arrow"`` or ``"json"``. A response that carries no format at all is
-        reported as ``"json"``, which is what the legacy connector reports for
-        it too.
-
-        ``None`` until a statement has produced a result set on this cursor.
-        That includes the window between :meth:`get_results_from_sfqid` and the
-        first fetch, where :attr:`description` and :attr:`rowcount` are equally
-        unpopulated, and the ``describe``-only path, which carries no format.
-
-        Snowpark reads this to decide whether a result set can be fetched as
-        Arrow or pandas.
+        Snowpark reads this to decide whether results can be fetched as pandas.
         """
         return self._query_result.query_result_format
 

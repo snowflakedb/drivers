@@ -197,7 +197,6 @@ class QueryResult:
                 if descriptor.HasField("stats")
                 else QueryResultStats()
             ),
-            # A response that carries no format is reported as JSON, matching
-            # the legacy connector's `data.get("queryResultFormat", "json")`.
+            # Legacy reports a format-less response as JSON.
             query_result_format=descriptor.query_result_format or "json",
         )

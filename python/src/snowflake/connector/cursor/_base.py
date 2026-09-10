@@ -551,6 +551,13 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             self._rownumber = -1
         return self._query_result.description_v2
 
+    @property
+    @snowpark_compat
+    @with_prefetch_hook
+    def _query_result_format(self) -> str | None:
+        """Like the base property, but loads a deferred async result first."""
+        return super()._query_result_format
+
     # ------------------------------------------------------------------
     # Fetch – shared implementation
     # Intentionally no @api_telemetry on fetch methods - they are hot paths.
