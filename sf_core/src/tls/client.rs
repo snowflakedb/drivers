@@ -221,7 +221,7 @@ pub(crate) fn configure_tls_builder(
 }
 
 /// [`configure_tls_builder`] plus `.no_gzip()`, for the storage clients
-/// (Azure, GCS) that move opaque, possibly CSE-encrypted bytes whose
+/// (Azure, GCS, S3) that move opaque, possibly CSE-encrypted bytes whose
 /// downstream SHA-256 digest / Content-Length / ranged-download checks
 /// assume wire bytes == body bytes. Without it, a response carrying
 /// `Content-Encoding: gzip` (e.g. from `gsutil cp -Z`, BigQuery exports, or
@@ -233,9 +233,9 @@ pub(crate) fn configure_tls_builder(
 /// (`storage_client.py:54-59`).
 ///
 /// The GS/REST client still wants gzip, so this can't be folded into
-/// `configure_tls_builder` itself. S3 applies `.no_gzip()` at its own call
-/// site ([`crate::tls::aws_http_client::build_s3_reqwest_client`]) because it
-/// also needs to adjust redirect policy and HTTP version there.
+/// `configure_tls_builder` itself. S3 chains additional options
+/// (`.redirect(Policy::none())`, `.http1_only()`) on the returned builder
+/// in [`crate::tls::aws_http_client::build_s3_reqwest_client`].
 pub(crate) fn configure_storage_client_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
