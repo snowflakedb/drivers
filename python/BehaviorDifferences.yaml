@@ -1362,10 +1362,10 @@ behavior_differences:
 
   92:
     name: "fetch_pandas_all/fetch_pandas_batches accept JSON result sets"
-    status: unknown
+    status: allowed
     type: enhancement
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: medium
     old_driver_behavior: |
       `fetch_pandas_all()`/`fetch_pandas_batches()` and the `fetch_arrow_*` equivalents
@@ -1376,8 +1376,4 @@ behavior_differences:
       JSON rowset is converted to Arrow, and no result-format check rejects the fetch.
     description: |
       The cursor-level counterpart of entry 18, which records the same capability on
-      `ResultBatch`. Callers that catch `NotSupportedError` to reach a non-pandas
-      fallback now take the pandas path instead, which is how the difference becomes
-      visible downstream: Snowpark's `DataFrame.to_pandas()` relabels non-SELECT
-      columns from its own query plan only inside that fallback, so its labels change
-      from `'"status"'` to `status`. See SNOW-4072353.
+      `ResultBatch`.
