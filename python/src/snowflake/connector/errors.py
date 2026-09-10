@@ -351,6 +351,10 @@ class ReauthenticationRequest(ProgrammingError):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        # `cause` matches legacy `network.ReauthenticationRequest`'s payload,
+        # which callers such as Snowpark's `_Decorator.wrap_exception` read
+        # unconditionally as `ex.cause`.
+        self.cause = ProgrammingError(*args, **kwargs)
         _warn_future_base_change()
 
 
