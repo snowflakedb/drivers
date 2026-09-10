@@ -1434,29 +1434,34 @@ class TestGetQueryStatus:
         mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
             status_name=status_name,
         )
-        assert connection.get_query_status("test-query-id") == expected
+        assert connection.get_query_status("11111111-1111-1111-1111-111111111111") == expected
 
     def test_unknown_status_returns_no_data(self, connection, mock_db_api):
         mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
             status_name="SOME_FUTURE_STATUS",
         )
-        assert connection.get_query_status("test-query-id") == QueryStatus.NO_DATA
+        assert connection.get_query_status("11111111-1111-1111-1111-111111111111") == QueryStatus.NO_DATA
 
     def test_passes_correct_conn_handle_and_query_id(self, connection, mock_db_api):
         mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
             status_name="SUCCESS",
         )
-        connection.get_query_status("abc-123")
+        connection.get_query_status("22222222-2222-2222-2222-222222222222")
 
         args, _ = mock_db_api.connection_get_query_status.call_args
         request = args[0]
         assert request.conn_handle == connection.conn_handle
-        assert request.query_id == "abc-123"
+        assert request.query_id == "22222222-2222-2222-2222-222222222222"
 
     def test_propagates_proto_error(self, connection, mock_db_api):
         mock_db_api.connection_get_query_status.side_effect = ProgrammingError("Query not found")
         with pytest.raises(ProgrammingError, match="Query not found"):
-            connection.get_query_status("invalid-id")
+            connection.get_query_status("33333333-3333-3333-3333-333333333333")
+
+    def test_rejects_malformed_query_id_without_request(self, connection, mock_db_api):
+        with pytest.raises(ValueError, match="Invalid UUID: 'not-a-uuid'"):
+            connection.get_query_status("not-a-uuid")
+        mock_db_api.connection_get_query_status.assert_not_called()
 
 
 class TestGetQueryStatusThrowIfError:
@@ -1466,13 +1471,13 @@ class TestGetQueryStatusThrowIfError:
         mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
             status_name="SUCCESS",
         )
-        assert connection.get_query_status_throw_if_error("qid") == QueryStatus.SUCCESS
+        assert connection.get_query_status_throw_if_error("44444444-4444-4444-4444-444444444444") == QueryStatus.SUCCESS
 
     def test_returns_status_when_running(self, connection, mock_db_api):
         mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
             status_name="RUNNING",
         )
-        assert connection.get_query_status_throw_if_error("qid") == QueryStatus.RUNNING
+        assert connection.get_query_status_throw_if_error("44444444-4444-4444-4444-444444444444") == QueryStatus.RUNNING
 
     def test_raises_on_error_status_with_details(self, connection, mock_db_api):
         mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
@@ -1481,24 +1486,29 @@ class TestGetQueryStatusThrowIfError:
             error_message="SQL compilation error",
         )
         with pytest.raises(ProgrammingError, match="SQL compilation error") as exc_info:
-            connection.get_query_status_throw_if_error("failed-qid")
+            connection.get_query_status_throw_if_error("55555555-5555-5555-5555-555555555555")
         assert exc_info.value.errno == 1003
-        assert exc_info.value.sfqid == "failed-qid"
+        assert exc_info.value.sfqid == "55555555-5555-5555-5555-555555555555"
 
     def test_raises_on_aborted_status(self, connection, mock_db_api):
         mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
             status_name="ABORTED",
         )
         with pytest.raises(ProgrammingError) as exc_info:
-            connection.get_query_status_throw_if_error("aborted-qid")
-        assert exc_info.value.sfqid == "aborted-qid"
+            connection.get_query_status_throw_if_error("66666666-6666-6666-6666-666666666666")
+        assert exc_info.value.sfqid == "66666666-6666-6666-6666-666666666666"
 
     def test_raises_with_fallback_message_when_no_error_message(self, connection, mock_db_api):
         mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
             status_name="FAILED_WITH_ERROR",
         )
-        with pytest.raises(ProgrammingError, match="Query failed-qid-2 failed"):
-            connection.get_query_status_throw_if_error("failed-qid-2")
+        with pytest.raises(ProgrammingError, match="Query 77777777-7777-7777-7777-777777777777 failed"):
+            connection.get_query_status_throw_if_error("77777777-7777-7777-7777-777777777777")
+
+    def test_rejects_malformed_query_id_without_request(self, connection, mock_db_api):
+        with pytest.raises(ValueError, match="Invalid UUID: 'not-a-uuid'"):
+            connection.get_query_status_throw_if_error("not-a-uuid")
+        mock_db_api.connection_get_query_status.assert_not_called()
 
 
 class TestIsValid:
