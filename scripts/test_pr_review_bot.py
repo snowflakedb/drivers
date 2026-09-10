@@ -10,6 +10,7 @@ Optional live check against GitHub (requires ``gh`` auth):
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -17,6 +18,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import pr_review_bot as bot  # noqa: E402
@@ -397,6 +399,158 @@ class ReminderDigestChunkTests(unittest.TestCase):
             first = json.loads(files[0].read_text())
             self.assertEqual(first["channel"], "drivers-review")
             self.assertTrue(first["blocks"])
+
+
+class _StubDisplay:
+    """Offline stand-in for ``ReviewerDisplay``: deterministic mention,
+    never OOO, no GitHub/Slack calls."""
+
+    def __init__(self, repo: str | None = None, slack_token: str | None = None) -> None:
+        pass
+
+    def name(self, login: str) -> str:
+        return f"<@{login}>"
+
+    def is_ooo(self, login: str) -> bool:
+        return False
+
+
+# A minimal pool: one plain reviewer and one with the ``notify: false``
+# opt-out, plus a couple of rules so the random-pick fallback has a
+# non-empty roster.
+_REVIEWERS_YAML = """\
+reviewers:
+  alice_snow:
+  bob_snow:
+    notify: false
+rules:
+  all:
+    - alice_snow
+  python:
+    - alice_snow
+    - bob_snow
+"""
+
+
+class AssignReuseExistingReviewerTests(unittest.TestCase):
+    """When a PR already carries a human reviewer, ``cmd_assign`` reuses
+    that reviewer instead of skipping: it reconciles the GitHub
+    review-request + assignee for them (``gh_pr_assign`` is idempotent and
+    sets both surfaces) and still posts the channel announcement, subject
+    to the reused reviewer's ``notify`` preference."""
+
+    def _pr(
+        self,
+        requested: list[dict],
+        *,
+        author: str = "dave_snow",
+        labels: list[str] | None = None,
+    ) -> dict:
+        return {
+            "number": 42,
+            "draft": False,
+            "state": "open",
+            "user": {"login": author},
+            "title": "Add thing",
+            "html_url": "https://github.com/snowflakedb/drivers/pull/42",
+            "additions": 10,
+            "deletions": 2,
+            "labels": [{"name": name} for name in (labels or [])],
+            "requested_reviewers": requested,
+        }
+
+    def _run_assign(self, pr: dict) -> tuple[list[str], dict | None]:
+        """Run ``cmd_assign`` against *pr* with every network seam stubbed.
+
+        Returns ``(assign_calls, payload)`` where ``assign_calls`` is the
+        list of logins passed to ``gh_pr_assign`` and ``payload`` is the
+        parsed Slack payload, or ``None`` when no channel post was written.
+        """
+        assign_calls: list[str] = []
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            reviewers = root / "reviewers.yml"
+            reviewers.write_text(_REVIEWERS_YAML)
+            payload_file = root / "payload.json"
+            env = {
+                "GH_REPO": "snowflakedb/drivers",
+                "PR_NUMBER": str(pr["number"]),
+                "REVIEWERS_PATH": str(reviewers),
+                "SLACK_CHANNEL": "drivers-review",
+                "SLACK_PAYLOAD_FILE": str(payload_file),
+                # Keep set_gh_output a no-op regardless of the outer env.
+                "GITHUB_OUTPUT": "",
+            }
+            with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+                bot, "get_pr", lambda repo, n: pr
+            ), mock.patch.object(
+                bot, "ReviewerDisplay", _StubDisplay
+            ), mock.patch.object(
+                bot,
+                "gh_pr_assign",
+                lambda repo, n, login: assign_calls.append(login),
+            ), mock.patch.object(
+                bot, "gh_pr_remove_reviewer", lambda repo, n, login: None
+            ):
+                rc = bot.cmd_assign(argparse.Namespace())
+            payload = (
+                json.loads(payload_file.read_text())
+                if payload_file.exists()
+                else None
+            )
+        self.assertEqual(rc, 0)
+        return assign_calls, payload
+
+    def test_reuses_existing_reviewer_and_posts_slack(self) -> None:
+        # carol_snow is a human reviewer already on the PR (and not even in
+        # the pool). The bot reuses her rather than picking someone new,
+        # and announces the PR naming her.
+        assign_calls, payload = self._run_assign(
+            self._pr([{"login": "carol_snow", "type": "User"}])
+        )
+        self.assertEqual(assign_calls, ["carol_snow"])
+        self.assertIsNotNone(payload)
+        blob = json.dumps(payload)
+        self.assertIn("carol_snow", blob)
+        self.assertIn("New PR ready for review", blob)
+
+    def test_reuses_only_the_first_when_multiple_requested(self) -> None:
+        assign_calls, _ = self._run_assign(
+            self._pr(
+                [
+                    {"login": "carol_snow", "type": "User"},
+                    {"login": "erin_snow", "type": "User"},
+                ]
+            )
+        )
+        # Only the first requested reviewer is reconciled; the rest keep
+        # their existing GitHub review request and are left untouched.
+        self.assertEqual(assign_calls, ["carol_snow"])
+
+    def test_reuse_honors_notify_false(self) -> None:
+        # bob_snow carries notify:false. The GitHub side is still
+        # reconciled, but the channel post is suppressed (Option A).
+        assign_calls, payload = self._run_assign(
+            self._pr([{"login": "bob_snow", "type": "User"}])
+        )
+        self.assertEqual(assign_calls, ["bob_snow"])
+        self.assertIsNone(payload)
+
+    def test_author_and_bot_reviewers_do_not_count_as_existing(self) -> None:
+        # Only the PR author (stripped) and a bot reviewer are present, so
+        # there is no human to reuse: the bot falls through to its normal
+        # random pick from the pool and never reuses the author or the bot.
+        assign_calls, _ = self._run_assign(
+            self._pr(
+                [
+                    {"login": "dave_snow", "type": "User"},
+                    {"login": "copilot[bot]", "type": "Bot"},
+                ]
+            )
+        )
+        self.assertEqual(len(assign_calls), 1)
+        self.assertIn(assign_calls[0], {"alice_snow", "bob_snow"})
+        self.assertNotIn(assign_calls[0], {"dave_snow", "copilot[bot]"})
 
 
 @unittest.skipUnless(
