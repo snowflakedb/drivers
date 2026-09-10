@@ -8,4 +8,5 @@ class TestType(str, Enum):
     PUT_GET = "put_get"
     COLD_START = "cold_start"
     CONCURRENT = "concurrent"
+    PARAMETER_BINDING = "parameter_binding"
 

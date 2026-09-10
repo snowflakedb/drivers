@@ -10,3 +10,5 @@ class PerfTestType(str, Enum):
     COLD_START = "cold_start"
     COLD_START_RECORDED_HTTP = "cold_start_recorded_http"
     CONCURRENT = "concurrent"
+    PARAMETER_BINDING = "parameter_binding"
+    PARAMETER_BINDING_RECORDED_HTTP = "parameter_binding_recorded_http"

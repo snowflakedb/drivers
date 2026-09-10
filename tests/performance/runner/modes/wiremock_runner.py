@@ -1,4 +1,5 @@
 import csv
+import json
 import logging
 import shutil
 import statistics
@@ -38,6 +39,9 @@ def run_wiremock_performance_test(
     fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
     result_format: str = "arrow",
+    binding_mode: str = "execute",
+    binding_params: list | tuple | None = None,
+    expected_row_count: int | None = None,
 ) -> list[Path]:
     """
     Run a performance test with WireMock HTTP traffic recording.
@@ -138,6 +142,9 @@ def run_wiremock_performance_test(
                     test_type=test_type,
                     fetch_mode=fetch_mode,
                     bind_mode=bind_mode,
+                    binding_mode=binding_mode,
+                    binding_params=binding_params,
+                    expected_row_count=expected_row_count,
                 )
                 
                 # Step 4: Create snapshot and transform
@@ -226,6 +233,8 @@ def run_wiremock_performance_test(
                 test_type=test_type,
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
+                binding_mode=binding_mode,
+                binding_params=binding_params,
             )
             
             # Collect metrics while WireMock is still running (triggers flush to disk)
@@ -292,6 +301,9 @@ def run_wiremock_comparison_test(
     fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
     result_format: str = "arrow",
+    binding_mode: str = "execute",
+    binding_params: list | tuple | None = None,
+    expected_row_count: int | None = None,
 ) -> dict[str, list[Path]]:
     """
     Run WireMock test on both universal and old driver implementations.
@@ -346,6 +358,9 @@ def run_wiremock_comparison_test(
         fetch_mode=fetch_mode,
         bind_mode=bind_mode,
         result_format=result_format,
+        binding_mode=binding_mode,
+        binding_params=binding_params,
+        expected_row_count=expected_row_count,
     )
     
     # Determine the mappings directory created by universal driver
@@ -386,6 +401,9 @@ def run_wiremock_comparison_test(
         fetch_mode=fetch_mode,
         bind_mode=bind_mode,
         result_format=result_format,
+        binding_mode=binding_mode,
+        binding_params=binding_params,
+        expected_row_count=expected_row_count,
     )
     
     return results
@@ -609,6 +627,8 @@ def _run_test_with_proxy(
     test_type: PerfTestType = PerfTestType.SELECT,
     fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
+    binding_mode: str = "execute",
+    binding_params: list | tuple | None = None,
 ):
     """
     Run test with WireMock proxy configuration.
@@ -642,6 +662,13 @@ def _run_test_with_proxy(
 
     if bind_mode != "char":
         env_vars["BIND_MODE"] = bind_mode
+
+    if test_type == PerfTestType.PARAMETER_BINDING:
+        env_vars["BINDING_MODE"] = binding_mode
+        if binding_params is not None:
+            env_vars["BINDING_PARAMS_JSON"] = json.dumps(binding_params)
+        if expected_row_count is not None:
+            env_vars["EXPECTED_ROW_COUNT"] = str(expected_row_count)
 
     # Export the WireMock CA cert so the driver trusts the dynamically generated
     # MITM certificates. Each Dockerfile appends this to the appropriate CA bundle.

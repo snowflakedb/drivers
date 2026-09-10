@@ -11,6 +11,7 @@ from connection import (
 )
 from concurrent_aio_execution import execute_concurrent_aio_test
 from concurrent_execution import execute_concurrent_test
+from binding_execution import execute_binding_test
 from put_execution import execute_put_get_test
 from query_execution import execute_fetch_test
 from results import write_csv_results, write_memory_timeline, write_run_metadata
@@ -121,7 +122,16 @@ def main():
         sys.exit(1)
 
     try:
-        if config.test_type == TestType.CONCURRENT:
+        if config.test_type == TestType.PARAMETER_BINDING:
+            results, memory_timeline = execute_binding_test(
+                cursor,
+                config.sql_command,
+                config.warmup_iterations,
+                config.iterations,
+                config.binding_mode,
+                config.binding_params_json,
+            )
+        elif config.test_type == TestType.CONCURRENT:
             if config.fetch_mode == "aio":
                 results, memory_timeline = execute_concurrent_aio_test(
                     conn,

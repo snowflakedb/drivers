@@ -387,7 +387,13 @@ def _prepare_setup_queries(
         List of setup queries with test-type-specific prefixes
     """
     match test_type:
-        case PerfTestType.SELECT | PerfTestType.SELECT_RECORDED_HTTP | PerfTestType.CONCURRENT:
+        case (
+            PerfTestType.SELECT
+            | PerfTestType.SELECT_RECORDED_HTTP
+            | PerfTestType.CONCURRENT
+            | PerfTestType.PARAMETER_BINDING
+            | PerfTestType.PARAMETER_BINDING_RECORDED_HTTP
+        ):
             fmt = result_format.upper()
             # connector-specific params override, set all of them, so each path is covered
             format_queries = [
@@ -404,7 +410,7 @@ def _prepare_setup_queries(
             params = json.loads(parameters_json)
             testconn = params.get("testconnection", {})
             database = testconn.get("SNOWFLAKE_TEST_DATABASE") or testconn.get("database", "")
-            
+
             use_db_query = f"USE DATABASE {database}"
             return [use_db_query] + (setup_queries or [])
 
@@ -425,8 +431,9 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 setup_queries=["ALTER SESSION SET QUERY_TAG = 'perf_test'"]  # optional
             )
     
-    Note: SELECT tests prepend the connector result-format session parameters
-    from --result-format (default ARROW). Any setup_queries provided are appended after that.
+    Note: SELECT and parameter-binding tests prepend the connector result-format
+    session parameters from --result-format (default ARROW). Any setup_queries
+    provided are appended after that.
 
     The test_name is automatically derived from the test function name (strips "test_" prefix).
     You can also explicitly provide test_name if needed.
@@ -451,11 +458,23 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         fetch_mode: str = "fetchmany",  # Cursor fetch strategy for SELECT tests
         bind_mode: str = "char",  # ODBC: "char" (SQL_C_CHAR) or "default" (SQL_C_DEFAULT)
         worker_count: int = 1,
+        binding_mode: str = "execute",
+        binding_params: list | tuple | None = None,
+        expected_row_count: int | None = None,
     ):
         if bind_mode not in ("char", "default"):
             raise ValueError(f"Invalid bind_mode '{bind_mode}'. Supported: char, default")
         if worker_count < 1:
             raise ValueError(f"worker_count must be >= 1, got {worker_count}")
+        if (
+            test_type
+            in (
+                PerfTestType.PARAMETER_BINDING,
+                PerfTestType.PARAMETER_BINDING_RECORDED_HTTP,
+            )
+            and binding_params is None
+        ):
+            raise ValueError("binding_params is required for parameter binding tests")
 
         if (
             result_format == "json"
@@ -481,7 +500,11 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         )
         is_comparison = _should_run_comparison(driver, driver_type) and not universal_only
 
-        if test_type in (PerfTestType.SELECT_RECORDED_HTTP, PerfTestType.COLD_START_RECORDED_HTTP):
+        if test_type in (
+            PerfTestType.SELECT_RECORDED_HTTP,
+            PerfTestType.COLD_START_RECORDED_HTTP,
+            PerfTestType.PARAMETER_BINDING_RECORDED_HTTP,
+        ):
             _regression_test_params[test_name] = {
                 "sql_command": sql_command,
                 "parameters_json": parameters_json,
@@ -490,7 +513,11 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
             }
 
         # Route to appropriate runner based on test type
-        if test_type in (PerfTestType.SELECT_RECORDED_HTTP, PerfTestType.COLD_START_RECORDED_HTTP):
+        if test_type in (
+            PerfTestType.SELECT_RECORDED_HTTP,
+            PerfTestType.COLD_START_RECORDED_HTTP,
+            PerfTestType.PARAMETER_BINDING_RECORDED_HTTP,
+        ):
             result = _run_wiremock_test(
                 test_name=test_name,
                 sql_command=sql_command,
@@ -500,6 +527,10 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 test_type=test_type,
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
+                binding_mode=binding_mode,
+                binding_params=binding_params,
+                expected_row_count=expected_row_count,
+                effective_driver_type=effective_driver_type,
             )
         else:
             result = _run_e2e_test(
@@ -513,6 +544,9 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 bind_mode=bind_mode,
                 worker_count=worker_count,
                 effective_driver_type=effective_driver_type,
+                binding_mode=binding_mode,
+                binding_params=binding_params,
+                expected_row_count=expected_row_count,
             )
 
         # Performance history comparison
@@ -531,6 +565,10 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         test_type: PerfTestType = PerfTestType.SELECT_RECORDED_HTTP,
         fetch_mode: str = "fetchmany",
         bind_mode: str = "char",
+        binding_mode: str = "execute",
+        binding_params: list | tuple | None = None,
+        expected_row_count: int | None = None,
+        effective_driver_type: str | None = None,
     ):
         """Run WireMock test (recorded HTTP traffic)."""
         _validate_wiremock_old_driver(driver, driver_type)
@@ -539,6 +577,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         container_type_map = {
             PerfTestType.SELECT_RECORDED_HTTP: PerfTestType.SELECT,
             PerfTestType.COLD_START_RECORDED_HTTP: PerfTestType.COLD_START,
+            PerfTestType.PARAMETER_BINDING_RECORDED_HTTP: PerfTestType.PARAMETER_BINDING,
         }
         container_test_type = container_type_map.get(test_type, PerfTestType.SELECT)
         
@@ -562,6 +601,9 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
                 result_format=result_format,
+                binding_mode=binding_mode,
+                binding_params=binding_params,
+                expected_row_count=expected_row_count,
             )
         else:
             from runner.modes.wiremock_runner import run_wiremock_performance_test
@@ -574,7 +616,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 iterations=iterations,
                 warmup_iterations=warmup_iterations,
                 driver=driver,
-                driver_type=_normalize_driver_type(driver, driver_type),
+                driver_type=_normalize_driver_type(driver, effective_driver_type),
                 use_local_binary=use_local_binary,
                 s3_files_dir=s3_files_dir,
                 run_id=run_id,
@@ -584,6 +626,9 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
                 result_format=result_format,
+                binding_mode=binding_mode,
+                binding_params=binding_params,
+                expected_row_count=expected_row_count,
             )
     
     def _run_e2e_test(
@@ -597,6 +642,9 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         bind_mode: str = "char",
         worker_count: int = 1,
         effective_driver_type: str | None = None,
+        binding_mode: str = "execute",
+        binding_params: list | tuple | None = None,
+        expected_row_count: int | None = None,
     ):
         """Run E2E test (real Snowflake connection)."""
         run_driver_type = effective_driver_type if effective_driver_type is not None else driver_type
@@ -615,6 +663,9 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
                 worker_count=worker_count,
+                binding_mode=binding_mode,
+                binding_params=binding_params,
+                expected_row_count=expected_row_count,
             )
         else:
             return run_performance_test(
@@ -633,6 +684,9 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 fetch_mode=fetch_mode,
                 bind_mode=bind_mode,
                 worker_count=worker_count,
+                binding_mode=binding_mode,
+                binding_params=binding_params,
+                expected_row_count=expected_row_count,
             )
     
     def _compare_local_results(result, test_name, driver, driver_type, is_comparison, results_dir):
