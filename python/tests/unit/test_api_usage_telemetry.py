@@ -376,7 +376,7 @@ class TestApiTelemetryResetBehavior:
         gen = connection.execute_stream(StringIO("SELECT 1; SELECT 2"))
         next(gen)
 
-        connection.get_query_status("")
+        connection.get_query_status("11111111-1111-1111-1111-111111111111")
 
         methods = _get_api_methods(mock_db_api)
         assert "Connection.execute_stream" in methods

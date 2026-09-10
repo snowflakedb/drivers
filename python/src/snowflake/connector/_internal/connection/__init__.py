@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..connection_config_mixin import ConnectionConfigMixin, OptionsModifier
-from .connection import ConnectionMixin, clamp_client_prefetch_threads
+from .connection import ConnectionMixin, clamp_client_prefetch_threads, validate_query_id
 from .connection_types import ConnectionParameters, ConnectionParamValue, F, SessionParameters
 from .constants import APPLICATION_NAME, CLIENT_NAME, DEFAULT_CONFIGURATION, LOG_MAX_QUERY_LENGTH
 from .decorators import requires_open
@@ -35,4 +35,5 @@ __all__ = [
     "SET_AUTOCOMMIT_SQL",
     "SET_CLIENT_PREFETCH_THREADS_SQL",
     "requires_open",
+    "validate_query_id",
 ]
