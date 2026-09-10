@@ -220,6 +220,31 @@ pub(crate) fn configure_tls_builder(
     }
 }
 
+/// [`configure_tls_builder`] plus `.no_gzip()`, for the storage clients
+/// (Azure, GCS) that move opaque, possibly CSE-encrypted bytes whose
+/// downstream SHA-256 digest / Content-Length / ranged-download checks
+/// assume wire bytes == body bytes. Without it, a response carrying
+/// `Content-Encoding: gzip` (e.g. from `gsutil cp -Z`, BigQuery exports, or
+/// other external loaders) is transparently gunzipped by reqwest, silently
+/// substituting the decoded body for the actual on-cloud bytes. Mirrors
+/// JDBC's `HttpUtil.disableContentCompression()`
+/// (`SnowflakeGCSClient.java:237,:432` via `HttpUtil.java:420`) and the
+/// intent of Python's `remove_content_encoding` urllib3 hook
+/// (`storage_client.py:54-59`).
+///
+/// The GS/REST client still wants gzip, so this can't be folded into
+/// `configure_tls_builder` itself. S3 applies `.no_gzip()` at its own call
+/// site ([`crate::tls::aws_http_client::build_s3_reqwest_client`]) because it
+/// also needs to adjust redirect policy and HTTP version there.
+pub(crate) fn configure_storage_client_builder(
+    builder: ClientBuilder,
+    tls_config: &TlsConfig,
+    proxy: Option<&ProxyConfig>,
+    crl_worker: SharedCrlWorker,
+) -> Result<ClientBuilder, TlsError> {
+    configure_tls_builder(builder, tls_config, proxy, crl_worker).map(ClientBuilder::no_gzip)
+}
+
 /// Build a rustls `ClientConfig` with CRL validation. Shared by
 /// [`configure_tls_builder`] (storage clients) and
 /// [`build_tls_client_and_rustls_config`] (connection-level client).

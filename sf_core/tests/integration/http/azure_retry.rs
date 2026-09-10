@@ -1,3 +1,5 @@
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::config::param_store::ParamStore;
@@ -13,6 +15,7 @@ use sf_core::file_manager::{
     MultipartParams, StageInfo, StageInfoRefresher, TransferCtx, download_files,
 };
 use sf_core::sensitive::SensitiveString;
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use wiremock::matchers::method;
@@ -105,16 +108,21 @@ async fn azure_download_success_returns_data_and_metadata() {
     assert_eq!(metadata.material_desc.smk_id, "1");
 }
 
+fn gzip_encode(payload: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(payload).expect("gzip encode write");
+    encoder.finish().expect("gzip encode finish")
+}
+
+/// Even when the body is *valid* gzip and the header says `gzip`, the driver
+/// must hand the caller the compressed wire bytes — proving the auto-decoder
+/// is off (positive byte-equality, not just "did not error"). This is the
+/// case that matters for CSE: ciphertext that happens to follow the gzip
+/// magic must not be re-decoded.
 #[tokio::test]
 async fn azure_download_does_not_auto_decompress_gzip_content_encoding() {
-    use flate2::Compression;
-    use flate2::write::GzEncoder;
-    use std::io::Write;
-
-    let mut wire_bytes = Vec::new();
-    let mut encoder = GzEncoder::new(&mut wire_bytes, Compression::default());
-    encoder.write_all(b"raw-wire-bytes").expect("gzip write");
-    encoder.finish().expect("gzip finish");
+    let raw_payload: &[u8] = b"raw-wire-bytes";
+    let wire_bytes = gzip_encode(raw_payload);
 
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -142,6 +150,93 @@ async fn azure_download_does_not_auto_decompress_gzip_content_encoding() {
         "the client must hand back the exact wire bytes; auto-decompressing a \
          Content-Encoding: gzip response would silently substitute the \
          decoded body for the actual on-cloud (possibly CSE-encrypted) bytes"
+    );
+    assert_ne!(
+        response.data, raw_payload,
+        "if this fires, reqwest auto-gunzip ran — the .no_gzip() fix has regressed"
+    );
+}
+
+/// An Azure response that claims `Content-Encoding: gzip` but ships a
+/// non-gzip body — e.g. CSE ciphertext, which is not valid gzip. With
+/// reqwest auto-decompression on, the body reader would either error
+/// (gunzip on non-gzip bytes) or return decoded garbage; either way the
+/// caller wouldn't see the wire bytes.
+#[tokio::test]
+async fn azure_download_content_encoding_gzip_with_non_gzip_body_is_returned_verbatim() {
+    let payload: &[u8] = b"hello world (raw plaintext, NOT gzip)";
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(payload.to_vec())
+                .insert_header("content-encoding", "gzip")
+                .insert_header("x-ms-meta-sfcdigest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = azure_stage(&server.uri());
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        None,
+    )
+    .await;
+
+    let response = result.expect(
+        "download must succeed: reqwest auto-gunzip must be disabled on the Azure client \
+         (otherwise the body reader errors on non-gzip bytes)",
+    );
+    assert_eq!(
+        response.data, payload,
+        "wire body bytes must reach the caller verbatim (no auto-decode)"
+    );
+}
+
+/// The Azure download path must not advertise `Accept-Encoding: gzip` on the
+/// wire either. `.no_gzip()` on reqwest also suppresses the automatic
+/// `Accept-Encoding` header injection — mirroring libcurl's default (no
+/// opt-in) and JDBC's `disableContentCompression`. This guards against a
+/// future regression where someone calls `.gzip(true)` or removes
+/// `.no_gzip()` and only the auto-decoder check is asserted.
+#[tokio::test]
+async fn azure_download_does_not_advertise_gzip_accept_encoding() {
+    let payload: &[u8] = b"plain body";
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(payload.to_vec())
+                .insert_header("x-ms-meta-sfcdigest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = azure_stage(&server.uri());
+    sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        None,
+    )
+    .await
+    .expect("download must succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "exactly one GET expected");
+    let accept_encoding = requests[0]
+        .headers
+        .get("accept-encoding")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        !accept_encoding.to_ascii_lowercase().contains("gzip"),
+        "Azure GET must not advertise gzip in Accept-Encoding (reqwest .no_gzip() also \
+         suppresses the auto-injected header); got: {accept_encoding:?}"
     );
 }
 

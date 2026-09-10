@@ -1,5 +1,13 @@
-//! SNOW-4073008: a stage file downloaded from Azure Blob Storage must come
-//! back byte-for-byte identical to what was staged, compressed or not.
+//! A stage file downloaded from Azure Blob Storage must come back
+//! byte-for-byte identical to what was staged, compressed or not.
+//!
+//! `require_running_on_azure!` skips these on non-Azure CI, and Snowflake
+//! Azure stages store gzip as identity-encoded blob bytes, so neither test
+//! sets `Content-Encoding: gzip` on the wire. They exercise the real
+//! upload/download round trip but do not reproduce the auto-gunzip
+//! regression; `azure_download_does_not_auto_decompress_gzip_content_encoding`
+//! in `sf_core/tests/integration/http/azure_retry.rs` is the regression lock
+//! for that.
 
 use crate::common::file_utils::create_test_file;
 use crate::common::put_get_common::{get_file_from_stage, upload_to_stage_with_options};
