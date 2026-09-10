@@ -2,16 +2,49 @@
 
 ## Upcoming Release
 
+- 
+
+## v4.0.0-rc3
+
 Breaking changes:
+
 - Changed `SQLColumns` `BUFFER_LENGTH` for `DATE`/`TIME` from `COLUMN_SIZE` (`10` / `18` for `TIME(9)`) to `6` (`sizeof(SQL_DATE_STRUCT)` / `sizeof(SQL_TIME_STRUCT)`); query-result `SQLColAttribute` octet length for DATE/TIME remains 6. (snowflakedb/drivers#1485)
 
 New features:
+
 - Added `INTERVAL YEAR TO MONTH` and `INTERVAL DAY TO SECOND` result support: `SQL_C_CHAR`/`SQL_C_WCHAR` fetch returns the canonical ANSI literal (`[-]Y-MM`, `[-]D HH:MM:SS[.f]`), same-family `SQL_C_INTERVAL_*` targets receive the parsed interval struct, and scalar numeric targets receive total months or total whole seconds (reporting `01S07` when sub-second precision is dropped). (snowflakedb/drivers#1732)
 - Added native AKS Workload Identity support for Azure: when the Azure Workload Identity webhook injects `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE` into a pod and the projected token file exists on disk, `WORKLOAD_IDENTITY_PROVIDER=AZURE` exchanges that federated token for an Entra ID access token directly. `WORKLOAD_IDENTITY_IMPERSONATION_PATH` is not supported in this environment. (snowflakedb/drivers#1367)
 - Added a `WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN` connection parameter for AWS Workload Identity Federation. When set to true, attestation uses outbound STS `GetWebIdentityToken` instead of the default pre-signed `GetCallerIdentity` token; the connection parameter takes precedence over `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN`. (snowflakedb/drivers#1551)
+- Added `INCLUDE_RETRY_REASON` (default true) so retried query requests send `retryReason` (the HTTP status that triggered the retry, or `0` for transport failures) alongside `retryCount`. (snowflakedb/drivers#1568)
+
+Changes:
+
+- Changed `SQLBrowseConnect` so an incomplete connection string returns `SQL_NEED_DATA` and keeps the handle available for further browse calls, matching the 3.x iterative protocol under iODBC. (snowflakedb/drivers#1742)
+- Changed OAuth Authorization Code connections to default `CLIENT_STORE_TEMPORARY_CREDENTIAL` to true when the caller has not set it, matching ODBC 3.x token caching. (snowflakedb/drivers#1545)
+- Changed `SQLForeignKeys` with `SQL_ATTR_METADATA_ID=TRUE` to return `SQL_ERROR` (`HY009`) for a `NULL` catalog, schema, or table pointer on either side. (snowflakedb/drivers#1545)
+- Changed `SQL_C_BINARY` fetch of `FLOAT`/`DOUBLE`/`REAL` to return the native 8-byte IEEE 754 value instead of a 19-byte `SQL_NUMERIC_STRUCT`. (snowflakedb/drivers#1664)
+- Changed `SQL_BIT` parameter binding so integer and `SQL_C_NUMERIC` sources accept only `0` and `1` (other magnitudes return `22003`). (snowflakedb/drivers#1544)
+- Changed `SQL_C_CHAR`/`SQL_C_WCHAR` binding of `"Infinity"`, `"-Infinity"`, and `"NaN"` to `SQL_FLOAT`/`SQL_REAL`/`SQL_DOUBLE` to forward the non-finite value instead of returning `22018`. (snowflakedb/drivers#1544)
+- Changed `SQL_C_CHAR`/`SQL_C_WCHAR` hex literals bound to `SQL_BINARY` so an odd-length hex string drops the leftover nibble and succeeds. (snowflakedb/drivers#1544)
+- Changed `SQLBindParameter` with Snowflake vendor TIMESTAMP codes (`2000` / `2001` / `2002`) to store those codes on the IPD so `SQLDescribeParam` returns them as bound. (snowflakedb/drivers#1544)
+- Changed `SQLSetStmtAttr(SQL_ROWSET_SIZE, 0)` to return `SQL_ERROR` (`HY024`) instead of storing `0` or coercing to `1`. (snowflakedb/drivers#1544)
+- Changed PUT result `source_compression` / `target_compression` tokens to lowercase (e.g. `gzip`), matching ODBC 3.x. (snowflakedb/drivers#1543)
+- Changed gzip-compressed PUT uploads to omit the original filename from the gzip `FNAME` header, matching ODBC 3.x. (snowflakedb/drivers#1543)
+- Changed PUT and GET to transfer several files at once, bounded by the statement `PARALLEL` value; result rows keep their original file order. (snowflakedb/drivers#1451)
+- Changed an unreadable or empty `TOKEN_FILE_PATH` to report SQLSTATE `28000` instead of `01S00`. (snowflakedb/drivers#1477)
+- Improved GET to warn when a downloaded batch contains multiple files that resolve to the same local filename. (snowflakedb/drivers#1651)
+- Improved external-browser callback handling to cap HTTP header size on the localhost listener. (snowflakedb/drivers#1201)
 
 Bug fixes:
+
 - Fixed `SQLGetDiagField` return codes for three edge cases: a record field requested with `RecNumber=0` now returns `SQL_ERROR` instead of `SQL_NO_DATA`, a header field requested with a positive `RecNumber` now returns `SQL_SUCCESS` instead of `SQL_NO_DATA`, and a negative `BufferLength` for a string field now returns `SQL_ERROR`. (snowflakedb/drivers#1878)
+- Fixed array/batch parameter binding to retry the execute with inline JSON when the `SYSTEM$BIND` stage is disabled, instead of failing the statement. (snowflakedb/drivers#1824)
+- Fixed the file-based token cache changing the mode of a cache file that is not `0600` and then using it anyway; such a file is now reported and left unused. (snowflakedb/drivers#1793)
+- Fixed connections failing when `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY` falls outside the accepted range; the value is now clamped before login. (snowflakedb/drivers#1780)
+- Fixed a `Driver=`-only connect with no other connection-string attributes to load the default `connections.toml` profile. (snowflakedb/drivers#1221)
+- Fixed session-parameter reads used by `SQLGetConnectAttr` and decimal-as-int conversion to honor typed values returned by the server (e.g. `AUTOCOMMIT` after `ALTER SESSION`). (snowflakedb/drivers#1342)
+- Fixed queries returning a `FILE` column failing with `Unsupported column type`. (snowflakedb/drivers#1697)
+- Fixed queries returning a `MAP` column failing with `Unsupported column type`. (snowflakedb/drivers#1666)
 
 ## v4.0.0-rc2
 
