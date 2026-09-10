@@ -11,6 +11,7 @@ use super::binary;
 use super::boolean;
 use super::date;
 use super::decfloat;
+use super::interval;
 use super::number;
 use super::real;
 use super::text;
@@ -61,6 +62,12 @@ impl ConversionContext {
             }
             SnowflakeFieldType::TimestampTz { scale } => {
                 timestamp_tz::from_column(array, field_type, scale)
+            }
+            SnowflakeFieldType::IntervalYearMonth { scale } => {
+                interval::year_month_from_column(array, field_type, scale)
+            }
+            SnowflakeFieldType::IntervalDayTime => {
+                interval::day_time_from_column(array, field_type)
             }
             SnowflakeFieldType::TimestampLtz { .. } | SnowflakeFieldType::Vector { .. } => {
                 Err(PyNotImplementedError::new_err(format!(
