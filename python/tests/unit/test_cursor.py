@@ -3903,3 +3903,71 @@ class TestAsyncCursorExecuteAsync:
         assert StatementParameterName.MULTI_STATEMENT_COUNT not in captured, (
             "second execute_async must NOT inherit MULTI_STATEMENT_COUNT from the first call"
         )
+
+
+class TestQueryResultFormat:
+    """Unit tests for Cursor._query_result_format, the format Snowpark reads."""
+
+    @pytest.fixture
+    def mock_connection(self, mock_core_client):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def _stub_execute_result(self, mock_core_client, query_result_format):
+        descriptor = MagicMock()
+        descriptor.query_id = "test-query-id"
+        descriptor.columns = []
+        descriptor.rows_affected = 0
+        descriptor.sql_state = ""
+        descriptor.statement_type_id = 0x0000
+        descriptor.query_result_format = query_result_format
+        descriptor.HasField = MagicMock(return_value=False)
+
+        execute_response = MagicMock()
+        execute_response.single.result_descriptor = descriptor
+        execute_response.single.result_set_handle = ResultSetHandle(id=1)
+        execute_response.HasField = MagicMock(side_effect=lambda f: f == "single")
+        mock_core_client.statement_execute_query.return_value = execute_response
+
+    def test_query_result_format_none_before_execute(self, cursor):
+        assert cursor._query_result_format is None
+
+    def test_query_result_format_reports_arrow(self, cursor, mock_core_client):
+        self._stub_execute_result(mock_core_client, "arrow")
+
+        cursor.execute("SELECT 1")
+
+        assert cursor._query_result_format == "arrow"
+
+    def test_query_result_format_reports_json(self, cursor, mock_core_client):
+        self._stub_execute_result(mock_core_client, "json")
+
+        cursor.execute("SHOW TABLES")
+
+        assert cursor._query_result_format == "json"
+
+    def test_query_result_format_defaults_to_json_when_response_carries_none(self, cursor, mock_core_client):
+        """An unset proto field reads as ""; legacy calls such responses JSON."""
+        self._stub_execute_result(mock_core_client, "")
+
+        cursor.execute("PUT file:///tmp/x.csv @stage")
+
+        assert cursor._query_result_format == "json"
+
+    def test_query_result_format_runs_pending_prefetch_hook(self, cursor):
+        """A deferred async result is loaded before the format is read."""
+
+        def load() -> None:
+            cursor._query_result.query_result_format = "arrow"
+            cursor._prefetch_hook = None
+
+        cursor._prefetch_hook = MagicMock(side_effect=load)
+
+        assert cursor._query_result_format == "arrow"

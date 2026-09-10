@@ -89,6 +89,7 @@ class QueryResult:
         "stats",
         "rowcount",
         "is_file_transfer",
+        "query_result_format",
     )
 
     def __init__(
@@ -102,6 +103,7 @@ class QueryResult:
         stats: QueryResultStats | None = None,
         rowcount: int | None = None,
         is_file_transfer: bool = False,
+        query_result_format: str | None = None,
     ) -> None:
         self.description_v2 = description_v2
         self._description_v1: list[ResultMetadata] | None = None
@@ -114,6 +116,7 @@ class QueryResult:
         self.stats = stats if stats is not None else QueryResultStats()
         self.rowcount = rowcount
         self.is_file_transfer = is_file_transfer
+        self.query_result_format = query_result_format
 
     @property
     def description(self) -> list[ResultMetadata] | None:
@@ -194,4 +197,6 @@ class QueryResult:
                 if descriptor.HasField("stats")
                 else QueryResultStats()
             ),
+            # Legacy reports a format-less response as JSON.
+            query_result_format=descriptor.query_result_format or "json",
         )

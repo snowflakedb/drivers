@@ -164,6 +164,9 @@ message ResultSetDescriptor {
   optional string sql_state = 5;
   optional QueryStats stats = 6;
   optional int64 row_count = 7;
+  // Server's `data.queryResultFormat`, verbatim. Absent when the response
+  // carried none, as some PUT/GET responses do.
+  optional string query_result_format = 8;
 }
 
 message ResultSetResponse {
