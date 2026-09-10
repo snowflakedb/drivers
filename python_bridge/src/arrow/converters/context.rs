@@ -16,6 +16,7 @@ use super::real;
 use super::text;
 use super::time;
 use super::timestamp_ntz;
+use super::timestamp_tz;
 
 pub(crate) struct ConversionContext {
     plan: LogicalPlan,
@@ -58,12 +59,15 @@ impl ConversionContext {
             SnowflakeFieldType::TimestampNtz { scale } => {
                 timestamp_ntz::from_column(array, field_type, scale)
             }
-            SnowflakeFieldType::TimestampLtz { .. }
-            | SnowflakeFieldType::TimestampTz { .. }
-            | SnowflakeFieldType::Vector { .. } => Err(PyNotImplementedError::new_err(format!(
-                "native Arrow conversion is not implemented for logical type {}",
-                field_type.logical_type_name()
-            ))),
+            SnowflakeFieldType::TimestampTz { scale } => {
+                timestamp_tz::from_column(array, field_type, scale)
+            }
+            SnowflakeFieldType::TimestampLtz { .. } | SnowflakeFieldType::Vector { .. } => {
+                Err(PyNotImplementedError::new_err(format!(
+                    "native Arrow conversion is not implemented for logical type {}",
+                    field_type.logical_type_name()
+                )))
+            }
         }
     }
 }

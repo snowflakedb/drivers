@@ -389,6 +389,20 @@ mod tests {
     }
 
     #[test]
+    fn from_schema_defaults_missing_timestamp_tz_scale_to_nine() {
+        let schema = Schema::new(vec![field_with_metadata(
+            "tz",
+            DataType::Int64,
+            logical_meta("TIMESTAMP_TZ", &[]),
+        )]);
+        let plan = LogicalPlan::from_schema(&schema).unwrap();
+        assert_eq!(
+            plan.field_types,
+            vec![SnowflakeFieldType::TimestampTz { scale: 9 }]
+        );
+    }
+
+    #[test]
     fn from_schema_errors_on_missing_scale() {
         let schema = Schema::new(vec![field_with_metadata(
             "n",

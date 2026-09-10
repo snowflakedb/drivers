@@ -129,3 +129,49 @@ pub(crate) fn assert_py_datetime(
         datetime.get_tzinfo()
     );
 }
+
+pub(crate) fn assert_py_datetime_tz(
+    value: &Bound<'_, PyAny>,
+    date: (i32, u8, u8),
+    time: (u8, u8, u8, u32),
+    offset_minutes: i32,
+) {
+    assert!(
+        value.is_instance_of::<PyDateTime>(),
+        "expected datetime.datetime, got {}",
+        value.get_type().name().unwrap()
+    );
+    let datetime = value.cast::<PyDateTime>().unwrap();
+    assert_eq!(
+        (
+            datetime.get_year(),
+            datetime.get_month(),
+            datetime.get_day(),
+            datetime.get_hour(),
+            datetime.get_minute(),
+            datetime.get_second(),
+            datetime.get_microsecond()
+        ),
+        (date.0, date.1, date.2, time.0, time.1, time.2, time.3)
+    );
+    let tzinfo = datetime
+        .get_tzinfo()
+        .expect("expected tz-aware datetime, got naive");
+    let tz_type = tzinfo.get_type().name().unwrap().to_string();
+    assert!(
+        tz_type == "timezone" || tz_type == "_FixedOffset",
+        "expected datetime.timezone or pytz.FixedOffset, got {tz_type}"
+    );
+    let offset_total_seconds = datetime
+        .call_method0("utcoffset")
+        .unwrap()
+        .call_method0("total_seconds")
+        .unwrap()
+        .extract::<f64>()
+        .unwrap();
+    assert_eq!(
+        offset_total_seconds,
+        f64::from(offset_minutes) * 60.0,
+        "expected offset {offset_minutes} minutes, got {offset_total_seconds} seconds"
+    );
+}
