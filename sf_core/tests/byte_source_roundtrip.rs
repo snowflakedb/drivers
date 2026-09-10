@@ -76,7 +76,7 @@ fn bytes_source_encrypt_decrypt_roundtrip() {
     let written = sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
         ciphertext.as_slice(),
         &enc_meta,
-        &digest,
+        Some(&digest),
         &material,
         &mut output,
     )
@@ -98,7 +98,7 @@ fn bytes_source_encrypt_decrypt_large_payload() {
     let written = sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
         ciphertext.as_slice(),
         &enc_meta,
-        &digest,
+        Some(&digest),
         &material,
         &mut output,
     )
@@ -121,7 +121,7 @@ fn bytes_source_decrypt_detects_tampered_digest() {
     let result = sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
         ciphertext.as_slice(),
         &enc_meta,
-        bad_digest,
+        Some(bad_digest),
         &material,
         &mut output,
     );
@@ -159,7 +159,7 @@ fn path_source_encrypt_decrypt_roundtrip() {
     let written = sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
         ciphertext.as_slice(),
         &enc_meta,
-        &digest,
+        Some(&digest),
         &material,
         &mut output_file,
     )
@@ -530,7 +530,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
         sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
             reader,
             &cse.metadata,
-            &cse.digest,
+            cse.digest.as_deref(),
             &mat_clone,
             &mut output,
         )
@@ -730,7 +730,7 @@ fn auto_compress_then_encrypt_decrypt_decompress_roundtrip() {
     sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
         ciphertext.as_slice(),
         &enc_meta,
-        &digest,
+        Some(&digest),
         &material,
         &mut compressed_back,
     )

@@ -216,17 +216,15 @@ pub(super) fn spawn_s3_byte_stream_producer(
     (StreamReader::new(rx), abort_handle)
 }
 
-/// Client-side-encryption inputs a download carries for the decrypt path,
-/// bundled so they are present together or not at all. A downloaded CSE object
-/// always carries both the encryption-metadata headers and the matching
-/// SHA-256 digest, and `decrypt_ciphertext_to_writer` needs both; SSE / raw
-/// objects carry neither and the caller sees `None`. Keeping these as one
-/// `Option` rather than two makes the "metadata present, digest absent" state
-/// (always invalid) unrepresentable — the download path validates both
-/// headers at the boundary before constructing this.
+/// Client-side-encryption inputs a download carries for the decrypt path.
+/// `metadata` gates whether the object is decrypted at all; `digest`, when
+/// present, is used for a post-decrypt integrity check but is not required to
+/// decrypt — some CSE objects (e.g. server-side `COPY INTO` unloads on S3)
+/// carry the key-wrap headers without an `sfc-digest`. SSE / raw objects
+/// carry neither and the caller sees `None` for the whole struct.
 pub struct CseDownloadInfo {
     pub metadata: EncryptedFileMetadata,
-    pub digest: String,
+    pub digest: Option<String>,
 }
 
 /// Result of a streaming download from a reqwest-based cloud transport.
@@ -290,7 +288,10 @@ impl CloudStreamingDownload {
         // Git-stage objects carry encryption headers but no sfc-digest —
         // treat as non-CSE, matching every other download path.
         let cse_info = match (file_metadata, digest) {
-            (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
+            (Some(metadata), Some(digest)) => Some(CseDownloadInfo {
+                metadata,
+                digest: Some(digest),
+            }),
             (Some(_), None) => {
                 tracing::debug!(
                     "encryptiondata present but sfc-digest absent (git-stage object); \

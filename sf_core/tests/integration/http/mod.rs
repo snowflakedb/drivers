@@ -6,6 +6,7 @@ pub(crate) mod multipart_test_support;
 mod proxy_stream_transfer;
 mod proxy_transfer;
 mod retry;
+mod s3_cse_headers;
 mod s3_multipart;
 mod session_refresh;
 mod sync_retry;

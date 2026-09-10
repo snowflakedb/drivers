@@ -1362,11 +1362,14 @@ async fn download_single_file_to(
             // blocking task. The `.await` itself is the cancellation point.
             let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(
                 move || -> Result<(i64, Option<tempfile::TempPath>), FileManagerError> {
-                    match (enc_material, file_metadata, digest) {
+                    match (enc_material, file_metadata) {
                         // Client-side-encrypted object: decrypt the ciphertext
-                        // (from the in-memory buffer or the spilled tempfile),
-                        // verifying the SHA-256 digest at finalize time.
-                        (Some(enc_material), Some(enc_metadata), Some(d)) => {
+                        // (from the in-memory buffer or the spilled tempfile).
+                        // `digest` verifies the plaintext at finalize time when
+                        // present, but is not required to decrypt — a
+                        // server-side `COPY INTO` unload onto a CSE stage
+                        // carries the key-wrap headers with no `sfc-digest`.
+                        (Some(enc_material), Some(enc_metadata)) => {
                             let reader = body.into_reader().context(IoSnafu)?;
                             let mut output_file =
                                 create_output_file(&partial_path2, unsafe_file_write)
@@ -1374,7 +1377,7 @@ async fn download_single_file_to(
                             let result = decrypt_ciphertext_to_writer(
                                 reader,
                                 &enc_metadata,
-                                d.as_str(),
+                                digest.as_deref(),
                                 &enc_material,
                                 &mut output_file,
                             )
@@ -1386,10 +1389,10 @@ async fn download_single_file_to(
                         //   * SSE stage — no `encryption_material` (server-side
                         //     decryption).
                         //   * `encryption_material` present but the object carries no
-                        //     client-side-encryption headers (e.g. git-stage objects
-                        //     on S3) — write raw bytes, matching legacy connector
-                        //     behaviour (SNOW git-stage fix).
-                        (maybe_enc, _, _) => {
+                        //     client-side-encryption headers at all (e.g. git-stage
+                        //     objects on S3) — write raw bytes, matching legacy
+                        //     connector behaviour (SNOW git-stage fix).
+                        (maybe_enc, _) => {
                             if maybe_enc.is_some() {
                                 tracing::debug!(
                                     "encryption_material present but S3 encryption headers absent; \
@@ -1735,10 +1738,11 @@ pub async fn open_s3_download_stream(
         .await
         .context(S3DownloadSnafu)?;
 
-    let cse_info = match (file_metadata, digest) {
-        (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
-        _ => None,
-    };
+    // The key-wrap headers alone gate decryption; `digest` (absent for a
+    // server-side `COPY INTO` unload onto a CSE stage) is used for a
+    // best-effort post-decrypt check when present. A real S3 git-stage
+    // object carries neither, so `file_metadata` stays `None` there.
+    let cse_info = file_metadata.map(|metadata| CseDownloadInfo { metadata, digest });
     let (reader, producer_abort) = spawn_s3_byte_stream_producer(body, slot);
 
     Ok(spawn_download_stream_pipeline(
@@ -2028,12 +2032,12 @@ fn run_streaming_download_pipeline<R: Read>(
 
     match (encryption_material, cse_info) {
         // Client-side-encrypted object: decrypt the ciphertext stream,
-        // verifying the SHA-256 digest at finalize time.
+        // verifying the SHA-256 digest at finalize time when present.
         (Some(enc_material), Some(CseDownloadInfo { metadata, digest })) => {
             decrypt_ciphertext_to_writer(
                 &mut reader,
                 &metadata,
-                digest.as_str(),
+                digest.as_deref(),
                 &enc_material,
                 &mut sink,
             )
@@ -2251,7 +2255,7 @@ fn write_cloud_download(
     unsafe_file_write: bool,
 ) -> Result<(i64, Option<tempfile::TempPath>), FileManagerError> {
     match (enc_material, cse_info) {
-        // Client-side-encrypted object: decrypt (verifying the digest).
+        // Client-side-encrypted object: decrypt (verifying the digest when present).
         (Some(enc_material), Some(cse)) => {
             let reader = body.into_reader().context(IoSnafu)?;
             let mut output_file =
@@ -2259,7 +2263,7 @@ fn write_cloud_download(
             let result = decrypt_ciphertext_to_writer(
                 reader,
                 &cse.metadata,
-                &cse.digest,
+                cse.digest.as_deref(),
                 &enc_material,
                 &mut output_file,
             )

@@ -213,12 +213,16 @@ impl<R: Read> Read for EncryptingReader<R> {
 }
 
 /// Decrypts `ciphertext` into `output`, verifying the SHA-256 digest at
-/// finalize time. On `DigestMismatch`, partial plaintext may already have
-/// been written — callers must discard the partial output.
+/// finalize time when `digest` is `Some`. Some CSE objects (e.g. server-side
+/// `COPY INTO` unloads on S3) carry the key-wrap headers needed to decrypt
+/// without an `sfc-digest`; `digest: None` decrypts without the post-decrypt
+/// check rather than refusing to decrypt at all. On `DigestMismatch`, partial
+/// plaintext may already have been written — callers must discard the
+/// partial output.
 pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
     mut ciphertext: R,
     metadata: &EncryptedFileMetadata,
-    digest: &str,
+    digest: Option<&str>,
     encryption_material: &EncryptionMaterial,
     output: &mut W,
 ) -> Result<i64, EncryptionError> {
@@ -302,12 +306,14 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
         output_byte_len += tail_written as i64;
     }
 
-    let computed_bytes = hasher.finish().context(OpenSSLSnafu {
-        operation: "finalizing SHA-256 digest for verification",
-    })?;
-    let computed = BASE64_ENGINE.encode(computed_bytes);
-    if computed != digest {
-        return DigestMismatchSnafu.fail();
+    if let Some(expected) = digest {
+        let computed_bytes = hasher.finish().context(OpenSSLSnafu {
+            operation: "finalizing SHA-256 digest for verification",
+        })?;
+        let computed = BASE64_ENGINE.encode(computed_bytes);
+        if computed != expected {
+            return DigestMismatchSnafu.fail();
+        }
     }
 
     Ok(output_byte_len)
@@ -523,7 +529,7 @@ mod tests {
         decrypt_ciphertext_to_writer(
             &ciphertext[..],
             &metadata,
-            &digest,
+            Some(&digest),
             &material,
             &mut decrypted,
         )
@@ -545,7 +551,7 @@ mod tests {
         let result = decrypt_ciphertext_to_writer(
             &ciphertext[..],
             &metadata,
-            &wrong_digest,
+            Some(&wrong_digest),
             &material,
             &mut output,
         );
@@ -554,5 +560,23 @@ mod tests {
             result,
             Err(EncryptionError::DigestMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn decrypt_succeeds_without_digest_when_absent() {
+        // Some CSE objects (e.g. server-side `COPY INTO` unloads on S3) carry
+        // the key-wrap headers but no `sfc-digest`; decryption must still
+        // succeed, just without the post-decrypt integrity check.
+        let plaintext = b"payload with no digest header";
+        let material = test_material();
+
+        let (enc, metadata) = build_encryptor(&material, plaintext.len() as i64).unwrap();
+        let ciphertext = encrypt_to_vec(&enc, plaintext);
+
+        let mut decrypted = Vec::new();
+        decrypt_ciphertext_to_writer(&ciphertext[..], &metadata, None, &material, &mut decrypted)
+            .unwrap();
+
+        assert_eq!(decrypted, plaintext);
     }
 }
