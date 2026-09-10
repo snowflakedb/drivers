@@ -2806,3 +2806,82 @@ behavior_differences:
       no_connection_details from an empty post-merge param map so the shared resolver
       can load the default profile. Explicit connection_name in the connection string
       already resolved via the param registry; only the no-args fallback was missing.
+
+  137:
+    name: "MFA token-caching connection parameter renamed: CLIENT_REQUEST_MFA_TOKEN -> CLIENT_STORE_TEMPORARY_CREDENTIAL"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      MFA token caching is enabled via the CLIENT_REQUEST_MFA_TOKEN=true connection-string
+      attribute.
+    new_driver_behavior: |
+      MFA token caching is enabled via CLIENT_STORE_TEMPORARY_CREDENTIAL=true. It is not yet
+      confirmed whether a backward-compatible CLIENT_REQUEST_MFA_TOKEN alias exists.
+    description: |
+      Applications that set CLIENT_REQUEST_MFA_TOKEN=true for MFA token caching on the
+      old driver need to switch to CLIENT_STORE_TEMPORARY_CREDENTIAL=true on the new driver.
+  138:
+    name: "External browser / auth timeout connection parameter renamed: BROWSER_RESPONSE_TIMEOUT -> AUTHENTICATION_TIMEOUT (and timeout error message reworded)"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    status_rationale: |
+      Deliberate rename. To be documented.
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The wait for the external-browser SSO callback is bounded by the
+      BROWSER_RESPONSE_TIMEOUT connection-string attribute (seconds). On expiry the
+      driver returns an error containing "Authentication timed out after <N> seconds"
+      and "Snowflake driver did not receive browser authentication response".
+    new_driver_behavior: |
+      BROWSER_RESPONSE_TIMEOUT is not recognized. The external-browser callback wait
+      is bounded by AUTHENTICATION_TIMEOUT (default 120s), the same attribute used
+      for all interactive auth flows. On expiry the driver returns
+      "Authentication timeout exceeded (budget <N>s)".
+    description: |
+      DSNs that set BROWSER_RESPONSE_TIMEOUT for external-browser auth are silently
+      ignored on the new driver and fall back to the 120s AUTHENTICATION_TIMEOUT
+      default. Applications must switch to AUTHENTICATION_TIMEOUT. Applications
+      matching on the old timeout message must update to the new wording.
+  139:
+    name: "External-browser (ID token) credential caching defaults to off; old driver cached it by default"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      After a successful external-browser (SSO) login with no explicit caching
+      parameter set, the old driver caches the ID token locally by default, so a
+      subsequent connection for the same user can skip the browser step.
+    new_driver_behavior: |
+      The new driver only caches the ID token when
+      CLIENT_STORE_TEMPORARY_CREDENTIAL=true is explicitly set. By default, every
+      external-browser connection re-opens the browser; nothing is cached.
+    description: |
+      Applications that rely on implicit external-browser caching on the old driver
+      must add CLIENT_STORE_TEMPORARY_CREDENTIAL=true on the new driver.
+
+  140:
+    name: "External-browser IDP-user-mismatch has no distinct error message; surfaces as the generic auth-failure code"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When the user authenticated at the IdP during an external-browser (SSO) login
+      differs from the username on the connection, the old driver raises a distinct,
+      descriptive error: "The user you were trying to authenticate as differs from the
+      user currently logged in at the IDP."
+    new_driver_behavior: |
+      The new driver does not distinguish this mismatch. Any login rejection after a
+      completed browser callback, including an IdP-user mismatch, surfaces as the
+      generic login failure (GS code 390100, "Invalid credentials").
+    description: |
+      Login is still denied. Only the diagnostic text is less specific than on the
+      old driver.
