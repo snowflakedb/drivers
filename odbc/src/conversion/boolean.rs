@@ -3,11 +3,14 @@ use odbc_sys as sql;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
 use crate::conversion::error::BindingError;
+use crate::conversion::error::{
+    ConversionError, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+};
 use crate::conversion::error::{
     InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
 };
-use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::numeric_helpers::{
     reject_multi_field_interval, write_interval_second, write_single_field_interval,
 };
@@ -298,5 +301,31 @@ impl WriteWire for SnowflakeBoolean {
 
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::Boolean
+    }
+}
+
+/// Batched `SQL_C_CHAR` kernel for `BOOLEAN`. Reused by the generic
+/// [`convert_char_range`](crate::conversion::batch::convert_char_range) loop.
+/// BOOLEAN has no `validate_value`, and its CHAR rendering is the static
+/// `"1"`/`"0"` literal, so the kernel ignores the shared scratch entirely —
+/// byte-identical to the `CDataType::Char` arm of [`SnowflakeBoolean`]'s
+/// `write_odbc_type`.
+pub(crate) struct BooleanCharKernel;
+
+impl CharKernel for BooleanCharKernel {
+    type Array = BooleanArray;
+    type Value = bool;
+
+    fn read_validate(&self, array: &BooleanArray, idx: usize) -> Result<bool, ConversionError> {
+        Ok(array.value(idx))
+    }
+
+    fn format_into<'s>(
+        &self,
+        value: &bool,
+        _binding: &Binding,
+        _scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<&'s str, WriteOdbcError> {
+        Ok(if *value { "1" } else { "0" })
     }
 }

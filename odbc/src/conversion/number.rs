@@ -5,8 +5,9 @@ use snafu::OptionExt;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::api::encoding::wchar_byte_size;
+use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
 use crate::conversion::error::{
-    BindingError, BindingNumericOutOfRangeSnafu, NumericMagnitudeOverflowSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, ConversionError, NumericMagnitudeOverflowSnafu,
     UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
@@ -869,112 +870,69 @@ mod pow10_tests {
     }
 }
 
-/// Batched `NUMBER → SQL_C_CHAR` conversion over a whole Arrow segment.
+/// Batched `SQL_C_CHAR` kernel for `NUMBER`. Reused by the generic
+/// [`convert_char_range`](crate::conversion::batch::convert_char_range) loop,
+/// which owns the null handling, striding, error placement, and warning
+/// collection; this kernel supplies only the per-row read + format + overflow
+/// check, reusing [`SnowflakeNumber::format_decimal_into`] and
+/// [`whole_digits_len`] so it stays byte-identical to the per-cell path
+/// (verified by `number_char_batch_tests`).
 ///
-/// This is the specialised, inlined counterpart to the generic per-cell
-/// `Converter::convert_arrow_range`: it downcasts once (the caller passes the
-/// concrete `PrimitiveArray<T>`), then reads, formats
-/// (`SnowflakeNumber::format_decimal_into`), and writes
-/// (`Binding::write_char_string`) in one tight loop with no per-cell
-/// `write_odbc_type` match, `validate_value` call, or trait indirection.
-///
-/// It is byte-for-byte equivalent to the generic path for the `SQL_C_CHAR`
-/// target (value buffer, indicators, warnings, and the whole-digits-overflow
-/// `22003` error), verified by `number_char_batch_tests`.
-///
-/// Returns `false` (having written nothing) to *decline* the batch — on
-/// first-row stride overflow, or when a non-nullable column unexpectedly
-/// contains nulls — so the caller can fall back to the generic per-cell path
-/// and reproduce its exact behavior for those cold cases.
-// 8 args mirrors `Converter::convert_arrow_range`'s contract (binding + strides
-// + outputs); grouping them into a struct would just move the noise.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn convert_number_char_range<T>(
-    scale: u32,
-    nullable: bool,
-    array: &PrimitiveArray<T>,
-    arrow_row_range: std::ops::Range<usize>,
-    base_binding: &Binding,
-    out_row_start: usize,
-    strides: crate::conversion::BindingStrides,
-    outputs: &mut [Result<Warnings, crate::conversion::error::ConversionError>],
-) -> bool
+/// `scale` is the only per-column state the read/format needs (the read is the
+/// inline `array.value(idx).into()`), so the kernel carries just the scale plus
+/// a `PhantomData<fn() -> T>` for the Arrow primitive type.
+pub(crate) struct NumberCharKernel<T> {
+    pub(crate) scale: u32,
+    pub(crate) _phantom: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> CharKernel for NumberCharKernel<T>
 where
-    T: ArrowPrimitiveType,
+    T: ArrowPrimitiveType + 'static,
     T::Native: Into<i128>,
 {
-    use crate::conversion::traits::LengthOrNull;
-    use snafu::ResultExt;
+    type Array = PrimitiveArray<T>;
+    type Value = i128;
 
-    // A non-nullable NUMBER column should never carry nulls; if one somehow
-    // does, decline so the generic path reproduces its read-error behavior
-    // exactly rather than us inventing a null indicator.
-    if !nullable && array.null_count() > 0 {
-        return false;
+    fn read_validate(
+        &self,
+        array: &PrimitiveArray<T>,
+        idx: usize,
+    ) -> Result<i128, ConversionError> {
+        // NUMBER has no `validate_value`; the read is infallible once the cell
+        // is known non-null (the loop never calls this on a null cell).
+        Ok(array.value(idx).into())
     }
 
-    // Materialize the first row's binding + the constant per-row stride, exactly
-    // as the generic path does. On the pathological first-row overflow, decline.
-    let Ok(mut binding) = strides.for_row(base_binding, out_row_start) else {
-        return false;
-    };
-    let (value_stride, indicator_stride) =
-        strides.row_step(base_binding.target_type, base_binding.buffer_length);
-    // Reused across rows; `format_decimal_into` fully writes the portion it
-    // returns, so no need to re-zero per row.
-    let mut num_buf = [0u8; 48];
-
-    for (i, batch_idx) in arrow_row_range.enumerate() {
-        if i > 0 {
-            binding = binding.stepped(value_stride, indicator_stride);
-        }
-        if outputs[i].is_err() {
-            continue;
-        }
-
-        // NULL cell (nullable columns only — see the null_count guard above):
-        // mirrors `Nullable::write_odbc_type`'s `None` arm.
-        if array.is_null(batch_idx) {
-            if let Err(e) = binding
-                .write_length_or_null(LengthOrNull::Null)
-                .context(crate::conversion::error::WriteOdbcValueSnafu)
-            {
-                outputs[i] = Err(e);
-            }
-            continue;
-        }
-
-        let value: i128 = array.value(batch_idx).into();
-        let result = (|| {
-            let num_str = SnowflakeNumber::format_decimal_into(value, scale, &mut num_buf)?;
-            let warnings = binding.write_char_string(num_str, &mut None);
-            // `write_char_string` flags truncation whenever `num_str` does not
-            // fit, and `whole_digits_len(num_str) <= num_str.len()`, so a whole-
-            // digit overflow always implies truncation — the length check alone
-            // is sufficient (the truncation warning would be redundant here).
-            if whole_digits_len(num_str) >= binding.buffer_length as usize {
-                return NumericValueOutOfRangeSnafu {
-                    reason: format!(
-                        "Whole digits of '{num_str}' do not fit in buffer of {} bytes",
-                        binding.buffer_length
-                    ),
-                }
-                .fail();
-            }
-            Ok(warnings)
-        })()
-        .context(crate::conversion::error::WriteOdbcValueSnafu);
-
-        match result {
-            Ok(w) => {
-                if !w.is_empty()
-                    && let Ok(existing) = &mut outputs[i]
-                {
-                    existing.extend(w);
-                }
-            }
-            Err(e) => outputs[i] = Err(e),
-        }
+    fn format_into<'s>(
+        &self,
+        value: &i128,
+        _binding: &Binding,
+        scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<&'s str, WriteOdbcError> {
+        // `format_decimal_into` wants a fixed `[u8; 48]`; carve it out of the
+        // shared scratch so its signature (and its `buf.len()`-based overflow
+        // message) stays unchanged.
+        let num_buf: &mut [u8; 48] = (&mut scratch[..48])
+            .try_into()
+            .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 48");
+        SnowflakeNumber::format_decimal_into(*value, self.scale, num_buf)
     }
-    true
+
+    fn post_write_check(&self, s: &str, binding: &Binding) -> Result<(), WriteOdbcError> {
+        // `write_char_string` flags truncation whenever `s` does not fit, and
+        // `whole_digits_len(s) <= s.len()`, so a whole-digit overflow always
+        // implies truncation — the length check alone is sufficient (the
+        // truncation warning would be redundant here).
+        if whole_digits_len(s) >= binding.buffer_length as usize {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "Whole digits of '{s}' do not fit in buffer of {} bytes",
+                    binding.buffer_length
+                ),
+            }
+            .fail();
+        }
+        Ok(())
+    }
 }
