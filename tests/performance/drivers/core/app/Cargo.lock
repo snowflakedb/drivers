@@ -4190,6 +4190,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "arrow-ipc",
+ "async-trait",
  "aws-config",
  "aws-credential-types",
  "aws-lc-rs",
