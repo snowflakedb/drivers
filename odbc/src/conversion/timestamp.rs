@@ -3,18 +3,19 @@ use arrow::array::{PrimitiveArray, StructArray};
 use arrow::datatypes::Int64Type;
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
-use snafu::OptionExt;
+use snafu::{OptionExt, ResultExt};
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
 use crate::conversion::error::{
     BindingError, BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu,
     InvalidCharacterValueForCastSnafu, InvalidDatetimeValueSnafu, NumericValueOutOfRangeSnafu,
     UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
-    ConversionError, DatetimeOutOfSqlRangeSnafu, ReadArrowError, SQL_DATETIME_YEAR_RANGE,
-    UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    ConversionError, DatetimeOutOfSqlRangeSnafu, ReadArrowError, ReadArrowValueSnafu,
+    SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
     TEMPORAL_CHAR_DIAG_MAX_CHARS, parse_temporal_char_input, read_binary_struct, read_char_str,
@@ -802,6 +803,58 @@ pub(crate) struct SnowflakeTimestampLtz {
 
 impl_snowflake_timestamp!(SnowflakeTimestampLtz, wallclock_odbc_write);
 
+/// Batched `SQL_C_CHAR` kernel for the flat `Int64` form of `TIMESTAMP_NTZ`
+/// and `TIMESTAMP_LTZ`. Both share exactly the same CHAR rendering — validate
+/// the SQL year (`check_sql_year`, the body of both types' `validate_value`),
+/// then [`format_timestamp_string_into`] behind the pre-write `<20` buffer
+/// guard — so one kernel serves both. Struct-encoded timestamps are *not*
+/// batched: the wrapper only downcasts to `PrimitiveArray<Int64Type>` and falls
+/// back to the generic per-cell converter for the struct layout (see
+/// `make_converter`). Byte-identical to the `CDataType::Char` arm of
+/// [`write_timestamp_to_odbc`].
+pub(crate) struct TimestampCharKernel {
+    pub(crate) scale: u32,
+}
+
+impl CharKernel for TimestampCharKernel {
+    type Array = PrimitiveArray<Int64Type>;
+    type Value = NaiveDateTime;
+
+    fn read_validate(
+        &self,
+        array: &PrimitiveArray<Int64Type>,
+        idx: usize,
+    ) -> Result<NaiveDateTime, ConversionError> {
+        let value = sf_types::read_scaled_timestamp(array, idx, self.scale)
+            .map_err(ReadArrowError::from)
+            .context(ReadArrowValueSnafu)?;
+        check_sql_year(&value)?;
+        Ok(value)
+    }
+
+    fn format_into<'s>(
+        &self,
+        value: &NaiveDateTime,
+        binding: &Binding,
+        scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<&'s str, WriteOdbcError> {
+        // Pre-write buffer-size guard, exactly as the per-cell arm.
+        if binding.buffer_length > 0 && binding.buffer_length < 20 {
+            return NumericValueOutOfRangeSnafu {
+                reason: "Buffer too small for SQL_C_CHAR timestamp (minimum 20 bytes)".to_string(),
+            }
+            .fail();
+        }
+        // `format_timestamp_string_into` wants a fixed `[u8; 48]`; carve it out
+        // of the shared scratch so its signature (and its `buf.len()`-based
+        // overflow message) stays unchanged.
+        let buf: &mut [u8; 48] = (&mut scratch[..48])
+            .try_into()
+            .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 48");
+        format_timestamp_string_into(value, buf)
+    }
+}
+
 pub(crate) struct SnowflakeTimestampTz {
     pub(crate) scale: u32,
     /// Set from the session's `TIMESTAMP_TZ_OUTPUT_FORMAT` at converter
@@ -828,12 +881,20 @@ impl ReadArrowType<StructArray> for SnowflakeTimestampTz {
         array: &'a StructArray,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
-        Ok(sf_types::ReadArrowType::read_arrow_type(
-            &sf_types::SnowflakeTimestampTz { scale: self.scale },
-            array,
-            row_idx,
-        )?)
+        read_struct_timestamp_tz(array, row_idx, self.scale)
     }
+}
+
+fn read_struct_timestamp_tz(
+    array: &StructArray,
+    row_idx: usize,
+    scale: u32,
+) -> Result<TzInstant, ReadArrowError> {
+    Ok(sf_types::ReadArrowType::read_arrow_type(
+        &sf_types::SnowflakeTimestampTz { scale },
+        array,
+        row_idx,
+    )?)
 }
 
 impl WriteODBCType for SnowflakeTimestampTz {
@@ -938,6 +999,79 @@ impl WriteWire for SnowflakeTimestampTz {
 
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::TimestampTz
+    }
+}
+
+/// Batched `SQL_C_CHAR` kernel for the struct-encoded form of `TIMESTAMP_TZ`
+/// — the *only* layout Snowflake sends in practice; `timestamp_tz_char_batch_converter!`
+/// rejects any other Arrow layout as `IncompatibleFieldMetadataSnafu`. Because
+/// TZ arrives as a [`StructArray`], the kernel's `Array` is `StructArray` (not
+/// the flat `Int64` the NTZ/LTZ kernel reads), so batching this form is where
+/// the real fetch-path win lives.
+///
+/// `read_validate` reuses [`read_struct_timestamp_tz`] + [`check_sql_year`]
+/// (the body of `SnowflakeTimestampTz::validate_value`), typed exactly as the
+/// per-cell path. `format_into` reproduces both `CDataType::Char` renderings
+/// byte-identically, selected on the same `tz_offset_format` the per-cell
+/// `write_odbc_type` branches on:
+///   * `Some(fmt)` → [`format_timestamp_tz_string_into`] into a 64-byte slice
+///     with **no** pre-write buffer guard, exactly as [`write_timestamp_tz_to_char`]
+///     (`write_char_string` applies the 01004 right-truncation contract).
+///   * `None` → the legacy UTC-only [`format_timestamp_string_into`] on
+///     `value.utc` behind the pre-write `<20` guard, exactly as the
+///     `CDataType::Char` arm of [`write_timestamp_to_odbc`].
+///
+/// `SQL_C_WCHAR` and `SQLGetData` stay on the per-cell converter (the wrapper
+/// only routes `CDataType::Char`), so the WChar offset rendering is untouched.
+pub(crate) struct TimestampTzCharKernel {
+    pub(crate) scale: u32,
+    pub(crate) tz_offset_format: Option<TzOffsetFormat>,
+}
+
+impl CharKernel for TimestampTzCharKernel {
+    type Array = StructArray;
+    type Value = TzInstant;
+
+    fn read_validate(&self, array: &StructArray, idx: usize) -> Result<TzInstant, ConversionError> {
+        let value =
+            read_struct_timestamp_tz(array, idx, self.scale).context(ReadArrowValueSnafu)?;
+        check_sql_year(&value.utc)?;
+        Ok(value)
+    }
+
+    fn format_into<'s>(
+        &self,
+        value: &TzInstant,
+        binding: &Binding,
+        scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<&'s str, WriteOdbcError> {
+        match self.tz_offset_format {
+            Some(fmt) => {
+                // Byte-identical to `write_timestamp_tz_to_char`: render into a
+                // 64-byte buffer with no pre-write guard; carve it out of the
+                // shared scratch so the helper's signature stays unchanged.
+                let buf: &mut [u8; 64] = (&mut scratch[..64])
+                    .try_into()
+                    .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 64");
+                format_timestamp_tz_string_into(value, fmt, buf)
+            }
+            None => {
+                // Legacy UTC-only path: byte-identical to the `CDataType::Char`
+                // arm of `write_timestamp_to_odbc(&value.utc, ..)`, including
+                // the pre-write `<20` guard.
+                if binding.buffer_length > 0 && binding.buffer_length < 20 {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_CHAR timestamp (minimum 20 bytes)"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                let buf: &mut [u8; 48] = (&mut scratch[..48])
+                    .try_into()
+                    .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 48");
+                format_timestamp_string_into(&value.utc, buf)
+            }
+        }
     }
 }
 

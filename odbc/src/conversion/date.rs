@@ -2,17 +2,18 @@ use arrow::array::PrimitiveArray;
 use arrow::datatypes::Date32Type;
 use chrono::{Datelike, NaiveDate, NaiveTime};
 use odbc_sys as sql;
-use snafu::OptionExt;
+use snafu::{OptionExt, ResultExt};
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
 use crate::conversion::error::{
     BindingError, BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu,
     InvalidDatetimeValueSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     ConversionError, DatetimeOutOfSqlRangeSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
-    SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    ReadArrowValueSnafu, SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::int_fmt;
 use crate::conversion::param_binding::{
@@ -281,6 +282,54 @@ impl WriteWire for SnowflakeDate {
 
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::Date
+    }
+}
+
+/// Batched `SQL_C_CHAR` kernel for `DATE`. Reused by the generic
+/// [`convert_char_range`](crate::conversion::batch::convert_char_range) loop.
+/// Reuses [`SnowflakeDate`]'s `read_arrow_type` + `validate_value` and the
+/// [`format_date_ascii`] helper so it stays byte-identical to the
+/// `CDataType::Char` arm of `write_odbc_type`, including the two-stage error
+/// typing (read → `ReadArrowValueSnafu`; year validation → raw
+/// `ConversionError`) and the pre-write `<11` buffer guard.
+pub(crate) struct DateCharKernel;
+
+impl CharKernel for DateCharKernel {
+    type Array = PrimitiveArray<Date32Type>;
+    type Value = NaiveDate;
+
+    fn read_validate(
+        &self,
+        array: &PrimitiveArray<Date32Type>,
+        idx: usize,
+    ) -> Result<NaiveDate, ConversionError> {
+        let value = SnowflakeDate
+            .read_arrow_type(array, idx)
+            .context(ReadArrowValueSnafu)?;
+        SnowflakeDate.validate_value(&value)?;
+        Ok(value)
+    }
+
+    fn format_into<'s>(
+        &self,
+        value: &NaiveDate,
+        binding: &Binding,
+        scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<&'s str, WriteOdbcError> {
+        // Pre-write buffer-size guard, exactly as the per-cell arm — fail
+        // before touching the value buffer.
+        if binding.buffer_length > 0 && binding.buffer_length < 11 {
+            return NumericValueOutOfRangeSnafu {
+                reason: "Buffer too small for SQL_C_CHAR date (minimum 11 bytes)".to_string(),
+            }
+            .fail();
+        }
+        // `format_date_ascii` wants a fixed `[u8; 32]`; carve it out of the
+        // shared scratch so its signature stays unchanged.
+        let buf: &mut [u8; 32] = (&mut scratch[..32])
+            .try_into()
+            .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 32");
+        Ok(format_date_ascii(value, buf))
     }
 }
 

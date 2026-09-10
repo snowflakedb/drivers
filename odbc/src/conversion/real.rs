@@ -6,12 +6,14 @@ use odbc_sys as sql;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::api::encoding::wchar_byte_size;
+use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
 use crate::conversion::error::{
     BindingError, BindingNumericOutOfRangeSnafu, InvalidNumericLiteralSnafu,
     NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
-    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    ConversionError, NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu,
+    WriteOdbcError,
 };
 use crate::conversion::numeric_helpers::{
     build_and_write_interval_second, check_leading_precision, checked_u32,
@@ -536,6 +538,60 @@ impl WriteWire for SnowflakeReal {
 
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::Real
+    }
+}
+
+/// Batched `SQL_C_CHAR` kernel for `REAL` (FLOAT/DOUBLE). Reused by the generic
+/// [`convert_char_range`](crate::conversion::batch::convert_char_range) loop.
+/// REAL has no `validate_value`, and its `read_arrow_type` is the infallible
+/// `array.value(idx)` for a non-null cell, so `read_validate` mirrors it
+/// directly. `format_into` reuses [`format_f64_for_char_fetch`] over the full
+/// shared scratch (REAL's `f64` `Display` is what sizes `CHAR_SCRATCH_LEN`), and
+/// `post_write_check` reuses [`whole_digits_len`] for the 22003 whole-digit
+/// overflow — byte-identical to the `CDataType::Char` arm of `write_odbc_type`.
+///
+/// This supersedes the bespoke REAL batched-CHAR converter that draft #1082
+/// proposed: REAL is now just another kernel on the shared loop.
+pub(crate) struct RealCharKernel;
+
+impl CharKernel for RealCharKernel {
+    type Array = Float64Array;
+    type Value = f64;
+
+    fn read_validate(&self, array: &Float64Array, idx: usize) -> Result<f64, ConversionError> {
+        // REAL has no `validate_value`; the read is infallible once the cell is
+        // known non-null (the loop never calls this on a null cell).
+        Ok(array.value(idx))
+    }
+
+    fn format_into<'s>(
+        &self,
+        value: &f64,
+        _binding: &Binding,
+        scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<&'s str, WriteOdbcError> {
+        // `format_f64_for_char_fetch` wants a fixed `[u8; 384]`, which is exactly
+        // the shared scratch (`CHAR_SCRATCH_LEN == 384`, sized for this case),
+        // so it is handed through unsliced.
+        format_f64_for_char_fetch(*value, scratch)
+    }
+
+    fn post_write_check(&self, s: &str, binding: &Binding) -> Result<(), WriteOdbcError> {
+        // Same whole-digits 22003 rule as the per-cell arm. `write_char_string`
+        // flags truncation whenever `s` does not fit, and
+        // `whole_digits_len(s) <= s.len()`, so a whole-digit overflow always
+        // implies truncation — the length check alone is sufficient (the
+        // truncation warning the per-cell arm guards on would be redundant).
+        if whole_digits_len(s) >= binding.buffer_length as usize {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "Whole digits of '{s}' do not fit in buffer of {} bytes",
+                    binding.buffer_length
+                ),
+            }
+            .fail();
+        }
+        Ok(())
     }
 }
 

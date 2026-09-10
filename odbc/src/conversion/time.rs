@@ -2,13 +2,14 @@ use arrow::array::PrimitiveArray;
 use arrow::datatypes::ArrowPrimitiveType;
 use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
 use odbc_sys as sql;
-use snafu::OptionExt;
+use snafu::{OptionExt, ResultExt};
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
 use crate::conversion::error::{
-    BindingError, BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu,
-    InvalidDatetimeValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    BindingError, BindingNumericOutOfRangeSnafu, ConversionError, DatetimeFieldOverflowSnafu,
+    InvalidDatetimeValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError, ReadArrowValueSnafu,
     UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::int_fmt;
@@ -288,6 +289,60 @@ impl WriteWire for SnowflakeTime {
 
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::Time
+    }
+}
+
+/// Batched `SQL_C_CHAR` kernel for `TIME`. Reused by the generic
+/// [`convert_char_range`](crate::conversion::batch::convert_char_range) loop.
+/// `TIME` has no `validate_value`, but its `read_arrow_type` can fail
+/// (scale > 9, negative, seconds out of range), so `read_validate` reuses it
+/// with the same `ReadArrowValueSnafu` typing as the per-cell path, and
+/// `format_into` reuses [`format_time_ascii`] behind the same pre-write `<9`
+/// buffer guard. Generic over the Arrow primitive (`Int32`/`Int64`) exactly as
+/// the per-cell converter is.
+pub(crate) struct TimeCharKernel<T> {
+    pub(crate) scale: u32,
+    pub(crate) _phantom: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> CharKernel for TimeCharKernel<T>
+where
+    T: ArrowPrimitiveType + 'static,
+    T::Native: Into<i64>,
+{
+    type Array = PrimitiveArray<T>;
+    type Value = NaiveTime;
+
+    fn read_validate(
+        &self,
+        array: &PrimitiveArray<T>,
+        idx: usize,
+    ) -> Result<NaiveTime, ConversionError> {
+        // `TIME` has no `validate_value`; the fallible decode lives in
+        // `read_arrow_type`, typed exactly as the per-cell path.
+        SnowflakeTime { scale: self.scale }
+            .read_arrow_type(array, idx)
+            .context(ReadArrowValueSnafu)
+    }
+
+    fn format_into<'s>(
+        &self,
+        value: &NaiveTime,
+        binding: &Binding,
+        scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<&'s str, WriteOdbcError> {
+        if binding.buffer_length > 0 && binding.buffer_length < 9 {
+            return NumericValueOutOfRangeSnafu {
+                reason: "Buffer too small for SQL_C_CHAR time (minimum 9 bytes)".to_string(),
+            }
+            .fail();
+        }
+        // `format_time_ascii` wants a fixed `[u8; 32]`; carve it out of the
+        // shared scratch so its signature stays unchanged.
+        let buf: &mut [u8; 32] = (&mut scratch[..32])
+            .try_into()
+            .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 32");
+        Ok(format_time_ascii(value, buf))
     }
 }
 
