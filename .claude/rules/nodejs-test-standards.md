@@ -20,6 +20,43 @@ carry older present-tense names; leave them alone unless the rename is the
 point of the change. Editing a file for an unrelated reason is not a licence to
 rename its tests — that turns a small diff into a wide one.
 
+### Test cleanup
+
+Register cleanup with Vitest's `onTestFinished` callback, not a `finally`
+block. A `finally` block runs its cleanup inline, so when the test body has
+already failed and the cleanup then throws, the cleanup error replaces the
+original failure — the reader sees the teardown error and never learns why the
+test actually failed.
+
+`onTestFinished` runs teardown separately from the test body, so the original
+assertion failure is preserved and reported even when cleanup also throws.
+Register the callback right after acquiring the resource, before the assertions
+that might fail.
+
+```ts
+❌ // finally hides the real failure when cleanup also throws
+it('should return one row', async () => {
+  const connection = await connectAsync(options);
+  try {
+    const rows = await queryAsync(connection);
+    expect(rows).toHaveLength(1);
+  } finally {
+    await destroyConnectionAsync(connection);
+  }
+});
+
+✅ // onTestFinished preserves the original assertion failure
+it('should return one row', async () => {
+  const connection = await connectAsync(options);
+  onTestFinished(async () => {
+    await destroyConnectionAsync(connection);
+  });
+
+  const rows = await queryAsync(connection);
+  expect(rows).toHaveLength(1);
+});
+```
+
 <!-- sync-target: .cursor/rules/nodejs-test-standards.mdc carries this body verbatim plus
      Cursor frontmatter (`globs` matching `paths` above). TO UPDATE: edit this file,
      copy the body (below the closing ---) into the .mdc file below its frontmatter,

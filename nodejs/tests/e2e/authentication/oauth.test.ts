@@ -1,13 +1,13 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import getTestParameter, { getTestParametersFromSameSource } from '../utils/getTestParameter.js';
 import {
   baseConnectionOptions,
   destroyConnectionAsync,
   executeAsync,
-  NO_BROWSER_AVAILABLE,
   snowflake,
 } from '../utils/index.js';
+import { NOT_IN_AUTH_TEST_CONTAINER } from './utils.js';
 
 const OKTA_USER_KEY = 'SNOWFLAKE_TEST_OKTA_USER';
 const OKTA_PASSWORD_KEY = 'SNOWFLAKE_TEST_OKTA_PASSWORD';
@@ -27,10 +27,11 @@ function requireOktaCredentials(): { user: string; password: string } {
 }
 
 async function mintOauthAccessToken(user: string, password: string): Promise<string> {
+  const tokenUrl = getTestParameter('SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL', true);
   const clientId = getTestParameter('SNOWFLAKE_TEST_OKTA_OAUTH_CLIENT_ID', true);
   const clientSecret = getTestParameter('SNOWFLAKE_TEST_OKTA_OAUTH_CLIENT_SECRET', true);
   const role = getTestParameter('SNOWFLAKE_TEST_ROLE', true);
-  const response = await fetch(getTestParameter('SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL', true), {
+  const response = await fetch(tokenUrl, {
     method: 'POST',
     headers: {
       Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
@@ -59,7 +60,7 @@ async function mintOauthAccessToken(user: string, password: string): Promise<str
   return payload.access_token;
 }
 
-describe.skipIf(NO_BROWSER_AVAILABLE)('OAuth authentication', () => {
+describe.skipIf(NOT_IN_AUTH_TEST_CONTAINER)('OAuth authentication', () => {
   it('should authenticate with a pre-acquired access token', async () => {
     // Given Authentication is set to legacy OAUTH and a pre-acquired OAuth access token is supplied via `token=`
     const { user, password } = requireOktaCredentials();
@@ -71,16 +72,15 @@ describe.skipIf(NO_BROWSER_AVAILABLE)('OAuth authentication', () => {
       token,
     });
 
-    try {
-      // When Trying to Connect
-      await connection.connectAsync();
-
-      // Then Login is successful and a simple query can be executed
-      const { rows } = await executeAsync(connection, 'SELECT 1');
-      expect(rows).toHaveLength(1);
-      expect(Object.values(rows[0])).toEqual([1]);
-    } finally {
+    // When Trying to Connect
+    await connection.connectAsync();
+    onTestFinished(async () => {
       await destroyConnectionAsync(connection);
-    }
+    });
+
+    // Then Login is successful and a simple query can be executed
+    const { rows } = await executeAsync(connection, 'SELECT 1');
+    expect(rows).toHaveLength(1);
+    expect(Object.values(rows[0])).toEqual([1]);
   });
 });

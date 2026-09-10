@@ -579,7 +579,7 @@ behavior_differences:
 
   28:
     name: 'The core silently drops non-whitelisted statement-level parameters'
-    status: todo
+    status: fixed
     type: bug
     reviewed: false
     is_breaking_change: true
@@ -595,11 +595,7 @@ behavior_differences:
       query request; a non-whitelisted key is accepted without error and then silently dropped, so
       the statement runs under the session default instead of the requested value.
     description: |
-      The drop is in sf_core: build_query_parameters (apis/database_driver_v1/statement.rs) copies
-      only the QUERY_PARAMETER_NAMES whitelist from the statement's settings into the query request,
-      discarding every other key. statement_set_options accepts unknown keys (validation returns Ok
-      when the registry has no definition), which is why the value is taken but never sent. Fixing
-      this means broadening what the core forwards to the query request.
+      sf_core fixed
 
   29:
     name: 'VECTOR columns decode to a native number[], except FLOAT32 smallest-normal values, which arrive as zero'
