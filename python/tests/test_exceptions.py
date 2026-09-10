@@ -232,6 +232,16 @@ class TestExceptionInstantiation:
         err = Error("")
         assert err.msg == ""
 
+    def test_msg_excludes_ids_but_str_includes_them(self):
+        err = ProgrammingError(
+            "test message",
+            errno=123,
+            sfqid="0000-1111",
+            request_id="550e8400-e29b-41d4-a716-446655440000",
+        )
+        assert err.msg == "000123: test message"
+        assert str(err) == "000123: test message (request_id=550e8400-e29b-41d4-a716-446655440000, sfqid=0000-1111)"
+
 
 class TestErrorKindMapping:
     """Test that proto error kinds map to the correct PEP 249 exception class."""
