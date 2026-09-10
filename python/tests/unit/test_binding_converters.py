@@ -1378,9 +1378,64 @@ class TestJsonBindingConverterNumpy:
         parsed = json.loads(json_str)
         assert parsed["1"] == {"type": "REAL", "value": "Infinity"}
 
+    @pytest.mark.parametrize(
+        "value, snowflake_type",
+        [
+            (np.int8(np.iinfo(np.int8).max), "FIXED"),
+            (np.uint8(np.iinfo(np.uint8).max), "FIXED"),
+            (np.uint32(np.iinfo(np.uint32).max), "FIXED"),
+            (np.uint64(np.iinfo(np.uint64).max), "FIXED"),
+            (np.float16(np.finfo(np.float16).max), "REAL"),
+        ],
+        ids=["int8", "uint8", "uint32", "uint64", "float16"],
+    )
+    def test_numpy_scalar_widths_match_legacy_type_map(self, value, snowflake_type):
+        mapped_type, converted = JsonBindingConverter._convert_value(value)
+        assert mapped_type == snowflake_type
+        assert converted == str(value)
+
 
 class TestClientSideBindingConverterNumpy:
-    """Test that ClientSideBindingConverter handles numpy types via _is_numeric."""
+    """Client-side numpy conversion matching the reference SnowflakeConverter."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            np.int8(np.iinfo(np.int8).max),
+            np.int16(np.iinfo(np.int16).max),
+            np.int32(np.iinfo(np.int32).max),
+            np.int64(np.iinfo(np.int64).max),
+            np.uint8(np.iinfo(np.uint8).max),
+            np.uint16(np.iinfo(np.uint16).max),
+            np.uint32(np.iinfo(np.uint32).max),
+            np.uint64(np.iinfo(np.uint64).max),
+        ],
+        ids=["int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64"],
+    )
+    def test_numpy_integer_passthrough(self, value):
+        result = ClientSideBindingConverter.to_snowflake(value)
+        assert result == value
+        assert ClientSideBindingConverter.process_single_param(value) == str(int(value))
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            np.finfo(np.float16).max,
+            np.finfo(np.float32).max,
+            np.float64("1.79769313486e+308"),
+            np.float64("-1.79769313486e+308"),
+        ],
+        ids=["float16_max", "float32_max", "float64_max", "float64_min"],
+    )
+    def test_numpy_float_quoted_as_bare_number(self, value):
+        result = ClientSideBindingConverter.process_single_param(value)
+        assert result == str(value)
+        assert "'" not in result
+
+    def test_numpy_bool_true_and_false(self):
+        assert ClientSideBindingConverter.to_snowflake(np.True_) == np.True_
+        assert ClientSideBindingConverter.process_single_param(np.True_) == "True"
+        assert ClientSideBindingConverter.process_single_param(np.False_) == "False"
 
     def test_numpy_int64_passthrough(self):
         result = ClientSideBindingConverter.to_snowflake(np.int64(42))
@@ -1418,6 +1473,21 @@ class TestClientSideBindingConverterNumpy:
 
     def test_numpy_float32_nan_quoted_bare(self):
         assert ClientSideBindingConverter.quote(np.float32("nan")) == "NaN"
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            np.datetime64("2005-02-25T03:30"),
+            np.datetime64("1970-12-31T05:00:00"),
+            np.datetime64("1969-12-31T05:00:00"),
+            np.datetime64("1968-11-12T07:00:00.123"),
+            np.datetime64("2016-03-04T12:03:05.123456789"),
+        ],
+        ids=["2005", "1970", "1969", "1968_ms", "nanoseconds"],
+    )
+    def test_numpy_datetime64_to_snowflake(self, value):
+        result = ClientSideBindingConverter.to_snowflake(value)
+        assert result == str(value) + "+00:00"
 
 
 class TestCsvBindingConverter:
