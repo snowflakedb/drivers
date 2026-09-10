@@ -430,15 +430,19 @@ pub(crate) fn validate_statement_option_write(
     Ok(())
 }
 
+/// Whether `key` has no entry in the param registry, under any alias.
+pub(crate) fn is_unregistered_param(key: &str) -> bool {
+    param_registry::registry().resolve(key).is_none()
+}
+
 /// Collect string-typed settings whose keys are not recognized by the param
 /// registry. These are forwarded as session parameters at login time so that
 /// drivers can set arbitrary Snowflake session parameters (e.g. `QUERY_TAG`)
 /// via regular connection options.
 pub(crate) fn collect_unknown_settings(settings: &ParamStore) -> HashMap<String, String> {
-    let registry = param_registry::registry();
     settings
         .iter()
-        .filter(|(key, _)| registry.resolve(key).is_none())
+        .filter(|(key, _)| is_unregistered_param(key))
         .filter_map(|(key, value)| {
             let str_value = match value {
                 Setting::String(s) => s.clone(),
