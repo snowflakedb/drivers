@@ -1359,3 +1359,21 @@ behavior_differences:
       together. `_common/extras.py` already resolves them independently, so
       a case where only one is installed now reports correctly instead of
       following whichever happens to be installed.
+
+  92:
+    name: "fetch_pandas_all/fetch_pandas_batches accept JSON result sets"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: medium
+    old_driver_behavior: |
+      `fetch_pandas_all()`/`fetch_pandas_batches()` and the `fetch_arrow_*` equivalents
+      raise `NotSupportedError` unless the server returned `queryResultFormat: arrow`,
+      so they reject `SHOW`, `DESCRIBE`, `SET`, DDL and PUT/GET result sets.
+    new_driver_behavior: |
+      They return a pandas `DataFrame` (or an Arrow table) for every result set; the
+      JSON rowset is converted to Arrow, and no result-format check rejects the fetch.
+    description: |
+      The cursor-level counterpart of entry 18, which records the same capability on
+      `ResultBatch`.
