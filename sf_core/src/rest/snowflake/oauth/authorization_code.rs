@@ -477,15 +477,9 @@ async fn try_cache_short_circuit(
                         &refreshed,
                     )
                     .await;
-                } else {
-                    // Cross-driver convention (.NET / Node): when the
-                    // IdP omits a new refresh token, evict the cached one.
-                    // It has either been single-use-rotated server-side
-                    // (Snowflake-IdP with `enable_single_use_refresh_tokens=true`)
-                    // or otherwise invalidated, and re-presenting it on the
-                    // next refresh would fail.
+                } else if config.enable_single_use_refresh_tokens {
                     tracing::debug!(
-                        "Refresh response omitted refresh_token; evicting cached refresh token"
+                        "Rotation requested but refresh response omitted refresh_token; evicting"
                     );
                     token::remove_oauth_refresh_token(
                         idp_url,
@@ -495,6 +489,10 @@ async fn try_cache_short_circuit(
                         token_cache.clone(),
                     )
                     .await;
+                } else {
+                    tracing::debug!(
+                        "Refresh response omitted refresh_token; retaining cached refresh token"
+                    );
                 }
                 return Some(refreshed);
             }
@@ -1732,11 +1730,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_response_without_refresh_token_evicts_cached_rt() {
-        // Cross-driver convention (.NET / Node): when the IdP omits a
-        // new `refresh_token`, the old one must be
-        // evicted because it has either been single-use-rotated server
-        // side or otherwise invalidated.
+    async fn refresh_response_without_refresh_token_retains_cached_rt_when_rotation_disabled() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
@@ -1760,7 +1754,69 @@ mod tests {
             Some(cache.clone()),
         )
         .await;
-        let config = cfg_with_token_url(token_url.clone());
+        let mut config = cfg_with_token_url(token_url.clone());
+        config.enable_single_use_refresh_tokens = false;
+        let client = reqwest::Client::new();
+        let acquired = run_oauth_authorization_code(
+            &client,
+            server_url().as_str(),
+            &config,
+            "",
+            Some(cache.clone()),
+            false,
+            None,
+        )
+        .await
+        .expect("refresh without new RT still succeeds");
+        assert_eq!(acquired.access_token.reveal(), "AT-NEW");
+        assert!(acquired.refresh_token.is_none());
+
+        let stored_rt = token::try_get_cached_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            Some(cache.clone()),
+        )
+        .await;
+        assert!(
+            stored_rt.is_some(),
+            "refresh token must be retained when rotation is disabled and the response omits a new one"
+        );
+        assert_eq!(
+            stored_rt.unwrap().reveal(),
+            "RT-STALE",
+            "retained refresh token must be the original cached value"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_response_without_refresh_token_evicts_cached_rt_when_rotation_enabled() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=RT-STALE"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-NEW","token_type":"Bearer"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
+        token::store_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            "RT-STALE",
+            Some(cache.clone()),
+        )
+        .await;
+        let mut config = cfg_with_token_url(token_url.clone());
+        config.enable_single_use_refresh_tokens = true;
         let client = reqwest::Client::new();
         let acquired = run_oauth_authorization_code(
             &client,
@@ -1786,7 +1842,7 @@ mod tests {
         .await;
         assert!(
             stored_rt.is_none(),
-            "stale refresh token must be evicted when the response omits a new one"
+            "refresh token must be evicted when rotation is enabled and the response omits a replacement"
         );
     }
 
