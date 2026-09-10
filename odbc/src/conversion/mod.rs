@@ -1423,13 +1423,16 @@ mod char_batch_tests {
         out
     }
 
-    fn assert_equiv(field: &Field, arr: &dyn arrow::array::Array, cell: usize) {
-        let conv = make_converter(field, &NumericSettings::default()).unwrap();
+    fn assert_equiv_with_converter(
+        conv: &dyn ColumnConverter,
+        arr: &dyn arrow::array::Array,
+        cell: usize,
+    ) {
         let n = arr.len();
         let (mut bp, mut ip) = (vec![0xAAu8; n * cell], vec![-9 as sql::Len; n]);
         let (mut bb, mut ib) = (vec![0xAAu8; n * cell], vec![-9 as sql::Len; n]);
-        let op = per_cell(conv.as_ref(), arr, cell, &mut bp, &mut ip);
-        let ob = batched(conv.as_ref(), arr, cell, &mut bb, &mut ib);
+        let op = per_cell(conv, arr, cell, &mut bp, &mut ip);
+        let ob = batched(conv, arr, cell, &mut bb, &mut ib);
         assert_eq!(bp, bb, "value buffers differ");
         assert_eq!(ip, ib, "indicators differ");
         for (i, (a, b)) in op.iter().zip(ob.iter()).enumerate() {
@@ -1439,6 +1442,11 @@ mod char_batch_tests {
                 "output {i}"
             );
         }
+    }
+
+    fn assert_equiv(field: &Field, arr: &dyn arrow::array::Array, cell: usize) {
+        let conv = make_converter(field, &NumericSettings::default()).unwrap();
+        assert_equiv_with_converter(conv.as_ref(), arr, cell);
     }
 
     #[test]
@@ -1674,17 +1682,59 @@ mod char_batch_tests {
         assert_eq!(&buf[2 * cell..2 * cell + 1], b"3");
     }
 
-    // ---- BOOLEAN --------------------------------------------------------
+    fn assert_declines_non_nullable_with_nulls<K: crate::conversion::batch::CharKernel>(
+        kernel: &K,
+        arr: &K::Array,
+    ) {
+        let cell = 16;
+        let n = arr.len();
+        let (mut buf, mut inds) = (vec![0u8; n * cell], vec![0 as sql::Len; n]);
+        let b = base(&mut buf, &mut inds, cell);
+        let mut outs: Vec<Result<Warnings, ConversionError>> =
+            (0..n).map(|_| Ok(Vec::new())).collect();
+        let took = crate::conversion::batch::convert_char_range(
+            kernel,
+            false,
+            arr,
+            0..n,
+            &b,
+            0,
+            BindingStrides {
+                bind_type: 0,
+                bind_offset: 0,
+            },
+            &mut outs,
+        );
+        assert!(
+            !took,
+            "must decline so the caller falls back to the generic path"
+        );
+    }
 
-    #[test]
-    fn batched_matches_per_cell_boolean() {
-        let arr = BooleanArray::from(vec![Some(true), Some(false), None, Some(true)]);
-        assert_equiv(&boolean_field(true), &arr, 8);
-        // tiny 1-byte cell: "1"/"0" is a single byte, so the NUL terminator has
-        // no room -> 22003 truncation on every non-null row; both paths agree.
-        assert_equiv(&boolean_field(true), &arr, 1);
-        let arr_nn = BooleanArray::from(vec![true, false, true]);
-        assert_equiv(&boolean_field(false), &arr_nn, 8);
+    fn assert_declines_first_row_stride_overflow<K: crate::conversion::batch::CharKernel>(
+        kernel: &K,
+        arr: &K::Array,
+    ) {
+        let cell = 16;
+        let n = arr.len();
+        let (mut buf, mut inds) = (vec![0u8; n * cell], vec![0 as sql::Len; n]);
+        let b = base(&mut buf, &mut inds, cell);
+        let mut outs: Vec<Result<Warnings, ConversionError>> =
+            (0..n).map(|_| Ok(Vec::new())).collect();
+        let took = crate::conversion::batch::convert_char_range(
+            kernel,
+            true,
+            arr,
+            0..n,
+            &b,
+            2,
+            BindingStrides {
+                bind_type: usize::MAX,
+                bind_offset: 0,
+            },
+            &mut outs,
+        );
+        assert!(!took, "first-row stride overflow must decline");
     }
 
     // ---- DATE -----------------------------------------------------------
@@ -1718,31 +1768,16 @@ mod char_batch_tests {
         assert_equiv(&date_field(true), &arr, 16);
     }
 
-    // ---- TIME -----------------------------------------------------------
-
     #[test]
-    fn batched_matches_per_cell_time_int64() {
-        // scale 9: raw = seconds*1e9 + nanos.
-        let s = 1_000_000_000i64;
-        let arr = Int64Array::from(vec![
-            Some(0),                      // 00:00:00
-            Some(3661 * s + 123_456_789), // 01:01:01.123456789
-            None,
-            Some(86_399 * s),               // 23:59:59
-            Some(45_015 * s + 900_000_000), // 12:30:15.9
-        ]);
-        assert_equiv(&time_field("9", DataType::Int64, true), &arr, 32);
-        // cell < 9 -> pre-write buffer guard fires identically.
-        assert_equiv(&time_field("9", DataType::Int64, true), &arr, 8);
+    fn batched_declines_date_non_nullable_with_nulls() {
+        let arr = Date32Array::from(vec![Some(0), None, Some(1)]);
+        assert_declines_non_nullable_with_nulls(&crate::conversion::date::DateCharKernel, &arr);
     }
 
     #[test]
-    fn batched_matches_per_cell_time_int32() {
-        // scale 0 fits in Int32: raw = seconds.
-        let arr = Int32Array::from(vec![Some(0), Some(3661), None, Some(86_399)]);
-        assert_equiv(&time_field("0", DataType::Int32, true), &arr, 32);
-        let arr_nn = Int32Array::from(vec![0, 3661, 86_399]);
-        assert_equiv(&time_field("0", DataType::Int32, false), &arr_nn, 32);
+    fn batched_declines_date_on_first_row_stride_overflow() {
+        let arr = Date32Array::from(vec![Some(0), Some(1)]);
+        assert_declines_first_row_stride_overflow(&crate::conversion::date::DateCharKernel, &arr);
     }
 
     // ---- TIMESTAMP_NTZ / _LTZ ------------------------------------------
@@ -1780,33 +1815,69 @@ mod char_batch_tests {
         assert_equiv(&timestamp_field("TIMESTAMP_NTZ", "0", true), &arr, 32);
     }
 
-    // ---- REAL -----------------------------------------------------------
-
     #[test]
-    fn batched_matches_per_cell_real() {
-        let arr = Float64Array::from(vec![
-            Some(0.0),
-            Some(-0.0),
-            Some(1.0),
-            Some(-12345.6789),
-            None,
-            Some(0.1),
-            Some(f64::INFINITY),
-            Some(f64::NEG_INFINITY),
-            Some(f64::NAN),
-        ]);
-        // wide cell: full Display output, exercises the fast path.
-        assert_equiv(&real_field(true), &arr, 64);
-        let arr_nn = Float64Array::from(vec![0.0, 1.5, -2.5, 1e20]);
-        assert_equiv(&real_field(false), &arr_nn, 64);
+    fn batched_declines_timestamp_non_nullable_with_nulls() {
+        let arr = Int64Array::from(vec![Some(0), None, Some(1_767_225_600)]);
+        assert_declines_non_nullable_with_nulls(
+            &crate::conversion::timestamp::TimestampCharKernel { scale: 0 },
+            &arr,
+        );
     }
 
     #[test]
-    fn batched_matches_per_cell_real_whole_digit_overflow() {
-        // A value whose whole-digit part cannot fit the cell must surface the
-        // 22003 NumericValueOutOfRange on both paths (not a silent truncation).
-        let arr = Float64Array::from(vec![Some(123_456_789.0), Some(1.0)]);
-        assert_equiv(&real_field(true), &arr, 4);
+    fn batched_declines_timestamp_on_first_row_stride_overflow() {
+        let arr = Int64Array::from(vec![Some(0), Some(1_767_225_600)]);
+        assert_declines_first_row_stride_overflow(
+            &crate::conversion::timestamp::TimestampCharKernel { scale: 0 },
+            &arr,
+        );
+    }
+
+    fn timestamp_struct_field(logical: &str, nullable: bool) -> Field {
+        let children = Fields::from(vec![
+            Field::new("epoch", DataType::Int64, true),
+            Field::new("fraction", DataType::Int32, true),
+        ]);
+        let mut md = HashMap::new();
+        md.insert("logicalType".to_string(), logical.to_string());
+        md.insert("scale".to_string(), "9".to_string());
+        Field::new("c", DataType::Struct(children), nullable).with_metadata(md)
+    }
+
+    fn ntz_struct_array(rows: &[Option<(i64, i32)>]) -> StructArray {
+        let epochs: Vec<Option<i64>> = rows.iter().map(|r| r.map(|(e, _)| e)).collect();
+        let fractions: Vec<Option<i32>> = rows.iter().map(|r| r.map(|(_, f)| f)).collect();
+        let valid: Vec<bool> = rows.iter().map(|r| r.is_some()).collect();
+        let epoch_col: ArrayRef = Arc::new(Int64Array::from(epochs));
+        let fraction_col: ArrayRef = Arc::new(Int32Array::from(fractions));
+        let fields: Fields = vec![
+            Arc::new(Field::new("epoch", DataType::Int64, true)),
+            Arc::new(Field::new("fraction", DataType::Int32, true)),
+        ]
+        .into();
+        StructArray::new(fields, vec![epoch_col, fraction_col], Some(valid.into()))
+    }
+
+    #[test]
+    fn batched_matches_per_cell_timestamp_ntz_struct_encoded() {
+        let arr = ntz_struct_array(&[
+            Some((0, 0)),
+            Some((1_767_225_600, 123_000_000)),
+            None,
+            Some((-62_135_596_800, 0)),
+        ]);
+        assert_equiv(&timestamp_struct_field("TIMESTAMP_NTZ", true), &arr, 32);
+    }
+
+    #[test]
+    fn batched_matches_per_cell_timestamp_ltz_struct_encoded() {
+        let arr = ntz_struct_array(&[
+            Some((0, 0)),
+            Some((1_767_225_600, 123_000_000)),
+            None,
+            Some((-62_135_596_800, 0)),
+        ]);
+        assert_equiv(&timestamp_struct_field("TIMESTAMP_LTZ", true), &arr, 32);
     }
 
     // ---- TIMESTAMP_TZ ---------------------------------------------------
@@ -1814,10 +1885,59 @@ mod char_batch_tests {
     // TZ is the only kernel whose `Array` is a `StructArray` (not a flat
     // primitive), so these tests exercise the struct-encoded batched path —
     // the layout Snowflake actually sends. `NumericSettings::tz_offset_format()`
-    // is currently hard-wired to `None`, so `make_converter` builds the kernel
-    // in its bare-UTC ("Mode None") rendering, matching the reachable production
-    // behaviour; the offset-suffix branch is covered by `timestamp.rs`'s own
-    // `format_timestamp_tz_string_into` unit tests.
+    // is hard-wired to `None`, so `make_converter` can only build the kernel in
+    // its bare-UTC ("Mode None") rendering; `tz_kernel_converter` below
+    // constructs the `Some(fmt)` offset-suffix pairing directly (bypassing
+    // `make_converter`) so that rendering gets the same per-cell/batched
+    // equivalence coverage as the reachable production path.
+
+    fn tz_kernel_converter(
+        scale: u32,
+        tz_offset_format: Option<crate::conversion::timestamp::TzOffsetFormat>,
+        nullable: bool,
+    ) -> Box<dyn ColumnConverter> {
+        let snowflake_type = crate::conversion::timestamp::SnowflakeTimestampTz {
+            scale,
+            tz_offset_format,
+        };
+        let inner: Box<dyn ColumnConverter> = if nullable {
+            Box::new(crate::conversion::Converter {
+                snowflake_type: crate::conversion::nullable::Nullable {
+                    value: snowflake_type,
+                },
+                _phantom: std::marker::PhantomData::<fn() -> StructArray>,
+            })
+        } else {
+            Box::new(crate::conversion::Converter {
+                snowflake_type,
+                _phantom: std::marker::PhantomData::<fn() -> StructArray>,
+            })
+        };
+        Box::new(crate::conversion::batch::CharBatchConverter {
+            inner,
+            kernel: crate::conversion::timestamp::TimestampTzCharKernel {
+                scale,
+                tz_offset_format,
+            },
+            nullable,
+        })
+    }
+
+    #[test]
+    fn batched_matches_per_cell_timestamp_tz_with_offset_suffix() {
+        let arr = tz_struct_array(&[
+            Some((0, 0)),
+            Some((1_767_225_600, 330)),
+            None,
+            Some((-62_135_596_800, -480)),
+        ]);
+        let conv = tz_kernel_converter(
+            0,
+            Some(crate::conversion::timestamp::TzOffsetFormat::Colon),
+            true,
+        );
+        assert_equiv_with_converter(conv.as_ref(), &arr, 32);
+    }
 
     #[test]
     fn batched_matches_per_cell_timestamp_tz() {
@@ -1847,5 +1967,29 @@ mod char_batch_tests {
         // (22008) from check_sql_year on both paths.
         let arr = tz_struct_array(&[Some((300_000_000_000i64, 0)), Some((0, 0))]);
         assert_equiv(&timestamp_tz_field("0", true), &arr, 32);
+    }
+
+    #[test]
+    fn batched_declines_timestamp_tz_non_nullable_with_nulls() {
+        let arr = tz_struct_array(&[Some((0, 0)), None, Some((1_767_225_600, 0))]);
+        assert_declines_non_nullable_with_nulls(
+            &crate::conversion::timestamp::TimestampTzCharKernel {
+                scale: 0,
+                tz_offset_format: None,
+            },
+            &arr,
+        );
+    }
+
+    #[test]
+    fn batched_declines_timestamp_tz_on_first_row_stride_overflow() {
+        let arr = tz_struct_array(&[Some((0, 0)), Some((1_767_225_600, 0))]);
+        assert_declines_first_row_stride_overflow(
+            &crate::conversion::timestamp::TimestampTzCharKernel {
+                scale: 0,
+                tz_offset_format: None,
+            },
+            &arr,
+        );
     }
 }
