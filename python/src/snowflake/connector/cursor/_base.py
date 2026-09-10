@@ -68,6 +68,46 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# A stage path may also be a Snow URL or a path relative to the stage.
+_STAGE_PREFIXES = ("@", "snow://", "/")
+
+
+def _file_uri(path: str) -> str:
+    """Return *path* with a ``file://`` prefix unless it already carries one.
+
+    Snowpark's stored-procedure branch passes the caller's path raw, while
+    ``write_pandas`` passes ``'file://…'`` already quoted.
+    """
+    stripped = path.strip()
+    return stripped if stripped.startswith(("'", "file://")) else f"file://{stripped}"
+
+
+def _stage_ref(path: str) -> str:
+    """Return *path* with an ``@`` prefix unless it already names a stage."""
+    stripped = path.strip()
+    return stripped if stripped.startswith(("'", *_STAGE_PREFIXES)) else f"@{stripped}"
+
+
+def _unquoted_stage_ref(path: str) -> str:
+    """Return *path* as a bare ``@``-prefixed stage path, dropping any quoting.
+
+    The chunked-download RPC takes the stage name as a field rather than SQL,
+    so a quoted literal would become part of the name.
+    """
+    stripped = path.strip()
+    if len(stripped) > 1 and stripped.startswith("'") and stripped.endswith("'"):
+        stripped = stripped[1:-1]
+    return stripped if stripped.startswith(_STAGE_PREFIXES) else f"@{stripped}"
+
+
+def _put_get_options(options: dict[str, Any] | None) -> str:
+    """Render an options mapping as trailing ``KEY=VALUE`` pairs.
+
+    Values are stringified as-is, matching the legacy connector, so a caller
+    passing a value PUT/GET expects quoted (``PATTERN``) must quote it.
+    """
+    return " ".join(f"{name}={value}" for name, value in (options or {}).items())
+
 
 class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     """
@@ -319,6 +359,96 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             return _ChunkedDownloadReader(begin.download_handle)  # type: ignore[return-value]
         finally:
             logger.info("download_stream: exit")
+
+    @snowpark_compat
+    @backward_compatibility
+    @requires_open
+    def _upload(
+        self,
+        local_file_name: str,
+        stage_location: str,
+        options: dict[str, Any],
+        _do_reset: bool = True,
+    ) -> None:
+        """Upload *local_file_name* to *stage_location* without a caller-supplied PUT.
+
+        Snowpark's ``session.file.put`` calls this instead of issuing SQL. The
+        upload runs as a PUT synthesized from the arguments, so afterwards
+        :attr:`description` and :meth:`fetchall` return the usual PUT result
+        row per file. *local_file_name* may name several files via ``*``/``?``
+        wildcards, and either path may already be a quoted ``'file://…'`` /
+        ``'@stage'`` literal.
+
+        *_do_reset* exists for signature parity with the legacy connector; when
+        false, prior cursor state survives the call.
+        """
+        sql = f"PUT {_file_uri(local_file_name)} {_stage_ref(stage_location)} {_put_get_options(options)}"
+        self._execute_file_transfer(sql.rstrip(), _do_reset=_do_reset)
+
+    @snowpark_compat
+    @backward_compatibility
+    @requires_open
+    def _download(
+        self,
+        stage_location: str,
+        target_directory: str,
+        options: dict[str, Any],
+        _do_reset: bool = True,
+    ) -> None:
+        """Download *stage_location* into *target_directory* without a caller-supplied GET.
+
+        The counterpart of :meth:`_upload`, backing ``session.file.get``, and
+        leaving one GET result row per downloaded file on the cursor.
+        *target_directory* is created if it does not exist.
+        """
+        sql = f"GET {_stage_ref(stage_location)} {_file_uri(target_directory)} {_put_get_options(options)}"
+        self._execute_file_transfer(sql.rstrip(), _do_reset=_do_reset)
+
+    @snowpark_compat
+    @backward_compatibility
+    @requires_open
+    def _upload_stream(
+        self,
+        input_stream: BinaryIO,
+        stage_location: str,
+        options: dict[str, Any],
+        _do_reset: bool = True,
+    ) -> None:
+        """Upload the contents of *input_stream* to the file named by *stage_location*.
+
+        The stream stands in for a local file, so *stage_location* names the
+        destination file rather than a directory. Bytes reach the core driver in
+        bounded chunks; the stream is read from the start regardless of its
+        current position. Leaves a PUT result row on the cursor.
+        """
+        stage_dir, _, filename = _unquoted_stage_ref(stage_location).rpartition("/")
+        sql = f"PUT file://{filename} {stage_dir} {_put_get_options(options)}"
+        self._execute_file_transfer(sql.rstrip(), _do_reset=_do_reset, file_stream=input_stream)
+
+    @snowpark_compat
+    @backward_compatibility
+    def _download_stream(self, stage_location: str, decompress: bool = False) -> BinaryIO:
+        """Return a lazily-read binary stream for the stage file at *stage_location*.
+
+        Backs ``session.file.get_stream``. Unlike the other three, this leaves
+        the cursor's result state untouched and hands back a reader; see
+        :meth:`download_stream`, which it delegates to after supplying the
+        leading ``@`` that Snowpark's stored-procedure path omits.
+        """
+        return self.download_stream(_unquoted_stage_ref(stage_location), decompress)
+
+    def _execute_file_transfer(
+        self,
+        sql: str,
+        *,
+        _do_reset: bool,
+        file_stream: BinaryIO | None = None,
+    ) -> None:
+        """Run a synthesized PUT/GET, resetting the cursor first unless told not to."""
+        if _do_reset:
+            self.execute(sql, file_stream=file_stream)
+        else:
+            self._execute(sql, file_stream=file_stream)
 
     def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteQueryResponse:
         """Execute query and return ExecuteQueryResponse (single or multi)."""
