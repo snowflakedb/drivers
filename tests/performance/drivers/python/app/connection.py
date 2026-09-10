@@ -1,6 +1,7 @@
 """Connection management and connector selection."""
 import asyncio
 import inspect
+import os
 from importlib.metadata import version, PackageNotFoundError
 
 
@@ -15,6 +16,8 @@ def create_connection(driver_type, conn_params):
     """Create and return a connection."""
     connector = _get_connector()
     driver_version = _get_driver_version(driver_type)
+    if driver_type == "old" and os.getenv("TEST_TYPE") == "parameter_binding":
+        conn_params = {**conn_params, "paramstyle": "qmark"}
     conn = connector.connect(**conn_params)
     return conn, driver_version
 
@@ -51,6 +54,7 @@ def execute_setup_queries(cursor, setup_queries):
         return
     
     print(f"\n=== Executing Setup Queries ({len(setup_queries)} queries) ===")
+    threshold_param = "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD"
     for i, query in enumerate(setup_queries, 1):
         print(f"  Setup query {i}: {query}")
         try:
@@ -59,12 +63,33 @@ def execute_setup_queries(cursor, setup_queries):
                 _await(cursor.fetchall())
             except Exception:
                 pass
+            if threshold_param in query.upper():
+                _sync_old_driver_stage_threshold(cursor, query)
         except Exception as e:
             print(f"\nERROR: Setup query {i} failed: {query}")
             print(f"   Error: {e}")
             raise
     
     print("Setup queries completed")
+
+
+def _sync_old_driver_stage_threshold(cursor, query: str):
+    import os
+    import re
+
+    if os.getenv("DRIVER_TYPE", "universal") != "old":
+        return
+    match = re.search(
+        rf"{re.escape('CLIENT_STAGE_ARRAY_BINDING_THRESHOLD')}\s*=\s*(\d+)",
+        query,
+        re.IGNORECASE,
+    )
+    if not match:
+        return
+    session_parameters = getattr(cursor.connection, "_session_parameters", None)
+    if session_parameters is None:
+        return
+    session_parameters["CLIENT_STAGE_ARRAY_BINDING_THRESHOLD"] = int(match.group(1))
 
 
 def close_connection(cursor, conn):

@@ -20,11 +20,22 @@ class TestConfig:
         except ValueError:
             print(
                 f"ERROR: Invalid test type '{test_type_str}'. "
-                "Supported types: select, put_get, cold_start, concurrent"
+                "Supported types: select, put_get, cold_start, concurrent, parameter_binding"
             )
             sys.exit(1)
         
         self.sql_command = os.getenv("SQL_COMMAND")
+        self.binding_mode = os.getenv("BINDING_MODE", "execute")
+        if self.binding_mode not in ("execute", "executemany"):
+            print(
+                f"ERROR: Invalid binding mode '{self.binding_mode}'. "
+                "Supported: execute, executemany"
+            )
+            sys.exit(1)
+        self.binding_params_json = os.getenv("BINDING_PARAMS_JSON")
+        if self.test_type == TestType.PARAMETER_BINDING and not self.binding_params_json:
+            print("ERROR: BINDING_PARAMS_JSON is required for parameter_binding tests")
+            sys.exit(1)
         self.test_name = os.getenv("TEST_NAME")
         self.iterations = int(os.getenv("PERF_ITERATIONS", "1"))
         self.warmup_iterations = int(os.getenv("PERF_WARMUP_ITERATIONS", "0"))

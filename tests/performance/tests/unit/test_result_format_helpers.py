@@ -53,6 +53,22 @@ def test_prepare_setup_queries_sets_universal_driver_format():
     assert not any("c_api_query_result_format" in q for q in queries)
 
 
+@pytest.mark.parametrize(
+    "test_type",
+    [PerfTestType.PARAMETER_BINDING, PerfTestType.PARAMETER_BINDING_RECORDED_HTTP],
+)
+def test_prepare_setup_queries_sets_format_for_parameter_binding(test_type):
+    queries = _prepare_setup_queries(
+        test_type,
+        "{}",
+        setup_queries=["CREATE TABLE t (id INT)"],
+        result_format="arrow",
+    )
+    assert "alter session set query_result_format = 'ARROW'" in queries
+    assert "alter session set python_connector_query_result_format = 'ARROW'" in queries
+    assert queries[-1] == "CREATE TABLE t (id INT)"
+
+
 def test_prepare_setup_queries_skips_format_for_put_get():
     params = '{"testconnection": {"database": "DB"}}'
     queries = _prepare_setup_queries(PerfTestType.PUT_GET, params, result_format="json")

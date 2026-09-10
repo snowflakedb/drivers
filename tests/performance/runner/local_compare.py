@@ -22,10 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_metric_column(csv_path: Path) -> Optional[str]:
-    """Return primary metric column: fetch_s for SELECT, query_s for PUT/GET, e2e_s for cold-start."""
+    """Return primary metric column: fetch_s for SELECT, query_s for PUT/GET and binding, e2e_s for cold-start."""
     try:
         with open(csv_path, "r") as f:
             header = f.readline()
+        if "bind_" in csv_path.name and "query_s" in header:
+            return "query_s"
         if "fetch_s" in header:
             return "fetch_s"
         if "query_s" in header:

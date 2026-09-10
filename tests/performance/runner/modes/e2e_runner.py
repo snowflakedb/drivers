@@ -1,4 +1,5 @@
 """End-to-end performance test runner (direct Snowflake connection)."""
+import json
 import logging
 from pathlib import Path
 
@@ -24,6 +25,9 @@ def run_performance_test(
     fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
     worker_count: int = 1,
+    binding_mode: str = "execute",
+    binding_params: list | tuple | None = None,
+    expected_row_count: int | None = None,
 ) -> list[Path]:
     """
     Run a performance test with the specified configuration.
@@ -69,6 +73,11 @@ def run_performance_test(
         env_vars["BIND_MODE"] = bind_mode
     if worker_count > 1:
         env_vars["WORKER_COUNT"] = str(worker_count)
+    if test_type == PerfTestType.PARAMETER_BINDING:
+        env_vars["BINDING_MODE"] = binding_mode
+        env_vars["BINDING_PARAMS_JSON"] = json.dumps(binding_params)
+        if expected_row_count is not None:
+            env_vars["EXPECTED_ROW_COUNT"] = str(expected_row_count)
 
     execute_test(
         test_name=test_name,
@@ -109,6 +118,9 @@ def run_comparison_test(
     fetch_mode: str = "fetchmany",
     bind_mode: str = "char",
     worker_count: int = 1,
+    binding_mode: str = "execute",
+    binding_params: list | tuple | None = None,
+    expected_row_count: int | None = None,
 ) -> dict[str, list[Path]]:
     """
     Run the same test on both universal and old driver implementations.
@@ -152,6 +164,9 @@ def run_comparison_test(
         fetch_mode=fetch_mode,
         bind_mode=bind_mode,
         worker_count=worker_count,
+        binding_mode=binding_mode,
+        binding_params=binding_params,
+        expected_row_count=expected_row_count,
     )
 
     # Run Old driver second
@@ -173,6 +188,9 @@ def run_comparison_test(
         fetch_mode=fetch_mode,
         bind_mode=bind_mode,
         worker_count=worker_count,
+        binding_mode=binding_mode,
+        binding_params=binding_params,
+        expected_row_count=expected_row_count,
     )
 
     return results
