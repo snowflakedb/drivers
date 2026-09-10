@@ -897,6 +897,7 @@ impl SnowflakeTestClient {
                     .into_iter()
                     .collect(),
                 no_connection_details: false,
+                connections_file_path: None,
             })
             .unwrap();
     }
@@ -921,6 +922,7 @@ impl SnowflakeTestClient {
                 conn_handle: Some(self.conn_handle),
                 options: [(key.to_string(), setting)].into_iter().collect(),
                 no_connection_details: false,
+                connections_file_path: None,
             })
             .unwrap();
     }

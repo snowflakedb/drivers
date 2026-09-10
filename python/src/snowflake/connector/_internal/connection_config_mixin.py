@@ -74,14 +74,16 @@ class ConnectionConfigMixin:
     """Enable/disable autocommit at connection time."""
 
     connections_file_path: str | None = None
-    """Path to a TOML connections configuration file.
+    """Path to the TOML file profiles are resolved from.
 
-    Accepted by :class:`Connection` for forward-compatibility with
-    snowflake-connector-python: callers can pass it today without breakage.
-    Loading the file and merging the named ``connection_name`` profile into
-    this config is **not yet wired up** in the universal core; until that
-    lands, the value is stored on the dataclass but does not influence
-    connection behaviour.  TODO: integrate with ``ConfigManager``."""
+    Sent to the core as ``ConnectionSetOptionsRequest.connections_file_path``,
+    not as a config-map setting. It overrides the standard Snowflake config
+    location both for a named ``connection_name`` profile and for the default
+    profile a bare ``connect(connections_file_path=...)`` falls back to.
+    Stored as ``str``; :meth:`from_connection_args` coerces ``os.PathLike``
+    input (e.g. ``pathlib.Path``) so the value can go straight onto the
+    protobuf string field.
+    """
 
     auto_cleanup: bool | None = None
     """Whether the connection should auto-close at interpreter shutdown via an
@@ -101,7 +103,8 @@ class ConnectionConfigMixin:
 
     _no_connection_details: bool = field(default=False, repr=False)
     """Wrapper-internal: ``True`` when ``connect()`` was called with no
-    connection options (the legacy ``is_kwargs_empty`` condition).
+    connection options other than ``connections_file_path`` (the legacy
+    ``is_kwargs_empty`` condition, which a separate parameter never affects).
 
     Set by :meth:`from_connection_args` from the raw caller input, *before* any
     bookkeeping params (application, client_app_id, …) are injected — only the
@@ -124,7 +127,11 @@ class ConnectionConfigMixin:
             "auto_cleanup",
         }
     )
-    """Fields handled only in Python, not forwarded to Rust."""
+    """Fields excluded from :meth:`to_options` / the core param map.
+
+    ``connections_file_path`` is still sent to the core as
+    ``ConnectionSetOptionsRequest.connections_file_path``.
+    """
 
     _INTERNAL_PARAMS: ClassVar[frozenset[str]] = frozenset(
         {
@@ -395,7 +402,7 @@ class ConnectionConfigMixin:
     def from_connection_args(
         cls: type[_Self],
         connection_name: str | None = None,
-        connections_file_path: str | None = None,
+        connections_file_path: str | os.PathLike[str] | None = None,
         config: _Self | None = None,
         **kwargs: Any,
     ) -> _Self:
@@ -405,6 +412,10 @@ class ConnectionConfigMixin:
         pre-built ``config``, and any remaining ``**kwargs`` into a single
         :class:`ConnectionConfig`.  Raises ``ProgrammingError`` when both *config*
         and *kwargs* are supplied.
+
+        ``connections_file_path`` accepts ``str`` or any ``os.PathLike``
+        (``pathlib.Path``, as the old connector typed it) and is stored as
+        ``str``.
 
         Performs all value normalisation and validation so that the returned
         config is ready to be consumed by ``to_options()`` without further
@@ -437,20 +448,22 @@ class ConnectionConfigMixin:
 
         internal_app_name: Any = None
         internal_app_version: Any = None
-        # Bare connect() = caller passed no connection options at all.  This is
-        # the legacy ``is_kwargs_empty`` condition and the sole trigger for the
-        # default-profile fallback in sf_core.  Computed from the raw caller
-        # input below; an explicit ``config`` object is never a bare connect.
+        # Bare connect() = caller passed no connection options beyond
+        # ``connections_file_path``.  This is the legacy ``is_kwargs_empty``
+        # condition and the sole trigger for the default-profile fallback in
+        # sf_core.  Computed from the raw caller input below; an explicit
+        # ``config`` object is never a bare connect.
         no_connection_details = False
         # Legacy ``SnowflakeConnection.__init__`` only sniffs when
         # ``"application" not in kwargs``. Keep that so ``application=None``
         # still means "use PythonConnector", not "run partner detection".
         application_explicit = False
+        if connections_file_path is not None:
+            connections_file_path = os.fspath(connections_file_path)
+
         if config is None:
             if connection_name is not None:
                 kwargs["connection_name"] = connection_name
-            if connections_file_path is not None:
-                kwargs["connections_file_path"] = connections_file_path
             # Pop the ``internal_application_*`` overrides before
             # ``from_kwargs`` runs: they are wrapper-internal levers that
             # ultimately populate ``client_app_id`` / ``client_app_version``,
@@ -464,7 +477,13 @@ class ConnectionConfigMixin:
             # matching the old driver version ``is_kwargs_empty = not kwargs``
             # (computed before any bookkeeping injection).  ``connect(user="alice")``
             # is NOT bare and must not silently load the default profile.
+            # ``connections_file_path`` is a parameter of its own in the old
+            # driver too, so it never reaches ``kwargs`` and never counts here:
+            # ``connect(connections_file_path=p)`` loads the default profile out
+            # of ``p``.  It is folded into ``kwargs`` only after this point.
             no_connection_details = connection_name is None and not kwargs
+            if connections_file_path is not None:
+                kwargs["connections_file_path"] = connections_file_path
             config = cls.from_kwargs(**kwargs)
         else:
             if connection_name is not None:

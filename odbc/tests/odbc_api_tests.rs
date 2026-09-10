@@ -109,6 +109,7 @@ fn smoke_connection_set_tls_config() {
             .into_iter()
             .collect(),
             no_connection_details: false,
+            connections_file_path: None,
         })
         .expect("set options");
 }

@@ -8,6 +8,7 @@ use crate::config::path_resolver::ConfigPaths;
 use crate::config::settings::Setting;
 use crate::config::toml_loader::FilePermissionCheck;
 use crate::env_vars;
+use std::path::Path;
 
 /// If `account` is not explicitly set but `host` is available,
 /// derive the account identifier from the hostname — matching the legacy
@@ -129,7 +130,15 @@ pub fn resolve(
     explicit: &ParamStore,
     no_connection_details: bool,
 ) -> Result<ParamStore, ConfigError> {
-    let paths = crate::config::path_resolver::get_config_paths()?;
+    resolve_with_connections_file(explicit, no_connection_details, None)
+}
+
+pub fn resolve_with_connections_file(
+    explicit: &ParamStore,
+    no_connection_details: bool,
+    connections_file: Option<&Path>,
+) -> Result<ParamStore, ConfigError> {
+    let paths = config_paths_with_connections_file(connections_file)?;
     resolve_with_paths(explicit, &paths, no_connection_details)
 }
 
@@ -143,8 +152,38 @@ pub fn resolve_for_wrapper(
     no_connection_details: bool,
     wrapper: Wrapper,
 ) -> Result<ParamStore, ConfigError> {
-    let paths = crate::config::path_resolver::get_config_paths()?;
+    resolve_for_wrapper_with_connections_file(explicit, no_connection_details, wrapper, None)
+}
+
+pub fn resolve_for_wrapper_with_connections_file(
+    explicit: &ParamStore,
+    no_connection_details: bool,
+    wrapper: Wrapper,
+    connections_file: Option<&Path>,
+) -> Result<ParamStore, ConfigError> {
+    let paths = config_paths_with_connections_file(connections_file)?;
     resolve_with_paths_for_wrapper(explicit, &paths, no_connection_details, Some(wrapper))
+}
+
+fn config_paths_with_connections_file(
+    connections_file: Option<&Path>,
+) -> Result<ConfigPaths, ConfigError> {
+    let override_path = crate::config::path_resolver::connections_file_override(connections_file);
+    match crate::config::path_resolver::get_config_paths() {
+        Ok(mut paths) => {
+            if let Some(connections_file) = override_path {
+                paths.connections_file = Some(connections_file);
+            }
+            Ok(paths)
+        }
+        Err(err) => match override_path {
+            Some(connections_file) => Ok(ConfigPaths {
+                connections_file: Some(connections_file),
+                config_file: None,
+            }),
+            None => Err(err),
+        },
+    }
 }
 
 /// Same as [`resolve`] but accepts explicit config file paths (for testing).
@@ -465,6 +504,95 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         }
+    }
+
+    #[test]
+    fn named_profile_loads_from_overridden_connections_file_not_default_location() {
+        let snowflake_home = TempDir::new().unwrap();
+        write_config(
+            &snowflake_home,
+            "connections.toml",
+            r#"
+[custom]
+account = "home-account"
+user = "home-user"
+"#,
+        );
+        write_config(&snowflake_home, "config.toml", "");
+
+        let custom_dir = TempDir::new().unwrap();
+        write_config(
+            &custom_dir,
+            "custom.toml",
+            r#"
+[custom]
+account = "custom-account"
+user = "custom-user"
+"#,
+        );
+
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            "connection_name".to_owned(),
+            Setting::String("custom".into()),
+        );
+        let paths = ConfigPaths {
+            connections_file: Some(custom_dir.path().join("custom.toml")),
+            config_file: Some(snowflake_home.path().join("config.toml")),
+        };
+
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
+
+        assert_eq!(
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("custom-account".to_owned())
+        );
+        assert_eq!(
+            get_str(&resolved, param_names::USER),
+            Some("custom-user".to_owned())
+        );
+    }
+
+    #[test]
+    fn bare_connect_loads_default_profile_from_overridden_connections_file() {
+        let snowflake_home = TempDir::new().unwrap();
+        write_config(
+            &snowflake_home,
+            "connections.toml",
+            r#"
+[default]
+account = "home-account"
+user = "home-user"
+"#,
+        );
+        write_config(&snowflake_home, "config.toml", "");
+
+        let custom_dir = TempDir::new().unwrap();
+        write_config(
+            &custom_dir,
+            "custom.toml",
+            r#"
+[default]
+account = "custom-account"
+user = "custom-user"
+"#,
+        );
+
+        let paths = ConfigPaths {
+            connections_file: Some(custom_dir.path().join("custom.toml")),
+            config_file: Some(snowflake_home.path().join("config.toml")),
+        };
+
+        let resolved = resolve_with_paths(&ParamStore::new(), &paths, true).unwrap();
+
+        assert_eq!(
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("custom-account".to_owned())
+        );
+        assert_eq!(
+            get_str(&resolved, param_names::USER),
+            Some("custom-user".to_owned())
+        );
     }
 
     #[test]

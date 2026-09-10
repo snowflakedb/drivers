@@ -2,7 +2,7 @@ use super::{ConfigDirNotFoundSnafu, ConfigError};
 use crate::env_vars;
 use snafu::OptionExt;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Holds the paths to configuration files.
 ///
@@ -39,6 +39,25 @@ fn resolve_snowflake_home(env_value: Option<String>, home_dir: Option<PathBuf>) 
     path.exists().then_some(path)
 }
 
+pub(crate) fn connections_file_override(connections_file: Option<&Path>) -> Option<PathBuf> {
+    connections_file_override_with_home(connections_file, dirs::home_dir().as_deref())
+}
+
+fn connections_file_override_with_home(
+    connections_file: Option<&Path>,
+    home_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    let path = connections_file?;
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    let expanded = match path.to_str() {
+        Some(raw) => expand_tilde(raw, home_dir),
+        None => path.to_path_buf(),
+    };
+    (!expanded.as_os_str().is_empty()).then_some(expanded)
+}
+
 /// Expand a leading `~` or `~/` to the user's home directory, mirroring
 /// Python's `Path.expanduser()`.
 ///
@@ -46,7 +65,7 @@ fn resolve_snowflake_home(env_value: Option<String>, home_dir: Option<PathBuf>) 
 /// string is left literal, and a `~user` form is left untouched. Shared with
 /// [`crate::file_manager`] PUT source-path expansion so both resolve `~`
 /// identically (and consistently with JDBC's `expandFileNames`).
-pub(crate) fn expand_tilde(raw: &str, home_dir: Option<&std::path::Path>) -> PathBuf {
+pub(crate) fn expand_tilde(raw: &str, home_dir: Option<&Path>) -> PathBuf {
     if raw == "~" {
         return home_dir
             .map(PathBuf::from)
@@ -195,6 +214,25 @@ mod tests {
     }
 
     // --- expand_tilde tests ---
+
+    #[test]
+    fn connections_file_override_ignores_empty_path() {
+        let home = PathBuf::from("/home/testuser");
+        assert_eq!(
+            connections_file_override_with_home(Some(Path::new("")), Some(&home)),
+            None
+        );
+        assert_eq!(connections_file_override_with_home(None, Some(&home)), None);
+    }
+
+    #[test]
+    fn connections_file_override_expands_leading_tilde() {
+        let home = PathBuf::from("/home/testuser");
+        assert_eq!(
+            connections_file_override_with_home(Some(Path::new("~/custom.toml")), Some(&home)),
+            Some(PathBuf::from("/home/testuser/custom.toml"))
+        );
+    }
 
     #[test]
     fn test_expand_tilde_with_suffix() {

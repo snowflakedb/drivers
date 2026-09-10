@@ -1,5 +1,6 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -296,10 +297,11 @@ impl DatabaseDriverV1 {
                     // synchronous disk I/O and private-key parsing, which currently extends the
                     // connection mutex critical section and can block the async runtime thread.
                     let effective_seed = conn.effective_seed(&database_seed);
-                    let mut resolved = resolver::resolve_for_wrapper(
+                    let mut resolved = resolver::resolve_for_wrapper_with_connections_file(
                         &effective_seed,
                         conn.no_connection_details,
                         self.wrapper_presets.configuration_flavor,
+                        conn.connections_file_path.as_deref(),
                     )
                     .context(ConfigurationSnafu)?;
                     normalize_host_underscores(&mut resolved);
@@ -749,6 +751,7 @@ impl DatabaseDriverV1 {
         handle: Handle,
         options: HashMap<String, Setting>,
         no_connection_details: bool,
+        connections_file_path: Option<PathBuf>,
     ) -> Result<Vec<ValidationIssue>, ApiError> {
         match self.connections.get_obj(handle) {
             Some(conn_ptr) => {
@@ -758,6 +761,11 @@ impl DatabaseDriverV1 {
                 // call cannot clear it. Only the wrapper can compute this (it
                 // alone sees the raw caller input before bookkeeping is added).
                 conn.no_connection_details |= no_connection_details;
+                if let Some(connections_file_path) = connections_file_path
+                    && !connections_file_path.as_os_str().is_empty()
+                {
+                    conn.connections_file_path = Some(connections_file_path);
+                }
                 let (resolved, issues) =
                     resolve_options(self.wrapper_presets.configuration_flavor, options);
                 let error_messages: Vec<String> = issues
@@ -1054,6 +1062,7 @@ pub struct Connection {
     /// default-profile fallback in [`resolver::resolve`]. Latched on, so a
     /// later non-bare `set_options` call cannot clear it.
     pub(crate) no_connection_details: bool,
+    pub(crate) connections_file_path: Option<PathBuf>,
     /// Resolved settings snapshot captured at successful login (defaults + files + seed).
     pub(crate) resolved_connect: Option<ParamStore>,
     /// Typed session overrides set after connect (session scope only).
@@ -1147,6 +1156,7 @@ impl Connection {
             database_seed: ParamStore::new(),
             connection_seed: ParamStore::new(),
             no_connection_details: false,
+            connections_file_path: None,
             resolved_connect: None,
             session_overrides: ParamStore::new(),
             tokens: Arc::new(AsyncRwLock::new(None)),
@@ -1325,9 +1335,10 @@ impl Connection {
     }
 
     fn resolved_settings(&self) -> Result<ParamStore, crate::config::ConfigError> {
-        resolver::resolve(
+        resolver::resolve_with_connections_file(
             &self.effective_seed(&self.database_seed),
             self.no_connection_details,
+            self.connections_file_path.as_deref(),
         )
     }
 
@@ -2981,6 +2992,42 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn connection_set_options_stores_connections_file_path() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        let path = PathBuf::from("/tmp/custom-connections.toml");
+
+        ds.connection_set_options(handle, HashMap::new(), false, Some(path.clone()))
+            .await
+            .unwrap();
+        ds.connection_set_options(handle, HashMap::new(), false, None)
+            .await
+            .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert_eq!(conn.connections_file_path.as_ref(), Some(&path));
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_set_options_ignores_empty_connections_file_path() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        ds.connection_set_options(handle, HashMap::new(), false, Some(PathBuf::new()))
+            .await
+            .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert_eq!(conn.connections_file_path, None);
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
     #[test]
     fn effective_seed_applies_unknown_option_precedence_case_insensitively() {
         let conn = make_connection_with_settings(vec![(
@@ -3406,7 +3453,7 @@ mod tests {
         let handle = ds.connection_new();
 
         // A bare connect() arrives as set_options with the flag set.
-        ds.connection_set_options(handle, HashMap::new(), true)
+        ds.connection_set_options(handle, HashMap::new(), true, None)
             .await
             .unwrap();
 
@@ -3424,12 +3471,12 @@ mod tests {
 
         // First call marks the connection as bare; a later non-bare call must
         // not clear the latch.
-        ds.connection_set_options(handle, HashMap::new(), true)
+        ds.connection_set_options(handle, HashMap::new(), true, None)
             .await
             .unwrap();
         let mut later = HashMap::new();
         later.insert("user".to_owned(), Setting::String("alice".to_owned()));
-        ds.connection_set_options(handle, later, false)
+        ds.connection_set_options(handle, later, false, None)
             .await
             .unwrap();
 

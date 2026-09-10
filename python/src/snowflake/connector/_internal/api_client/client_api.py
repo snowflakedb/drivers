@@ -358,11 +358,13 @@ class CoreDriver:
         conn_handle: ConnectionHandle,
         options: dict[str, ConfigSetting],
         no_connection_details: bool = False,
+        connections_file_path: str | None = None,
     ) -> ConnectionSetOptionsResponse:
         request = ConnectionSetOptionsRequest(
             conn_handle=conn_handle,
             options=options,
             no_connection_details=no_connection_details,
+            connections_file_path=connections_file_path,
         )
         return self.client.connection_set_options(request)
 
@@ -725,12 +727,14 @@ class AsyncCoreDriver:
         conn_handle: ConnectionHandle,
         options: dict[str, ConfigSetting],
         no_connection_details: bool = False,
+        connections_file_path: str | None = None,
     ) -> ConnectionSetOptionsResponse:
         return await self.client.connection_set_options(
             ConnectionSetOptionsRequest(
                 conn_handle=conn_handle,
                 options=options,
                 no_connection_details=no_connection_details,
+                connections_file_path=connections_file_path,
             )
         )
 

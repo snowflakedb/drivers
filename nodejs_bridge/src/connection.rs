@@ -145,7 +145,7 @@ impl Connection {
 
         block_on(async {
             DRIVER
-                .connection_set_options(conn_handle, converted_options, false)
+                .connection_set_options(conn_handle, converted_options, false, None)
                 .await?;
             if !session_parameters.is_empty() {
                 DRIVER
