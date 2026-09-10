@@ -40,6 +40,15 @@ repos:
         pass_filenames: false
         files: ^(Cargo\.lock|python/Cargo\.lock\.sdist|python/Cargo\.toml\.sdist|(sf_core|python_bridge|sf_params_spec|proto_utils|error_trace|error_trace_derive|proto_generator)/Cargo\.toml)$
         language: system
+    -   id: core-perf-cargo-lock
+        name: Core perf Cargo.lock is --locked
+        description: >
+          Fail if tests/performance/drivers/core/app/Cargo.lock is stale.
+          Refresh with: cargo metadata --manifest-path tests/performance/drivers/core/app/Cargo.toml --format-version 1
+        entry: bash -c 'cargo metadata --manifest-path tests/performance/drivers/core/app/Cargo.toml --locked --format-version 1 >/dev/null'
+        pass_filenames: false
+        files: ^(tests/performance/drivers/core/app/Cargo\.(toml|lock)|(sf_core|sf_params_spec|proto_utils|error_trace|error_trace_derive|proto_generator)/Cargo\.toml)$
+        language: system
     -   id: clang-format
         name: clang-format
         description: Run clang-format on C/C++ files included in the commit. clang-format should be installed before-hand.
