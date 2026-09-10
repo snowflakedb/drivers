@@ -22,5 +22,8 @@ tracing = "0.1.41"
 # itself comes from `sf_core`.
 tokio = { version = "1.50.0", features = ["sync"] }
 
+[dev-dependencies]
+tokio = { version = "1.50.0", features = ["macros", "rt"] }
+
 [build-dependencies]
 napi-build = "2"

@@ -70,6 +70,26 @@ export function loginSuccess(dataOverrides: Record<string, unknown> = {}): StubM
   };
 }
 
+export function queryRequestFail(code: string, message: string): StubMapping {
+  return {
+    request: {
+      method: 'POST',
+      urlPathPattern: '/queries/v1/query-request.*',
+    },
+    response: jsonResponse(200, { success: false, code, message }),
+  };
+}
+
+export function tokenRequestFail(code: string, message: string): StubMapping {
+  return {
+    request: {
+      method: 'POST',
+      urlPath: '/session/token-request',
+    },
+    response: jsonResponse(200, { success: false, code, message }),
+  };
+}
+
 export function logoutSuccess(): StubMapping {
   return {
     request: {

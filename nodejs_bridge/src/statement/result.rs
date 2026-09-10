@@ -47,13 +47,6 @@ impl StatementResult {
         Self { cell, ready }
     }
 
-    pub(super) fn from_error(error: BridgeError) -> Self {
-        Self {
-            cell: Arc::new(OnceCell::new_with(Some(Err(error)))),
-            ready: Arc::new(Notify::new()),
-        }
-    }
-
     pub(super) async fn ready(&self) -> Result<&ResultData, BridgeError> {
         loop {
             let notified = self.ready.notified();
