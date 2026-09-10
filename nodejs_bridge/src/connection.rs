@@ -11,7 +11,7 @@ use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 #[napi]
@@ -19,7 +19,6 @@ pub struct Connection {
     /// Shared with every in-flight operation, so the handles outlive this object
     /// for as long as any of them still needs them.
     handles: Arc<Handles>,
-    state: ConnectionState,
     /// Serializes the lifecycle transitions so `destroy()` cannot close and
     /// release while `connect()` is still initializing.
     ///
@@ -46,42 +45,18 @@ pub struct QueryBindings {
     pub data: String,
 }
 
-/// Tracked here because the core cannot answer for it: `destroy` releases the
-/// handle, and a failed login leaves the core reporting the same error as for a
-/// connection nobody touched.
-#[derive(Clone)]
-struct ConnectionState(Arc<AtomicU8>);
-
-impl ConnectionState {
-    const PRISTINE: u8 = 0;
-    const CONNECTED: u8 = 1;
-    const TERMINATED: u8 = 2;
-
-    fn pristine() -> Self {
-        Self(Arc::new(AtomicU8::new(Self::PRISTINE)))
+// TODO: ask core to bundle these three reads into one call.
+async fn unusable_connection(handle: Handle) -> Option<UnusableConnection> {
+    if DRIVER.connection_is_closed(handle).await.unwrap_or(true) {
+        return Some(UnusableConnection::Terminated);
     }
-
-    fn mark_connected(&self) {
-        self.0.store(Self::CONNECTED, Ordering::Relaxed);
+    if DRIVER.connection_is_expired(handle).await.unwrap_or(true) {
+        return Some(UnusableConnection::Terminated);
     }
-
-    fn mark_terminated(&self) {
-        self.0.store(Self::TERMINATED, Ordering::Relaxed);
-    }
-
-    /// Up means the connection takes statements, so it holds for exactly the
-    /// state [`Self::unusable`] lets through. A session being renewed stays
-    /// [`Self::CONNECTED`], because the core renews without telling the wrapper.
-    fn is_up(&self) -> bool {
-        self.0.load(Ordering::Relaxed) == Self::CONNECTED
-    }
-
-    fn unusable(&self) -> Option<UnusableConnection> {
-        match self.0.load(Ordering::Relaxed) {
-            Self::CONNECTED => None,
-            Self::TERMINATED => Some(UnusableConnection::Terminated),
-            _ => Some(UnusableConnection::NeverEstablished),
-        }
+    match DRIVER.connection_is_initialized(handle).await {
+        Ok(true) => None,
+        Ok(false) => Some(UnusableConnection::NeverEstablished),
+        Err(_) => Some(UnusableConnection::Terminated),
     }
 }
 
@@ -201,14 +176,12 @@ impl Connection {
 
         Ok(Self {
             handles: Handles::new(conn_handle, database_handle),
-            state: ConnectionState::pristine(),
             lifecycle: Arc::new(Mutex::new(())),
         })
     }
 
     #[napi]
     pub fn connect(&self, env: &Env) -> Result<AsyncBlock<()>> {
-        let state = self.state.clone();
         // Moved into the future so login keeps the handles alive: if the JS
         // object became unreachable once the promise existed, releasing them
         // here would either fail the init or strand a live server session on a
@@ -222,9 +195,9 @@ impl Connection {
             let result = DRIVER
                 .connection_init(None, handles.connection, handles.database)
                 .await;
-            match result {
-                Ok(()) => state.mark_connected(),
-                Err(_) => state.mark_terminated(),
+            if result.is_err() {
+                // A failed login is neither initialized nor closed; this settles it as terminated.
+                let _ = DRIVER.connection_close(handles.connection).await;
             }
             result
         })
@@ -232,15 +205,14 @@ impl Connection {
 
     #[napi]
     pub fn is_up(&self) -> bool {
-        self.state.is_up()
+        block_on(is_usable(self.handles.connection))
     }
 
     #[napi]
     pub fn is_valid_async(&self, env: &Env) -> Result<AsyncBlock<bool>> {
         let handle = self.handles.connection;
-        let state = self.state.clone();
         async_to_js(env, async move {
-            if !state.is_up() {
+            if !is_usable(handle).await {
                 return Ok::<bool, BridgeError>(false);
             }
             Ok(DRIVER.connection_heartbeat(handle).await.unwrap_or(false))
@@ -258,22 +230,18 @@ impl Connection {
     #[napi]
     pub fn execute(
         &self,
-        env: &Env,
         query: String,
         bindings: Option<QueryBindings>,
         parameters: Option<HashMap<String, String>>,
-    ) -> Result<Statement> {
-        if let Some(unusable) = self.state.unusable() {
-            return Ok(Statement::refused(unusable));
-        }
-        let stmt_handle = DRIVER
-            .statement_new(self.handles.connection)
-            .map_err(|e| e.to_js_error(*env))?;
+    ) -> Statement {
+        let handles = self.handles.clone();
         let operation_ctx = Arc::new(OperationCtx::with_own_token());
-        Ok(Statement::from_pending(
+        Statement::from_pending(
             self.handles.clone(),
             Some(operation_ctx.clone()),
             async move {
+                refuse_if_unusable(handles.connection).await?;
+                let stmt_handle = DRIVER.statement_new(handles.connection)?;
                 let binding_bytes = bindings.map(|b| (b.format, b.data.into_bytes()));
                 let result = async {
                     DRIVER.statement_set_sql_query(stmt_handle, query).await?;
@@ -297,33 +265,31 @@ impl Connection {
                 }
                 .await;
                 let _ = DRIVER.statement_release(stmt_handle);
-                result
+                result.map_err(BridgeError::from)
             },
-        ))
+        )
     }
 
     #[napi]
     pub fn get_query_result(&self, query_id: String) -> Statement {
-        if let Some(unusable) = self.state.unusable() {
-            return Statement::refused(unusable);
-        }
-        let conn_handle = self.handles.connection;
+        let handles = self.handles.clone();
         // Shared with the `Statement` handed back, whose `cancel()` triggers it.
         let operation_ctx = Arc::new(OperationCtx::with_own_token());
         Statement::from_pending(
             self.handles.clone(),
             Some(operation_ctx.clone()),
             async move {
+                refuse_if_unusable(handles.connection).await?;
                 DRIVER
-                    .connection_get_query_result(Some(&operation_ctx), conn_handle, query_id)
+                    .connection_get_query_result(Some(&operation_ctx), handles.connection, query_id)
                     .await
+                    .map_err(BridgeError::from)
             },
         )
     }
 
     #[napi]
     pub fn destroy(&self, env: &Env) -> Result<AsyncBlock<()>> {
-        let state = self.state.clone();
         // Held for the whole close, so the handles cannot be released — by a
         // `Drop` or anything else — before `connection_close` has used them.
         // Releasing early would leave the session logged in server-side.
@@ -339,7 +305,7 @@ impl Connection {
             let _lifecycle = lifecycle.lock().await;
             // Under the lock, so a destroy that waited out a connect answers for
             // the session that connect left behind.
-            if let Some(unusable) = state.unusable() {
+            if let Some(unusable) = unusable_connection(handles.connection).await {
                 return Err(BridgeError::UnusableConnection(
                     ConnectionOperation::Destroy,
                     unusable,
@@ -355,10 +321,23 @@ impl Connection {
                 // the next GC — and on failure the `Arc` this connection holds
                 // keeps them alive for the retry, so nothing leaks either way.
                 handles.release();
-                state.mark_terminated();
             }
             close.map_err(BridgeError::from)
         })
+    }
+}
+
+async fn is_usable(handle: Handle) -> bool {
+    unusable_connection(handle).await.is_none()
+}
+
+async fn refuse_if_unusable(handle: Handle) -> std::result::Result<(), BridgeError> {
+    match unusable_connection(handle).await {
+        Some(unusable) => Err(BridgeError::UnusableConnection(
+            ConnectionOperation::Request,
+            unusable,
+        )),
+        None => Ok(()),
     }
 }
 
@@ -366,35 +345,38 @@ impl Connection {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_connection_nobody_touched_is_not_up() {
-        let state = ConnectionState::pristine();
+    #[tokio::test]
+    async fn a_connection_nobody_touched_was_never_established() {
+        let handle = DRIVER.connection_new();
 
-        assert!(!state.is_up());
         assert!(matches!(
-            state.unusable(),
+            unusable_connection(handle).await,
             Some(UnusableConnection::NeverEstablished)
         ));
+
+        DRIVER.connection_release(handle).unwrap();
     }
 
-    #[test]
-    fn an_established_connection_is_up() {
-        let state = ConnectionState::pristine();
-        state.mark_connected();
+    #[tokio::test]
+    async fn a_closed_connection_is_terminated() {
+        let handle = DRIVER.connection_new();
+        DRIVER.connection_close(handle).await.unwrap();
 
-        assert!(state.is_up());
-        assert!(state.unusable().is_none());
-    }
-
-    #[test]
-    fn a_terminated_connection_is_not_up() {
-        let state = ConnectionState::pristine();
-        state.mark_connected();
-        state.mark_terminated();
-
-        assert!(!state.is_up());
         assert!(matches!(
-            state.unusable(),
+            unusable_connection(handle).await,
+            Some(UnusableConnection::Terminated)
+        ));
+
+        DRIVER.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_released_handle_is_terminated() {
+        let handle = DRIVER.connection_new();
+        DRIVER.connection_release(handle).unwrap();
+
+        assert!(matches!(
+            unusable_connection(handle).await,
             Some(UnusableConnection::Terminated)
         ));
     }

@@ -431,7 +431,7 @@ behavior_differences:
       which is its own feature rather than an error-mapping detail.
 
   20:
-    name: 'isUp() keeps reporting up after a session renewal fails'
+    name: 'isUp() still reports up after a renewal fails for a reason the core does not record'
     status: todo
     type: bug
     reviewed: false
@@ -443,13 +443,17 @@ behavior_differences:
       its disconnected state and isUp() answers false from then on
       (StateRenewing.enter -> transitionToDisconnected).
     new_driver_behavior: |
-      The core renews tokens without reporting the outcome to the wrapper, so the connection stays
-      marked connected and isUp() answers true even though the session is gone. The caller learns
-      of it only when an operation fails.
+      isUp() reads the core, which records an expired master token, so that case now answers false
+      as the old driver does. A renewal the server refuses for another reason - 390111, the session
+      no longer exists - leaves no mark on the connection, so isUp() answers true for a session that
+      can never serve another statement, and the caller learns of it only when an operation fails.
     status_rationale: |
-      The wrapper cannot observe a renewal it does not perform. The core tracks both is_closed and
-      is_master_token_expired on the connection, but only behind async accessors, and isUp() is
-      synchronous. Closing this needs a synchronous state read from the core.
+      The remaining case needs a flag the core does not have: it marks the connection for
+      390113/390114/390115 only, and every other refusal goes back to the calling operation
+      unrecorded. The core's own troubleshooting guide already calls 390111 unrecoverable
+      ("renewal cannot help; establish a new connection"), so its connection state disagrees with
+      its documented contract, and the fix belongs there rather than in a wrapper that cannot
+      observe a renewal it does not perform. Pending a decision with the core team.
 
   22:
     name: 'representNullAsStringNull is scoped to the connection rather than leaking into module state'
@@ -566,7 +570,7 @@ behavior_differences:
     new_driver_behavior: |
       A destroy waits on the same lifecycle lock the connect holds, so one that reaches the lock
       second behaves as the old driver does. One that reaches it first, before the connect has
-      begun, sees a connection that is still pristine and is refused with ClientError 406501.
+      begun, sees a connection with no login on it and is refused with ClientError 406501.
       Which of the two happens depends on the order the two operations reach the lock.
     status_rationale: |
       Closing this needs the connecting state the connect error family (405501/405502/405503)

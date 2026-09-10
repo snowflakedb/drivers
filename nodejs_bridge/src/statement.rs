@@ -11,7 +11,7 @@ pub use column::Column;
 
 use crate::DRIVER;
 use crate::connection::Handles;
-use crate::error::{BridgeError, ConnectionOperation, ToJsError, UnusableConnection, async_to_js};
+use crate::error::{BridgeError, ToJsError, async_to_js};
 use crate::session_params::KnownSessionParameters;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -31,16 +31,6 @@ pub struct Statement {
 
 #[napi]
 impl Statement {
-    pub(crate) fn refused(connection: UnusableConnection) -> Self {
-        Self {
-            result: StatementResult::from_error(BridgeError::UnusableConnection(
-                ConnectionOperation::Request,
-                connection,
-            )),
-            operation_ctx: None,
-        }
-    }
-
     /// `conn_handles` is held for the lifetime of the statement's work, not just
     /// borrowed for its handle: the JS `Connection` can become unreachable while
     /// a statement is still running, and releasing the connection handle out
@@ -49,7 +39,7 @@ impl Statement {
     pub(crate) fn from_pending(
         conn_handles: Arc<Handles>,
         operation_ctx: Option<Arc<OperationCtx>>,
-        result_future: impl Future<Output = std::result::Result<ExecuteQueryResult, ApiError>>
+        result_future: impl Future<Output = std::result::Result<ExecuteQueryResult, BridgeError>>
         + Send
         + 'static,
     ) -> Self {
