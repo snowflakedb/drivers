@@ -509,6 +509,7 @@ async fn connected(transport: &RustTransport, addr: SocketAddr) -> ConnectionIni
             conn_handle: Some(conn),
             options: mock_options(addr),
             no_connection_details: false,
+            connections_file_path: None,
         },
     )
     .await;

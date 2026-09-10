@@ -456,6 +456,56 @@ class TestTimeoutPropertiesUnit:
 class TestConnectionSetOptions:
     """Unit tests for the batched connection_set_options RPC during __init__."""
 
+    def test_connections_file_path_is_forwarded(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        Connection(connection_name="custom", connections_file_path="/tmp/custom-connections.toml")
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.connections_file_path == "/tmp/custom-connections.toml"
+
+    def test_connections_file_path_is_forwarded_async(self, mock_async_db_api):
+        import asyncio
+
+        from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
+
+        conn = AsyncConnection(connection_name="custom", connections_file_path="/tmp/custom-connections.toml")
+        asyncio.run(conn.connect())
+
+        request = mock_async_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.connections_file_path == "/tmp/custom-connections.toml"
+
+    def test_connections_file_path_alone_keeps_no_connection_details(self, mock_db_api):
+        """``connect(connections_file_path=...)`` loads the default profile out of that file."""
+        from snowflake.connector.connection import Connection
+
+        Connection(connections_file_path="/tmp/custom-connections.toml")
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.connections_file_path == "/tmp/custom-connections.toml"
+        assert request.no_connection_details is True
+
+    def test_connections_file_path_with_options_clears_no_connection_details(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        Connection(user="alice", connections_file_path="/tmp/custom-connections.toml")
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.connections_file_path == "/tmp/custom-connections.toml"
+        assert request.no_connection_details is False
+
+    def test_connections_file_path_accepts_pathlib_path(self, mock_db_api):
+        """Legacy typed the parameter as ``pathlib.Path``; the protobuf field is a string."""
+        import pathlib
+
+        from snowflake.connector.connection import Connection
+
+        path = pathlib.Path("/tmp/custom-connections.toml")
+        Connection(connection_name="custom", connections_file_path=path)
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.connections_file_path == str(path)
+
     def test_string_options_use_string_value(self, mock_db_api):
         """String kwargs should be sent as ConfigSetting(string_value=...)."""
         from snowflake.connector.connection import Connection

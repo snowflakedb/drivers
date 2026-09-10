@@ -575,6 +575,7 @@ fn connect_with_params(
                 conn_handle: Some(conn_handle),
                 options,
                 no_connection_details,
+                connections_file_path: None,
             })
             .await?;
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import platform
 import warnings
 
@@ -79,7 +80,7 @@ class Connection(ConnectionMixin[CursorInstance]):
         self,
         *,
         connection_name: str | None = None,
-        connections_file_path: str | None = None,
+        connections_file_path: str | os.PathLike[str] | None = None,
         config: ConnectionConfig | None = None,
         **kwargs: Any,
     ) -> None:
@@ -129,6 +130,7 @@ class Connection(ConnectionMixin[CursorInstance]):
                 conn_handle=conn_handle,
                 options=options,
                 no_connection_details=self.config._no_connection_details,
+                connections_file_path=self.config.connections_file_path,
             )
             for warning in response.warnings:
                 warnings.warn(warning.message, stacklevel=2)

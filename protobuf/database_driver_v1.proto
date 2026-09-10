@@ -931,6 +931,14 @@ message ConnectionSetOptionsRequest {
   // client_app_id, …); a value of `false` (the default) means "caller supplied
   // something", so do not load the default profile.
   bool no_connection_details = 3;
+  // Optional override for connections.toml. When set (and non-empty), profiles
+  // are loaded from this path instead of SNOWFLAKE_HOME / the platform config
+  // directory — both the profile named by `connection_name` and, when
+  // `no_connection_details` is true, the default profile. A leading `~` is
+  // expanded the same way as SNOWFLAKE_HOME. Empty string is treated as unset.
+  // Setting this alone does not identify a connection, so wrappers MUST NOT
+  // let it clear `no_connection_details`.
+  optional string connections_file_path = 4;
 }
 
 message ConnectionSetOptionsResponse {

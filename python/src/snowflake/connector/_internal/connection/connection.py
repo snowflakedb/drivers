@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
 
@@ -90,7 +92,7 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
         self,
         *,
         connection_name: str | None = None,
-        connections_file_path: str | None = None,
+        connections_file_path: str | os.PathLike[str] | None = None,
         config: ConnectionConfig | None = None,
         **kwargs: Any,
     ) -> None:

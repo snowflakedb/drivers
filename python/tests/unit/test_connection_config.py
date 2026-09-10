@@ -2,6 +2,7 @@
 Unit tests for ConnectionConfig.
 """
 
+import pathlib
 import sys
 import types
 
@@ -238,6 +239,32 @@ class TestFromConnectionArgs:
     def test_connections_file_path_param(self):
         config = ConnectionConfig.from_connection_args(connections_file_path="/path/to/file", user="u")
         assert config.connections_file_path == "/path/to/file"
+        assert config._no_connection_details is False
+
+    def test_connections_file_path_alone_is_a_bare_connect(self):
+        # Legacy takes ``connections_file_path`` as its own parameter, so it never
+        # lands in ``kwargs`` and never defeats ``is_kwargs_empty``: the default
+        # profile is loaded out of the custom file.
+        config = ConnectionConfig.from_connection_args(connections_file_path="/path/to/file")
+        assert config._no_connection_details is True
+        assert config.connections_file_path == "/path/to/file"
+
+    def test_connections_file_path_with_connection_name_is_not_bare(self):
+        config = ConnectionConfig.from_connection_args(connection_name="myconn", connections_file_path="/path/to/file")
+        assert config._no_connection_details is False
+
+    def test_connections_file_path_accepts_pathlib_path(self):
+        # Legacy types this parameter as ``pathlib.Path | None``; the value goes
+        # onto a protobuf string field, so it is coerced on the way in.
+        config = ConnectionConfig.from_connection_args(connections_file_path=pathlib.Path("/path/to/file"), user="u")
+        assert config.connections_file_path == str(pathlib.Path("/path/to/file"))
+
+    def test_connections_file_path_accepts_pathlib_path_with_config_object(self):
+        existing = ConnectionConfig(user="u")
+        config = ConnectionConfig.from_connection_args(
+            config=existing, connections_file_path=pathlib.Path("/path/to/file")
+        )
+        assert config.connections_file_path == str(pathlib.Path("/path/to/file"))
 
     def test_config_and_kwargs_raises(self):
         existing = ConnectionConfig(user="u")

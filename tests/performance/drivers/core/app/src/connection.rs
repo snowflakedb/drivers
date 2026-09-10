@@ -275,6 +275,7 @@ fn set_connection_option(
             conn_handle: Some(*conn_handle),
             options,
             no_connection_details: false,
+            connections_file_path: None,
         })
         .map_err(|e| format!("Connection option set failed ({}): {:?}", key, e))?;
     Ok(())

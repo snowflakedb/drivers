@@ -5,10 +5,16 @@ Regression coverage for SNOW-3647714: bare ``snowflake.connector.connect()``
 honoring ``SNOWFLAKE_DEFAULT_CONNECTION_NAME`` and ``config.toml``'s
 ``default_connection_name``.
 
+SNOW-4017510 extends the same contract to ``connections_file_path``: the
+override redirects both named and default profile loads, and passing it alone
+is still a bare connect. Those cases live in
+:class:`TestConnectionsFilePathOverride`.
+
 These tests pass on the reference (legacy) driver and demonstrate the
 regression on the universal driver.
 """
 
+import pathlib
 import stat
 
 from textwrap import dedent
@@ -17,6 +23,7 @@ import pytest
 
 import snowflake.connector
 
+from snowflake.connector.config_manager import CONFIG_MANAGER
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
@@ -43,7 +50,8 @@ def isolated_config_home(tmp_path, monkeypatch):
 
     Mirrors the pattern in ``test_config_manager.py::config_env`` but also
     scrubs ``SNOWFLAKE_DEFAULT_CONNECTION_NAME`` and per-parameter env vars
-    so each test starts from a clean slate.
+    so each test starts from a clean slate. Also restores CONFIG_MANAGER so
+    a ``connections_file_path`` override cannot leak into later connects.
     """
     monkeypatch.setenv("SNOWFLAKE_HOME", str(tmp_path))
     monkeypatch.delenv("SNOWFLAKE_DEFAULT_CONNECTION_NAME", raising=False)
@@ -55,11 +63,17 @@ def isolated_config_home(tmp_path, monkeypatch):
     ):
         monkeypatch.delenv(key, raising=False)
 
+    original_slices = CONFIG_MANAGER._slices.copy()
+    original_conf_file_cache = CONFIG_MANAGER.conf_file_cache
+
     yield {
         "tmp_path": tmp_path,
         "config_file": tmp_path / "config.toml",
         "connections_file": tmp_path / "connections.toml",
     }
+
+    CONFIG_MANAGER._slices = original_slices
+    CONFIG_MANAGER.conf_file_cache = original_conf_file_cache
 
 
 def _write_connections_toml(path, content: str) -> None:
@@ -278,6 +292,213 @@ class TestExplicitArgsDoNotMergeDefaultProfile:
             # trigger a 250001 network error, not a 251006 auth error).
             assert CONNECTION_ATTEMPT_MARKER not in str(exc_info.value), (
                 f"Default profile was silently loaded for connect(user='alice'): {exc_info.value!r}"
+            )
+
+
+class TestConnectionsFilePathOverride:
+    """``connections_file_path=`` redirects profile loads at a custom file.
+
+    Regression coverage for SNOW-4017510. The wrapper used to fold the path
+    into ``kwargs`` before computing the ``is_kwargs_empty`` signal, so
+    ``connect(connections_file_path=p)`` looked like a caller-supplied
+    connection and sf_core loaded no profile at all — surfacing as a missing
+    ``account`` instead of the default profile out of ``p``.
+
+    Each test writes a profile that is complete except for pointing at
+    ``127.0.0.1:1``, so a resolved profile reaches a refused connection
+    (``250001``) and an unresolved one fails parameter validation.
+    """
+
+    @staticmethod
+    def _write_custom_connections(tmp_path, content: str):
+        """Write a connections file *outside* ``SNOWFLAKE_HOME`` and return its path."""
+        custom_dir = tmp_path / "custom_location"
+        custom_dir.mkdir(exist_ok=True)
+        path = custom_dir / "my-connections.toml"
+        _write_connections_toml(path, content)
+        return path
+
+    def test_path_alone_loads_default_profile_from_that_file(self, isolated_config_home):
+        """``connect(connections_file_path=p)`` is still a bare connect.
+
+        The direct repro: only the override is passed, so the default profile
+        must be read out of the custom file.
+        """
+        custom_file = self._write_custom_connections(
+            isolated_config_home["tmp_path"],
+            """
+            [default]
+            account = "snow4017510_custom_acct"
+            user = "u"
+            password = "p"
+            host = "127.0.0.1"
+            port = 1
+            login_timeout = 1
+            network_timeout = 1
+            """,
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            snowflake.connector.connect(connections_file_path=str(custom_file))
+
+        _assert_no_regression(exc_info.value)
+
+    def test_path_alone_prefers_custom_file_over_snowflake_home(self, isolated_config_home):
+        """The override wins over a ``[default]`` in the standard location.
+
+        The ``SNOWFLAKE_HOME`` profile deliberately omits ``account``, so
+        reading the wrong file fails parameter validation — which
+        ``_assert_no_regression`` reports.
+        """
+        _write_connections_toml(
+            isolated_config_home["connections_file"],
+            """
+            [default]
+            user = "home_only_user"
+            password = "p"
+            """,
+        )
+        custom_file = self._write_custom_connections(
+            isolated_config_home["tmp_path"],
+            """
+            [default]
+            account = "snow4017510_custom_acct"
+            user = "custom_user"
+            password = "p"
+            host = "127.0.0.1"
+            port = 1
+            login_timeout = 1
+            network_timeout = 1
+            """,
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            snowflake.connector.connect(connections_file_path=str(custom_file))
+
+        _assert_no_regression(exc_info.value)
+        assert "home_only_user" not in str(exc_info.value), (
+            f"Profile was loaded from SNOWFLAKE_HOME instead of connections_file_path: {exc_info.value!r}"
+        )
+
+    def test_path_accepts_pathlib_path(self, isolated_config_home):
+        """The legacy connector types this parameter as ``pathlib.Path | None``.
+
+        The value reaches a protobuf string field, so an uncoerced ``Path``
+        raises ``TypeError`` before any profile is loaded.
+        """
+        custom_file = self._write_custom_connections(
+            isolated_config_home["tmp_path"],
+            """
+            [default]
+            account = "snow4017510_custom_acct"
+            user = "u"
+            password = "p"
+            host = "127.0.0.1"
+            port = 1
+            login_timeout = 1
+            network_timeout = 1
+            """,
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            snowflake.connector.connect(connections_file_path=pathlib.Path(custom_file))
+
+        assert not isinstance(exc_info.value, TypeError), (
+            f"pathlib.Path was passed through to the protobuf string field: {exc_info.value!r}"
+        )
+        _assert_no_regression(exc_info.value)
+
+    def test_named_profile_loads_from_custom_file(self, isolated_config_home):
+        """``connection_name=`` resolves against the override, not the standard location."""
+        _write_connections_toml(
+            isolated_config_home["connections_file"],
+            """
+            [other]
+            user = "home_only_user"
+            password = "p"
+            """,
+        )
+        custom_file = self._write_custom_connections(
+            isolated_config_home["tmp_path"],
+            """
+            [other]
+            account = "snow4017510_custom_acct"
+            user = "custom_user"
+            password = "p"
+            host = "127.0.0.1"
+            port = 1
+            login_timeout = 1
+            network_timeout = 1
+            """,
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            snowflake.connector.connect(connection_name="other", connections_file_path=str(custom_file))
+
+        _assert_no_regression(exc_info.value)
+        assert "home_only_user" not in str(exc_info.value), (
+            f"Named profile was loaded from SNOWFLAKE_HOME instead of connections_file_path: {exc_info.value!r}"
+        )
+
+    def test_config_toml_default_connection_name_selects_profile_in_custom_file(self, isolated_config_home):
+        """The override redirects only the connections file, not ``config.toml``.
+
+        ``default_connection_name`` keeps coming from ``config.toml`` in the
+        standard location; the profile it names is read from the custom file.
+        """
+        _write_config_toml(
+            isolated_config_home["config_file"],
+            """
+            default_connection_name = "alt"
+            """,
+        )
+        custom_file = self._write_custom_connections(
+            isolated_config_home["tmp_path"],
+            """
+            [alt]
+            account = "snow4017510_custom_acct"
+            user = "u"
+            password = "p"
+            host = "127.0.0.1"
+            port = 1
+            login_timeout = 1
+            network_timeout = 1
+            """,
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            snowflake.connector.connect(connections_file_path=str(custom_file))
+
+        _assert_no_regression(exc_info.value)
+
+    def test_path_with_other_kwargs_does_not_load_a_profile(self, isolated_config_home):
+        """``connections_file_path`` does not make an otherwise non-bare connect bare.
+
+        Legacy ``is_kwargs_empty`` parity: ``connect(user=...)`` supplied a
+        connection option, so no profile is merged underneath even though the
+        override names a file with a usable ``[default]``.
+        """
+        custom_file = self._write_custom_connections(
+            isolated_config_home["tmp_path"],
+            """
+            [default]
+            account = "snow4017510_custom_acct"
+            user = "profile_user"
+            password = "p"
+            host = "127.0.0.1"
+            port = 1
+            login_timeout = 1
+            network_timeout = 1
+            """,
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            snowflake.connector.connect(user="alice", connections_file_path=str(custom_file))
+
+        if IS_UNIVERSAL_DRIVER:
+            assert CONNECTION_ATTEMPT_MARKER not in str(exc_info.value), (
+                f"Default profile was silently loaded for connect(user='alice', connections_file_path=...): "
+                f"{exc_info.value!r}"
             )
 
 
