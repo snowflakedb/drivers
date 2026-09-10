@@ -175,3 +175,27 @@ pub(crate) fn assert_py_datetime_tz(
         "expected offset {offset_minutes} minutes, got {offset_total_seconds} seconds"
     );
 }
+
+pub(crate) fn assert_py_timedelta(
+    value: &Bound<'_, PyAny>,
+    days: i32,
+    seconds: i32,
+    microseconds: i32,
+) {
+    use pyo3::types::{PyDelta, PyDeltaAccess};
+
+    assert!(
+        value.is_instance_of::<PyDelta>(),
+        "expected datetime.timedelta, got {}",
+        value.get_type().name().unwrap()
+    );
+    let delta = value.cast::<PyDelta>().unwrap();
+    assert_eq!(
+        (
+            delta.get_days(),
+            delta.get_seconds(),
+            delta.get_microseconds()
+        ),
+        (days, seconds, microseconds)
+    );
+}

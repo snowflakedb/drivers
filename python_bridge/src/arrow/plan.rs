@@ -72,6 +72,10 @@ pub(crate) enum SnowflakeFieldType {
         element_type: VectorElementType,
         column_size: u32,
     },
+    IntervalYearMonth {
+        scale: u32,
+    },
+    IntervalDayTime,
 }
 
 impl SnowflakeFieldType {
@@ -97,6 +101,8 @@ impl SnowflakeFieldType {
             Self::Real => "REAL",
             Self::Decfloat { .. } => "DECFLOAT",
             Self::Vector { .. } => "VECTOR",
+            Self::IntervalYearMonth { .. } => "INTERVAL_YEAR_MONTH",
+            Self::IntervalDayTime => "INTERVAL_DAY_TIME",
         }
     }
 
@@ -171,6 +177,14 @@ impl SnowflakeFieldType {
                     is_semi_structured: true,
                 })
             }
+            "INTERVAL_YEAR_MONTH" => Ok(Self::IntervalYearMonth {
+                scale: match get_field_metadata(field, "scale") {
+                    Ok(scale) => scale,
+                    Err(PlanError::MissingMetadata { .. }) => 0,
+                    Err(e) => return Err(e),
+                },
+            }),
+            "INTERVAL_DAY_TIME" => Ok(Self::IntervalDayTime),
             "VECTOR" => {
                 let element_type = match field.data_type() {
                     DataType::FixedSizeList(child_field, _) => match child_field.data_type() {
@@ -386,6 +400,31 @@ mod tests {
             plan.field_types,
             vec![SnowflakeFieldType::TimestampNtz { scale: 9 }]
         );
+    }
+
+    #[test]
+    fn from_schema_defaults_missing_interval_year_month_scale_to_zero() {
+        let schema = Schema::new(vec![field_with_metadata(
+            "ym",
+            DataType::Int64,
+            logical_meta("INTERVAL_YEAR_MONTH", &[]),
+        )]);
+        let plan = LogicalPlan::from_schema(&schema).unwrap();
+        assert_eq!(
+            plan.field_types,
+            vec![SnowflakeFieldType::IntervalYearMonth { scale: 0 }]
+        );
+    }
+
+    #[test]
+    fn from_schema_plans_interval_day_time_without_scale() {
+        let schema = Schema::new(vec![field_with_metadata(
+            "dt",
+            DataType::Int64,
+            logical_meta("INTERVAL_DAY_TIME", &[]),
+        )]);
+        let plan = LogicalPlan::from_schema(&schema).unwrap();
+        assert_eq!(plan.field_types, vec![SnowflakeFieldType::IntervalDayTime]);
     }
 
     #[test]

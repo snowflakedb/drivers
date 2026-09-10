@@ -4,6 +4,7 @@ mod context;
 mod date;
 mod decfloat;
 mod decode;
+mod interval;
 mod number;
 mod real;
 mod text;
@@ -29,6 +30,7 @@ use self::boolean::BoolMaterializer;
 use self::date::DateMaterializer;
 use self::decfloat::DecfloatMaterializer;
 use self::decode::TypedColumn;
+use self::interval::{IntervalDayTimeColumn, IntervalYearMonthColumn};
 use self::number::NumberColumn;
 use self::real::RealMaterializer;
 use self::text::TextMaterializer;
@@ -49,6 +51,8 @@ pub(crate) enum Column {
     Time(TimeColumn),
     TimestampNtz(TimestampNtzColumn),
     TimestampTz(TypedColumn<StructArray, SnowflakeTimestampTz, TimestampTzMaterializer>),
+    IntervalYearMonth(IntervalYearMonthColumn),
+    IntervalDayTime(IntervalDayTimeColumn),
 }
 
 impl Column {
@@ -64,6 +68,8 @@ impl Column {
             Self::Time(column) => column.to_py(py, row),
             Self::TimestampNtz(column) => column.to_py(py, row),
             Self::TimestampTz(column) => column.to_py(py, row),
+            Self::IntervalYearMonth(column) => column.to_py(py, row),
+            Self::IntervalDayTime(column) => column.to_py(py, row),
         }
     }
 }
