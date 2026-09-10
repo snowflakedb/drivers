@@ -6,56 +6,204 @@ summary:
 tests:
   AuthenticationTests/AuthLatestTest/ExternalBrowserTest.cpp:
   - test_name: IdToken scenario
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/external_browser.cpp - should authenticate with external browser via Okta IdP"
+      - path: "odbc_tests/tests/e2e/authentication/external_browser.cpp - should reuse cached ID token without browser interaction"
+      - path: "sf_core/tests/integration/authentication/external_browser_id_token_cache.rs - should_authenticate_with_cached_id_token"
+      - path: "sf_core/tests/integration/authentication/external_browser_id_token_cache.rs - should_store_id_token_after_successful_browser_login"
+      - path: "sf_core/tests/integration/authentication/external_browser_id_token_cache.rs - should_retry_with_browser_flow_when_cached_id_token_fails"
+      - path: "sf_core/tests/integration/authentication/external_browser_id_token_cache.rs - should_not_cache_id_token_when_caching_disabled"
+    status: mapped
+    notes: "SNOW-3725940. Old 3-section scenario (browser-auth / cached-token-no-browser / re-open-browser-after-delete) explicitly opts into caching and is decomposed and scope-EXPANDED in UD: 9 wiremock ID-token-cache tests (incl. 5x EXT_AUTHN eviction, all #[ignore] flaky-Windows per SNOW-3552507). Old S2 'no browser' proven by should_authenticate_with_cached_id_token (asserts no authenticator-request). Old S3 'delete file re-opens browser' is decomposed into the cache-miss/eviction->browser paths, not one test."
+    jira: "SNOW-3725940"
   - test_name: should authenticate using external browser
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/external_browser.cpp - should authenticate with external browser via Okta IdP"
+      - path: "odbc_tests/tests/integration/authentication/external_browser.cpp - should login with external browser using simulated callback"
+      - path: "sf_core/tests/integration/authentication/external_browser.rs - should_login_with_external_browser_using_simulated_callback"
+    status: partial
+    gaps:
+      - "Old test observes a temporary-credential file is written after a plain browser login with no explicit caching parameter set (old driver caches the ID token by default). UD only caches when CLIENT_STORE_TEMPORARY_CREDENTIAL=true is explicitly set (the ODBC e2e equivalent sets it false for this scenario) - not covered by BD#85 (OAuth-AC specific) or BD#137 (MFA param rename); see new BD#139."
+    notes: "SNOW-3548054. Connect-success + SELECT-1 assertions fully covered; wire-level body (AUTHENTICATOR/TOKEN/PROOF_KEY/LOGIN_NAME) verified by the integration + sf_core tests."
+    jira: "SNOW-3548054"
   - test_name: should throw error for browser timeout
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/integration/authentication/external_browser.cpp - should fail with timeout when no browser callback arrives"
+      - path: "sf_core/tests/integration/authentication/external_browser.rs - should_fail_with_timeout_when_no_browser_callback_arrives"
+    status: partial
+    gaps:
+      - "Old ODBC connection param BROWSER_RESPONSE_TIMEOUT is not recognized by the universal driver (renamed to AUTHENTICATION_TIMEOUT, no back-compat alias) - see new BD#138"
+      - "No UD test asserts the descriptive timeout message from SNOW-2004277 ('Authentication timed out after N seconds' / 'Snowflake driver did not receive browser authentication response'); UD emits 'Authentication timeout exceeded (budget Ns)' and its tests assert only the generic substrings 'timeout'/'browser' - message-wording covered under BD#138"
+    notes: "Timeout-error path covered by the no-callback-timeout test (closest structural match). SNOW-2004277 (old descriptive-message ticket)."
+    jira: "SNOW-2004277"
   - test_name: should throw error for mismatched username - external browser
-    ud_tests: []
+    ud_tests:
+      - path: "sf_core/tests/integration/authentication/external_browser.rs - should_fail_when_login_request_is_rejected_after_browser_callback"
+    status: partial
+    gaps:
+      - "The old driver's distinct 'differs from the user currently logged in at the IDP' message is absent from all UD source (grepped, zero hits) - see new BD#140. UD has no IDP-mismatch-specific code path; any post-callback login rejection (including this one) surfaces as the same generic 390100 'Invalid credentials' failure, which the cited test already exercises."
+    notes: "CORRECTION to a prior mapping pass: this was marked unmapped/'needs a new UD test', but should_fail_when_login_request_is_rejected_after_browser_callback (added May 2026, PR #1129 - predates this mapping session) already drives a successful browser callback followed by a login_failure() rejection, which is exactly the generic mechanism UD uses for this scenario. Writing a new test asserting the same generic rejection would be a near-duplicate; the real gap is the missing distinct message, now tracked as BD#140."
   - test_name: should throw error for wrong credentials
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/integration/authentication/external_browser.cpp - should fail with timeout when no browser callback arrives"
+      - path: "sf_core/tests/integration/authentication/external_browser.rs - should_fail_with_timeout_when_no_browser_callback_arrives"
+    status: partial
+    gaps:
+      - "Old ODBC connection param BROWSER_RESPONSE_TIMEOUT not recognized by the universal driver (renamed to AUTHENTICATION_TIMEOUT) - see new BD#138"
+      - "No UD test asserts the descriptive timeout message from SNOW-2004277; UD emits 'Authentication timeout exceeded (budget Ns)' and asserts only generic 'timeout'/'browser' substrings - message-wording covered under BD#138"
+      - "Old test's failed-IdP-login scenario ('fail') is not distinctly modeled; UD models 'no callback -> timeout' (same terminal outcome: no valid token -> timeout)"
+    notes: "Old 'wrong credentials' asserts the SAME two timeout strings as 'browser timeout' - a failed IdP login yields no callback and the driver times out. Maps to the same UD no-callback-timeout test. SNOW-2004277."
+    jira: "SNOW-2004277"
   AuthenticationTests/AuthLatestTest/MfaLatestTest.cpp:
   - test_name: should authenticate using MFA with TOTP codes from generator
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/user_password_mfa.cpp - should authenticate using username password and TOTP passcode"
+      - path: "odbc_tests/tests/e2e/authentication/user_password_mfa.cpp - should reuse cached MFA token without passcode"
+      - path: "sf_core/tests/e2e/authentication/user_password_mfa.rs"
+      - path: "sf_core/tests/integration/authentication/user_password_mfa.rs"
+      - path: "sf_core/tests/integration/authentication/user_password_mfa_token_cache.rs"
+    status: mapped
+    notes: "SNOW-2235959. Old test's single-file MFA+TOTP+cache flow is split across ODBC e2e (login + cache-reuse) and Rust core integration (7 wiremock tests: cache-hit, eviction on 5 EXT_AUTHN codes, DUO-push retry) - scope expansion, not reduction. See BD#137 for the CLIENT_REQUEST_MFA_TOKEN->CLIENT_STORE_TEMPORARY_CREDENTIAL rename this test's cache_attrs() depends on."
+    jira: "SNOW-2235959"
   AuthenticationTests/AuthLatestTest/OauthLatestTest.cpp:
   - test_name: should authenticate using oauth
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should authenticate with pre acquired access token"
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should authenticate using lowercase oauth authenticator"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_legacy_oauth_using_pre_acquired_token"
+      - path: "sf_core/tests/e2e/authentication/oauth.rs - oauth_should_authenticate_with_pre_acquired_access_token"
+    status: mapped
+    notes: "Legacy AUTHENTICATOR=OAUTH pre-acquired token. Scope expansion: UD adds SELECT 1 and asserts token forwarded verbatim (IdP token endpoint not called). ODBC e2e gated behind REQUIRE_BROWSER. Cross-driver mirrors: python/tests/e2e/authentication/test_oauth.py, jdbc OauthTests.java."
+    jira: "SNOW-1876560"
   - test_name: should throw error for invalid token
-    ud_tests: []
+    ud_tests:
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_fail_legacy_oauth_when_snowflake_returns_390303"
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should fail legacy authentication with invalid token"
+      - path: "sf_core/tests/e2e/authentication/oauth.rs - oauth_should_fail_legacy_authentication_with_invalid_token"
+    status: partial
+    gaps:
+      - "Old test asserts the literal message 'Invalid OAuth access token'; the only active UD test asserts a different signal (server error code 390303/OAUTH_ACCESS_TOKEN_INVALID) for the same underlying condition, not the message text itself. The ODBC e2e and sf_core e2e variants that would exercise the message at the wrapper level are SKIP-disabled / #[ignore]'d."
+    notes: "Invalid pre-acquired token -> login failure. Active coverage is the sf_core wiremock 390303 integration test; message-text parity is unverified anywhere active."
+    jira: "SNOW-1876560"
   - test_name: should throw error for mismatched username - oauth
     ud_tests: []
+    status: unmapped
+    notes: "GAP: no UD test verifies a UID differing from the principal tied to the pre-acquired OAuth token is rejected ('differs from the user tied to the access token'). Not a documented behavior difference - missing UD test. Related legacy work: SNOW-1876560 (LOGIN_NAME for OAUTH/PAT)."
+    jira: "SNOW-1876560"
   AuthenticationTests/AuthLatestTest/OauthOktaAuthorizationCodeLatestTest.cpp:
   - test_name: should authenticate using external oauth okta authorization code
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should authenticate using authorization code flow"
+      - path: "sf_core/tests/e2e/authentication/oauth.rs - oauth_should_authenticate_using_authorization_code_flow"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_authorization_code_using_cached_access_token"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_authorization_code_using_cached_refresh_token"
+      - path: "sf_core/src/rest/snowflake/oauth/authorization_code.rs - cached_access_token_short_circuits_full_flow"
+    status: mapped
+    notes: "AC (Authorization Code + PKCE) browser happy path against a custom/external Okta IdP. UD e2e drives the browser leg + SELECT 1; sf_core wiremock covers custom IdP endpoint forwarding without a real browser. Old test's implicit temp-credential-file creation is BD#85 (legacy caches AC tokens by default; UD defaults off). Cross-driver mirrors: python/jdbc e2e OauthTests."
+    jira: "SNOW-2205633"
   - test_name: should authenticate using external oauth okta authorization code -
       token cache
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should reuse cached access token without browser interaction"
+      - path: "sf_core/tests/e2e/authentication/oauth.rs - oauth_should_reuse_cached_access_token_without_browser_interaction"
+      - path: "sf_core/tests/e2e/authentication/oauth.rs - oauth_should_short_circuit_authorization_code_flow_with_cached_access_token"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_authorization_code_using_cached_access_token"
+    status: partial
+    gaps:
+      - "Section 3 of the old test ('should open browser again when token is deleted'): no UD test evicts the cached AC token and then asserts the interactive browser leg re-fires on the next connect."
+      - "Old test asserts a temp-credential file is created by default (cache on); UD defaults caching off and only caches with CLIENT_STORE_TEMPORARY_CREDENTIAL=true (BehaviorDifference #85)."
+    notes: "Sections 1-2 (cache write on first browser auth, reuse without browser on second connect) covered by ODBC e2e + sf_core e2e/integration. Section 3 and default-on caching not."
+    jira: "SNOW-2205633"
   - test_name: should throw error for browser timeout - oauth okta authorization code
-    ud_tests: []
+    ud_tests:
+      - path: "sf_core/src/rest/snowflake/oauth/loopback_server.rs - timeout_surfaces_browser_timeout"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_evict_refresh_token_when_idp_returns_invalid_grant"
+    status: partial
+    gaps:
+      - "Only active browser-timeout assertion is the sf_core loopback_server unit test (wait_for_redirect -> OAuthError::BrowserTimeout); the integration-level test is #[ignore]'d as flaky (SNOW-3552507)."
+      - "Old test's BROWSER_RESPONSE_TIMEOUT=1 parameter is not recognized by the universal driver at all (renamed to AUTHENTICATION_TIMEOUT, same shared authentication_timeout_secs config field used by external-browser auth - see BehaviorDifference #138). No UD test drives the timeout via this connection parameter."
+      - "No ODBC/e2e wrapper test asserts the user-facing 'Auth browser timed out.' diagnostic message."
+    notes: "Core timeout->BrowserTimeout behavior is unit-tested; gaps are test-depth/flakiness plus the BD#138 parameter rename, not a new divergence."
+    jira: "SNOW-2205633"
   - test_name: should throw error for mismatched username - oauth okta authorization
       code
     ud_tests: []
+    status: unmapped
+    notes: "GAP + old test is disabled ([.][ignore], //todo SNOW-1876560). No UD test verifies AC username mismatch ('differs from the user currently logged in at the IDP'). Not a documented behavior difference - missing UD test. Consider not-applicable if the old test is to be retired rather than ported."
+    jira: "SNOW-1876560"
   AuthenticationTests/AuthLatestTest/OauthOktaClientCredentialsLatestTest.cpp:
   - test_name: should authenticate using okta ouath client credentials
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should authenticate using client credentials flow"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_client_credentials_using_external_idp"
+      - path: "sf_core/tests/e2e/authentication/oauth.rs - oauth_should_authenticate_using_client_credentials_flow"
+      - path: "sf_core/src/rest/snowflake/oauth/client_credentials.rs - happy_path_returns_access_token"
+    status: mapped
+    notes: "CC (Client Credentials, external IdP) happy path. The old REQUIRE_FALSE(deleteTemporaryCredentialFile()) 'CC must not cache' assertion is directly covered by sf_core integ should_login_with_client_credentials_using_external_idp (asserts both access and refresh tokens absent from cache; aligns with legacy SNOW-2089127 'remove token caching for OAuth client credentials'). Cross-driver mirrors: python/jdbc e2e OauthTests."
+    jira: "SNOW-2089127"
   - test_name: should throw error for client credentials mismatched username
     ud_tests: []
+    status: unmapped
+    notes: "GAP + old test is disabled ([.][ignore], //todo SNOW-1876560) and its body only calls check_rc without asserting an error (incomplete). No UD test covers CC username mismatch. Missing UD test, not a documented behavior difference. Consider not-applicable if the old test is to be retired."
+    jira: "SNOW-1876560"
   - test_name: should throw error for unauthorized client credentials
-    ud_tests: []
+    ud_tests:
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_fail_client_credentials_when_idp_returns_500"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_fail_client_credentials_when_idp_returns_invalid_scope"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_fail_client_credentials_when_idp_response_is_missing_access_token"
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should fail client credentials flow with bad client secret"
+    status: mapped
+    notes: "CC token-exchange failure surface. Old test triggers via invalid client_id; UD integration tests cover the same IdP-rejection class via 500 / invalid_scope / missing-access-token (all active) plus secret redaction. ODBC e2e bad-credential variant is SKIP-disabled and asserts SQLSTATE 28000 vs legacy HY000 (BehaviorDifference #83, correctly cited in oauth.cpp). Message 'oauth access token request failure' not asserted verbatim; UD asserts on OAuthFlow/IdpError/TokenExchange error class."
+    jira: "SNOW-1876560"
   AuthenticationTests/AuthLatestTest/OauthSnowflakeAuthorizationCodeLatestTest.cpp:
   - test_name: should authenticate using snowflake authorization code
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should authenticate using authorization code flow"
+      - path: "sf_core/tests/e2e/authentication/oauth.rs - oauth_should_authenticate_using_authorization_code_flow"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_authorization_code_using_cached_access_token"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_authorization_code_using_cached_refresh_token"
+    status: mapped
+    notes: "AC against the internal Snowflake IdP (derived /oauth/authorize + /oauth/token-request). The ODBC e2e AC happy-path test is exactly this flow (SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_* params). Implicit temp-credential file assertion is BD#85 (legacy caches by default; UD defaults off). Cross-driver mirrors: python/jdbc e2e OauthTests."
+    jira: "SNOW-2205633"
   - test_name: should authenticate using snowflake authorization code - token cache
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should reuse cached access token without browser interaction"
+      - path: "sf_core/tests/e2e/authentication/oauth.rs - oauth_should_reuse_cached_access_token_without_browser_interaction"
+      - path: "sf_core/tests/e2e/authentication/oauth.rs - oauth_should_short_circuit_authorization_code_flow_with_cached_access_token"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_authorization_code_using_cached_access_token"
+    status: partial
+    gaps:
+      - "Section 3 ('should open browser again when token is deleted'): no UD test evicts the cached AC token and asserts the interactive browser leg re-fires."
+      - "Old test asserts a temp-credential file is created by default; UD defaults caching off and caches only with CLIENT_STORE_TEMPORARY_CREDENTIAL=true (BehaviorDifference #85)."
+    notes: "Sections 1-2 (cache write + reuse without browser) covered by ODBC e2e + sf_core e2e/integration. Section 3 and default-on caching not covered. Same coverage state as the Okta AC token-cache test."
+    jira: "SNOW-2205633"
   - test_name: should authenticate using snowflake authorization code on chosen redirect
       URI
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/oauth.cpp - oauth should authenticate using authorization code flow"
+      - path: "sf_core/src/rest/snowflake/oauth/authorization_code.rs - build_oauth_client_emits_redirect_uri_verbatim_without_trailing_slash"
+      - path: "sf_core/src/rest/snowflake/oauth/loopback_server.rs - explicit_port_verbatim_hint_end_to_end_redirect_succeeds"
+      - path: "sf_core/src/rest/snowflake/oauth/loopback_server.rs - localhost_hint_end_to_end_redirect_succeeds"
+    status: mapped
+    notes: "AC with an explicit OAUTH_REDIRECT_URI. ODBC e2e passes the redirect URI end-to-end; sf_core loopback_server unit tests specifically verify explicit/custom redirect-URI binding (verbatim host, explicit port, no trailing-slash mutation). BD#85 applies to the default cache-file assertion."
+    jira: "SNOW-2205633"
   - test_name: should throw error for browser timeout - snowflake authorization code
-    ud_tests: []
+    ud_tests:
+      - path: "sf_core/src/rest/snowflake/oauth/loopback_server.rs - timeout_surfaces_browser_timeout"
+      - path: "sf_core/tests/integration/authentication/oauth.rs - should_evict_refresh_token_when_idp_returns_invalid_grant"
+    status: partial
+    gaps:
+      - "Only active browser-timeout assertion is the sf_core loopback_server unit test (wait_for_redirect -> OAuthError::BrowserTimeout); the integration-level test is #[ignore]'d as flaky (SNOW-3552507)."
+      - "Old test's BROWSER_RESPONSE_TIMEOUT parameter is not recognized by the universal driver at all (renamed to AUTHENTICATION_TIMEOUT - see BehaviorDifference #138, shared with external-browser auth). No UD test drives the timeout via this connection parameter."
+      - "No ODBC/e2e wrapper test asserts the 'Auth browser timed out.' diagnostic message."
+    notes: "Core timeout behavior is unit-covered; gaps are test-depth/flakiness plus BD#138. Same coverage state as the Okta AC browser-timeout test."
+    jira: "SNOW-2205633"
   - test_name: should throw error for mismatched username - snowflake authorization
       code
     ud_tests: []
+    status: unmapped
+    notes: "GAP + old test is disabled ([.][ignore], //todo SNOW-1876560). No UD test covers Snowflake-IdP AC username mismatch. Missing UD test, not a documented behavior difference. Consider not-applicable if the old test is to be retired."
+    jira: "SNOW-1876560"
   AuthenticationTests/AuthLatestTest/OktaLatestTest.cpp:
   - test_name: should authenticate using okta
     ud_tests:
@@ -80,20 +228,66 @@ tests:
     - sf_core/tests/integration/authentication/native_okta.rs - should_fail_when_ssourl_does_not_match_configured_okta_url_origin
   AuthenticationTests/AuthLatestTest/PATLatestTest.cpp:
   - test_name: should authenticate using PAT
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/pat.cpp - should authenticate using PAT as token"
+      - path: "odbc_tests/tests/e2e/authentication/pat.cpp - should authenticate using PAT as token with lowercase authenticator"
+      - path: "sf_core/tests/e2e/authentication/pat.rs - flaky_should_authenticate_using_pat_as_token"
+      - path: "sf_core/tests/e2e/authentication/pat.rs - flaky_should_authenticate_using_pat_as_token_with_lowercase_authenticator"
+      - path: "sf_core/src/rest/snowflake/mod.rs - pat_auth_payload_includes_authenticator"
+    status: mapped
+    notes: "SNOW-2030491 (PAT tests - ODBC; old-driver PR snowflakedb/snowflake-odbc#719). Old test connects with AUTHENTICATOR=programmatic_access_token (lowercase) + UID + token and checks only SQL_SUCCESS. UD covers both authenticator casings (lowercase variant matches the old test's exact casing; uppercase added), verifies a SELECT 1 round-trip + clean disconnect, and the sf_core unit test asserts the login payload carries authenticator=PROGRAMMATIC_ACCESS_TOKEN + login_name + token - scope expansion. The ODBC 'as token' e2e test is stable (not flaky-gated); the Rust e2e token tests are flaky-prefixed (server-side hang on some accounts, ctest -LE flaky) but present."
+    jira: "SNOW-2030491"
   - test_name: should authenticate using PAT in password
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/pat.cpp - should authenticate using PAT as password"
+      - path: "sf_core/tests/e2e/authentication/pat.rs - should_authenticate_using_pat_as_password"
+    status: mapped
+    notes: "SNOW-2030491. Old test supplies the PAT as PWD with the default (password) authenticator and checks only SQL_SUCCESS. UD covers the same PAT-as-password flow and expands with a SELECT 1 round-trip + disconnect verification."
+    jira: "SNOW-2030491"
   - test_name: should throw error for invalid PAT
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/authentication/pat.cpp - should fail PAT authentication when invalid token provided"
+      - path: "sf_core/tests/e2e/authentication/pat.rs - should_fail_pat_authentication_when_invalid_token_provided"
+    status: mapped
+    notes: "SNOW-2030491. Old test asserts only that the error message contains 'Programmatic access token is invalid.'. The ODBC UD test asserts that exact substring AND expands (unconditionally, both drivers) with SQLSTATE 28000 + native error 394400 + exactly-one-diag-record. The Rust e2e test adds a generic login-error assertion. Full coverage + expansion."
+    jira: "SNOW-2030491"
   - test_name: should throw error for mismatched username - PAT
-    ud_tests: []
+    ud_tests:
+      - path: "sf_core/src/rest/snowflake/mod.rs - pat_auth_payload_includes_authenticator"
+    status: partial
+    gaps:
+      - "GS's actual rejection behavior for a valid PAT + mismatched username is unverified - would need a live account or knowledge of the exact GS error code/response shape for this scenario, neither of which is grounded anywhere in this codebase (no precedent found). Not safe to fabricate a wiremock response for this without live-account verification."
+    notes: "SNOW-2030491. CORRECTION to a prior mapping pass: the client-side half of this concern - 'rule out the new driver silently ignoring the mismatched username' - is already covered. pat_auth_payload_includes_authenticator (and pat_auth_without_user_omits_login_name) directly assert that sf_core/src/rest/snowflake/mod.rs's PAT branch (717-725) forwards whatever username is configured, unconditionally, as LOGIN_NAME - the client cannot and does not distinguish a mismatched username from a matching one, so it can't silently drop it. The residual gap is purely server-side: does GS actually reject a valid-PAT + wrong-username the way the old driver's 'Programmatic access token is invalid.' message implies. That needs live verification, not a new client-level unit test."
+    jira: "SNOW-2030491"
   AuthenticationTests/WIFLatestTest/WIFLatestTest.cpp:
   - test_name: should authenticate using OIDC
-    ud_tests: []
+    ud_tests:
+      - path: sf_core/src/rest/snowflake/workload_identity/oidc.rs - valid_token_with_iss_sub
+      - path: python/tests/integ/authentication/test_workload_identity_python_specific.py - test_should_forward_valid_oidc_token_past_param_validation
+    status: partial
+    gaps:
+      - "No UD test performs a SUCCESSFUL OIDC WIF login with a real token - the old test's core assertion (SQLDriverConnect succeeds after fetching a GCP OIDC token). sf_core e2e OIDC tests are failure-only; the generic WIF happy-path never sets `token` so it cannot succeed for OIDC. Only JWT structural validation (oidc.rs) and token-forwarding-past-param-validation (python) are covered."
+      - "No ODBC-wrapper test exercises the OIDC WIF connection-string path (Authenticator=workload_identity; WORKLOAD_IDENTITY_PROVIDER=OIDC; token=...)."
+    notes: "WIF has ZERO ODBC-layer coverage; mapping is via sf_core inline + python integ only. OIDC signature is verified server-side, so a full-success OIDC e2e requires a live IdP token."
+    jira: "SNOW-2160718"
   - test_name: should authenticate using wif with explicit provider
-    ud_tests: []
+    ud_tests:
+      - path: sf_core/tests/e2e/authentication/workload_identity.rs - should_authenticate_with_cloud_identity_using_wif
+      - path: sf_core/tests/e2e/authentication/workload_identity.rs - should_authenticate_with_wif_using_lowercase_authenticator
+      - path: python/tests/integ/authentication/test_workload_identity_python_specific.py - test_should_accept_all_four_wif_provider_strings
+    status: partial
+    gaps:
+      - "Happy-path WIF auth is covered only at the sf_core layer (Rust e2e connect + SELECT 1). No ODBC-wrapper test verifies the ODBC DSN keywords (Authenticator=workload_identity, WORKLOAD_IDENTITY_PROVIDER) parse and plumb through SQLDriverConnect to sf_core."
+    notes: "sf_core e2e covers + scope-expands the old assertion (adds SELECT 1) for AWS/AZURE/GCP auto-detected identities, incl. the lowercase-authenticator form the old connstring uses. Python tests assert provider-string acceptance only (connect_expecting_error, no live login). Considered but deferred: an ODBC-wrapper test asserting a full successful WIF login would need a real cloud identity attestation environment (AWS/Azure/GCP metadata service) to reach a genuine success outcome - anything short of that would just observe an attestation failure whose exact error text isn't grounded/verified anywhere in this codebase, so it wasn't safe to fabricate. The missing-provider validation path (client-side only, no cloud dependency) is now ODBC-covered instead - see 'shouldn't authenticate using wif without explicit provider' below."
   - test_name: shouldn't authenticate using wif without explicit provider
-    ud_tests: []
+    ud_tests:
+      - path: sf_core/src/config/connection_config.rs - validate_wif_missing_provider_reports_issue
+      - path: sf_core/tests/e2e/authentication/workload_identity.rs - should_fail_workload_identity_when_provider_is_missing
+      - path: python/tests/integ/authentication/test_workload_identity.py - test_should_fail_workload_identity_when_provider_is_missing
+      - path: "odbc_tests/tests/integration/authentication/workload_identity_auth.cpp - should fail workload identity authentication when provider is missing"
+    status: mapped
+    notes: "Failure intent (missing provider -> error) covered at sf_core validation (inline + e2e) and python integ layers. SQLSTATE/message divergence = BehaviorDifference #1 (client-side config rejection: old 28000 -> new 01S00). The ODBC-layer SQLSTATE/message gap is now closed, mirroring the proven BD#1 missing-PRIV_KEY_FILE pattern (private_key_auth.cpp:77-88) - verified the old driver's exact message directly against Tests/AuthenticationTests/WIFLatestTest/WIFLatestTest.cpp:62 before writing the OLD_DRIVER_ONLY assertion."
+    jira: "SNOW-2251257"
   EndToEndTests/ApiCatchLatestTest/ApiCatchLatestTest.cpp:
   - test_name: Configurable default varchar/binary size
     ud_tests: []
