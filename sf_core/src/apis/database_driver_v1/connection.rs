@@ -47,18 +47,6 @@ use crate::sensitive::SensitiveString;
 use crate::tls::config::ProxyConfig;
 use crate::xp_backend::{SnowflakeBackend, XpSlot};
 
-/// Whether `execute_session_sql` should refresh the connection's local
-/// session-state cache (`session_parameters`, `final_session_names`) from
-/// the response after a successful query.
-#[derive(Copy, Clone, Debug)]
-enum SessionStateRefresh {
-    /// SQL may change session state (e.g. `ALTER SESSION SET`, `USE DATABASE`).
-    Apply,
-    /// SQL is non-stateful from the session's perspective (e.g. `COMMIT`,
-    /// `ROLLBACK`).
-    Skip,
-}
-
 /// Server session-parameter key for the JDBC PUT/GET disable switch. Read by
 /// [`Connection::enable_put_get`]; upstream uppercases session-parameter names.
 const JDBC_ENABLE_PUT_GET_SERVER_KEY: &str = "JDBC_ENABLE_PUT_GET";
@@ -83,8 +71,7 @@ impl DatabaseDriverV1 {
                     } else {
                         "ALTER SESSION SET AUTOCOMMIT = FALSE"
                     };
-                    self.execute_session_sql(&mut conn, sql, SessionStateRefresh::Apply)
-                        .await
+                    self.execute_session_sql(&mut conn, sql).await
                 } else {
                     conn.init_session_parameters
                         .get_or_insert_with(HashMap::new)
@@ -127,8 +114,7 @@ impl DatabaseDriverV1 {
                     }
                     .fail();
                 }
-                self.execute_session_sql(&mut conn, &sql, SessionStateRefresh::Apply)
-                    .await
+                self.execute_session_sql(&mut conn, &sql).await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -167,11 +153,7 @@ impl DatabaseDriverV1 {
                     }
                     .fail();
                 }
-                // COMMIT/ROLLBACK do not change session parameters or
-                // current database/schema/warehouse/role, so skip the
-                // session-state cache refresh.
-                self.execute_session_sql(&mut conn, sql, SessionStateRefresh::Skip)
-                    .await
+                self.execute_session_sql(&mut conn, sql).await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -208,8 +190,7 @@ impl DatabaseDriverV1 {
                 }
                 let database = resolve_session_database(&conn)?;
                 let sql = build_use_schema_sql(database.as_deref(), schema);
-                self.execute_session_sql(&mut conn, &sql, SessionStateRefresh::Apply)
-                    .await
+                self.execute_session_sql(&mut conn, &sql).await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -219,20 +200,7 @@ impl DatabaseDriverV1 {
     }
 
     /// Execute a session-scoped SQL command without creating a statement.
-    ///
-    /// `refresh` controls whether the local session-state cache
-    /// (`session_parameters`, `final_session_names`) is refreshed from the
-    /// response after a successful query. Pass `Apply` for SQL that may
-    /// change session state (e.g. `ALTER SESSION SET`, `USE DATABASE`); pass
-    /// `Skip` for SQL that is non-stateful from the session's perspective
-    /// (e.g. `COMMIT`, `ROLLBACK`) to avoid taking the cache write locks
-    /// for a no-op merge.
-    async fn execute_session_sql(
-        &self,
-        conn: &mut Connection,
-        sql: &str,
-        refresh: SessionStateRefresh,
-    ) -> Result<(), ApiError> {
+    async fn execute_session_sql(&self, conn: &mut Connection, sql: &str) -> Result<(), ApiError> {
         let query_input = QueryInput::new(sql);
         let query_parameters = conn.query_transport_parameters()?;
         let http_client = conn
@@ -271,7 +239,7 @@ impl DatabaseDriverV1 {
             )
             .await;
 
-        if response.success && matches!(refresh, SessionStateRefresh::Apply) {
+        if response.success {
             conn.update_session_params_cache(
                 sql,
                 response.data.parameters.as_ref(),
