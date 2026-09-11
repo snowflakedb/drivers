@@ -5,6 +5,7 @@ These tests cover Python-specific behavior not in the shared feature file:
 - Cursor state management across nextset() calls
 - Query ID tracking (multi_statement_savedIds and multi_statement_parent_sfqid)
 - Mixed fetch modes (fetchall + nextset)
+- Async result retrieval for multi-statement plans (SNOW-4089998)
 """
 
 from __future__ import annotations
@@ -122,3 +123,37 @@ class TestResultBatchesWithMultiStatement:
         assert second_batches is not None
         assert len(second_batches) >= 2, "Expected at least an inline batch and one remote batch"
         assert sum(b.rowcount for b in second_batches) == second_stmt_row_count
+
+
+class TestAsyncMultiStatement:
+    """Async result retrieval for multi-statement plans must return every
+    statement's rows, matching the synchronous execute() path (SNOW-4089998)."""
+
+    def test_get_results_from_sfqid_returns_every_child_rows(self, cursor, connection):
+        # Given a multi-statement plan with two distinct, data-bearing SELECTs
+        sql = "SELECT 1, 'a', 1.5; SELECT 2, 'b', 2.5 UNION ALL SELECT 3, 'c', 3.5 ORDER BY 1"
+
+        # When executed synchronously, fetching each child via nextset()
+        cursor.execute(sql, num_statements=2)
+        sync_first_rows = cursor.fetchall()
+        cursor.nextset()
+        sync_second_rows = cursor.fetchall()
+
+        # And the identical plan is executed asynchronously instead
+        submission = cursor.execute_async(sql, num_statements=2)
+        query_id = submission["queryId"]
+
+        # Then fetching the first child's results by query ID matches the sync run
+        first_child_cursor = connection.cursor()
+        first_child_cursor.get_results_from_sfqid(query_id)
+        async_first_rows = first_child_cursor.fetchall()
+        assert async_first_rows == sync_first_rows
+
+        # Then advancing past the first child (mirroring Snowpark's AsyncJob.result(),
+        # which calls nextset() before any fetch) reaches the second child's own rows,
+        # not the first child's, and they match the sync run row-for-row
+        second_child_cursor = connection.cursor()
+        second_child_cursor.get_results_from_sfqid(query_id)
+        second_child_cursor.nextset()
+        async_second_rows = second_child_cursor.fetchall()
+        assert async_second_rows == sync_second_rows
