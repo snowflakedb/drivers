@@ -1208,7 +1208,11 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
                     })?
                     .clone()
                     .into(),
-                aws_token: creds_data.aws_token.clone().unwrap_or_default().into(),
+                aws_token: creds_data
+                    .aws_token
+                    .as_ref()
+                    .filter(|token| !token.is_empty())
+                    .map(|token| token.clone().into()),
             },
             file_manager::LocationType::Gcs => file_manager::CloudCredentials::Gcs {
                 gcs_access_token: creds_data
@@ -2743,15 +2747,6 @@ mod tests {
         assert!(!info.use_s3_regional_url);
     }
 
-    // --- S3 credentials: AWS_TOKEN optionality (SNOW-4090013) ---
-    //
-    // An internal (temp) stage and an external stage backed by a storage
-    // integration both get a scoped STS session token, so `creds` carries
-    // AWS_TOKEN. An external stage with no storage integration is granted
-    // access through credentials stored on the stage itself and GS omits
-    // AWS_TOKEN for that response — a valid shape, not an error. AWS_KEY_ID
-    // and AWS_SECRET_KEY are unconditionally required for every S3 stage.
-
     fn s3_creds_value(aws_key_id: Option<&str>, aws_secret_key: Option<&str>) -> serde_json::Value {
         let mut creds = serde_json::json!({});
         let obj = creds.as_object_mut().unwrap();
@@ -2777,12 +2772,17 @@ mod tests {
     }
 
     #[test]
-    fn s3_credentials_without_aws_token_default_to_empty_string() {
-        // External stage without a storage integration: creds omits AWS_TOKEN.
+    fn s3_credentials_without_aws_token_preserve_required_credentials() {
         let info = parse_s3_stage_info(s3_creds_value(Some("k"), Some("s")));
         match info.creds {
-            file_manager::CloudCredentials::S3 { aws_token, .. } => {
-                assert_eq!(aws_token.reveal(), "");
+            file_manager::CloudCredentials::S3 {
+                aws_key_id,
+                aws_secret_key,
+                aws_token,
+            } => {
+                assert_eq!(aws_key_id, "k");
+                assert_eq!(aws_secret_key.reveal(), "s");
+                assert!(aws_token.is_none());
             }
             _ => panic!("expected S3 credentials"),
         }
@@ -2790,12 +2790,23 @@ mod tests {
 
     #[test]
     fn s3_credentials_with_aws_token_are_preserved() {
-        // Internal stage / external stage with a storage integration: creds
-        // carries a scoped STS session token.
         let info = parse_s3_stage_info(s3_stage_info_value(None, None));
         match info.creds {
             file_manager::CloudCredentials::S3 { aws_token, .. } => {
-                assert_eq!(aws_token.reveal(), "t");
+                assert_eq!(aws_token.as_ref().map(|token| token.reveal()), Some("t"));
+            }
+            _ => panic!("expected S3 credentials"),
+        }
+    }
+
+    #[test]
+    fn s3_credentials_with_empty_aws_token_treat_it_as_absent() {
+        let mut value = s3_stage_info_value(None, None);
+        value["creds"]["AWS_TOKEN"] = serde_json::Value::String(String::new());
+        let info = parse_s3_stage_info(value);
+        match info.creds {
+            file_manager::CloudCredentials::S3 { aws_token, .. } => {
+                assert!(aws_token.is_none());
             }
             _ => panic!("expected S3 credentials"),
         }

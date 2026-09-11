@@ -371,11 +371,11 @@ impl StageTransport {
 /// Cloud storage credentials.
 #[derive(Debug, Clone)]
 pub enum CloudCredentials {
-    /// AWS S3 credentials (access key + secret + session token).
+    /// AWS S3 credentials (access key + secret + optional session token).
     S3 {
         aws_key_id: String,
         aws_secret_key: SensitiveString,
-        aws_token: SensitiveString,
+        aws_token: Option<SensitiveString>,
     },
     /// Google Cloud Storage credentials (OAuth2 Bearer token).
     /// Token is `None` when operating in presigned-URL-only mode.

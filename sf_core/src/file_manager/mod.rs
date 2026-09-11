@@ -2851,7 +2851,7 @@ mod tests {
                 creds: CloudCredentials::S3 {
                     aws_key_id: "AKIA-TEST".to_string(),
                     aws_secret_key: crate::sensitive::SensitiveString::from("secret".to_string()),
-                    aws_token: crate::sensitive::SensitiveString::from("token".to_string()),
+                    aws_token: Some(crate::sensitive::SensitiveString::from("token".to_string())),
                 },
                 endpoint: Some(mock_uri.to_string()),
                 presigned_url: None,
@@ -4494,7 +4494,7 @@ mod tests {
             creds: CloudCredentials::S3 {
                 aws_key_id: String::new(),
                 aws_secret_key: SensitiveString::from(String::new()),
-                aws_token: SensitiveString::from(String::new()),
+                aws_token: None,
             },
             endpoint: None,
             presigned_url: None,
@@ -4665,7 +4665,7 @@ mod tests {
             LocationType::S3 => CloudCredentials::S3 {
                 aws_key_id: "AKIA-TEST".to_string(),
                 aws_secret_key: SensitiveString::from("secret".to_string()),
-                aws_token: SensitiveString::from("token".to_string()),
+                aws_token: Some(SensitiveString::from("token".to_string())),
             },
             LocationType::Gcs => CloudCredentials::Gcs {
                 gcs_access_token: Some(SensitiveString::from("test-bearer-token".to_string())),

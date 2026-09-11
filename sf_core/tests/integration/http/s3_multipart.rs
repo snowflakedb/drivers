@@ -129,7 +129,7 @@ fn s3_stage(endpoint: &str) -> StageInfo {
         creds: CloudCredentials::S3 {
             aws_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
             aws_secret_key: SensitiveString::from("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
-            aws_token: SensitiveString::from(""),
+            aws_token: None,
         },
         endpoint: Some(endpoint.to_string()),
         presigned_url: None,

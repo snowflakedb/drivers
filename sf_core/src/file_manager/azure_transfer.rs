@@ -2072,7 +2072,7 @@ mod tests {
             creds: Some(CloudCredentials::S3 {
                 aws_key_id: "key".to_string(),
                 aws_secret_key: SensitiveString::from("secret"),
-                aws_token: SensitiveString::from("token"),
+                aws_token: Some(SensitiveString::from("token")),
             }),
             ..Default::default()
         });
