@@ -1970,9 +1970,22 @@ tests:
     ud_tests: []
   integ/test_direct_file_operation_utils.py:
   - test_name: test_upload
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/put_get/test_put_get_snowpark_direct.py::test_should_upload_a_local_file_and_report_it_uploaded
+      - python/tests/unit/test_cursor.py::TestSnowparkDirectFileTransfer::test_upload_calls_execute_with_the_statement_legacy_would_send
+    notes: >-
+      The old test only covers auto_compress on/off; the parametrized UD unit test adds the
+      pre-quoted path shape write_pandas uses and boolean-option stringification.
   - test_name: test_upload_stream
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/put_get/test_put_get_snowpark_direct.py::test_should_upload_a_stream_to_the_named_stage_file
+      - python/tests/unit/test_cursor.py::TestSnowparkDirectFileTransfer::test_upload_stream_calls_execute_with_the_statement_legacy_would_send
+      - python/tests/unit/test_cursor.py::TestFileStreamUpload::test_rewinds_a_stream_left_at_a_non_zero_position
+      - python/tests/unit/test_cursor.py::TestFileStreamUpload::test_aborts_and_reraises_on_chunk_failure
+    notes: >-
+      _upload_stream delegates to execute(file_stream=...), so the streaming mechanics
+      (rewind, chunking, abort) are covered generically by TestFileStreamUpload rather than
+      re-tested here.
   integ/test_easy_logging.py:
   - test_name: test_no_save_logs
     ud_tests: []
