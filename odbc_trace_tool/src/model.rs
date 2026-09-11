@@ -540,6 +540,81 @@ pub struct Transact {
     pub completion_type_name: Option<String>,
 }
 
+/// `SQLDataSources` — enumerates the DSNs registered on the *client machine*
+/// (an env-handle call). MS Query iterates it to populate its data-source
+/// picker. The returned names are a property of the tester's ODBC registry,
+/// never the driver or server, so the emitter drops it — asserting them would
+/// pin the test to one workstation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataSources {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+}
+
+/// `SQLDescribeParam` — reports a parameter's inferred SQL type / size /
+/// nullability on a prepared statement. Read-only introspection (the sibling of
+/// `SQLNumParams`); the bind it informs is reproduced through
+/// `SQLBindParameter`. The inferred metadata is driver-derived and not part of
+/// the observable replay, so the emitter drops it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DescribeParam {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+}
+
+/// `SQLSetConnectOption` — ODBC 2.x deprecated form of `SQLSetConnectAttr`.
+/// MS Query sets `SQL_LOGIN_TIMEOUT` through it before connecting. The timeout
+/// affects only connect latency, never the observable result set, so the
+/// emitter drops it rather than asserting an environment-specific return code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetConnectOption {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+}
+
+/// `SQLSetStmtOption` — ODBC 2.x deprecated form of `SQLSetStmtAttr`. MS Query
+/// toggles `SQL_ASYNC_ENABLE` through it; the Snowflake driver rejects that
+/// attribute (`SQL_ERROR`) and MS Query proceeds synchronously. Since the
+/// toggle is refused and has no bearing on the result set, the emitter drops it
+/// rather than asserting a driver-specific return code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetStmtOption {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+}
+
+/// `SQLCancel` — cancels processing on a statement. The MS Query "cancel and
+/// connection reuse" trace fires it to abort a long-running `SYSTEM$WAIT(...)`
+/// query before reusing the connection. The emitter reproduces the call and
+/// asserts its recorded return code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cancel {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+}
+
+/// `SQLSpecialColumns` — catalog function returning the optimal row-identifier
+/// (or version) columns for a table. MS Query probes it during navigation.
+/// Snowflake has no row-id concept, so the result set is empty (the trace's
+/// `SQLFetch` returns `SQL_NO_DATA`); the emitter reproduces the call with its
+/// identifier / scope / nullable selectors and lets the existing fetch path
+/// assert the empty result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpecialColumns {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub identifier_type: Option<i64>,
+    pub identifier_type_name: Option<String>,
+    /// Catalog / schema / table-name selectors, in signature order. Modelled
+    /// like [`CatalogFunction::string_args`] (null pointer → `None`).
+    #[serde(default)]
+    pub string_args: Vec<CatalogStringArg>,
+    pub scope: Option<i64>,
+    pub scope_name: Option<String>,
+    pub nullable: Option<i64>,
+    pub nullable_name: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // OdbcCall enum
 // ---------------------------------------------------------------------------
@@ -617,6 +692,18 @@ pub enum OdbcCall {
     SetDescField(SetDescField),
     #[serde(rename = "SQLTransact")]
     Transact(Transact),
+    #[serde(rename = "SQLDataSources")]
+    DataSources(DataSources),
+    #[serde(rename = "SQLDescribeParam")]
+    DescribeParam(DescribeParam),
+    #[serde(rename = "SQLSetConnectOption")]
+    SetConnectOption(SetConnectOption),
+    #[serde(rename = "SQLSetStmtOption")]
+    SetStmtOption(SetStmtOption),
+    #[serde(rename = "SQLCancel")]
+    Cancel(Cancel),
+    #[serde(rename = "SQLSpecialColumns")]
+    SpecialColumns(SpecialColumns),
     #[serde(rename = "Unsupported")]
     Unsupported(Unsupported),
 }
@@ -659,6 +746,12 @@ impl OdbcCall {
             Self::GetDiagField(c) => c.return_code,
             Self::SetDescField(c) => c.return_code,
             Self::Transact(c) => c.return_code,
+            Self::DataSources(c) => c.return_code,
+            Self::DescribeParam(c) => c.return_code,
+            Self::SetConnectOption(c) => c.return_code,
+            Self::SetStmtOption(c) => c.return_code,
+            Self::Cancel(c) => c.return_code,
+            Self::SpecialColumns(c) => c.return_code,
             Self::Unsupported(c) => c.return_code,
         }
     }
@@ -700,6 +793,12 @@ impl OdbcCall {
             Self::GetDiagField(_) => "SQLGetDiagField",
             Self::SetDescField(_) => "SQLSetDescField",
             Self::Transact(_) => "SQLTransact",
+            Self::DataSources(_) => "SQLDataSources",
+            Self::DescribeParam(_) => "SQLDescribeParam",
+            Self::SetConnectOption(_) => "SQLSetConnectOption",
+            Self::SetStmtOption(_) => "SQLSetStmtOption",
+            Self::Cancel(_) => "SQLCancel",
+            Self::SpecialColumns(_) => "SQLSpecialColumns",
             Self::Unsupported(c) => &c.function_name,
         }
     }
@@ -750,6 +849,12 @@ impl OdbcCall {
             Self::GetDiagField(c) => c.handle.as_deref(),
             Self::SetDescField(c) => c.handle.as_deref(),
             Self::Transact(c) => c.handle.as_deref(),
+            Self::DataSources(c) => c.handle.as_deref(),
+            Self::DescribeParam(c) => c.handle.as_deref(),
+            Self::SetConnectOption(c) => c.handle.as_deref(),
+            Self::SetStmtOption(c) => c.handle.as_deref(),
+            Self::Cancel(c) => c.handle.as_deref(),
+            Self::SpecialColumns(c) => c.handle.as_deref(),
             Self::Unsupported(c) => c.handle.as_deref(),
         }
     }
@@ -802,6 +907,12 @@ impl OdbcCall {
             Self::GetDiagField(c) => resolve(&mut c.handle, map),
             Self::SetDescField(c) => resolve(&mut c.handle, map),
             Self::Transact(c) => resolve(&mut c.handle, map),
+            Self::DataSources(c) => resolve(&mut c.handle, map),
+            Self::DescribeParam(c) => resolve(&mut c.handle, map),
+            Self::SetConnectOption(c) => resolve(&mut c.handle, map),
+            Self::SetStmtOption(c) => resolve(&mut c.handle, map),
+            Self::Cancel(c) => resolve(&mut c.handle, map),
+            Self::SpecialColumns(c) => resolve(&mut c.handle, map),
             Self::Unsupported(c) => resolve(&mut c.handle, map),
         }
     }
@@ -950,6 +1061,9 @@ impl OdbcCall {
             "SQLTables" | "SQLColumns" | "SQLPrimaryKeys" | "SQLForeignKeys" => {
                 raw::build_catalog_function(normalized, input_params, output_params, return_code)
             }
+            "SQLSpecialColumns" => {
+                raw::build_special_columns(input_params, output_params, return_code)
+            }
             "SQLGetInfo" => raw::build_get_info(input_params, output_params, return_code),
             "SQLGetDiagRec" => raw::build_get_diag_rec(input_params, output_params, return_code),
             "SQLGetFunctions" => raw::build_get_functions(input_params, output_params, return_code),
@@ -997,6 +1111,52 @@ impl OdbcCall {
             // ODBC 2.x transaction terminator — routed onto SQLEndTran at emit
             // time.
             "SQLTransact" => raw::build_transact(input_params, output_params, return_code),
+            // Recognised-but-dropped MS Query calls. Each is either
+            // machine/driver-specific metadata (`SQLDataSources`,
+            // `SQLDescribeParam`) or a no-observable-effect 2.x set-option
+            // (`SQLSetConnectOption`, `SQLSetStmtOption`); the C++ emitter drops
+            // all four. Recognising them as typed calls keeps generation off the
+            // `--allow-unsupported` path.
+            "SQLDataSources" => {
+                raw::build_simple_handle_call(input_params, output_params, return_code, |h, rc| {
+                    Self::DataSources(DataSources {
+                        return_code: rc,
+                        handle: h,
+                    })
+                })
+            }
+            "SQLDescribeParam" => {
+                raw::build_simple_handle_call(input_params, output_params, return_code, |h, rc| {
+                    Self::DescribeParam(DescribeParam {
+                        return_code: rc,
+                        handle: h,
+                    })
+                })
+            }
+            "SQLSetConnectOption" => {
+                raw::build_simple_handle_call(input_params, output_params, return_code, |h, rc| {
+                    Self::SetConnectOption(SetConnectOption {
+                        return_code: rc,
+                        handle: h,
+                    })
+                })
+            }
+            "SQLSetStmtOption" => {
+                raw::build_simple_handle_call(input_params, output_params, return_code, |h, rc| {
+                    Self::SetStmtOption(SetStmtOption {
+                        return_code: rc,
+                        handle: h,
+                    })
+                })
+            }
+            "SQLCancel" => {
+                raw::build_simple_handle_call(input_params, output_params, return_code, |h, rc| {
+                    Self::Cancel(Cancel {
+                        return_code: rc,
+                        handle: h,
+                    })
+                })
+            }
             _ => {
                 let handle =
                     raw::first_addr(&input_params).or_else(|| raw::first_addr(&output_params));
@@ -1410,6 +1570,54 @@ mod raw {
             handle,
             function_name: function_name.to_string(),
             string_args,
+        })
+    }
+
+    /// `SQLSpecialColumns(stmt, IdentifierType, Catalog, NameLen1, Schema,
+    /// NameLen2, Table, NameLen3, Scope, Nullable)`. The three string/length
+    /// pairs are extracted exactly like the catalog functions; the leading
+    /// `IdentifierType` and trailing `Scope` / `Nullable` selectors are pulled
+    /// from their fixed positions (signature order is invariant in the trace).
+    pub fn build_special_columns(
+        input: Vec<Parameter>,
+        _output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement").or_else(|| first_addr(&input));
+        let identifier_type = int_or_named(&input, 1);
+        let identifier_type_name = named_const_at(&input, 1);
+
+        // Catalog / schema / table sit at indices 2..=7 as string/length pairs.
+        let mut string_args = Vec::new();
+        let mut i = 2;
+        while i < input.len() && string_args.len() < 3 {
+            if is_catalog_string_slot(&input[i]) {
+                string_args.push(CatalogStringArg {
+                    value: catalog_string_value(&input[i]),
+                    length: input.get(i + 1).and_then(catalog_length_value),
+                });
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+
+        // Scope / Nullable are the two selectors immediately after the strings.
+        let scope = int_or_named(&input, i);
+        let scope_name = named_const_at(&input, i);
+        let nullable = int_or_named(&input, i + 1);
+        let nullable_name = named_const_at(&input, i + 1);
+
+        OdbcCall::SpecialColumns(SpecialColumns {
+            return_code: rc,
+            handle,
+            identifier_type,
+            identifier_type_name,
+            string_args,
+            scope,
+            scope_name,
+            nullable,
+            nullable_name,
         })
     }
 
