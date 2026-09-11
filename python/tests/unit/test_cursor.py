@@ -4138,34 +4138,21 @@ class TestQueryResultFormat:
 class TestSnowparkDirectFileTransfer:
     """Unit tests for `_upload`/`_download`/`_upload_stream`/`_download_stream`.
 
-    Snowpark's `session.file` API calls these directly with paths and an options
-    dict rather than SQL, so what matters here is the statement each one
-    synthesizes and which transfer path it hands it to.
+    Each method is a thin wrapper that builds a PUT/GET statement (or a stage
+    reference) and hands it to `execute`/`_execute`/`download_stream`. These
+    tests only check that the right one is called with the right arguments —
+    execution, chunking and abort behavior belong to TestFileStreamUpload and
+    TestDownloadStream.
     """
 
     @pytest.fixture
-    def cursor(self, mock_core_client):
+    def cursor(self):
         conn = MagicMock()
         conn.is_closed.return_value = False
-        conn.conn_handle = ConnectionHandle(id=1)
-        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
-        execute_response = MagicMock()
-        execute_response.HasField = MagicMock(side_effect=lambda field: field == "single")
-        mock_core_client.statement_execute_query.return_value = execute_response
         return SnowflakeCursor(conn)
 
-    @staticmethod
-    def _executed_sql(mock_core_client) -> str:
-        """Return the SQL bound to the statement handle."""
-        calls = mock_core_client.statement_set_sql_query.call_args_list
-        assert len(calls) == 1, f"expected exactly one statement, got {len(calls)}"
-        return calls[0].args[0].query
-
-    # Same arguments in, same statement out as the legacy connector's
-    # `parse_file_operation`, except that it binds the stage path as `?` — which
-    # the chunked-upload RPC cannot do, since it takes SQL and nothing else.
     @pytest.mark.parametrize(
-        ("local_file_name", "stage_location", "options", "expected"),
+        ("local_file_name", "stage_location", "options", "expected_sql"),
         [
             pytest.param(
                 "'file:///tmp/x.csv'",
@@ -4190,16 +4177,16 @@ class TestSnowparkDirectFileTransfer:
             ),
         ],
     )
-    def test_upload_synthesizes_the_statement_legacy_would(
-        self, cursor, mock_core_client, local_file_name, stage_location, options, expected
+    def test_upload_calls_execute_with_the_statement_legacy_would_send(
+        self, cursor, local_file_name, stage_location, options, expected_sql
     ):
-        with patch.object(SnowflakeCursor, "_apply_result_set"):
+        with patch.object(cursor, "execute") as execute:
             cursor._upload(local_file_name, stage_location, options)
 
-        assert self._executed_sql(mock_core_client) == expected
+        execute.assert_called_once_with(expected_sql, file_stream=None)
 
     @pytest.mark.parametrize(
-        ("stage_location", "options", "expected"),
+        ("stage_location", "options", "expected_sql"),
         [
             pytest.param(
                 "@mystage/prefix1/data.csv",
@@ -4221,97 +4208,57 @@ class TestSnowparkDirectFileTransfer:
             ),
         ],
     )
-    def test_upload_stream_synthesizes_the_statement_legacy_would(
-        self, cursor, mock_core_client, stage_location, options, expected
+    def test_upload_stream_calls_execute_with_the_statement_legacy_would_send(
+        self, cursor, stage_location, options, expected_sql
     ):
-        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
-            upload_handle=UploadStreamHandle(id=3, magic=1)
-        )
+        stream = io.BytesIO(b"payload")
 
-        with patch.object(SnowflakeCursor, "_apply_result_set"):
-            cursor._upload_stream(io.BytesIO(b"payload"), stage_location, options)
+        with patch.object(cursor, "execute") as execute:
+            cursor._upload_stream(stream, stage_location, options)
 
-        assert mock_core_client.connection_upload_stream_begin.call_args.args[0].sql == expected
+        execute.assert_called_once_with(expected_sql, file_stream=stream)
 
-    def test_download_synthesizes_a_get(self, cursor, mock_core_client):
-        with patch.object(SnowflakeCursor, "_apply_result_set"):
-            cursor._download("@mystage/prefix1", "/tmp/target", {"parallel": 10})
+    @pytest.mark.parametrize(
+        ("stage_location", "target_directory", "options", "expected_sql"),
+        [
+            pytest.param(
+                "@mystage/prefix1",
+                "/tmp/target",
+                {"parallel": 10},
+                "GET @mystage/prefix1 file:///tmp/target parallel=10",
+                id="plain-get",
+            ),
+            pytest.param(
+                "@mystage",
+                "/tmp/target",
+                {"parallel": 10, "pattern": "'.*test.*[.]csv'"},
+                "GET @mystage file:///tmp/target parallel=10 pattern='.*test.*[.]csv'",
+                id="with-a-pattern-option",
+            ),
+        ],
+    )
+    def test_download_calls_execute_with_a_get(self, cursor, stage_location, target_directory, options, expected_sql):
+        with patch.object(cursor, "execute") as execute:
+            cursor._download(stage_location, target_directory, options)
 
-        assert self._executed_sql(mock_core_client) == "GET @mystage/prefix1 file:///tmp/target parallel=10"
+        execute.assert_called_once_with(expected_sql, file_stream=None)
 
-    def test_download_carries_a_pattern_option(self, cursor, mock_core_client):
-        with patch.object(SnowflakeCursor, "_apply_result_set"):
-            cursor._download("@mystage", "/tmp/target", {"parallel": 10, "pattern": "'.*test.*[.]csv'"})
+    @pytest.mark.parametrize(
+        ("stage_location", "decompress", "expected_stage_location"),
+        [
+            pytest.param(
+                "@mystage/prefix1/data.csv.gz", True, "@mystage/prefix1/data.csv.gz", id="already-at-prefixed"
+            ),
+            pytest.param("mystage/data.csv", False, "@mystage/data.csv", id="bare-stage-gets-the-at-prefix"),
+        ],
+    )
+    def test_download_stream_delegates_to_download_stream(
+        self, cursor, stage_location, decompress, expected_stage_location
+    ):
+        with patch.object(cursor, "download_stream") as download_stream:
+            cursor._download_stream(stage_location, decompress)
 
-        assert self._executed_sql(mock_core_client) == (
-            "GET @mystage file:///tmp/target parallel=10 pattern='.*test.*[.]csv'"
-        )
-
-    def test_upload_stream_streams_the_payload_in_chunks(self, cursor, mock_core_client):
-        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
-            upload_handle=UploadStreamHandle(id=3, magic=1)
-        )
-        payload = b"col1,col2\nx,y\n"
-
-        with patch.object(SnowflakeCursor, "_apply_result_set"):
-            cursor._upload_stream(io.BytesIO(payload), "@mystage/prefix1/data.csv", {"auto_compress": False})
-
-        sent = b"".join(c.args[0].data for c in mock_core_client.connection_upload_stream_chunk.call_args_list)
-        assert sent == payload
-        mock_core_client.connection_upload_stream_finish.assert_called_once()
-        mock_core_client.connection_upload_stream_abort.assert_not_called()
-
-    def test_upload_stream_rewinds_a_stream_left_at_a_non_zero_position(self, cursor, mock_core_client):
-        """Snowpark hands over streams it has already read (SNOW-4072349)."""
-        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
-            upload_handle=UploadStreamHandle(id=3, magic=1)
-        )
-        payload = b"payload bytes"
-        stream = io.BytesIO(payload)
-        stream.seek(0, io.SEEK_END)
-
-        with patch.object(SnowflakeCursor, "_apply_result_set"):
-            cursor._upload_stream(stream, "@mystage/data.csv", {})
-
-        sent = b"".join(c.args[0].data for c in mock_core_client.connection_upload_stream_chunk.call_args_list)
-        assert sent == payload
-
-    def test_upload_stream_aborts_and_reraises_on_chunk_failure(self, cursor, mock_core_client):
-        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
-            upload_handle=UploadStreamHandle(id=3, magic=1)
-        )
-        mock_core_client.connection_upload_stream_chunk.side_effect = DatabaseError(msg="mid-upload failure")
-
-        with pytest.raises(DatabaseError, match="mid-upload failure"):
-            cursor._upload_stream(io.BytesIO(b"data"), "@mystage/data.csv", {})
-
-        mock_core_client.connection_upload_stream_abort.assert_called_once()
-        mock_core_client.connection_upload_stream_finish.assert_not_called()
-
-    def test_download_stream_opens_a_chunked_reader_for_the_stage_file(self, cursor, mock_core_client):
-        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
-            download_handle=DownloadStreamHandle(id=7, magic=1)
-        )
-
-        reader = cursor._download_stream("@mystage/prefix1/data.csv.gz", decompress=True)
-
-        begin_request = mock_core_client.connection_download_stream_begin.call_args.args[0]
-        assert begin_request.stage_name == "@mystage/prefix1"
-        assert begin_request.source_filename == "data.csv.gz"
-        assert begin_request.decompress is True
-        assert reader.readable()
-
-    def test_download_stream_supplies_the_at_prefix_snowpark_omits(self, cursor, mock_core_client):
-        """`validate_stage_location` does not add `@`, so the stage arrives bare."""
-        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
-            download_handle=DownloadStreamHandle(id=7, magic=1)
-        )
-
-        cursor._download_stream("mystage/data.csv")
-
-        begin_request = mock_core_client.connection_download_stream_begin.call_args.args[0]
-        assert begin_request.stage_name == "@mystage"
-        assert begin_request.source_filename == "data.csv"
+        download_stream.assert_called_once_with(expected_stage_location, decompress)
 
     @pytest.mark.parametrize(
         "call",
@@ -4330,15 +4277,16 @@ class TestSnowparkDirectFileTransfer:
 
         assert exc_info.value.errno == ER_CURSOR_IS_CLOSED
 
-    def test_upload_resets_prior_cursor_state_by_default(self, cursor, mock_core_client):
-        with patch.object(SnowflakeCursor, "_apply_result_set"), patch.object(SnowflakeCursor, "reset") as reset:
-            cursor._upload("/tmp/data.csv", "@stage", {})
+    @pytest.mark.parametrize(
+        ("do_reset", "expected_method"),
+        [
+            pytest.param(True, "execute", id="resets-by-default"),
+            pytest.param(False, "_execute", id="skips-the-reset-when-asked-to"),
+        ],
+    )
+    def test_upload_honors_do_reset(self, cursor, do_reset, expected_method):
+        with patch.object(cursor, "execute") as execute, patch.object(cursor, "_execute") as _execute:
+            cursor._upload("/tmp/data.csv", "@stage", {}, _do_reset=do_reset)
 
-        reset.assert_called_once()
-
-    def test_upload_skips_the_reset_when_asked_to(self, cursor, mock_core_client):
-        """`_do_reset=False` exists for legacy signature parity and must be honoured."""
-        with patch.object(SnowflakeCursor, "_apply_result_set"), patch.object(SnowflakeCursor, "reset") as reset:
-            cursor._upload("/tmp/data.csv", "@stage", {}, _do_reset=False)
-
-        reset.assert_not_called()
+        (execute if expected_method == "execute" else _execute).assert_called_once()
+        (_execute if expected_method == "execute" else execute).assert_not_called()
