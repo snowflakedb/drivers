@@ -212,13 +212,9 @@ impl<R: Read> Read for EncryptingReader<R> {
     }
 }
 
-/// Decrypts `ciphertext` into `output`, verifying the SHA-256 digest at
-/// finalize time when `digest` is `Some`. Some CSE objects (e.g. server-side
-/// `COPY INTO` unloads on S3) carry the key-wrap headers needed to decrypt
-/// without an `sfc-digest`; `digest: None` decrypts without the post-decrypt
-/// check rather than refusing to decrypt at all. On `DigestMismatch`, partial
-/// plaintext may already have been written — callers must discard the
-/// partial output.
+/// Decrypts `ciphertext` into `output`. When `digest` is present it is
+/// verified at finalize; on `DigestMismatch`, callers must discard any
+/// already-written output.
 pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
     mut ciphertext: R,
     metadata: &EncryptedFileMetadata,
@@ -260,9 +256,13 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
 
     // The digest stored on upload is the SHA-256 of the (compressed) plaintext,
     // not the ciphertext, so verification hashes the decrypted output.
-    let mut hasher = Hasher::new(MessageDigest::sha256()).context(OpenSSLSnafu {
-        operation: "initializing SHA-256 hasher for decryption",
-    })?;
+    let mut hasher = digest
+        .map(|_| {
+            Hasher::new(MessageDigest::sha256()).context(OpenSSLSnafu {
+                operation: "initializing SHA-256 hasher for decryption",
+            })
+        })
+        .transpose()?;
 
     let mut cipher_buf = vec![0u8; CRYPT_CHUNK_SIZE];
     let mut plain_buf = vec![0u8; CRYPT_CHUNK_SIZE + AES_BLOCK_SIZE_IN_BYTES];
@@ -282,9 +282,11 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
             })?;
         if written > 0 {
             let plaintext = &plain_buf[..written];
-            hasher.update(plaintext).context(OpenSSLSnafu {
-                operation: "hashing plaintext chunk",
-            })?;
+            if let Some(hasher) = hasher.as_mut() {
+                hasher.update(plaintext).context(OpenSSLSnafu {
+                    operation: "hashing plaintext chunk",
+                })?;
+            }
             output.write_all(plaintext).context(IoSnafu {
                 operation: "writing decrypted chunk to output",
             })?;
@@ -297,16 +299,18 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
     })?;
     if tail_written > 0 {
         let plaintext = &plain_buf[..tail_written];
-        hasher.update(plaintext).context(OpenSSLSnafu {
-            operation: "hashing final plaintext block",
-        })?;
+        if let Some(hasher) = hasher.as_mut() {
+            hasher.update(plaintext).context(OpenSSLSnafu {
+                operation: "hashing final plaintext block",
+            })?;
+        }
         output.write_all(plaintext).context(IoSnafu {
             operation: "writing final decrypted block",
         })?;
         output_byte_len += tail_written as i64;
     }
 
-    if let Some(expected) = digest {
+    if let (Some(expected), Some(hasher)) = (digest, hasher) {
         let computed_bytes = hasher.finish().context(OpenSSLSnafu {
             operation: "finalizing SHA-256 digest for verification",
         })?;
@@ -564,9 +568,6 @@ mod tests {
 
     #[test]
     fn decrypt_succeeds_without_digest_when_absent() {
-        // Some CSE objects (e.g. server-side `COPY INTO` unloads on S3) carry
-        // the key-wrap headers but no `sfc-digest`; decryption must still
-        // succeed, just without the post-decrypt integrity check.
         let plaintext = b"payload with no digest header";
         let material = test_material();
 

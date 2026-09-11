@@ -1296,11 +1296,9 @@ async fn download_single_file_to(
     // in memory and spills large ranged downloads to a tempfile (renamed into
     // place on the SSE path); GCS/Azure stream from the network.
     //
-    // CSE verifies the SHA-256 digest at finalize time rather than pre-checking
-    // it: pre-verification would require buffering the full ciphertext, which
-    // defeats the streaming refactor. The integrity guarantee is preserved (a
-    // tampered byte still yields DigestMismatch); only the failure-mode timing
-    // differs. Every branch writes to `partial_path` and renames on success — the
+    // When a digest is present, CSE verifies it at finalize rather than
+    // pre-checking: pre-verification would require buffering the full ciphertext.
+    // Every branch writes to `partial_path` and renames on success — the
     // user-visible destination only ever appears as a complete artefact, even if
     // a concurrent FS observer is racing.
     // Extract enc_material and unsafe_file_write before the match so all three
@@ -1363,12 +1361,7 @@ async fn download_single_file_to(
             let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(
                 move || -> Result<(i64, Option<tempfile::TempPath>), FileManagerError> {
                     match (enc_material, file_metadata) {
-                        // Client-side-encrypted object: decrypt the ciphertext
-                        // (from the in-memory buffer or the spilled tempfile).
-                        // `digest` verifies the plaintext at finalize time when
-                        // present, but is not required to decrypt — a
-                        // server-side `COPY INTO` unload onto a CSE stage
-                        // carries the key-wrap headers with no `sfc-digest`.
+                        // CSE: decrypt the ciphertext (in-memory buffer or spilled tempfile).
                         (Some(enc_material), Some(enc_metadata)) => {
                             let reader = body.into_reader().context(IoSnafu)?;
                             let mut output_file =
@@ -1384,14 +1377,8 @@ async fn download_single_file_to(
                             .context(DecryptionSnafu);
                             write_or_cleanup(output_file, &partial_path2, result).map(|n| (n, None))
                         }
-                        // Non-decrypting cases — the cloud bytes are already the
-                        // final plaintext:
-                        //   * SSE stage — no `encryption_material` (server-side
-                        //     decryption).
-                        //   * `encryption_material` present but the object carries no
-                        //     client-side-encryption headers at all (e.g. git-stage
-                        //     objects on S3) — write raw bytes, matching legacy
-                        //     connector behaviour (SNOW git-stage fix).
+                        // SSE (no encryption_material) or S3 git-stage (no CSE
+                        // headers at all): the cloud bytes are already plaintext.
                         (maybe_enc, _) => {
                             if maybe_enc.is_some() {
                                 tracing::debug!(
@@ -1738,10 +1725,6 @@ pub async fn open_s3_download_stream(
         .await
         .context(S3DownloadSnafu)?;
 
-    // The key-wrap headers alone gate decryption; `digest` (absent for a
-    // server-side `COPY INTO` unload onto a CSE stage) is used for a
-    // best-effort post-decrypt check when present. A real S3 git-stage
-    // object carries neither, so `file_metadata` stays `None` there.
     let cse_info = file_metadata.map(|metadata| CseDownloadInfo { metadata, digest });
     let (reader, producer_abort) = spawn_s3_byte_stream_producer(body, slot);
 
@@ -2031,8 +2014,7 @@ fn run_streaming_download_pipeline<R: Read>(
     };
 
     match (encryption_material, cse_info) {
-        // Client-side-encrypted object: decrypt the ciphertext stream,
-        // verifying the SHA-256 digest at finalize time when present.
+        // CSE: decrypt; verify digest when present.
         (Some(enc_material), Some(CseDownloadInfo { metadata, digest })) => {
             decrypt_ciphertext_to_writer(
                 &mut reader,
@@ -2108,13 +2090,13 @@ fn warn_remove_partial(partial_path: &Path) {
 /// bytes.
 ///
 /// How the writer *ends* differs by path, and only one of them cleans up after
-/// itself. On a CSE object, `decrypt_ciphertext_to_writer` fails its digest check on
-/// the truncated body, so [`write_or_cleanup`] removes `.part` — dropping the file
-/// handle first, which is what makes that removal work on Windows. On a plain SSE
-/// object the closed channel reads as a clean EOF ([`cloud_http::StreamReader`]
-/// returns `Ok(0)`), `std::io::copy` returns `Ok`, and nothing is removed. So on SSE
-/// this guard stops the fetch but leaves `.part` behind for
-/// [`remove_partial_after_cancel`] to deal with.
+/// itself. On a CSE object with a digest, `decrypt_ciphertext_to_writer` fails
+/// its digest check on the truncated body, so [`write_or_cleanup`] removes `.part`
+/// — dropping the file handle first, which is what makes that removal work on
+/// Windows. On SSE, or CSE with no digest, the closed channel reads as a clean
+/// EOF ([`cloud_http::StreamReader`] returns `Ok(0)`), the write returns `Ok`,
+/// and nothing is removed. This guard then stops the fetch but leaves `.part`
+/// behind for [`remove_partial_after_cancel`] to deal with.
 ///
 /// `Drop`-based rather than registered as cleanup: the abort is synchronous, so
 /// there is nothing to await, and a guard fires even when the caller had no
@@ -2255,7 +2237,7 @@ fn write_cloud_download(
     unsafe_file_write: bool,
 ) -> Result<(i64, Option<tempfile::TempPath>), FileManagerError> {
     match (enc_material, cse_info) {
-        // Client-side-encrypted object: decrypt (verifying the digest when present).
+        // CSE: decrypt; verify digest when present.
         (Some(enc_material), Some(cse)) => {
             let reader = body.into_reader().context(IoSnafu)?;
             let mut output_file =

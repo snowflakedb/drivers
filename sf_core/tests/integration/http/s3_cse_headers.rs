@@ -1,17 +1,5 @@
-//! S3 GET must decrypt a client-side-encrypted object whenever the CSE
-//! key-wrap headers (`x-amz-key`/`x-amz-iv`/`x-amz-matdesc`) are present, even
-//! when `sfc-digest` is absent — the exact signature a server-side
-//! `COPY INTO ... SINGLE=TRUE` unload onto a CSE-enabled internal stage
-//! leaves on the S3 object (GS's own unloader never sets `sfc-digest`, unlike
-//! a client-driven PUT). Before this fix, `download_single_file` required all
-//! three of `encryption_material`/CSE-headers/digest to decrypt and silently
-//! wrote the still-encrypted ciphertext to disk otherwise — reproduced
-//! against a real `sfctest0` account via `COPY INTO` + `GET`.
-//!
-//! Real S3 git-stage objects (the case the fallback was originally added
-//! for, #117) carry none of the four headers (`sfc-digest`, `x-amz-matdesc`,
-//! `x-amz-key`, `x-amz-iv`) at all — that raw-bytes fallback is exercised
-//! here too and must stay intact.
+//! S3 GET decrypts CSE objects that have key-wrap headers but no `sfc-digest`,
+//! and returns raw bytes when those headers are all absent.
 
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_store::ParamStore;
@@ -59,9 +47,6 @@ fn test_material() -> EncryptionMaterial {
     }
 }
 
-/// Encrypts `plaintext` through the production lazy path (`build_encryptor` +
-/// `EncryptingReader`), returning the ciphertext plus the CSE metadata
-/// headers a real PUT would attach to the object.
 fn encrypt(plaintext: &[u8], material: &EncryptionMaterial) -> (Vec<u8>, String, String, String) {
     let (encryptor, metadata) =
         build_encryptor(material, plaintext.len() as i64).expect("build_encryptor");
@@ -81,9 +66,7 @@ fn encrypt(plaintext: &[u8], material: &EncryptionMaterial) -> (Vec<u8>, String,
     )
 }
 
-/// Serves a fixed HEAD/GET response pair: HEAD returns `head_headers` over a
-/// same-length zero body (matching real S3, which never sends a HEAD body);
-/// GET returns `body` unconditionally.
+/// HEAD gets a same-length zero body (S3 HEAD has no body); GET returns `body`.
 struct FixedS3Object {
     body: Vec<u8>,
     extra_headers: Vec<(String, String)>,
@@ -100,6 +83,27 @@ impl Respond for FixedS3Object {
         }
         template
     }
+}
+
+async fn mount_object(
+    server: &MockServer,
+    body: Vec<u8>,
+    extra_headers: Vec<(String, String)>,
+) {
+    Mock::given(method("HEAD"))
+        .respond_with(FixedS3Object {
+            body: body.clone(),
+            extra_headers: extra_headers.clone(),
+        })
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(FixedS3Object {
+            body,
+            extra_headers,
+        })
+        .mount(server)
+        .await;
 }
 
 async fn download_from_mock(
@@ -136,75 +140,33 @@ async fn s3_download_decrypts_when_cse_headers_present_but_digest_absent() {
     let (ciphertext, encrypted_key, iv, mat_desc_json) = encrypt(&plaintext, &material);
 
     let server = MockServer::start().await;
-    Mock::given(method("HEAD"))
-        .respond_with(FixedS3Object {
-            body: ciphertext.clone(),
-            extra_headers: vec![
-                ("x-amz-meta-x-amz-key".to_string(), encrypted_key.clone()),
-                ("x-amz-meta-x-amz-iv".to_string(), iv.clone()),
-                (
-                    "x-amz-meta-x-amz-matdesc".to_string(),
-                    mat_desc_json.clone(),
-                ),
-                // No x-amz-meta-sfc-digest: the server-side COPY INTO unload signature.
-            ],
-        })
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .respond_with(FixedS3Object {
-            body: ciphertext,
-            extra_headers: vec![
-                ("x-amz-meta-x-amz-key".to_string(), encrypted_key),
-                ("x-amz-meta-x-amz-iv".to_string(), iv),
-                ("x-amz-meta-x-amz-matdesc".to_string(), mat_desc_json),
-            ],
-        })
-        .mount(&server)
-        .await;
+    mount_object(
+        &server,
+        ciphertext,
+        vec![
+            ("x-amz-meta-x-amz-key".to_string(), encrypted_key),
+            ("x-amz-meta-x-amz-iv".to_string(), iv),
+            ("x-amz-meta-x-amz-matdesc".to_string(), mat_desc_json),
+        ],
+    )
+    .await;
 
     let output_path = download_from_mock(&server, Some(material)).await;
     let downloaded = std::fs::read(&output_path).expect("read downloaded file");
 
-    assert_eq!(
-        downloaded, plaintext,
-        "the driver must decrypt the object using the CSE key-wrap headers even \
-         though sfc-digest is absent — writing the ciphertext through unmodified \
-         (the pre-fix behaviour) would fail this assertion"
-    );
+    assert_eq!(downloaded, plaintext);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn s3_download_returns_raw_bytes_when_all_cse_headers_absent() {
-    // Real S3 git-stage objects (#117): encryption_material is non-null on the
-    // GET response, but the object itself carries none of sfc-digest /
-    // x-amz-matdesc / x-amz-key / x-amz-iv. This must still return raw bytes,
-    // not attempt (and fail) a decrypt.
     let raw_bytes = b"raw git-stage file contents".to_vec();
     let material = test_material();
 
     let server = MockServer::start().await;
-    Mock::given(method("HEAD"))
-        .respond_with(FixedS3Object {
-            body: raw_bytes.clone(),
-            extra_headers: vec![],
-        })
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .respond_with(FixedS3Object {
-            body: raw_bytes.clone(),
-            extra_headers: vec![],
-        })
-        .mount(&server)
-        .await;
+    mount_object(&server, raw_bytes.clone(), vec![]).await;
 
     let output_path = download_from_mock(&server, Some(material)).await;
     let downloaded = std::fs::read(&output_path).expect("read downloaded file");
 
-    assert_eq!(
-        downloaded, raw_bytes,
-        "with no CSE headers at all, the driver must pass the object through \
-         verbatim rather than attempting to decrypt it"
-    );
+    assert_eq!(downloaded, raw_bytes);
 }

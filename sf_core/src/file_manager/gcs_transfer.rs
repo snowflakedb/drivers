@@ -1600,8 +1600,7 @@ fn parse_gcs_cse_info(
     let material_desc: MaterialDescription =
         serde_json::from_str(&mat_desc_str).context(gcs_download_error::DeserializationSnafu)?;
 
-    // Git-stage objects on GCS carry encryption headers but no sfc-digest —
-    // fall through to raw bytes, matching Azure's git-stage fix (#592).
+    // Git-stage objects on GCS carry encryption headers but no sfc-digest.
     let Some(digest) = digest else {
         tracing::debug!("GCS encryptiondata present but sfc-digest absent; returning raw bytes");
         return Ok(None);

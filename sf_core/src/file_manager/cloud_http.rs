@@ -216,12 +216,8 @@ pub(super) fn spawn_s3_byte_stream_producer(
     (StreamReader::new(rx), abort_handle)
 }
 
-/// Client-side-encryption inputs a download carries for the decrypt path.
-/// `metadata` gates whether the object is decrypted at all; `digest`, when
-/// present, is used for a post-decrypt integrity check but is not required to
-/// decrypt — some CSE objects (e.g. server-side `COPY INTO` unloads on S3)
-/// carry the key-wrap headers without an `sfc-digest`. SSE / raw objects
-/// carry neither and the caller sees `None` for the whole struct.
+/// CSE decrypt inputs. `digest` is verified after decrypt when present;
+/// some S3 objects carry key-wrap headers without `sfc-digest`.
 pub struct CseDownloadInfo {
     pub metadata: EncryptedFileMetadata,
     pub digest: Option<String>,
@@ -243,8 +239,7 @@ pub struct CloudStreamingDownload {
     /// [`StreamReader::bytes_read_handle`] in that case, which still counts
     /// on-cloud ciphertext bytes (not the decrypted plaintext length).
     pub cloud_byte_count: i64,
-    /// `Some` for a client-side-encrypted object (both metadata + digest
-    /// headers were present); `None` for SSE / raw objects.
+    /// CSE key-wrap metadata and optional digest; `None` for SSE / raw objects.
     pub cse_info: Option<CseDownloadInfo>,
     /// Running total of on-cloud (pre-decryption) ciphertext bytes pulled off
     /// the wire. `load` it after the decrypt task joins to recover the
