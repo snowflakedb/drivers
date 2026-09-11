@@ -1,0 +1,34 @@
+{
+  "name": "Successful login with CLIENT_STAGE_ARRAY_BINDING_THRESHOLD lowered to 1",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "token": "mock_session_token",
+        "masterToken": "mock_master_token",
+        "sessionId": 12345,
+        "validityInSeconds": 3600,
+        "masterValidityInSeconds": 14400,
+        "sessionInfo": {
+          "databaseName": "",
+          "schemaName": "",
+          "warehouseName": "",
+          "roleName": ""
+        },
+        "parameters": [
+          {"name": "CLIENT_TELEMETRY_ENABLED", "value": false},
+          {"name": "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD", "value": 1}
+        ]
+      }
+    }
+  },
+  "priority": 10
+}
