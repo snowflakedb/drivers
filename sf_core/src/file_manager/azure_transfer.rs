@@ -1226,7 +1226,7 @@ fn map_http_error(e: HttpError) -> AzureRequestError {
 // --- Helpers ---
 
 fn create_azure_client(stage_info: &StageInfo) -> Result<reqwest::Client, AzureRequestError> {
-    let builder = crate::tls::client::configure_tls_builder(
+    let builder = crate::tls::client::configure_storage_client_builder(
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
         // Honour the connection's explicit proxy (proxy_host/proxy_port/no_proxy)

@@ -4,16 +4,15 @@
 //! trust store — no min/max protocol-version knob, no CRL hook, no custom root
 //! store — so it cannot honour the connection's full [`TlsConfig`]. This adapter
 //! instead hands the AWS SDK an [`HttpClient`] over the same `reqwest::Client`
-//! Azure and GCS transfers build via [`configure_tls_builder`], so S3 inherits
-//! one implementation of the connection's TLS policy (version window, CRL, custom
-//! root store) and proxy handling (`proxy_host`/`proxy_port`/`no_proxy`/
-//! `use_proxy_env`, HTTPS CONNECT-tunnelling, `HTTP_PROXY`/`HTTPS_PROXY` fallback).
+//! Azure and GCS transfers build via [`configure_storage_client_builder`], so S3
+//! inherits one implementation of the connection's TLS policy (version window,
+//! CRL, custom root store), proxy handling (`proxy_host`/`proxy_port`/`no_proxy`/
+//! `use_proxy_env`, HTTPS CONNECT-tunnelling, `HTTP_PROXY`/`HTTPS_PROXY` fallback),
+//! and gzip disabled so response bodies arrive exactly as they were on the wire.
 //!
-//! Three `reqwest` defaults are adjusted for the SDK:
+//! Two further `reqwest` defaults are adjusted for the SDK:
 //! - redirect following — the SDK owns signing and retries, and a SigV4-signed
 //!   request cannot be redirected without re-signing;
-//! - gzip decompression — the SDK does its own content-encoding handling and
-//!   expects response bodies exactly as they arrived on the wire;
 //! - HTTP version — pinned to HTTP/1.1 to match the AWS SDK's default connector
 //!   rather than negotiating HTTP/2 via the enabled `http2` feature.
 
@@ -27,19 +26,19 @@ use aws_smithy_types::body::SdkBody;
 use snafu::ResultExt;
 
 use crate::crl::worker::SharedCrlWorker;
-use crate::tls::client::configure_tls_builder;
+use crate::tls::client::configure_storage_client_builder;
 use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::error::{ClientBuildSnafu, TlsError};
 
 /// Builds the `reqwest::Client` that backs the S3 [`HttpClient`] adapter.
 ///
-/// Delegates to [`configure_tls_builder`] — the exact TLS + proxy path Azure and
-/// GCS transfers use — so S3 gets identical `TlsConfig`/`ProxyConfig` handling,
-/// then adjusts three `reqwest` defaults the AWS SDK must own itself: redirect
-/// following (SigV4 re-signing), gzip auto-decompression, and the HTTP protocol
-/// version. The version is pinned to HTTP/1.1 (`http1_only`) so this client
-/// matches the AWS SDK's own default connector rather than negotiating HTTP/2
-/// via the enabled `http2` feature — pinning here, at the S3-specific call site,
+/// Delegates to [`configure_storage_client_builder`] — the exact TLS + proxy +
+/// `.no_gzip()` path Azure and GCS transfers use — so S3 gets identical
+/// `TlsConfig`/`ProxyConfig` handling and wire-byte bodies, then chains two
+/// S3-only `reqwest` options the AWS SDK must own itself: redirect following
+/// (SigV4 re-signing) and HTTP/1.1 (`http1_only`) so this client matches the
+/// AWS SDK's own default connector rather than negotiating HTTP/2 via the
+/// enabled `http2` feature. Pinning those here, at the S3-specific call site,
 /// leaves the shared Azure/GCS path untouched. No request-level `.timeout()` is
 /// set: the SDK's `TimeoutConfig` (`operation_attempt_timeout`/`operation_timeout`)
 /// governs S3 request timing.
@@ -53,9 +52,8 @@ pub(crate) fn build_s3_reqwest_client(
     proxy: Option<&ProxyConfig>,
     crl_worker: SharedCrlWorker,
 ) -> Result<reqwest::Client, TlsError> {
-    configure_tls_builder(reqwest::Client::builder(), tls_config, proxy, crl_worker)?
+    configure_storage_client_builder(reqwest::Client::builder(), tls_config, proxy, crl_worker)?
         .redirect(reqwest::redirect::Policy::none())
-        .no_gzip()
         .http1_only()
         .build()
         .context(ClientBuildSnafu)
