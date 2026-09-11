@@ -1864,8 +1864,8 @@ fn regional_s3_endpoint(region: &str) -> String {
 
 /// Error returned when `create_s3_client` cannot produce an `S3Client`: the stage
 /// carries non-S3 credentials, or the TLS/proxy-configured HTTP client failed to
-/// build (mirroring Azure/GCS, which also surface a `configure_tls_builder`
-/// failure rather than silently continuing).
+/// build (mirroring Azure/GCS, which also surface a
+/// `configure_storage_client_builder` failure rather than silently continuing).
 #[derive(Debug)]
 enum CreateS3ClientError {
     MissingCredentials,
