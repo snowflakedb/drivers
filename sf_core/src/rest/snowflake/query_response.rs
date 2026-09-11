@@ -2793,7 +2793,10 @@ mod tests {
         let info = parse_s3_stage_info(s3_stage_info_value(None, None));
         match info.creds {
             file_manager::CloudCredentials::S3 { aws_token, .. } => {
-                assert_eq!(aws_token.as_ref().map(|token| token.reveal()), Some("t"));
+                assert_eq!(
+                    aws_token.as_ref().map(|token| token.reveal().as_str()),
+                    Some("t")
+                );
             }
             _ => panic!("expected S3 credentials"),
         }

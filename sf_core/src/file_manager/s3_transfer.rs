@@ -1692,9 +1692,7 @@ async fn create_s3_client(
     let credentials = Credentials::new(
         aws_key_id,
         aws_secret_key.reveal(),
-        aws_token
-            .as_ref()
-            .map(|token| token.reveal().to_string()),
+        aws_token.as_ref().map(|token| token.reveal().to_string()),
         None,
         provider_name,
     );
