@@ -3463,6 +3463,14 @@ class TestExecutemanyMultirowInsertRewrite:
         assert exc_info.value.errno == ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT
         mock_core_client.statement_execute_query.assert_not_called()
 
+    def test_should_raise_programming_error_for_insert_select_rewrite(self, cursor, mock_core_client):
+        """SNOW-4018717 / BD#93: INSERT...SELECT rewrite failure raises ProgrammingError."""
+        with pytest.raises(ProgrammingError) as exc_info:
+            cursor.executemany("insert into numbers (select 1)", [1, 2])
+
+        assert exc_info.value.errno == ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT
+        mock_core_client.statement_execute_query.assert_not_called()
+
 
 class TestFileStreamUpload:
     """Unit tests for cursor.execute(sql, file_stream=...), mocking the core client.
