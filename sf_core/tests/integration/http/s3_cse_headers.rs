@@ -85,11 +85,7 @@ impl Respond for FixedS3Object {
     }
 }
 
-async fn mount_object(
-    server: &MockServer,
-    body: Vec<u8>,
-    extra_headers: Vec<(String, String)>,
-) {
+async fn mount_object(server: &MockServer, body: Vec<u8>, extra_headers: Vec<(String, String)>) {
     Mock::given(method("HEAD"))
         .respond_with(FixedS3Object {
             body: body.clone(),
@@ -109,7 +105,7 @@ async fn mount_object(
 async fn download_from_mock(
     server: &MockServer,
     encryption_material: Option<EncryptionMaterial>,
-) -> std::path::PathBuf {
+) -> tempfile::TempDir {
     let output_dir = tempfile::tempdir().unwrap();
     let download = SingleDownloadData {
         src_location: "object.csv".to_string(),
@@ -130,7 +126,7 @@ async fn download_from_mock(
     .await
     .expect("download should succeed");
 
-    output_dir.keep().join("object.csv")
+    output_dir
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -151,8 +147,9 @@ async fn s3_download_decrypts_when_cse_headers_present_but_digest_absent() {
     )
     .await;
 
-    let output_path = download_from_mock(&server, Some(material)).await;
-    let downloaded = std::fs::read(&output_path).expect("read downloaded file");
+    let output_dir = download_from_mock(&server, Some(material)).await;
+    let downloaded =
+        std::fs::read(output_dir.path().join("object.csv")).expect("read downloaded file");
 
     assert_eq!(downloaded, plaintext);
 }
@@ -165,8 +162,9 @@ async fn s3_download_returns_raw_bytes_when_all_cse_headers_absent() {
     let server = MockServer::start().await;
     mount_object(&server, raw_bytes.clone(), vec![]).await;
 
-    let output_path = download_from_mock(&server, Some(material)).await;
-    let downloaded = std::fs::read(&output_path).expect("read downloaded file");
+    let output_dir = download_from_mock(&server, Some(material)).await;
+    let downloaded =
+        std::fs::read(output_dir.path().join("object.csv")).expect("read downloaded file");
 
     assert_eq!(downloaded, raw_bytes);
 }
