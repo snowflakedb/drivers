@@ -34,6 +34,7 @@ New features:
 
 Bug fixes:
 
+- Fixed reading from an external stage without a storage integration failing with `Missing parameter in Snowflake response: credentials -> aws token`. That stage kind is granted access through credentials stored on the stage itself rather than a scoped STS session token, so GS omits `AWS_TOKEN` from the response; it is now treated as optional and defaults to an empty token, matching legacy `snowflake-connector-python`. (snowflakedb/drivers#TBD)
 - Fixed OAuth refresh token being evicted after a successful refresh when token rotation is not enabled. When `oauth_enable_single_use_refresh_tokens` is false (the default), a refresh response that omits a new refresh token is spec-compliant (RFC 6749 §6); the existing cached token remains valid and is now retained. Previously the driver incorrectly treated the absent field as an invalidation signal, forcing a browser re-auth on the next access-token expiry. (snowflakedb/drivers#1902)
 - Fixed Azure GET downloads being silently corrupted by transparent gzip decompression of the response body, matching the existing S3 and GCS behavior. (snowflakedb/drivers#1906)
 - Fixed the file-based token cache changing the mode of a cache file that is not `0600` and then reading from and writing to it anyway. Such a file is now reported and left unused, and the driver authenticates as it would with no cached token. Restoring `0600` on the file, or removing it so the driver recreates it, makes the cache usable again. (snowflakedb/drivers#1793)
