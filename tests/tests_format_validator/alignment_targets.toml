@@ -13,3 +13,9 @@ name     = "pandas-types"
 language = "python"
 features = "tests/definitions/shared/types"
 tests    = "python/tests/e2e/pandas/types"
+
+[[target]]
+name     = "numpy-types"
+language = "python"
+features = "tests/definitions/shared/types"
+tests    = "python/tests/e2e/numpy/types"

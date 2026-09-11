@@ -53,6 +53,12 @@ name     = "pandas-types"
 language = "python"
 features = "tests/definitions/shared/types"
 tests    = "python/tests/e2e/pandas/types"
+
+[[target]]
+name     = "numpy-types"
+language = "python"
+features = "tests/definitions/shared/types"
+tests    = "python/tests/e2e/numpy/types"
 ```
 
 Each target pairs every `.feature` file in the `features` directory with the corresponding test file in the `tests` directory (matched by stem: `boolean.feature` ↔ `test_boolean.py`). The validator then checks:
