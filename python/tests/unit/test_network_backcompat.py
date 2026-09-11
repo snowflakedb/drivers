@@ -12,6 +12,7 @@ import warnings
 import pytest
 
 import snowflake.connector.constants as constants
+import snowflake.connector.errors as errors
 import snowflake.connector.network as network
 
 # Reuses the fixture already defined for the generic backward-compat helper;
@@ -109,3 +110,12 @@ def test_authenticator_type_is_reexported_from_constants():
     compatibility.
     """
     assert network.AuthenticatorType is constants.AuthenticatorType
+
+
+def test_reauthentication_request_is_reexported_from_errors():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        exported = network.ReauthenticationRequest
+
+    assert exported is errors.ReauthenticationRequest
+    assert not [w for w in caught if issubclass(w.category, DeprecationWarning)]
