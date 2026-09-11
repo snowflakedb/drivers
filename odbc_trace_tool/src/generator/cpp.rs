@@ -121,18 +121,39 @@ fn temporal_c_type(value_type: Option<i64>, value_type_name: Option<&str>) -> Op
     }
 }
 
-/// True for an `SQLTables` call that enumerates objects across *every* catalog
-/// in the account — i.e. the `CatalogName` argument is the `%` wildcard
-/// (`SQL_ALL_CATALOGS`, the Power Query Navigator browse). Argument order is
-/// preserved by the parser (empty slots become `None`), so the first string
-/// arg is always `CatalogName`. The remaining args — a schema/table pattern or
-/// a `TableType` filter such as `"TABLE,VIEW"` — only narrow *what* is listed,
-/// not *which account*, so they don't affect the account-coupling that makes
-/// the result set non-replayable. A concrete catalog (e.g. a fixture DB name)
-/// scopes the browse to a deterministic set and is left unrolled.
+fn is_unreplayed_call(call: &OdbcCall) -> bool {
+    matches!(call, OdbcCall::GetDiagRec(_) | OdbcCall::GetFunctions(_))
+}
+
+fn catalog_arg_is_percent(arg: Option<&crate::model::CatalogStringArg>) -> bool {
+    arg.and_then(|a| a.value.as_deref()) == Some("%")
+}
+
+fn catalog_arg_is_empty_selector(arg: Option<&crate::model::CatalogStringArg>) -> bool {
+    match arg {
+        None => true,
+        Some(a) if a.value.as_deref() == Some("") => true,
+        Some(a) if a.value.is_none() && a.length == Some(0) => true,
+        _ => false,
+    }
+}
+
+/// True for the `SQLTables` enumerate-all navigation forms whose result set is
+/// a property of the connected account, not the driver: the catalog list
+/// (`SQLTables("%", "", "")`) and the account-wide schema list
+/// (`SQLTables("", "%", "")`). Catalog `"%"` is sufficient. Schema `"%"`
+/// collapses only when the catalog selector is the empty-string sentinel
+/// (empty string or captured length 0), not a null pointer. A literal catalog,
+/// a table-name `"%"`, or `"%"` only in `TableType` is a scoped listing and
+/// stays unrolled.
 fn is_account_wide_tables(call: &crate::model::CatalogFunction) -> bool {
-    call.function_name == "SQLTables"
-        && call.string_args.first().and_then(|a| a.value.as_deref()) == Some("%")
+    if call.function_name != "SQLTables" {
+        return false;
+    }
+    let catalog = call.string_args.first();
+    let schema = call.string_args.get(1);
+    catalog_arg_is_percent(catalog)
+        || (catalog_arg_is_empty_selector(catalog) && catalog_arg_is_percent(schema))
 }
 
 /// Render an ODBC enum-style argument. Prefer the captured symbolic name when
@@ -207,6 +228,16 @@ const INFO_TYPES_WITH_UNSTABLE_VALUES: &[&str] = &[
     "SQL_ODBC_VER",
     "SQL_DBMS_VER",
     "SQL_DBMS_NAME",
+    // Connection-identity strings: properties of the account / DSN the test
+    // connects to, not of the driver. The trace recorded one workstation's
+    // values (e.g. DSN "Trial tzgwpah", database "ODBCMETADATATESTDB"); replay
+    // connects to the CI account (no DSN, database "TESTDB_UNIVERSAL"), so the
+    // bytes legitimately differ. The call still asserts success — only the
+    // value check is skipped.
+    "SQL_DATA_SOURCE_NAME",
+    "SQL_DATABASE_NAME",
+    "SQL_SERVER_NAME",
+    "SQL_USER_NAME",
 ];
 
 struct GenContext<'a> {
@@ -262,6 +293,20 @@ struct GenContext<'a> {
     /// these handles are skipped until the trace's `SQL_NO_DATA` fetch (or a
     /// cursor-ending call clears the set via [`Self::clear_enum_cursor`]).
     draining: HashSet<String>,
+    /// For each row-wise `SQLBindCol` call (keyed by its index in `calls`), the
+    /// base address of the row struct it belongs to: the minimum bound pointer
+    /// across the contiguous bind run (one binding round). Row-wise pointers are
+    /// absolute trace addresses that the driver treats as offsets into one
+    /// struct, so they must be rebased to that struct's start. Computing the
+    /// base per *run* — not per handle — is essential because ODBC reuses a
+    /// freed handle's address for later statements, which would otherwise
+    /// conflate bind rounds from unrelated statements. Populated in
+    /// [`Self::index_bind_runs`].
+    bind_run_base: HashMap<usize, i64>,
+    /// Index (into `calls`) of the call currently being emitted, so per-call
+    /// emitters can consult index-keyed precomputed state like
+    /// [`Self::bind_run_base`].
+    current_idx: usize,
 }
 
 impl<'a> GenContext<'a> {
@@ -290,6 +335,42 @@ impl<'a> GenContext<'a> {
             row_buf_declared: HashSet::new(),
             enum_cursors: HashSet::new(),
             draining: HashSet::new(),
+            bind_run_base: HashMap::new(),
+            current_idx: 0,
+        }
+    }
+
+    /// Precompute the row-struct base address for every `SQLBindCol` call.
+    /// Binds issued for one result set arrive as a contiguous run in the trace
+    /// (one `SQLBindCol` per column, back-to-back); each such run targets a
+    /// single row struct, so the run's minimum non-null `TargetValue` /
+    /// `StrLen_or_Ind` pointer is that struct's base. We rebase every pointer in
+    /// the run against it (see [`Self::bind_run_base`]).
+    fn index_bind_runs(&mut self) {
+        let mut i = 0;
+        while i < self.calls.len() {
+            if !matches!(self.calls[i], OdbcCall::BindCol(_)) {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            let mut base: Option<i64> = None;
+            while i < self.calls.len() {
+                let OdbcCall::BindCol(b) = &self.calls[i] else {
+                    break;
+                };
+                for p in [b.target_value_ptr.as_deref(), b.indicator_ptr.as_deref()] {
+                    if let Some(a) = p.filter(|a| !is_null_addr(a)).and_then(parse_hex_addr) {
+                        base = Some(base.map_or(a, |cur| cur.min(a)));
+                    }
+                }
+                i += 1;
+            }
+            if let Some(base) = base {
+                for j in start..i {
+                    self.bind_run_base.insert(j, base);
+                }
+            }
         }
     }
 
@@ -313,6 +394,8 @@ impl<'a> GenContext<'a> {
             return Err(GenerateError::MissingRequired(missing));
         }
 
+        self.index_bind_runs();
+
         self.emit_header();
         self.emit_test_open();
         self.emit_config_install();
@@ -321,7 +404,7 @@ impl<'a> GenContext<'a> {
         let mut idx = 0;
         while idx < self.calls.len() {
             let call = &self.calls[idx];
-            if matches!(call, OdbcCall::GetDiagRec(_) | OdbcCall::GetFunctions(_)) {
+            if is_unreplayed_call(call) {
                 idx += 1;
                 continue;
             }
@@ -353,6 +436,17 @@ impl<'a> GenContext<'a> {
                     }
                 }
             }
+            // Collapse an async-execution poll run (repeated identical executes
+            // returning SQL_STILL_EXECUTING) into a single poll loop.
+            if matches!(call, OdbcCall::ExecDirect(_) | OdbcCall::Execute(_)) {
+                let consumed = self.try_emit_async_poll(idx);
+                if consumed > 0 {
+                    self.update_enum_cursor_state(&self.calls[idx]);
+                    idx += consumed;
+                    continue;
+                }
+            }
+            self.current_idx = idx;
             self.emit_call(call);
             self.update_enum_cursor_state(call);
             idx += 1;
@@ -649,6 +743,8 @@ impl<'a> GenContext<'a> {
             OdbcCall::FreeHandle(c) => self.emit_free_handle(c),
             OdbcCall::Disconnect(c) => self.emit_disconnect(c),
             OdbcCall::Transact(c) => self.emit_transact(c),
+            OdbcCall::Cancel(c) => self.emit_cancel(c),
+            OdbcCall::SpecialColumns(c) => self.emit_special_columns(c),
             OdbcCall::Unsupported(c) => {
                 *self.unsupported.entry(c.function_name.clone()).or_insert(0) += 1;
                 if self.config.allow_unsupported {
@@ -666,9 +762,12 @@ impl<'a> GenContext<'a> {
             // `SQLNumParams`, `SQLGetDiagField`, plus the pre-existing
             // `SQLGetDiagRec` / `SQLGetFunctions`), or descriptor pokes that
             // duplicate binding the generator already reproduces through
-            // `SQLBindCol` / `SQLBindParameter` (`SQLSetDescField`). See the
-            // doc-comments on the corresponding `model` structs for the
-            // rationale.
+            // `SQLBindCol` / `SQLBindParameter` (`SQLSetDescField`). The MS Query
+            // additions are dropped on the same grounds: machine-specific DSN
+            // enumeration (`SQLDataSources`), driver-derived parameter metadata
+            // (`SQLDescribeParam`), and no-observable-effect 2.x set-options
+            // (`SQLSetConnectOption` / `SQLSetStmtOption`). See the doc-comments
+            // on the corresponding `model` structs for the rationale.
             OdbcCall::GetEnvAttr(_)
             | OdbcCall::GetConnectAttr(_)
             | OdbcCall::GetStmtAttr(_)
@@ -676,7 +775,11 @@ impl<'a> GenContext<'a> {
             | OdbcCall::GetDiagField(_)
             | OdbcCall::SetDescField(_)
             | OdbcCall::GetDiagRec(_)
-            | OdbcCall::GetFunctions(_) => {}
+            | OdbcCall::GetFunctions(_)
+            | OdbcCall::DataSources(_)
+            | OdbcCall::DescribeParam(_)
+            | OdbcCall::SetConnectOption(_)
+            | OdbcCall::SetStmtOption(_) => {}
         }
     }
 
@@ -1060,10 +1163,24 @@ impl<'a> GenContext<'a> {
                 self.writeln(&format!("std::vector<char> {buf}({rowset} * {stride}, 0);"));
                 self.row_buf_declared.insert(stmt_var.clone());
             }
+            // Rebase the absolute trace pointers onto the row struct's start
+            // (see `bind_run_base`), so offsets stay within `rowset * stride`.
+            // ADO traces log struct-relative offsets (small, always < stride); only
+            // genuinely-absolute pointers (e.g. MS Query's 0x000000C4...) exceed the
+            // row extent and must be rebased onto the struct start. Rebasing small
+            // offsets is wrong and, when a bind run is split by a benign intervening
+            // call, aliases columns onto the same offset.
+            let raw_base = self
+                .bind_run_base
+                .get(&self.current_idx)
+                .copied()
+                .unwrap_or(0);
+            let base = if raw_base < stride { 0 } else { raw_base };
             let data_off = call
                 .target_value_ptr
                 .as_deref()
                 .and_then(parse_hex_addr)
+                .map(|a| a - base)
                 .unwrap_or(0);
             // A null StrLen_or_Ind means the app bound no indicator for this
             // column; only a non-null capture is a real offset into the row.
@@ -1074,7 +1191,7 @@ impl<'a> GenContext<'a> {
                 .and_then(parse_hex_addr)
             {
                 Some(off) => {
-                    format!("reinterpret_cast<SQLLEN*>({buf}.data() + {off})")
+                    format!("reinterpret_cast<SQLLEN*>({buf}.data() + {})", off - base)
                 }
                 None => "nullptr".to_string(),
             };
@@ -1540,9 +1657,24 @@ impl<'a> GenContext<'a> {
     fn emit_catalog(&mut self, call: &crate::model::CatalogFunction) {
         let stmt_var = self.stmt_var_for(&call.handle);
         let fn_name = &call.function_name;
+        // The catalog-enumeration special forms — `SQLTables("%", "", "")`
+        // (catalogs), `SQLTables("", "%", "")` (schemas) — REQUIRE empty-string
+        // selectors: a captured length of 0 is the ODBC empty-string sentinel
+        // (rendered `<zero length>`), semantically distinct from a null pointer
+        // (`<null pointer>`, length SQL_NTS = -3), and passing null instead
+        // makes the driver return no rows. We only honour that distinction for
+        // these enumeration calls: elsewhere (e.g. `SQLColumns`' ColumnName) an
+        // empty string means "match nothing" while null means "match all", and
+        // the trace's intent is the latter, so non-enumeration empty selectors
+        // stay null.
+        let enumeration = is_account_wide_tables(call);
         let mut args = vec![stmt_var.clone()];
         for arg in &call.string_args {
             match &arg.value {
+                None if enumeration && arg.length == Some(0) => {
+                    args.push("sqlchar(\"\")".to_string());
+                    args.push("0".to_string());
+                }
                 None => {
                     args.push("nullptr".to_string());
                     args.push(arg.length.unwrap_or(0).to_string());
@@ -1567,6 +1699,65 @@ impl<'a> GenContext<'a> {
         self.writeln("");
     }
 
+    fn emit_cancel(&mut self, call: &crate::model::Cancel) {
+        let stmt_var = self.stmt_var_for(&call.handle);
+        self.writeln("// SQLCancel");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!("SQLRETURN ret = SQLCancel({stmt_var});"));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    fn emit_special_columns(&mut self, call: &crate::model::SpecialColumns) {
+        let stmt_var = self.stmt_var_for(&call.handle);
+
+        // Selectors: prefer the symbolic constant the DM logged (e.g.
+        // `SQL_BEST_ROWID`), falling back to the captured integer.
+        let identifier = symbolic_or_int(
+            call.identifier_type_name.as_deref(),
+            call.identifier_type,
+            "SQL_BEST_ROWID",
+        );
+        let scope = symbolic_or_int(call.scope_name.as_deref(), call.scope, "SQL_SCOPE_CURROW");
+        let nullable =
+            symbolic_or_int(call.nullable_name.as_deref(), call.nullable, "SQL_NULLABLE");
+
+        let mut args = vec![stmt_var.clone(), identifier];
+        for arg in &call.string_args {
+            match &arg.value {
+                None => {
+                    args.push("nullptr".to_string());
+                    args.push(arg.length.unwrap_or(0).to_string());
+                }
+                Some(s) => {
+                    args.push(format!("sqlchar(\"{}\")", escape_cpp_string_literal(s)));
+                    args.push(
+                        arg.length
+                            .map(|l| l.to_string())
+                            .unwrap_or_else(|| "SQL_NTS".to_string()),
+                    );
+                }
+            }
+        }
+        args.push(scope);
+        args.push(nullable);
+
+        self.writeln("// SQLSpecialColumns");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLSpecialColumns({});",
+            args.join(", ")
+        ));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
     /// Update which statement cursors are account-wide catalog enumerations.
     /// Set when an `SQLTables('%')` opens such a cursor; cleared whenever the
     /// cursor is closed or a different statement begins on the same handle.
@@ -1582,6 +1773,7 @@ impl<'a> GenContext<'a> {
             // clear it, but a trace that never fetches the cursor must not leak
             // the flag onto the handle's next result set).
             OdbcCall::Catalog(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            OdbcCall::SpecialColumns(c) => self.clear_enum_cursor(c.handle.as_deref()),
             OdbcCall::ExecDirect(c) => self.clear_enum_cursor(c.handle.as_deref()),
             OdbcCall::Execute(c) => self.clear_enum_cursor(c.handle.as_deref()),
             OdbcCall::Prepare(c) => self.clear_enum_cursor(c.handle.as_deref()),
@@ -1653,6 +1845,102 @@ impl<'a> GenContext<'a> {
         self.indent -= 1;
         self.writeln("}");
         self.writeln("");
+    }
+
+    /// If the call at `start_idx` begins an async-execution poll run — a maximal
+    /// run of identical consecutive `SQLExecDirect` / `SQLExecute` calls on one
+    /// statement whose first call returned `SQL_STILL_EXECUTING` — emit a poll
+    /// loop and return the number of calls consumed; otherwise return 0.
+    ///
+    /// With async enabled, the host re-issues the *same* execute repeatedly,
+    /// each returning `SQL_STILL_EXECUTING`, until the server finishes and it
+    /// returns a terminal code. The number of polls is purely a function of
+    /// server timing, so pinning the trace's count would make the test flaky.
+    /// We loop until the statement stops reporting `SQL_STILL_EXECUTING` and
+    /// assert the run's terminal return code.
+    fn try_emit_async_poll(&mut self, start_idx: usize) -> usize {
+        // Identify the leading execute and require it to be mid-poll.
+        let (handle, sql_raw): (Option<String>, Option<String>) = match &self.calls[start_idx] {
+            OdbcCall::ExecDirect(c) => (
+                c.handle.clone(),
+                Some(c.sql.as_deref().unwrap_or_default().to_string()),
+            ),
+            OdbcCall::Execute(c) => (c.handle.clone(), None),
+            _ => return 0,
+        };
+        if !matches!(
+            self.calls[start_idx].return_code(),
+            crate::model::ReturnCode::StillExecuting
+        ) {
+            return 0;
+        }
+
+        // Absorb identical executes through the first terminal (non-STILL)
+        // return, skipping unreplayed diag/functions the emit loop also drops.
+        let mut end = start_idx;
+        let mut terminal_rc = None;
+        while end < self.calls.len() {
+            if is_unreplayed_call(&self.calls[end]) {
+                end += 1;
+                continue;
+            }
+            let matches_run = match (&self.calls[end], &sql_raw) {
+                (OdbcCall::ExecDirect(c), Some(sql)) => {
+                    c.handle == handle && c.sql.as_deref().unwrap_or_default() == sql
+                }
+                (OdbcCall::Execute(c), None) => c.handle == handle,
+                _ => false,
+            };
+            if !matches_run {
+                break;
+            }
+            let rc = self.calls[end].return_code();
+            end += 1;
+            if !matches!(rc, crate::model::ReturnCode::StillExecuting) {
+                terminal_rc = Some(rc);
+                break;
+            }
+        }
+
+        // Only collapse when the run actually completed (a terminal code was
+        // captured). A run that is STILL_EXECUTING all the way — e.g. an
+        // execute that the host cancels mid-flight — is left to literal
+        // emission so its `SQLCancel` follow-up still lines up.
+        let Some(terminal_rc) = terminal_rc else {
+            return 0;
+        };
+
+        let stmt_var = self.stmt_var_for(&handle);
+        self.writeln("// async execution: the host re-issues the same statement until");
+        self.writeln("// the server stops reporting SQL_STILL_EXECUTING. The poll count");
+        self.writeln("// is timing-dependent, so loop rather than pin the trace's count.");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln("SQLRETURN ret;");
+        self.writeln("int async_polls = 0;");
+        self.writeln("do {");
+        self.indent += 1;
+        self.writeln("REQUIRE(async_polls < 10000);");
+        self.writeln("++async_polls;");
+        match &sql_raw {
+            Some(raw) => {
+                let sql = escape_cpp_string_literal(&self.resolve_query(raw));
+                self.writeln(&format!(
+                    "ret = SQLExecDirect({stmt_var}, sqlchar(\"{sql}\"), SQL_NTS);"
+                ));
+            }
+            None => {
+                self.writeln(&format!("ret = SQLExecute({stmt_var});"));
+            }
+        }
+        self.indent -= 1;
+        self.writeln("} while (ret == SQL_STILL_EXECUTING);");
+        self.emit_return_assertion(terminal_rc, "SQL_HANDLE_STMT", &stmt_var, true, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+
+        end - start_idx
     }
 
     fn emit_get_info(&mut self, call: &crate::model::GetInfo) {
@@ -2587,6 +2875,130 @@ mod tests {
         assert!(
             !output.contains("bind_buf_"),
             "row-wise path must not emit column-wise buffers; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_row_wise_bind_relative_offsets_split_run_no_aliasing() {
+        use crate::model::{BindCol, GetAttr, OdbcCall, ReturnCode, SetStmtAttr};
+
+        // Mirrors ADO concurrent_recordsets: col1/col2 bind, an intervening
+        // SQLGetStmtAttr splits the bind run, then col3 binds. Relative offsets
+        // (all < stride) must not be rebased or col3 aliases col1.
+        let calls = vec![
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_ROW_BIND_TYPE".to_string()),
+                value: Some(496),
+                str_len: Some(0),
+            }),
+            OdbcCall::BindCol(BindCol {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(1),
+                target_type: Some(1),
+                target_type_name: Some("SQL_C_CHAR".to_string()),
+                buffer_length: Some(17),
+                target_value_ptr: Some("0x0000000000000098".to_string()),
+                indicator_ptr: Some("0x0000000000000090 (BADMEM)".to_string()),
+            }),
+            OdbcCall::BindCol(BindCol {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(2),
+                target_type: Some(2),
+                target_type_name: Some("SQL_C_NUMERIC".to_string()),
+                buffer_length: Some(19),
+                target_value_ptr: Some("0x00000000000000C0".to_string()),
+                indicator_ptr: Some("0x00000000000000B8 (BADMEM)".to_string()),
+            }),
+            OdbcCall::GetStmtAttr(GetAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_APP_ROW_DESC".to_string()),
+            }),
+            OdbcCall::BindCol(BindCol {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(3),
+                target_type: Some(1),
+                target_type_name: Some("SQL_C_CHAR".to_string()),
+                buffer_length: Some(257),
+                target_value_ptr: Some("0x00000000000000E8".to_string()),
+                indicator_ptr: Some("0x00000000000000E0 (BADMEM)".to_string()),
+            }),
+        ];
+        let output = gen_ado(calls);
+        assert!(
+            output.contains(
+                "SQLBindCol(stmt0, 1, SQL_C_CHAR, row_buf_stmt0.data() + 152, 17, reinterpret_cast<SQLLEN*>(row_buf_stmt0.data() + 144));"
+            ),
+            "col1 at raw offset 152/144; output:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "SQLBindCol(stmt0, 2, SQL_C_NUMERIC, row_buf_stmt0.data() + 192, 19, reinterpret_cast<SQLLEN*>(row_buf_stmt0.data() + 184));"
+            ),
+            "col2 at raw offset 192/184; output:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "SQLBindCol(stmt0, 3, SQL_C_CHAR, row_buf_stmt0.data() + 232, 257, reinterpret_cast<SQLLEN*>(row_buf_stmt0.data() + 224));"
+            ),
+            "col3 at raw offset 232/224 (must not alias col1); output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_row_wise_bind_absolute_pointers_rebased() {
+        use crate::model::{BindCol, OdbcCall, ReturnCode, SetStmtAttr};
+
+        // MS Query-style absolute heap pointers must still be rebased onto the
+        // row struct start so offsets stay within rowset * stride.
+        let calls = vec![
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_ROW_BIND_TYPE".to_string()),
+                value: Some(65540),
+                str_len: Some(0),
+            }),
+            OdbcCall::BindCol(BindCol {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(1),
+                target_type: Some(1),
+                target_type_name: Some("SQL_C_CHAR".to_string()),
+                buffer_length: Some(17),
+                target_value_ptr: Some("0x000000C4B070D390".to_string()),
+                indicator_ptr: Some("0x000000C4B070D0E8".to_string()),
+            }),
+            OdbcCall::BindCol(BindCol {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(2),
+                target_type: Some(1),
+                target_type_name: Some("SQL_C_CHAR".to_string()),
+                buffer_length: Some(17),
+                target_value_ptr: Some("0x000000C4B070D420".to_string()),
+                indicator_ptr: Some("0x000000C4B070D0A8".to_string()),
+            }),
+        ];
+        let output = gen_ado(calls);
+        // run min = 0xC4B070D0A8; col1 data 0x2E8 above base, ind 0x40 above base;
+        // col2 data 0x378 above base, ind at base.
+        assert!(
+            output.contains(
+                "SQLBindCol(stmt0, 1, SQL_C_CHAR, row_buf_stmt0.data() + 744, 17, reinterpret_cast<SQLLEN*>(row_buf_stmt0.data() + 64));"
+            ),
+            "col1 rebased from absolute pointers; output:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "SQLBindCol(stmt0, 2, SQL_C_CHAR, row_buf_stmt0.data() + 888, 17, reinterpret_cast<SQLLEN*>(row_buf_stmt0.data() + 0));"
+            ),
+            "col2 rebased from absolute pointers; output:\n{output}"
         );
     }
 
@@ -4111,6 +4523,437 @@ mod tests {
         assert!(
             output.contains("ALLDATATYPESNAV"),
             "fixture-scoped value stays asserted; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn schema_list_empty_catalog_collapses_to_drain_loop() {
+        use crate::model::{
+            CatalogFunction, CatalogStringArg, Fetch, GetData, OdbcCall, ReturnCode,
+        };
+
+        let nullarg = || CatalogStringArg {
+            value: None,
+            length: Some(0),
+        };
+        let calls = vec![
+            OdbcCall::Catalog(CatalogFunction {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                function_name: "SQLTables".to_string(),
+                string_args: vec![
+                    nullarg(),
+                    CatalogStringArg {
+                        value: Some("%".to_string()),
+                        length: Some(1),
+                    },
+                    nullarg(),
+                    nullarg(),
+                ],
+            }),
+            OdbcCall::Fetch(Fetch {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+            }),
+            OdbcCall::GetData(GetData {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(2),
+                target_type: Some(-8),
+                target_type_name: Some("SQL_C_WCHAR".to_string()),
+                buffer_length: Some(2048),
+                value: Some("PUBLIC".to_string()),
+                indicator: Some(12),
+                captured: None,
+                seq: None,
+            }),
+            OdbcCall::Fetch(Fetch {
+                return_code: ReturnCode::NoData,
+                handle: Some("0xstmt".to_string()),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "schema list".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("while ((ret = SQLFetch("),
+            "schema-list enumeration drains in a loop; output:\n{output}"
+        );
+        assert!(
+            !output.contains("PUBLIC"),
+            "account-specific schema names must not be pinned; output:\n{output}"
+        );
+        assert!(
+            output.contains("sqlchar(\"\")"),
+            "enumerate-all empty selectors render as empty string; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn fixture_schema_table_wildcard_is_not_treated_as_enumeration() {
+        use crate::model::{
+            CatalogFunction, CatalogStringArg, Fetch, GetData, OdbcCall, ReturnCode,
+        };
+
+        let calls = vec![
+            OdbcCall::Catalog(CatalogFunction {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                function_name: "SQLTables".to_string(),
+                string_args: vec![
+                    CatalogStringArg {
+                        value: Some("fixture_db".to_string()),
+                        length: Some(10),
+                    },
+                    CatalogStringArg {
+                        value: Some("fixture_schema".to_string()),
+                        length: Some(14),
+                    },
+                    CatalogStringArg {
+                        value: Some("%".to_string()),
+                        length: Some(1),
+                    },
+                    CatalogStringArg {
+                        value: None,
+                        length: Some(0),
+                    },
+                ],
+            }),
+            OdbcCall::Fetch(Fetch {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+            }),
+            OdbcCall::GetData(GetData {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(3),
+                target_type: Some(-8),
+                target_type_name: Some("SQL_C_WCHAR".to_string()),
+                buffer_length: Some(2048),
+                value: Some("ALLDATATYPESNAV".to_string()),
+                indicator: Some(30),
+                captured: None,
+                seq: None,
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "scoped tables".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            !output.contains("while ((ret = SQLFetch("),
+            "scoped table listing must stay unrolled; output:\n{output}"
+        );
+        assert!(
+            output.contains("ALLDATATYPESNAV"),
+            "scoped table name stays asserted; output:\n{output}"
+        );
+        let tables_line = output
+            .lines()
+            .find(|l| l.contains("SQLRETURN ret = SQLTables("))
+            .expect("SQLTables call");
+        assert!(
+            tables_line.contains("nullptr"),
+            "length-0 slot on a scoped listing is nullptr; line:\n{tables_line}"
+        );
+        assert!(
+            !tables_line.contains("sqlchar(\"\")"),
+            "scoped listing must not use empty-string sentinels; line:\n{tables_line}"
+        );
+    }
+
+    #[test]
+    fn catalog_scoped_schema_list_is_not_treated_as_enumeration() {
+        use crate::model::{
+            CatalogFunction, CatalogStringArg, Fetch, GetData, OdbcCall, ReturnCode,
+        };
+
+        let nullarg = || CatalogStringArg {
+            value: None,
+            length: Some(0),
+        };
+        let calls = vec![
+            OdbcCall::Catalog(CatalogFunction {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                function_name: "SQLTables".to_string(),
+                string_args: vec![
+                    CatalogStringArg {
+                        value: Some("MYDB".to_string()),
+                        length: Some(4),
+                    },
+                    CatalogStringArg {
+                        value: Some("%".to_string()),
+                        length: Some(1),
+                    },
+                    nullarg(),
+                    nullarg(),
+                ],
+            }),
+            OdbcCall::Fetch(Fetch {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+            }),
+            OdbcCall::GetData(GetData {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(2),
+                target_type: Some(-8),
+                target_type_name: Some("SQL_C_WCHAR".to_string()),
+                buffer_length: Some(2048),
+                value: Some("FIXTURE_SCHEMA".to_string()),
+                indicator: Some(28),
+                captured: None,
+                seq: None,
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "catalog schema list".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            !output.contains("while ((ret = SQLFetch("),
+            "catalog-scoped schema list must stay unrolled; output:\n{output}"
+        );
+        assert!(
+            output.contains("FIXTURE_SCHEMA"),
+            "catalog-scoped schema name stays asserted; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn table_type_percent_is_not_treated_as_enumeration() {
+        use crate::model::{
+            CatalogFunction, CatalogStringArg, Fetch, GetData, OdbcCall, ReturnCode,
+        };
+
+        let calls = vec![
+            OdbcCall::Catalog(CatalogFunction {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                function_name: "SQLTables".to_string(),
+                string_args: vec![
+                    CatalogStringArg {
+                        value: Some("MYDB".to_string()),
+                        length: Some(4),
+                    },
+                    CatalogStringArg {
+                        value: Some("SCH".to_string()),
+                        length: Some(3),
+                    },
+                    CatalogStringArg {
+                        value: Some("TBL".to_string()),
+                        length: Some(3),
+                    },
+                    CatalogStringArg {
+                        value: Some("%".to_string()),
+                        length: Some(1),
+                    },
+                ],
+            }),
+            OdbcCall::Fetch(Fetch {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+            }),
+            OdbcCall::GetData(GetData {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(3),
+                target_type: Some(-8),
+                target_type_name: Some("SQL_C_WCHAR".to_string()),
+                buffer_length: Some(2048),
+                value: Some("TBL".to_string()),
+                indicator: Some(6),
+                captured: None,
+                seq: None,
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "table type percent".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            !output.contains("while ((ret = SQLFetch("),
+            "TableType % must not collapse the fetch; output:\n{output}"
+        );
+        assert!(
+            output.contains("\"TBL\""),
+            "TableType-% listing stays unrolled; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn catalog_list_emits_empty_string_sentinels() {
+        use crate::model::{CatalogFunction, CatalogStringArg, OdbcCall, ReturnCode};
+
+        let nullarg = || CatalogStringArg {
+            value: None,
+            length: Some(0),
+        };
+        let calls = vec![OdbcCall::Catalog(CatalogFunction {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            function_name: "SQLTables".to_string(),
+            string_args: vec![
+                CatalogStringArg {
+                    value: Some("%".to_string()),
+                    length: Some(1),
+                },
+                nullarg(),
+                nullarg(),
+                nullarg(),
+            ],
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "catalog empty".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        let tables_line = output
+            .lines()
+            .find(|l| l.contains("SQLRETURN ret = SQLTables("))
+            .expect("SQLTables call");
+        assert!(
+            tables_line.contains("sqlchar(\"\")"),
+            "catalog-list length-0 selectors render as empty string; line:\n{tables_line}"
+        );
+        assert!(
+            !tables_line.contains("nullptr"),
+            "catalog-list length-0 selectors must not be nullptr; line:\n{tables_line}"
+        );
+    }
+
+    #[test]
+    fn async_poll_run_collapses_to_do_while() {
+        use crate::model::{ExecDirect, OdbcCall, ReturnCode};
+
+        let exec = |rc| {
+            OdbcCall::ExecDirect(ExecDirect {
+                return_code: rc,
+                handle: Some("0xstmt".to_string()),
+                sql: Some("SELECT 1".to_string()),
+                sql_truncated: false,
+            })
+        };
+        let calls = vec![
+            exec(ReturnCode::StillExecuting),
+            exec(ReturnCode::StillExecuting),
+            exec(ReturnCode::Success),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "async poll".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert_eq!(
+            output.matches("do {").count(),
+            1,
+            "exactly one poll loop; output:\n{output}"
+        );
+        assert!(
+            output.contains("} while (ret == SQL_STILL_EXECUTING);"),
+            "poll loop waits on SQL_STILL_EXECUTING; output:\n{output}"
+        );
+        assert!(
+            output.contains("REQUIRE(async_polls < 10000);"),
+            "poll loop is bounded; output:\n{output}"
+        );
+        assert!(
+            output.contains("OdbcMatchers::IsSuccess()"),
+            "terminal return code is asserted; output:\n{output}"
+        );
+        assert_eq!(
+            output.matches("SQLExecDirect(").count(),
+            1,
+            "executes are not unrolled; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn async_poll_run_collapses_across_get_diag_rec() {
+        use crate::model::{ExecDirect, GetDiagRec, HandleType, OdbcCall, ReturnCode};
+
+        let exec = |rc| {
+            OdbcCall::ExecDirect(ExecDirect {
+                return_code: rc,
+                handle: Some("0xstmt".to_string()),
+                sql: Some("SELECT 1".to_string()),
+                sql_truncated: false,
+            })
+        };
+        let calls = vec![
+            exec(ReturnCode::StillExecuting),
+            OdbcCall::GetDiagRec(GetDiagRec {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Stmt),
+                handle: Some("0xstmt".to_string()),
+                rec_number: Some(1),
+            }),
+            exec(ReturnCode::StillExecuting),
+            exec(ReturnCode::Success),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "async interleaved".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert_eq!(
+            output.matches("do {").count(),
+            1,
+            "interleaved diag still collapses to one poll loop; output:\n{output}"
+        );
+        assert_eq!(
+            output.matches("SQLExecDirect(").count(),
+            1,
+            "interleaved diag must not unroll executes; output:\n{output}"
+        );
+        assert!(
+            !output.contains("SQLGetDiagRec"),
+            "diag stays unreplayed; output:\n{output}"
+        );
+        assert!(
+            output.contains("OdbcMatchers::IsSuccess()"),
+            "terminal return code is asserted; output:\n{output}"
         );
     }
 
