@@ -159,6 +159,16 @@ class TestReauthenticationRequest:
         finally:
             errors_module._FUTURE_BASE_CHANGE_WARNED = False
 
+    def test_cause_is_populated_and_reachable(self):
+        # Snowpark's wrap_exception reads ``ex.cause`` unconditionally.
+        exc = ReauthenticationRequest("master token expired", errno=390114, sqlstate="08001")
+
+        assert type(exc.cause) is ProgrammingError
+        assert exc.cause is not exc
+        assert exc.cause.raw_msg == "master token expired"
+        assert exc.cause.errno == 390114
+        assert exc.cause.sqlstate == "08001"
+
 
 class TestExceptionInstantiation:
     """Test Error attributes (msg, errno, sqlstate, sfqid, query)."""

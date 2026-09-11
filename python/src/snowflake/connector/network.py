@@ -18,6 +18,9 @@ The values here are not written out again: each is taken from
 which is the one place the list lives on the Python side and which carries the
 note on keeping it in sync with the Rust core. Add or change a value there, not
 here.
+
+``ReauthenticationRequest`` is the exception to that: Snowpark still imports
+it from this module, so it is re-exported without a deprecation warning.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from __future__ import annotations
 from ._internal.backward_compatibility import install_backward_compatibility_getattr
 from ._internal.decorators import backward_compatibility
 from .constants import AuthenticatorType
+from .errors import ReauthenticationRequest
 
 
 # ``.value`` (a plain ``str``) rather than the enum member: matches the upstream
@@ -58,6 +62,7 @@ __all__ = [
     "USR_PWD_MFA_AUTHENTICATOR",
     "PROGRAMMATIC_ACCESS_TOKEN",
     "WORKLOAD_IDENTITY_AUTHENTICATOR",
+    "ReauthenticationRequest",
 ]
 
 # Must be the last statement; see ``install_backward_compatibility_getattr``.

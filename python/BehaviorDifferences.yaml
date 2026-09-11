@@ -692,11 +692,11 @@ behavior_differences:
       The old driver raises `network.ReauthenticationRequest`, imported from
       `snowflake.connector.network`, when the master token expires.
     new_driver_behavior: |
-      ReauthenticationRequest is raised for the codes above. It's importable
-      only from errors, not network (which re-exports authenticator constants
-      but not this class — that import still raises ImportError). It
-      subclasses ProgrammingError for compatibility and emits a FutureWarning
-      that the base moves to OperationalError in a future major release.
+      ReauthenticationRequest is raised for the codes above. It is importable
+      from both `snowflake.connector.errors` and `snowflake.connector.network`.
+      It carries a `.cause` `ProgrammingError` with the same message, errno,
+      and sqlstate. It subclasses `ProgrammingError` and emits a FutureWarning
+      that the base moves to `OperationalError` in a future major release.
 
   45:
     name: "Out-of-band (OOB) telemetry is not implemented"
