@@ -1,0 +1,28 @@
+{
+  "name": "CREATE TEMPORARY STAGE SYSTEM$BIND fails (stage binding disabled)",
+  "priority": 1,
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": {
+          "expression": "$.sqlText",
+          "contains": "CREATE TEMPORARY STAGE"
+        }
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": false,
+      "code": "002043",
+      "message": "SQL compilation error: Cannot perform CREATE STAGE. This session does not have a current database.",
+      "data": {}
+    }
+  }
+}

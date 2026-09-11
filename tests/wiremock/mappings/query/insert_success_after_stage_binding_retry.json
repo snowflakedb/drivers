@@ -1,0 +1,35 @@
+{
+  "name": "Statement succeeds when retried with inline JSON bindings",
+  "priority": 5,
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "statementTypeId": 12544,
+        "rowtype": [
+          {
+            "name": "number of rows inserted",
+            "type": "fixed",
+            "nullable": false,
+            "length": null,
+            "byteLength": null,
+            "precision": 10,
+            "scale": 0
+          }
+        ],
+        "rowset": [["1"]],
+        "total": 1,
+        "returned": 1,
+        "queryResultFormat": "json"
+      }
+    }
+  }
+}
