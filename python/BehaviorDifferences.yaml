@@ -1377,3 +1377,25 @@ behavior_differences:
     description: |
       The cursor-level counterpart of entry 18, which records the same capability on
       `ResultBatch`.
+  93:
+    name: "executemany() rewrite failure for a non-VALUES INSERT raises ProgrammingError instead of InterfaceError"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `executemany()` on an `INSERT` with no `VALUES` clause (for example
+      `INSERT ... SELECT`) raises `InterfaceError` with errno
+      `ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT` (252001) and message
+      "Failed to rewrite multi-row insert".
+    new_driver_behavior: |
+      The same call raises `ProgrammingError` with the same errno. The message
+      states that no `VALUES` clause was found and that the statement must
+      have the form `INSERT INTO ... VALUES (...)`.
+    description: |
+      `ProgrammingError` is the PEP 249 class for invalid statement shape;
+      `InterfaceError` is reserved for driver-state failures such as a closed
+      cursor. Errno-based handlers and `except Error` still match. `except
+      InterfaceError` does not; `except DatabaseError` / `except
+      ProgrammingError` match only the new driver.
