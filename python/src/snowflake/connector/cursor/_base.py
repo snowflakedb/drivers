@@ -399,7 +399,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             raise
 
     def _handle_multi_statement_response(
-        self, result: MultiStatementResult, query: str, request_id: str | None
+        self, result: MultiStatementResult, query: str | None, request_id: str | None
     ) -> None:
         self._multi_statement = MultiStatementQueryResultState.from_result(result, request_id)
 
@@ -763,12 +763,15 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @pep249
     @api_telemetry
     @requires_open
+    @with_prefetch_hook
     def nextset(self) -> SnowflakeCursorBase | None:
         """
         Skip to the next available result set, discarding remaining rows from current set.
 
         This method is used for multi-statement queries where a single execute() produces
         multiple result sets. Call nextset() to advance to the next query's results.
+
+        Loads a deferred async result first.
 
         Returns:
             SnowflakeCursorBase: Self if next set is available.
@@ -975,15 +978,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             query_id=qid,
         )
 
-        # Handle single or multi-statement response
         if response.HasField("multi"):
-            multi_result = response.multi
-            if multi_result.query_ids:
-                first_qid = multi_result.query_ids[0]
-                rs_response = self._fetch_result_set_by_query_id(first_qid)
-                self._apply_result_set(rs_response, query=None)
-            else:
-                self._query_result = QueryResult()
+            self._handle_multi_statement_response(response.multi, query=None, request_id=None)
         else:
             rs_response = response.single
             self._apply_result_set(rs_response, query=None)

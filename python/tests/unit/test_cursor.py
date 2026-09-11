@@ -2092,6 +2092,48 @@ class TestDescribe:
         assert cursor._request_id == "550e8400-e29b-41d4-a716-446655440000"
 
 
+def _child_result_descriptor(query_id, rows_affected):
+    descriptor = MagicMock()
+    descriptor.query_id = query_id
+    descriptor.columns = []
+    descriptor.rows_affected = rows_affected
+    descriptor.HasField = MagicMock(side_effect=lambda f: f == "rows_affected")
+    descriptor.sql_state = ""
+    descriptor.stats = None
+    return descriptor
+
+
+def _stub_multi_query_result(client, child_query_ids, rows_by_qid, *, is_async=False):
+    multi = MagicMock()
+    multi.query_ids = child_query_ids
+    multi.parent = MagicMock(query_id="parent-qid")
+
+    query_result_response = MagicMock()
+    query_result_response.multi = multi
+    query_result_response.HasField = MagicMock(side_effect=lambda f: f == "multi")
+
+    def result_set_for(query_id):
+        rs_response = MagicMock()
+        rs_response.result_descriptor = _child_result_descriptor(query_id, rows_by_qid[query_id])
+        rs_response.result_set_handle = ResultSetHandle(id=1)
+        return rs_response
+
+    if is_async:
+        client.connection_get_query_result = AsyncMock(return_value=query_result_response)
+
+        async def fetch_result_set(request):
+            return result_set_for(request.query_id)
+
+        client.connection_get_result_set = AsyncMock(side_effect=fetch_result_set)
+    else:
+        client.connection_get_query_result.return_value = query_result_response
+
+        def fetch_result_set(request):
+            return result_set_for(request.query_id)
+
+        client.connection_get_result_set.side_effect = fetch_result_set
+
+
 class TestQueryResult:
     """Unit tests for Cursor.query_result method."""
 
@@ -2198,6 +2240,36 @@ class TestQueryResult:
         mock_core_client.connection_get_query_result.side_effect = ProgrammingError("Query has expired")
         with pytest.raises(ProgrammingError, match="Query has expired"):
             cursor.query_result("expired-qid")
+
+    def test_nextset_advances_through_every_child_after_query_result(self, cursor, mock_core_client):
+        _stub_multi_query_result(
+            mock_core_client,
+            child_query_ids=["qid-1", "qid-2"],
+            rows_by_qid={"qid-1": 1, "qid-2": 2},
+        )
+
+        cursor.query_result("parent-qid")
+
+        assert cursor.multi_statement_savedIds == ["qid-1", "qid-2"]
+        assert cursor.rowcount == 1
+
+        result = cursor.nextset()
+
+        assert result is cursor
+        assert cursor.rowcount == 2
+        assert cursor.nextset() is None
+
+    def test_query_result_with_single_child_leaves_nextset_exhausted(self, cursor, mock_core_client):
+        _stub_multi_query_result(
+            mock_core_client,
+            child_query_ids=["qid-1"],
+            rows_by_qid={"qid-1": 5},
+        )
+
+        cursor.query_result("parent-qid")
+
+        assert cursor.rowcount == 5
+        assert cursor.nextset() is None
 
 
 class TestQueryResultWaiter:
@@ -2328,6 +2400,82 @@ class TestGetResultsFromSfqid:
         cursor.execute("SELECT 1")
 
         assert cursor._prefetch_hook is None
+
+    def test_nextset_before_any_fetch_reaches_the_last_statement(self, cursor, mock_core_client):
+        _stub_multi_query_result(
+            mock_core_client,
+            child_query_ids=["qid-1", "qid-2"],
+            rows_by_qid={"qid-1": 1, "qid-2": 2},
+        )
+
+        with patch("snowflake.connector._internal.cursor.query_result_waiter.time.sleep"):
+            cursor.get_results_from_sfqid("parent-qid")
+            result = cursor.nextset()
+
+        assert result is cursor
+        assert cursor.multi_statement_savedIds == ["qid-1", "qid-2"]
+        assert cursor.rowcount == 2
+        assert cursor.nextset() is None
+
+
+class TestAsyncQueryResult:
+    """Async cursor: query_result and get_results_from_sfqid with nextset()."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.get_query_status_throw_if_error = AsyncMock(return_value=QueryStatus.SUCCESS)
+        conn.is_still_running.return_value = False
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return AsyncSnowflakeCursor(mock_connection)
+
+    @pytest.fixture
+    def mock_async_core_client(self):
+        mock = MagicMock()
+        old = async_core_driver._client
+        async_core_driver.client = mock
+        yield mock
+        async_core_driver.client = old
+
+    def test_nextset_advances_through_every_child_after_query_result(self, cursor, mock_async_core_client):
+        _stub_multi_query_result(
+            mock_async_core_client,
+            child_query_ids=["qid-1", "qid-2"],
+            rows_by_qid={"qid-1": 1, "qid-2": 2},
+            is_async=True,
+        )
+
+        asyncio.run(cursor.query_result("parent-qid"))
+
+        assert cursor.multi_statement_savedIds == ["qid-1", "qid-2"]
+        assert cursor.rowcount == 1
+
+        result = asyncio.run(cursor.nextset())
+
+        assert result is cursor
+        assert cursor.rowcount == 2
+        assert asyncio.run(cursor.nextset()) is None
+
+    def test_nextset_before_any_fetch_reaches_the_last_statement(self, cursor, mock_async_core_client):
+        _stub_multi_query_result(
+            mock_async_core_client,
+            child_query_ids=["qid-1", "qid-2"],
+            rows_by_qid={"qid-1": 1, "qid-2": 2},
+            is_async=True,
+        )
+
+        asyncio.run(cursor.get_results_from_sfqid("parent-qid"))
+        result = asyncio.run(cursor.nextset())
+
+        assert result is cursor
+        assert cursor.multi_statement_savedIds == ["qid-1", "qid-2"]
+        assert cursor.rowcount == 2
+        assert asyncio.run(cursor.nextset()) is None
 
 
 class TestAbortQuery:
