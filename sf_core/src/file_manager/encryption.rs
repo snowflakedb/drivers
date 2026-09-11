@@ -310,7 +310,7 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
         output_byte_len += tail_written as i64;
     }
 
-    if let (Some(expected), Some(hasher)) = (digest, hasher) {
+    if let (Some(expected), Some(mut hasher)) = (digest, hasher) {
         let computed_bytes = hasher.finish().context(OpenSSLSnafu {
             operation: "finalizing SHA-256 digest for verification",
         })?;
