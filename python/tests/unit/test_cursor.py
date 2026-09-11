@@ -20,6 +20,7 @@ from snowflake.connector._internal.api_client.client_api import CHUNK_SIZE, asyn
 from snowflake.connector._internal.binding_converters import ParamStyle, parse_stage_binding_threshold
 from snowflake.connector._internal.cursor import CursorBaseMixin, QueryResult, QueryResultWaiter
 from snowflake.connector._internal.errorcode import (
+    ER_CURSOR_IS_CLOSED,
     ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT,
     ER_INVALID_VALUE,
     ER_NO_PYARROW,
@@ -4031,3 +4032,160 @@ class TestQueryResultFormat:
         cursor._prefetch_hook = MagicMock(side_effect=load)
 
         assert cursor._query_result_format == "arrow"
+
+
+class TestSnowparkDirectFileTransfer:
+    """Unit tests for `_upload`/`_download`/`_upload_stream`/`_download_stream`.
+
+    Each method is a thin wrapper that builds a PUT/GET statement (or a stage
+    reference) and hands it to `execute`/`_execute`/`download_stream`. These
+    tests only check that the right one is called with the right arguments —
+    execution, chunking and abort behavior belong to TestFileStreamUpload and
+    TestDownloadStream.
+    """
+
+    @pytest.fixture
+    def cursor(self):
+        conn = MagicMock()
+        conn.is_closed.return_value = False
+        return SnowflakeCursor(conn)
+
+    @pytest.mark.parametrize(
+        ("local_file_name", "stage_location", "options", "expected_sql"),
+        [
+            pytest.param(
+                "'file:///tmp/x.csv'",
+                "@stage",
+                {"parallel": 4, "source_compression": "auto_detect"},
+                "PUT 'file:///tmp/x.csv' @stage parallel=4 source_compression=auto_detect",
+                id="pre-quoted-path-as-write-pandas-sends-it",
+            ),
+            pytest.param(
+                "tests/resources/t*.csv",
+                "@mystage/prefix1",
+                {},
+                "PUT file://tests/resources/t*.csv @mystage/prefix1",
+                id="raw-path-as-snowpark-sends-it",
+            ),
+            pytest.param(
+                "/tmp/data.csv",
+                "mystage",
+                {"auto_compress": True, "overwrite": False},
+                "PUT file:///tmp/data.csv @mystage auto_compress=True overwrite=False",
+                id="booleans-stringified-the-way-legacy-does",
+            ),
+        ],
+    )
+    def test_upload_calls_execute_with_the_statement_legacy_would_send(
+        self, cursor, local_file_name, stage_location, options, expected_sql
+    ):
+        with patch.object(cursor, "execute") as execute:
+            cursor._upload(local_file_name, stage_location, options)
+
+        execute.assert_called_once_with(expected_sql, file_stream=None)
+
+    @pytest.mark.parametrize(
+        ("stage_location", "options", "expected_sql"),
+        [
+            pytest.param(
+                "@mystage/prefix1/data.csv",
+                {"auto_compress": False},
+                "PUT file://data.csv @mystage/prefix1 auto_compress=False",
+                id="stage-file-as-snowpark-sends-it",
+            ),
+            pytest.param(
+                "@SYSTEMBIND/abc/9.csv",
+                {"source_compression": "auto_detect"},
+                "PUT file://9.csv @SYSTEMBIND/abc source_compression=auto_detect",
+                id="bind-upload-agent-stage-shape",
+            ),
+            pytest.param(
+                "mystage/data.csv",
+                {},
+                "PUT file://data.csv @mystage",
+                id="stage-without-the-at-prefix",
+            ),
+        ],
+    )
+    def test_upload_stream_calls_execute_with_the_statement_legacy_would_send(
+        self, cursor, stage_location, options, expected_sql
+    ):
+        stream = io.BytesIO(b"payload")
+
+        with patch.object(cursor, "execute") as execute:
+            cursor._upload_stream(stream, stage_location, options)
+
+        execute.assert_called_once_with(expected_sql, file_stream=stream)
+
+    @pytest.mark.parametrize(
+        ("stage_location", "target_directory", "options", "expected_sql"),
+        [
+            pytest.param(
+                "@mystage/prefix1",
+                "/tmp/target",
+                {"parallel": 10},
+                "GET @mystage/prefix1 file:///tmp/target parallel=10",
+                id="plain-get",
+            ),
+            pytest.param(
+                "@mystage",
+                "/tmp/target",
+                {"parallel": 10, "pattern": "'.*test.*[.]csv'"},
+                "GET @mystage file:///tmp/target parallel=10 pattern='.*test.*[.]csv'",
+                id="with-a-pattern-option",
+            ),
+        ],
+    )
+    def test_download_calls_execute_with_a_get(self, cursor, stage_location, target_directory, options, expected_sql):
+        with patch.object(cursor, "execute") as execute:
+            cursor._download(stage_location, target_directory, options)
+
+        execute.assert_called_once_with(expected_sql, file_stream=None)
+
+    @pytest.mark.parametrize(
+        ("stage_location", "decompress", "expected_stage_location"),
+        [
+            pytest.param(
+                "@mystage/prefix1/data.csv.gz", True, "@mystage/prefix1/data.csv.gz", id="already-at-prefixed"
+            ),
+            pytest.param("mystage/data.csv", False, "@mystage/data.csv", id="bare-stage-gets-the-at-prefix"),
+        ],
+    )
+    def test_download_stream_delegates_to_download_stream(
+        self, cursor, stage_location, decompress, expected_stage_location
+    ):
+        with patch.object(cursor, "download_stream") as download_stream:
+            cursor._download_stream(stage_location, decompress)
+
+        download_stream.assert_called_once_with(expected_stage_location, decompress)
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(lambda c: c._upload("/tmp/data.csv", "@stage", {}), id="_upload"),
+            pytest.param(lambda c: c._download("@stage", "/tmp/target", {}), id="_download"),
+            pytest.param(lambda c: c._upload_stream(io.BytesIO(b"x"), "@stage/data.csv", {}), id="_upload_stream"),
+            pytest.param(lambda c: c._download_stream("@stage/data.csv"), id="_download_stream"),
+        ],
+    )
+    def test_methods_reject_a_closed_cursor(self, cursor, call):
+        cursor.close()
+
+        with pytest.raises(InterfaceError, match="Cursor is closed") as exc_info:
+            call(cursor)
+
+        assert exc_info.value.errno == ER_CURSOR_IS_CLOSED
+
+    @pytest.mark.parametrize(
+        ("do_reset", "expected_method"),
+        [
+            pytest.param(True, "execute", id="resets-by-default"),
+            pytest.param(False, "_execute", id="skips-the-reset-when-asked-to"),
+        ],
+    )
+    def test_upload_honors_do_reset(self, cursor, do_reset, expected_method):
+        with patch.object(cursor, "execute") as execute, patch.object(cursor, "_execute") as _execute:
+            cursor._upload("/tmp/data.csv", "@stage", {}, _do_reset=do_reset)
+
+        (execute if expected_method == "execute" else _execute).assert_called_once()
+        (_execute if expected_method == "execute" else execute).assert_not_called()

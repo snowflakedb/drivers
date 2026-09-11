@@ -320,6 +320,76 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         finally:
             logger.info("download_stream: exit")
 
+    @snowpark_compat
+    @backward_compatibility
+    @requires_open
+    def _upload(
+        self,
+        local_file_name: str,
+        stage_location: str,
+        options: dict[str, Any],
+        _do_reset: bool = True,
+    ) -> None:
+        """Synthesize and run the PUT that ``session.file.put`` would otherwise issue as SQL."""
+        from .._internal.snowpark_backcompat_helpers import file_uri, put_get_options, stage_ref
+
+        sql = f"PUT {file_uri(local_file_name)} {stage_ref(stage_location)} {put_get_options(options)}"
+        self._execute_file_transfer(sql.rstrip(), _do_reset=_do_reset)
+
+    @snowpark_compat
+    @backward_compatibility
+    @requires_open
+    def _download(
+        self,
+        stage_location: str,
+        target_directory: str,
+        options: dict[str, Any],
+        _do_reset: bool = True,
+    ) -> None:
+        """Synthesize and run the GET that ``session.file.get`` would otherwise issue as SQL."""
+        from .._internal.snowpark_backcompat_helpers import file_uri, put_get_options, stage_ref
+
+        sql = f"GET {stage_ref(stage_location)} {file_uri(target_directory)} {put_get_options(options)}"
+        self._execute_file_transfer(sql.rstrip(), _do_reset=_do_reset)
+
+    @snowpark_compat
+    @backward_compatibility
+    @requires_open
+    def _upload_stream(
+        self,
+        input_stream: BinaryIO,
+        stage_location: str,
+        options: dict[str, Any],
+        _do_reset: bool = True,
+    ) -> None:
+        """Stream-upload to the file named by *stage_location* (a file, not a directory)."""
+        from .._internal.snowpark_backcompat_helpers import put_get_options, unquoted_stage_ref
+
+        stage_dir, _, filename = unquoted_stage_ref(stage_location).rpartition("/")
+        sql = f"PUT file://{filename} {stage_dir} {put_get_options(options)}"
+        self._execute_file_transfer(sql.rstrip(), _do_reset=_do_reset, file_stream=input_stream)
+
+    @snowpark_compat
+    @backward_compatibility
+    def _download_stream(self, stage_location: str, decompress: bool = False) -> BinaryIO:
+        """Delegate to :meth:`download_stream`, adding the ``@`` prefix Snowpark omits."""
+        from .._internal.snowpark_backcompat_helpers import unquoted_stage_ref
+
+        return self.download_stream(unquoted_stage_ref(stage_location), decompress)
+
+    def _execute_file_transfer(
+        self,
+        sql: str,
+        *,
+        _do_reset: bool,
+        file_stream: BinaryIO | None = None,
+    ) -> None:
+        """Run a synthesized PUT/GET, resetting the cursor first unless told not to."""
+        if _do_reset:
+            self.execute(sql, file_stream=file_stream)
+        else:
+            self._execute(sql, file_stream=file_stream)
+
     def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteQueryResponse:
         """Execute query and return ExecuteQueryResponse (single or multi)."""
         try:
