@@ -1,11 +1,11 @@
-@python @odbc @jdbc @nodejs @core_not_needed
+@python @odbc @jdbc @nodejs @dotnet @core_not_needed
 Feature: DECFLOAT type support
 
   # =========================================================================== #
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should cast decfloat values to appropriate type
     # Python: Values should be cast to 'Decimal' type with 38-digit precision
     Given Snowflake client is logged in
