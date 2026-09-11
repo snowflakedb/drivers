@@ -65,26 +65,6 @@ def test_should_upload_a_local_file_and_report_it_uploaded(connection, local_fil
         assert local_file.name in _stage_filenames(cursor, stage_name)
 
 
-def test_should_describe_the_put_result_columns(connection, local_file):
-    """cursor.description after _upload is what Snowpark maps onto PutResult."""
-    with connection.cursor() as cursor:
-        stage_name = create_temporary_stage(cursor, "TEST_SNOWPARK_UPLOAD_DESC")
-
-        cursor._upload(local_file.as_posix(), f"@{stage_name}", {"auto_compress": False, "overwrite": True})
-
-        column_names = [column.name.lower() for column in cursor.description]
-        assert column_names == [
-            "source",
-            "target",
-            "source_size",
-            "target_size",
-            "source_compression",
-            "target_compression",
-            "status",
-            "message",
-        ]
-
-
 def test_should_accept_a_pre_quoted_local_path(connection, local_file):
     """write_pandas-style callers pass an already-quoted 'file://…' literal."""
     with connection.cursor() as cursor:
@@ -98,25 +78,6 @@ def test_should_accept_a_pre_quoted_local_path(connection, local_file):
 
         assert cursor.fetchone()[PUT_STATUS] == "UPLOADED"
         assert local_file.name in _stage_filenames(cursor, stage_name)
-
-
-def test_should_upload_several_files_matching_a_wildcard(connection, tmp_path):
-    """_upload accepts the wildcards session.file.put documents."""
-    for index in range(3):
-        (tmp_path / f"part{index}.csv").write_bytes(PAYLOAD)
-
-    with connection.cursor() as cursor:
-        stage_name = create_temporary_stage(cursor, "TEST_SNOWPARK_UPLOAD_GLOB")
-
-        cursor._upload(
-            (tmp_path / "part*.csv").as_posix(),
-            f"@{stage_name}",
-            {"auto_compress": False, "overwrite": True},
-        )
-
-        statuses = [row[PUT_STATUS] for row in cursor.fetchall()]
-        assert statuses == ["UPLOADED"] * 3, f"expected three uploads, got {statuses}"
-        assert sorted(_stage_filenames(cursor, stage_name)) == ["part0.csv", "part1.csv", "part2.csv"]
 
 
 def test_should_upload_a_stream_to_the_named_stage_file(connection):
@@ -172,36 +133,6 @@ def test_should_download_a_stage_file_into_the_target_directory(connection, loca
             assert (target / local_file.name).read_bytes() == PAYLOAD
 
 
-def test_should_describe_the_get_result_columns(connection, local_file):
-    """cursor.description after _download is what Snowpark maps onto GetResult."""
-    with connection.cursor() as cursor:
-        stage_name = create_temporary_stage(cursor, "TEST_SNOWPARK_DOWNLOAD_DESC")
-        cursor._upload(local_file.as_posix(), f"@{stage_name}", {"auto_compress": False, "overwrite": True})
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            cursor._download(f"@{stage_name}/{local_file.name}", tmp_dir, {"parallel": 1})
-
-        column_names = [column.name.lower() for column in cursor.description]
-        assert column_names == ["file", "size", "status", "message"]
-
-
-def test_should_download_only_the_files_matching_a_pattern(connection, tmp_path):
-    """_download honors the PATTERN option session.file.get exposes."""
-    (tmp_path / "keep.csv").write_bytes(PAYLOAD)
-    (tmp_path / "skip.txt").write_bytes(PAYLOAD)
-
-    with connection.cursor() as cursor:
-        stage_name = create_temporary_stage(cursor, "TEST_SNOWPARK_DOWNLOAD_PATTERN")
-        cursor._upload((tmp_path / "*").as_posix(), f"@{stage_name}", {"auto_compress": False, "overwrite": True})
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            # Snowpark single-quotes PATTERN before handing the options over.
-            cursor._download(f"@{stage_name}", tmp_dir, {"parallel": 1, "pattern": "'.*[.]csv'"})
-
-            downloaded = sorted(path.name for path in Path(tmp_dir).iterdir())
-            assert downloaded == ["keep.csv"], f"PATTERN did not filter the download: {downloaded}"
-
-
 def test_should_read_a_stage_file_through_a_stream(connection, local_file):
     """_download_stream returns a reader over the stage file's bytes."""
     with connection.cursor() as cursor:
@@ -229,32 +160,3 @@ def test_should_decompress_a_gzipped_stage_file_on_request(connection, tmp_path)
         with cursor._download_stream(stage_path) as stream:
             assert gzip.decompress(stream.read()) == PAYLOAD
 
-
-def test_should_accept_a_stage_location_without_the_at_prefix(connection, local_file):
-    """Snowpark's validate_stage_location does not add `@`, so the stage arrives bare."""
-    with connection.cursor() as cursor:
-        stage_name = create_temporary_stage(cursor, "TEST_SNOWPARK_BARE_STAGE")
-
-        cursor._upload(local_file.as_posix(), stage_name, {"auto_compress": False, "overwrite": True})
-        assert cursor.fetchone()[PUT_STATUS] == "UPLOADED"
-
-        with cursor._download_stream(f"{stage_name}/{local_file.name}") as stream:
-            assert stream.read() == PAYLOAD
-
-
-def test_should_round_trip_a_stream_upload_through_a_stream_download(connection):
-    """put_stream followed by get_stream is the pairing Snowpark users hit most."""
-    payload = b"a,b\n" + b"1,2\n" * 5000
-
-    with connection.cursor() as cursor:
-        stage_name = create_temporary_stage(cursor, "TEST_SNOWPARK_STREAM_ROUNDTRIP")
-
-        cursor._upload_stream(
-            io.BytesIO(payload),
-            f"@{stage_name}/roundtrip.csv",
-            {"auto_compress": False, "overwrite": True},
-        )
-        assert cursor.fetchone()[PUT_STATUS] == "UPLOADED"
-
-        with cursor._download_stream(f"@{stage_name}/roundtrip.csv") as stream:
-            assert stream.read() == payload

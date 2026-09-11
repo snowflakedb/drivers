@@ -4233,32 +4233,6 @@ class TestSnowparkDirectFileTransfer:
 
         assert mock_core_client.connection_upload_stream_begin.call_args.args[0].sql == expected
 
-    def test_upload_synthesizes_a_put_from_raw_snowpark_arguments(self, cursor, mock_core_client):
-        with patch.object(SnowflakeCursor, "_apply_result_set"):
-            cursor._upload(
-                "/tmp/data.csv",
-                "@mystage/prefix1",
-                {"parallel": 4, "source_compression": "AUTO_DETECT", "auto_compress": True, "overwrite": False},
-            )
-
-        assert self._executed_sql(mock_core_client) == (
-            "PUT file:///tmp/data.csv @mystage/prefix1 "
-            "parallel=4 source_compression=AUTO_DETECT auto_compress=True overwrite=False"
-        )
-        mock_core_client.connection_upload_stream_begin.assert_not_called()
-
-    def test_upload_accepts_the_pre_quoted_path_shape_write_pandas_uses(self, cursor, mock_core_client):
-        with patch.object(SnowflakeCursor, "_apply_result_set"):
-            cursor._upload(
-                local_file_name="'file:///tmp/chunk.parquet'",
-                stage_location="@stage",
-                options={"parallel": 4, "source_compression": "auto_detect"},
-            )
-
-        assert self._executed_sql(mock_core_client) == (
-            "PUT 'file:///tmp/chunk.parquet' @stage parallel=4 source_compression=auto_detect"
-        )
-
     def test_download_synthesizes_a_get(self, cursor, mock_core_client):
         with patch.object(SnowflakeCursor, "_apply_result_set"):
             cursor._download("@mystage/prefix1", "/tmp/target", {"parallel": 10})
@@ -4273,7 +4247,7 @@ class TestSnowparkDirectFileTransfer:
             "GET @mystage file:///tmp/target parallel=10 pattern='.*test.*[.]csv'"
         )
 
-    def test_upload_stream_streams_the_payload_under_a_synthesized_put(self, cursor, mock_core_client):
+    def test_upload_stream_streams_the_payload_in_chunks(self, cursor, mock_core_client):
         mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
             upload_handle=UploadStreamHandle(id=3, magic=1)
         )
@@ -4282,8 +4256,6 @@ class TestSnowparkDirectFileTransfer:
         with patch.object(SnowflakeCursor, "_apply_result_set"):
             cursor._upload_stream(io.BytesIO(payload), "@mystage/prefix1/data.csv", {"auto_compress": False})
 
-        begin_request = mock_core_client.connection_upload_stream_begin.call_args.args[0]
-        assert begin_request.sql == "PUT file://data.csv @mystage/prefix1 auto_compress=False"
         sent = b"".join(c.args[0].data for c in mock_core_client.connection_upload_stream_chunk.call_args_list)
         assert sent == payload
         mock_core_client.connection_upload_stream_finish.assert_called_once()

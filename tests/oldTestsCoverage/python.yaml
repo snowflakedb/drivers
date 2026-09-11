@@ -1973,16 +1973,16 @@ tests:
     ud_tests:
       - python/tests/e2e/put_get/test_put_get_snowpark_direct.py::test_should_upload_a_local_file_and_report_it_uploaded
       - python/tests/e2e/put_get/test_put_get_snowpark_direct.py::test_should_accept_a_pre_quoted_local_path
-      - python/tests/unit/test_cursor.py::TestSnowparkDirectFileTransfer::test_upload_synthesizes_a_put_from_raw_snowpark_arguments
+      - python/tests/unit/test_cursor.py::TestSnowparkDirectFileTransfer::test_upload_synthesizes_the_statement_legacy_would
     notes: >-
-      The old test only covers auto_compress on/off; the UD e2e tests add the pre-quoted path
-      shape, wildcards and the PUT result columns. Compression round-trip is covered by
+      The old test only covers auto_compress on/off; the UD tests add the pre-quoted path shape
+      write_pandas uses. Compression round-trip is covered by
       test_should_decompress_a_gzipped_stage_file_on_request.
   - test_name: test_upload_stream
     ud_tests:
       - python/tests/e2e/put_get/test_put_get_snowpark_direct.py::test_should_upload_a_stream_to_the_named_stage_file
       - python/tests/e2e/put_get/test_put_get_snowpark_direct.py::test_should_upload_a_stream_left_at_a_non_zero_position
-      - python/tests/unit/test_cursor.py::TestSnowparkDirectFileTransfer::test_upload_stream_streams_the_payload_under_a_synthesized_put
+      - python/tests/unit/test_cursor.py::TestSnowparkDirectFileTransfer::test_upload_stream_streams_the_payload_in_chunks
       - python/tests/unit/test_cursor.py::TestSnowparkDirectFileTransfer::test_upload_stream_aborts_and_reraises_on_chunk_failure
   integ/test_easy_logging.py:
   - test_name: test_no_save_logs
