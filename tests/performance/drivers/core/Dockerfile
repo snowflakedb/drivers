@@ -82,12 +82,13 @@ RUN sed -i 's/crate-type = \["dylib", "rlib"\]/crate-type = ["rlib"]/' ./sf_core
 
 WORKDIR /workdir/tests/performance/drivers/core/app
 
-# Build dependencies - this layer will be cached unless dependencies change
+# cargo-chef cook rewrites manifests into a dependency-only recipe and masks
+# local crate versions to 0.0.1, so this cache-warming layer cannot use the
+# committed Cargo.lock. CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback
+# keeps that temporary resolution on the pinned toolchain. The COPY below
+# restores the reviewed lockfile for the --locked build.
 COPY --from=planner /workdir/tests/performance/drivers/core/app/recipe.json recipe.json
-# Copy Cargo.lock to ensure cargo-chef uses pinned dependency versions
-# (without this, cargo resolves the latest versions which may require a newer rustc)
-COPY tests/performance/drivers/core/app/Cargo.lock Cargo.lock
-RUN cargo chef cook --release --recipe-path recipe.json --locked
+RUN cargo chef cook --release --recipe-path recipe.json
 
 # Copy application source and build only the app (sf_core already compiled)
 COPY tests/performance/drivers/core/app/ ./

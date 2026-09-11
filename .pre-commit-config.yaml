@@ -41,13 +41,16 @@ repos:
         files: ^(Cargo\.lock|python/Cargo\.lock\.sdist|python/Cargo\.toml\.sdist|(sf_core|python_bridge|sf_params_spec|proto_utils|error_trace|error_trace_derive|proto_generator)/Cargo\.toml)$
         language: system
     -   id: core-perf-cargo-lock
-        name: Core perf Cargo.lock is --locked
+        name: Core perf-driver Cargo.lock is --locked
         description: >
-          Fail if tests/performance/drivers/core/app/Cargo.lock is stale.
-          Refresh with: cargo metadata --manifest-path tests/performance/drivers/core/app/Cargo.toml --format-version 1
-        entry: bash -c 'cargo metadata --manifest-path tests/performance/drivers/core/app/Cargo.toml --locked --format-version 1 >/dev/null'
+          Fail if tests/performance/drivers/core/app/Cargo.lock is stale for the
+          isolated core-perf-driver workspace. The Core perf Dockerfile builds
+          that crate with cargo --locked; a stale lockfile fails the
+          drivers-performance-pr-check job on main. Refresh with
+          scripts/check-core-perf-cargo-lock.sh refresh.
+        entry: bash scripts/check-core-perf-cargo-lock.sh
         pass_filenames: false
-        files: ^(tests/performance/drivers/core/app/Cargo\.(toml|lock)|(sf_core|sf_params_spec|proto_utils|error_trace|error_trace_derive|proto_generator)/Cargo\.toml)$
+        files: ^(tests/performance/drivers/core/app/Cargo\.(toml|lock)|(sf_core|sf_params_spec|proto_utils|error_trace|error_trace_derive|proto_generator)/Cargo\.toml|sf_core/tests/common/arrow_deserialize_macro/Cargo\.toml)$
         language: system
     -   id: clang-format
         name: clang-format
