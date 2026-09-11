@@ -3101,6 +3101,58 @@ class TestParamsAliasAndForceQmark:
         assert sql_request.query == "INSERT INTO t VALUES (%s)"  # not interpolated
 
 
+class TestExecuteStripsSurroundingWhitespace:
+    """SNOW-4088977: cursor.query (and, transitively, QueryRecord.sql_text on
+    the Snowpark side) must not carry leading/trailing whitespace, matching
+    the legacy connector's ``execute()`` normalization. Internal whitespace
+    (e.g. the double spaces Snowpark's SQL templates emit) is left alone.
+    """
+
+    @pytest.fixture
+    def mock_connection(self, mock_core_client):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.PYFORMAT
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_core_client.statement_execute_query.return_value.result = execute_result
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        cur = SnowflakeCursor(mock_connection)
+        yield cur
+        cur.close()
+
+    @pytest.mark.parametrize(
+        ("operation", "expected"),
+        [
+            (
+                " CREATE  OR  REPLACE  SCOPED TEMPORARY  TABLE t (a INT) ",
+                "CREATE  OR  REPLACE  SCOPED TEMPORARY  TABLE t (a INT)",
+            ),
+            (
+                " INSERT  INTO t WITH cte AS (SELECT 1) SELECT * FROM cte",
+                "INSERT  INTO t WITH cte AS (SELECT 1) SELECT * FROM cte",
+            ),
+            (
+                "WITH cte AS (SELECT 1) SELECT * FROM cte\n",
+                "WITH cte AS (SELECT 1) SELECT * FROM cte",
+            ),
+        ],
+    )
+    def test_execute_strips_leading_and_trailing_whitespace(self, cursor, mock_core_client, operation, expected):
+        cursor.execute(operation)
+
+        assert cursor.query == expected
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == expected
+
+
 class TestExecutemanyReturnsCursor:
     """executemany() returns the cursor (``self``) on every path, matching the
     legacy connector so callers (e.g. Snowpark's query listener) can read

@@ -225,6 +225,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
+        operation = operation.strip(" \t\n\r") if operation else ""
+
         if file_stream is not None:
             await self._execute_upload_stream(operation, file_stream)
             self._rownumber = -1
