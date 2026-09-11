@@ -306,8 +306,8 @@ e2e = "pytest tests/e2e {args}"
 all = "pytest tests/ --ignore=tests/packaging {args}"
 # All tests with coverage
 all-cov = "pytest tests/ --ignore=tests/packaging --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
-# Pandas-specific tests only (requires pandas extra)
-pandas-cov = "pytest tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+# Pandas and NumPy consumer tests (requires pandas extra)
+pandas-cov = "pytest tests/e2e/pandas tests/e2e/numpy --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # This environment skips installing the ud version from sources,
 # installs from wheel via install-wheel
@@ -327,11 +327,11 @@ install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
 # failures from GitHub Actions, and `dev:e2e` does not ignore pandas.
 unit = "pytest tests/unit {args}"
 integ = "pytest tests/integ {args}"
-e2e = "pytest tests/e2e --ignore=tests/e2e/pandas {args}"
-cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+e2e = "pytest tests/e2e --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy {args}"
+cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 # Runs only tests marked @pytest.mark.flaky. `-m flaky` overrides the default
 # `-m "not flaky"` from [tool.pytest.ini_options].addopts.
-flaky = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas -m flaky --no-cov {args}"
+flaky = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy -m flaky --no-cov {args}"
 # Runs @pytest.mark.requires_no_mfa tests (parameters_aws_local.json).
 no_mfa = "pytest tests/e2e/authentication/test_user_password.py -m requires_no_mfa -n 0 --no-cov {args}"
 
@@ -353,7 +353,7 @@ install-wheel = [
 # Table and insert cases can run because execute_query status rows are NUMBER.
 cov = "pytest tests/e2e/types/test_boolean.py tests/e2e/types/test_float.py tests/e2e/types/test_string.py tests/e2e/types/test_binary.py tests/e2e/types/test_number.py tests/e2e/types/test_int.py tests/e2e/types/test_decfloat.py tests/e2e/types/test_date.py tests/e2e/types/test_time.py --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
-# Pandas-specific CI test environment
+# Pandas and NumPy consumer CI test environment
 [tool.hatch.envs.test-pandas]
 template = "test"
 features = ["test", "dev", "pandas"]
@@ -362,7 +362,7 @@ features = ["test", "dev", "pandas"]
 python = ["3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.test-pandas.scripts]
-cov = "pytest tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+cov = "pytest tests/e2e/pandas tests/e2e/numpy --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # Packaging tests environment - tests sdist build and installation
 [tool.hatch.envs.packaging]
@@ -389,7 +389,7 @@ template = "test"
 test = [
     "uv pip uninstall snowflake-connector-python",
     "uv pip install \"snowflake-connector-python{env:PYTHON_REFERENCE_DRIVER_VERSION:>=4,<5}\"",
-    "pytest tests/integ tests/e2e --ignore=tests/e2e/pandas {args}",
+    "pytest tests/integ tests/e2e --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy {args}",
 ]
 compare = "python ci/reference_tests/compare_reports.py {args}"
 
@@ -400,5 +400,5 @@ template = "test"
 test = [
     "uv pip uninstall snowflake-connector-python",
     "uv pip install \"snowflake-connector-python[pandas]{env:PYTHON_REFERENCE_DRIVER_VERSION:>=4,<5}\"",
-    "pytest tests/e2e/pandas {args}",
+    "pytest tests/e2e/pandas tests/e2e/numpy {args}",
 ]
