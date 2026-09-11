@@ -2628,14 +2628,7 @@ class TestGetResultsFromSfqid:
                 cur2.get_results_from_sfqid(qid)
 
     def test_get_results_from_sfqid_after_execute_async_with_num_statements(self, connection):
-        """execute_async plumbs num_statements to MULTI_STATEMENT_COUNT.
-
-        ``get_results_from_sfqid`` loads only the first statement's result
-        set — it does not populate the multi-statement chain ``nextset()``
-        relies on, unlike the synchronous ``execute()`` path — so this
-        asserts on that first result set completing without a
-        statement-count error.
-        """
+        """execute_async forwards num_statements so a multi-statement query completes."""
         with connection.cursor() as cur1:
             cur1.execute_async("SELECT 1; SELECT 2", num_statements=2)
             qid = cur1.sfqid

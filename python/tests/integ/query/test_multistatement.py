@@ -5,6 +5,7 @@ These tests cover Python-specific behavior not in the shared feature file:
 - Cursor state management across nextset() calls
 - Query ID tracking (multi_statement_savedIds and multi_statement_parent_sfqid)
 - Mixed fetch modes (fetchall + nextset)
+- Async result retrieval for multi-statement plans
 """
 
 from __future__ import annotations
@@ -122,3 +123,25 @@ class TestResultBatchesWithMultiStatement:
         assert second_batches is not None
         assert len(second_batches) >= 2, "Expected at least an inline batch and one remote batch"
         assert sum(b.rowcount for b in second_batches) == second_stmt_row_count
+
+
+class TestAsyncMultiStatement:
+    def test_get_results_from_sfqid_returns_every_child_rows(self, cursor, connection):
+        sql = "SELECT 1, 'a', 1.5; SELECT 2, 'b', 2.5 UNION ALL SELECT 3, 'c', 3.5 ORDER BY 1"
+
+        cursor.execute(sql, num_statements=2)
+        sync_first_rows = cursor.fetchall()
+        cursor.nextset()
+        sync_second_rows = cursor.fetchall()
+
+        submission = cursor.execute_async(sql, num_statements=2)
+        query_id = submission["queryId"]
+
+        with connection.cursor() as first_child_cursor:
+            first_child_cursor.get_results_from_sfqid(query_id)
+            assert first_child_cursor.fetchall() == sync_first_rows
+
+        with connection.cursor() as second_child_cursor:
+            second_child_cursor.get_results_from_sfqid(query_id)
+            second_child_cursor.nextset()
+            assert second_child_cursor.fetchall() == sync_second_rows
