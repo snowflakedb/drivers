@@ -7,12 +7,16 @@ use napi_derive::napi;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity;
 use sf_core::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use sf_core::apis::operation_ctx::OperationCtx;
+use sf_core::config::param_names;
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
+
+const NODE_TLS_REJECT_UNAUTHORIZED: &str = "NODE_TLS_REJECT_UNAUTHORIZED";
+const NODE_EXTRA_CA_CERTS: &str = "NODE_EXTRA_CA_CERTS";
 
 #[napi]
 pub struct Connection {
@@ -130,16 +134,16 @@ impl Connection {
             .iter()
             .map(|(k, v)| (k.clone(), Setting::String(v.clone())))
             .collect();
-        if std::env::var("NODE_TLS_REJECT_UNAUTHORIZED").as_deref() == Ok("0") {
+        if std::env::var(NODE_TLS_REJECT_UNAUTHORIZED).as_deref() == Ok("0") {
             converted_options
-                .entry("tls_skip_verify".to_string())
+                .entry(param_names::TLS_SKIP_VERIFY.as_str().to_string())
                 .or_insert_with(|| Setting::String("true".to_string()));
         }
-        if let Ok(ca_path) = std::env::var("NODE_EXTRA_CA_CERTS")
+        if let Ok(ca_path) = std::env::var(NODE_EXTRA_CA_CERTS)
             && !ca_path.is_empty()
         {
             converted_options
-                .entry("custom_root_store_path".to_string())
+                .entry(param_names::EXTRA_ROOT_STORE_PATH.as_str().to_string())
                 .or_insert_with(|| Setting::String(ca_path));
         }
 
