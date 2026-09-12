@@ -61,6 +61,10 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
         return vec!["disabled".to_string()];
     }
 
+    // Platform probes can run before any connection is opened, so this may be
+    // the first HTTP client in the process. reqwest picks its crypto backend at
+    // build time, so pin the provider first.
+    crate::tls::ensure_crypto_provider();
     let http = reqwest::Client::new();
 
     let detectors: Vec<(&'static str, BoxFuture<'_, bool>)> = vec![

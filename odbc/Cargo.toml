@@ -47,6 +47,10 @@ default = ["sonic-json"]
 sonic-json = ["sf_core/sonic-json"]
 perf_timing = ["sf_core/perf_timing"]
 vendored-openssl = ["sf_core/vendored-openssl"]
+# Links the FIPS-validated TLS backend (aws-lc-fips-sys) instead of aws-lc-sys.
+# Covers TLS only, which is what the name says -- see the `fips-tls` feature
+# comment in sf_core/Cargo.toml for why this is not a FIPS artifact on its own.
+fips-tls = ["sf_core/fips-tls"]
 # Exposes `bench_support` (doc-hidden) so the `conversion` criterion bench can
 # reach the otherwise-private fetch-conversion pipeline. Off by default; not
 # part of the public API.

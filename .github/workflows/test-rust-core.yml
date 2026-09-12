@@ -122,7 +122,7 @@ jobs:
           shared-key: "no-protobuf"
 
       - name: Build sf_core without protobuf feature
-        run: cargo build --locked --package sf_core --no-default-features --features fips
+        run: cargo build --locked --package sf_core --no-default-features --features fips-tls
 
       # Compile-test the library's unit tests (tests inside sf_core/src/*) to catch
       # modules that use protobuf types without a `#[cfg(feature = "protobuf")]` guard.
@@ -132,8 +132,14 @@ jobs:
       # tracked separately; this check still catches the more impactful class of bugs
       # (accidentally exposing protobuf-dependent code in the library's public surface).
       # --no-run skips execution so this lane stays fast and doesn't need network access.
+      #
+      # Which also means the `fips-tls` assertions in tls::fips_tests are compiled
+      # here but never executed: this step and the build above are the only places
+      # the feature is turned on, and neither runs a test. Nothing in this repo
+      # currently asserts FIPS-ness at runtime; the lanes that will are added with
+      # the FIPS release pipelines.
       - name: Compile library unit tests without protobuf feature
-        run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips
+        run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips-tls
 
       - name: Clean up python_bridge artifacts from target
         if: always()
@@ -384,8 +390,13 @@ jobs:
   # Upstream issue: https://github.com/aws/aws-lc-rs/issues/1057
   # Repro job: https://github.com/snowflakedb/drivers/actions/runs/22779459689/job/66081199710
   # TODO: re-enable --all-features after fix.
-  # The test suite is identical with and without fips — no tests are gated
-  # behind cfg(feature = "fips"). Only the linked TLS crypto backend differs
+  # Coverage note: the only tests gated behind cfg(feature = "fips-tls") are the
+  # tls::fips_tests assertions, which verify FIPS-ness end to end: the linked
+  # aws-lc module reports FIPS mode, and the installed rustls provider /
+  # ClientConfig are FIPS (approved cipher suites only). All of that is
+  # meaningless on this non-fips lane by construction, so
+  # skipping them here loses no coverage. Every other test runs identically with
+  # and without fips; only the linked TLS crypto backend differs
   # (aws-lc-sys vs aws-lc-fips-sys).
   test_windows_arm64_nonfips:
     needs: load-core-matrix
