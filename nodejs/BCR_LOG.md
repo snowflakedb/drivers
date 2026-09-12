@@ -45,6 +45,7 @@ TIME is a clock (`14:45:30`), not a date. The old format converter has no `MMMM`
 
 ## Known bugs in both drivers
 
+- Date type `fetchAsString` ignores `DATE_OUTPUT_FORMAT` (should behave similar to timestamp output formats)
 - Binary data type doesn't honor BINARY_OUTPUT_FORMAT when fetchAsString is used (should behave similar to timestamp output formats)
 - Binding `"42.0"` to a DECFLOAT column returns `"42"`, dropping the trailing zero. The `decfloat.feature` "should select decfloat using parameter binding" scenario specifies `42.0` as the returned value, so both drivers deviate from the shared spec; the tests assert the observed `"42"` and cite this entry.
 

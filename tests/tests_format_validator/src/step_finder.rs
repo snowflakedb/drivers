@@ -49,10 +49,7 @@ static JS_TEST_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Returns true if the trimmed line is a recognized xUnit C# test attribute.
 fn is_dotnet_test_attribute(s: &str) -> bool {
-    matches!(
-        s,
-        "[SnowflakeFact]" | "[SnowflakeTheory]"
-    )
+    matches!(s, "[SnowflakeFact]" | "[SnowflakeTheory]")
 }
 
 /// Configuration for language-specific step finding
@@ -203,7 +200,8 @@ impl MethodBoundaryFinder {
                 "TEST_CASE(" => {
                     // C++ Catch2: TEST_CASE("method_name") or TEST_CASE_METHOD(Fixture, "method_name")
                     // Declarations may span multiple lines.
-                    if trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(") {
+                    if trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(")
+                    {
                         if let Some(captures) = catch2_regex.captures(trimmed) {
                             let method_name = captures[1].to_string();
                             methods.push((method_name, i + 1));
@@ -350,10 +348,12 @@ impl MethodBoundaryFinder {
                 || (self.config.test_annotation.contains("pytest")
                     && trimmed.starts_with("@pytest"))
                 || (self.config.test_annotation == "TEST_CASE("
-                    && (trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(")))
+                    && (trimmed.starts_with("TEST_CASE(")
+                        || trimmed.starts_with("TEST_CASE_METHOD(")))
                 || (self.config.test_annotation == "#[test]"
                     && rust_test_attr_regex.is_match(trimmed))
-                || (self.config.test_annotation.contains("[Snowflake") && is_dotnet_test_attribute(trimmed))
+                || (self.config.test_annotation.contains("[Snowflake")
+                    && is_dotnet_test_attribute(trimmed))
             {
                 // Rust special-case: generic test attribute matched above
                 // For C++, the TEST_CASE line itself contains the method name
@@ -1175,18 +1175,21 @@ impl StepFinder {
         // form where the title sits on a line after the opener. Scanning the whole content
         // (not line by line) lets one regex span that opener-to-title gap; the match's byte
         // offset maps back to the declaration's line number.
-        let mut methods = Vec::new();
-
+        //
+        // The match is by substring, so a scenario name that is a prefix of a longer test
+        // title (`... dates` vs. `... dates from table`) matches both titles. The first
+        // source-order match wins, which resolves that collision only when the scenario
+        // whose name is the prefix is authored before the longer-named one in the file.
         for captures in JS_TEST_REGEX.captures_iter(content) {
             let test_name = &captures[1];
             if js_title_matches_scenario(test_name, scenario_name) {
                 let decl_offset = captures.get(0).map(|m| m.start()).unwrap_or(0);
                 let line_number = line_index_at_offset(content, decl_offset) + 1;
-                methods.push((test_name.to_string(), line_number));
+                return Ok(vec![(test_name.to_string(), line_number)]);
             }
         }
 
-        Ok(methods)
+        Ok(vec![])
     }
 }
 
@@ -1208,20 +1211,20 @@ import pytest
 def test_something_with_nested_constructs():
     # Given the system is ready
     value = 42
-    
+
     # Nested import inside the function (e.g., lazy import)
     import json
-    
+
     # Nested function definition
     def helper():
         return "helper result"
-    
+
     # When we process the data
     result = helper()
-    
+
     # Then we should get the expected result
     assert result == "helper result"
-    
+
     # Nested async def
     async def async_helper():
         return "async result"
@@ -1547,7 +1550,8 @@ class TestFetchAll:
 
         let body: String = lines[start..=end.min(lines.len() - 1)].join("\n");
         assert!(
-            body.contains("// When Query is executed") && body.contains("// Then the result matches"),
+            body.contains("// When Query is executed")
+                && body.contains("// Then the result matches"),
             "the body must span the owning declaration so its When/Then steps are seen"
         );
     }

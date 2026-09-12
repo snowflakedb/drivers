@@ -413,7 +413,7 @@ impl TestDiscovery {
                 let e2e_dir = self.workspace_root.join("nodejs/tests/e2e");
                 let kebab_name = snake_name.replace('_', "-");
                 match snake_name.as_str() {
-                    "date" | "time" => vec![e2e_dir.join("query-data-types.test.ts")],
+                    "time" => vec![e2e_dir.join("query-data-types.test.ts")],
                     "binary_to_string" => {
                         vec![e2e_dir.join("query/data-types/binary.test.ts")]
                     }
