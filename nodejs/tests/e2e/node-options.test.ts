@@ -1,19 +1,46 @@
-import { describe, it } from 'vitest';
+import { afterEach, describe, it, vi } from 'vitest';
+import { createLiveConnection, createTempDir } from './utils/fixtures.js';
 
-// Parked for later: these are e2e tests that need utilities to exercise the TLS
-// handshake against a wiremock / other mock server before they can assert real
-// behavior. Kept as todos so the intended NODE_TLS_REJECT_UNAUTHORIZED /
-// NODE_EXTRA_CA_CERTS coverage is tracked rather than forgotten.
+const UNUSED_CA_PEM = `-----BEGIN CERTIFICATE-----
+MIIDFTCCAf2gAwIBAgIUUw1GCbZJNDWcAiJnEPZjMXJA344wDQYJKoZIhvcNAQEL
+BQAwGjEYMBYGA1UEAwwPVW51c2VkIEV4dHJhIENBMB4XDTI2MDkwOTExNDQ0NVoX
+DTM2MDkwNjExNDQ0NVowGjEYMBYGA1UEAwwPVW51c2VkIEV4dHJhIENBMIIBIjAN
+BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAklE1DlzqNDOZ9oER56dcVs6ihDJE
+IleScA/0wH3OKPv4No2EeiUFIEgSQ2GLIgijoUx2wTSMZ3a8WEltuNhzrXrh/o8i
+qirv2bkavPInPcka2Cl/1awRm88t0vjdjL3BcvJrl3zG1NjuyFOAJnsk/8a2jb5G
+5RDwX2Gj6e3RgrkdsDP9wByizewSeVUay0gl3D4oQbyhhkjZKWZgr1zcjKj7POYX
+K/yMrycnsNa1T9bQdG8djnN+kAJgn/2q4ljRyuAqBNq6GD9dG4r1W4c7UWJ01xP8
+cZixnC9S1uCmft93ImvkWdv2RwwrV2lSb0bBhYFDaELBrnIsJEI4cqhaRQIDAQAB
+o1MwUTAdBgNVHQ4EFgQUgrmEJM94AJePQvsb7i9CsY5RA20wHwYDVR0jBBgwFoAU
+grmEJM94AJePQvsb7i9CsY5RA20wDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0B
+AQsFAAOCAQEAVVlBfXUcig24LBex/WZTMpE04p7rQij9lEzIujs4zCYvJOMWjaea
+5MiJx4XjVcrXSwew4GJed9kK+YpH9piQU0k6CppdVX3vcT53X38/y8YKx3uavJhG
+B0nl9BvXdFFB+mSOZ391twdpVnhWw9Uc/rK0jpr5xooVAMpWNgcaSn/CICD9xo1i
+IFsMGT9Bbz89uoqVlglIOWjPEbp+UtVqBJ7ORhw1VxV64QkTOHn9u07YVatwNMNs
+f5gtRKxtAPmRX/LwWYp7ifrVseqjUCQ+yXmPv404daU35W0YkFgRSaVO1z+cYJq9
+kEJUD2DJGhy+ADL/hCgztbm7/0AMc64L1Q==
+-----END CERTIFICATE-----
+`;
+
 describe('node TLS environment options', () => {
-  it.todo('disables certificate verification when NODE_TLS_REJECT_UNAUTHORIZED=0');
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
-  it.todo('loads a custom CA bundle when NODE_EXTRA_CA_CERTS points at a PEM file');
+  it.todo('should disable certificate verification when NODE_TLS_REJECT_UNAUTHORIZED=0');
 
-  // TODO: Node's NODE_EXTRA_CA_CERTS adds the file's certs on top of the built-in
-  // root bundle, but the core's custom_root_store_path replaces the built-in roots
-  // with only the supplied file (tls_built_in_root_certs(false) in
-  // sf_core/src/tls/client.rs). Fix the core to make custom roots additive, then
-  // cover it here: a server chaining to a built-in root still verifies while
-  // NODE_EXTRA_CA_CERTS is set.
-  it.todo('keeps built-in roots trusted when NODE_EXTRA_CA_CERTS adds an extra CA');
+  // TODO:
+  // This test is kind of pointless: it doesn't really check that NODE_EXTRA_CA_CERTS passed to core
+  // Later we should do better tests with wiremocks over https and custom certs
+  it('should keep default roots trusted when NODE_EXTRA_CA_CERTS points at an unused PEM', async () => {
+    const tmpDir = createTempDir();
+    const pemPath = tmpDir.writeFile('unused-ca.pem', UNUSED_CA_PEM);
+    vi.stubEnv('NODE_EXTRA_CA_CERTS', pemPath);
+    await createLiveConnection();
+  });
+
+  it('should ignore empty NODE_EXTRA_CA_CERTS', async () => {
+    vi.stubEnv('NODE_EXTRA_CA_CERTS', '');
+    await createLiveConnection();
+  });
 });
