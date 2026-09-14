@@ -13,8 +13,10 @@ import static org.mockito.Mockito.when;
 import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
@@ -177,8 +179,11 @@ class SnowflakeResultSetImplHandleLifecycleTest {
 
     resultSet.close();
 
-    assertThrows(
-        IllegalStateException.class, () -> resultSet.getResultSetSerializables(Long.MAX_VALUE));
+    SFSQLException thrown =
+        assertThrows(
+            SFSQLException.class, () -> resultSet.getResultSetSerializables(Long.MAX_VALUE));
+    assertEquals(ErrorCode.RESULTSET_ALREADY_CLOSED, thrown.getErrorCode());
+    assertEquals("ResultSet is closed", thrown.getMessage());
   }
 
   @Test

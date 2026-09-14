@@ -1,19 +1,15 @@
 package net.snowflake.client.internal.log;
 
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.TimeZone;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.logging.Formatter;
 import java.util.logging.LogRecord;
 
 /** Snowflake log formatter for {@link java.util.logging} file and console handlers. */
 public class SFFormatter extends Formatter {
-  private static final DateFormat DF = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
-
-  static {
-    DF.setTimeZone(TimeZone.getTimeZone("UTC"));
-  }
+  private static final DateTimeFormatter DF =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(ZoneOffset.UTC);
 
   // Fixed to "net.snowflake.client" since SnowflakeDriver moved to api.driver package.
   public static final String CLASS_NAME_PREFIX = "net.snowflake.client";
@@ -39,7 +35,7 @@ public class SFFormatter extends Formatter {
     }
 
     StringBuilder builder = new StringBuilder(1000);
-    builder.append(DF.format(new Date(record.getMillis()))).append(" ");
+    builder.append(DF.format(Instant.ofEpochMilli(record.getMillis()))).append(" ");
     builder.append(className).append(" ");
     builder.append(record.getLevel()).append(" ");
     builder.append(methodName).append(":");

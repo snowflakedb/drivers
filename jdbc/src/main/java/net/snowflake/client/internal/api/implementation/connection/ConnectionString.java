@@ -66,7 +66,7 @@ public class ConnectionString {
           .normalizeHostForUnderscoreAccount()
           .applyDefaultPortForEffectiveScheme()
           .build();
-    } catch (Exception ex) {
+    } catch (IllegalArgumentException | SFSQLException ex) {
       logger.warn("Exception thrown while parsing Snowflake connect string", ex);
       return INVALID_CONNECT_STRING;
     }

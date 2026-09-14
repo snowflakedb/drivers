@@ -21,6 +21,7 @@ import java.sql.Timestamp;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Map;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.api.resultset.SnowflakeResultSet;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
@@ -1383,7 +1384,7 @@ public class SnowflakeAsyncResultSetImpl implements InternalAsyncResultSet {
 
   private void checkClosed() {
     if (closed) {
-      throw new SFSQLException("ResultSet is closed");
+      throw new SFSQLException(ErrorCode.RESULTSET_ALREADY_CLOSED, "ResultSet is closed");
     }
   }
 }

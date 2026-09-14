@@ -593,7 +593,12 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     try {
       return coreDriverApi.connectionHeartbeat(connectionHandle, timeout).getValid();
     } catch (Exception e) {
-      logger.debug("isValid check failed", e);
+      // JDBC maps a failed heartbeat to false; keep the discriminant in the log.
+      logger.debug(
+          "isValid check failed: {} {}",
+          e.getClass().getSimpleName(),
+          e.getMessage() == null ? "" : e.getMessage(),
+          e);
       return false;
     }
   }
@@ -657,7 +662,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public Array createArrayOf(String typeName, Object[] elements) {
     checkClosed();
-    throw new NotImplementedException();
+    throw new NotImplementedException("createArrayOf");
   }
 
   @Override

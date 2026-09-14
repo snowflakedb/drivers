@@ -119,6 +119,7 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public Logger getParentLogger() {
+    // Matches the legacy driver, which returns null rather than a JUL parent logger.
     return null;
   }
 

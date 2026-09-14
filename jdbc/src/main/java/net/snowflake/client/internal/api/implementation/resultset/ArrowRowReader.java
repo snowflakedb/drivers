@@ -24,7 +24,7 @@ class ArrowRowReader implements RowReader {
   private final SchemaState schema;
   private final ArrowBatchManager batchManager;
   private final long totalRowCount;
-  private boolean closed = false;
+  private volatile boolean closed = false;
 
   // Construction runs before any decorator boundary, so it declares the checked SQLException from
   // the Arrow schema read directly rather than sneaky-throwing it like the accessors below.
