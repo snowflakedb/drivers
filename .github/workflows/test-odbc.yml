@@ -129,6 +129,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # Reclaim ~25 GB before cargo-cache extract + cmake --build of the full
+      # Catch2 tree. This job cargo-builds the driver and then links every C++
+      # test binary on one ubuntu-latest runner (~14 GB free); nightly hits
+      # ENOSPC in ld while linking unused replay_dtm_* targets. Same action as
+      # rust-core. See .github/actions/free-disk-space-linux/action.yml.
+      - name: Free runner disk space
+        uses: ./.github/actions/free-disk-space-linux
+
       - name: Setup ODBC build environment
         uses: ./.github/actions/setup-odbc-build-env
 
@@ -172,6 +180,36 @@ jobs:
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
+      # Save before dropping target/. If this stayed at the end of the job,
+      # the slim step below would rewrite the odbc cache as nearly empty.
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          slim-mode: aggressive
+          shared-key: "odbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      # Match the gating odbc_tests job: cmake --build sees only libsfodbc.so,
+      # not a multi-GB Cargo target/. run_tests_unix.sh still builds every
+      # Catch2 binary (ctest -L does not skip linking); that needs the disk.
+      - name: Keep driver library, drop Cargo target
+        run: |
+          set -euxo pipefail
+          df -h /
+          so=target/debug/libsfodbc.so
+          test -f "$so"
+          tmp=$(mktemp)
+          cp -a "$so" "$tmp"
+          rm -rf target
+          mkdir -p target/debug
+          mv "$tmp" target/debug/libsfodbc.so
+          df -h /
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh aws
         env:
@@ -198,18 +236,6 @@ jobs:
           name: odbc-long-running-tests
           path: odbc-long-running-junit.xml
           if-no-files-found: warn
-
-      - name: Save Rust cache
-        if: always()
-        timeout-minutes: 20
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: save
-          slim-mode: aggressive
-          shared-key: "odbc"
-          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
-          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
 
   odbc-status:
