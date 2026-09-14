@@ -11,9 +11,11 @@
 //! `#[ignore]`d timing probe with a standard, statistically-rigorous bench.
 //!
 //! Cases cover every batched `CharKernel`: NUMBER, TIMESTAMP_NTZ,
-//! TIMESTAMP_LTZ, TIMESTAMP_TZ (struct-encoded), BOOLEAN, DATE, TIME, and
-//! REAL. Each drives the generic `convert_char_range` loop through the
-//! type's kernel.
+//! TIMESTAMP_LTZ, TIMESTAMP_TZ (struct-encoded), DATE, TIME, and REAL, each
+//! driving the generic `convert_char_range` loop through the type's kernel.
+//! BOOLEAN layers `BooleanCharConverter`'s direct-write fast path on top of
+//! its own `CharKernel`-backed converter; the narrow/wide-cell variants below
+//! vary its stride.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -77,11 +79,17 @@ fn tz_struct_array() -> StructArray {
 
 /// One `convert_arrow_range` pass over the whole rowset into a strided
 /// `SQL_C_CHAR` buffer — exactly what `SQLFetch` drives per rowset.
-fn run(conv: &dyn ColumnConverter, arr: &dyn Array, buf: &mut [u8], inds: &mut [sql::Len]) {
+fn run(
+    conv: &dyn ColumnConverter,
+    arr: &dyn Array,
+    cell: usize,
+    buf: &mut [u8],
+    inds: &mut [sql::Len],
+) {
     let base = Binding {
         target_type: CDataType::Char,
         target_value_ptr: buf.as_mut_ptr() as sql::Pointer,
-        buffer_length: CELL as sql::Len,
+        buffer_length: cell as sql::Len,
         octet_length_ptr: inds.as_mut_ptr(),
         indicator_ptr: inds.as_mut_ptr(),
         ..Default::default()
@@ -171,7 +179,27 @@ fn bench(c: &mut Criterion) {
         let mut buf = vec![0u8; N * CELL];
         let mut inds = vec![0 as sql::Len; N];
         group.bench_function(*name, |b| {
-            b.iter(|| run(conv.as_ref(), arr.as_ref(), &mut buf, &mut inds))
+            b.iter(|| run(conv.as_ref(), arr.as_ref(), CELL, &mut buf, &mut inds))
+        });
+    }
+
+    let boolean_field = field(DataType::Boolean, "BOOLEAN", &[]);
+    let boolean_converter = make_converter(&boolean_field);
+    let boolean_array =
+        BooleanArray::from_iter((0..N).map(|i| Some((i.wrapping_mul(7919) & 1) != 0)));
+    for cell in [2, 64, 1024] {
+        let mut buf = vec![0u8; N * cell];
+        let mut inds = vec![0 as sql::Len; N];
+        group.bench_function(format!("boolean_{cell}"), |b| {
+            b.iter(|| {
+                run(
+                    boolean_converter.as_ref(),
+                    &boolean_array,
+                    cell,
+                    &mut buf,
+                    &mut inds,
+                )
+            })
         });
     }
     group.finish();
