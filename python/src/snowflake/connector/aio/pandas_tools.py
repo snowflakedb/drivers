@@ -227,6 +227,8 @@ async def write_pandas(
     Returns a WritePandasResult named tuple (success, nchunks, nrows, copy_results).
     Backward-compatible with plain tuple unpacking and indexing.
 
+    ``infer_schema`` is deprecated and has no effect.
+
     Note:
         Unlike the sync module, this module does not expose ``pd_writer`` or
         ``make_pd_writer``.  ``DataFrame.to_sql(method=...)`` invokes the method

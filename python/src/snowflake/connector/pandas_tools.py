@@ -100,6 +100,8 @@ def write_pandas(
 
     Returns a WritePandasResult named tuple (success, nchunks, nrows, copy_results).
     Backward-compatible with plain tuple unpacking and indexing.
+
+    ``infer_schema`` is deprecated and has no effect.
     """
     try:
         cfg = WritePandasConfig(

@@ -1399,3 +1399,28 @@ behavior_differences:
       cursor. Errno-based handlers and `except Error` still match. `except
       InterfaceError` does not; `except DatabaseError` / `except
       ProgrammingError` match only the new driver.
+
+  95:
+    name: "write_pandas loads columns by name instead of projecting staged fields"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `write_pandas` COPY INTO projects each DataFrame column name into SQL.
+      Extra DataFrame columns that are not in the target table raise `ProgrammingError`.
+      Quoted identifier case mismatches raise `ProgrammingError`.
+      `infer_schema=True` infers Parquet types and applies them as casts on those
+      projected columns.
+    new_driver_behavior: |
+      `write_pandas` COPY INTO matches staged Parquet columns to table columns by name
+      (`CASE_SENSITIVE` when `quote_identifiers=True`, `CASE_INSENSITIVE` otherwise).
+      Extra DataFrame columns that are not in the target table are ignored.
+      Quoted identifier case mismatches leave the unmatched table column NULL.
+      Auto-created tables take column names and types from the staged Parquet files.
+      `infer_schema` is still accepted but has no effect and emits a `DeprecationWarning`
+      when `True`.
+    description: |
+      Column names are no longer concatenated into CREATE or COPY SQL. CREATE uses
+      `USING TEMPLATE` from `INFER_SCHEMA`; COPY uses `MATCH_BY_COLUMN_NAME`.

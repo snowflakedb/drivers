@@ -191,10 +191,6 @@ class WritePandasConfig:
     # -- Branching properties -----------------------------------------------
 
     @property
-    def needs_inference(self) -> bool:
-        return self.auto_create_table or self.overwrite or self.infer_schema
-
-    @property
     def needs_table_creation(self) -> bool:
         return self.auto_create_table or self.overwrite
 
@@ -212,7 +208,7 @@ class WritePandasConfig:
 
     @property
     def binary_as_text_false_on_copy(self) -> bool:
-        return self.auto_create_table or self.overwrite or self.infer_schema
+        return self.auto_create_table or self.overwrite
 
     @property
     def match_by_column_name(self) -> str:
@@ -238,11 +234,18 @@ class WritePandasConfig:
         return qualify_name(self.database, self.schema, name, self.quote_identifiers)
 
     def emit_warnings(self) -> None:
-        """Emit user-facing warnings about the input data.
+        """Emit user-facing warnings.
 
         Called from execute() rather than __init__ so that stacklevel
         correctly points to the caller of write_pandas().
         """
+        if self.infer_schema:
+            warnings.warn(
+                "write_pandas infer_schema is deprecated and has no effect; "
+                "columns are matched by name. It may be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=4,
+            )
         if self.use_logical_type is not True and self.has_tz_aware_columns():
             warnings.warn(
                 "DataFrame contains a datetime column with timezone "

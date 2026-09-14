@@ -164,7 +164,6 @@ class TestConfigValidation:
 class TestBranchingProperties:
     def test_defaults_need_nothing(self):
         cfg = _make_cfg()
-        assert not cfg.needs_inference
         assert not cfg.needs_table_creation
         assert not cfg.needs_truncate
         assert not cfg.needs_swap
@@ -173,7 +172,6 @@ class TestBranchingProperties:
 
     def test_auto_create_table(self):
         cfg = _make_cfg(auto_create_table=True)
-        assert cfg.needs_inference
         assert cfg.needs_table_creation
         assert not cfg.needs_truncate
         assert not cfg.needs_swap
@@ -182,7 +180,6 @@ class TestBranchingProperties:
 
     def test_overwrite_only(self):
         cfg = _make_cfg(overwrite=True)
-        assert cfg.needs_inference
         assert cfg.needs_table_creation
         assert cfg.needs_truncate
         assert not cfg.needs_swap
@@ -191,21 +188,24 @@ class TestBranchingProperties:
 
     def test_overwrite_with_auto_create(self):
         cfg = _make_cfg(overwrite=True, auto_create_table=True)
-        assert cfg.needs_inference
         assert cfg.needs_table_creation
         assert not cfg.needs_truncate
         assert cfg.needs_swap
         assert cfg.binary_as_text_false_on_stage
         assert cfg.binary_as_text_false_on_copy
 
-    def test_infer_schema_only(self):
+    def test_infer_schema_does_not_change_branching(self):
         cfg = _make_cfg(infer_schema=True)
-        assert cfg.needs_inference
         assert not cfg.needs_table_creation
         assert not cfg.needs_truncate
         assert not cfg.needs_swap
         assert not cfg.binary_as_text_false_on_stage
-        assert cfg.binary_as_text_false_on_copy
+        assert not cfg.binary_as_text_false_on_copy
+
+    def test_infer_schema_emits_deprecation_warning(self):
+        cfg = _make_cfg(infer_schema=True)
+        with pytest.warns(DeprecationWarning, match="infer_schema"):
+            cfg.emit_warnings()
 
     def test_match_by_column_name_follows_quote_identifiers(self):
         assert _make_cfg(quote_identifiers=True).match_by_column_name == "CASE_SENSITIVE"
@@ -348,6 +348,11 @@ class TestBuildCopyIntoSql:
         assert 'has"quote' not in result["operation"]
         assert "spaced" not in result["operation"]
         assert "$1:" not in result["operation"]
+
+    def test_infer_schema_does_not_change_copy_sql(self):
+        default = _make_op()._build_copy_into_sql("MY_STAGE", "MY_TABLE")
+        with_flag = _make_op(infer_schema=True)._build_copy_into_sql("MY_STAGE", "MY_TABLE")
+        assert with_flag == default
 
     def test_no_quoting_uses_case_insensitive_match(self):
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]), quote_identifiers=False)
@@ -603,7 +608,8 @@ class TestPipelineFlow:
             patch.object(op, "_create_table") as mock_create,
             patch.object(op, "_copy_into", return_value=[("f", "LOADED")]),
         ):
-            result = op.execute()
+            with pytest.warns(DeprecationWarning, match="infer_schema"):
+                result = op.execute()
 
         assert result.success
         mock_ff.assert_not_called()
