@@ -34,8 +34,10 @@ on:
     - cron: '0 2 * * *'  # Nightly at 02:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # PR number for PRs; unique run ID for nightly/dispatch so they cannot
+  # cancel each other (github.ref is refs/heads/main for every main run).
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always

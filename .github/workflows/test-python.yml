@@ -31,10 +31,9 @@ concurrency:
   # to "Driver CI" and put this run in the orchestrator's own group. GitHub
   # reads that as a deadlock and fails the call before any job starts.
   group: python-ci-${{ github.event.pull_request.number || github.run_id }}
-  # Don't cancel an in-flight run when an unrelated label is added/removed —
-  # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
-  # push/synchronize/reopen events should replace the running matrix.
-  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
+  # Cancel only in-flight PR runs. Unrelated labels must not replace the
+  # matrix; push-to-main must never cancel a sibling run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)) }}
 
 env:
   CARGO_TERM_COLOR: always

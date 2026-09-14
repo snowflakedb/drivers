@@ -6,8 +6,10 @@ on:
     types: [ checks_requested ]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # PR number for PRs; unique run ID for merge_group so queue attempts do not
+  # cancel each other. Only PR events cancel an in-flight run.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test-data:

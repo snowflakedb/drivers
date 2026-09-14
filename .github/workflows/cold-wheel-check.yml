@@ -30,8 +30,10 @@ on:
         default: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PR number for PRs; unique run ID for nightly/dispatch so a later event
+  # cannot cancel an in-flight main run.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   load-targets:

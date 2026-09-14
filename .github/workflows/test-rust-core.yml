@@ -20,10 +20,9 @@ concurrency:
   # to "Driver CI" and put this run in the orchestrator's own group. GitHub
   # reads that as a deadlock and fails the call before any job starts.
   group: rust-core-ci-${{ github.event.pull_request.number || github.run_id }}
-  # Don't cancel an in-flight run when an unrelated label is added/removed —
-  # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
-  # push/synchronize/reopen events should replace the running matrix.
-  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
+  # Cancel only in-flight PR runs. Unrelated labels must not replace the
+  # matrix; push-to-main must never cancel a sibling run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)) }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -161,7 +160,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.load-core-matrix.outputs.test_matrix) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       E2E_TLS_SERVER: https://snowflakecomputing.com
     steps:
@@ -297,7 +296,7 @@ jobs:
       # decoded account; put_get_multipart_proxy_live_mitm re-runs that round-trip
       # through mitmdump (installed above) to prove multipart transits the proxy.
       # No per-cloud test code either way.
-      # Step-level timeout caps blast radius against the job's 35-min budget.
+      # Step-level timeout caps blast radius against the job's 45-min budget.
       - name: Run long-running tests (nightly, aws + azure + gcp)
         if: github.event_name == 'schedule' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
         timeout-minutes: 25
