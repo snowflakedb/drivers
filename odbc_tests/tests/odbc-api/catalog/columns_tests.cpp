@@ -150,6 +150,40 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: result-set IRD concise type
   }
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: SQL_C_DEFAULT binds catalog SMALLINT and INTEGER as binary",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                             sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT dataType = 0;
+  std::memset(&dataType, 0xFF, sizeof(dataType));
+  SQLLEN dataTypeInd = -1;
+  ret = SQLBindCol(stmt_handle(), 5, SQL_C_DEFAULT, &dataType, sizeof(dataType), &dataTypeInd);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLCHAR columnSizeBuf[8];
+  std::memset(columnSizeBuf, 0xFF, sizeof(columnSizeBuf));
+  SQLLEN columnSizeInd = -1;
+  ret = SQLBindCol(stmt_handle(), 7, SQL_C_DEFAULT, columnSizeBuf, sizeof(columnSizeBuf), &columnSizeInd);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  REQUIRE(dataTypeInd == static_cast<SQLLEN>(sizeof(SQLSMALLINT)));
+  REQUIRE((dataType == SQL_DECIMAL || dataType == SQL_NUMERIC || dataType == SQL_INTEGER || dataType == SQL_BIGINT ||
+           dataType == SQL_SMALLINT || dataType == SQL_TINYINT || dataType == SQL_VARCHAR || dataType == SQL_CHAR ||
+           dataType == SQL_WVARCHAR || dataType == SQL_WCHAR || dataType == SQL_DOUBLE || dataType == SQL_FLOAT ||
+           dataType == SQL_REAL || dataType == SQL_BIT || dataType == SQL_BINARY || dataType == SQL_VARBINARY ||
+           dataType == SQL_TYPE_DATE || dataType == SQL_TYPE_TIME || dataType == SQL_TYPE_TIMESTAMP));
+
+  REQUIRE(columnSizeInd == static_cast<SQLLEN>(sizeof(SQLINTEGER)));
+  SQLINTEGER columnSize = 0;
+  std::memcpy(&columnSize, columnSizeBuf, sizeof(columnSize));
+  REQUIRE(columnSize > 0);
+}
+
 // ============================================================================
 // SQLColumns - Data Verification
 // ============================================================================

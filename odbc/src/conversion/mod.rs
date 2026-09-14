@@ -499,11 +499,15 @@ impl SnowflakeFieldType {
             "FIXED" => {
                 let scale = get_field_metadata(field, "scale")?;
                 let precision = get_field_metadata(field, "precision")?;
-                let sql_type = number::NumericSqlType::from_scale_and_precision(
-                    scale,
-                    precision,
-                    numeric_settings,
-                );
+                let sql_type = concise_sql_type_override(field)
+                    .and_then(number::NumericSqlType::from_concise_sql_type)
+                    .unwrap_or_else(|| {
+                        number::NumericSqlType::from_scale_and_precision(
+                            scale,
+                            precision,
+                            numeric_settings,
+                        )
+                    });
                 Ok(Self::Number(number::SnowflakeNumber {
                     scale,
                     precision,
@@ -999,6 +1003,14 @@ pub(crate) const WVARCHAR_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::EXT_W_V
 /// as ODBC `SQL_INTEGER`.
 pub(crate) const INTEGER_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::INTEGER.0;
 
+fn concise_sql_type_override(field: &Field) -> Option<odbc_sys::SqlDataType> {
+    field
+        .metadata()
+        .get("conciseSqlType")
+        .and_then(|v| v.parse::<i16>().ok())
+        .map(odbc_sys::SqlDataType)
+}
+
 /// Map a Snowflake Arrow field to the corresponding SQL data type.
 pub fn sql_type_from_field(
     field: &Field,
@@ -1008,12 +1020,8 @@ pub fn sql_type_from_field(
     // string catalog cols, SMALLINT/INTEGER for numeric catalog cols) while
     // keeping a physical Arrow type that is convenient to build. Query-result
     // TEXT fields never set this metadata and keep resolving to SQL_VARCHAR.
-    if let Some(code) = field
-        .metadata()
-        .get("conciseSqlType")
-        .and_then(|v| v.parse::<i16>().ok())
-    {
-        return Ok(odbc_sys::SqlDataType(code));
+    if let Some(code) = concise_sql_type_override(field) {
+        return Ok(code);
     }
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
 }
@@ -1038,11 +1046,15 @@ pub fn verbose_sql_type_from_field(
 mod concise_sql_type_override_tests {
     use super::{
         INTEGER_CONCISE_SQL_TYPE, NumericSettings, SMALLINT_CONCISE_SQL_TYPE,
-        WVARCHAR_CONCISE_SQL_TYPE, sql_type_from_field,
+        WVARCHAR_CONCISE_SQL_TYPE, make_converter, sql_type_from_field,
     };
+    use crate::api::CDataType;
+    use crate::conversion::test_utils::helpers::binding_for_value;
+    use arrow::array::{ArrayRef, Int16Array, Int32Array};
     use arrow::datatypes::{DataType, Field};
     use odbc_sys as sql;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn text_field_with_concise(code: i16) -> Field {
         let metadata: HashMap<String, String> = [
@@ -1097,6 +1109,51 @@ mod concise_sql_type_override_tests {
             sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
             sql::SqlDataType::VARCHAR
         );
+    }
+
+    fn catalog_fixed_field(data_type: DataType, scale: u32, precision: u32, concise: i16) -> Field {
+        let metadata: HashMap<String, String> = [
+            ("logicalType".to_string(), "FIXED".to_string()),
+            ("scale".to_string(), scale.to_string()),
+            ("precision".to_string(), precision.to_string()),
+            ("conciseSqlType".to_string(), concise.to_string()),
+        ]
+        .into();
+        Field::new("col", data_type, true).with_metadata(metadata)
+    }
+
+    #[test]
+    fn fixed_smallint_concise_default_writes_binary_not_char() {
+        let field = catalog_fixed_field(DataType::Int16, 0, 5, SMALLINT_CONCISE_SQL_TYPE);
+        let settings = NumericSettings {
+            treat_decimal_as_int: true,
+            ..NumericSettings::default()
+        };
+        let converter = make_converter(&field, &settings).unwrap();
+        let array: ArrayRef = Arc::new(Int16Array::from(vec![Some(-9)]));
+        let mut value: i16 = 0x7FFF;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        converter
+            .convert_arrow_value(array.as_ref(), 0, &binding, &mut None)
+            .unwrap();
+        assert_eq!(value, -9);
+        assert_eq!(str_len, std::mem::size_of::<i16>() as sql::Len);
+    }
+
+    #[test]
+    fn fixed_integer_concise_default_writes_binary_not_char() {
+        let field = catalog_fixed_field(DataType::Int32, 0, 10, INTEGER_CONCISE_SQL_TYPE);
+        let converter = make_converter(&field, &NumericSettings::default()).unwrap();
+        let array: ArrayRef = Arc::new(Int32Array::from(vec![Some(12)]));
+        let mut value: i32 = -1;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        converter
+            .convert_arrow_value(array.as_ref(), 0, &binding, &mut None)
+            .unwrap();
+        assert_eq!(value, 12);
+        assert_eq!(str_len, std::mem::size_of::<i32>() as sql::Len);
     }
 }
 
