@@ -911,12 +911,16 @@ pub fn make_converter(
         SnowflakeFieldType::TimestampTz(snowflake_type) => {
             timestamp_tz_char_batch_converter!(snowflake_type, field, nullable)
         }
-        SnowflakeFieldType::Boolean(snowflake_type) => char_batch_converter!(
-            arrow::array::BooleanArray,
-            boolean::BooleanCharKernel,
-            snowflake_type,
-            nullable
-        ),
+        SnowflakeFieldType::Boolean(snowflake_type) => {
+            let inner = char_batch_converter!(
+                arrow::array::BooleanArray,
+                boolean::BooleanCharKernel,
+                snowflake_type,
+                nullable
+            )?;
+            Ok(Box::new(boolean::BooleanCharConverter { inner, nullable })
+                as Box<dyn ColumnConverter>)
+        }
         SnowflakeFieldType::Binary(snowflake_type) => {
             make_converter!(
                 arrow::array::GenericByteArray<arrow::datatypes::GenericBinaryType<i32>>,
@@ -1737,6 +1741,132 @@ mod char_batch_tests {
         assert!(!took, "first-row stride overflow must decline");
     }
 
+    // ---- BOOLEAN --------------------------------------------------------
+
+    #[test]
+    fn batched_matches_per_cell_boolean() {
+        let arr = BooleanArray::from(vec![Some(true), Some(false), None, Some(true)]);
+        assert_equiv(&boolean_field(true), &arr, 8);
+        // tiny 1-byte cell: "1"/"0" is a single byte, so the NUL terminator has
+        // no room -> 22003 truncation on every non-null row; both paths agree.
+        assert_equiv(&boolean_field(true), &arr, 1);
+        let arr_nn = BooleanArray::from(vec![true, false, true]);
+        assert_equiv(&boolean_field(false), &arr_nn, 8);
+    }
+
+    #[test]
+    fn boolean_direct_writer_shared_octet_and_indicator_pointer_ends_at_length() {
+        let arr = BooleanArray::from(vec![true, false]);
+        let conv = make_converter(&boolean_field(false), &NumericSettings::default()).unwrap();
+        let cell = 8;
+        let n = arr.len();
+        let (mut buf, mut inds) = (vec![0xAAu8; n * cell], vec![-9 as sql::Len; n]);
+        let outs = batched(conv.as_ref(), &arr, cell, &mut buf, &mut inds);
+
+        for out in &outs {
+            assert!(out.is_ok());
+        }
+        assert_eq!(&buf[0..2], b"1\0");
+        assert_eq!(inds[0], 1);
+        assert_eq!(&buf[cell..cell + 2], b"0\0");
+        assert_eq!(inds[1], 1);
+    }
+
+    #[test]
+    fn boolean_direct_writer_null_cell_sets_sql_null_data_and_leaves_value_untouched() {
+        let arr = BooleanArray::from(vec![Some(true), None, Some(false)]);
+        let conv = make_converter(&boolean_field(true), &NumericSettings::default()).unwrap();
+        let cell = 8;
+        let n = arr.len();
+        let (mut buf, mut inds) = (vec![0xAAu8; n * cell], vec![-9 as sql::Len; n]);
+        let outs = batched(conv.as_ref(), &arr, cell, &mut buf, &mut inds);
+
+        assert!(outs[1].is_ok());
+        assert_eq!(inds[1], crate::api::SQL_NULL_DATA);
+        assert_eq!(
+            &buf[cell..cell + 2],
+            [0xAA, 0xAA],
+            "null cell value bytes must be untouched"
+        );
+    }
+
+    #[test]
+    fn batched_declines_boolean_non_nullable_with_nulls() {
+        let arr = BooleanArray::from(vec![Some(true), None, Some(false)]);
+        assert_declines_non_nullable_with_nulls(
+            &crate::conversion::boolean::BooleanCharKernel,
+            &arr,
+        );
+    }
+
+    #[test]
+    fn batched_declines_boolean_on_first_row_stride_overflow() {
+        let arr = BooleanArray::from(vec![true, false]);
+        assert_declines_first_row_stride_overflow(
+            &crate::conversion::boolean::BooleanCharKernel,
+            &arr,
+        );
+    }
+
+    #[test]
+    fn boolean_direct_writer_honors_row_stride_offset_and_existing_errors() {
+        #[repr(C)]
+        struct Row {
+            value: [u8; 2],
+            octet_length: sql::Len,
+            indicator: sql::Len,
+        }
+
+        let arr = BooleanArray::from(vec![true, false, true]);
+        let conv = make_converter(&boolean_field(false), &NumericSettings::default()).unwrap();
+        let mut rows: Vec<Row> = (0..4)
+            .map(|_| Row {
+                value: [0xAA; 2],
+                octet_length: -9,
+                indicator: -9,
+            })
+            .collect();
+        let binding = Binding {
+            target_type: CDataType::Char,
+            target_value_ptr: rows[0].value.as_mut_ptr() as sql::Pointer,
+            buffer_length: 2,
+            octet_length_ptr: &mut rows[0].octet_length,
+            indicator_ptr: &mut rows[0].indicator,
+            ..Default::default()
+        };
+        let mut outputs: Vec<Result<Warnings, ConversionError>> =
+            (0..arr.len()).map(|_| Ok(Vec::new())).collect();
+        outputs[0] = Err(crate::conversion::error::MissingFieldMetadataSnafu {
+            key: "existing".to_string(),
+            field_name: "earlier_column".to_string(),
+        }
+        .build());
+
+        conv.convert_arrow_range(
+            &arr,
+            0..arr.len(),
+            &binding,
+            1,
+            BindingStrides {
+                bind_type: std::mem::size_of::<Row>(),
+                bind_offset: 0,
+            },
+            &mut outputs,
+        );
+
+        assert_eq!(rows[0].value, [0xAA; 2]);
+        assert_eq!(rows[1].value, [0xAA; 2]);
+        assert_eq!(rows[1].octet_length, -9);
+        assert_eq!(rows[1].indicator, -9);
+        assert!(outputs[0].is_err());
+        assert_eq!(rows[2].value, *b"0\0");
+        assert_eq!(rows[2].octet_length, 1);
+        assert_eq!(rows[2].indicator, 0);
+        assert_eq!(rows[3].value, *b"1\0");
+        assert_eq!(rows[3].octet_length, 1);
+        assert_eq!(rows[3].indicator, 0);
+    }
+
     // ---- DATE -----------------------------------------------------------
 
     fn days_since_epoch(year: i32, month: u32, day: u32) -> i32 {
@@ -1778,6 +1908,71 @@ mod char_batch_tests {
     fn batched_declines_date_on_first_row_stride_overflow() {
         let arr = Date32Array::from(vec![Some(0), Some(1)]);
         assert_declines_first_row_stride_overflow(&crate::conversion::date::DateCharKernel, &arr);
+    }
+
+    // ---- TIME -----------------------------------------------------------
+
+    #[test]
+    fn batched_matches_per_cell_time_int64() {
+        // scale 9: raw = seconds*1e9 + nanos.
+        let s = 1_000_000_000i64;
+        let arr = Int64Array::from(vec![
+            Some(0),                      // 00:00:00
+            Some(3661 * s + 123_456_789), // 01:01:01.123456789
+            None,
+            Some(86_399 * s),               // 23:59:59
+            Some(45_015 * s + 900_000_000), // 12:30:15.9
+        ]);
+        assert_equiv(&time_field("9", DataType::Int64, true), &arr, 32);
+        // cell < 9 -> pre-write buffer guard fires identically.
+        assert_equiv(&time_field("9", DataType::Int64, true), &arr, 8);
+    }
+
+    #[test]
+    fn batched_matches_per_cell_time_int32() {
+        // scale 0 fits in Int32: raw = seconds.
+        let arr = Int32Array::from(vec![Some(0), Some(3661), None, Some(86_399)]);
+        assert_equiv(&time_field("0", DataType::Int32, true), &arr, 32);
+        let arr_nn = Int32Array::from(vec![0, 3661, 86_399]);
+        assert_equiv(&time_field("0", DataType::Int32, false), &arr_nn, 32);
+    }
+
+    #[test]
+    fn batched_matches_per_cell_time_decode_failure() {
+        let negative = Int64Array::from(vec![Some(0), Some(-1)]);
+        assert_equiv(&time_field("9", DataType::Int64, true), &negative, 32);
+
+        let bad_scale = Int64Array::from(vec![Some(0)]);
+        assert_equiv(&time_field("10", DataType::Int64, true), &bad_scale, 32);
+
+        let overflow = Int32Array::from(vec![Some(0), Some(86_400)]);
+        assert_equiv(&time_field("0", DataType::Int32, true), &overflow, 32);
+    }
+
+    #[test]
+    fn batched_declines_time_non_nullable_with_nulls() {
+        use arrow::datatypes::Int64Type;
+        let arr = Int64Array::from(vec![Some(0), None, Some(3_661_000_000_000)]);
+        assert_declines_non_nullable_with_nulls(
+            &crate::conversion::time::TimeCharKernel::<Int64Type> {
+                scale: 9,
+                _phantom: std::marker::PhantomData,
+            },
+            &arr,
+        );
+    }
+
+    #[test]
+    fn batched_declines_time_on_first_row_stride_overflow() {
+        use arrow::datatypes::Int64Type;
+        let arr = Int64Array::from(vec![Some(0), Some(3_661_000_000_000)]);
+        assert_declines_first_row_stride_overflow(
+            &crate::conversion::time::TimeCharKernel::<Int64Type> {
+                scale: 9,
+                _phantom: std::marker::PhantomData,
+            },
+            &arr,
+        );
     }
 
     // ---- TIMESTAMP_NTZ / _LTZ ------------------------------------------
@@ -1878,6 +2073,53 @@ mod char_batch_tests {
             Some((-62_135_596_800, 0)),
         ]);
         assert_equiv(&timestamp_struct_field("TIMESTAMP_LTZ", true), &arr, 32);
+    }
+
+    // ---- REAL -----------------------------------------------------------
+
+    #[test]
+    fn batched_matches_per_cell_real() {
+        let arr = Float64Array::from(vec![
+            Some(0.0),
+            Some(-0.0),
+            Some(1.0),
+            Some(-12345.6789),
+            None,
+            Some(0.1),
+            Some(f64::INFINITY),
+            Some(f64::NEG_INFINITY),
+            Some(f64::NAN),
+        ]);
+        // wide cell: full Display output, exercises the fast path.
+        assert_equiv(&real_field(true), &arr, 64);
+        let arr_nn = Float64Array::from(vec![0.0, 1.5, -2.5, 1e20]);
+        assert_equiv(&real_field(false), &arr_nn, 64);
+    }
+
+    #[test]
+    fn batched_matches_per_cell_real_whole_digit_overflow() {
+        // A value whose whole-digit part cannot fit the cell must surface the
+        // 22003 NumericValueOutOfRange on both paths (not a silent truncation).
+        let arr = Float64Array::from(vec![Some(123_456_789.0), Some(1.0)]);
+        assert_equiv(&real_field(true), &arr, 4);
+    }
+
+    #[test]
+    fn batched_matches_per_cell_real_fractional_truncation_no_overflow() {
+        let arr = Float64Array::from(vec![Some(1.234_567_89), Some(-2.987_654_321)]);
+        assert_equiv(&real_field(true), &arr, 4);
+    }
+
+    #[test]
+    fn batched_declines_real_non_nullable_with_nulls() {
+        let arr = Float64Array::from(vec![Some(1.0), None, Some(3.0)]);
+        assert_declines_non_nullable_with_nulls(&crate::conversion::real::RealCharKernel, &arr);
+    }
+
+    #[test]
+    fn batched_declines_real_on_first_row_stride_overflow() {
+        let arr = Float64Array::from(vec![Some(1.0), Some(2.0)]);
+        assert_declines_first_row_stride_overflow(&crate::conversion::real::RealCharKernel, &arr);
     }
 
     // ---- TIMESTAMP_TZ ---------------------------------------------------

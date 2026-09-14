@@ -1,4 +1,4 @@
-use arrow::array::BooleanArray;
+use arrow::array::{Array, BooleanArray};
 use odbc_sys as sql;
 
 use crate::api::CDataType;
@@ -6,7 +6,7 @@ use crate::api::ParameterBinding;
 use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
 use crate::conversion::error::BindingError;
 use crate::conversion::error::{
-    ConversionError, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    ConversionError, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError, WriteOdbcValueSnafu,
 };
 use crate::conversion::error::{
     InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
@@ -17,10 +17,11 @@ use crate::conversion::numeric_helpers::{
 use crate::conversion::param_binding::{
     buffer_data_len, read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
 };
-use crate::conversion::traits::Binding;
+use crate::conversion::traits::{Binding, BindingStrides, LengthOrNull};
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
-use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
+use crate::conversion::{ColumnConverter, ReadArrowType, SnowflakeType, WriteODBCType};
+use snafu::ResultExt;
 
 pub(crate) use sf_types::SnowflakeBoolean;
 
@@ -328,4 +329,121 @@ impl CharKernel for BooleanCharKernel {
     ) -> Result<&'s str, WriteOdbcError> {
         Ok(if *value { "1" } else { "0" })
     }
+}
+
+/// BOOLEAN-specific block-fetch writer layered on top of the shared
+/// [`BooleanCharKernel`]-backed converter. `SQLGetData`, non-CHAR targets, and
+/// cold CHAR shapes are delegated to `inner`; the common bound-column shape
+/// writes the ASCII digit, terminator, and indicators directly.
+pub(crate) struct BooleanCharConverter {
+    pub(crate) inner: Box<dyn ColumnConverter>,
+    pub(crate) nullable: bool,
+}
+
+impl ColumnConverter for BooleanCharConverter {
+    fn convert_arrow_value(
+        &self,
+        array: &dyn Array,
+        row_idx: usize,
+        binding: &Binding,
+        get_data_offset: &mut Option<usize>,
+    ) -> Result<Warnings, ConversionError> {
+        self.inner
+            .convert_arrow_value(array, row_idx, binding, get_data_offset)
+    }
+
+    fn convert_arrow_range(
+        &self,
+        array: &dyn Array,
+        arrow_row_range: std::ops::Range<usize>,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) {
+        let Some(array) = array.as_any().downcast_ref::<BooleanArray>() else {
+            self.inner.convert_arrow_range(
+                array,
+                arrow_row_range,
+                base_binding,
+                out_row_start,
+                strides,
+                outputs,
+            );
+            return;
+        };
+
+        if base_binding.target_type != CDataType::Char
+            || base_binding.target_value_ptr.is_null()
+            || base_binding.buffer_length < 2
+            || (!self.nullable && array.null_count() > 0)
+            || !write_boolean_char_range(
+                array,
+                arrow_row_range.clone(),
+                base_binding,
+                out_row_start,
+                strides,
+                outputs,
+            )
+        {
+            self.inner.convert_arrow_range(
+                array,
+                arrow_row_range,
+                base_binding,
+                out_row_start,
+                strides,
+                outputs,
+            );
+        }
+    }
+}
+
+fn write_boolean_char_range(
+    array: &BooleanArray,
+    arrow_row_range: std::ops::Range<usize>,
+    base_binding: &Binding,
+    out_row_start: usize,
+    strides: BindingStrides,
+    outputs: &mut [Result<Warnings, ConversionError>],
+) -> bool {
+    let Ok(mut binding) = strides.for_row(base_binding, out_row_start) else {
+        return false;
+    };
+    let (value_stride, indicator_stride) =
+        strides.row_step(base_binding.target_type, base_binding.buffer_length);
+    let no_nulls = array.null_count() == 0;
+
+    for (i, batch_idx) in arrow_row_range.enumerate() {
+        if i > 0 {
+            binding = binding.stepped(value_stride, indicator_stride);
+        }
+        if outputs[i].is_err() {
+            continue;
+        }
+        if !no_nulls && array.is_null(batch_idx) {
+            if let Err(error) = binding
+                .write_length_or_null(LengthOrNull::Null)
+                .context(WriteOdbcValueSnafu)
+            {
+                outputs[i] = Err(error);
+            }
+            continue;
+        }
+
+        // SAFETY: `base_binding.buffer_length >= 2` was checked by the caller
+        // before taking this fast path, and `binding` steps by that same
+        // buffer_length each row, so `target` and `target.add(1)` are in bounds.
+        unsafe {
+            let target = binding.target_value_ptr as *mut u8;
+            std::ptr::write(target, b'0' + u8::from(array.value(batch_idx)));
+            std::ptr::write(target.add(1), 0);
+        }
+        if let Err(error) = binding
+            .write_length_or_null(LengthOrNull::Length(1))
+            .context(WriteOdbcValueSnafu)
+        {
+            outputs[i] = Err(error);
+        }
+    }
+    true
 }
