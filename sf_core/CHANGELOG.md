@@ -32,6 +32,10 @@ New features:
 - Added file-level parallelism to PUT and GET: a multi-file transfer now uploads or downloads several files at once instead of one at a time, bounded by the statement's `PARALLEL` value, and result rows keep their original file order. Fail-fast now lets files already in flight (up to `PARALLEL` of them) finish and land on the stage after the first error, instead of stopping after only the current file. (snowflakedb/drivers#1451)
 - Added the `FILE` (18), `INTERVAL_YEAR_MONTH` (19) and `INTERVAL_DAY_TIME` (20) type codes to the Python type-code table, matching legacy `snowflake-connector-python`. Columns of these types previously reported as `TEXT` in `cursor.description`. (snowflakedb/drivers#1697)
 
+Changes:
+
+- Changed the message on a failed login to carry the server's own text: `ApiError::Login` renders as `Failed to login: <server text>` instead of a bare `Failed to login`, and for coded server errors as `Failed to login: Login error: <server text>, code: <code>`. The server sentence previously reached applications only through the error trace. This is what `DriverException.message` carries; error kinds, vendor codes and SQLSTATEs are unchanged. (snowflake-eng/drivers#1881)
+
 Bug fixes:
 
 - Fixed `ReauthenticationRequest` missing a `cause` attribute and not being importable from `snowflake.connector.network`, which broke Snowpark session-expiry handling. (snowflakedb/drivers#1945)
