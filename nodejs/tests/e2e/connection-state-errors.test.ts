@@ -1,23 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { Connection } from '../types/sdk-types.js';
 import { createConnection, createLiveConnection } from './utils/fixtures.js';
-import { destroyConnectionAsync, executeAsync, isRunningNewDriverWithBD } from './utils/index.js';
-
-function connectAsyncWithErrorBD(connection: Connection) {
-  if (isRunningNewDriverWithBD('BD#11')) {
-    return connection.connectAsync();
-  } else {
-    return new Promise((resolve, reject) => {
-      connection.connect((error: unknown) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(void 0);
-        }
-      });
-    });
-  }
-}
+import { connectAsyncWithErrorBD, destroyConnectionAsync, executeAsync } from './utils/index.js';
 
 describe('Connection State Errors', () => {
   it('rejects a statement issued before the connection is established', async () => {

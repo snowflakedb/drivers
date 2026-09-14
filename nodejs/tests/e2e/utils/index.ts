@@ -81,6 +81,16 @@ export function createTestConnection(overrides: Partial<ConnectionOptions> = {})
   });
 }
 
+export async function connectAsyncWithErrorBD(connection: Connection): Promise<void> {
+  if (isRunningNewDriverWithBD('BD#11')) {
+    await connection.connectAsync();
+  } else {
+    await new Promise<void>((resolve, reject) => {
+      connection.connect((error) => (error ? reject(error) : resolve()));
+    });
+  }
+}
+
 export async function destroyConnectionAsync(connection: Connection): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     connection.destroy((err) => (err ? reject(err) : resolve()));
