@@ -1,19 +1,15 @@
 name: full_put_get_tests
 
-# On-demand full put/get sweep across all three clouds. The standard CI
-# matrix doesn't exercise put/get against aws/gcp/azure on every PR, so this
-# workflow is the process's way of covering that combination when a PR
-# touches stage file transfer or otherwise warrants the full sweep.
+# This file configures the git workflow to run put/get e2e tests across all
+# three clouds. The standard CI doesn't run put/get tests against aws/gcp/azure
+# on every PR that touches core, so this workflow covers that combination when a PR
+# changes core code responsible for file transfer.
 #
-# Spawned when either the `transport` or `run_full_put_get_tests` label is on
-# a PR — `transport` is auto-applied by .github/labeler.yml for stage
-# file-transfer changes, `run_full_put_get_tests` is available to apply
-# manually for any other PR that warrants the full put/get sweep. Runs the
-# put/get test subset across python, sf_core, and odbc on Linux x64, fanned
-# out across aws/gcp/azure (3 jobs per driver). Cargo + uv cache shared-keys
-# mirror the main test pipelines so when this workflow fires after the
-# regular CI runs, the registry/target/uv caches are already warm and
-# rebuild cost is near-zero.
+# Workflow is triggered when either the `transport` or `run_full_put_get_tests`
+# label is on a PR: 
+#  - `transport` label is auto-applied by .github/labeler.yml when a PR touches
+# stage file transfer code in core.
+#  - `run_full_put_get_tests` label can be applied manually for any PR.
 #
 # Build-once / test-many pattern (mirrors main pipelines):
 #   build_python_wheel  → uploads wheel, downloaded by the 3 cloud entries
@@ -23,6 +19,8 @@ name: full_put_get_tests
 #                         distributing those as artifacts is fragile, so we
 #                         rely on the shared `core-test` cargo cache instead
 #                         of a separate build job.
+#   nodejs_put_get      → matrix entries each build the native core via the
+#                         e2e globalSetup
 #
 # JDBC has no put/get tests in the test tree today, so it is intentionally
 # omitted; add a JDBC job here when those tests land.
@@ -461,3 +459,81 @@ jobs:
           kind: ccache
           key-suffix: default
           cache-hit: ${{ steps.ccache.outputs.cache-hit }}
+
+  # No separate build job: the native core is compiled inside the test:e2e run
+  nodejs_put_get:
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud_provider: [aws, gcp, azure]
+    runs-on: ubuntu-latest
+    name: nodejs_put_get (linux x64, node22, ${{ matrix.cloud_provider }})
+    env:
+      MATRIX_KEY: putget-nodejs-ubuntu-latest-${{ matrix.cloud_provider }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free runner disk space
+        uses: ./.github/actions/free-disk-space-linux
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # npm 10 (bundled with Node 22) crashes on install; see test-nodejs.yml.
+      - name: Upgrade npm
+        run: npm install -g npm@11
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: nodejs
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: nodejs
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
+
+      # test:e2e globalSetup builds the native core/sdk/link first, then vitest
+      # runs only the put/get suites
+      - name: Run Node.js put/get e2e tests (new driver)
+        working-directory: nodejs
+        run: |
+          mkdir -p reports
+          npm run test:e2e -- query/put-get/ \
+            --reporter=default --reporter=junit \
+            --outputFile=reports/${MATRIX_KEY}.xml
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-${{ env.MATRIX_KEY }}
+          path: nodejs/reports/${{ env.MATRIX_KEY }}.xml
+          if-no-files-found: warn
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          slim-mode: aggressive
+          shared-key: nodejs
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
