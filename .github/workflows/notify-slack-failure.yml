@@ -177,6 +177,11 @@ jobs:
           # Parse JUnit XML files for individual test failures.
           test_failures = []
           for xml_path in sorted(glob.glob('test-artifacts/**/*.xml', recursive=True)):
+              # Flaky lanes run continue-on-error, so their failures are
+              # non-blocking and never fail a run; their JUnit artifacts stay
+              # out of the alert so flaky tests are not surfaced for triage.
+              if 'flaky' in xml_path.lower():
+                  continue
               try:
                   tree = ET.parse(xml_path)
                   for tc in tree.findall('.//testcase'):
