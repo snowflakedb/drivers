@@ -28,8 +28,13 @@ final class PreparedStatementBindingSerializer {
   /** Thread-safe once configured; reused to avoid re-parsing the (empty) generator config. */
   private static final JsonFactory JSON_FACTORY = new JsonFactory();
 
-  /** Process-wide; a fresh allocator per execute is measurably expensive in batch scenarios. */
-  static final RootAllocator SHARED_ALLOCATOR = new RootAllocator(Long.MAX_VALUE);
+  /**
+   * Process-wide; a fresh allocator per execute is measurably expensive in batch scenarios. Cap the
+   * budget so a leak or runaway batch cannot grow without bound.
+   */
+  static final long MAX_BIND_ALLOCATION_BYTES = 4L * 1024 * 1024 * 1024;
+
+  static final RootAllocator SHARED_ALLOCATOR = new RootAllocator(MAX_BIND_ALLOCATION_BYTES);
 
   static final class ParameterValue {
     private final SnowflakeType bindType;

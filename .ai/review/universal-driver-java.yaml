@@ -134,7 +134,7 @@ rules:
 
   - id: ud-java-try-with-resources-required
     rule: |
-      **OBJECTIVE**: Prevent JDBC resource leaks and connection blocking in tests and production code.
+      **OBJECTIVE**: Prevent JDBC resource leaks and connection blocking in tests and source.
 
       **REQUIREMENT**: Every `Connection`, `Statement`, `PreparedStatement`, `CallableStatement`, and `ResultSet` acquired in JDBC test code MUST be managed with try-with-resources (or an equivalent RAII helper that closes on all exit paths). Manual `close()` in `finally` is acceptable only when try-with-resources cannot express the control flow — and must still close in reverse acquisition order.
 
@@ -783,7 +783,7 @@ rules:
       includes a non-constant variable value in the SQL string is a finding. The correction
       depends on position:
 
-      **Identifiers** (table, schema, stage, view, column name) in production code (`src/main/java`):
+      **Identifiers** (table, schema, stage, view, column name) in source (`src/main/java`):
       Use `IDENTIFIER(?)` with `PreparedStatement.setString(n, name)`.
 
       **Data values** (WHERE clause values, INSERT data, option arguments):

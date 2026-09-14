@@ -5,6 +5,7 @@ import static java.sql.ResultSetMetaData.columnNullable;
 import static net.snowflake.client.internal.api.implementation.metadata.objects.ErrorUtils.isMissingMetadataObject;
 import static net.snowflake.client.internal.api.implementation.metadata.objects.MatchingUtils.matches;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.DatabaseMetaData;
@@ -247,7 +248,7 @@ public class MetaDataObjects {
             JsonNode jsonNode;
             try {
               jsonNode = mapper.readTree(dataTypeStr);
-            } catch (Exception ex) {
+            } catch (JsonProcessingException | IllegalArgumentException ex) {
               logger.error("Exception when parsing column result: {}", ex.getClass().getName());
               logger.debug("Exception when parsing column result", ex);
               // INTERNAL_ERROR carries the verbatim message (null template) — see SFSQLException.

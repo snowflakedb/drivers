@@ -1,0 +1,45 @@
+# Routing-accuracy eval set for: jdbc-impl-reviewer
+
+should_trigger:
+  - prompt: "review jdbc impl"
+    notes: "Exact trigger phrase from the skill description."
+
+  - prompt: "review JDBC source"
+    notes: "Exact trigger phrase from the skill description."
+
+  - prompt: "jdbc impl review on the connection class"
+    notes: "Matches 'jdbc impl review' trigger phrase."
+
+  - prompt: "review this Java implementation in SnowflakeConnectionImpl"
+    notes: "Matches 'review this Java implementation' and names a source class."
+
+  - prompt: "review jdbc/src/main/java for Effective Java issues"
+    notes: "Matches 'review jdbc/src/main/java' and names the source tree."
+
+  - prompt: "can you do a Java good-practices review of the Snowflake JDBC driver internals"
+    notes: "Description's additional context: Java good-practices review of the driver, not tests."
+
+  - prompt: "ProtobufApis.coreDriverApi is a public static — is that a problem in the JDBC source"
+    notes: "Names the source seam this skill is written to catch."
+
+  - prompt: "SFFormatter uses a static SimpleDateFormat, review the JDBC logging code"
+    notes: "Source concurrency issue in jdbc/src/main/java logging."
+
+should_not_trigger:
+  - prompt: "review jdbc tests"
+    reason: "Routes to jdbc-test-reviewer. Test tree is explicitly out of scope."
+
+  - prompt: "is this jdbc test flaky"
+    reason: "Flaky-test review is jdbc-test-reviewer, not source impl review."
+
+  - prompt: "review my odbc test for flakiness"
+    reason: "ODBC tests are out of scope."
+
+  - prompt: "can you review this before I open a PR — just want a final sanity check on the code"
+    reason: "General pre-PR review; routes to end-of-task-self-review."
+
+  - prompt: "extract a helper from this long Java method, keep behavior the same"
+    reason: "Refactor workflow; routes to java-clean-code."
+
+  - prompt: "how do I run the JDBC unit tests"
+    reason: "Routes to run-jdbc-ud-tests."

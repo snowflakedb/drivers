@@ -48,8 +48,8 @@ should_not_trigger:
   - prompt: "review my odbc test for flakiness, it's in odbc/src/test/c/StatementTest.c"
     reason: "ODBC tests (C/C++) are explicitly out of scope for this skill. Should route to an odbc-test-reviewer or general review."
 
-  - prompt: "there's a resource leak in the jdbc connection pool — can you look at the production code in jdbc/src/main/java"
-    reason: "Non-test production code is explicitly out of scope. Routes to general /review. Keywords 'jdbc' and 'resource leak' make this confusable."
+  - prompt: "there's a resource leak in the jdbc connection pool — can you look at the source in jdbc/src/main/java"
+    reason: "Non-test source is explicitly out of scope. Routes to general /review. Keywords 'jdbc' and 'resource leak' make this confusable."
 
   - prompt: "what version of snowflake-jdbc should I bump to in the pom.xml"
     reason: "Maven POM / dependency version decisions are explicitly out of scope. Routes to general conversation or no skill."

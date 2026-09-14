@@ -8,9 +8,10 @@ Before editing or creating a file, read the `.ai/review/*.yaml` whose
 `allowed_folders` + `allowed_file_extensions` match it (and not its
 `excluded_folders`), and follow that ruleset's `rule:` blocks. Glob the
 directory to discover the current set rather than assuming a fixed list.
-Example: `jdbc/src/test/java/**/*.java` → `universal-driver-java.yaml` (which
-requires `should`-prefixed `@Test` names and typed assertions over
-`assertEquals(true, …)`).
+Examples: `jdbc/src/test/java/**/*.java` → `universal-driver-java.yaml`
+(test naming, `wasNull()`, WireMock). `jdbc/src/main/java/**/*.java` →
+`universal-driver-java-impl.yaml` (carriers, no public mutable statics,
+bounded Arrow allocators) plus the shared logging/security rulesets.
 
 These layer under `code-review-design-discipline.md`; a direct user instruction
 wins over both.

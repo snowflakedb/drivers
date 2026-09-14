@@ -156,6 +156,38 @@ documenting at the function level. Refactor-stale comments (e.g.
 "validated by `OldFn`" after the work moved to `NewFn`) are worse than
 no comment — fix them when you move the code.
 
+## Java JDBC counterparts
+
+The same six principles apply in `jdbc/src/main/java`. Concrete forms:
+
+1. **No global mutable seam** — do not add `public static CoreDriverApi` (or
+   similar) that tests mutate. Inject through the existing
+   `SnowflakeConnectionImpl(..., CoreDriverApi)` constructor.
+   `ProtobufApis.coreDriverApi()` is the default factory, not a setter.
+2. **One parser** — connection URL / property resolution already lives in
+   `ConnectionString` and `ConnectionOptionsResolver`. Do not add a parallel
+   Properties builder.
+3. **Discriminability across the JNI/protobuf boundary** — impls throw
+   carriers (`SFSQLException`, `CoreException`) so `SqlExceptionMapper` can
+   rebuild SQLSTATE / vendor code. Do not catch `Exception` and return a
+   sentinel that drops the discriminant (`ConnectionString` → invalid,
+   `isValid()` → false) unless the JDBC spec requires that shape and you log
+   the cause.
+4. **Visibility** — `net.snowflake.client.api` is the public contract;
+   `internal` types stay out of it. A public field whose type is package-private
+   is the Java form of mixed visibility.
+5. **Let the compiler keep lists honest** — prefer `@JdbcBoundary` codegen
+   over hand-maintained `Decorated*` forwarding. A manual `equals`/`toString`
+   that lists fields has the same change-amplification smell as a hand-rolled
+   Rust `Debug`.
+6. **Uphold the documented contract** — if `checkClosed()` is specified to
+   throw `SFSQLException` with `CONNECTION_CLOSED` /
+   `RESULTSET_ALREADY_CLOSED`, a new call site must not throw
+   `IllegalStateException` instead.
+
+JDBC-specific rules: `.ai/review/universal-driver-java-impl.yaml` and
+`.claude/rules/java-jdbc-impl.md`.
+
 ---
 
 These are *design-time* principles. For *end-of-task* self-checks

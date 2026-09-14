@@ -87,6 +87,11 @@ Do not extract:
 
 Prefer one cohesive refactor over a chain of tiny forwarding methods.
 
+In the JDBC wrapper, prefer a package-private collaborator over growing
+`SnowflakeConnectionImpl`, `SnowflakeResultSetImpl`, `SnowflakePreparedStatementImpl`,
+or `MetaDataObjects`. Keep `@JdbcBoundary` / `SqlExceptionMapper` as the exception
+boundary; extraction must not introduce checked `SQLException` on impl methods.
+
 ## Behavior-preservation checklist
 
 - [ ] Public signatures and visibility are unchanged unless requested.

@@ -121,7 +121,7 @@ public class VarCharConverter extends AbstractArrowVectorConverter {
         return null;
       }
       return new BigDecimal(str);
-    } catch (Exception ex) {
+    } catch (NumberFormatException ex) {
       throw SFSQLException.fromErrorCode(
           ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BIG_DECIMAL_STR, str);
     }

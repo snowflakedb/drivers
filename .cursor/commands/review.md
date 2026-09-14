@@ -30,9 +30,19 @@ Prioritize known hotspots: resource cleanup (try-with-resources), multistatement
 
 Output findings grouped by severity (High / Medium / Low) using the review output format defined in the rule.
 
+## As @jdbc-impl-reviewer review jdbc/src/main/java
+
+When JDBC source files are in the diff, review each changed file under
+`jdbc/src/main/java/` (skip `protobuf_gen` and generated `Decorated*`).
+
+Follow the `jdbc-impl-reviewer` skill and map findings to
+`.ai/review/universal-driver-java-impl.yaml`. The skill's hotspot examples are
+not an exclusive list — report any matching issue anywhere in the JDBC source
+diff.
+
 ## Combine review reports and present to the user
 
-- Merge findings from the Arctic Owl review, the ODBC test review, and the JDBC test review into a single report.
+- Merge findings from the Arctic Owl review, the ODBC test review, the JDBC test review, and the JDBC impl review into a single report.
 - Deduplicate overlapping issues, keeping the more detailed description.
 - Group all findings by severity (High / Medium / Low), then by file.
 - Append the ODBC Spec Compliance and Missing Test Coverage sections from the ODBC test review.

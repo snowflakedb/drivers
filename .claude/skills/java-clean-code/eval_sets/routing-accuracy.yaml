@@ -1,0 +1,24 @@
+# Routing-accuracy eval set for: java-clean-code
+
+should_trigger:
+  - prompt: "extract a helper from this long Java method"
+    notes: "Matches extracting helpers / simplifying a long method."
+
+  - prompt: "Java clean code this ConnectionImpl method"
+    notes: "Exact 'Java clean code' phrasing."
+
+  - prompt: "refactor this Java method but keep the behavior the same"
+    notes: "Behavior-preserving Java refactor."
+
+  - prompt: "this JDBC method mixes parsing and validation, can you split it"
+    notes: "Classic extraction request on JDBC source."
+
+should_not_trigger:
+  - prompt: "review jdbc tests"
+    reason: "Routes to jdbc-test-reviewer."
+
+  - prompt: "review jdbc impl"
+    reason: "Routes to jdbc-impl-reviewer; this skill is the refactor workflow, not the review report."
+
+  - prompt: "how do I run the JDBC unit tests"
+    reason: "Routes to run-jdbc-ud-tests."

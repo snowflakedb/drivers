@@ -1,0 +1,235 @@
+id: universal-driver-java-impl
+friendly_name: "Universal Driver Java/JDBC Source Guidelines"
+status: enabled
+allowed_folders:
+  - "jdbc/src/main/java"
+excluded_folders:
+  - "jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen"
+  - "jdbc/src/main/java/net/snowflake/client/internal/api/implementation/decorator"
+allowed_file_extensions:
+  - ".java"
+rules:
+  - id: ud-java-no-public-mutable-static-seam
+    rule: |
+      **OBJECTIVE**: Keep JDBC source free of public mutable static test/source seams.
+
+      **REQUIREMENT**: Do not introduce `public static` mutable fields that source and tests share
+      as a process-wide override (`ProtobufApis.coreDriverApi = …`). Prefer constructor or factory
+      injection. A `private static final` default singleton plus a package-private constructor
+      on the consumer is acceptable.
+
+      **EXEMPTIONS**: JDBC driver self-registration (`DriverManager.registerDriver` in a static block),
+      one-time native-library loaders, and immutable constants.
+
+      ❌ **BAD:**
+      ```java
+      public class ProtobufApis {
+        public static CoreDriverApi coreDriverApi = new CoreDriverApiImpl(...);
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      public final class ProtobufApis {
+        private static final CoreDriverApi PRODUCTION = new CoreDriverApiImpl(...);
+        public static CoreDriverApi coreDriverApi() { return PRODUCTION; }
+      }
+      SnowflakeConnectionImpl(String url, Properties info, CoreDriverApi api) { ... }
+      ```
+
+      **PRIORITY**: High for a new public mutable static. Medium when tightening an existing seam
+      in the same PR that already touches it.
+
+  - id: ud-java-no-thread-unsafe-jdk-dateformat
+    rule: |
+      **OBJECTIVE**: Prevent data races in shared date/time formatters.
+
+      **REQUIREMENT**: Never store `SimpleDateFormat`, `DateFormat`, or `Calendar` in a `static`
+      field used from more than one thread. Use `DateTimeFormatter` (immutable) or a
+      `ThreadLocal` / per-call clone.
+
+      ❌ **BAD:**
+      ```java
+      private static final DateFormat DF = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+      builder.append(DF.format(new Date(record.getMillis())));
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      private static final DateTimeFormatter DF =
+          DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(ZoneOffset.UTC);
+      builder.append(DF.format(Instant.ofEpochMilli(record.getMillis())));
+      ```
+
+      **PRIORITY**: High.
+
+  - id: ud-java-catch-specific-or-translate
+    rule: |
+      **OBJECTIVE**: Preserve error discriminants instead of collapsing every failure to one sentinel.
+
+      **REQUIREMENT**: New or modified `catch (Exception)` / `catch (Throwable)` in `jdbc/src/main/java`
+      is a finding unless the site is one of:
+      - a documented JNI / native-bridge swallow that logs and continues;
+      - a close/abort/log delivery path that must not mask the primary failure (`addSuppressed`);
+      - `isValid()` mapping transport failure to `false` (JDBC contract), provided the failure is logged.
+
+      Catch the types the callee actually throws. Unexpected `RuntimeException` should propagate
+      (or become a carrier via `SqlExceptionMapper`), not become a generic invalid/false result.
+
+      ❌ **BAD:**
+      ```java
+      } catch (Exception ex) {
+        return INVALID_CONNECT_STRING;
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      } catch (IllegalArgumentException | NumberFormatException | SFSQLException ex) {
+        logger.warn("Unparseable Snowflake connect string", ex);
+        return INVALID_CONNECT_STRING;
+      }
+      ```
+
+      **PRIORITY**: Medium. Do not flag an untouched legacy catch unless the PR already edits that method.
+
+  - id: ud-java-impl-throws-carriers-only
+    rule: |
+      **OBJECTIVE**: Keep checked `SQLException` creation inside `SqlExceptionMapper` / `@JdbcBoundary`.
+
+      **REQUIREMENT**: Methods on `@JdbcBoundary` impl classes must throw runtime carriers
+      (`SFSQLException`, `CoreException`, `NotImplementedException`,
+      `SFSQLFeatureNotSupportedException`) — not checked `SQLException`. Constructors that run
+      before decoration (`SnowflakeDriver.connect`, `SnowflakeConnectionImpl`) must wrap through
+      `SqlExceptionMapper.call` / `run`.
+
+      Do not add a new `throws SQLException` on an impl method to "match JDBC". The generated
+      decorator already translates.
+
+      ❌ **BAD:**
+      ```java
+      public void execute(String sql) throws SQLException {
+        throw new SnowflakeSQLException("failed");
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      public void execute(String sql) {
+        throw new SFSQLException("failed");
+      }
+      ```
+
+      **PRIORITY**: High for new methods. Medium when a touched method grows a checked throw.
+
+  - id: ud-java-jdbc-closed-uses-carrier
+    rule: |
+      **OBJECTIVE**: Closed JDBC handles must surface as carriers with a documented SQLSTATE.
+
+      **REQUIREMENT**: `checkClosed()` (and equivalents) on Connection / Statement / ResultSet impls
+      must throw `SFSQLException` with `ErrorCode.CONNECTION_CLOSED` or
+      `ErrorCode.RESULTSET_ALREADY_CLOSED` — not `IllegalStateException`. The decorator maps the
+      carrier to checked `SQLException`. Keep the `closed` flag `volatile` or use `AtomicBoolean`
+      when the object can be closed from another thread.
+
+      ❌ **BAD:**
+      ```java
+      private boolean closed;
+      private void checkClosed() {
+        if (closed) throw new IllegalStateException("ResultSet is closed");
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      private volatile boolean closed;
+      private void checkClosed() {
+        if (closed) {
+          throw new SFSQLException(ErrorCode.RESULTSET_ALREADY_CLOSED, "ResultSet is closed");
+        }
+      }
+      ```
+
+      **PRIORITY**: High.
+
+  - id: ud-java-no-empty-not-implemented
+    rule: |
+      **OBJECTIVE**: Unsupported JDBC methods must name themselves in the exception message.
+
+      **REQUIREMENT**: `NotImplementedException` and `SFSQLFeatureNotSupportedException` must be
+      constructed with the method name (and enough context to identify the call). A no-arg
+      `new NotImplementedException()` that becomes an empty `SQLFeatureNotSupportedException`
+      is a finding.
+
+      ❌ **BAD:**
+      ```java
+      public Array getArray(int columnIndex) {
+        throw new NotImplementedException();
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      public Array getArray(int columnIndex) {
+        throw new NotImplementedException("getArray");
+      }
+      ```
+
+      **PRIORITY**: Medium.
+
+  - id: ud-java-resource-close-aggregates
+    rule: |
+      **OBJECTIVE**: Multi-resource close must not drop secondary failures.
+
+      **REQUIREMENT**: When closing more than one AutoCloseable / native / Arrow resource in one
+      method, keep the first exception and `addSuppressed` subsequent ones (see `ArrowResources`).
+      Do not empty-catch close failures unless the method is already handling a primary failure
+      and logs the secondary one.
+
+      **PRIORITY**: Medium. Flag only newly added or modified close paths.
+
+  - id: ud-java-arrow-allocator-must-be-bounded
+    rule: |
+      **OBJECTIVE**: Process-wide Arrow allocators must have a finite budget.
+
+      **REQUIREMENT**: `new RootAllocator(Long.MAX_VALUE)` (or any unbounded max) is a finding.
+      Reuse of one allocator is fine; the cap must be a named constant or derived from
+      `Runtime.getRuntime().maxMemory()`.
+
+      ❌ **BAD:**
+      ```java
+      static final RootAllocator SHARED_ALLOCATOR = new RootAllocator(Long.MAX_VALUE);
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      static final long MAX_BIND_ALLOCATION_BYTES = 4L * 1024 * 1024 * 1024;
+      static final RootAllocator SHARED_ALLOCATOR = new RootAllocator(MAX_BIND_ALLOCATION_BYTES);
+      ```
+
+      **PRIORITY**: High for a new unbounded allocator. Medium when tightening an existing one.
+
+  - id: ud-java-native-close-on-all-paths
+    rule: |
+      **OBJECTIVE**: JNI, Arrow, and binding buffers must be released on every exit path.
+
+      **REQUIREMENT**: Native / Arrow handles acquired in a method must be closed in try-with-resources
+      or `finally`. A manual try/finally is acceptable when TWR would mis-classify a close-after-success
+      as the primary failure (document why, as `PreparedBatch` does).
+
+      **PRIORITY**: High for new native allocations. Do not flag generated protobuf.
+
+  - id: ud-java-prefer-composition-at-jdbc-surface
+    rule: |
+      **OBJECTIVE**: Grow JDBC surface through collaborators, not by enlarging `*Impl` god classes.
+
+      **REQUIREMENT**: When a PR adds a new responsibility to `SnowflakeConnectionImpl`,
+      `SnowflakeResultSetImpl`, `SnowflakePreparedStatementImpl`, or `MetaDataObjects`, extract it
+      to a package-private collaborator (or extend the decorator/codegen) rather than adding another
+      50+ lines of mixed concern to the impl. Existing decorator / carrier / `DelegatingWrapper`
+      patterns stay; do not replace them with per-method try/catch.
+
+      **DO NOT FLAG**: JDBC DataSource setter beans (`SnowflakeBasicDataSource`), generated `Decorated*`
+      forwarding, or a one-line delegate.
+
+      **PRIORITY**: Medium. Diff-scoped only.

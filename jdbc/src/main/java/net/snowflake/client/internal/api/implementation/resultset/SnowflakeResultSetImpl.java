@@ -27,12 +27,14 @@ import java.util.Map;
 import java.util.TimeZone;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.Decorators;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.DecoratedSnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
@@ -53,7 +55,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   private final boolean ownsStatement;
   private final ResultSetChunksProvider resultSetChunksProvider;
 
-  private boolean closed = false;
+  private volatile boolean closed = false;
   private int fetchSize = 0;
   private int fetchDirection = FETCH_FORWARD;
 
@@ -818,7 +820,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public Array getArray(int columnIndex) {
-    throw new NotImplementedException();
+    throw new NotImplementedException("getArray");
   }
 
   @Override
@@ -1233,7 +1235,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   private void checkClosed() {
     if (closed) {
-      throw new IllegalStateException("ResultSet is closed");
+      throw new SFSQLException(ErrorCode.RESULTSET_ALREADY_CLOSED, "ResultSet is closed");
     }
   }
 
@@ -1282,11 +1284,11 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public <T> List<T> getList(int columnIndex, Class<T> type) {
-    throw new NotImplementedException();
+    throw new NotImplementedException("getList");
   }
 
   @Override
   public <T> Map<String, T> getMap(int columnIndex, Class<T> type) {
-    throw new NotImplementedException();
+    throw new NotImplementedException("getMap");
   }
 }
