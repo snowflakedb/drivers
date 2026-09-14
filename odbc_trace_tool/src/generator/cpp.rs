@@ -138,22 +138,41 @@ fn catalog_arg_is_empty_selector(arg: Option<&crate::model::CatalogStringArg>) -
     }
 }
 
-/// True for the `SQLTables` enumerate-all navigation forms whose result set is
-/// a property of the connected account, not the driver: the catalog list
-/// (`SQLTables("%", "", "")`) and the account-wide schema list
-/// (`SQLTables("", "%", "")`). Catalog `"%"` is sufficient. Schema `"%"`
-/// collapses only when the catalog selector is the empty-string sentinel
-/// (empty string or captured length 0), not a null pointer. A literal catalog,
-/// a table-name `"%"`, or `"%"` only in `TableType` is a scoped listing and
-/// stays unrolled.
-fn is_account_wide_tables(call: &crate::model::CatalogFunction) -> bool {
+/// True when a `SQLTables` string arg is an explicit null-pointer selector: the
+/// DM passed this position (the arg is present) but captured no string, and the
+/// captured length is the null-pointer sentinel `SQL_NTS` (-3) rather than the
+/// empty-string sentinel (length 0). A null pointer means "match every object
+/// at this level". An absent arg (a synthetic call that omits the position)
+/// returns false so it stays unrolled.
+fn arg_is_null_pointer(arg: Option<&crate::model::CatalogStringArg>) -> bool {
+    matches!(arg, Some(a) if a.value.is_none() && a.length != Some(0))
+}
+
+/// True for the `SQLTables` enumerate-all forms whose result set is a property
+/// of the connected account and fixture, not the driver, so its row count is
+/// drained structurally rather than pinned:
+///
+/// * catalog list — `SQLTables("%", "", "", "")`;
+/// * account-wide schema list — `SQLTables("", "%", "", "")`, where the catalog
+///   is the empty-string sentinel (empty string or captured length 0), not a
+///   null pointer;
+/// * all objects in a catalog — `SQLTables(<catalog>, NULL, NULL, [types])`,
+///   the form Excel MS Query issues to list every table/view/synonym. Both the
+///   schema and table names are null pointers, so the result is every object in
+///   the catalog across all schemas — a count that grows as the fixture grows.
+///
+/// A literal schema or table name, a `"%"` schema on a catalog-scoped listing,
+/// or `"%"` only in `TableType` is a scoped listing and stays unrolled.
+fn is_object_enumeration(call: &crate::model::CatalogFunction) -> bool {
     if call.function_name != "SQLTables" {
         return false;
     }
     let catalog = call.string_args.first();
     let schema = call.string_args.get(1);
+    let table = call.string_args.get(2);
     catalog_arg_is_percent(catalog)
         || (catalog_arg_is_empty_selector(catalog) && catalog_arg_is_percent(schema))
+        || (arg_is_null_pointer(schema) && arg_is_null_pointer(table))
 }
 
 /// Render an ODBC enum-style argument. Prefer the captured symbolic name when
@@ -619,8 +638,14 @@ impl<'a> GenContext<'a> {
         self.indent = 0;
         self.writeln("#include <catch2/catch_test_macros.hpp>");
         self.writeln("#include <algorithm>");
+        if self.has_async_poll_run() {
+            self.writeln("#include <chrono>");
+        }
         self.writeln("#include <cstring>");
         self.writeln("#include <string>");
+        if self.has_async_poll_run() {
+            self.writeln("#include <thread>");
+        }
         self.writeln("#include <vector>");
         if self.config.capture_mode {
             self.writeln("#include <cmath>");
@@ -1667,7 +1692,7 @@ impl<'a> GenContext<'a> {
         // empty string means "match nothing" while null means "match all", and
         // the trace's intent is the latter, so non-enumeration empty selectors
         // stay null.
-        let enumeration = is_account_wide_tables(call);
+        let enumeration = is_object_enumeration(call);
         let mut args = vec![stmt_var.clone()];
         for arg in &call.string_args {
             match &arg.value {
@@ -1763,7 +1788,7 @@ impl<'a> GenContext<'a> {
     /// cursor is closed or a different statement begins on the same handle.
     fn update_enum_cursor_state(&mut self, call: &OdbcCall) {
         match call {
-            OdbcCall::Catalog(c) if is_account_wide_tables(c) => {
+            OdbcCall::Catalog(c) if is_object_enumeration(c) => {
                 if let Some(h) = c.handle.clone() {
                     self.enum_cursors.insert(h);
                 }
@@ -1804,21 +1829,24 @@ impl<'a> GenContext<'a> {
         }
     }
 
-    /// Emit a structural drain loop for an account-wide catalog enumeration
-    /// on `handle`. Remaining matching trace ops are skipped by the main loop
-    /// while the handle is in [`Self::draining`].
+    /// Emit a structural drain loop for a catalog object enumeration on
+    /// `handle`. Remaining matching trace ops are skipped by the main loop while
+    /// the handle is in [`Self::draining`].
     ///
-    /// The number of rows and the catalog names returned depend on the
-    /// connected account, not the driver, so instead of unrolling per-row
+    /// The number of rows and the object names returned depend on the connected
+    /// account and fixture, not the driver, so instead of unrolling per-row
     /// assertions we assert the protocol contract: every fetch succeeds until
-    /// `SQL_NO_DATA`, the driver returns at least one row, and each row's
-    /// `SQLGetData` on column 1 succeeds.
+    /// `SQL_NO_DATA` and the driver returns at least one row. The loop reads no
+    /// column: the trace binds result columns with `SQLBindCol` before it
+    /// fetches, and `SQLGetData` on a column that precedes the last bound one is
+    /// only legal under `SQL_GD_ANY_COLUMN`, so a fixed-column probe would not be
+    /// portable. Bound columns are still populated by `SQLFetch`.
     fn emit_enumeration_drain(&mut self, handle: &str) {
         let stmt_var = self.stmt_var_for(&Some(handle.to_string()));
-        self.writeln("// account-wide SQLTables('%') catalog enumeration:");
-        self.writeln("// the row count and catalog names are a property of the");
-        self.writeln("// connected account, not the driver, so drain the cursor");
-        self.writeln("// structurally rather than pinning environment-specific rows.");
+        self.writeln("// catalog object enumeration: the row count and object names are a");
+        self.writeln("// property of the connected account and fixture, not the driver, so");
+        self.writeln("// drain the cursor structurally rather than pinning environment-specific");
+        self.writeln("// rows.");
         self.writeln("{");
         self.indent += 1;
         self.writeln("SQLRETURN ret;");
@@ -1827,14 +1855,6 @@ impl<'a> GenContext<'a> {
             "while ((ret = SQLFetch({stmt_var})) == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {{"
         ));
         self.indent += 1;
-        self.writeln("std::vector<char> buf(2048, static_cast<char>(0xFF));");
-        self.writeln("SQLLEN ind = 0;");
-        self.writeln(&format!(
-            "SQLRETURN g = SQLGetData({stmt_var}, 1, SQL_C_WCHAR, buf.data(), 2048, &ind);"
-        ));
-        self.writeln(&format!(
-            "CHECK_THAT(OdbcResult(g, SQL_HANDLE_STMT, {stmt_var}), OdbcMatchers::Succeeded());"
-        ));
         self.writeln("++enum_rows;");
         self.indent -= 1;
         self.writeln("}");
@@ -1845,6 +1865,21 @@ impl<'a> GenContext<'a> {
         self.indent -= 1;
         self.writeln("}");
         self.writeln("");
+    }
+
+    /// True when the trace contains an execute that returned
+    /// `SQL_STILL_EXECUTING`, i.e. an async poll loop will be emitted. Gates the
+    /// `<chrono>` / `<thread>` includes the poll loop's inter-poll sleep needs.
+    fn has_async_poll_run(&self) -> bool {
+        self.calls.iter().any(|c| {
+            matches!(
+                c,
+                OdbcCall::ExecDirect(e) if e.return_code == crate::model::ReturnCode::StillExecuting
+            ) || matches!(
+                c,
+                OdbcCall::Execute(e) if e.return_code == crate::model::ReturnCode::StillExecuting
+            )
+        })
     }
 
     /// If the call at `start_idx` begins an async-execution poll run — a maximal
@@ -1911,17 +1946,31 @@ impl<'a> GenContext<'a> {
         };
 
         let stmt_var = self.stmt_var_for(&handle);
-        self.writeln("// async execution: the host re-issues the same statement until");
-        self.writeln("// the server stops reporting SQL_STILL_EXECUTING. The poll count");
-        self.writeln("// is timing-dependent, so loop rather than pin the trace's count.");
+        self.writeln("// async execution: the host re-issues the same statement until the");
+        self.writeln("// server stops reporting SQL_STILL_EXECUTING. The poll count is timing-");
+        self.writeln("// dependent, so loop rather than pin the trace's count, and sleep between");
+        self.writeln("// polls: hammering the execute in a tight loop starves the driver's");
+        self.writeln("// in-flight async work and it never reaches a terminal code. A statement");
+        self.writeln("// that still has not settled after the bound fails the test rather than");
+        self.writeln("// looping forever, so a regression in async completion is caught.");
         self.writeln("{");
         self.indent += 1;
         self.writeln("SQLRETURN ret;");
         self.writeln("int async_polls = 0;");
         self.writeln("do {");
         self.indent += 1;
-        self.writeln("REQUIRE(async_polls < 10000);");
-        self.writeln("++async_polls;");
+        self.writeln("if (async_polls++ >= 300) {");
+        self.indent += 1;
+        self.writeln(
+            "FAIL(\"async execute did not reach a terminal code within the poll bound\");",
+        );
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("if (async_polls > 1) {");
+        self.indent += 1;
+        self.writeln("std::this_thread::sleep_for(std::chrono::milliseconds(100));");
+        self.indent -= 1;
+        self.writeln("}");
         match &sql_raw {
             Some(raw) => {
                 let sql = escape_cpp_string_literal(&self.resolve_query(raw));
@@ -4474,6 +4523,86 @@ mod tests {
     }
 
     #[test]
+    fn catalog_scoped_all_objects_collapses_to_drain_loop() {
+        use crate::model::{CatalogFunction, CatalogStringArg, Fetch, OdbcCall, ReturnCode};
+
+        // SQLTables(<literal catalog>, NULL, NULL, <types>) — Excel MS Query's
+        // "list every table/view/synonym in this database". The schema and table
+        // names are null pointers (length SQL_NTS = -3), so the result is every
+        // object in the catalog; the count grows as the fixture grows and must
+        // not be pinned.
+        let nullptr_arg = || CatalogStringArg {
+            value: None,
+            length: Some(-3),
+        };
+        let calls = vec![
+            OdbcCall::Catalog(CatalogFunction {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                function_name: "SQLTables".to_string(),
+                string_args: vec![
+                    CatalogStringArg {
+                        value: Some("ODBCMETADATATESTDB".to_string()),
+                        length: Some(18),
+                    },
+                    nullptr_arg(),
+                    nullptr_arg(),
+                    CatalogStringArg {
+                        value: Some("'TABLE','VIEW','SYNONYM'".to_string()),
+                        length: Some(24),
+                    },
+                ],
+            }),
+            OdbcCall::Fetch(Fetch {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+            }),
+            OdbcCall::Fetch(Fetch {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+            }),
+            OdbcCall::Fetch(Fetch {
+                return_code: ReturnCode::NoData,
+                handle: Some("0xstmt".to_string()),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "all objects".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("while ((ret = SQLFetch("),
+            "all-objects enumeration drains in a loop; output:\n{output}"
+        );
+        assert!(
+            output.contains("CHECK(enum_rows > 0);"),
+            "drain loop asserts at least one row; output:\n{output}"
+        );
+        assert!(
+            output.contains("OdbcMatchers::IsNoData()"),
+            "drain loop asserts SQL_NO_DATA termination; output:\n{output}"
+        );
+        let tables_line = output
+            .lines()
+            .find(|l| l.contains("SQLRETURN ret = SQLTables("))
+            .expect("SQLTables call");
+        assert!(
+            tables_line.contains("nullptr"),
+            "null-pointer schema/table selectors stay nullptr; line:\n{tables_line}"
+        );
+        assert!(
+            !tables_line.contains("sqlchar(\"\")"),
+            "null pointers are not rewritten to empty-string sentinels; line:\n{tables_line}"
+        );
+    }
+
+    #[test]
     fn fixture_scoped_tables_is_not_treated_as_enumeration() {
         use crate::model::{
             CatalogFunction, CatalogStringArg, Fetch, GetData, OdbcCall, ReturnCode,
@@ -4890,8 +5019,22 @@ mod tests {
             "poll loop waits on SQL_STILL_EXECUTING; output:\n{output}"
         );
         assert!(
-            output.contains("REQUIRE(async_polls < 10000);"),
+            output.contains("if (async_polls++ >= 300) {"),
             "poll loop is bounded; output:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "FAIL(\"async execute did not reach a terminal code within the poll bound\");"
+            ),
+            "exhausting the poll bound fails the test rather than looping forever; output:\n{output}"
+        );
+        assert!(
+            output.contains("std::this_thread::sleep_for(std::chrono::milliseconds(100));"),
+            "poll loop sleeps between polls so the driver's async work can settle; output:\n{output}"
+        );
+        assert!(
+            output.contains("#include <chrono>") && output.contains("#include <thread>"),
+            "async poll loop pulls in the sleep headers; output:\n{output}"
         );
         assert!(
             output.contains("OdbcMatchers::IsSuccess()"),
