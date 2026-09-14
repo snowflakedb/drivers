@@ -1,11 +1,11 @@
-@python @jdbc @nodejs @core_not_needed
+@python @jdbc @nodejs @core_not_needed @dotnet
 Feature: DATE type support
 
   # =========================================================================== #
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should cast date values to appropriate type
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15'::DATE, '1970-01-01'::DATE, '1999-12-31'::DATE" is executed

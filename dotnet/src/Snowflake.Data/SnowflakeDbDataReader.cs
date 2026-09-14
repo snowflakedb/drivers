@@ -157,7 +157,16 @@ public sealed class SnowflakeDbDataReader : DbDataReader
 
     public override string GetDataTypeName(int ordinal) => _descriptor.Columns[ordinal].Type;
 
-    public override DateTime GetDateTime(int ordinal) => throw new NotImplementedException();
+    // TODO this implementation is just PoC and will undergo heavy refactoring.
+    public override DateTime GetDateTime(int ordinal)
+    {
+        EnsurePositioned();
+        var column = _currentBatch!.Column(ordinal);
+
+        // Fallback: convert value to string.
+        var value = ExtractValue(column, _rowIndexInBatch);
+        return (DateTime)value;
+    }
 
     public override double GetDouble(int ordinal) => throw new NotImplementedException();
 
@@ -173,6 +182,7 @@ public sealed class SnowflakeDbDataReader : DbDataReader
             "TEXT" => typeof(string),
             "BOOLEAN" => typeof(bool),
             "BINARY" => typeof(byte[]),
+            "DATE" => typeof(DateTime),
             _ => typeof(string),
         };
     }
@@ -298,6 +308,7 @@ public sealed class SnowflakeDbDataReader : DbDataReader
             StringArray arr => (object?)arr.GetString(index) ?? DBNull.Value,
             BooleanArray arr => arr.GetValue(index) ?? (object)DBNull.Value,
             BinaryArray arr => (object?)arr.GetBytes(index).ToArray() ?? DBNull.Value,
+            Date32Array arr => (object?)arr.GetDateTime(index) ?? DBNull.Value,
             _ => throw new NotSupportedException($"Unsupported Arrow array type: {column.GetType().Name}"),
         };
     }
