@@ -455,6 +455,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         test_type: PerfTestType = PerfTestType.SELECT,
         s3_download_url: str = None,  # S3 URL for PUT/GET tests
         s3_download_dir: str = None,  # Local directory for downloaded files
+        s3_max_files: int = None,  # If set, download only the first N objects from the prefix
         fetch_mode: str = "fetchmany",  # Cursor fetch strategy for SELECT tests
         bind_mode: str = "char",  # ODBC: "char" (SQL_C_CHAR) or "default" (SQL_C_DEFAULT)
         worker_count: int = 1,
@@ -493,7 +494,9 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         final_setup_queries = _prepare_setup_queries(
             test_type, parameters_json, setup_queries, result_format
         )
-        s3_files_dir = _download_s3_files_if_needed(s3_download_url, s3_download_dir)
+        s3_files_dir = _download_s3_files_if_needed(
+            s3_download_url, s3_download_dir, s3_max_files
+        )
         universal_only = request.node.get_closest_marker("universal_only") is not None
         effective_driver_type = (
             "universal" if universal_only and driver_type == "both" else driver_type
@@ -985,13 +988,16 @@ def pytest_sessionfinish(session, exitstatus):
         logger.info("\nSkipping regression check (use --regression-check to enable)")
 
 
-def _download_s3_files_if_needed(s3_download_url: str = None, s3_download_dir: str = None):
+def _download_s3_files_if_needed(
+    s3_download_url: str = None, s3_download_dir: str = None, s3_max_files: int = None
+):
     """
     Download S3 files if needed (for PUT/GET tests).
     
     Args:
         s3_download_url: S3 URL to download files from
         s3_download_dir: Local directory to download files to (optional)
+        s3_max_files: If set, download only the first N objects from the prefix
     
     Returns:
         Path to downloaded files directory, or None if no download needed
@@ -1007,12 +1013,14 @@ def _download_s3_files_if_needed(s3_download_url: str = None, s3_download_dir: s
         # Extract dataset name from S3 URL
         # e.g., "s3://bucket/path/12Mx100/" -> "12Mx100"
         dataset_name = s3_download_url.rstrip('/').split('/')[-1]
+        if s3_max_files is not None:
+            dataset_name = f"{dataset_name}_n{s3_max_files}"
         s3_download_dir = str(s3_files_base / dataset_name)
     
     s3_files_dir = Path(s3_download_dir)
     
     try:
-        download_s3_files(s3_download_url, s3_files_dir)
+        download_s3_files(s3_download_url, s3_files_dir, max_files=s3_max_files)
     except Exception as e:
         pytest.fail(f"S3 download failed: {e}")
     
