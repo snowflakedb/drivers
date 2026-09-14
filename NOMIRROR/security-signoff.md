@@ -232,37 +232,30 @@ whole sync rather than quietly omitting one file.
 - `ci/mirroring/copy.bara.sky` — mirror exclusions.
 - `.ai/review/universal-driver-security-disclosure.yaml` — the ArcticOwl
   rules for how a security-relevant change should be worded.
+- `configs/snowflake-eng/drivers/` in `snowflake-eng/gh-policies-as-code` —
+  org-level rulesets that require `security-signoff`.
 
 
-## Remaining steps
+## Enforcement
 
-Protection lives in two rulesets, not classic branch protection: "Protect main"
-(target `~DEFAULT_BRANCH`) and "Protect release branch" (target
-`refs/heads/release/*`). Until the status is required on both, this workflow
-publishes a verdict that nothing enforces.
+Protection lives in two repo-level rulesets, not classic branch protection,
+plus two org-level rulesets from `gh-policies-as-code` so the required
+status cannot drift off the list:
 
-- **Require `security-signoff` on "Protect main".** It already requires eleven
-  other checks; add this one.
-- **Give "Protect release branch" some rules, then require the status there
-  too.** That ruleset's `rules` array is currently empty — not merely missing
-  required checks, but carrying no pull-request requirement and no checks of any
-  kind. The branches API reports `protected: true` for `release/*`, which only
-  means that some ruleset matches the ref, so protection read that way is
-  misleading. Release branches are where security backports land, which makes
-  this the widest of the gaps. Enforcement has to happen in this repo: the gate
-  is deliberately absent from the mirror, changes reach the mirror only through
-  the outbound Copybara sync, and releases are cut from the mirror — by the time
-  a change is there it is already public.
-- **Confirm the bypass actors** on both rulesets are who you expect, per
-  "Known limits" above.
-- **Seed the roster on existing release branches.** The action reads
-  `.github/security-partners.yml` from the PR's base branch. Every current
-  `release/*` branch was cut before this change, so none carries the file;
-  requiring the status there first would block every labeled PR with no way to
-  clear it. Branches cut from `main` afterwards inherit it.
-- **Test the revoke-after-queueing case** from "Known limits" above — one
-  throwaway PR settles it.
-- **Watch the keyword and path nets.** Repo-specific `keyword-patterns` and
-  `path-patterns` are configured in `.github/workflows/security-label.yml`.
-  Leave `scan-diff` off unless filename matching is not enough; scanning
-  diffs is noisier. Do not add this label to `.github/labeler.yml`.
+- **Protect main** (target `~DEFAULT_BRANCH`) requires `security-signoff`
+  along with the other CI checks. PAC `drivers_security_signoff_main`
+  requires the same status additively.
+- **Protect release branch** (target `refs/heads/release/*`) requires
+  `security-signoff` and also carries pull-request, deletion, and
+  non-fast-forward rules. PAC `drivers_security_signoff_release` requires
+  the status additively. Enforcement has to happen in this repo: the gate
+  is deliberately absent from the mirror, changes reach the mirror only
+  through the outbound Copybara sync, and releases are cut from the
+  mirror — by the time a change is there it is already public.
+
+Repository Admin may bypass Protect main on pull requests. Repository
+Admin and a named user may always bypass Protect release. That is
+intentional.
+
+`.github/security-partners.yml` is on `main` and on existing `release/*`
+branches, so labeled PRs into those bases can be cleared.
