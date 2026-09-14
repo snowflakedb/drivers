@@ -49,7 +49,9 @@ public final class WiremockClient implements AutoCloseable {
   private static final String WIREMOCK_KEYSTORE = "wiremock-keystore.p12";
   private static final String WIREMOCK_KEYSTORE_PASSWORD = "password";
   private static final String TLS_BASE_DISABLED = "SSLv3, TLSv1, TLSv1.1";
-  private static final Duration DEFAULT_HEALTH_TIMEOUT = Duration.ofSeconds(30);
+  // Windows GHA (Java 21) can take >30s for the WireMock JVM + TLS keystore
+  // to answer GET /__admin/health; TlsVersionTest then fails the whole JDBC lane.
+  private static final Duration DEFAULT_HEALTH_TIMEOUT = Duration.ofSeconds(90);
   private static final Duration DEFAULT_HEALTH_POLL_INTERVAL = Duration.ofMillis(250);
   // Idempotent admin calls occasionally see a transient read timeout when the WireMock
   // subprocess briefly stalls (GC pause, CPU starvation on a loaded CI runner). A couple of
