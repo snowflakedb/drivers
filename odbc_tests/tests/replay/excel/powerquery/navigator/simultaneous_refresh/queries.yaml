@@ -1,0 +1,19 @@
+queries:
+- index: 0
+  original: "select \"ROWKIND\",\r\n    \"LARGEVARCHAR\",\r\n    \"LARGEBINARY\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"LARGELOBS\""
+  mapped: "select \"ROWKIND\",\r\n    \"LARGEVARCHAR\",\r\n    \"LARGEBINARY\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"LARGELOBS\""
+- index: 1
+  original: "select \"ROWKIND\",\r\n    \"LARGEVARCHAR\",\r\n    \"LARGEBINARY\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"LARGELOBS\""
+  mapped: "select \"ROWKIND\",\r\n    \"LARGEVARCHAR\",\r\n    \"LARGEBINARY\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"LARGELOBS\""
+- index: 2
+  original: "select \"ROWKIND\",\r\n    \"LARGEVARCHAR\",\r\n    \"LARGEBINARY\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"LARGELOBS\""
+  mapped: "select \"ROWKIND\",\r\n    \"LARGEVARCHAR\",\r\n    \"LARGEBINARY\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"LARGELOBS\""
+- index: 3
+  original: "select \"ROWKIND\",\r\n    \"INTVAL\",\r\n    \"BIGINTVAL\",\r\n    \"SMALLINTVAL\",\r\n    \"TINYINTVAL\",\r\n    \"NUM38\",\r\n    \"NUM18S6\",\r\n    \"FLOATVAL\",\r\n    \"DOUBLEVAL\",\r\n    \"REALVAL\",\r\n    \"VARCHARVAL\",\r\n    \"TEXTVAL\",\r\n    \"CHARVAL\",\r\n    \"BINARYVAL\",\r\n    \"VARBINARYVAL\",\r\n    \"BOOLVAL\",\r\n    \"DATEVAL\",\r\n    \"TIMEVAL\",\r\n    \"TSNTZ\",\r\n    \"TSLTZ\",\r\n    \"TSTZ\",\r\n    \"VARIANTVAL\",\r\n    \"OBJECTVAL\",\r\n    \"ARRAYVAL\",\r\n    \"GEOVAL\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"ALLDATATYPESNAV\""
+  mapped: "select \"ROWKIND\",\r\n    \"INTVAL\",\r\n    \"BIGINTVAL\",\r\n    \"SMALLINTVAL\",\r\n    \"TINYINTVAL\",\r\n    \"NUM38\",\r\n    \"NUM18S6\",\r\n    \"FLOATVAL\",\r\n    \"DOUBLEVAL\",\r\n    \"REALVAL\",\r\n    \"VARCHARVAL\",\r\n    \"TEXTVAL\",\r\n    \"CHARVAL\",\r\n    \"BINARYVAL\",\r\n    \"VARBINARYVAL\",\r\n    \"BOOLVAL\",\r\n    \"DATEVAL\",\r\n    \"TIMEVAL\",\r\n    \"TSNTZ\",\r\n    \"TSLTZ\",\r\n    \"TSTZ\",\r\n    \"VARIANTVAL\",\r\n    \"OBJECTVAL\",\r\n    \"ARRAYVAL\",\r\n    \"GEOVAL\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"ALLDATATYPESNAV\""
+- index: 4
+  original: "select \"ROWKIND\",\r\n    \"INTVAL\",\r\n    \"BIGINTVAL\",\r\n    \"SMALLINTVAL\",\r\n    \"TINYINTVAL\",\r\n    \"NUM38\",\r\n    \"NUM18S6\",\r\n    \"FLOATVAL\",\r\n    \"DOUBLEVAL\",\r\n    \"REALVAL\",\r\n    \"VARCHARVAL\",\r\n    \"TEXTVAL\",\r\n    \"CHARVAL\",\r\n    \"BINARYVAL\",\r\n    \"VARBINARYVAL\",\r\n    \"BOOLVAL\",\r\n    \"DATEVAL\",\r\n    \"TIMEVAL\",\r\n    \"TSNTZ\",\r\n    \"TSLTZ\",\r\n    \"TSTZ\",\r\n    \"VARIANTVAL\",\r\n    \"OBJECTVAL\",\r\n    \"ARRAYVAL\",\r\n    \"GEOVAL\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"ALLDATATYPESNAV\""
+  mapped: "select \"ROWKIND\",\r\n    \"INTVAL\",\r\n    \"BIGINTVAL\",\r\n    \"SMALLINTVAL\",\r\n    \"TINYINTVAL\",\r\n    \"NUM38\",\r\n    \"NUM18S6\",\r\n    \"FLOATVAL\",\r\n    \"DOUBLEVAL\",\r\n    \"REALVAL\",\r\n    \"VARCHARVAL\",\r\n    \"TEXTVAL\",\r\n    \"CHARVAL\",\r\n    \"BINARYVAL\",\r\n    \"VARBINARYVAL\",\r\n    \"BOOLVAL\",\r\n    \"DATEVAL\",\r\n    \"TIMEVAL\",\r\n    \"TSNTZ\",\r\n    \"TSLTZ\",\r\n    \"TSTZ\",\r\n    \"VARIANTVAL\",\r\n    \"OBJECTVAL\",\r\n    \"ARRAYVAL\",\r\n    \"GEOVAL\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"ALLDATATYPESNAV\""
+- index: 5
+  original: "select \"ROWKIND\",\r\n    \"LARGEVARCHAR\",\r\n    \"LARGEBINARY\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"LARGELOBS\""
+  mapped: "select \"ROWKIND\",\r\n    \"LARGEVARCHAR\",\r\n    \"LARGEBINARY\"\r\nfrom \"ODBCMETADATATESTDB\".\"DATATYPETESTS\".\"LARGELOBS\""
