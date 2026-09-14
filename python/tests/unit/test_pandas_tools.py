@@ -207,6 +207,14 @@ class TestBranchingProperties:
         assert not cfg.binary_as_text_false_on_stage
         assert cfg.binary_as_text_false_on_copy
 
+    def test_match_by_column_name_follows_quote_identifiers(self):
+        assert _make_cfg(quote_identifiers=True).match_by_column_name == "CASE_SENSITIVE"
+        assert _make_cfg(quote_identifiers=False).match_by_column_name == "CASE_INSENSITIVE"
+
+    def test_ignore_case_follows_quote_identifiers(self):
+        assert not _make_cfg(quote_identifiers=True).ignore_case
+        assert _make_cfg(quote_identifiers=False).ignore_case
+
 
 # ---------------------------------------------------------------------------
 # WritePandasConfig — qualify
@@ -325,59 +333,61 @@ class TestBuildCreateFileFormatSql:
 class TestBuildCopyIntoSql:
     def test_basic_with_quoting(self):
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A", "B"]))
-        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        result = op._build_copy_into_sql("MY_STAGE", "MY_TABLE")
         assert "COPY INTO IDENTIFIER(?)" in result["operation"]
-        assert '$1:"A" AS "A"' in result["operation"]
-        assert '$1:"B" AS "B"' in result["operation"]
+        assert "MATCH_BY_COLUMN_NAME=CASE_SENSITIVE" in result["operation"]
+        assert "$1:" not in result["operation"]
         assert "TYPE=PARQUET" in result["operation"]
         assert "PURGE=TRUE" in result["operation"]
         assert "ON_ERROR=?" in result["operation"]
         assert result["parameters"] == ("MY_TABLE", "abort_statement")
 
-    def test_with_column_type_map(self):
-        op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
-        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", {"A": "NUMBER(38,0)"})
-        assert '$1:"A"::NUMBER(38,0)' in result["operation"]
+    def test_does_not_interpolate_column_names(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=['has"quote', " spaced "]))
+        result = op._build_copy_into_sql("MY_STAGE", "MY_TABLE")
+        assert 'has"quote' not in result["operation"]
+        assert "spaced" not in result["operation"]
+        assert "$1:" not in result["operation"]
 
-    def test_no_quoting(self):
+    def test_no_quoting_uses_case_insensitive_match(self):
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]), quote_identifiers=False)
-        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
-        assert '$1:"A" AS A' in result["operation"]
-        assert '"A" AS "A"' not in result["operation"]
+        result = op._build_copy_into_sql("MY_STAGE", "MY_TABLE")
+        assert "MATCH_BY_COLUMN_NAME=CASE_INSENSITIVE" in result["operation"]
+        assert "CASE_SENSITIVE" not in result["operation"]
 
     def test_with_vectorized_scanner(self):
         op: WritePandasOperation = _make_op(use_vectorized_scanner=True)
-        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        result = op._build_copy_into_sql("MY_STAGE", "MY_TABLE")
         assert "USE_VECTORIZED_SCANNER=TRUE" in result["operation"]
 
     def test_target_location_is_not_interpolated_into_sql(self):
         target = '"mydb"."myschema"."mytable"'
         op: WritePandasOperation = _make_op()
-        result = op._build_copy_into_sql("@MY_STAGE", target, None)
+        result = op._build_copy_into_sql("MY_STAGE", target)
         assert target not in result["operation"]
         assert result["parameters"][0] == target
 
     def test_on_error_is_not_interpolated_into_sql(self):
         payload = "CONTINUE ->>\n EXECUTE IMMEDIATE $$DROP TABLE foo$$;--"
         op: WritePandasOperation = _make_op(on_error=payload)
-        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        result = op._build_copy_into_sql("MY_STAGE", "MY_TABLE")
         assert payload not in result["operation"]
         assert result["parameters"][1] == payload
 
     def test_params_order_is_target_then_on_error(self):
         op: WritePandasOperation = _make_op(on_error="continue")
-        result = op._build_copy_into_sql("@MY_STAGE", "MY_TARGET", None)
+        result = op._build_copy_into_sql("MY_STAGE", "MY_TARGET")
         assert result["parameters"] == ("MY_TARGET", "continue")
 
     def test_full_query_and_parameters(self):
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
-        result = op._build_copy_into_sql("MY_STAGE", "MY_TABLE", None)
+        result = op._build_copy_into_sql("MY_STAGE", "MY_TABLE")
         assert result == {
             "operation": (
-                'COPY INTO IDENTIFIER(?) ("A") '
-                'FROM (SELECT $1:"A" AS "A" '
-                "FROM '@MY_STAGE') "
+                "COPY INTO IDENTIFIER(?) "
+                "FROM '@MY_STAGE' "
                 "FILE_FORMAT = (TYPE=PARQUET COMPRESSION=auto) "
+                "MATCH_BY_COLUMN_NAME=CASE_SENSITIVE "
                 "PURGE=TRUE ON_ERROR=?"
             ),
             "parameters": ("MY_TABLE", "abort_statement"),
@@ -418,35 +428,42 @@ class TestBuildTruncateTableSql:
 class TestBuildCreateTableSql:
     def test_target_location_uses_identifier_binding(self):
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
-        result = op._build_create_table_sql('"db"."schema"."tbl"', None)
+        result = op._build_create_table_sql('"db"."schema"."tbl"', "MY_STAGE", "MY_FF")
         assert "IDENTIFIER(?)" in result["operation"]
         assert '"db"."schema"."tbl"' not in result["operation"]
-        assert result["parameters"] == ('"db"."schema"."tbl"',)
+        assert result["parameters"][0] == '"db"."schema"."tbl"'
         assert result["_force_qmark_paramstyle"] is True
 
-    def test_column_type_from_map(self):
-        op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
-        result = op._build_create_table_sql("MY_TABLE", {"A": "NUMBER(38,0)"})
-        assert "NUMBER(38,0)" in result["operation"]
-
-    def test_column_type_defaults_to_variant(self):
-        op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
-        result = op._build_create_table_sql("MY_TABLE", None)
-        assert "VARIANT" in result["operation"]
-
-    def test_table_type_prefix(self):
-        op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]), table_type="temp")
-        result = op._build_create_table_sql("MY_TABLE", None)
-        assert "TEMP TABLE" in result["operation"]
-
-
-class TestBuildInferColumnTypesSql:
     def test_stage_and_format_are_bound_params(self):
         op: WritePandasOperation = _make_op()
-        result = op._build_infer_column_types_sql("MY_STAGE", "MY_FILE_FORMAT")
-        assert result["operation"] == "SELECT * FROM TABLE(INFER_SCHEMA(LOCATION => ?, FILE_FORMAT => ?))"
-        assert result["parameters"] == ("@MY_STAGE", "MY_FILE_FORMAT")
-        assert result["_force_qmark_paramstyle"] is True
+        result = op._build_create_table_sql("MY_TABLE", "MY_STAGE", "MY_FF")
+        assert "USING TEMPLATE" in result["operation"]
+        assert "INFER_SCHEMA(LOCATION => ?, FILE_FORMAT => ?, IGNORE_CASE => FALSE)" in result["operation"]
+        assert result["parameters"] == ("MY_TABLE", "@MY_STAGE", "MY_FF")
+
+    def test_does_not_interpolate_column_names(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=['has"quote', " spaced "]))
+        result = op._build_create_table_sql("MY_TABLE", "MY_STAGE", "MY_FF")
+        assert 'has"quote' not in result["operation"]
+        assert "spaced" not in result["operation"]
+        assert "VARIANT" not in result["operation"]
+
+    def test_ignore_case_when_identifiers_are_unquoted(self):
+        op: WritePandasOperation = _make_op(quote_identifiers=False)
+        result = op._build_create_table_sql("MY_TABLE", "MY_STAGE", "MY_FF")
+        assert "IGNORE_CASE => TRUE" in result["operation"]
+
+    def test_table_type_prefix(self):
+        op: WritePandasOperation = _make_op(table_type="temp")
+        result = op._build_create_table_sql("MY_TABLE", "MY_STAGE", "MY_FF")
+        assert "TEMP TABLE" in result["operation"]
+
+    def test_iceberg_uses_kind_and_keeps_options_out_of_infer(self):
+        op: WritePandasOperation = _make_op(iceberg_config={"EXTERNAL_VOLUME": "vol"})
+        result = op._build_create_table_sql("MY_TABLE", "MY_STAGE", "MY_FF")
+        assert "ICEBERG TABLE" in result["operation"]
+        assert "KIND => 'ICEBERG'" in result["operation"]
+        assert "EXTERNAL_VOLUME='vol'" in result["operation"]
 
 
 class TestBuildPutFileSql:
@@ -577,13 +594,27 @@ class TestPipelineFlow:
         mock_upload.assert_called_once()
         mock_copy.assert_called_once()
 
-    def test_auto_create_triggers_inference_and_create_table(self, conn):
+    def test_infer_schema_only_skips_table_creation(self, conn):
+        op: WritePandasOperation = _make_op(conn=conn, infer_schema=True)
+        with (
+            patch.object(op, "_create_stage", return_value="@STAGE"),
+            patch.object(op, "_upload_to_stage", return_value=(1, 10)),
+            patch.object(op, "_create_file_format") as mock_ff,
+            patch.object(op, "_create_table") as mock_create,
+            patch.object(op, "_copy_into", return_value=[("f", "LOADED")]),
+        ):
+            result = op.execute()
+
+        assert result.success
+        mock_ff.assert_not_called()
+        mock_create.assert_not_called()
+
+    def test_auto_create_creates_file_format_and_table(self, conn):
         op: WritePandasOperation = _make_op(conn=conn, auto_create_table=True, table_type="temp")
         with (
             patch.object(op, "_create_stage", return_value="@STAGE"),
             patch.object(op, "_upload_to_stage", return_value=(1, 10)),
             patch.object(op, "_create_file_format", return_value="MY_FF") as mock_ff,
-            patch.object(op, "_infer_column_types", return_value={"A": "NUMBER"}) as mock_infer,
             patch.object(op, "_create_table") as mock_create,
             patch.object(op, "_copy_into", return_value=[("f", "LOADED")]),
         ):
@@ -591,7 +622,6 @@ class TestPipelineFlow:
 
         assert result.success
         mock_ff.assert_called_once()
-        mock_infer.assert_called_once()
         mock_create.assert_called_once()
 
     def test_overwrite_with_auto_create_triggers_swap(self, conn):
@@ -600,7 +630,6 @@ class TestPipelineFlow:
             patch.object(op, "_create_stage", return_value="@STAGE"),
             patch.object(op, "_upload_to_stage", return_value=(1, 5)),
             patch.object(op, "_create_file_format", return_value="MY_FF"),
-            patch.object(op, "_infer_column_types", return_value={"A": "NUMBER"}),
             patch.object(op, "_create_table"),
             patch.object(op, "_copy_into", return_value=[("f", "LOADED")]),
             patch.object(op, "_swap_tables") as mock_swap,
@@ -616,7 +645,6 @@ class TestPipelineFlow:
             patch.object(op, "_create_stage", return_value="@STAGE"),
             patch.object(op, "_upload_to_stage", return_value=(1, 5)),
             patch.object(op, "_create_file_format", return_value="MY_FF"),
-            patch.object(op, "_infer_column_types", return_value={"A": "NUMBER"}),
             patch.object(op, "_create_table"),
             patch.object(op, "_truncate_table") as mock_truncate,
             patch.object(op, "_copy_into", return_value=[("f", "LOADED")]),

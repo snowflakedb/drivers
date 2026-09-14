@@ -214,6 +214,14 @@ class WritePandasConfig:
     def binary_as_text_false_on_copy(self) -> bool:
         return self.auto_create_table or self.overwrite or self.infer_schema
 
+    @property
+    def match_by_column_name(self) -> str:
+        return "CASE_SENSITIVE" if self.quote_identifiers else "CASE_INSENSITIVE"
+
+    @property
+    def ignore_case(self) -> bool:
+        return not self.quote_identifiers
+
     # -- DataFrame inspection -----------------------------------------------
 
     def has_tz_aware_columns(self) -> bool:
@@ -298,21 +306,8 @@ class WritePandasMixin:
         self,
         stage_location: str,
         target_location: str,
-        column_type_map: dict[str, str] | None,
     ) -> dict[str, Any]:
         cfg = self._cfg
-        target_cols: list[str] = []
-        select_exprs: list[str] = []
-
-        for col in cfg.df.columns:
-            col_name = quote_identifier(col) if cfg.quote_identifiers else col
-            target_cols.append(col_name)
-
-            parquet_ref = f'$1:"{col}"'
-            if column_type_map and col.upper() in column_type_map:
-                parquet_ref += f"::{column_type_map[col.upper()]}"
-            select_exprs.append(f"{parquet_ref} AS {col_name}")
-
         # COPY INTO FROM @stage does not support IDENTIFIER(?) bindings for the stage reference;
         # stage_location is a connector-internal name produced by generate_temp_name().
         escaped_stage = stage_location.replace("'", "\\'")
@@ -327,10 +322,10 @@ class WritePandasMixin:
             file_format_parts.append(f"USE_VECTORIZED_SCANNER={_sql_bool(cfg.use_vectorized_scanner)}")
 
         sql = (
-            f"COPY INTO IDENTIFIER(?) ({', '.join(target_cols)}) "
-            f"FROM (SELECT {', '.join(select_exprs)} "
-            f"FROM '@{escaped_stage}') "
+            f"COPY INTO IDENTIFIER(?) "
+            f"FROM '@{escaped_stage}' "
             f"FILE_FORMAT = ({' '.join(file_format_parts)}) "
+            f"MATCH_BY_COLUMN_NAME={cfg.match_by_column_name} "
             f"PURGE=TRUE ON_ERROR=?"
         )
         return {
@@ -373,35 +368,41 @@ class WritePandasMixin:
             ),
         }
 
-    def _build_infer_column_types_sql(self, stage_location: str, file_format_location: str) -> dict[str, Any]:
-        return {
-            "operation": "SELECT * FROM TABLE(INFER_SCHEMA(LOCATION => ?, FILE_FORMAT => ?))",
-            "parameters": (f"@{stage_location}", file_format_location),
-            "_force_qmark_paramstyle": True,
-        }
-
     def _build_create_table_sql(
         self,
         target_location: str,
-        column_type_map: dict[str, str] | None,
+        stage_location: str,
+        file_format_location: str,
     ) -> dict[str, Any]:
         cfg = self._cfg
-        col_defs = []
-        for col in cfg.df.columns:
-            col_type = column_type_map.get(col.upper(), "VARIANT") if column_type_map else "VARIANT"
-            col_name = quote_identifier(col) if cfg.quote_identifiers else col
-            col_defs.append(f"{col_name} {col_type}")
+        infer_args = [
+            "LOCATION => ?",
+            "FILE_FORMAT => ?",
+            f"IGNORE_CASE => {_sql_bool(cfg.ignore_case)}",
+        ]
+        if cfg.iceberg_config:
+            infer_args.append("KIND => 'ICEBERG'")
+
+        template = (
+            "SELECT ARRAY_AGG(OBJECT_CONSTRUCT("
+            "'COLUMN_NAME', COLUMN_NAME, "
+            "'TYPE', TYPE, "
+            "'NULLABLE', NULLABLE"
+            ")) WITHIN GROUP (ORDER BY ORDER_ID) "
+            f"FROM TABLE(INFER_SCHEMA({', '.join(infer_args)}))"
+        )
 
         table_type_clause = cfg.table_type.upper() + " " if cfg.table_type else ""
         iceberg_prefix = "ICEBERG " if cfg.iceberg_config else ""
-        iceberg_clause = self._build_iceberg_config_sql() if cfg.iceberg_config else ""
+        iceberg_clause = self._build_iceberg_config_sql()
+        iceberg_suffix = f" {iceberg_clause}" if iceberg_clause else ""
 
         return {
             "operation": (
                 f"CREATE {table_type_clause}{iceberg_prefix}TABLE IF NOT EXISTS "
-                f"IDENTIFIER(?) ({', '.join(col_defs)}) {iceberg_clause}"
+                f"IDENTIFIER(?) USING TEMPLATE ({template}){iceberg_suffix}"
             ),
-            "parameters": (target_location,),
+            "parameters": (target_location, f"@{stage_location}", file_format_location),
             "_force_qmark_paramstyle": True,
         }
 
@@ -474,20 +475,16 @@ class WritePandasOperation(WritePandasMixin):
             stage_location = self._create_stage(cursor)
             nchunks, nrows = self._upload_to_stage(cursor, stage_location)
 
-            column_type_map: dict[str, str] | None = None
-            if cfg.needs_inference:
-                file_format_location = self._create_file_format(cursor)
-                column_type_map = self._infer_column_types(cursor, stage_location, file_format_location)
-
             target_location = self._resolve_target_table()
 
             if cfg.needs_table_creation:
-                self._create_table(cursor, target_location, column_type_map)
+                file_format_location = self._create_file_format(cursor)
+                self._create_table(cursor, target_location, stage_location, file_format_location)
 
             if cfg.needs_truncate:
                 self._truncate_table(cursor, target_location)
 
-            copy_results = self._copy_into(cursor, stage_location, target_location, column_type_map)
+            copy_results = self._copy_into(cursor, stage_location, target_location)
 
             if cfg.needs_swap:
                 self._swap_tables(cursor, target_location)
@@ -569,7 +566,7 @@ class WritePandasOperation(WritePandasMixin):
     def _put_directory(self, cursor: SnowflakeCursor, stage_location: str, directory: str) -> None:
         cursor.execute(**self._build_put_directory_sql(stage_location, directory))
 
-    # -- Schema inference ------------------------------------------------
+    # -- File format & table creation ------------------------------------
 
     def _create_file_format(self, cursor: SnowflakeCursor) -> str:
         cfg = self._cfg
@@ -577,25 +574,14 @@ class WritePandasOperation(WritePandasMixin):
         qualified = cfg.qualify(name)
         return self._create_temp_object(cursor, self._build_create_file_format_sql, qualified, name)
 
-    def _infer_column_types(
-        self,
-        cursor: SnowflakeCursor,
-        stage_location: str,
-        file_format_location: str,
-    ) -> dict[str, str]:
-        """Run INFER_SCHEMA and return {UPPER_COL_NAME: SQL_TYPE} mapping."""
-        rows = cursor.execute(**self._build_infer_column_types_sql(stage_location, file_format_location)).fetchall()
-        return {row[0].upper(): row[1] for row in rows}
-
-    # -- Table management ------------------------------------------------
-
     def _create_table(
         self,
         cursor: SnowflakeCursor,
         target_location: str,
-        column_type_map: dict[str, str] | None,
+        stage_location: str,
+        file_format_location: str,
     ) -> None:
-        cursor.execute(**self._build_create_table_sql(target_location, column_type_map))
+        cursor.execute(**self._build_create_table_sql(target_location, stage_location, file_format_location))
 
     def _truncate_table(self, cursor: SnowflakeCursor, target_location: str) -> None:
         cursor.execute(**self._build_truncate_table_sql(target_location))
@@ -618,6 +604,5 @@ class WritePandasOperation(WritePandasMixin):
         cursor: SnowflakeCursor,
         stage_location: str,
         target_location: str,
-        column_type_map: dict[str, str] | None,
     ) -> list:
-        return cursor.execute(**self._build_copy_into_sql(stage_location, target_location, column_type_map)).fetchall()
+        return cursor.execute(**self._build_copy_into_sql(stage_location, target_location)).fetchall()

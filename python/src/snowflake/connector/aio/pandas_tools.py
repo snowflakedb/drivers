@@ -82,20 +82,16 @@ class _AsyncWritePandasOperation(WritePandasMixin):
             stage_location = await self._create_stage(cur)
             nchunks, nrows = await self._upload_to_stage(cur, stage_location)
 
-            column_type_map: dict[str, str] | None = None
-            if cfg.needs_inference:
-                file_format_location = await self._create_file_format(cur)
-                column_type_map = await self._infer_column_types(cur, stage_location, file_format_location)
-
             target_location = self._resolve_target_table()
 
             if cfg.needs_table_creation:
-                await self._create_table(cur, target_location, column_type_map)
+                file_format_location = await self._create_file_format(cur)
+                await self._create_table(cur, target_location, stage_location, file_format_location)
 
             if cfg.needs_truncate:
                 await self._truncate_table(cur, target_location)
 
-            copy_results = await self._copy_into(cur, stage_location, target_location, column_type_map)
+            copy_results = await self._copy_into(cur, stage_location, target_location)
 
             if cfg.needs_swap:
                 await self._swap_tables(cur, target_location)
@@ -160,26 +156,14 @@ class _AsyncWritePandasOperation(WritePandasMixin):
         qualified = cfg.qualify(name)
         return await self._create_temp_object(cur, self._build_create_file_format_sql, qualified, name)
 
-    async def _infer_column_types(
-        self,
-        cur: AsyncSnowflakeCursor,
-        stage_location: str,
-        file_format_location: str,
-    ) -> dict[str, str]:
-        """Run INFER_SCHEMA and return {UPPER_COL_NAME: SQL_TYPE} mapping."""
-        await cur.execute(**self._build_infer_column_types_sql(stage_location, file_format_location))
-        rows = await cur.fetchall()
-        return {row[0].upper(): row[1] for row in rows}
-
-    # -- Table management ----------------------------------------------------
-
     async def _create_table(
         self,
         cur: AsyncSnowflakeCursor,
         target_location: str,
-        column_type_map: dict[str, str] | None,
+        stage_location: str,
+        file_format_location: str,
     ) -> None:
-        await cur.execute(**self._build_create_table_sql(target_location, column_type_map))
+        await cur.execute(**self._build_create_table_sql(target_location, stage_location, file_format_location))
 
     async def _truncate_table(self, cur: AsyncSnowflakeCursor, target_location: str) -> None:
         await cur.execute(**self._build_truncate_table_sql(target_location))
@@ -202,9 +186,8 @@ class _AsyncWritePandasOperation(WritePandasMixin):
         cur: AsyncSnowflakeCursor,
         stage_location: str,
         target_location: str,
-        column_type_map: dict[str, str] | None,
     ) -> list:
-        await cur.execute(**self._build_copy_into_sql(stage_location, target_location, column_type_map))
+        await cur.execute(**self._build_copy_into_sql(stage_location, target_location))
         return await cur.fetchall()
 
 
