@@ -116,7 +116,7 @@ fn build_async_query_request<'a>(query_input: &QueryInput<'a>) -> query_request:
         sql_text: query_input.sql.clone(),
         async_exec: true,
         sequence_id: QUERY_SEQUENCE_ID,
-        query_submission_time: current_epoch_millis(),
+        query_submission_time: super::current_epoch_millis(),
         is_internal: false,
         describe_only: query_input.describe_only,
         parameters: query_input.query_parameters.clone(),
@@ -173,13 +173,6 @@ async fn parse_submit_response(
         get_result_url,
         response: parsed,
     })
-}
-
-fn current_epoch_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
 }
 
 pub async fn submit_statement_async<'a>(

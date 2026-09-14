@@ -554,6 +554,8 @@ impl ConnectionGetInfoResponse {
             proxy_user: info.proxy_user,
             proxy_password: info.proxy_password.map(|p| p.reveal().to_string()),
             no_proxy: info.no_proxy,
+            session_token_expires_at_ms: info.session_token_expires_at_ms,
+            master_token_expires_at_ms: info.master_token_expires_at_ms,
         }
     }
 }

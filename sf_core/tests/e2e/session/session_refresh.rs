@@ -146,3 +146,47 @@ fn should_refresh_session_proactively() {
         );
     });
 }
+
+#[test]
+fn should_report_token_expiry_as_wall_clock_milliseconds() {
+    // Given Snowflake client is logged in
+    let client = SnowflakeTestClient::connect_with_default_auth();
+    let now_ms = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after the Unix epoch")
+            .as_millis(),
+    )
+    .expect("epoch milliseconds should fit in i64");
+
+    // When connection info is read without asking for the master token
+    let info = client
+        .connection_get_info_blocking(false)
+        .expect("get_info should succeed");
+
+    // Then both expiries are reported, though the master token is withheld
+    assert!(
+        info.master_token.is_none(),
+        "master token must stay withheld when include_master_token is false"
+    );
+    let session_expiry = info
+        .session_token_expires_at_ms
+        .expect("session token expiry should be reported");
+    let master_expiry = info
+        .master_token_expires_at_ms
+        .expect("master token expiry should be reported");
+
+    const ONE_DAY_MS: i64 = 24 * 60 * 60 * 1000;
+    assert!(
+        (now_ms..now_ms + ONE_DAY_MS).contains(&session_expiry),
+        "session expiry {session_expiry} should be epoch ms within a day of {now_ms}"
+    );
+    assert!(
+        (now_ms..now_ms + ONE_DAY_MS).contains(&master_expiry),
+        "master expiry {master_expiry} should be epoch ms within a day of {now_ms}"
+    );
+    assert!(
+        master_expiry > session_expiry,
+        "master expiry {master_expiry} should outlive session expiry {session_expiry}"
+    );
+}
