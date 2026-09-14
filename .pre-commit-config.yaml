@@ -147,6 +147,13 @@ repos:
         pass_filenames: false
         files: ^(ci/mirroring/|\.github/workflows/(mirror|mirror-inbound|close-imported-pr)\.yml$)
         language: system
+    -   id: notify-slack-failure-parser-test
+        name: notify-slack-failure JUnit parser test
+        description: Guard the flaky-artifact filter in the CI failure Slack notifier
+        entry: python3 -m unittest scripts/test_notify_slack_failure.py
+        pass_filenames: false
+        files: ^(\.github/workflows/notify-slack-failure\.yml|scripts/test_notify_slack_failure\.py)$
+        language: python
     -   id: tests-format-validator
         name: Tests format validator
         description: Validate that test implementations match Gherkin feature scenarios
