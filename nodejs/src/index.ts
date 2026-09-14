@@ -312,6 +312,11 @@ export class Connection {
 //   it is exported as default
 export const configure = (options: ConfigureOptions) => updateGlobalConfig(options);
 export const createConnection = (options: ConnectionOptions) => new Connection(options);
+// TODO: document that a deserialized connection shares the originating session,
+// so destroying it logs out a session its originator still owns.
+export const deserializeConnection = () => {
+  throw new Error('Not implemented');
+};
 
 export default {
   configure,
