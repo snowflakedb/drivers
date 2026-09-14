@@ -105,12 +105,8 @@ or add a BD entry). Do not apply it in this run.
 - `sf_core` login/option/type changes can affect every wrapper even when the
   diff has no `jdbc/` / `python/` / `odbc/` / `nodejs/` / `dotnet/` files.
   Still review all five wrappers against the shared surface.
-- `.NET` has a coverage index and no BD file; say so and continue.
 - Node’s `_old-driver-reference/` is a frozen snapshot. Other drivers often
   have only the YAML index in this repo.
-- An empty `ud_tests` list is not itself a finding. It matters only when the
-  row matches a surface changed by this diff and the observable contract needs
-  wrapper coverage.
 - If a non-doc path is not classified by the evidence table, name it in the
   report and determine whether it changes a wrapper-visible shared contract.
   Review all wrappers when it does; otherwise return `insufficient_evidence`
@@ -124,7 +120,7 @@ or add a BD entry). Do not apply it in this run.
 ## Out of Scope
 
 - Inventorying unmapped old tests for APIs this diff does not touch.
-- Filing Jira (including epic SNOW-4073010) on this invocation.
+- Filing Jira on this invocation.
 - Writing or editing `BehaviorDifferences.yaml`, coverage YAML, or tests
   as part of the default run.
 - Trimming `nodejs/tests/_old-driver-reference/`.
