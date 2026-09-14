@@ -357,6 +357,11 @@ message ConnectionGetInfoResponse {
   optional string proxy_user = 16;
   optional string proxy_password = 17;
   optional string no_proxy = 18;
+  // Token expiry as milliseconds since the Unix epoch, resolved against the
+  // wall clock when the response is built. Both are set regardless of
+  // include_master_token.
+  optional int64 session_token_expires_at_ms = 19;
+  optional int64 master_token_expires_at_ms = 20;
 }
 
 message ConnectionGetObjectsRequest {

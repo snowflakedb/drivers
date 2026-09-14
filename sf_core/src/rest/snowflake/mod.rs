@@ -225,6 +225,33 @@ impl SessionTokens {
         self.master_expires_at
             .and_then(|exp| exp.checked_duration_since(std::time::Instant::now()))
     }
+
+    /// Session token expiry in epoch milliseconds, read off the wall clock at
+    /// call time rather than at the time the token was issued
+    pub fn session_expires_at_epoch_ms(&self) -> Option<i64> {
+        self.session_expires_at.map(instant_to_epoch_ms)
+    }
+
+    /// Master token expiry in epoch milliseconds, on the same terms
+    pub fn master_expires_at_epoch_ms(&self) -> Option<i64> {
+        self.master_expires_at.map(instant_to_epoch_ms)
+    }
+}
+
+fn instant_to_epoch_ms(instant: Instant) -> i64 {
+    let now = Instant::now();
+    let now_epoch_ms = current_epoch_millis();
+    match instant.checked_duration_since(now) {
+        Some(remaining) => now_epoch_ms + remaining.as_millis() as i64,
+        None => now_epoch_ms - now.duration_since(instant).as_millis() as i64,
+    }
+}
+
+fn current_epoch_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 /// Response from the session token refresh endpoint
@@ -2855,6 +2882,32 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn instant_to_epoch_ms_puts_a_live_token_ahead_of_the_current_time() {
+        let now_epoch_ms = current_epoch_millis();
+
+        let expires_at = instant_to_epoch_ms(Instant::now() + Duration::from_secs(3600));
+
+        let ahead_by = expires_at - now_epoch_ms;
+        assert!(
+            (3_595_000..=3_605_000).contains(&ahead_by),
+            "expected roughly an hour ahead of {now_epoch_ms}, got {expires_at}"
+        );
+    }
+
+    #[test]
+    fn instant_to_epoch_ms_puts_an_expired_token_behind_the_current_time() {
+        let now_epoch_ms = current_epoch_millis();
+
+        let expired_at = instant_to_epoch_ms(Instant::now() - Duration::from_secs(60));
+
+        let behind_by = now_epoch_ms - expired_at;
+        assert!(
+            (55_000..=65_000).contains(&behind_by),
+            "expected roughly a minute behind {now_epoch_ms}, got {expired_at}"
+        );
+    }
 
     #[test]
     fn is_reauthentication_required_covers_id_token_and_oauth_codes() {

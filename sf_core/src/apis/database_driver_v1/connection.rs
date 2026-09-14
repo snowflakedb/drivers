@@ -1925,6 +1925,10 @@ pub struct ConnectionInfo {
     pub proxy_password: Option<SensitiveString>,
     /// Comma-separated list of hosts that bypass the proxy, if configured
     pub no_proxy: Option<String>,
+    /// The session token expiry in epoch milliseconds
+    pub session_token_expires_at_ms: Option<i64>,
+    /// The master token expiry in epoch milliseconds
+    pub master_token_expires_at_ms: Option<i64>,
 }
 
 fn setting_as_display_string(setting: &Setting) -> Option<String> {
@@ -2023,15 +2027,23 @@ impl DatabaseDriverV1 {
 
                 let server_url = conn.server_url.clone();
 
-                let (session_token, session_id, master_token) = {
+                let (
+                    session_token,
+                    session_id,
+                    master_token,
+                    session_token_expires_at_ms,
+                    master_token_expires_at_ms,
+                ) = {
                     let tokens_guard = conn.tokens.read().await;
                     match tokens_guard.as_ref() {
                         Some(tokens) => (
                             Some(tokens.session_token.clone()),
                             Some(tokens.session_id),
                             Some(tokens.master_token.clone()),
+                            tokens.session_expires_at_epoch_ms(),
+                            tokens.master_expires_at_epoch_ms(),
                         ),
-                        None => (None, None, None),
+                        None => (None, None, None, None, None),
                     }
                 };
 
@@ -2104,6 +2116,8 @@ impl DatabaseDriverV1 {
                     proxy_user: proxy.user,
                     proxy_password: proxy.password,
                     no_proxy: proxy.no_proxy,
+                    session_token_expires_at_ms,
+                    master_token_expires_at_ms,
                 })
             }
             None => InvalidArgumentSnafu {
