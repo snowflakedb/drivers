@@ -168,7 +168,13 @@ public sealed class SnowflakeDbDataReader : DbDataReader
         return (DateTime)value;
     }
 
-    public override double GetDouble(int ordinal) => throw new NotImplementedException();
+    // TODO this implementation is just PoC and will undergo heavy refactoring.
+    public override double GetDouble(int ordinal)
+    {
+        EnsurePositioned();
+        var column = _currentBatch!.Column(ordinal);
+        return (double)ExtractValue(column, _rowIndexInBatch);
+    }
 
     // TODO this implementation is just PoC and will undergo heavy refactoring.
     public override Type GetFieldType(int ordinal)

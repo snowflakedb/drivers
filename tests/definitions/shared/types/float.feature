@@ -1,4 +1,4 @@
-@python @odbc @jdbc @core_not_needed
+@python @odbc @jdbc @dotnet @core_not_needed
 Feature: FLOAT type support
 
   # =========================================================================== #
@@ -18,7 +18,7 @@ Feature: FLOAT type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should select float literals for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT 0.0::<type>, 1.0::<type>, -1.0::<type>, 123.456::<type>, -123.456::<type>" is executed
@@ -57,13 +57,13 @@ Feature: FLOAT type support
     When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
     Then Result should verify precision around 15 decimal digits
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should handle NULL values from literals for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT NULL::<type>, 42.5::<type>, NULL::<type>" is executed
     Then Result should contain [NULL, 42.5, NULL]
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should download large result set with multiple chunks from GENERATOR for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v" is executed
@@ -73,7 +73,7 @@ Feature: FLOAT type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should select floats from table for float and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
@@ -94,14 +94,14 @@ Feature: FLOAT type support
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain maximum, minimum, and precision boundary values preserved within float precision limits
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should handle NULL values from table for float and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain [NULL, 123.456, NULL, -789.012]
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should select large result set from table for float and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists with 50000 sequential values
