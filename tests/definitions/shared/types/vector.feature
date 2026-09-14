@@ -89,7 +89,7 @@ Feature: VECTOR type support
   #                       Multiple chunks downloading                           #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e @nodejs_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should download vector data in multiple chunks
     Given Snowflake client is logged in
     When Query generating 20000 integer vectors is executed

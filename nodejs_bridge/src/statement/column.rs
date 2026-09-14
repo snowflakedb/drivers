@@ -148,4 +148,9 @@ impl Column {
     pub fn is_map(&self) -> bool {
         self.type_name == "map"
     }
+
+    #[napi]
+    pub fn is_vector(&self) -> bool {
+        self.type_name == "vector"
+    }
 }

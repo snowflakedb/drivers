@@ -27,6 +27,7 @@ export declare class Column {
   isObject(): boolean
   isArray(): boolean
   isMap(): boolean
+  isVector(): boolean
 }
 
 export declare class Connection {

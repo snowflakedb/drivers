@@ -7,6 +7,7 @@ import {
   dateAsStringConverter,
   realAsStringConverter,
   textAsStringConverter,
+  vectorAsStringConverter,
 } from './string-converters.js';
 import { fixedConverter, variantConverter } from './value-converters.js';
 
@@ -20,6 +21,7 @@ const CONVERTERS_BY_COLUMN_TYPE: Record<
   text: { asValue: null, asString: textAsStringConverter },
   fixed: { asValue: fixedConverter, asString: textAsStringConverter },
   real: { asValue: null, asString: realAsStringConverter },
+  vector: { asValue: null, asString: vectorAsStringConverter },
   decfloat: { asValue: null, asString: textAsStringConverter },
   boolean: { asValue: null, asString: booleanAsStringConverter },
   binary: { asValue: null, asString: binaryAsStringConverter },
@@ -32,7 +34,7 @@ const CONVERTERS_BY_COLUMN_TYPE: Record<
 
 const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
   String: ['text', 'decfloat'],
-  Number: ['fixed', 'real'],
+  Number: ['fixed', 'real', 'vector'],
   Boolean: ['boolean'],
   Buffer: ['binary'],
   Date: ['date'],
