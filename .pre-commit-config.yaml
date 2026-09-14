@@ -132,6 +132,13 @@ repos:
         pass_filenames: false
         files: ^nodejs/
         language: system
+    -   id: dotnet-checks
+        name: dotnet code checks (format)
+        description: Run dotnet format on changed dotnet files
+        entry: bash -c 'cd dotnet && dotnet format --verify-no-changes'
+        pass_filenames: false
+        files: ^dotnet/
+        language: system
     -   id: behavior-differences-validator
         name: Behavioral Differences format check
         description: Validate BehaviorDifferences.yaml schema (status, type, impact, is_breaking_change)
