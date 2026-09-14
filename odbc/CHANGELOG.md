@@ -2,7 +2,8 @@
 
 ## Upcoming Release
 
-- 
+Bug fixes:
+- Fixed `SQL_C_DEFAULT` on catalog `SMALLINT` and `INTEGER` columns so `SQLGetTypeInfo` and `SQLColumns` return binary integers instead of failing with SQLSTATE 22003. (snowflake-eng/drivers#1896)
 
 ## v4.0.0-rc3
 

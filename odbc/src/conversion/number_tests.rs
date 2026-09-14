@@ -72,6 +72,79 @@ mod tests {
         assert_eq!(NumericSqlType::VarChar.default_c_type(), CDataType::Char);
     }
 
+    #[test]
+    fn smallint_default_c_type_is_sshort() {
+        assert_eq!(NumericSqlType::SmallInt.default_c_type(), CDataType::SShort);
+    }
+
+    #[test]
+    fn integer_default_c_type_is_slong() {
+        assert_eq!(NumericSqlType::Integer.default_c_type(), CDataType::SLong);
+    }
+
+    #[test]
+    fn from_concise_sql_type_maps_smallint_and_integer() {
+        assert_eq!(
+            NumericSqlType::from_concise_sql_type(sql::SqlDataType::SMALLINT),
+            Some(NumericSqlType::SmallInt)
+        );
+        assert_eq!(
+            NumericSqlType::from_concise_sql_type(sql::SqlDataType::INTEGER),
+            Some(NumericSqlType::Integer)
+        );
+        assert_eq!(
+            NumericSqlType::from_concise_sql_type(sql::SqlDataType::DECIMAL),
+            None
+        );
+    }
+
+    fn make_catalog_number(
+        sql_type: NumericSqlType,
+        scale: u32,
+        precision: u32,
+    ) -> SnowflakeNumber {
+        SnowflakeNumber {
+            scale,
+            precision,
+            sql_type,
+        }
+    }
+
+    #[test]
+    fn smallint_default_writes_binary_sshort_including_negative_type_code() {
+        let sn = make_catalog_number(NumericSqlType::SmallInt, 0, 5);
+        let mut value: i16 = -1;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(-9i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value, -9);
+        assert_eq!(str_len, std::mem::size_of::<i16>() as sql::Len);
+    }
+
+    #[test]
+    fn integer_default_writes_binary_slong_into_eight_byte_buffer() {
+        let sn = make_catalog_number(NumericSqlType::Integer, 0, 10);
+        let mut buffer = [0xFFu8; 8];
+        let mut str_len: sql::Len = 0;
+        let str_len_ptr = &mut str_len as *mut sql::Len;
+        let binding = Binding {
+            target_type: CDataType::Default,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: str_len_ptr,
+            indicator_ptr: str_len_ptr,
+            ..Default::default()
+        };
+        let warnings = sn
+            .write_odbc_type(134_217_728i128, &binding, &mut None)
+            .unwrap();
+        assert!(warnings.is_empty());
+        let written = i32::from_ne_bytes(buffer[..4].try_into().unwrap());
+        assert_eq!(written, 134_217_728);
+        assert_eq!(str_len, std::mem::size_of::<i32>() as sql::Len);
+    }
+
     // BD#11: treat_decimal_as_int=true, scale=0 → BigInt for any precision
     #[test]
     fn treat_decimal_as_int_scale_zero_resolves_to_bigint() {
@@ -763,6 +836,15 @@ mod tests {
     }
 
     #[test]
+    fn default_decimal_tiny_char_buffer_still_returns_22003() {
+        let sn = make_decimal(0, 10);
+        let mut buffer = vec![0u8; 2];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Default, &mut buffer, &mut str_len);
+        assert!(sn.write_odbc_type(12i128, &binding, &mut None).is_err());
+    }
+
+    #[test]
     fn char_negative_whole_digit_truncation_returns_22003() {
         let sn = make_decimal(0, 10);
         // "-123" → whole part "-123" (4 chars)
@@ -851,7 +933,7 @@ mod tests {
     #[test]
     fn binary_buffer_exact_size_succeeds() {
         let sn = make_decimal(0, 10);
-        let numeric_size = std::mem::size_of::<sql::Numeric>();
+        let numeric_size = size_of::<sql::Numeric>();
         let mut buffer = vec![0u8; numeric_size];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_char_buffer(CDataType::Binary, &mut buffer, &mut str_len);

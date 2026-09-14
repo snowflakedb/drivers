@@ -117,6 +117,8 @@ pub(crate) enum NumericSqlType {
     Decimal,
     BigInt,
     VarChar,
+    SmallInt,
+    Integer,
 }
 
 impl NumericSqlType {
@@ -125,6 +127,18 @@ impl NumericSqlType {
             Self::Decimal => CDataType::Char,
             Self::BigInt => CDataType::SBigInt,
             Self::VarChar => CDataType::Char,
+            Self::SmallInt => CDataType::SShort,
+            Self::Integer => CDataType::SLong,
+        }
+    }
+
+    pub(crate) fn from_concise_sql_type(sql_type: sql::SqlDataType) -> Option<Self> {
+        if sql_type == sql::SqlDataType::SMALLINT {
+            Some(Self::SmallInt)
+        } else if sql_type == sql::SqlDataType::INTEGER {
+            Some(Self::Integer)
+        } else {
+            None
         }
     }
 

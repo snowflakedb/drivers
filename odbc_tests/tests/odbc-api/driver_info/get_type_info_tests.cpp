@@ -1144,6 +1144,44 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fe
   REQUIRE(columnSize > 0);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: SQL_C_DEFAULT binds catalog SMALLINT and INTEGER as binary",
+                 "[odbc-api][gettypeinfo][driver_info]") {
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT dataType = 0;
+  std::memset(&dataType, 0xFF, sizeof(dataType));
+  SQLLEN dataTypeInd = -1;
+  SQLCHAR columnSizeBuf[8];
+  std::memset(columnSizeBuf, 0xFF, sizeof(columnSizeBuf));
+  SQLLEN columnSizeInd = -1;
+
+  ret = SQLBindCol(stmt_handle(), 2, SQL_C_DEFAULT, &dataType, sizeof(dataType), &dataTypeInd);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLBindCol(stmt_handle(), 3, SQL_C_DEFAULT, columnSizeBuf, sizeof(columnSizeBuf), &columnSizeInd);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  REQUIRE(dataTypeInd == static_cast<SQLLEN>(sizeof(SQLSMALLINT)));
+  REQUIRE(columnSizeInd == static_cast<SQLLEN>(sizeof(SQLINTEGER)));
+
+  bool knownSqlType = false;
+  for (const auto& expected : ALL_TYPE_INFO) {
+    if (expected.sqlType == dataType) {
+      knownSqlType = true;
+      break;
+    }
+  }
+  REQUIRE(knownSqlType);
+
+  SQLINTEGER columnSize = 0;
+  std::memcpy(&columnSize, columnSizeBuf, sizeof(columnSize));
+  REQUIRE(columnSize > 0);
+}
+
 // ============================================================================
 // SQLGetTypeInfo - Comprehensive Deep Validation for All Types
 // ============================================================================
