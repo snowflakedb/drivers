@@ -11,6 +11,7 @@ public sealed class DefaultTestConnectionFactory : ITestConnectionFactory
     private static string BuildConnectionString(ITestOutputHelper? testOutputHelper)
     {
         ParametersReader.Init(testOutputHelper);
+        RsaKeyUtils.Init(testOutputHelper);
         IConnectionStringBuilder builder = new ConnectionStringBuilder();
         builder
             .WithAccount(ParametersReader.Get("SNOWFLAKE_TEST_ACCOUNT"))
@@ -21,6 +22,9 @@ public sealed class DefaultTestConnectionFactory : ITestConnectionFactory
             .WithSchema(ParametersReader.Get("SNOWFLAKE_TEST_SCHEMA"))
             .WithRole(ParametersReader.Get("SNOWFLAKE_TEST_ROLE"))
             .WithPat(ParametersReader.Get("SNOWFLAKE_TEST_PAT"));
+
+        if (RsaKeyUtils.TryDiscoverRsaKeyFile(out var path))
+            builder.WithKeyFile(path);
 
         return builder.Build();
     }

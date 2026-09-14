@@ -10,6 +10,7 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
     private string? _schema;
     private string? _role;
     private string? _pat;
+    private string? _keyFile;
 
     private string _authenticator = string.Empty;
 
@@ -72,8 +73,24 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
         if (pat == null)
             return this;
 
+        if (!string.IsNullOrEmpty(_authenticator))
+            throw new ArgumentException($"Authenticator is already set ({_authenticator}). Pick one.");
+
         _authenticator = "programmatic_access_token";
         _pat = pat;
+        return this;
+    }
+
+    public IConnectionStringBuilder WithKeyFile(string? keyFile)
+    {
+        if (keyFile == null)
+            return this;
+
+        if (!string.IsNullOrEmpty(_authenticator))
+            throw new ArgumentException($"Authenticator is already set ({_authenticator}). Pick one.");
+
+        _keyFile = keyFile;
+        _authenticator = "snowflake_jwt";
         return this;
     }
 
@@ -106,6 +123,9 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
 
         if (_pat != null)
             keys.Add($"token={_pat}");
+
+        if (_keyFile != null)
+            keys.Add($"private_key_file={_keyFile}");
 
         if ("programmatic_access_token".Equals(_authenticator, StringComparison.InvariantCultureIgnoreCase))
             keys.Add("authenticator=PROGRAMMATIC_ACCESS_TOKEN");
