@@ -314,17 +314,19 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free statement han
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Probe in-process. REQUIRE_INVALID_HANDLE forks and maps any non-INVALID_HANDLE
-  //   return (including SQL_ERROR) to SQL_SUCCESS, which hid the old-driver result.
-  const SQLRETURN second = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   OLD_IODBC_ONLY("BD#126") {
-    // The old driver still accepts the second free through iODBC and posts
-    //   SQL_ERROR + HY000 on the DBC; a third SQLFreeHandle then returns
-    //   SQL_INVALID_HANDLE.
+    // In-process: REQUIRE_INVALID_HANDLE's POSIX probe maps any
+    //   non-INVALID_HANDLE return (including SQL_ERROR) to SQL_SUCCESS,
+    //   which hid this old-driver result. The old driver still accepts the
+    //   second free through iODBC and posts SQL_ERROR + HY000 on the DBC.
+    const SQLRETURN second = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
     REQUIRE_EXPECTED_ERROR(second, "HY000", dbc_handle(), SQL_HANDLE_DBC);
   }
   else {
-    REQUIRE(second == SQL_INVALID_HANDLE);
+    // Double-free is UB. unixODBC returns SQL_INVALID_HANDLE; the Windows
+    //   DM can AV — ARM64 Azure Catch2 then SEGFAULTs the whole process.
+    //   REQUIRE_INVALID_HANDLE isolates AV via SEH (and fork on POSIX).
+    REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
   }
 
   SQLDisconnect(dbc_handle());
