@@ -37,3 +37,6 @@ export const binaryAsStringConverter: CellConverter = (value) =>
 // today.
 export const dateAsStringConverter: CellConverter = (value) =>
   value === null ? NULL_AS_STRING : (value as Date).toISOString().slice(0, 'YYYY-MM-DD'.length);
+
+export const vectorAsStringConverter: CellConverter = (value) =>
+  value === null ? NULL_AS_STRING : JSON.stringify(value);

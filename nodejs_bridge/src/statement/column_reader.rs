@@ -338,9 +338,15 @@ impl ColumnReader {
                     sf_types::VectorCell::Int32(values) => {
                         values.iter().map(|&v| v as f64).collect()
                     }
-                    sf_types::VectorCell::Float32(values) => {
-                        values.iter().map(|&v| v as f64).collect()
-                    }
+                    // A direct f32-to-f64 conversion carries the 32-bit rounding
+                    // error along, handing JS 1.7999999523162842 for a stored 1.8.
+                    // Reparsing the shortest decimal that identifies the f32
+                    // ("1.8") gives the number JS means by 1.8.
+                    sf_types::VectorCell::Float32(values) => values
+                        .iter()
+                        .copied()
+                        .map(widen_f32_via_shortest_decimal)
+                        .collect(),
                 };
                 JsCell::NumberArray(numbers)
             }),
@@ -422,6 +428,17 @@ where
             .unwrap_or_else(|_| unreachable!("non-null REAL cell always decodes to an f64"));
         JsCell::Number(value)
     })
+}
+
+fn widen_f32_via_shortest_decimal(value: f32) -> f64 {
+    if value.is_finite() {
+        value
+            .to_string()
+            .parse::<f64>()
+            .unwrap_or_else(|_| unreachable!("f32 Display always parses as f64"))
+    } else {
+        f64::from(value)
+    }
 }
 
 fn read_decfloat(array: &StructArray, row_index: usize, precision: usize) -> JsCell<'_> {
@@ -604,8 +621,29 @@ mod tests {
         let reader = reader(&field, &array);
         assert_eq!(
             reader.read(0),
-            JsCell::NumberArray(vec![1.5, -3.5, 0.0, f64::from(f32::MIN_POSITIVE)])
+            JsCell::NumberArray(vec![1.5, -3.5, 0.0, 1.1754944e-38])
         );
+    }
+
+    #[test]
+    fn vector_float_reads_inexact_decimals_as_their_js_literals() {
+        let field = vector_field(DataType::Float32, 5);
+        let array = float_vector_array(&[Some(vec![1.8, -3.4, 6.7, 0.0, 2.3])], 5);
+        let reader = reader(&field, &array);
+        assert_eq!(
+            reader.read(0),
+            JsCell::NumberArray(vec![1.8, -3.4, 6.7, 0.0, 2.3])
+        );
+    }
+
+    #[test]
+    fn vector_float_preserves_negative_zero_sign() {
+        let field = vector_field(DataType::Float32, 1);
+        let array = float_vector_array(&[Some(vec![-0.0])], 1);
+        match reader(&field, &array).read(0) {
+            JsCell::NumberArray(values) => assert!(values[0].is_sign_negative()),
+            other => panic!("expected NumberArray, got {other:?}"),
+        }
     }
 
     #[test]

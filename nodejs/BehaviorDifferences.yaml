@@ -1,4 +1,4 @@
-# Behavioral Differences between the new (universal) Node.js driver and the old (legacy) Node.js driver.
+# Behavioral Differences between the new (universal) Node.js driver and the old Node.js driver.
 #
 # Allowed statuses:
 #  - unknown (default): status is not yet determined
@@ -54,7 +54,7 @@ behavior_differences:
     new_driver_behavior: |
       ConnectionOptions (index.ts) is Record<string, string> & { rowMode?: RowMode } -- rowMode
       is now typed to match the old driver, so a typo'd rowMode is caught at compile time same as
-      legacy. Every other connection option is still an untyped string, so a typo there compiles
+      the old driver. Every other connection option is still an untyped string, so a typo there compiles
       fine and either fails at runtime (if the field is used) or silently passes through
       (if not). No runtime behavior differs for valid input on any option -- both drivers behave
       identically at runtime -- so this is a compile-time type-safety/DX gap, not an execution
@@ -244,7 +244,7 @@ behavior_differences:
     new_driver_behavior: |
       The new driver does not export these constants at all.
     status_rationale: |
-      These were a leftover legacy constant that nobody removed from the old driver. They are
+      These were leftover constants that nobody removed from the old driver. They are
       undocumented and unusable (their values match no getType() result), so the new driver simply
       does not carry them over.
 
@@ -319,20 +319,20 @@ behavior_differences:
       execute use getRowStatementColumn (BD#13).
 
   14:
-    name: "TIME column NULL returns real null, not the legacy driver's 'NULL' string"
+    name: "TIME column NULL returns real null, not the old driver's 'NULL' string"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
-      The legacy driver stringifies a NULL TIME cell to the literal 'NULL' by default
+      The old driver stringifies a NULL TIME cell to the literal 'NULL' by default
       (isRepresentNullAsStringNull=true, a process-global config knob), while every other
-      type — including the legacy driver's own DATE — returns real null.
+      type — including the old driver's own DATE — returns real null.
     new_driver_behavior: |
       The universal driver returns real null for every type uniformly.
     description: |
-      A TIME-only anomaly in the legacy driver, not a contract. The universal driver returns
+      A TIME-only anomaly in the old driver, not a contract. The universal driver returns.
       real null. Verified live against both drivers.
 
   15:
@@ -343,13 +343,13 @@ behavior_differences:
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      The legacy driver's format engine emits a trailing literal '.' with no digits after it
+      The old driver's format engine emits a trailing literal '.' with no digits after it.
       when a bare FF token is requested against a scale-0 TIME column
       (e.g. 'HH24:MI:SS.FF' -> '12:34:56.').
     new_driver_behavior: |
       The universal driver drops the digit-less fractional suffix entirely in this case.
     description: |
-      A documented legacy formatting quirk, not a contract. Verified live against both drivers.
+      A documented old-driver formatting quirk, not a contract. Verified live against both drivers.
 
   16:
     name: "FFn against TIME renders only the column's real scale digits, not always n zero-padded digits"
@@ -359,7 +359,7 @@ behavior_differences:
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      The legacy driver's FFn (digit-suffixed) token ignores the column's declared scale — it
+      The old driver's FFn (digit-suffixed) token ignores the column's declared scale — it.
       always renders exactly n digits, zero-padding past whatever precision the column actually
       stored (e.g. a TIME(0) column under 'HH24:MI:SS.FF9' renders '.000000000', a TIME(3)
       column renders '.123000000').
@@ -598,36 +598,30 @@ behavior_differences:
       sf_core fixed
 
   29:
-    name: 'VECTOR columns decode to a native number[], except FLOAT32 smallest-normal values, which arrive as zero'
+    name: 'VECTOR columns decode to a native number[] instead of the raw server string'
     status: todo
     type: enhancement
     reviewed: false
-    is_breaking_change: false
+    is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      The legacy snowflake-connector-nodejs has no VECTOR SQL type: data_types.js lists no VECTOR in
-      sqlTypes.values and MAP_SQL_TO_NATIVE has no entry for it, so toNativeType('vector') returns
-      undefined. A VECTOR column has no native-type mapping and no converter, and none of the is*()
-      predicates recognize it.
+      Column does not define VECTOR and has no isVector(). Construction in column.js never matches
+      an is*() check, so it falls through to the final else ("column is of type string, so leave
+      value as is") and convert is a no-op. The cell is whatever string the server returned, e.g.
+      '[1,2,3]' or '[1.500000,2.500000,3.500000]'. getType() is still 'vector'.
     new_driver_behavior: |
-      nodejs_bridge decodes a VECTOR column (an Arrow FixedSizeList) to a native number[]:
-      VECTOR(INT) reads the Int32 child and VECTOR(FLOAT) the Float32 child, both widened to a JS
-      number (column_reader.rs, js_cell.rs). The TS layer has no vector converter, so the bridge's
-      number[] passes through unchanged (cell-mapping.ts). This matches the Python driver, which
-      returns VECTOR as a native list. One value does not survive the round trip: the smallest IEEE
-      754 single-precision normal (1.1754944e-38) comes back as 0.
+      - Native value: a VECTOR cell is a number[] ([1, 2, 3] / [1.5, 2.5, 3.5]). VECTOR(FLOAT)
+        elements use the f32's shortest decimal so a stored 1.8 is the JS number 1.8, not
+        1.7999999523162842. getType() remains 'vector'.
+      - isVector(): Column.isVector() is added and returns true for these columns.
+      - fetchAsString: ['Number'] stringifies that array (JSON, e.g. '[1,2,3]' / '[1.5,2.5,3.5]')
+        and renders a NULL cell as the string 'NULL', same as FIXED and REAL.
     description: |
-      The underflow is server-side, not a decode bug. GS serves JSON result sets to clients that
-      identify as JavaScript, and its JSON serialization flushes FLOAT32 smallest-normal to zero;
-      the Arrow encoding preserves the bit pattern. Python and JDBC keep the value because their
-      Arrow jobs receive Arrow, and both skip the case on their JSON jobs
-      (skip_for_json_result_set / @SkipForJSONResultSet). Node cannot make that choice per test --
-      an ALTER SESSION requesting ARROW does not change what GS sends for a JavaScript client -- so
-      `should preserve FLOAT smallest-normal` in tests/definitions/shared/types/vector.feature
-      carries no @nodejs_e2e tag. The decode path itself is covered by the nodejs_bridge unit test
-      vector_float_reads_number_array_and_preserves_smallest_normal, which feeds f32::MIN_POSITIVE
-      through the Arrow reader. Closing this needs GS to honor a result-format request from
-      JavaScript clients.
+      Public-facing docs should now list VECTOR as a supported Node.js type. The old string was
+      the fallback for an unrecognized type, not a chosen format. Callers that parsed that string
+      now get a number[]. fetchAsString Number is the way to get a string back; the old driver
+      still ignores that token for VECTOR because the type is unrecognized, so the cell stays the
+      server text (and a NULL stays null).
 
   30:
     name: 'PUT of a symlinked source reports the target basename'
