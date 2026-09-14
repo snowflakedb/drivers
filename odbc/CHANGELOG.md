@@ -35,6 +35,10 @@ Changes:
 - Improved GET to warn when a downloaded batch contains multiple files that resolve to the same local filename. (snowflakedb/drivers#1651)
 - Improved external-browser callback handling to cap HTTP header size on the localhost listener. (snowflakedb/drivers#1201)
 
+Changes:
+
+- Changed the diagnostic message on a failed login to lead with the server's own text: `SQLGetDiagRec` now reads `Failed to login: Login error: <server text>, code: <code>` on its first line, where the server sentence previously appeared only inside the error trace. SQLSTATE and native error code are unchanged. (snowflakedb/drivers#1881)
+
 Bug fixes:
 
 - Fixed `SQLGetDiagField` return codes for three edge cases: a record field requested with `RecNumber=0` now returns `SQL_ERROR` instead of `SQL_NO_DATA`, a header field requested with a positive `RecNumber` now returns `SQL_SUCCESS` instead of `SQL_NO_DATA`, and a negative `BufferLength` for a string field now returns `SQL_ERROR`. (snowflakedb/drivers#1878)

@@ -23,6 +23,7 @@ add_library(common STATIC
     include/ODBCConfig.hpp
     include/ODBCFixtures.hpp
     include/EnvOverride.hpp
+    include/external_browser_test_helpers.hpp
 )
 
 if (WIN32)

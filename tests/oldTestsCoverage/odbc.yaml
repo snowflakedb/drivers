@@ -39,10 +39,9 @@ tests:
   - test_name: should throw error for mismatched username - external browser
     ud_tests:
       - path: "sf_core/tests/integration/authentication/external_browser.rs - should_fail_when_login_request_is_rejected_after_browser_callback"
-    status: partial
-    gaps:
-      - "The old driver's distinct 'differs from the user currently logged in at the IDP' message is absent from all UD source (grepped, zero hits) - see new BD#140. UD has no IDP-mismatch-specific code path; any post-callback login rejection (including this one) surfaces as the same generic 390100 'Invalid credentials' failure, which the cited test already exercises."
-    notes: "CORRECTION to a prior mapping pass: this was marked unmapped/'needs a new UD test', but should_fail_when_login_request_is_rejected_after_browser_callback (added May 2026, PR #1129 - predates this mapping session) already drives a successful browser callback followed by a login_failure() rejection, which is exactly the generic mechanism UD uses for this scenario. Writing a new test asserting the same generic rejection would be a near-duplicate; the real gap is the missing distinct message, now tracked as BD#140."
+      - path: "odbc_tests/tests/integration/authentication/idp_user_mismatch.cpp - should reject external browser login when the IdP user differs from the connection user"
+    status: mapped
+    notes: "SNOW-3989973. GS answers the mismatch with a dedicated code 390191 and a sentence naming it, and the driver reports SQLSTATE 28000, native error 390191, and that sentence - so the mismatch is discriminable, not collapsed into a generic 390100. The dedicated wiremock test pins that; what differs from 3.x is only the surrounding message framing, tracked as BD#140. An earlier mapping pass recorded the opposite (no distinct message, generic 390100) from a source grep for the 3.x sentence; measuring the flow disproved it."
   - test_name: should throw error for wrong credentials
     ud_tests:
       - path: "odbc_tests/tests/integration/authentication/external_browser.cpp - should fail with timeout when no browser callback arrives"

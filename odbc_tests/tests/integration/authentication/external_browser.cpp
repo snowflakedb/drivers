@@ -2,7 +2,6 @@
 #include <sqlext.h>
 
 #include <algorithm>
-#include <chrono>
 #include <string>
 #include <thread>
 
@@ -14,6 +13,7 @@
 #include "HandleWrapper.hpp"
 #include "WiremockClient.hpp"
 #include "compatibility.hpp"
+#include "external_browser_test_helpers.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -21,82 +21,8 @@
 #include "test_setup.hpp"
 
 using Catch::Matchers::ContainsSubstring;
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-static std::string get_external_browser_connection_string(const WiremockClient& wm) {
-  std::ostringstream ss;
-  configure_driver_string(ss);
-  ss << "SERVER=localhost;";
-  ss << "PORT=" << wm.port() << ";";
-  ss << "ACCOUNT=testaccount;";
-  ss << "UID=test_user;";
-  ss << "AUTHENTICATOR=EXTERNALBROWSER;";
-  ss << "SSL=off;";
-  ss << "DisableOCSPCheck=true;";
-  return ss.str();
-}
-
-/// Poll WireMock for the authenticator-request, extract the redirect port,
-/// then send a fake token to sf_core's localhost callback listener.
-static void simulate_browser_callback(const WiremockClient& wm, const std::string& token, int timeout_ms = 10000) {
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  while (std::chrono::steady_clock::now() < deadline) {
-    auto requests = wm.find_requests("/session/authenticator-request.*");
-    if (!requests.empty()) {
-      const auto& req_obj = requests[0].get<picojson::object>();
-      auto body_it = req_obj.find("body");
-      if (body_it == req_obj.end() || !body_it->second.is<std::string>()) {
-        throw std::runtime_error("authenticator-request has no body string");
-      }
-
-      picojson::value body_json;
-      std::string err = picojson::parse(body_json, body_it->second.get<std::string>());
-      if (!err.empty()) {
-        throw std::runtime_error("Failed to parse authenticator-request body: " + err);
-      }
-
-      auto port_str = body_json.get<picojson::object>()["data"]
-                          .get<picojson::object>()["BROWSER_MODE_REDIRECT_PORT"]
-                          .get<std::string>();
-      int port = std::stoi(port_str);
-
-#ifdef _WIN32
-      WSADATA wsa_data;
-      WSAStartup(MAKEWORD(2, 2), &wsa_data);
-      SOCKET sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-#else
-      int sock = ::socket(AF_INET, SOCK_STREAM, 0);
-#endif
-      sockaddr_in addr{};
-      addr.sin_family = AF_INET;
-      addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-      addr.sin_port = htons(static_cast<uint16_t>(port));
-
-      if (::connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        throw std::runtime_error("Failed to connect to callback listener on port " + port_str);
-      }
-
-      std::string http_request = "GET /?token=" + token + " HTTP/1.1\r\nHost: localhost\r\n\r\n";
-#ifdef _WIN32
-      ::send(sock, http_request.c_str(), static_cast<int>(http_request.size()), 0);
-      char buf[4096];
-      ::recv(sock, buf, sizeof(buf), 0);
-      ::closesocket(sock);
-#else
-      ::send(sock, http_request.c_str(), http_request.size(), 0);
-      char buf[4096];
-      ::recv(sock, buf, sizeof(buf), 0);
-      ::close(sock);
-#endif
-      return;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-  }
-  throw std::runtime_error("authenticator-request never arrived at WireMock");
-}
+using external_browser_test::get_external_browser_connection_string;
+using external_browser_test::simulate_browser_callback;
 
 // =============================================================================
 // Happy Path

@@ -2802,7 +2802,7 @@ behavior_differences:
       The same bare Driver=-only connect loads the default connections.toml profile and
       honors SNOWFLAKE_DEFAULT_CONNECTION_NAME. Extra params still suppress the fallback.
     description: |
-      Restores the old driver's TomlConfigurationTest matrix. The wrapper now sets
+      Restores the 3.x driver's TomlConfigurationTest matrix. The wrapper now sets
       no_connection_details from an empty post-merge param map so the shared resolver
       can load the default profile. Explicit connection_name in the connection string
       already resolved via the param registry; only the no-args fallback was missing.
@@ -2867,21 +2867,32 @@ behavior_differences:
       must add CLIENT_STORE_TEMPORARY_CREDENTIAL=true on the new driver.
 
   140:
-    name: "External-browser IDP-user-mismatch has no distinct error message; surfaces as the generic auth-failure code"
-    status: unknown
+    name: "External-browser IDP-user-mismatch message carries a prefix and an error trace"
+    status: allowed
     type: enhancement
     reviewed: false
+    status_rationale: |
+      The mismatch stays discriminable and the server's sentence still reaches the
+      application on the first line. GS detects the mismatch and answers with code
+      390191 and a sentence naming it; both drivers report SQLSTATE 28000, native
+      error 390191, and that sentence. What differs is the text around it - 4.x opens
+      the first line with "Failed to login: Login error: ", closes it with the GS
+      code, and follows it with an error trace naming sf_core and odbc source
+      locations. Callers keying on the native error code are unaffected; callers
+      displaying the message verbatim see the prefix and the trace. That framing comes
+      from a shared sf_core Display and reaches every login failure rather than this
+      one alone, so it is general presentation work on the error path, not a change to
+      what the driver can detect.
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
       When the user authenticated at the IdP during an external-browser (SSO) login
-      differs from the username on the connection, the old driver raises a distinct,
-      descriptive error: "The user you were trying to authenticate as differs from the
+      differs from the username on the connection, the diagnostic message is the server
+      sentence on its own: "The user you were trying to authenticate as differs from the
       user currently logged in at the IDP."
     new_driver_behavior: |
-      The new driver does not distinguish this mismatch. Any login rejection after a
-      completed browser callback, including an IdP-user mismatch, surfaces as the
-      generic login failure (GS code 390100, "Invalid credentials").
+      SQLSTATE, native error code and the server sentence match the old driver. The
+      first line reads "Failed to login: Login error: <sentence>, code: 390191", and a
+      multi-line error trace follows it.
     description: |
-      Login is still denied. Only the diagnostic text is less specific than on the
-      old driver.
+      The mismatch stays identifiable by native error code 390191 on both drivers.

@@ -1,0 +1,23 @@
+{
+  "name": "External browser login rejected with USERNAMES_MISMATCH",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'EXTERNALBROWSER')]"
+      },
+      {
+        "matchesJsonPath": "$.data[?(@.TOKEN == 'browser_sso_token_mismatched_user')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": false,
+      "code": "390191",
+      "message": "The user you were trying to authenticate as differs from the user currently logged in at the IDP."
+    }
+  }
+}

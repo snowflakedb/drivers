@@ -65,7 +65,7 @@ pub enum ApiError {
         location: Location,
     },
     #[non_exhaustive]
-    #[snafu(display("Failed to login"))]
+    #[snafu(display("Failed to login: {source}"))]
     Login {
         #[snafu(implicit)]
         location: Location,
