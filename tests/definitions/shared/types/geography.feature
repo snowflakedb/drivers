@@ -1,4 +1,4 @@
-@python @jdbc @core_not_needed
+@python @jdbc @dotnet @core_not_needed
 Feature: GEOGRAPHY type support
   # Snowflake GEOGRAPHY type represents geospatial data on a sphere (WGS84).
   # Values are returned as strings by default (GeoJSON format).
@@ -12,7 +12,7 @@ Feature: GEOGRAPHY type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario Outline: should select <shape> geography literal
     Given Snowflake client is logged in
     When Query "SELECT <query_value>" is executed
@@ -24,7 +24,7 @@ Feature: GEOGRAPHY type support
       | LineString | TO_GEOGRAPHY('LINESTRING(0 0, 1 1, 2 2)')                  |
       | Polygon    | TO_GEOGRAPHY('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))')    |
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should select geography from GeoJSON input
     Given Snowflake client is logged in
     When Query "SELECT TO_GEOGRAPHY('{"type":"Point","coordinates":[-122.35,37.55]}')" is executed
@@ -71,7 +71,7 @@ Feature: GEOGRAPHY type support
   #                       Multiple chunks downloading                           #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should download geography data in multiple chunks
     # skip_for_json_result_set
     Given Snowflake client is logged in
