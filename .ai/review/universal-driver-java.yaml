@@ -52,6 +52,50 @@ rules:
 
       **PRIORITY**: Medium when mixed responsibilities materially obscure control flow or make behavior-preserving review difficult; otherwise stay silent.
 
+
+  - id: ud-java-extract-testable-helpers-to-package-owner
+    rule: |
+      **OBJECTIVE**: Keep public JDBC classes as orchestration boundaries and put testable domain helpers on a cohesive package-level owner.
+
+      **REQUIREMENT**: When a newly added or materially expanded public JDBC class accumulates `private static` helpers that encode domain decisions (resolution, validation, credential rules, result construction) and those helpers merit unit tests, extract them to a cohesive owner in the proper package. In JDBC, that package is `net.snowflake.client.internal.util`, next to `UrlUtils` and `StringUtil`. Name the class after the domain (`DriverPropertyInfoUtil`), not a generic `Utils` dump.
+
+      Keep the public entry point as a thin delegate. Keep extracted helpers package-private when same-package tests are enough. Do not widen visibility solely so a test in another package can call them.
+
+      ❌ **BAD:**
+      ```java
+      public class SnowflakeDriver implements Driver {
+          public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) throws SQLException {
+              return findMissingProperties(resolveAndValidate(url, info));
+          }
+
+          private static Properties resolveAndValidate(String url, Properties info) { ... }
+          private static DriverPropertyInfo[] findMissingProperties(Properties resolved) { ... }
+          private static boolean requiresPasswordCredentials(String authenticator) { ... }
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) throws SQLException {
+          return DriverPropertyInfoUtil.getPropertyInfo(url, info);
+      }
+
+      // net.snowflake.client.internal.util.DriverPropertyInfoUtil
+      static boolean requiresPasswordCredentials(String authenticator) { ... }
+      ```
+
+      **DO NOT FLAG**:
+      - A one-line `private static` predicate that is not independently tested and does not mix domain phases.
+      - Helpers that must stay private because they close over instance state or a test seam already exists through the public API.
+      - Suggestions to dump unrelated helpers into `SnowflakeUtil` or another catch-all class.
+      - Suggestions to make helpers public only to satisfy a test in a different package.
+
+      **DIFF SCOPE**: Review only methods added or materially expanded by the PR.
+
+      **CONSOLIDATION**: Emit at most one finding per public class and propose one cohesive owner.
+
+      **PRIORITY**: Medium when private static helpers on a public JDBC class block focused unit tests; otherwise stay silent.
+
   - id: ud-java-prefer-direct-bulk-collection-operation
     rule: |
       **OBJECTIVE**: Express unchanged collection copies with the Java collection API instead of manual population code.

@@ -14,11 +14,25 @@ Improve readability without changing observable behavior. Treat method length as
 3. Identify cohesive phases. Common phases are input guards, resolution/parsing, validation, domain decisions, result construction, and side effects.
 4. Keep the entry method at one abstraction level. Give each extracted helper one purpose and a name that describes the domain action.
 5. Choose the narrowest boundary:
-   - use a `private static` helper for stateless logic local to one class;
-   - use a package-private collaborator when logic owns state/dependencies, is reused, or merits focused tests;
+   - use a `private static` helper for stateless logic local to one class when it is not worth independent tests;
+   - extract a cohesive package-private owner when helpers own state/dependencies, are reused, or merit focused unit tests;
    - do not widen visibility solely to test an implementation detail.
 6. Preserve execution order and data flow. Do not combine cleanup, renaming, or semantic changes with extraction unless tests explicitly cover them.
 7. Run focused tests and formatting. Review the diff for accidental API or behavior changes.
+
+## Extract testable helpers to a package owner
+
+Do not leave testable domain helpers as `private static` methods on a public JDBC class. Extract them to a cohesive owner in the proper package so they can be unit-tested at package visibility.
+
+In JDBC, that package is `net.snowflake.client.internal.util`, next to `UrlUtils` and `StringUtil`. Name the owner after the domain (`DriverPropertyInfoUtil`), not a generic `Utils` dump.
+
+```java
+public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) throws SQLException {
+  return DriverPropertyInfoUtil.getPropertyInfo(url, info);
+}
+```
+
+Keep helpers package-private on the util when only same-package tests need them. Do not make them public merely so a test in another package can call them. Do not dump unrelated predicates, parsers, and validators into one catch-all class.
 
 ## Extraction standard
 
