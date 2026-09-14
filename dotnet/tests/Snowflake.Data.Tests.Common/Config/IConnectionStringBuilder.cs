@@ -3,6 +3,7 @@ namespace Snowflake.Data.Tests.Config;
 public interface IConnectionStringBuilder
 {
     string Build();
+    IConnectionStringBuilder WithKeyFile(string? keyFile);
     IConnectionStringBuilder WithAccount(string? account);
     IConnectionStringBuilder WithUser(string? user);
     IConnectionStringBuilder WithPassword(string? password);
