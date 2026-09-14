@@ -28,8 +28,10 @@ on:
         description: 'Override package version (default: __version__ from version.py)'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # PR number for PRs; unique run ID for dispatch so a later event cannot
+  # cancel an in-flight non-PR run.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build_conda_packages:

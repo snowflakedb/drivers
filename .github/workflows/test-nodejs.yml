@@ -25,7 +25,8 @@ concurrency:
   # to "Driver CI" and put this run in the orchestrator's own group. GitHub
   # reads that as a deadlock and fails the call before any job starts.
   group: nodejs-ci-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  # Cancel only in-flight PR runs. Push-to-main must never cancel a sibling run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   nodejs_tests:

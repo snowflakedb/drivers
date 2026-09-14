@@ -28,7 +28,8 @@ concurrency:
   # to "Driver CI" and put this run in the orchestrator's own group. GitHub
   # reads that as a deadlock and fails the call before any job starts.
   group: dotnet-ci-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
+  # Cancel only in-flight PR runs. Push-to-main must never cancel a sibling run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)) }}
 
 jobs:
   load-dotnet-matrix:
