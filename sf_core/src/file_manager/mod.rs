@@ -200,6 +200,7 @@ use cloud_http::{
 };
 use encryption::{
     EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
+    wrapped_key_matches_material,
 };
 use flate2::write::GzDecoder;
 use futures::StreamExt as _;
@@ -1219,6 +1220,24 @@ fn prepare_download_output_paths(
     Ok((output_path, partial_path))
 }
 
+fn cse_info_from_s3_object(
+    file_metadata: Option<EncryptedFileMetadata>,
+    digest: Option<String>,
+    enc_material: Option<&EncryptionMaterial>,
+) -> Option<CseDownloadInfo> {
+    let metadata = file_metadata?;
+    let enc_material = enc_material?;
+    if digest.is_some() || wrapped_key_matches_material(&metadata, enc_material) {
+        Some(CseDownloadInfo { metadata, digest })
+    } else {
+        tracing::debug!(
+            "S3 encryption headers present but wrapped key does not match encryption material; \
+             treating as raw bytes"
+        );
+        None
+    }
+}
+
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
 ///
 /// `per_file_index` is the file's index inside the GET batch — i.e. its
@@ -1352,6 +1371,7 @@ async fn download_single_file_to(
             .await
             .context(S3DownloadSnafu)?;
 
+            let cse_info = cse_info_from_s3_object(file_metadata, digest, enc_material.as_ref());
             let partial_path2 = partial_path.clone();
 
             // Write to `<dst>.part` but do NOT rename inside spawn_blocking.
@@ -1360,25 +1380,26 @@ async fn download_single_file_to(
             // blocking task. The `.await` itself is the cancellation point.
             let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(
                 move || -> Result<(i64, Option<tempfile::TempPath>), FileManagerError> {
-                    match (enc_material, file_metadata) {
+                    match (enc_material, cse_info) {
                         // CSE: decrypt the ciphertext (in-memory buffer or spilled tempfile).
-                        (Some(enc_material), Some(enc_metadata)) => {
+                        (Some(enc_material), Some(cse)) => {
                             let reader = body.into_reader().context(IoSnafu)?;
                             let mut output_file =
                                 create_output_file(&partial_path2, unsafe_file_write)
                                     .context(IoSnafu)?;
                             let result = decrypt_ciphertext_to_writer(
                                 reader,
-                                &enc_metadata,
-                                digest.as_deref(),
+                                &cse.metadata,
+                                cse.digest.as_deref(),
                                 &enc_material,
                                 &mut output_file,
                             )
                             .context(DecryptionSnafu);
                             write_or_cleanup(output_file, &partial_path2, result).map(|n| (n, None))
                         }
-                        // SSE (no encryption_material) or S3 git-stage (no CSE
-                        // headers at all): the cloud bytes are already plaintext.
+                        // SSE (no encryption_material) or git-stage (CSE-shaped
+                        // headers whose wrap is not this query-stage master key):
+                        // already plaintext.
                         (maybe_enc, _) => {
                             if maybe_enc.is_some() {
                                 tracing::debug!(
@@ -1725,7 +1746,7 @@ pub async fn open_s3_download_stream(
         .await
         .context(S3DownloadSnafu)?;
 
-    let cse_info = file_metadata.map(|metadata| CseDownloadInfo { metadata, digest });
+    let cse_info = cse_info_from_s3_object(file_metadata, digest, encryption_material.as_ref());
     let (reader, producer_abort) = spawn_s3_byte_stream_producer(body, slot);
 
     Ok(spawn_download_stream_pipeline(

@@ -38,7 +38,7 @@ Changes:
 
 Bug fixes:
 
-- Fixed GET downloads from an S3-backed stage returning undecrypted, unreadable data for files written by a server-side unload (e.g. `COPY INTO` with `SINGLE=TRUE`) onto a client-side-encrypted stage. (snowflakedb/drivers#1942)
+- Fixed GET downloads from an S3-backed stage returning undecrypted, unreadable data for files written by a server-side unload (e.g. `COPY INTO` with `SINGLE=TRUE`) onto a client-side-encrypted stage, without treating git-stage objects as client-side-encrypted. (snowflakedb/drivers#1942)
 - Fixed `ReauthenticationRequest` missing a `cause` attribute and not being importable from `snowflake.connector.network`, which broke Snowpark session-expiry handling. (snowflakedb/drivers#1945)
 - Fixed OAuth refresh token being evicted after a successful refresh when token rotation is not enabled. When `oauth_enable_single_use_refresh_tokens` is false (the default), a refresh response that omits a new refresh token is spec-compliant (RFC 6749 §6); the existing cached token remains valid and is now retained. Previously the driver incorrectly treated the absent field as an invalidation signal, forcing a browser re-auth on the next access-token expiry. (snowflakedb/drivers#1902)
 - Fixed Azure GET downloads being silently corrupted by transparent gzip decompression of the response body, matching the existing S3 and GCS behavior. (snowflakedb/drivers#1906)

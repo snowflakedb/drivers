@@ -1,5 +1,6 @@
 //! S3 GET decrypts CSE objects that have key-wrap headers but no `sfc-digest`,
-//! and returns raw bytes when those headers are all absent.
+//! and returns raw bytes when those headers are absent or the wrap is not this
+//! query-stage master key (git-stage objects).
 
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_store::ParamStore;
@@ -161,6 +162,47 @@ async fn s3_download_returns_raw_bytes_when_all_cse_headers_absent() {
 
     let server = MockServer::start().await;
     mount_object(&server, raw_bytes.clone(), vec![]).await;
+
+    let output_dir = download_from_mock(&server, Some(material)).await;
+    let downloaded =
+        std::fs::read(output_dir.path().join("object.csv")).expect("read downloaded file");
+
+    assert_eq!(downloaded, raw_bytes);
+}
+
+fn git_stage_headers(material: &EncryptionMaterial) -> Vec<(String, String)> {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    use openssl::symm::{Cipher, encrypt};
+
+    let master_key = STANDARD
+        .decode(material.query_stage_master_key.reveal())
+        .expect("master key");
+    let short_key = [9u8; 16];
+    let wrapped =
+        encrypt(Cipher::aes_256_ecb(), &master_key, None, &short_key).expect("wrap short key");
+    let mat_desc = serde_json::json!({
+        "queryId": material.query_id,
+        "smkId": material.smk_id,
+        "keySize": "256",
+    });
+    vec![
+        ("x-amz-meta-x-amz-key".to_string(), STANDARD.encode(wrapped)),
+        (
+            "x-amz-meta-x-amz-iv".to_string(),
+            STANDARD.encode([0u8; 16]),
+        ),
+        ("x-amz-meta-x-amz-matdesc".to_string(), mat_desc.to_string()),
+    ]
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn s3_download_returns_raw_bytes_when_cse_headers_are_git_stage_wrap() {
+    let raw_bytes = b"git blob stored as plaintext\n".to_vec();
+    let material = test_material();
+
+    let server = MockServer::start().await;
+    mount_object(&server, raw_bytes.clone(), git_stage_headers(&material)).await;
 
     let output_dir = download_from_mock(&server, Some(material)).await;
     let downloaded =

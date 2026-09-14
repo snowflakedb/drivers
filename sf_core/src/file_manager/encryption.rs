@@ -1,6 +1,6 @@
 use super::types::{ByteSource, EncryptedFileMetadata, EncryptionMaterial, MaterialDescription};
 use crate::sensitive::Sensitive;
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, ResultExt, Snafu, ensure};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_ENGINE};
 use openssl::{
@@ -212,16 +212,20 @@ impl<R: Read> Read for EncryptingReader<R> {
     }
 }
 
-/// Decrypts `ciphertext` into `output`. When `digest` is present it is
-/// verified at finalize; on `DigestMismatch`, callers must discard any
-/// already-written output.
-pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
-    mut ciphertext: R,
+/// Whether `metadata`'s wrapped file key unwraps with `encryption_material` to
+/// an AES key of the master-key length. Git-stage objects carry CSE-shaped
+/// headers whose wrap is not this query-stage master key.
+pub(super) fn wrapped_key_matches_material(
     metadata: &EncryptedFileMetadata,
-    digest: Option<&str>,
     encryption_material: &EncryptionMaterial,
-    output: &mut W,
-) -> Result<i64, EncryptionError> {
+) -> bool {
+    unwrap_file_key(metadata, encryption_material).is_ok()
+}
+
+fn unwrap_file_key(
+    metadata: &EncryptedFileMetadata,
+    encryption_material: &EncryptionMaterial,
+) -> Result<(Vec<u8>, CipherSuite), EncryptionError> {
     let master_key = BASE64_ENGINE
         .decode(encryption_material.query_stage_master_key.reveal())
         .context(Base64DecodeSnafu {
@@ -235,17 +239,37 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
             .context(Base64DecodeSnafu {
                 context: "encrypted file key",
             })?;
-    let iv = BASE64_ENGINE
-        .decode(&metadata.iv)
-        .context(Base64DecodeSnafu {
-            context: "initialization vector",
-        })?;
 
     let file_key = decrypt(cipher_suite.ecb, &master_key, None, &encrypted_file_key).context(
         OpenSSLSnafu {
             operation: "decrypting file key with AES-ECB",
         },
     )?;
+    ensure!(
+        file_key.len() == cipher_suite.key_len,
+        UnsupportedKeySizeSnafu {
+            key_size: file_key.len()
+        }
+    );
+    Ok((file_key, cipher_suite))
+}
+
+/// Decrypts `ciphertext` into `output`. When `digest` is present it is
+/// verified at finalize; on `DigestMismatch`, callers must discard any
+/// already-written output.
+pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
+    mut ciphertext: R,
+    metadata: &EncryptedFileMetadata,
+    digest: Option<&str>,
+    encryption_material: &EncryptionMaterial,
+    output: &mut W,
+) -> Result<i64, EncryptionError> {
+    let (file_key, cipher_suite) = unwrap_file_key(metadata, encryption_material)?;
+    let iv = BASE64_ENGINE
+        .decode(&metadata.iv)
+        .context(Base64DecodeSnafu {
+            context: "initialization vector",
+        })?;
 
     let mut crypter = Crypter::new(cipher_suite.cbc, Mode::Decrypt, &file_key, Some(&iv)).context(
         OpenSSLSnafu {
@@ -579,5 +603,47 @@ mod tests {
             .unwrap();
 
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn wrapped_key_matches_material_accepts_real_cse_wrap() {
+        let material = test_material();
+        let (_enc, metadata) = build_encryptor(&material, 8).unwrap();
+        assert!(wrapped_key_matches_material(&metadata, &material));
+    }
+
+    #[test]
+    fn wrapped_key_matches_material_rejects_placeholder_key() {
+        let material = test_material();
+        let metadata = EncryptedFileMetadata {
+            encrypted_key: BASE64_ENGINE.encode(b"test-key"),
+            iv: BASE64_ENGINE.encode([0u8; AES_BLOCK_SIZE_IN_BYTES]),
+            material_desc: MaterialDescription {
+                query_id: material.query_id.clone(),
+                smk_id: material.smk_id.clone(),
+                key_size: "256".to_string(),
+            },
+        };
+        assert!(!wrapped_key_matches_material(&metadata, &material));
+    }
+
+    #[test]
+    fn wrapped_key_matches_material_rejects_mismatched_key_length() {
+        let material = test_material();
+        let master_key = BASE64_ENGINE
+            .decode(material.query_stage_master_key.reveal())
+            .unwrap();
+        let short_key = [9u8; AES_128_KEY_SIZE_IN_BYTES];
+        let wrapped = encrypt(Cipher::aes_256_ecb(), &master_key, None, &short_key).unwrap();
+        let metadata = EncryptedFileMetadata {
+            encrypted_key: BASE64_ENGINE.encode(wrapped),
+            iv: BASE64_ENGINE.encode([0u8; AES_BLOCK_SIZE_IN_BYTES]),
+            material_desc: MaterialDescription {
+                query_id: material.query_id.clone(),
+                smk_id: material.smk_id.clone(),
+                key_size: "256".to_string(),
+            },
+        };
+        assert!(!wrapped_key_matches_material(&metadata, &material));
     }
 }
