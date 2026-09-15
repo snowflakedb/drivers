@@ -10,9 +10,11 @@ crate-type = ["cdylib"]
 [features]
 # Static OpenSSL for the release fat-jar libs (dev/test builds link system OpenSSL).
 vendored-openssl = ["sf_core/vendored-openssl"]
-# Links the FIPS-validated TLS backend (aws-lc-fips-sys) instead of aws-lc-sys.
-# Covers TLS only, which is what the name says -- see the `fips-tls` feature
-# comment in sf_core/Cargo.toml for why this is not a FIPS artifact on its own.
+# Links the FIPS-validated crypto module (aws-lc-fips-sys) instead of
+# aws-lc-sys. Despite the name it is no longer TLS-only: JWT signing, DPoP,
+# stage file encryption and private-key parsing now run on the same module. The
+# name and the caveat both stand -- see the `fips-tls` feature comment in
+# sf_core/Cargo.toml for why this is still not a FIPS artifact on its own.
 fips-tls = ["sf_core/fips-tls"]
 
 [dependencies]

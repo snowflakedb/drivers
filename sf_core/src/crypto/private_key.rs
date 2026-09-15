@@ -50,9 +50,11 @@
 //! belongs to the organisation. That acceptance needs to be recorded in the
 //! compliance exception list rather than implied by this module existing.
 //!
-//! Behaviour is identical with and without `fips-tls`. There is deliberately no
-//! feature gate that rejects 3DES in FIPS builds: NIST permits the unwrap, so a
-//! gate would break documented, supported keys for no regulatory reason.
+//! 3DES behaves identically with and without `fips-tls`. There is deliberately
+//! no feature gate that rejects it in FIPS builds: NIST permits the unwrap, so
+//! a gate would break documented, supported keys for no regulatory reason.
+//! (One format *does* differ by build -- see the next section -- so this is a
+//! statement about 3DES, not about the module.)
 //!
 //! # The one place builds differ: traditional encrypted PEM
 //!
