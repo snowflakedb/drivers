@@ -4,6 +4,8 @@
 #include <iostream>
 #include <regex>
 
+#include <nlohmann/json.hpp>
+
 std::string get_env_required(const char* name) {
   const char* value = std::getenv(name);
   if (!value) {
@@ -119,32 +121,23 @@ std::vector<std::string> parse_setup_queries() {
 
   const char* setup_queries_json = std::getenv("SETUP_QUERIES");
   if (!setup_queries_json) {
-    return setup_queries;  // No setup queries
-  }
-
-  std::string json_str(setup_queries_json);
-
-  // Remove leading/trailing whitespace and brackets
-  size_t start = json_str.find('[');
-  size_t end = json_str.rfind(']');
-  if (start == std::string::npos || end == std::string::npos) {
     return setup_queries;
   }
 
-  std::string queries_str = json_str.substr(start + 1, end - start - 1);
-
-  // Parse quoted strings
-  size_t pos = 0;
-  while (pos < queries_str.length()) {
-    size_t quote_start = queries_str.find('"', pos);
-    if (quote_start == std::string::npos) break;
-    size_t quote_end = queries_str.find('"', quote_start + 1);
-    if (quote_end == std::string::npos) break;
-    std::string query = queries_str.substr(quote_start + 1, quote_end - quote_start - 1);
-    if (!query.empty()) {
-      setup_queries.push_back(query);
+  try {
+    const auto parsed = nlohmann::json::parse(setup_queries_json);
+    if (!parsed.is_array()) {
+      std::cerr << "ERROR: SETUP_QUERIES must be a JSON array\n";
+      exit(1);
     }
-    pos = quote_end + 1;
+    for (const auto& item : parsed) {
+      if (item.is_string()) {
+        setup_queries.push_back(item.get<std::string>());
+      }
+    }
+  } catch (const nlohmann::json::exception& e) {
+    std::cerr << "ERROR: Failed to parse SETUP_QUERIES: " << e.what() << "\n";
+    exit(1);
   }
 
   return setup_queries;

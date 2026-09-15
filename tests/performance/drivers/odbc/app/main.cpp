@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "binding_execution.h"
 #include "common.h"
 #include "concurrent_execution.h"
 #include "config.h"
@@ -168,11 +169,14 @@ int main() {
       int worker_count = get_env_int("WORKER_COUNT", 1);
       execute_concurrent_test(env, dbc, sql_command, warmup_iterations, iterations, worker_count, setup_queries,
                               test_name, driver_type_str, driver_version_str, now);
+    } else if (test_type == TestType::ParameterBinding) {
+      execute_binding_test(dbc, sql_command, warmup_iterations, iterations, test_name, driver_type_str,
+                           driver_version_str, now);
     } else {
       auto executor_it = TEST_EXECUTORS.find(test_type);
       if (executor_it == TEST_EXECUTORS.end()) {
         std::cerr << "ERROR: Unknown test type: " << test_type_to_string(test_type) << "\n";
-        std::cerr << "Supported types: select, put_get, concurrent\n";
+        std::cerr << "Supported types: select, put_get, concurrent, parameter_binding\n";
         SQLDisconnect(dbc);
         SQLFreeHandle(SQL_HANDLE_DBC, dbc);
         SQLFreeHandle(SQL_HANDLE_ENV, env);
@@ -186,7 +190,8 @@ int main() {
     SQLFreeHandle(SQL_HANDLE_DBC, dbc);
     SQLFreeHandle(SQL_HANDLE_ENV, env);
     return 0;
-  } catch (const std::exception&) {
+  } catch (const std::exception& e) {
+    std::cerr << "ERROR: " << e.what() << "\n";
     if (dbc != SQL_NULL_HDBC) {
       SQLDisconnect(dbc);
       SQLFreeHandle(SQL_HANDLE_DBC, dbc);

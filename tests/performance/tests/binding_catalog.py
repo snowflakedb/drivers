@@ -44,25 +44,25 @@ def scalar_binding_params(
     return [sample for _ in range(cell_count)]
 
 # TPCH LINEITEM column layout (matches select_15columns_* perf tests)
-LINEITEM_15_COLUMNS_DDL = f"""
-CREATE OR REPLACE TEMPORARY TABLE {BIND_PERF_TABLE} (
-    L_ORDERKEY INT,
-    L_PARTKEY INT,
-    L_SUPPKEY INT,
-    L_LINENUMBER INT,
-    L_QUANTITY FLOAT,
-    L_EXTENDEDPRICE FLOAT,
-    L_DISCOUNT FLOAT,
-    L_TAX FLOAT,
-    L_RETURNFLAG VARCHAR(1),
-    L_LINESTATUS VARCHAR(1),
-    L_SHIPDATE DATE,
-    L_COMMITDATE DATE,
-    L_RECEIPTDATE DATE,
-    L_SHIPINSTRUCT VARCHAR(25),
-    L_COMMENT VARCHAR(44)
+LINEITEM_15_COLUMNS_DDL = (
+    f"CREATE OR REPLACE TEMPORARY TABLE {BIND_PERF_TABLE} (\n"
+    "    L_ORDERKEY INT,\n"
+    "    L_PARTKEY INT,\n"
+    "    L_SUPPKEY INT,\n"
+    "    L_LINENUMBER INT,\n"
+    "    L_QUANTITY FLOAT,\n"
+    "    L_EXTENDEDPRICE FLOAT,\n"
+    "    L_DISCOUNT FLOAT,\n"
+    "    L_TAX FLOAT,\n"
+    "    L_RETURNFLAG VARCHAR(1),\n"
+    "    L_LINESTATUS VARCHAR(1),\n"
+    "    L_SHIPDATE DATE,\n"
+    "    L_COMMITDATE DATE,\n"
+    "    L_RECEIPTDATE DATE,\n"
+    "    L_SHIPINSTRUCT VARCHAR(25),\n"
+    "    L_COMMENT VARCHAR(44)\n"
+    ")"
 )
-"""
 
 EXECUTEMANY_15COL_INSERT_SQL = (
     f"INSERT INTO {BIND_PERF_TABLE} VALUES ("
