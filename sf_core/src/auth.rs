@@ -1,6 +1,3 @@
-use jwt::PKeyWithDigest;
-use jwt::SignWithKey;
-use openssl::hash::MessageDigest;
 use serde::Serialize;
 use snafu::{Location, ResultExt, Snafu};
 
@@ -69,41 +66,27 @@ fn generate_jwt_token(
     private_key: &str,
     passphrase: Option<&str>,
 ) -> Result<String, AuthError> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-    use jwt::{Header, Token};
-    use openssl::{pkey::PKey, rsa::Rsa};
+    use aws_lc_rs::encoding::AsDer;
+    use aws_lc_rs::signature::KeyPair;
+    use base64::Engine as _;
+    use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Parse RSA private key
-    let rsa = if let Some(passphrase) = passphrase {
-        Rsa::private_key_from_pem_passphrase(private_key.as_bytes(), passphrase.as_bytes())
-    } else {
-        Rsa::private_key_from_pem(private_key.as_bytes())
-    }
-    .context(InvalidPrivateKeyFormatSnafu)?;
-    let private_key = PKey::from_rsa(rsa).context(PrivateKeyCreationSnafu)?;
+    let key = crate::crypto::private_key::load_rsa_key(private_key.as_bytes(), passphrase)
+        .context(InvalidPrivateKeyFormatSnafu)?;
 
-    // Extract public key and hash it
-    let public_key_der = private_key
-        .public_key_to_der()
+    // Snowflake matches the `iss` fingerprint against SHA-256 of the *SPKI*
+    // (X.509 SubjectPublicKeyInfo) DER -- the same bytes
+    // `openssl rsa -pubin -outform DER` emits. `PublicKeyX509Der` is that
+    // encoding; the PKCS#1 `RSAPublicKey` form would hash to something the
+    // server does not recognise.
+    let spki = key
+        .public_key()
+        .as_der()
         .context(PublicKeyExtractionSnafu)?;
-    let mut hasher = openssl::sha::Sha256::new();
-    hasher.update(&public_key_der);
-    let public_key_hash = hasher.finish();
-    let public_key_b64 = BASE64.encode(public_key_hash);
+    let fingerprint = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, spki.as_ref());
+    let public_key_b64 = BASE64.encode(fingerprint.as_ref());
 
-    let pkey_with_digest = PKeyWithDigest {
-        digest: MessageDigest::sha256(),
-        key: private_key,
-    };
-
-    // Create JWT header
-    let header = Header {
-        algorithm: jwt::AlgorithmType::Rs256,
-        ..Default::default()
-    };
-
-    // Create claims
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context(SystemTimeSnafu)?
@@ -119,19 +102,34 @@ fn generate_jwt_token(
 
     let sub = format!("{}.{}", account_locator, username.to_uppercase());
     let iss = format!("{sub}.SHA256:{public_key_b64}");
-    let claim: Claim = Claim {
+    let claim = Claim {
         sub,
         iss,
         iat: now,
         exp: now + 120,
     };
 
-    // Create and sign token
-    let token = Token::new(header, claim)
-        .sign_with_key(&pkey_with_digest)
-        .context(JWTSignSnafu)?;
+    // The JWS is assembled here rather than through the `jwt` crate, whose
+    // signing traits are implemented only for OpenSSL keys (`PKeyWithDigest`).
+    // Same shape as `rest::snowflake::oauth::dpop`, which hand-builds its proof
+    // for a different reason.
+    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
+    let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claim).context(JWTSerializeSnafu)?);
+    let signing_input = format!("{header}.{claims}");
 
-    Ok(token.as_str().to_string())
+    let mut signature = vec![0u8; key.public_modulus_len()];
+    key.sign(
+        &aws_lc_rs::signature::RSA_PKCS1_SHA256,
+        &aws_lc_rs::rand::SystemRandom::new(),
+        signing_input.as_bytes(),
+        &mut signature,
+    )
+    .context(JWTSignSnafu)?;
+
+    Ok(format!(
+        "{signing_input}.{}",
+        URL_SAFE_NO_PAD.encode(&signature)
+    ))
 }
 
 // Runs synchronously on the connect path so JWT signing completes before the
@@ -272,19 +270,13 @@ pub enum AuthError {
     },
     #[snafu(display("Invalid private key format"))]
     InvalidPrivateKeyFormat {
-        source: openssl::error::ErrorStack,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to create private key from RSA"))]
-    PrivateKeyCreation {
-        source: openssl::error::ErrorStack,
+        source: crate::crypto::private_key::PrivateKeyError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to extract public key from private key"))]
     PublicKeyExtraction {
-        source: openssl::error::ErrorStack,
+        source: aws_lc_rs::error::Unspecified,
         #[snafu(implicit)]
         location: Location,
     },
@@ -294,9 +286,15 @@ pub enum AuthError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to serialize JWT claims"))]
+    JWTSerialize {
+        source: serde_json::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to sign JWT token"))]
     JWTSign {
-        source: jwt::Error,
+        source: aws_lc_rs::error::Unspecified,
         #[snafu(implicit)]
         location: Location,
     },
@@ -311,6 +309,109 @@ pub enum AuthError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use base64::Engine as _;
+    use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
+
+    const PASSPHRASE: &str = "correct horse battery staple";
+
+    /// The `iss` fingerprint must be SHA-256 of the SPKI DER, Base64.
+    ///
+    /// This is the one value the server independently recomputes: Snowflake
+    /// compares it against `RSA_PUBLIC_KEY_FP`, and the documented way for a
+    /// user to check their own key is
+    /// `openssl rsa -pubin -outform DER | openssl dgst -sha256 -binary | openssl enc -base64`.
+    /// So the assertion is against OpenSSL's `public_key_to_der()`, not against
+    /// another AWS-LC call -- an encoding mistake here (PKCS#1 `RSAPublicKey`
+    /// instead of SPKI) would produce a well-formed JWT that every login
+    /// rejects.
+    #[test]
+    fn jwt_iss_fingerprint_matches_openssl_spki_sha256() {
+        let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
+        let pem = String::from_utf8(rsa.private_key_to_pem().unwrap()).unwrap();
+        let pkey = openssl::pkey::PKey::from_rsa(rsa).unwrap();
+
+        let expected = BASE64.encode(openssl::sha::sha256(&pkey.public_key_to_der().unwrap()));
+
+        let token = generate_jwt_token("myaccount.us-east-1", "myuser", &pem, None).unwrap();
+        let claims: serde_json::Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(token.split('.').nth(1).unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            claims["iss"].as_str().unwrap(),
+            format!("MYACCOUNT.MYUSER.SHA256:{expected}"),
+            "iss must carry the SPKI SHA-256 fingerprint the server recomputes"
+        );
+        assert_eq!(claims["sub"].as_str().unwrap(), "MYACCOUNT.MYUSER");
+    }
+
+    /// Sign with our code, verify with OpenSSL. Proves the hand-built JWS is a
+    /// valid RS256 signature over `header.claims` and not merely well-shaped.
+    #[test]
+    fn jwt_signature_verifies_under_openssl() {
+        let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
+        let pem = String::from_utf8(rsa.private_key_to_pem().unwrap()).unwrap();
+        let pkey = openssl::pkey::PKey::from_rsa(rsa).unwrap();
+
+        let token = generate_jwt_token("acct", "user", &pem, None).unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3, "JWT must have three segments");
+
+        let header: serde_json::Value =
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
+        assert_eq!(header["alg"], "RS256");
+        assert_eq!(header["typ"], "JWT");
+
+        let mut verifier =
+            openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), &pkey).unwrap();
+        verifier
+            .update(format!("{}.{}", parts[0], parts[1]).as_bytes())
+            .unwrap();
+        assert!(
+            verifier
+                .verify(&URL_SAFE_NO_PAD.decode(parts[2]).unwrap())
+                .unwrap(),
+            "RS256 signature must verify under OpenSSL"
+        );
+    }
+
+    /// An encrypted key in the format Snowflake documents (`-v2 des3`) must
+    /// produce the same JWT as its unencrypted equivalent.
+    #[test]
+    fn encrypted_key_produces_the_same_issuer_as_unencrypted() {
+        let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
+        let pkey = openssl::pkey::PKey::from_rsa(rsa).unwrap();
+        let plain = String::from_utf8(pkey.private_key_to_pem_pkcs8().unwrap()).unwrap();
+        let encrypted = String::from_utf8(
+            pkey.private_key_to_pem_pkcs8_passphrase(
+                openssl::symm::Cipher::des_ede3_cbc(),
+                PASSPHRASE.as_bytes(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let iss_of = |pem: &str, pass: Option<&str>| -> String {
+            let token = generate_jwt_token("acct", "user", pem, pass).unwrap();
+            let claims: serde_json::Value = serde_json::from_slice(
+                &URL_SAFE_NO_PAD
+                    .decode(token.split('.').nth(1).unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+            claims["iss"].as_str().unwrap().to_string()
+        };
+
+        assert_eq!(
+            iss_of(&plain, None),
+            iss_of(&encrypted, Some(PASSPHRASE)),
+            "unwrapping must recover the identical key"
+        );
+    }
 
     #[test]
     fn test_extract_account_locator_simple() {

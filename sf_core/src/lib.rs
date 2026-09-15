@@ -13,6 +13,7 @@ mod compression;
 mod compression_types;
 pub mod config;
 pub mod crl;
+pub mod crypto;
 mod fs_lock;
 pub mod xp_backend;
 // Public for integration tests; only `types` and specific transfer functions are re-exported.
