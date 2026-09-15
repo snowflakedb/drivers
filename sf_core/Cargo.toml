@@ -17,13 +17,19 @@ sonic-json = ["sonic-rs"]
 # run against the FIPS module by declaration, not by accident of the resolver
 # happening to unify rustls's transitive activation into the same crate.
 #
-# Named `fips-tls` rather than `fips` because it covers TLS only. JWT signing,
-# stage file encryption, DPoP and key parsing still run on OpenSSL, which has no
-# FIPS-validated provider -- and under `vendored-openssl` that unvalidated copy
-# is statically linked where a customer cannot replace it. An artifact built
-# from this feature is therefore not a FIPS artifact, and the narrower name is
-# what keeps the two apart: `fips` is left unclaimed for the complete thing,
-# once the non-TLS crypto is ported off OpenSSL.
+# Still named `fips-tls` rather than `fips`, but no longer for the original
+# reason. JWT signing, stage file encryption, DPoP and private-key parsing have
+# all been ported off OpenSSL to AWS-LC, so the feature's reach is no longer
+# TLS-only in practice.
+#
+# The name stays because the *claim* is not yet complete:
+#   - `openssl` is still in `[dependencies]` (dev-only in practice, but
+#     `vendored-openssl` below still statically links an unvalidated copy where
+#     a customer cannot replace it). Removing it is the next step; see F2.
+#   - AWS-LC-FIPS 4.x is "in process" at CMVP rather than certificated; the
+#     issued certs cover the 3.x line.
+# So an artifact built from this feature is still not a FIPS artifact, and
+# `fips` stays unclaimed for the complete thing.
 fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
 protobuf = ["prost", "proto_utils"]
 vendored-openssl = ["openssl/vendored"]
