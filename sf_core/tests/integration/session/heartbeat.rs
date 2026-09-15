@@ -148,7 +148,12 @@ async fn heartbeat_stops_on_cancellation() {
         Duration::from_millis(50),
         Arc::new(AtomicBool::new(false)),
     );
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Win32 CI can miss the first tick in 100ms (interval 50ms + HTTP). Wait
+    // until the mock has seen at least one request, with a hard deadline.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while heartbeat_count.load(Ordering::SeqCst) < 1 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let count_before_cancel = heartbeat_count.load(Ordering::SeqCst);
     assert!(
         count_before_cancel >= 1,
