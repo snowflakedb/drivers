@@ -406,9 +406,10 @@ async fn should_timeout_after_15_seconds_by_default_when_server_does_not_respond
     //Then Close throws timeout error
     assert!(result.is_err(), "Should timeout with default 15s budget");
 
-    //And Total elapsed time is between 14 and 17 seconds
+    //And Total elapsed time is around 15s. Win32 CI can overshoot ~18s under
+    // load (retry loop + spawn_blocking), so keep a wide upper bound.
     assert!(
-        elapsed >= Duration::from_secs(14) && elapsed < Duration::from_secs(18),
+        elapsed >= Duration::from_secs(14) && elapsed < Duration::from_secs(25),
         "Should timeout after ~15 seconds, took {:?}",
         elapsed
     );

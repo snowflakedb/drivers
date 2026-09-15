@@ -473,6 +473,7 @@ impl Read for SpilledReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Seek, SeekFrom};
 
     #[test]
     fn part_size_is_default_below_recompute_threshold() {
@@ -685,11 +686,16 @@ mod tests {
 
     #[test]
     fn write_at_places_disjoint_chunks_at_offsets() {
-        let f = tempfile::NamedTempFile::new().unwrap();
-        f.as_file().set_len(6).unwrap();
+        // Unnamed tempfile: on Windows, NamedTempFile::new() plus a second
+        // open via fs::read(path) flakes with ERROR_ACCESS_DENIED (AV / share).
+        let mut f = tempfile::tempfile().unwrap();
+        f.set_len(6).unwrap();
         // Write out of order; positioned writes must land at the right offset.
-        write_at(f.as_file(), 3, b"DEF").unwrap();
-        write_at(f.as_file(), 0, b"ABC").unwrap();
-        assert_eq!(std::fs::read(f.path()).unwrap(), b"ABCDEF");
+        write_at(&f, 3, b"DEF").unwrap();
+        write_at(&f, 0, b"ABC").unwrap();
+        f.seek(SeekFrom::Start(0)).unwrap();
+        let mut buf = [0u8; 6];
+        f.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"ABCDEF");
     }
 }
