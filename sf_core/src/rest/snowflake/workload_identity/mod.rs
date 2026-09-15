@@ -201,6 +201,13 @@ pub(crate) async fn create_attestation(
     // clients built by the TLS factories, which run both calls in
     // `configure_tls_builder`. Redundant for the login path -- both calls are
     // `Once`-cheap and idempotent.
+    //
+    // `client` arrives already built, so its crypto backend cannot be changed
+    // from here. That is why the gate has to cover the process-global provider
+    // and not just the linked module: the RPC path passes a plain
+    // `reqwest::Client`, whose handshake resolves the global slot, and Azure
+    // and GCP attestation both ride that client. See
+    // `tls::require_fips_provider`.
     crate::tls::ensure_crypto_provider();
     crate::tls::require_fips_provider().context(CryptoProviderSnafu)?;
     let endpoints = AttestationEndpoints::default();

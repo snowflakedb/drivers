@@ -65,9 +65,11 @@ pub(crate) fn build_tls_client_and_rustls_config(
     // "No provider set".
     super::ensure_crypto_provider();
     // Fail closed rather than serve traffic on a non-approved module: in
-    // `fips-tls` builds this refuses to build a client when the provider that
-    // won the process-global slot is not FIPS. Compiles away without the
-    // feature.
+    // `fips-tls` builds this refuses to build a client unless both the linked
+    // module and the process-global provider are FIPS. The global matters
+    // because only the CRL branch below hands rustls our config -- the
+    // insecure and CRL-disabled branches let reqwest resolve the global for
+    // the handshake. Compiles away without the feature.
     super::require_fips_provider()?;
 
     if !tls_config.verify_certificates {

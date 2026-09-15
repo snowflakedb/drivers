@@ -49,10 +49,26 @@ pub enum TlsError {
     },
 
     #[snafu(display(
-        "driver was built with the `fips-tls` feature but the active rustls crypto provider \
+        "driver was built with the `fips-tls` feature but the linked crypto module \
          is not in FIPS mode; refusing to create a TLS client"
     ))]
     FipsModeUnavailable {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// Distinct from [`TlsError::FipsModeUnavailable`] so the two are
+    /// diagnosable apart: that one means the wrong artifact was linked, this
+    /// one means the embedding application installed its own non-FIPS provider
+    /// before the driver could claim the slot. The remedies differ -- reinstall
+    /// versus fix the host application's startup order -- and the error text is
+    /// the only thing a customer will see.
+    #[snafu(display(
+        "driver was built with the `fips-tls` feature but the process-global rustls crypto \
+         provider is not in FIPS mode (an embedding application installed its own provider \
+         first); refusing to create a TLS client"
+    ))]
+    FipsGlobalProviderUnavailable {
         #[snafu(implicit)]
         location: Location,
     },
