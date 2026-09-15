@@ -1,4 +1,4 @@
-# ODBC Driver
+# Snowflake ODBC Driver
 
 ## Configuration via `sf.odbc.ini`
 

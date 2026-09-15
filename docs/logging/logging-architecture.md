@@ -1,4 +1,4 @@
-# Universal Driver Logging Architecture
+# Logging architecture for Snowflake drivers built on the Universal Core
 
 How logs flow from the Rust core into each wrapper. Unlike the logging
 guidelines (which are prescriptive), this document is descriptive: it captures

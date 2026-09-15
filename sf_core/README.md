@@ -1,6 +1,8 @@
-# SF Core - Rust Core Library
+# sf_core
 
-The core Rust library that powers the drivers based on unified architecture. This library provides the fundamental database driver functionality including connection management, query execution, authentication, and data processing.
+`sf_core` is the Rust library behind the Universal Core. It provides connection
+management, query execution, authentication, and data processing for Snowflake
+drivers that share that library.
 
 ## Testing
 
