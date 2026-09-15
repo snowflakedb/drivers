@@ -74,12 +74,14 @@ pub enum AttestationError {
         #[snafu(implicit)]
         location: Location,
     },
-    /// Raised before any provider is dispatched, in `fips` builds whose
-    /// process-global rustls provider is not FIPS. All providers exchange
-    /// authentication material over the caller-supplied clients, so the same
-    /// fail-closed gate the TLS factories apply belongs here too -- notably
-    /// for the `wif_create_attestation` RPC, whose plain client is not built
-    /// through those factories.
+    /// Raised before any provider is dispatched, in `fips-tls` builds whose
+    /// process-global rustls provider is not FIPS. The AWS, Azure and GCP
+    /// providers exchange authentication material over the caller-supplied
+    /// clients, so the same fail-closed gate the TLS factories apply belongs
+    /// here too -- notably for the `wif_create_attestation` RPC, whose plain
+    /// client is not built through those factories. OIDC reads a token it was
+    /// already given and so cannot reach this, but the gate runs before the
+    /// dispatch that would tell them apart.
     #[snafu(display("Refusing Workload Identity attestation"))]
     CryptoProvider {
         source: crate::tls::error::TlsError,
@@ -168,12 +170,14 @@ pub(crate) async fn create_attestation(
     aws_sdk_http: Option<&AwsSdkReqwestClient>,
     config: &WorkloadIdentityConfig,
 ) -> Result<Attestation, AttestationError> {
-    // Every provider exchanges authentication material over the supplied
-    // clients. Pinning and gating the crypto backend at this single entry
-    // point gives a caller-built plain client (the `wif_create_attestation`
-    // RPC) the same fail-closed FIPS behaviour as clients built by the TLS
-    // factories, which run both calls in `configure_tls_builder`. Redundant
-    // for the login path -- both calls are `Once`-cheap and idempotent.
+    // The AWS, Azure and GCP providers exchange authentication material over
+    // the supplied clients (OIDC makes no request). Pinning and gating the
+    // crypto backend at this single entry point, before the dispatch that
+    // distinguishes them, gives a caller-built plain client (the
+    // `wif_create_attestation` RPC) the same fail-closed FIPS behaviour as
+    // clients built by the TLS factories, which run both calls in
+    // `configure_tls_builder`. Redundant for the login path -- both calls are
+    // `Once`-cheap and idempotent.
     crate::tls::ensure_crypto_provider();
     crate::tls::require_fips_provider().context(CryptoProviderSnafu)?;
     let endpoints = AttestationEndpoints::default();

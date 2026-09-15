@@ -69,6 +69,14 @@ pub(crate) fn ensure_crypto_provider() {
 /// from standard builds would make "you installed the wrong artifact" look
 /// identical to "you are running a driver too old to have the accessor at
 /// all". Always present, answering `false`, keeps those two distinguishable.
+///
+/// `pub` rather than `pub(crate)` for the same reason: both in-crate callers
+/// (the mismatch log in `ensure_crypto_provider`, the gate in
+/// `require_fips_provider`) sit under `#[cfg(feature = "fips-tls")]`, so a
+/// crate-private version is dead code in every standard build. The only ways
+/// to keep it crate-private are an `#[allow(dead_code)]` or the feature gate
+/// this doc block just explained we do not want -- both of which hide the
+/// accessor Phase 4 is going to export anyway.
 pub fn fips_mode_active() -> bool {
     rustls::crypto::CryptoProvider::get_default().is_some_and(|p| p.fips())
 }
