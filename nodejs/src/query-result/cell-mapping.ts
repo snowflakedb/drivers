@@ -51,17 +51,22 @@ function selectConverter(
   if (!converters) {
     return null;
   }
+
   if (!asStringColumnTypes.has(columnType)) {
     return converters.asValue;
   }
-  // Only the asString converters render a NULL as the string 'NULL'; when
-  // representNullAsStringNull is off, short-circuit the NULL back to real null
-  // here so a new asString converter cannot forget to honor the option.
+
   const asString = converters.asString;
-  if (asString === null || options.representNullAsStringNull) {
-    return asString;
+  if (!asString) {
+    return null;
   }
-  return (value, context) => (value === null ? null : asString(value, context));
+
+  return (value, context) => {
+    if (value === null && options.representNullAsStringNull === false) {
+      return null;
+    }
+    return asString(value, context);
+  };
 }
 
 interface ColumnConverter {
