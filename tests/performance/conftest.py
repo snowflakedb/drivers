@@ -130,6 +130,13 @@ def pytest_addoption(parser):
         type=int,
         help="Number of iterations for regression confirmation re-runs (default: 10). Only used with --regression-check",
     )
+    parser.addoption(
+        "--regression-baseline-runs",
+        action="store",
+        default=10,
+        type=int,
+        help="Number of recent main Benchstore runs to median for the baseline (default: 10). Only used with --regression-check",
+    )
 
 
 def _resolve_parameters_path(config) -> str:
@@ -969,6 +976,7 @@ def pytest_sessionfinish(session, exitstatus):
                 run_id=run_id_val,
                 iterations=rerun_iterations,
                 warmup_iterations=session.config.getoption("--warmup-iterations") if session.config.getoption("--warmup-iterations") is not None else 2,
+                num_runs=session.config.getoption("--regression-baseline-runs"),
             )
 
             REGRESSION_EXIT_CODE = 77

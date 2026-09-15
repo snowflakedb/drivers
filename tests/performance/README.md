@@ -797,7 +797,7 @@ Two parallel lanes run on dedicated performance nodes (`drivers-perf-regular-mem
 ### Regression Detection Flow (PRs)
 
 1. **Screen** — run selected tests (10 iterations for fast tests, 3 for slow tests like `select_15columns_1M`)
-2. **Compare** — fetch the latest main branch baselines from Benchstore (median of last 3 runs) and compare PR medians against them
+2. **Compare** — fetch the latest main branch baselines from Benchstore (median of last 10 runs) and compare PR medians against them. A wider window absorbs a couple of unusually fast nightlies so they cannot pull a 3-run median down and make a normal PR look like +18%.
 3. **Confirm** — if any test exceeds the threshold (default: 5%), re-run only the regressed tests with more iterations (default: 10) up to 2 times. Regression is confirmed if it appears in at least 2 of 3 total runs (majority vote)
 4. **Report** — log a results table and upload all data to Benchstore with `REGRESSION_DETECTED` tag
 5. **Gate** — post a `performance/regression` GitHub commit status (`SUCCESS` or `FAILURE`)
@@ -818,6 +818,7 @@ The test stage distinguishes between functional test failures and performance re
 |--------|-------------|---------|
 | `--regression-check` | Enable regression detection | `false` |
 | `--regression-threshold` | Regression threshold percentage | `5.0` |
+| `--regression-baseline-runs` | Recent main Benchstore runs to median for the baseline | `10` |
 | `--regression-rerun-iterations` | Iterations for confirmation re-runs | `10` |
 
 ### ACCEPT_PERFORMANCE_CHANGES Label

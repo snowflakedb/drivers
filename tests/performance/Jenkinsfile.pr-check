@@ -4,6 +4,7 @@ import groovy.transform.Field
 
 // Regression check configuration
 @Field def REGRESSION_THRESHOLD = 10.0
+@Field def REGRESSION_BASELINE_RUNS = 10
 @Field def REGRESSION_SCREEN_ITERATIONS = 10
 @Field def REGRESSION_RERUN_ITERATIONS_PER_RUN = 10
 @Field def REGRESSION_BASELINE_ITERATIONS = 10
@@ -152,6 +153,7 @@ def runRegressionTests(String driver) {
                 --iterations=${REGRESSION_SCREEN_ITERATIONS} --warmup-iterations=${REGRESSION_WARMUP_ITERATIONS} \
                 --preserve-mappings \
                 --regression-check --regression-threshold=${REGRESSION_THRESHOLD} \
+                --regression-baseline-runs=${REGRESSION_BASELINE_RUNS} \
                 --regression-rerun-iterations=${REGRESSION_RERUN_ITERATIONS_PER_RUN} \
                 -s -v
         """

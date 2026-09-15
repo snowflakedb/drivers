@@ -63,7 +63,7 @@ def get_main_baseline(
     driver: str = "python",
     driver_type: str = "universal",
     use_local_auth: bool = False,
-    num_runs: int = 3,
+    num_runs: int = 10,
 ) -> tuple[dict[str, float], Optional[int]]:
     """
     Query Benchstore for the latest main branch median fetch_s values.
@@ -77,7 +77,7 @@ def get_main_baseline(
         driver: Driver name (python, odbc, core).
         driver_type: universal or old.
         use_local_auth: Use browser auth instead of config file.
-        num_runs: Number of recent main runs to average over (default 3).
+        num_runs: Number of recent main runs to median over (default 10).
 
     Returns:
         (baselines, latest_run_key) where baselines maps test_name -> median fetch_s,
