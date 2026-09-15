@@ -2,6 +2,7 @@ pub mod aws_http_client;
 pub mod client;
 pub mod config;
 pub mod crl_verifier;
+pub mod crypto_module;
 pub mod error;
 pub mod revocation;
 #[cfg(test)]
@@ -57,12 +58,9 @@ pub(crate) fn ensure_crypto_provider() {
 
 /// Whether the crypto provider actually in force is operating in FIPS mode.
 ///
-/// Reports on the installed provider rather than on build flags, so it stays
-/// honest when an embedding application installed a provider of its own before
-/// the driver initialised. A build without `fips-tls` links non-FIPS aws-lc-sys
-/// and so reports `false` unless such an application installed a FIPS provider
-/// first -- in which case `true` is the accurate answer for TLS, and remains
-/// only an answer about TLS.
+/// Reports on the provider that carries the driver's traffic -- the compiled
+/// module's own -- rather than on build flags. A build without `fips-tls`
+/// links non-FIPS aws-lc-sys and so reports `false`.
 ///
 /// Deliberately not gated on the feature. The wrappers will surface this as a
 /// customer-facing accessor (plan Phase 4), and a function that is *absent*
@@ -70,15 +68,22 @@ pub(crate) fn ensure_crypto_provider() {
 /// identical to "you are running a driver too old to have the accessor at
 /// all". Always present, answering `false`, keeps those two distinguishable.
 ///
-/// `pub` rather than `pub(crate)` for the same reason: both in-crate callers
-/// (the mismatch log in `ensure_crypto_provider`, the gate in
-/// `require_fips_provider`) sit under `#[cfg(feature = "fips-tls")]`, so a
-/// crate-private version is dead code in every standard build. The only ways
-/// to keep it crate-private are an `#[allow(dead_code)]` or the feature gate
-/// this doc block just explained we do not want -- both of which hide the
-/// accessor Phase 4 is going to export anyway.
+/// `pub` rather than `pub(crate)` for the same reason: its in-crate callers
+/// sit under `#[cfg(feature = "fips-tls")]`, so a crate-private version is
+/// dead code in every standard build. The only ways to keep it crate-private
+/// are an `#[allow(dead_code)]` or the feature gate this doc block just
+/// explained we do not want -- both of which hide the accessor Phase 4 is
+/// going to export anyway.
+///
+/// Phase 3 note: this used to read `CryptoProvider::get_default()`, so that a
+/// standard build into which an embedding application had installed a FIPS
+/// provider reported `true`. That was the honest answer while the driver
+/// *used* whatever won the global slot. It no longer does -- TLS configs are
+/// built from the linked crypto module (`tls::crypto_module`) -- so reading the global
+/// would now report on a module that carries none of our traffic. The
+/// intent is unchanged: answer for whatever is actually doing the work.
 pub fn fips_mode_active() -> bool {
-    rustls::crypto::CryptoProvider::get_default().is_some_and(|p| p.fips())
+    crypto_module::CryptoModule::get().fips()
 }
 
 /// Fails closed in `fips-tls` builds when the provider that actually won the
