@@ -8,6 +8,7 @@ from io import StringIO
 
 COMMENT_PATTERN_RE = re.compile(r"^\s*\-\-")
 EMPTY_LINE_RE = re.compile(r"^\s*$")
+INLINE_COMMENT_PREFIXES = ("--", "//")
 
 _VALUES_CLAUSE_RE = re.compile(r"\bVALUES\s*\(", re.IGNORECASE)
 
@@ -193,7 +194,7 @@ def split_statements(
                     statement.append((line[col0 : col + 1], True))
                     col += 1
                     col0 = col
-                elif line[col:].startswith("--"):
+                elif line[col:].startswith(INLINE_COMMENT_PREFIXES) and "://" not in line[col0 : col + 3]:
                     statement.append((line[col0:col], True))
                     if not remove_comments:
                         # keep the comment
