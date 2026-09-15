@@ -2,13 +2,13 @@ use super::types::{ByteSource, EncryptedFileMetadata, EncryptionMaterial, Materi
 use crate::sensitive::Sensitive;
 use snafu::{Location, ResultExt, Snafu};
 
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64_ENGINE};
-use openssl::{
-    error::ErrorStack as OpenSslErrorStack,
-    hash::{Hasher, MessageDigest},
-    rand::rand_bytes,
-    symm::{Cipher, Crypter, Mode, decrypt, encrypt},
+use aws_lc_rs::cipher::{
+    AES_128, AES_256, Algorithm, DecryptionContext, EncryptionContext, PaddedBlockDecryptingKey,
+    PaddedBlockEncryptingKey, StreamingDecryptingKey, StreamingEncryptingKey, UnboundCipherKey,
 };
+use aws_lc_rs::digest;
+use aws_lc_rs::iv::{FixedLength, IV_LEN_128_BIT};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64_ENGINE};
 use std::io::{Read, Write};
 
 // Cryptographic constants
@@ -18,11 +18,12 @@ const AES_BLOCK_SIZE_IN_BYTES: usize = 16; // 128-bit block size for AES
 
 const CRYPT_CHUNK_SIZE: usize = 64 * 1024;
 
-/// A container for the ciphers and key length determined by the master key.
+/// The AES algorithm selected by the master key's length. CBC and ECB share
+/// one [`Algorithm`]; the mode comes from the key constructor
+/// (`*_cbc_pkcs7` / `*_ecb_pkcs7`) rather than from a second value.
 struct CipherSuite {
     key_len: usize,
-    cbc: Cipher,
-    ecb: Cipher,
+    algorithm: &'static Algorithm,
 }
 
 impl CipherSuite {
@@ -30,17 +31,29 @@ impl CipherSuite {
         match key_len {
             AES_128_KEY_SIZE_IN_BYTES => Ok(Self {
                 key_len,
-                cbc: Cipher::aes_128_cbc(),
-                ecb: Cipher::aes_128_ecb(),
+                algorithm: &AES_128,
             }),
             AES_256_KEY_SIZE_IN_BYTES => Ok(Self {
                 key_len,
-                cbc: Cipher::aes_256_cbc(),
-                ecb: Cipher::aes_256_ecb(),
+                algorithm: &AES_256,
             }),
             _ => UnsupportedKeySizeSnafu { key_size: key_len }.fail(),
         }
     }
+
+    fn unbound_key(&self, key: &[u8]) -> Result<UnboundCipherKey, EncryptionError> {
+        UnboundCipherKey::new(self.algorithm, key).context(CryptoSnafu {
+            operation: "binding AES key",
+        })
+    }
+}
+
+/// The stage IV as the fixed-width type AWS-LC's cipher contexts require.
+fn iv_context(iv: &[u8]) -> Result<EncryptionContext, EncryptionError> {
+    let iv: [u8; IV_LEN_128_BIT] = iv
+        .try_into()
+        .map_err(|_| InvalidIvLengthSnafu { actual: iv.len() }.build())?;
+    Ok(EncryptionContext::Iv128(FixedLength::from(iv)))
 }
 
 /// AES-CBC/PKCS#7 ciphertext length for a `source_len`-byte plaintext: always
@@ -83,19 +96,19 @@ impl Encryptor {
         source: R,
     ) -> Result<EncryptingReader<R>, EncryptionError> {
         let cipher_suite = CipherSuite::from_key_len(self.file_key.reveal().len())?;
-        let mut crypter = Crypter::new(
-            cipher_suite.cbc,
-            Mode::Encrypt,
-            self.file_key.reveal(),
-            Some(&self.iv),
-        )
-        .context(OpenSSLSnafu {
-            operation: "initializing AES-CBC encryptor",
-        })?;
-        crypter.pad(true);
+        let unbound = cipher_suite.unbound_key(self.file_key.reveal())?;
+        // `less_safe_` because the IV is ours: it is generated once in
+        // `build_encryptor`, travels in the stage metadata, and must be reused
+        // verbatim on every retry so re-encryption is byte-identical. Letting
+        // AWS-LC generate a fresh IV here would break that determinism and the
+        // plaintext digest along with it.
+        let key = StreamingEncryptingKey::less_safe_cbc_pkcs7(unbound, iv_context(&self.iv)?)
+            .context(CryptoSnafu {
+                operation: "initializing AES-CBC encryptor",
+            })?;
         Ok(EncryptingReader {
             source,
-            crypter,
+            key: Some(key),
             chunk: vec![0u8; CRYPT_CHUNK_SIZE],
             staged: Vec::new(),
             staged_pos: 0,
@@ -120,15 +133,20 @@ pub fn build_encryptor(
         })?;
     let cipher_suite = CipherSuite::from_key_len(master_key.len())?;
 
-    let file_key = generate_random_bytes(cipher_suite.key_len).context(OpenSSLSnafu {
-        operation: "generating file key",
-    })?;
-    let iv = generate_random_bytes(AES_BLOCK_SIZE_IN_BYTES).context(OpenSSLSnafu {
-        operation: "generating initialization vector",
-    })?;
+    let file_key = generate_random_bytes(cipher_suite.key_len)?;
+    let iv = generate_random_bytes(AES_BLOCK_SIZE_IN_BYTES)?;
 
-    let encrypted_file_key =
-        encrypt(cipher_suite.ecb, &master_key, None, &file_key).context(OpenSSLSnafu {
+    // The per-file key is wrapped with AES-ECB under the stage master key.
+    // PKCS#7 padding is not optional here: it is what the stage wire format
+    // carries, so the wrapped key is one full block longer than the key
+    // itself, exactly as OpenSSL's padded one-shot produced.
+    let mut encrypted_file_key = file_key.clone();
+    PaddedBlockEncryptingKey::ecb_pkcs7(cipher_suite.unbound_key(&master_key)?)
+        .context(CryptoSnafu {
+            operation: "initializing AES-ECB key wrap",
+        })?
+        .encrypt(&mut encrypted_file_key)
+        .context(CryptoSnafu {
             operation: "encrypting file key with AES-ECB",
         })?;
 
@@ -156,7 +174,9 @@ pub fn build_encryptor(
 /// Peak resident memory is `~CRYPT_CHUNK_SIZE`, independent of file size.
 pub struct EncryptingReader<R: Read> {
     source: R,
-    crypter: Crypter,
+    /// Taken at finalize time: `StreamingEncryptingKey::finish` consumes the
+    /// key, so it cannot live behind `&mut self`.
+    key: Option<StreamingEncryptingKey>,
     /// Reused plaintext read buffer.
     chunk: Vec<u8>,
     /// Ciphertext produced but not yet handed to the caller.
@@ -185,12 +205,20 @@ impl<R: Read> Read for EncryptingReader<R> {
 
             // 2. At source EOF, emit the final padded block exactly once.
             if self.source_done {
-                self.staged.resize(AES_BLOCK_SIZE_IN_BYTES * 2, 0);
-                let w = self
-                    .crypter
-                    .finalize(&mut self.staged)
-                    .map_err(std::io::Error::other)?;
-                self.staged.truncate(w);
+                let key = self
+                    .key
+                    .take()
+                    .ok_or_else(|| std::io::Error::other("AES-CBC encryptor already finalized"))?;
+                self.staged.resize(AES_BLOCK_SIZE_IN_BYTES, 0);
+                // Scoped so the `BufferUpdate` borrow of `staged` ends before
+                // the truncate below.
+                let written = {
+                    let (_ctx, out) = key
+                        .finish(&mut self.staged)
+                        .map_err(std::io::Error::other)?;
+                    out.written().len()
+                };
+                self.staged.truncate(written);
                 self.finalized = true;
                 continue;
             }
@@ -202,12 +230,20 @@ impl<R: Read> Read for EncryptingReader<R> {
                 self.source_done = true;
                 continue;
             }
+            // AWS-LC requires `input.len() + block_len - 1`; a whole extra
+            // block is simpler and always sufficient.
             self.staged.resize(n + AES_BLOCK_SIZE_IN_BYTES, 0);
-            let w = self
-                .crypter
-                .update(&self.chunk[..n], &mut self.staged)
-                .map_err(std::io::Error::other)?;
-            self.staged.truncate(w);
+            let written = {
+                let key = self
+                    .key
+                    .as_mut()
+                    .ok_or_else(|| std::io::Error::other("AES-CBC encryptor already finalized"))?;
+                let out = key
+                    .update(&self.chunk[..n], &mut self.staged)
+                    .map_err(std::io::Error::other)?;
+                out.written().len()
+            };
+            self.staged.truncate(written);
         }
     }
 }
@@ -241,24 +277,28 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
             context: "initialization vector",
         })?;
 
-    let file_key = decrypt(cipher_suite.ecb, &master_key, None, &encrypted_file_key).context(
-        OpenSSLSnafu {
+    let mut wrapped = encrypted_file_key;
+    let file_key = PaddedBlockDecryptingKey::ecb_pkcs7(cipher_suite.unbound_key(&master_key)?)
+        .context(CryptoSnafu {
+            operation: "initializing AES-ECB key unwrap",
+        })?
+        .decrypt(&mut wrapped, DecryptionContext::None)
+        .context(CryptoSnafu {
             operation: "decrypting file key with AES-ECB",
-        },
-    )?;
+        })?;
 
-    let mut crypter = Crypter::new(cipher_suite.cbc, Mode::Decrypt, &file_key, Some(&iv)).context(
-        OpenSSLSnafu {
-            operation: "initializing AES-CBC decryptor",
-        },
-    )?;
-    crypter.pad(true);
+    let file_suite = CipherSuite::from_key_len(file_key.len())?;
+    let mut key = StreamingDecryptingKey::cbc_pkcs7(
+        file_suite.unbound_key(file_key)?,
+        iv_context(&iv)?.into(),
+    )
+    .context(CryptoSnafu {
+        operation: "initializing AES-CBC decryptor",
+    })?;
 
     // The digest stored on upload is the SHA-256 of the (compressed) plaintext,
     // not the ciphertext, so verification hashes the decrypted output.
-    let mut hasher = Hasher::new(MessageDigest::sha256()).context(OpenSSLSnafu {
-        operation: "initializing SHA-256 hasher for decryption",
-    })?;
+    let mut hasher = digest::Context::new(&digest::SHA256);
 
     let mut cipher_buf = vec![0u8; CRYPT_CHUNK_SIZE];
     let mut plain_buf = vec![0u8; CRYPT_CHUNK_SIZE + AES_BLOCK_SIZE_IN_BYTES];
@@ -271,41 +311,34 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
         if n == 0 {
             break;
         }
-        let written = crypter
+        let out = key
             .update(&cipher_buf[..n], &mut plain_buf)
-            .context(OpenSSLSnafu {
+            .context(CryptoSnafu {
                 operation: "decrypting data chunk with AES-CBC",
             })?;
-        if written > 0 {
-            let plaintext = &plain_buf[..written];
-            hasher.update(plaintext).context(OpenSSLSnafu {
-                operation: "hashing plaintext chunk",
-            })?;
+        let plaintext = out.written();
+        if !plaintext.is_empty() {
+            hasher.update(plaintext);
+            output_byte_len += plaintext.len() as i64;
             output.write_all(plaintext).context(IoSnafu {
                 operation: "writing decrypted chunk to output",
             })?;
-            output_byte_len += written as i64;
         }
     }
 
-    let tail_written = crypter.finalize(&mut plain_buf).context(OpenSSLSnafu {
+    let out = key.finish(&mut plain_buf).context(CryptoSnafu {
         operation: "finalizing AES-CBC decryption",
     })?;
-    if tail_written > 0 {
-        let plaintext = &plain_buf[..tail_written];
-        hasher.update(plaintext).context(OpenSSLSnafu {
-            operation: "hashing final plaintext block",
-        })?;
-        output.write_all(plaintext).context(IoSnafu {
+    let tail = out.written();
+    if !tail.is_empty() {
+        hasher.update(tail);
+        output_byte_len += tail.len() as i64;
+        output.write_all(tail).context(IoSnafu {
             operation: "writing final decrypted block",
         })?;
-        output_byte_len += tail_written as i64;
     }
 
-    let computed_bytes = hasher.finish().context(OpenSSLSnafu {
-        operation: "finalizing SHA-256 digest for verification",
-    })?;
-    let computed = BASE64_ENGINE.encode(computed_bytes);
+    let computed = BASE64_ENGINE.encode(hasher.finish().as_ref());
     if computed != digest {
         return DigestMismatchSnafu.fail();
     }
@@ -314,9 +347,11 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
 }
 
 /// Generates a vector of random bytes of a specified size.
-fn generate_random_bytes(size: usize) -> Result<Vec<u8>, OpenSslErrorStack> {
+fn generate_random_bytes(size: usize) -> Result<Vec<u8>, EncryptionError> {
     let mut buffer = vec![0; size];
-    rand_bytes(&mut buffer)?;
+    aws_lc_rs::rand::fill(&mut buffer).context(CryptoSnafu {
+        operation: "generating random bytes",
+    })?;
     Ok(buffer)
 }
 
@@ -325,9 +360,7 @@ fn generate_random_bytes(size: usize) -> Result<Vec<u8>, OpenSslErrorStack> {
 /// place. Used by **both** the CSE and SSE upload paths so the source is never
 /// materialized as a `Vec<u8>` just to compute a digest.
 pub fn compute_sha256_digest(source: &ByteSource) -> Result<String, EncryptionError> {
-    let mut hasher = Hasher::new(MessageDigest::sha256()).context(OpenSSLSnafu {
-        operation: "initializing SHA-256 hasher",
-    })?;
+    let mut hasher = digest::Context::new(&digest::SHA256);
     match source {
         ByteSource::Path(p) => {
             let mut f = std::fs::File::open(p).context(IoSnafu {
@@ -341,29 +374,28 @@ pub fn compute_sha256_digest(source: &ByteSource) -> Result<String, EncryptionEr
                 if n == 0 {
                     break;
                 }
-                hasher.update(&buf[..n]).context(OpenSSLSnafu {
-                    operation: "hashing data chunk",
-                })?;
+                hasher.update(&buf[..n]);
             }
         }
-        ByteSource::Bytes(b) => {
-            hasher.update(b).context(OpenSSLSnafu {
-                operation: "hashing in-memory bytes",
-            })?;
-        }
+        ByteSource::Bytes(b) => hasher.update(b),
     }
-    let digest = hasher.finish().context(OpenSSLSnafu {
-        operation: "finalizing SHA-256 digest",
-    })?;
-    Ok(BASE64_ENGINE.encode(digest))
+    Ok(BASE64_ENGINE.encode(hasher.finish().as_ref()))
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum EncryptionError {
-    #[snafu(display("OpenSSL cryptographic operation failed during {operation}"))]
-    OpenSSL {
+    #[snafu(display("AWS-LC cryptographic operation failed during {operation}"))]
+    Crypto {
         operation: String,
-        source: OpenSslErrorStack,
+        source: aws_lc_rs::error::Unspecified,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "AES-CBC requires a {IV_LEN_128_BIT}-byte initialization vector, got {actual} bytes"
+    ))]
+    InvalidIvLength {
+        actual: usize,
         #[snafu(implicit)]
         location: Location,
     },
@@ -420,6 +452,34 @@ mod tests {
         out
     }
 
+    /// One-shot AES-CBC/PKCS#7 via OpenSSL, as an independent reference for
+    /// the AWS-LC streaming output.
+    ///
+    /// Deliberately a second implementation rather than an AWS-LC one-shot:
+    /// the stage format is fixed and shared with the other Snowflake drivers,
+    /// so what needs proving is that the ciphertext is unchanged by the port,
+    /// not that AWS-LC agrees with itself. OpenSSL stays a dev-dependency for
+    /// exactly this.
+    fn openssl_reference_cbc(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Vec<u8> {
+        let cipher = match key.len() {
+            AES_128_KEY_SIZE_IN_BYTES => openssl::symm::Cipher::aes_128_cbc(),
+            AES_256_KEY_SIZE_IN_BYTES => openssl::symm::Cipher::aes_256_cbc(),
+            other => panic!("unexpected key length {other}"),
+        };
+        openssl::symm::encrypt(cipher, key, Some(iv), plaintext).expect("openssl reference encrypt")
+    }
+
+    /// One-shot AES-ECB/PKCS#7 via OpenSSL, the reference for the wrapped
+    /// per-file key that travels in the stage metadata.
+    fn openssl_reference_ecb(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
+        let cipher = match key.len() {
+            AES_128_KEY_SIZE_IN_BYTES => openssl::symm::Cipher::aes_128_ecb(),
+            AES_256_KEY_SIZE_IN_BYTES => openssl::symm::Cipher::aes_256_ecb(),
+            other => panic!("unexpected key length {other}"),
+        };
+        openssl::symm::encrypt(cipher, key, None, plaintext).expect("openssl reference encrypt")
+    }
+
     fn digest_of(bytes: &[u8]) -> String {
         compute_sha256_digest(&ByteSource::Bytes(bytes::Bytes::copy_from_slice(bytes))).unwrap()
     }
@@ -458,11 +518,7 @@ mod tests {
 
             let lazy = encrypt_to_vec(&enc, &plaintext);
 
-            let cbc = CipherSuite::from_key_len(enc.file_key.reveal().len())
-                .unwrap()
-                .cbc;
-            let one_shot = encrypt(cbc, enc.file_key.reveal(), Some(&enc.iv), &plaintext)
-                .expect("one-shot encrypt");
+            let one_shot = openssl_reference_cbc(enc.file_key.reveal(), &enc.iv, &plaintext);
             assert_eq!(
                 lazy, one_shot,
                 "lazy ciphertext must match one-shot (len {len})"
@@ -503,10 +559,7 @@ mod tests {
             out.extend_from_slice(&buf[..n]);
         }
 
-        let cbc = CipherSuite::from_key_len(enc.file_key.reveal().len())
-            .unwrap()
-            .cbc;
-        let one_shot = encrypt(cbc, enc.file_key.reveal(), Some(&enc.iv), &plaintext).unwrap();
+        let one_shot = openssl_reference_cbc(enc.file_key.reveal(), &enc.iv, &plaintext);
         assert_eq!(out, one_shot);
     }
 
@@ -553,6 +606,56 @@ mod tests {
         assert!(matches!(
             result,
             Err(EncryptionError::DigestMismatch { .. })
+        ));
+    }
+
+    /// The wrapped per-file key must be byte-identical to OpenSSL's padded
+    /// one-shot ECB, because it travels in the stage metadata and is unwrapped
+    /// by whichever driver downloads the file next.
+    ///
+    /// The length assertion is the load-bearing one. OpenSSL's one-shot
+    /// applies PKCS#7 unconditionally, so a key that is already a block
+    /// multiple still gains a whole padding block. AWS-LC offers both a padded
+    /// and an unpadded ECB API, and the unpadded one accepts this input
+    /// happily -- it would produce a 32-byte wrap where the format expects 48,
+    /// which no driver would be able to unwrap.
+    #[test]
+    fn wrapped_file_key_matches_openssl_padded_ecb() {
+        let material = test_material();
+        let (enc, metadata) = build_encryptor(&material, 0).unwrap();
+
+        let master_key = BASE64_ENGINE
+            .decode(material.query_stage_master_key.reveal())
+            .unwrap();
+        let wrapped = BASE64_ENGINE.decode(&metadata.encrypted_key).unwrap();
+
+        assert_eq!(
+            wrapped,
+            openssl_reference_ecb(&master_key, enc.file_key.reveal()),
+            "wrapped file key must match OpenSSL's padded ECB output"
+        );
+        assert_eq!(
+            wrapped.len(),
+            enc.file_key.reveal().len() + AES_BLOCK_SIZE_IN_BYTES,
+            "PKCS#7 must add a full padding block to a block-multiple key"
+        );
+    }
+
+    /// An IV of the wrong width is rejected rather than silently truncated or
+    /// zero-extended, either of which would produce ciphertext no other driver
+    /// could decrypt.
+    #[test]
+    fn wrong_length_iv_is_rejected() {
+        let material = test_material();
+        let (enc, _meta) = build_encryptor(&material, 0).unwrap();
+        let short = Encryptor {
+            file_key: enc.file_key.clone(),
+            iv: vec![0u8; AES_BLOCK_SIZE_IN_BYTES - 1],
+            cipher_len: enc.cipher_len(),
+        };
+        assert!(matches!(
+            short.encrypting_reader(std::io::Cursor::new(Vec::new())),
+            Err(EncryptionError::InvalidIvLength { .. })
         ));
     }
 }
