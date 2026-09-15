@@ -1279,7 +1279,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         // cache fallback. `create_attestation` additionally re-pins the
         // provider and applies the fail-closed FIPS gate at its entry, so this
         // plain client cannot carry attestation traffic on a non-FIPS provider
-        // in a `fips` build.
+        // in a `fips-tls` build.
         let client = reqwest::Client::new();
         // This client has no request timeout, so for the AWS/Azure/GCP providers
         // — which each await a cloud metadata or IdP endpoint — `operation_ctx` is the only
