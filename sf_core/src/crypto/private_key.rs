@@ -254,12 +254,20 @@ fn aes_cbc_decrypt(
         operation: "initializing AES-CBC decryption of the private key",
     })?;
     let mut buf = ciphertext.to_vec();
-    let plaintext = decrypting
+    // Take only the plaintext *length* from the borrow, then move `buf` itself
+    // into `Sensitive`. `plaintext.to_vec()` would leave `buf` holding a second,
+    // un-zeroized copy of the key until its allocation is reused: `decrypt`
+    // works in place, so `buf` is the plaintext, and only the `Sensitive`
+    // wrapper zeroizes on drop. The bytes past `len` are PKCS#7 padding, not key
+    // material, so leaving them in spare capacity discloses nothing.
+    let plaintext_len = decrypting
         .decrypt(&mut buf, DecryptionContext::Iv128(FixedLength::from(*iv)))
         .context(CryptoSnafu {
             operation: "decrypting the private key (wrong passphrase?)",
-        })?;
-    Ok(plaintext.to_vec().into())
+        })?
+        .len();
+    buf.truncate(plaintext_len);
+    Ok(buf.into())
 }
 
 /// 3DES-CBC/PKCS#7, outside the validated module. See the module docs: this is
@@ -281,15 +289,20 @@ fn des_ede3_cbc_decrypt(
         .build()
     })?;
     let mut buf = ciphertext.to_vec();
-    let plaintext = decryptor
+    // Same reasoning as `aes_cbc_decrypt`: take the length from the borrow and
+    // move `buf`, rather than copying the plaintext out and dropping `buf`
+    // un-zeroized.
+    let plaintext_len = decryptor
         .decrypt_padded_mut::<Pkcs7>(&mut buf)
         .map_err(|_| {
             CryptoBackendSnafu {
                 operation: "decrypting the private key with 3DES-CBC (wrong passphrase?)",
             }
             .build()
-        })?;
-    Ok(plaintext.to_vec().into())
+        })?
+        .len();
+    buf.truncate(plaintext_len);
+    Ok(buf.into())
 }
 
 /// Split PEM armour into its label and DER body.
