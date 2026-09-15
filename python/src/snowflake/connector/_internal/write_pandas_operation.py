@@ -308,7 +308,7 @@ class WritePandasMixin:
             col_name = quote_identifier(col) if cfg.quote_identifiers else col
             target_cols.append(col_name)
 
-            parquet_ref = f'$1:"{col}"'
+            parquet_ref = f"$1:{quote_identifier(col)}"
             if column_type_map and col.upper() in column_type_map:
                 parquet_ref += f"::{column_type_map[col.upper()]}"
             select_exprs.append(f"{parquet_ref} AS {col_name}")
