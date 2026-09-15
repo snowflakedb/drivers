@@ -53,6 +53,25 @@
 //! Behaviour is identical with and without `fips-tls`. There is deliberately no
 //! feature gate that rejects 3DES in FIPS builds: NIST permits the unwrap, so a
 //! gate would break documented, supported keys for no regulatory reason.
+//!
+//! # The one place builds differ: traditional encrypted PEM
+//!
+//! `-----BEGIN RSA PRIVATE KEY-----` with `Proc-Type: 4,ENCRYPTED` -- what
+//! `openssl rsa -aes256` and `openssl genrsa -aes256` emit -- is read in
+//! standard builds and refused in `fips-tls` builds. See [`legacy_pem`].
+//!
+//! The gate is on the KDF, not the cipher. The format derives its key with
+//! OpenSSL's `EVP_BytesToKey`, which is MD5-based, and MD5 is definitional to
+//! the format rather than a parameter of it: there is no version of this that
+//! runs inside AWS-LC, which exposes no MD5 at all. So unlike 3DES -- where
+//! SP 800-131A permits the unwrap and the KDF is already approved PBKDF2 --
+//! there is no reading of the rules under which a FIPS build may do this.
+//!
+//! Refusing it *everywhere* was the earlier behaviour and was the wrong trade:
+//! it dropped a working format from every shipped artifact in order to protect
+//! a claim only the FIPS artifact makes. A standard build asserts no FIPS
+//! compliance, so nothing about it is compromised by using MD5 to open a key
+//! its owner already has. Recorded as F16 in the compliance plan.
 
 use aws_lc_rs::cipher::{
     AES_128, AES_192, AES_256, DecryptionContext, PaddedBlockDecryptingKey, UnboundCipherKey,
@@ -79,13 +98,47 @@ pub(crate) fn load_rsa_key(
     passphrase: Option<&str>,
 ) -> Result<RsaKeyPair, PrivateKeyError> {
     match decode_pem(key)? {
-        Some((label, der)) => from_labelled_der(&label, &der, passphrase),
+        Some(Pem::Plain { label, der }) => from_labelled_der(&label, &der, passphrase),
+        Some(Pem::Legacy {
+            label,
+            dek_info,
+            body,
+        }) => from_legacy_pem(&label, &dek_info, &body, passphrase),
         // No PEM armour: the input is DER. This is a real input path, not just
         // a fallback -- the Python connector supplies raw DER bytes -- and that
         // DER may itself be an encrypted PKCS#8 envelope, so it gets the same
         // treatment as the armoured form.
         None => from_bare_der(key, passphrase),
     }
+}
+
+/// Traditional encrypted PEM: decrypt with the `DEK-Info` parameters, then
+/// parse the plaintext as whatever the label says it is.
+///
+/// Split by build, and this is the only place in the module where that changes
+/// which keys load rather than only which module does the work. See
+/// [`legacy_pem`] for why MD5 makes that unavoidable.
+#[cfg(not(feature = "fips-tls"))]
+fn from_legacy_pem(
+    label: &str,
+    dek_info: &str,
+    body: &[u8],
+    passphrase: Option<&str>,
+) -> Result<RsaKeyPair, PrivateKeyError> {
+    let passphrase = passphrase.with_context(|| PassphraseRequiredSnafu)?;
+    let der = legacy_pem::decrypt(dek_info, body, passphrase)?;
+    // The passphrase is spent; the plaintext is an ordinary unencrypted body.
+    from_labelled_der(label, der.reveal(), None)
+}
+
+#[cfg(feature = "fips-tls")]
+fn from_legacy_pem(
+    _label: &str,
+    _dek_info: &str,
+    _body: &[u8],
+    _passphrase: Option<&str>,
+) -> Result<RsaKeyPair, PrivateKeyError> {
+    LegacyEncryptedPemSnafu.fail()
 }
 
 /// The PEM label matching `der`'s actual format, validating it along the way.
@@ -305,15 +358,26 @@ fn des_ede3_cbc_decrypt(
     Ok(buf.into())
 }
 
-/// Split PEM armour into its label and DER body.
+/// What a block of PEM armour turned out to contain.
+enum Pem {
+    /// Ordinary armour: a label and the DER it wraps.
+    Plain { label: String, der: Vec<u8> },
+    /// Traditional encrypted PEM, whose cipher and IV live in `DEK-Info`
+    /// headers rather than in the DER. `body` is still ciphertext.
+    Legacy {
+        label: String,
+        dek_info: String,
+        body: Vec<u8>,
+    },
+}
+
+/// Split PEM armour into its label and body.
 ///
 /// `Ok(None)` means the input carried no armour and should be treated as DER.
 /// Deliberately hand-rolled rather than via `rustls-pemfile`: that crate keys
 /// off the label to decide what it parsed and has no variant for
 /// `ENCRYPTED PRIVATE KEY`, so it cannot report the one case that matters here.
-fn decode_pem(input: &[u8]) -> Result<Option<(String, Vec<u8>)>, PrivateKeyError> {
-    use base64::Engine as _;
-
+fn decode_pem(input: &[u8]) -> Result<Option<Pem>, PrivateKeyError> {
     let text = match std::str::from_utf8(input) {
         Ok(text) => text,
         // Invalid UTF-8 cannot be PEM; it is DER (or nothing useful).
@@ -339,41 +403,204 @@ fn decode_pem(input: &[u8]) -> Result<Option<(String, Vec<u8>)>, PrivateKeyError
         }
         .fail();
     };
-
-    // Legacy PKCS#1 encryption ("Proc-Type: 4,ENCRYPTED" plus "DEK-Info") keeps
-    // its parameters in PEM headers rather than ASN.1, and derives the key with
-    // OpenSSL's `EVP_BytesToKey`, which is MD5-based. Refused deliberately, and
-    // not for want of trying: aws-lc-rs exposes no MD5 digest and no
-    // `EVP_BytesToKey`, so accepting these keys would mean hand-rolling that KDF
-    // over a non-AWS-LC MD5 -- putting a non-approved hash in the private-key
-    // path, which is the thing this module exists to remove.
-    //
-    // This is *not* the 3DES situation. There, PBKDF2-HMAC-SHA is an approved
-    // KDF and only the cipher is legacy, and SP 800-131A Rev. 2 explicitly
-    // permits three-key TDEA *decryption* and *key unwrapping* for legacy use,
-    // so unwrapping stays inside the rules. No equivalent allowance makes
-    // MD5-based key derivation permissible, so the two cannot be treated alike.
-    //
-    // Snowflake has only ever documented `openssl pkcs8 -topk8`, which emits
-    // PKCS#8, so no documented workflow produces this format. The refusal
-    // carries the exact conversion command rather than hard-failing blind, and
-    // it beats the alternative of mis-parsing the headers-plus-base64 body as
-    // unencrypted DER.
     let body_text = &rest[..end];
+
+    // Traditional PKCS#1 encryption ("Proc-Type: 4,ENCRYPTED" plus "DEK-Info")
+    // keeps its parameters in PEM headers rather than in ASN.1, so the body has
+    // a header block before the base64 and is ciphertext once decoded. Detected
+    // by exactly the condition that used to reject it outright, so ordinary
+    // armour reaches the base64 path on an unchanged code path.
     if body_text.contains("Proc-Type:") && body_text.contains("ENCRYPTED") {
-        return LegacyEncryptedPemSnafu.fail();
+        let dek_info = body_text
+            .lines()
+            .map(str::trim)
+            .find_map(|line| line.strip_prefix("DEK-Info:"))
+            .map(str::trim)
+            .with_context(|| MalformedPemSnafu {
+                detail: "`Proc-Type: 4,ENCRYPTED` without a `DEK-Info` header",
+            })?
+            .to_string();
+        let b64_text = body_after_headers(body_text).with_context(|| MalformedPemSnafu {
+            detail: "encrypted PEM headers are not followed by a blank line",
+        })?;
+        return Ok(Some(Pem::Legacy {
+            label,
+            dek_info,
+            body: decode_b64(b64_text)?,
+        }));
     }
 
-    let b64: String = body_text.chars().filter(|c| !c.is_whitespace()).collect();
-    let der = base64::engine::general_purpose::STANDARD
+    Ok(Some(Pem::Plain {
+        label,
+        der: decode_b64(body_text)?,
+    }))
+}
+
+/// The base64 payload following a PEM header block.
+///
+/// Headers end at the first blank line *after* at least one header, which is
+/// what distinguishes that blank line from the newline immediately after the
+/// `-----BEGIN ...-----` marker -- the body starts with that newline, so a
+/// naive "first empty line" search matches straight away and consumes nothing.
+fn body_after_headers(body: &str) -> Option<&str> {
+    let mut offset = 0usize;
+    let mut seen_header = false;
+    for line in body.split_inclusive('\n') {
+        offset += line.len();
+        if line.trim().is_empty() {
+            if seen_header {
+                return Some(&body[offset..]);
+            }
+        } else {
+            seen_header = true;
+        }
+    }
+    None
+}
+
+fn decode_b64(text: &str) -> Result<Vec<u8>, PrivateKeyError> {
+    use base64::Engine as _;
+
+    let b64: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD
         .decode(b64.as_bytes())
         .map_err(|e| {
             MalformedPemSnafu {
                 detail: format!("body is not valid base64: {e}"),
             }
             .build()
+        })
+}
+
+/// Traditional encrypted PEM, supported only in non-FIPS builds.
+///
+/// Gated because of the KDF, not the cipher. The format derives its key with
+/// OpenSSL's `EVP_BytesToKey`, which is MD5-based -- MD5 is definitional to
+/// the format, so there is no variant of this that runs inside AWS-LC. A
+/// `fips-tls` build therefore cannot read these keys and says so, while a
+/// standard build makes no FIPS claim and keeps the compatibility the OpenSSL
+/// loader had.
+///
+/// This is the one place where build flags change which *keys load*, rather
+/// than only which module does the work. It is a deliberate exception,
+/// recorded as F16 in the compliance plan: the alternative was dropping a
+/// working format from every shipped artifact to protect a claim only one of
+/// them makes.
+///
+/// Note what is *not* gated: the bulk decryption still runs in AWS-LC for AES
+/// (and in `des` for 3DES, as everywhere else in this module). Only the key
+/// derivation is MD5.
+#[cfg(not(feature = "fips-tls"))]
+mod legacy_pem {
+    use super::{
+        AES_128, AES_192, AES_256, MalformedPemSnafu, PrivateKeyError, Sensitive,
+        UnsupportedCipherSnafu, aes_cbc_decrypt, des_ede3_cbc_decrypt,
+    };
+    use snafu::OptionExt;
+
+    /// Decrypt a traditional encrypted PEM body using its `DEK-Info` header.
+    pub(super) fn decrypt(
+        dek_info: &str,
+        ciphertext: &[u8],
+        passphrase: &str,
+    ) -> Result<Sensitive<Vec<u8>>, PrivateKeyError> {
+        let (algorithm, iv_hex) = dek_info
+            .split_once(',')
+            .with_context(|| MalformedPemSnafu {
+                detail: format!("`DEK-Info: {dek_info}` has no `,<iv>`"),
+            })?;
+        let iv = hex::decode(iv_hex.trim()).map_err(|e| {
+            MalformedPemSnafu {
+                detail: format!("`DEK-Info` IV is not hex: {e}"),
+            }
+            .build()
         })?;
-    Ok(Some((label, der)))
+
+        // OpenSSL salts the KDF with the first 8 bytes of the IV and derives
+        // only the key; the full IV comes from the header. See `PEM_do_header`,
+        // which calls `EVP_BytesToKey(cipher, EVP_md5(), &iv[0], pass, len, 1,
+        // key, NULL)` -- count 1, and a NULL iv output.
+        let salt = iv.get(..8).with_context(|| MalformedPemSnafu {
+            detail: "`DEK-Info` IV is shorter than the 8 bytes used as KDF salt",
+        })?;
+
+        match algorithm.trim().to_ascii_uppercase().as_str() {
+            "AES-128-CBC" => {
+                let key = evp_bytes_to_key(passphrase, salt, 16);
+                aes_cbc_decrypt(&AES_128, key.reveal(), &iv_128(&iv)?, ciphertext)
+            }
+            "AES-192-CBC" => {
+                let key = evp_bytes_to_key(passphrase, salt, 24);
+                aes_cbc_decrypt(&AES_192, key.reveal(), &iv_128(&iv)?, ciphertext)
+            }
+            "AES-256-CBC" => {
+                let key = evp_bytes_to_key(passphrase, salt, 32);
+                aes_cbc_decrypt(&AES_256, key.reveal(), &iv_128(&iv)?, ciphertext)
+            }
+            "DES-EDE3-CBC" => {
+                let key = evp_bytes_to_key(passphrase, salt, 24);
+                let iv: [u8; 8] = iv.as_slice().try_into().map_err(|_| {
+                    MalformedPemSnafu {
+                        detail: format!("3DES needs an 8-byte IV, got {}", iv.len()),
+                    }
+                    .build()
+                })?;
+                des_ede3_cbc_decrypt(key.reveal(), &iv, ciphertext)
+            }
+            // Single-DES is refused for the same reason the PBES2 path leaves
+            // `pkcs5`'s `des-insecure` feature off: a 56-bit key is
+            // brute-forceable, so "OpenSSL read it" is not on its own a reason
+            // to keep reading it. RC2 likewise.
+            other => UnsupportedCipherSnafu {
+                cipher: format!("{other} (traditional encrypted PEM)"),
+            }
+            .fail(),
+        }
+    }
+
+    fn iv_128(iv: &[u8]) -> Result<[u8; 16], PrivateKeyError> {
+        iv.try_into().map_err(|_| {
+            MalformedPemSnafu {
+                detail: format!("AES-CBC needs a 16-byte IV, got {}", iv.len()),
+            }
+            .build()
+        })
+    }
+
+    /// OpenSSL's `EVP_BytesToKey` with MD5 and an iteration count of 1.
+    ///
+    /// `D_1 = MD5(pass || salt)`, then `D_i = MD5(D_{i-1} || pass || salt)`,
+    /// concatenated until `key_len` bytes are available. Only the key is
+    /// produced: the traditional PEM format takes its IV from the header
+    /// instead of from the tail of this stream, which is why the caller passes
+    /// the IV in separately.
+    ///
+    /// Hand-rolled because no crate in this graph exposes it and AWS-LC does
+    /// not implement it. The construction is fixed by the on-disk format, so
+    /// there is nothing to choose here and nothing to get creatively wrong --
+    /// the round-trip tests decrypt keys produced by OpenSSL itself, which is
+    /// the only check that matters.
+    fn evp_bytes_to_key(passphrase: &str, salt: &[u8], key_len: usize) -> Sensitive<Vec<u8>> {
+        use md5::{Digest as _, Md5};
+        use zeroize::Zeroize as _;
+
+        let mut key = Vec::with_capacity(key_len + Md5::output_size());
+        let mut block: Vec<u8> = Vec::new();
+        while key.len() < key_len {
+            let mut hasher = Md5::new();
+            hasher.update(&block);
+            hasher.update(passphrase.as_bytes());
+            hasher.update(salt);
+            block.zeroize();
+            block = hasher.finalize().to_vec();
+            key.extend_from_slice(&block);
+        }
+        // `block` is derived key material in its own right, and unlike `key` it
+        // never reaches a `Sensitive` wrapper.
+        block.zeroize();
+        key.truncate(key_len);
+        key.into()
+    }
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -416,9 +643,16 @@ pub enum PrivateKeyError {
         location: Location,
     },
 
+    /// Only reachable in `fips-tls` builds; standard builds read these keys.
+    /// The message says which build the user is on, because otherwise "this
+    /// key does not work" is indistinguishable from "this key is broken" for
+    /// someone whose colleague on a default artifact is using it happily.
     #[snafu(display(
-        "This private key uses the legacy PKCS#1 encrypted-PEM format (`Proc-Type: 4,ENCRYPTED`), \
-         whose key derivation is MD5-based. Convert it with: \
+        "This private key uses the traditional encrypted-PEM format \
+         (`Proc-Type: 4,ENCRYPTED`), whose key derivation is MD5-based. This is \
+         a FIPS build, which cannot derive a key with MD5; standard builds of \
+         this driver read these keys normally. Either use a standard build, or \
+         convert the key with: \
          openssl pkcs8 -topk8 -v2 aes-256-cbc -in <key> -out <key>.p8"
     ))]
     LegacyEncryptedPem {
@@ -675,10 +909,62 @@ mod tests {
         assert_recovers(&loaded, &key);
     }
 
-    /// Legacy PKCS#1 encrypted PEM derives its key with an MD5-based KDF. It is
-    /// refused with conversion guidance rather than mis-parsed as unencrypted.
+    /// Traditional encrypted PEM is the format `openssl rsa -aes256` and
+    /// `openssl genrsa -aes256` produce, and the OpenSSL loader this module
+    /// replaced read it. Standard builds keep that parity.
+    ///
+    /// Every cipher OpenSSL will emit here is covered, including the 3DES form
+    /// from `-des3`, because the KDF derives a different key length for each
+    /// and the IV width differs between AES (16) and 3DES (8) -- a mistake in
+    /// either would surface as a wrong key rather than as a parse error.
+    #[cfg(not(feature = "fips-tls"))]
     #[test]
-    fn legacy_encrypted_pem_is_rejected_with_guidance() {
+    fn legacy_encrypted_pem_round_trips() {
+        for (label, cipher) in [
+            ("AES-256-CBC", Cipher::aes_256_cbc()),
+            ("AES-192-CBC", Cipher::aes_192_cbc()),
+            ("AES-128-CBC", Cipher::aes_128_cbc()),
+            ("DES-EDE3-CBC", Cipher::des_ede3_cbc()),
+        ] {
+            // `private_key_to_pem_passphrase` is an `Rsa` method and is what
+            // emits the traditional format; `PKey` only offers the PKCS#8 one.
+            let rsa = Rsa::generate(2048).expect("rsa keygen");
+            let pem = rsa
+                .private_key_to_pem_passphrase(cipher, PASSPHRASE.as_bytes())
+                .unwrap_or_else(|e| panic!("{label} legacy encrypted pem: {e}"));
+            assert!(
+                String::from_utf8_lossy(&pem).contains("Proc-Type: 4,ENCRYPTED"),
+                "{label}: OpenSSL did not produce the traditional format"
+            );
+            let original = PKey::from_rsa(rsa).expect("pkey");
+            let loaded = load_rsa_key(&pem, Some(PASSPHRASE))
+                .unwrap_or_else(|e| panic!("load {label} legacy PEM: {e}"));
+            assert_recovers(&loaded, &original);
+        }
+    }
+
+    /// A wrong passphrase must fail rather than yield a mangled key: the KDF
+    /// happily derives *a* key from any passphrase, so the only thing standing
+    /// between a typo and a corrupt key is the padding check.
+    #[cfg(not(feature = "fips-tls"))]
+    #[test]
+    fn legacy_encrypted_pem_rejects_wrong_passphrase() {
+        let rsa = Rsa::generate(2048).expect("rsa keygen");
+        let pem = rsa
+            .private_key_to_pem_passphrase(Cipher::aes_256_cbc(), PASSPHRASE.as_bytes())
+            .expect("legacy encrypted pem");
+        assert!(load_rsa_key(&pem, Some("not-the-passphrase")).is_err());
+        assert!(matches!(
+            load_rsa_key(&pem, None),
+            Err(PrivateKeyError::PassphraseRequired { .. })
+        ));
+    }
+
+    /// FIPS builds cannot derive a key with MD5, so the same key is refused --
+    /// with a message that says it is the build talking, not the key.
+    #[cfg(feature = "fips-tls")]
+    #[test]
+    fn legacy_encrypted_pem_is_rejected_in_fips_builds() {
         let rsa = Rsa::generate(2048).expect("rsa keygen");
         let pem = rsa
             .private_key_to_pem_passphrase(Cipher::aes_256_cbc(), PASSPHRASE.as_bytes())
@@ -688,6 +974,10 @@ mod tests {
         assert!(
             err.to_string().contains("openssl pkcs8 -topk8"),
             "error must tell the user how to convert the key, got: {err}"
+        );
+        assert!(
+            err.to_string().contains("standard builds"),
+            "error must distinguish the build from the key, got: {err}"
         );
     }
 
