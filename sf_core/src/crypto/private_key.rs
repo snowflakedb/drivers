@@ -327,10 +327,25 @@ fn decode_pem(input: &[u8]) -> Result<Option<(String, Vec<u8>)>, PrivateKeyError
         .fail();
     };
 
-    // Legacy PKCS#1 encryption carries its parameters in headers rather than in
-    // ASN.1, and derives the key with an MD5-based KDF that predates PBES2.
-    // Rejected with an actionable message instead of silently mis-parsing the
-    // body as unencrypted DER.
+    // Legacy PKCS#1 encryption ("Proc-Type: 4,ENCRYPTED" plus "DEK-Info") keeps
+    // its parameters in PEM headers rather than ASN.1, and derives the key with
+    // OpenSSL's `EVP_BytesToKey`, which is MD5-based. Refused deliberately, and
+    // not for want of trying: aws-lc-rs exposes no MD5 digest and no
+    // `EVP_BytesToKey`, so accepting these keys would mean hand-rolling that KDF
+    // over a non-AWS-LC MD5 -- putting a non-approved hash in the private-key
+    // path, which is the thing this module exists to remove.
+    //
+    // This is *not* the 3DES situation. There, PBKDF2-HMAC-SHA is an approved
+    // KDF and only the cipher is legacy, and SP 800-131A Rev. 2 explicitly
+    // permits three-key TDEA *decryption* and *key unwrapping* for legacy use,
+    // so unwrapping stays inside the rules. No equivalent allowance makes
+    // MD5-based key derivation permissible, so the two cannot be treated alike.
+    //
+    // Snowflake has only ever documented `openssl pkcs8 -topk8`, which emits
+    // PKCS#8, so no documented workflow produces this format. The refusal
+    // carries the exact conversion command rather than hard-failing blind, and
+    // it beats the alternative of mis-parsing the headers-plus-base64 body as
+    // unencrypted DER.
     let body_text = &rest[..end];
     if body_text.contains("Proc-Type:") && body_text.contains("ENCRYPTED") {
         return LegacyEncryptedPemSnafu.fail();
