@@ -2197,8 +2197,26 @@ mod tests {
         );
     }
 
-    // SNOW-3663586: account identifiers carrying characters outside
+    // SNOW-3663586 / BD#143: account identifiers carrying characters outside
     // the allow-list must be rejected before the host is derived.
+    #[test]
+    fn validate_account_with_embedded_crlf_reports_issue() {
+        for account in ["acct\nx", "acct\rx", "acct\r\nx"] {
+            let settings = settings_from(&[
+                ("account", Setting::String(account.into())),
+                ("user", Setting::String("u".into())),
+                ("password", Setting::String("p".into())),
+            ]);
+            let issues = validate_settings(&settings);
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.parameter == "account" && i.code == ValidationCode::InvalidValue),
+                "Expected InvalidValue for account {account:?}, got: {issues:?}"
+            );
+        }
+    }
+
     #[test]
     fn validate_account_with_url_metacharacters_reports_issue() {
         let invalid_account_names = [
@@ -2218,6 +2236,53 @@ mod tests {
                 "Expected InvalidValue for account {account:?}, got: {issues:?}"
             );
         }
+    }
+
+    // BD#143: 3.x ODBC rejects CR/LF in session connection parameters at connect
+    // time; the new driver does not - login encodes them as query parameters.
+    #[test]
+    fn validate_session_connection_parameters_accept_embedded_crlf() {
+        let session_params = [
+            ("database", "db\nname"),
+            ("schema", "sch\rname"),
+            ("warehouse", "wh\r\nname"),
+            ("role", "role\nname"),
+        ];
+        for (param, value) in session_params {
+            let settings = settings_from(&[
+                ("account", Setting::String("acct".into())),
+                ("user", Setting::String("u".into())),
+                ("password", Setting::String("p".into())),
+                ("host", Setting::String("h.com".into())),
+                (param, Setting::String(value.into())),
+            ]);
+            let issues = validate_settings(&settings);
+            assert!(
+                !issues
+                    .iter()
+                    .any(|i| i.parameter == param && i.code == ValidationCode::InvalidValue),
+                "Expected {param}={value:?} to pass validation, got: {issues:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_accepts_session_connection_parameters_with_embedded_crlf() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("h.com".into())),
+            ("database", Setting::String("db\nname".into())),
+            ("schema", Setting::String("sch\rname".into())),
+            ("warehouse", Setting::String("wh\r\nname".into())),
+            ("role", Setting::String("role\nname".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).expect("build should succeed");
+        assert_eq!(config.session.database.as_deref(), Some("db\nname"));
+        assert_eq!(config.session.schema.as_deref(), Some("sch\rname"));
+        assert_eq!(config.session.warehouse.as_deref(), Some("wh\r\nname"));
+        assert_eq!(config.session.role.as_deref(), Some("role\nname"));
     }
 
     // Legitimate account identifier shapes must not be flagged: bare locators,

@@ -2925,3 +2925,33 @@ behavior_differences:
       The new driver uses one shared attempt limit for PUT and GET. The 3.x ODBC
       spellings are accepted as aliases of that setting and warn on use.
 
+  143:
+    name: "Connection-parameter CRLF rejection is scoped to account URL safety, not session names"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      The 3.x CRLF check guarded a URL-injection weakness in its HTTP
+      client; the new HTTP library structurally prevents it. Account-locator
+      construction is already blocked by the allow-list before a host is derived.
+      Rejecting CR/LF in database, schema, warehouse, or role at connect would
+      only restore 3.x fail-fast on those names; login already
+      percent-encodes them as query parameters, so the extra check is not required.
+    old_driver_behavior: |
+      SFSettings rejects embedded carriage return or line feed in host, port,
+      database, schema, warehouse, and role at connect time
+      (SFInvalidConnectionParameterValue). Host and account also require
+      ^[A-Za-z0-9_\-\.]+$ (SFInvalidCharacterInConnectionParameter).
+    new_driver_behavior: |
+      `validate_settings` rejects URL-significant characters in `account`
+      (SNOW-3663586) before the host is derived. `port` is a typed integer.
+      Explicit `host`/`server_url` is validated as a URL elsewhere. Database,
+      schema, warehouse, and role are not rejected for embedded CR/LF at
+      connect time; login sends them as percent-encoded query parameters.
+    description: |
+      The 3.x CRLF guard targeted a URL-injection weakness in its HTTP
+      client; the new HTTP library structurally prevents it. Account and host
+      construction is covered by the account allow-list. Session-name CRLF
+      rejection is ODBC connect-time compatibility only; parity is not required.
