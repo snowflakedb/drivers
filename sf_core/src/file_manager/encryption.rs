@@ -384,7 +384,7 @@ pub fn compute_sha256_digest(source: &ByteSource) -> Result<String, EncryptionEr
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum EncryptionError {
-    #[snafu(display("AES-LC cryptographic operation failed during {operation}"))]
+    #[snafu(display("AWS-LC cryptographic operation failed during {operation}"))]
     Crypto {
         operation: String,
         source: aws_lc_rs::error::Unspecified,
