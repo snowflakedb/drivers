@@ -464,6 +464,8 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             compiler: login_parameters.client_info.compiler.clone(),
             os_details: login_parameters.client_info.os_details.clone(),
             release_type: login_parameters.client_info.release_type.clone(),
+            isa: std::env::consts::ARCH.to_string(),
+            core_version: env!("CARGO_PKG_VERSION").to_string(),
         },
         ..Default::default()
     }
@@ -3665,6 +3667,16 @@ mod tests {
             data.authenticator.is_none(),
             "Password auth should NOT include AUTHENTICATOR field (matching old driver behavior)"
         );
+    }
+
+    #[test]
+    fn base_auth_request_data_includes_isa_and_core_version() {
+        let login_params = test_login_params();
+        let data = base_auth_request_data(&login_params);
+        let isa = &data.client_environment.isa;
+        let core_version = &data.client_environment.core_version;
+        assert!(!isa.is_empty(), "ISA must be non-empty");
+        assert!(!core_version.is_empty(), "CORE_VERSION must be non-empty");
     }
 
     #[test]

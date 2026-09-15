@@ -55,6 +55,10 @@ pub struct AuthRequestClientEnvironment {
     pub os_details: Option<HashMap<String, String>>,
     #[serde(rename = "RELEASE_TYPE", skip_serializing_if = "Option::is_none")]
     pub release_type: Option<String>,
+    #[serde(rename = "ISA")]
+    pub isa: String,
+    #[serde(rename = "CORE_VERSION")]
+    pub core_version: String,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -275,5 +279,20 @@ mod tests {
         };
         let json = serde_json::to_value(&env).unwrap();
         assert_eq!(json["RELEASE_TYPE"], "rc1");
+    }
+
+    #[test]
+    fn test_client_environment_serializes_isa_and_core_version() {
+        let env = AuthRequestClientEnvironment {
+            application: "ODBC".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.10".to_string(),
+            isa: "x86_64".to_string(),
+            core_version: "1.2.3".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["ISA"], "x86_64");
+        assert_eq!(json["CORE_VERSION"], "1.2.3");
     }
 }
