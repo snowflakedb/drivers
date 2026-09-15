@@ -1,4 +1,4 @@
-# Universal Driver Logging Guidelines
+# Logging guidelines for Snowflake drivers built on the Universal Core
 
 Knowledge base and source of truth for client-side logging practices across the Rust core and all wrappers.
 

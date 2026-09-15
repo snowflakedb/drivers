@@ -13,7 +13,7 @@ try:
 except ImportError as err:
     raise OperationalError(
         msg=(
-            "Couldn't load core driver dependency (sf_core_python). "
+            "Couldn't load the native library (sf_core_python). "
             "Ensure the package was installed from a pre-built wheel or built locally."
         )
     ) from err

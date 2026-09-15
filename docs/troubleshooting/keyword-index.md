@@ -119,7 +119,7 @@ nothing matches, use the [deep-dive index](index.md) or
 ### Python
 | Match this | Go to |
 |---|---|
-| `Couldn't load core driver dependency (sf_core_python)`, `cannot import name 'sf_core_python'`, core extension won't import, ABI mismatch | [python.md](wrappers/python.md) → "Symptom: `OperationalError: Couldn't load core driver dependency" |
+| `Couldn't load the native library (sf_core_python)`, `cannot import name 'sf_core_python'`, core extension won't import, ABI mismatch | [python.md](wrappers/python.md) → "Symptom: `OperationalError: Couldn't load the native library" |
 | `OSError: libssl.so.X: cannot open shared object file` | [python.md](wrappers/python.md) → "Symptom: OSError: libssl.so" |
 | TLS error despite `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` set (they are ignored) | [python.md](wrappers/python.md) → "Symptom: TLS/certificate errors despite" |
 | Arrow → pandas / numpy, `ArrowInvalid`, type error | [python.md](wrappers/python.md) → "Symptom: Arrow→pandas conversion" |

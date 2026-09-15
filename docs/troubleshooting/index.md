@@ -1,7 +1,7 @@
 # Troubleshooting deep-dive index
 
-Subsystem deep-dives for the Snowflake Universal Core Architecture (the Rust
-core `sf_core` and its language wrappers). These pages sit **below** the
+Subsystem deep-dives for Snowflake drivers built on the Universal Core (the Rust
+library `sf_core` and its language wrappers). These pages sit **below** the
 [Troubleshooting Runbook](../troubleshooting-runbook.md) — start there for the
 task-oriented flow (capture logs → run the connection diagnosis → read the
 symptom → action table) and follow its links down into the pages here when you

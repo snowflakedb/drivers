@@ -1,7 +1,7 @@
-# Snowflake's Universal Core Architecture — Troubleshooting Runbook
+# Troubleshooting runbook for Snowflake drivers built on the Universal Core
 
-How to diagnose a problem with Snowflake's Universal Core Architecture across
-the Python, ODBC and JDBC wrappers and the shared Rust core (`sf_core`).
+How to diagnose a problem with the Snowflake Connector for Python, the Snowflake
+ODBC Driver, and the Snowflake JDBC Driver that share the Universal Core (`sf_core`).
 
 | Section | Use it for |
 |---------|-----------|
@@ -22,7 +22,7 @@ the driver source checked out, though the same structure works for a human readi
 top-down. A useful starting prompt:
 
 > Using `docs/troubleshooting-runbook.md` and the deep-dive pages it links, help me
-> diagnose a Universal Core issue. Wrapper + version: **snowflake-connector-python
+> diagnose a driver issue. Wrapper + version: **snowflake-connector-python
 > 4.x**. Symptom: on connect I get `<paste the exact error string / code>`, from
 > behind a corporate proxy. First tell me which capture to collect (troubleshooting
 > logs §1 and/or the connection diagnostic §2); then use the keyword index to find

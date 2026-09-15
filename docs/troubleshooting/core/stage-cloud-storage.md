@@ -34,8 +34,8 @@ distribution points, an OCSP-cache entry, and the cloud-storage hostnames for
 your account's stage region.
 
 > The allowlist output lists an **OCSP cache** entry because the function is
-> shared across clients. The Universal Driver performs **CRL-based** revocation
-> only and does not use OCSP — see [crl-revocation.md](crl-tls/crl-revocation.md).
+> shared across clients. Drivers built on the Universal Core perform **CRL-based**
+> revocation only and do not use OCSP — see [crl-revocation.md](crl-tls/crl-revocation.md).
 > You still need the CRL distribution points reachable when `crl_check_mode` is
 > `ENABLED`/`ADVISORY`.
 

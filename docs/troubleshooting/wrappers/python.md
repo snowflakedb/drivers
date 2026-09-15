@@ -29,7 +29,7 @@ explains several of the symptoms below.
 
 ---
 
-## Symptom: `OperationalError: Couldn't load core driver dependency (sf_core_python)`
+## Symptom: `OperationalError: Couldn't load the native library (sf_core_python)`
 
 The compiled core extension is missing or was built for a different Python ABI.
 The extension is the pyo3 module **`sf_core_python`** *inside* the
@@ -41,7 +41,7 @@ different messages, depending on which import path trips first:
   'snowflake.connector._core'`** — the raw failure. A plain `import
   snowflake.connector` reaches an internal module that imports the binding at module
   top level, so on a broken install this is usually what you hit first.
-- **`OperationalError: Couldn't load core driver dependency (sf_core_python).`** —
+- **`OperationalError: Couldn't load the native library (sf_core_python).`** —
   the guarded, friendlier re-raise the connector emits when the binding is reached
   through one of its guarded call paths.
 
