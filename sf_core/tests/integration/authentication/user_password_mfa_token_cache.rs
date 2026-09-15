@@ -80,6 +80,101 @@ fn should_authenticate_with_cached_mfa_token_via_wiremock() {
     let _ = cache.remove_token(&key);
 }
 
+#[test]
+fn should_rotate_cached_mfa_token_across_successive_logins() {
+    // Given Wiremock is running with three successive MFA login mappings: a
+    // fresh (no-cache) DUO push login that seeds the first token, a login
+    // using that first token which the server rotates to a second, different
+    // token, and a login using that second token which succeeds without
+    // rotating further
+    let user = "mfa_rotation_user";
+    let fixture = MfaTestFixture::with_user(user);
+    fixture.set_option("client_store_temporary_credential", "true");
+    fixture.mock.mount(mfa::login_success_with_mfa_token());
+    fixture
+        .mock
+        .mount(mfa::login_success_with_cached_token_returns_rotated_token(
+            "mock_mfa_token_from_server",
+            "mock_mfa_token_rotated",
+        ));
+    fixture
+        .mock
+        .mount(mfa::login_success_with_cached_token_value(
+            "mock_mfa_token_rotated",
+        ));
+
+    let cache = KeyringTokenCache::new().expect("token cache should be available");
+    let server_url = fixture.mock.http_url();
+    let key = CacheKey {
+        token_type: TokenType::MfaToken,
+        idp: String::new(),
+        snowflake: normalize_url(&server_url),
+        username: normalize_identifier(user),
+        role: String::new(),
+    };
+    // Ensures remove_token runs even if an assertion panics mid-test, preventing
+    // a stale OS-keyring/file entry from affecting subsequent runs on the same machine.
+    struct CacheCleanup<'a> {
+        cache: &'a KeyringTokenCache,
+        key: &'a CacheKey,
+    }
+    impl Drop for CacheCleanup<'_> {
+        fn drop(&mut self) {
+            let _ = self.cache.remove_token(self.key);
+        }
+    }
+    let _cleanup = CacheCleanup {
+        cache: &cache,
+        key: &key,
+    };
+
+    // When Connecting for the first time with no cached token
+    let result = fixture.connect();
+    // Then Login succeeds and the server-issued token is cached
+    fixture.expecting_success_result(result, "first MFA login (no cache) to succeed");
+    assert_eq!(
+        cache.get_token(&key).expect("get_token should not fail"),
+        Some("mock_mfa_token_from_server".to_string()),
+        "expected the first server-issued MFA token to be cached"
+    );
+
+    // When Connecting again as a separate client sharing the same cache key
+    let second_client =
+        crate::common::snowflake_test_client::SnowflakeTestClient::with_int_tests_params(Some(
+            &server_url,
+        ));
+    second_client.set_connection_option("authenticator", "USERNAME_PASSWORD_MFA");
+    second_client.set_connection_option("user", user);
+    second_client.set_connection_option("password", "test_password"); // pragma: allowlist secret
+    second_client.set_connection_option("client_store_temporary_credential", "true");
+    let result = second_client.connect();
+    // Then Login succeeds by sending the cached token, and the server's
+    // rotated token replaces it in the cache - not the stale original
+    fixture.expecting_success_result(result, "second MFA login (rotation) to succeed");
+    assert_eq!(
+        cache.get_token(&key).expect("get_token should not fail"),
+        Some("mock_mfa_token_rotated".to_string()),
+        "expected the cache to hold the rotated token, not the stale original"
+    );
+
+    // When Connecting a third time as another separate client
+    let third_client =
+        crate::common::snowflake_test_client::SnowflakeTestClient::with_int_tests_params(Some(
+            &server_url,
+        ));
+    third_client.set_connection_option("authenticator", "USERNAME_PASSWORD_MFA");
+    third_client.set_connection_option("user", user);
+    third_client.set_connection_option("password", "test_password"); // pragma: allowlist secret
+    third_client.set_connection_option("client_store_temporary_credential", "true");
+    let result = third_client.connect();
+    // Then Login succeeds - this only matches the mock if the driver sent
+    // the ROTATED token from the second login, not the original first token
+    fixture.expecting_success_result(
+        result,
+        "third MFA login using the rotated (not stale) token to succeed",
+    );
+}
+
 // =============================================================================
 // Wiremock-based MFA tests - EXT_AUTHN error codes evict cached MFA token
 // =============================================================================

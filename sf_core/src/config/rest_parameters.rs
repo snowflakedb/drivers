@@ -1834,6 +1834,65 @@ mod tests {
     }
 
     #[test]
+    fn test_workload_identity_dispatches_to_login_method() {
+        let settings = create_test_settings(vec![
+            (
+                "authenticator",
+                Setting::String("WORKLOAD_IDENTITY".to_string()),
+            ),
+            (
+                "workload_identity_provider",
+                Setting::String("AWS".to_string()),
+            ),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::WorkloadIdentity(cfg) => {
+                assert_eq!(cfg.provider, WifProvider::Aws);
+            }
+            other => panic!("Expected WorkloadIdentity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_workload_identity_requires_provider() {
+        let settings = create_test_settings(vec![(
+            "authenticator",
+            Setting::String("WORKLOAD_IDENTITY".to_string()),
+        )]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Missing required parameter")
+                && msg.contains("workload_identity_provider"),
+            "Expected missing provider error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_workload_identity_rejects_invalid_provider() {
+        let settings = create_test_settings(vec![
+            (
+                "authenticator",
+                Setting::String("WORKLOAD_IDENTITY".to_string()),
+            ),
+            (
+                "workload_identity_provider",
+                Setting::String("GCPP".to_string()),
+            ),
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        match err {
+            ConfigError::InvalidParameterValue {
+                parameter, value, ..
+            } => {
+                assert_eq!(parameter, "workload_identity_provider");
+                assert_eq!(value, "GCPP");
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn should_derive_oauth_scope_from_role_when_scope_not_set() {
         let settings = create_test_settings(vec![("role", Setting::String("ANALYST".to_string()))]);
         assert_eq!(

@@ -5,6 +5,7 @@ use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
+use sf_core::http::retry::{HttpContext, execute_bytes_with_retry};
 // Zero-backoff policy shared with the in-crate unit tests via `internal`, so
 // retry tests inject the real shape with backoff zeroed instead of sleeping.
 use sf_core::file_manager::internal::gcs_test_retry_policy as test_policy;
@@ -2054,4 +2055,70 @@ async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
     let written = std::fs::read(std::path::Path::new(&local_location).join("git-file.txt"))
         .expect("downloaded file should exist");
     assert_eq!(written, b"raw-git-file-bytes");
+}
+
+// ---------------------------------------------------------------
+// execute_with_retry logs ctx.path with query/fragment stripped so
+// presigned tokens (X-Goog-Signature) never reach the logs.
+// ---------------------------------------------------------------
+
+/// Scoped log capture (per-test, thread-local `set_default` guard — NOT a
+/// global subscriber). Mirrors `azure_sas_refresh_on_403.rs::capturing_subscriber`
+/// / `session/logout.rs::capturing_subscriber`; avoids the global-subscriber
+/// conflict `#[traced_test]` triggers alongside other tests' `setup_logging()`
+/// in the shared integration binary (which poisoned a `Once`).
+fn capturing_subscriber() -> (
+    tracing::subscriber::DefaultGuard,
+    &'static std::sync::Mutex<Vec<u8>>,
+) {
+    let buf: &'static std::sync::Mutex<Vec<u8>> =
+        Box::leak(Box::new(std::sync::Mutex::new(Vec::new())));
+    let mock_writer = tracing_test::internal::MockWriter::new(buf);
+    let dispatch = tracing_test::internal::get_subscriber(mock_writer, "trace");
+    let guard = tracing::dispatcher::set_default(&dispatch);
+    (guard, buf)
+}
+
+fn captured(buf: &std::sync::Mutex<Vec<u8>>) -> String {
+    String::from_utf8(buf.lock().unwrap().clone()).unwrap_or_default()
+}
+
+#[tokio::test]
+async fn execute_with_retry_never_logs_presigned_url_signature() {
+    let (_guard, buf) = capturing_subscriber();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("Not Found"))
+        .mount(&server)
+        .await;
+
+    const FAKE_SIGNATURE: &str = "FAKE-GOOG-SIGNATURE-abcdef0123456789";
+    let presigned_url = format!(
+        "{}/download?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Signature={FAKE_SIGNATURE}",
+        server.uri()
+    );
+    let path_without_query = presigned_url.split(['?', '#']).next().unwrap();
+
+    let client = reqwest::Client::new();
+    let ctx = HttpContext::new(reqwest::Method::GET, presigned_url.clone());
+    let result =
+        execute_bytes_with_retry(|| client.get(&presigned_url), &ctx, &RetryPolicy::default())
+            .await;
+
+    assert!(result.is_err(), "404 should be a hard failure");
+    let logs = captured(buf);
+    assert!(
+        logs.contains("outbound HTTP call"),
+        "the shared HTTP logging breadcrumb must still fire: {logs}"
+    );
+    assert!(
+        logs.contains(path_without_query),
+        "the logged path must keep host and path: {logs}"
+    );
+    assert!(
+        !logs.contains(FAKE_SIGNATURE),
+        "the presigned URL's X-Goog-Signature value must never reach the logs: {logs}"
+    );
 }

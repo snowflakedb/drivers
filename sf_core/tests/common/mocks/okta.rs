@@ -46,6 +46,19 @@ pub fn authenticator_request_mismatched_sso_url(okta_base_url: &str) -> Mock {
         })))
 }
 
+/// Snowflake rejects the configured `authenticator` value at the
+/// authenticator-request step (e.g. the URL doesn't match any IdP registered
+/// for the account, or isn't recognized as a supported authenticator at all).
+/// `success: false` with a `message` is a logical failure, not an HTTP error.
+pub fn authenticator_request_rejected(message: &str) -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/authenticator-request"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "message": message,
+        })))
+}
+
 // ─── Okta Token Endpoint (/api/v1/authn) ─────────────────────────────────────
 
 pub fn okta_token_success() -> Mock {

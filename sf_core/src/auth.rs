@@ -328,4 +328,42 @@ mod tests {
         // Edge case: empty string
         assert_eq!(extract_account_locator(""), "");
     }
+
+    /// generate_jwt_token decrypts an encrypted PEM with
+    /// Rsa::private_key_from_pem_passphrase. Wrong and empty passphrases must
+    /// be rejected.
+    ///
+    /// Deliberately not testing a missing passphrase (None): that routes to
+    /// Rsa::private_key_from_pem, which for an encrypted key falls back to
+    /// OpenSSL's interactive "Enter PEM pass phrase:" UI. That is
+    /// environment-dependent and not safe in an automated test.
+    #[test]
+    fn generate_jwt_token_rejects_wrong_password_for_encrypted_key() {
+        use openssl::rsa::Rsa;
+        use openssl::symm::Cipher;
+
+        let rsa = Rsa::generate(2048).expect("generate rsa key");
+        let encrypted_pem = rsa
+            .private_key_to_pem_passphrase(Cipher::aes_256_cbc(), b"correct_password")
+            .expect("encrypt key");
+        let encrypted_pem = String::from_utf8(encrypted_pem).expect("pem is utf8");
+
+        let wrong = generate_jwt_token("acct", "user", &encrypted_pem, Some("wrong_password"));
+        assert!(
+            matches!(wrong, Err(AuthError::InvalidPrivateKeyFormat { .. })),
+            "wrong password should be rejected, got: {wrong:?}"
+        );
+
+        let empty = generate_jwt_token("acct", "user", &encrypted_pem, Some(""));
+        assert!(
+            matches!(empty, Err(AuthError::InvalidPrivateKeyFormat { .. })),
+            "empty password should be rejected, got: {empty:?}"
+        );
+
+        // Sanity: correct password succeeds, proving the encrypted fixture
+        // above is genuinely encrypted and genuinely decryptable.
+        assert!(
+            generate_jwt_token("acct", "user", &encrypted_pem, Some("correct_password")).is_ok()
+        );
+    }
 }

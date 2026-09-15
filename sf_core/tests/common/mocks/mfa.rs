@@ -119,6 +119,37 @@ pub fn login_success_with_cached_token_value(token: &str) -> Mock {
         })))
 }
 
+// ─── Successful MFA login that rotates the cached token to a new value ───────
+
+/// Successful login where the request carries a cached MFA token with an
+/// exact known value (`old_token`), and the server responds with a
+/// *different* `mfaToken` (`new_token`) to be cached going forward - the
+/// token-rotation scenario, as opposed to `login_success_with_cached_token_value`
+/// which does not rotate.
+pub fn login_success_with_cached_token_returns_rotated_token(
+    old_token: &str,
+    new_token: &str,
+) -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "USERNAME_PASSWORD_MFA",
+                "TOKEN": old_token
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "token": "mock_session_token_rotated",
+                "masterToken": "mock_master_token_rotated",
+                "sessionId": 12347,
+                "mfaToken": new_token,
+                "mfaTokenValidityInSeconds": 3600
+            }
+        })))
+}
+
 // ─── Generic successful MFA login (no specific field matching) ───────────────
 
 pub fn login_success() -> Mock {

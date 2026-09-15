@@ -513,6 +513,18 @@ mod tests {
         assert!(policy.extra_retryable_statuses.is_empty());
     }
 
+    /// put_get_max_attempts only rejects values <= 0 (falling back to
+    /// DEFAULT_PUT_GET_MAX_ATTEMPTS = 6). There is no upper-bound clamp, so
+    /// 101 is accepted verbatim.
+    #[test]
+    fn put_get_max_attempts_has_no_upper_bound_unlike_old_drivers_clamp() {
+        let store = params(&[(
+            param_names::PUT_GET_MAX_ATTEMPTS.as_str(),
+            Setting::Int(101),
+        )]);
+        assert_eq!(RetryPolicy::put_get(&store).max_attempts, 101);
+    }
+
     #[test]
     fn skips_blank_non_numeric_and_out_of_range_tokens() {
         // Empty tokens, garbage, out-of-range (<100 and >599), and overflow are dropped.
