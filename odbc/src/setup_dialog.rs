@@ -180,7 +180,6 @@ const IDC_DBEDIT: i32 = 1007;
 const IDC_SCHEMAEDIT: i32 = 1008;
 const IDC_WAREHOUSEEDIT: i32 = 1009;
 const IDC_ROLEEDIT: i32 = 1014;
-const IDC_TRACINGEDIT: i32 = 1015;
 const IDC_AUTHENTICATOREDIT: i32 = 1016;
 const IDC_PROXYEDIT: i32 = 1017;
 const IDC_NO_PROXYEDIT: i32 = 1018;
@@ -203,7 +202,6 @@ const FIELD_MAP: &[(i32, &str)] = &[
     (IDC_SCHEMAEDIT, "SCHEMA"),
     (IDC_WAREHOUSEEDIT, "WAREHOUSE"),
     (IDC_ROLEEDIT, "ROLE"),
-    (IDC_TRACINGEDIT, "TRACING"),
     (IDC_AUTHENTICATOREDIT, "AUTHENTICATOR"),
     // Legacy ODBC PROXY URL form: `[scheme://][user:pass@]host[:port]`.
     // `sf_core::tls::config::ProxyConfig::from_settings` parses the URL.

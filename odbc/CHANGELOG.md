@@ -9,6 +9,7 @@ New features:
 Changes:
 
 - Changed `SQLDriverConnect` to reject connection-string keywords it does not recognize with a local `01S00` warning (native error 17, "N invalid keys are found in the connection string: <KEY>"); a keyword is recognized when the `sf_core` parameter registry resolves it or it names an ODBC structural keyword (`DSN`, `DRIVER`, `FILEDSN`, `SAVEFILE`). The connection still opens and the keyword is still forwarded to the server. (snowflakedb/drivers#1926)
+- Removed `Tracing(0-6)` field from the Windows ODBC DSN setup dialog; driver logging uses `sf.odbc.ini` (`LogLevel`, `LogPath`) instead. Legacy `TRACING` values in a DSN or connection string are ignored. (snowflakedb/drivers#2022)
 
 Bug fixes:
 - Fixed `SQL_C_DEFAULT` on catalog `SMALLINT` and `INTEGER` columns so `SQLGetTypeInfo` and `SQLColumns` return binary integers instead of failing with SQLSTATE 22003. (snowflakedb/drivers#1896)

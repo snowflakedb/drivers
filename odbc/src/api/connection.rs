@@ -204,12 +204,14 @@ fn deprecated_put_get_retry_warnings(params: &HashMap<String, String>) -> Vec<Wa
 /// spellings. Keys unknown to the registry are forwarded uppercased as
 /// session/unknown parameters (matching how ODBC passes server session params
 /// through). `DRIVER` is dropped (it only names the driver library).
+/// Legacy ODBC `TRACING` (0–6) is dropped; driver logging uses `sf.odbc.ini`
+/// (`LogLevel` / `LogPath`) instead.
 fn normalize_connection_string_option(
     key: String,
     value: String,
 ) -> Option<(String, ConfigSetting)> {
     let upper = key.to_ascii_uppercase();
-    if upper == "DRIVER" {
+    if upper == "DRIVER" || upper == "TRACING" {
         return None;
     }
 
@@ -314,11 +316,17 @@ fn apply_global_ssl_version_override(
 /// spurious 01S00. Upper-cased to match [`parse_connection_string`] keys.
 const ODBC_STRUCTURAL_KEYS: &[&str] = &["DSN", "DRIVER", "FILEDSN", "SAVEFILE"];
 
+/// Legacy 3.x DSN/connection-string keys this driver no longer models. They
+/// are recognized so leftover values do not draw 01S00, then dropped before
+/// connect rather than forwarded as session parameters.
+const ODBC_IGNORED_KEYS: &[&str] = &["TRACING"];
+
 /// Connection-string keys that neither resolve through the `sf_core` registry
 /// under the ODBC flavor nor name ODBC connection mechanics
-/// ([`ODBC_STRUCTURAL_KEYS`]), sorted for a stable diagnostic. A key the
-/// registry resolves stays recognized, so any parameter this driver models is
-/// accepted without a warning.
+/// ([`ODBC_STRUCTURAL_KEYS`]) or ignored leftover keys ([`ODBC_IGNORED_KEYS`]),
+/// sorted for a stable diagnostic. A key the registry resolves stays
+/// recognized, so any parameter this driver models is accepted without a
+/// warning.
 fn unrecognized_connection_string_keys(params: &HashMap<String, String>) -> Vec<String> {
     let registry = sf_core::config::param_registry::registry();
     let mut keys: Vec<String> = params
@@ -326,6 +334,7 @@ fn unrecognized_connection_string_keys(params: &HashMap<String, String>) -> Vec<
         .filter(|key| {
             let upper = key.to_ascii_uppercase();
             !ODBC_STRUCTURAL_KEYS.contains(&upper.as_str())
+                && !ODBC_IGNORED_KEYS.contains(&upper.as_str())
                 && registry.resolve_for(Wrapper::Odbc, &upper).is_none()
         })
         .cloned()
@@ -934,7 +943,7 @@ pub fn connect<E: OdbcEncoding>(
 /// Merge DSN-stored attributes underneath caller-supplied params.
 ///
 /// Explicit params (connection string / UID+PWD) win over DSN-stored values.
-/// Strips DSN metadata keys (`Driver`, `Description`, `DSN`) from the result.
+/// Strips DSN metadata keys (`Driver`, `Description`, `DSN`) and `TRACING` key from the result.
 /// No-op when `dsn` is `None`.
 fn merge_dsn_config(
     explicit: HashMap<String, String>,
@@ -958,6 +967,7 @@ fn merge_dsn_config_impl(
         !k.eq_ignore_ascii_case("Driver")
             && !k.eq_ignore_ascii_case("Description")
             && !k.eq_ignore_ascii_case("DSN")
+            && !k.eq_ignore_ascii_case("TRACING")
     });
     Ok(explicit)
 }
@@ -3507,6 +3517,16 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_drops_legacy_tracing() {
+        let options = normalize_connection_string_options(HashMap::from([(
+            "TRACING".to_owned(),
+            "6".to_owned(),
+        )]));
+
+        assert!(options.is_empty());
+    }
+
+    #[test]
     fn normalize_connection_string_options_preserves_unrecognized_keys() {
         // A key unknown to the registry (e.g. a Snowflake server session
         // parameter) is forwarded uppercased and verbatim, so core can pass it
@@ -3825,6 +3845,12 @@ mod tests {
     }
 
     #[test]
+    fn unrecognized_connection_string_keys_ignores_legacy_tracing() {
+        let params = parse_connection_string("DSN=my_dsn;TRACING=6").unwrap();
+        assert!(unrecognized_connection_string_keys(&params).is_empty());
+    }
+
+    #[test]
     fn parse_connection_string_rejects_chars_after_closing_brace() {
         let result = parse_connection_string("PWD={val}extra;UID=admin");
         assert!(result.is_err());
@@ -3981,6 +4007,18 @@ mod tests {
             assert!(!result.contains_key("DRIVER"));
             assert!(!result.contains_key("Description"));
             assert!(!result.contains_key("DSN"));
+            assert_eq!(result.get("SERVER").unwrap(), "myhost");
+        }
+
+        #[test]
+        fn should_strip_tracing_from_stored_dsn() {
+            let stored = HashMap::from([
+                ("TRACING".to_owned(), "6".to_owned()),
+                ("SERVER".to_owned(), "myhost".to_owned()),
+            ]);
+            let result =
+                merge_dsn_config_impl(HashMap::new(), Some("TestDSN"), ok_lookup(stored)).unwrap();
+            assert!(!result.contains_key("TRACING"));
             assert_eq!(result.get("SERVER").unwrap(), "myhost");
         }
 

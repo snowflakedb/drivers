@@ -122,5 +122,17 @@ pub(crate) unsafe fn write_dsn_values(
             ok = false;
         }
     }
+    let tracing_key = to_wide("TRACING");
+    if unsafe {
+        SQLWritePrivateProfileStringW(
+            dsn_w.as_ptr(),
+            tracing_key.as_ptr(),
+            std::ptr::null(),
+            odbc_ini.as_ptr(),
+        )
+    } == 0
+    {
+        ok = false;
+    }
     ok
 }

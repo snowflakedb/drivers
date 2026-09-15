@@ -127,8 +127,6 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   if (auto role = get_string(params, "SNOWFLAKE_TEST_ROLE", ""); !role.empty()) {
     config.parameters_["ROLE"] = role;
   }
-  config.parameters_["TRACING"] = "0";
-
   if (auto result_format = test_utils::get_query_result_format(); !result_format.empty()) {
     config.parameters_["ODBC_QUERY_RESULT_FORMAT"] = result_format;
   }

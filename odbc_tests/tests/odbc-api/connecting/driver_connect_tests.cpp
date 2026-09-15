@@ -491,8 +491,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Basic DSN connection s
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Connection with additional parameters",
                  "[odbc-api][driverconnect][dsn][integration]") {
-  // DSN with additional Snowflake-specific parameters
-  const std::string connStr = "DSN=" + dsn_name() + ";TRACING=0";
+  const std::string connStr = "DSN=" + dsn_name() + ";APPLICATION=ODBCTest";
 
   SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                    SQL_DRIVER_NOPROMPT);
@@ -606,14 +605,30 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLDriverConnect: Multiple concurrent co
 // that are not part of the standard ODBC specification. These parameters are
 // extensions provided by the Snowflake driver for driver-specific functionality.
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake TRACING parameter",
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: legacy TRACING parameter is ignored",
                  "[odbc-api][driverconnect][dsn][integration][snowflake]") {
-  // Note: TRACING is a Snowflake-specific parameter that controls logging level (0-6)
-  const std::string connStr = "DSN=" + dsn_name() + ";TRACING=0";
+  const std::string connStr = "DSN=" + dsn_name() + ";TRACING=6";
 
   SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                    SQL_DRIVER_NOPROMPT);
+  REQUIRE(SQL_SUCCEEDED(ret));
+
+  auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
+  auto find_01S00 = [&records]() -> const DiagRec* {
+    for (const auto& r : records) {
+      if (r.sqlState == "01S00") return &r;
+    }
+    return nullptr;
+  };
+  REQUIRE(find_01S00() == nullptr);
+
+  SQLHSTMT stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
+  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
@@ -760,7 +775,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake multiple par
   // Combination of multiple Snowflake-specific parameters
   const std::string connStr = "DSN=" + dsn_name() +
                               ";APPLICATION=ODBCTest"
-                              ";TRACING=0"
                               ";LOGIN_TIMEOUT=60"
                               ";QUERY_TIMEOUT=0"
                               ";NETWORK_TIMEOUT=0"
