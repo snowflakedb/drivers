@@ -602,6 +602,23 @@ mod tests {
     }
 
     #[test]
+    fn prefetch_config_from_session_params_parses_string_values() {
+        let mut params = HashMap::new();
+        params.insert(
+            "CLIENT_PREFETCH_THREADS".to_string(),
+            Setting::String("8".to_string()),
+        );
+        params.insert(
+            "CLIENT_MEMORY_LIMIT".to_string(),
+            Setting::String("2048".to_string()),
+        );
+
+        let config = PrefetchConfig::from_session_params(&params);
+        assert_eq!(config.prefetch_threads, 8);
+        assert_eq!(config.memory_limit_mb, 2048);
+    }
+
+    #[test]
     fn prefetch_config_from_session_params_falls_back_on_invalid_values() {
         let mut params = HashMap::new();
         params.insert(

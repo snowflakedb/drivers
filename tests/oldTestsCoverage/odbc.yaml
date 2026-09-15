@@ -340,7 +340,13 @@ tests:
   - test_name: Bind NULL type
     ud_tests: []
   - test_name: CLIENT_PREFETCH_THREADS
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/session/session_parameters.cpp - should set CLIENT_PREFETCH_THREADS via ALTER SESSION"
+      - path: "odbc_tests/tests/e2e/session/session_parameters.cpp - should set CLIENT_PREFETCH_THREADS via connection string"
+      - path: "sf_core/src/chunks/mod.rs - prefetch_config_from_session_params_parses_valid_values"
+      - path: "sf_core/src/chunks/mod.rs - prefetch_config_from_session_params_parses_string_values"
+    status: mapped
+    notes: "Old test ALTERs CLIENT_PREFETCH_THREADS to 5, runs a 100k-row generator query, and greps snowflake_odbc_generic0.log for m_prefetchThreads=5 (Unix only). UD has no such log line. The session-parameter contract is asserted via SHOW PARAMETERS after a connection-string set of 5 and ALTER SESSION to 7 (neither is the default of 4). PrefetchConfig::from_session_params unit tests cover the client applying the cached value, including the Setting::String shape ALTER SESSION writes into the session cache. Internal thread-count log sniffing is not ported."
   - test_name: Expiredcertificate
     ud_tests: []
   - test_name: Query ID for failed query

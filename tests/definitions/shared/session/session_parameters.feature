@@ -24,6 +24,18 @@ Feature: Session parameters via connection options
     Then the session parameter value reflects the configured frequency
 
   @odbc_e2e
+  Scenario: should set CLIENT_PREFETCH_THREADS via connection string
+    Given Snowflake client is logged in with connection option CLIENT_PREFETCH_THREADS set to 5
+    When Query "SHOW PARAMETERS LIKE 'CLIENT_PREFETCH_THREADS'" is executed
+    Then the session parameter value should be "5"
+
+  @odbc_e2e
+  Scenario: should set CLIENT_PREFETCH_THREADS via ALTER SESSION
+    Given Snowflake client is logged in
+    When CLIENT_PREFETCH_THREADS is set to 7 with ALTER SESSION
+    Then the session parameter value should be "7"
+
+  @odbc_e2e
   Scenario Outline: should report canonical AUTOCOMMIT values through SQLGetConnectAttr
     Given Snowflake client is logged in
     When AUTOCOMMIT is set to <value> with ALTER SESSION
