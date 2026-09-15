@@ -307,6 +307,33 @@ fn apply_global_ssl_version_override(
     Ok(())
 }
 
+/// ODBC connection-string keywords that describe the connection mechanics
+/// (data source, driver library, file DSN) rather than a Snowflake setting, so
+/// the `sf_core` registry does not model them. They are recognized regardless
+/// of the registry; without this, every `DSN=...` connection would draw a
+/// spurious 01S00. Upper-cased to match [`parse_connection_string`] keys.
+const ODBC_STRUCTURAL_KEYS: &[&str] = &["DSN", "DRIVER", "FILEDSN", "SAVEFILE"];
+
+/// Connection-string keys that neither resolve through the `sf_core` registry
+/// under the ODBC flavor nor name ODBC connection mechanics
+/// ([`ODBC_STRUCTURAL_KEYS`]), sorted for a stable diagnostic. A key the
+/// registry resolves stays recognized, so any parameter this driver models is
+/// accepted without a warning.
+fn unrecognized_connection_string_keys(params: &HashMap<String, String>) -> Vec<String> {
+    let registry = sf_core::config::param_registry::registry();
+    let mut keys: Vec<String> = params
+        .keys()
+        .filter(|key| {
+            let upper = key.to_ascii_uppercase();
+            !ODBC_STRUCTURAL_KEYS.contains(&upper.as_str())
+                && registry.resolve_for(Wrapper::Odbc, &upper).is_none()
+        })
+        .cloned()
+        .collect();
+    keys.sort();
+    keys
+}
+
 /// Parse connection string into key-value pairs.
 ///
 /// Supports brace-quoted values (e.g. `PWD={p@ss;word}`) where `}}` inside
@@ -455,6 +482,13 @@ pub fn driver_connect<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
     let params = parse_connection_string(&connection_string)?;
+    // Keys checked against the caller-supplied connection string alone, before
+    // DSN expansion, so odbc.ini-stored attributes never draw the warning —
+    // matching the 3.x driver, which validated its connection-settings map.
+    let unrecognized = unrecognized_connection_string_keys(&params);
+    if !unrecognized.is_empty() {
+        warnings.push(Warning::UnrecognizedConnectionStringKeys(unrecognized));
+    }
     // Capture the original `DRIVER=` / `DSN=` keywords (if any) before
     // they get normalised away — they are needed later to resolve the
     // driver's file name for `SQLGetInfo(SQL_DRIVER_NAME)`.
@@ -3761,6 +3795,33 @@ mod tests {
     fn parse_connection_string_rejects_unterminated_brace() {
         let result = parse_connection_string("PWD={unterminated");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_flags_unknown_key() {
+        let params = parse_connection_string("DSN=my_dsn;INVALIDKEY=abc").unwrap();
+        assert_eq!(
+            unrecognized_connection_string_keys(&params),
+            vec!["INVALIDKEY".to_string()]
+        );
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_accepts_registry_and_structural_keys() {
+        // UID/SERVER/WAREHOUSE resolve via the ODBC registry; DSN is an ODBC
+        // structural keyword.
+        let params =
+            parse_connection_string("DSN=my_dsn;UID=admin;SERVER=foo;WAREHOUSE=wh").unwrap();
+        assert!(unrecognized_connection_string_keys(&params).is_empty());
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_are_sorted() {
+        let params = parse_connection_string("DSN=my_dsn;ZED=1;ABE=2").unwrap();
+        assert_eq!(
+            unrecognized_connection_string_keys(&params),
+            vec!["ABE".to_string(), "ZED".to_string()]
+        );
     }
 
     #[test]

@@ -502,8 +502,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Connection with additi
   REQUIRE(ret == SQL_SUCCESS);
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture,
-                 "SQLDriverConnect: Unrecognized connection string keyword (old driver: 01S00, new driver: no warning)",
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Unrecognized connection string keyword flags 01S00",
                  "[odbc-api][driverconnect][dsn][integration]") {
   const std::string connStr = "DSN=" + dsn_name() + ";INVALIDKEY=abc";
 
@@ -511,35 +510,23 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
                                    SQL_DRIVER_NOPROMPT);
 
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
-  auto has_01S00 = [&records]() {
+  auto find_01S00 = [&records]() -> const DiagRec* {
     for (const auto& r : records) {
-      if (r.sqlState == "01S00") return true;
+      if (r.sqlState == "01S00") return &r;
     }
-    return false;
+    return nullptr;
   };
 
-  // The unrecognized keyword does not prevent the connection: the old driver's 01S00 and
-  //   the new driver's 01004 OutConnectionString info are both SQL_SUCCESS_WITH_INFO, not
-  //   errors, so the connection opens on both.
   REQUIRE(SQL_SUCCEEDED(ret));
 
-  NEW_DRIVER_ONLY("BD#106") {
-    // BD#106: the new driver forwards unrecognized connection-string keywords to the
-    //   server as session parameters rather than rejecting them locally, so it does not
-    //   post the 01S00 warning. SNOW-3831223 will source 01S00 from a server-side
-    //   "parameter not applied" signal, reaching parity with the old driver.
-    REQUIRE_FALSE(has_01S00());
+  IODBC_ONLY {
+    // Under iODBC neither driver posts the 01S00 record on the DBC handle (BD#61).
+    CHECK(records.empty());
   }
-  OLD_DRIVER_ONLY("BD#106") {
-    OLD_IODBC_ONLY("BD#61") {
-      // The old driver under iODBC reports SQL_SUCCESS_WITH_INFO for the unrecognized
-      //   keyword but doesn't post the 01S00 diagnostic record on the DBC handle.
-      (void)records;
-    }
-    else {
-      // Per ODBC spec, the old driver flags the unrecognized keyword with 01S00.
-      REQUIRE(has_01S00());
-    }
+  else {
+    const DiagRec* warning = find_01S00();
+    REQUIRE(warning != nullptr);
+    CHECK(warning->nativeError == 17);
   }
 
   ret = SQLDisconnect(dbc_handle());

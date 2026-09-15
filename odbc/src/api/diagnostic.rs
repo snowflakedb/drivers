@@ -317,6 +317,17 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
         Warning::RowError => "Error in row".to_owned(),
         Warning::OptionValueChanged => "Option value changed".to_owned(),
         Warning::DisconnectError => "Disconnect error".to_owned(),
+        Warning::UnrecognizedConnectionStringKeys(keys) => {
+            let mut listed = String::new();
+            for key in keys {
+                listed.push_str(key);
+                listed.push(' ');
+            }
+            format!(
+                "{} invalid keys are found in the connection string: {listed}",
+                keys.len()
+            )
+        }
         Warning::DeprecatedParameter {
             parameter,
             replacement,
@@ -328,11 +339,16 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
         Warning::RowError => SqlState::ErrorInRow,
         Warning::OptionValueChanged => SqlState::OptionValueChanged,
         Warning::DisconnectError => SqlState::DisconnectError,
+        Warning::UnrecognizedConnectionStringKeys(_) => SqlState::InvalidConnectionStringAttribute,
         Warning::DeprecatedParameter { .. } => SqlState::GeneralWarning,
+    };
+    let native_error = match warning {
+        Warning::UnrecognizedConnectionStringKeys(_) => 17,
+        _ => 0,
     };
     let state_str = sql_state.as_str();
     DiagnosticRecord {
-        native_error: 0,
+        native_error,
         class_origin: class_origin_for_sqlstate(state_str),
         subclass_origin: subclass_origin_for_sqlstate(state_str),
         sql_state,
@@ -908,6 +924,37 @@ mod tests {
         assert_eq!(rec.sql_state.as_str(), "01002");
         assert_eq!(rec.message_text, "Disconnect error");
         assert!(rec.sql_state.is_warning());
+    }
+
+    #[test]
+    fn from_warning_unrecognized_keys_maps_to_01s00_native_17() {
+        let rec = from_warning(
+            &crate::conversion::warning::Warning::UnrecognizedConnectionStringKeys(vec![
+                "INVALIDKEY".to_string(),
+            ]),
+        );
+        assert_eq!(rec.sql_state, SqlState::InvalidConnectionStringAttribute);
+        assert_eq!(rec.sql_state.as_str(), "01S00");
+        assert_eq!(rec.native_error, 17);
+        assert_eq!(
+            rec.message_text,
+            "1 invalid keys are found in the connection string: INVALIDKEY "
+        );
+        assert!(rec.sql_state.is_warning());
+    }
+
+    #[test]
+    fn from_warning_unrecognized_keys_lists_every_key_with_count() {
+        let rec = from_warning(
+            &crate::conversion::warning::Warning::UnrecognizedConnectionStringKeys(vec![
+                "FOO".to_string(),
+                "BAR".to_string(),
+            ]),
+        );
+        assert_eq!(
+            rec.message_text,
+            "2 invalid keys are found in the connection string: FOO BAR "
+        );
     }
 
     #[test]
