@@ -2896,3 +2896,32 @@ behavior_differences:
       multi-line error trace follows it.
     description: |
       The mismatch stays identifiable by native error code 390191 on both drivers.
+
+  141:
+    name: "PUT_MAXRETRIES and GET_MAXRETRIES map to a shared PUT/GET attempt count"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      PUT and GET share one attempt budget in the new driver, matching the core
+      `put_get_max_attempts` setting rather than 3.x's independent retry counts.
+      The 3.x spellings stay accepted so existing DSNs keep working, and connect
+      posts SQLSTATE 01000 so callers move to PUT_GET_MAX_ATTEMPTS. The missing
+      [0, 100] clamp and default of 6 (not 5) are the shared core semantics and
+      are accepted as the 4.x contract.
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      PUT_MAXRETRIES / GET_MAXRETRIES accept any integer as independent retry counts.
+      Values in [0, 100] are honored separately for PUT and GET (N retries means N + 1
+      total attempts). Values outside that range are silently reset to 5.
+    new_driver_behavior: |
+      PUT_GET_MAX_ATTEMPTS, PUT_MAXRETRIES, and GET_MAXRETRIES all set the same
+      put_get_max_attempts value (total attempts, default 6). There is no per-operation
+      split and no [0, 100] clamp; values <= 0 fall back to 6. Using PUT_MAXRETRIES or
+      GET_MAXRETRIES also posts SQLSTATE 01000 ("Parameter '…' is deprecated, use
+      'PUT_GET_MAX_ATTEMPTS' instead") and returns SQL_SUCCESS_WITH_INFO on connect.
+    description: |
+      The new driver uses one shared attempt limit for PUT and GET. The 3.x ODBC
+      spellings are accepted as aliases of that setting and warn on use.
+

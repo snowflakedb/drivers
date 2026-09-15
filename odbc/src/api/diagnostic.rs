@@ -312,11 +312,15 @@ pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
 
 pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
     let message_text = match warning {
-        Warning::StringDataTruncated => "String data truncated",
-        Warning::NumericValueTruncated => "Numeric value truncated",
-        Warning::RowError => "Error in row",
-        Warning::OptionValueChanged => "Option value changed",
-        Warning::DisconnectError => "Disconnect error",
+        Warning::StringDataTruncated => "String data truncated".to_owned(),
+        Warning::NumericValueTruncated => "Numeric value truncated".to_owned(),
+        Warning::RowError => "Error in row".to_owned(),
+        Warning::OptionValueChanged => "Option value changed".to_owned(),
+        Warning::DisconnectError => "Disconnect error".to_owned(),
+        Warning::DeprecatedParameter {
+            parameter,
+            replacement,
+        } => format!("Parameter '{parameter}' is deprecated, use '{replacement}' instead"),
     };
     let sql_state = match warning {
         Warning::StringDataTruncated => SqlState::StringDataRightTruncated,
@@ -324,6 +328,7 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
         Warning::RowError => SqlState::ErrorInRow,
         Warning::OptionValueChanged => SqlState::OptionValueChanged,
         Warning::DisconnectError => SqlState::DisconnectError,
+        Warning::DeprecatedParameter { .. } => SqlState::GeneralWarning,
     };
     let state_str = sql_state.as_str();
     DiagnosticRecord {
@@ -331,7 +336,7 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
         class_origin: class_origin_for_sqlstate(state_str),
         subclass_origin: subclass_origin_for_sqlstate(state_str),
         sql_state,
-        message_text: message_text.to_string(),
+        message_text,
         ..Default::default()
     }
 }
@@ -902,6 +907,21 @@ mod tests {
         assert_eq!(rec.sql_state, SqlState::DisconnectError);
         assert_eq!(rec.sql_state.as_str(), "01002");
         assert_eq!(rec.message_text, "Disconnect error");
+        assert!(rec.sql_state.is_warning());
+    }
+
+    #[test]
+    fn from_warning_deprecated_parameter_maps_to_01000() {
+        let rec = from_warning(&crate::conversion::warning::Warning::DeprecatedParameter {
+            parameter: "PUT_MAXRETRIES".to_owned(),
+            replacement: "PUT_GET_MAX_ATTEMPTS",
+        });
+        assert_eq!(rec.sql_state, SqlState::GeneralWarning);
+        assert_eq!(rec.sql_state.as_str(), "01000");
+        assert_eq!(
+            rec.message_text,
+            "Parameter 'PUT_MAXRETRIES' is deprecated, use 'PUT_GET_MAX_ATTEMPTS' instead"
+        );
         assert!(rec.sql_state.is_warning());
     }
 
