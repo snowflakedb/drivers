@@ -137,15 +137,6 @@ pub enum OAuthError {
         location: Location,
     },
 
-    /// DPoP proof JWT signing failed inside the `jwt` crate (e.g.
-    /// header/claims serialization or DER → JOSE conversion).
-    #[snafu(display("Failed to sign DPoP proof JWT"))]
-    DPoPProofSigning {
-        source: jwt::Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     /// DPoP JWK could not be parsed (e.g. unsupported `kty`/`crv` or
     /// a missing required field on a cached bundled JWK).
     #[snafu(display("DPoP JWK could not be parsed: {reason}"))]
