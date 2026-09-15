@@ -4793,6 +4793,7 @@ dependencies = [
  "keyring",
  "libc",
  "lru",
+ "md-5",
  "memchr",
  "num-traits",
  "oauth2",
