@@ -36,6 +36,8 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ),
     ("PUT_FASTFAIL", "put_fastfail"),
     ("GET_FASTFAIL", "get_fastfail"),
+    ("PUT_MAXRETRIES", "put_get_max_attempts"),
+    ("GET_MAXRETRIES", "put_get_max_attempts"),
     ("SecondaryRoles", "secondary_roles"),
     ("ProxyWithEnv", "use_proxy_env"),
     ("disableQueryContextCache", "disable_query_context_cache"),
@@ -155,8 +157,6 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     "CRL_DISK_CACHING",
     "CRL_MEMORY_CACHING",
     "CABundleFile",
-    "PUT_MAXRETRIES",
-    "GET_MAXRETRIES",
     // Documented `NETWORK_TIMEOUT`. The legacy driver accepted the key;
     // its `getNetworkTimeout()` reader is unused today.
     "NETWORK_TIMEOUT",

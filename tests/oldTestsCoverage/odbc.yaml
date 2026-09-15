@@ -285,7 +285,7 @@ tests:
       - path: python/tests/integ/authentication/test_workload_identity.py - test_should_fail_workload_identity_when_provider_is_missing
       - path: "odbc_tests/tests/integration/authentication/workload_identity_auth.cpp - should fail workload identity authentication when provider is missing"
     status: mapped
-    notes: "Failure intent (missing provider -> error) covered at sf_core validation (inline + e2e) and python integ layers. SQLSTATE/message divergence = BehaviorDifference #1 (client-side config rejection: old 28000 -> new 01S00). The ODBC-layer SQLSTATE/message gap is now closed, mirroring the proven BD#1 missing-PRIV_KEY_FILE pattern (private_key_auth.cpp:77-88) - verified the old driver's exact message directly against Tests/AuthenticationTests/WIFLatestTest/WIFLatestTest.cpp:62 before writing the OLD_DRIVER_ONLY assertion."
+    notes: "Failure intent (missing provider -> error) covered at sf_core validation (inline + e2e) and python integ layers. Both drivers report SQLSTATE 28000; message wording still diverges under BD#1. The ODBC-layer SQLSTATE/message gap is now closed, mirroring the proven BD#1 missing-PRIV_KEY_FILE pattern (private_key_auth.cpp:77-88) - verified the old driver's exact message directly against Tests/AuthenticationTests/WIFLatestTest/WIFLatestTest.cpp:62 before writing the OLD_DRIVER_ONLY assertion."
     jira: "SNOW-2251257"
   EndToEndTests/ApiCatchLatestTest/ApiCatchLatestTest.cpp:
   - test_name: Configurable default varchar/binary size
