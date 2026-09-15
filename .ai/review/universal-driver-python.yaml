@@ -153,6 +153,8 @@ rules:
       - Block comments describing what was changed in this PR ("Refactored to use X instead of Y").
       - Section banners (`# ====== HELPERS ======`) when the module is small enough to scan.
 
+      **TEST DOCSTRINGS — do NOT flag one-line restatements**: In `python/tests/**` and functions named `test_*`, a single-line docstring that only restates the function name in prose is an established pytest convention and is not a finding. Flag a test docstring only when it is **more than one line** and still adds no information beyond the function name (parameter lists, Returns/Raises boilerplate, copy-pasted restatement). Inline comments that paraphrase the next line remain in scope in tests. Production code under `python/src/**` stays in scope regardless of docstring length.
+
       ❌ **BAD:**
       ```python
       def fetch_one(self) -> tuple | None:
