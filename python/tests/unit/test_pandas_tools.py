@@ -345,6 +345,17 @@ class TestBuildCopyIntoSql:
         assert '$1:"A" AS A' in result["operation"]
         assert '"A" AS "A"' not in result["operation"]
 
+    def test_parquet_field_quotes_internal_double_quotes(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=['has"quote']))
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        assert '$1:"has""quote"' in result["operation"]
+
+    def test_parquet_field_does_not_close_early_on_internal_quote(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=['a"b']))
+        sql = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)["operation"]
+        assert '$1:"a""b"' in sql
+        assert '$1:"a"b"' not in sql
+
     def test_with_vectorized_scanner(self):
         op: WritePandasOperation = _make_op(use_vectorized_scanner=True)
         result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
