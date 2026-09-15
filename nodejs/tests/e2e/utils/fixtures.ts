@@ -57,3 +57,33 @@ export function createTempDir(
   }
   return tempDir;
 }
+
+export interface TemporaryStageOptions {
+  encryption?: string;
+  directory?: boolean;
+}
+
+export async function createTemporaryStage(
+  connection: Connection,
+  options: TemporaryStageOptions = {},
+  shouldCleanupAfterTest = true,
+): Promise<string> {
+  const stageName = randomizeName('nodejs_stage_');
+  const encryptionClause = options.encryption
+    ? ` ENCRYPTION = (TYPE = '${options.encryption}')`
+    : '';
+  const directoryClause =
+    options.directory === undefined
+      ? ''
+      : ` DIRECTORY = (ENABLE = ${options.directory ? 'TRUE' : 'FALSE'})`;
+  await executeAsync(
+    connection,
+    `CREATE TEMPORARY STAGE IF NOT EXISTS ${stageName}${encryptionClause}${directoryClause}`,
+  );
+  if (shouldCleanupAfterTest) {
+    onTestFinished(async () => {
+      await executeAsync(connection, `DROP STAGE IF EXISTS ${stageName}`);
+    });
+  }
+  return stageName;
+}
