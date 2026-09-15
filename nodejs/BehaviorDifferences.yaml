@@ -657,3 +657,39 @@ behavior_differences:
     status_rationale: |
       Matches the Python and JDBC drivers, whose old drivers already expanded `~`;
       Tilde expansion is the unified behavior of the new driver across languages;
+
+  32:
+    name: 'PUT honors SOURCE_COMPRESSION=BROTLI'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `SOURCE_COMPRESSION=BROTLI` fails client-side with
+      `TypeError: Cannot read properties of undefined (reading 'is_supported')`.
+      Brotli is accepted only when spelled `SOURCE_COMPRESSION=BR`.
+    new_driver_behavior: |
+      `SOURCE_COMPRESSION=BROTLI` is honored. The `BR` subtype alias is not accepted.
+    description: |
+      The old driver matches SOURCE_COMPRESSION against mime-subtypes; BROTLI's subtype is `BR`, so
+      the canonical name misses the table. The new driver keys off the canonical codec name, matching
+      Python, JDBC and Snowflake PUT documentation.
+
+  33:
+    name: 'PUT honors SOURCE_COMPRESSION=AUTO_DETECT and NONE'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `SOURCE_COMPRESSION=AUTO_DETECT` fails client-side with
+      `TypeError: Cannot read properties of undefined (reading 'is_supported')`.
+      `SOURCE_COMPRESSION=NONE` fails the same way.
+    new_driver_behavior: |
+      `SOURCE_COMPRESSION=AUTO_DETECT` is honored: the source codec is detected from the file.
+      `SOURCE_COMPRESSION=NONE` leaves the source uncompressed.
+    description: |
+      AUTO_DETECT and NONE are not mime-subtypes, so they miss the old driver's lookup table. The new
+      driver honors both, matching Python and JDBC.
