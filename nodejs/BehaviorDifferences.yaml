@@ -693,3 +693,41 @@ behavior_differences:
     description: |
       AUTO_DETECT and NONE are not mime-subtypes, so they miss the old driver's lookup table. The new
       driver honors both, matching Python and JDBC.
+
+  34:
+    name: 'PUT expands the ? wildcard in the source path'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Only `*` is treated as a wildcard on PUT; a `?` is passed through literally, so the driver
+      stats the unexpanded path and fails client-side with `ENOENT` before contacting the server.
+    new_driver_behavior: |
+      A `?` in the source path is expanded as a single-character glob, so each matching file is
+      located and uploaded, matching the Python and JDBC drivers.
+    status_rationale: |
+      Single-character `?` glob expansion is the unified behavior of the new driver across
+      languages: the Python and JDBC old drivers already expand it, and only the old Node driver
+      limited PUT wildcards to `*`.
+
+  35:
+    name: 'GET of a nonexistent staged file raises instead of returning an empty result set'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      A GET whose path matches no staged object resolves with an empty result set and downloads
+      nothing; no error is raised.
+    new_driver_behavior: |
+      A GET whose path matches no staged object rejects with an error whose message contains
+      `the file does not exist`.
+    description: |
+      JDBC returns an empty result set for a missing GET target, so the same approach can be used
+      for the Node.js driver if we want to keep the same old behavior.
+    status_rationale: |
+      Raising on a missing GET target is the unified behavior of the new driver: Python and core
+      raise an error for a missing GET target.

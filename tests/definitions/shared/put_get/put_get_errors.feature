@@ -1,4 +1,4 @@
-@core @python @jdbc
+@core @python @jdbc @nodejs
 Feature: PUT/GET error handling
 
   @core_e2e @python_e2e @jdbc_e2e
@@ -7,7 +7,7 @@ Feature: PUT/GET error handling
     When PUT is executed with a path to a nonexistent local file
     Then An error is raised indicating the local file does not exist
 
-  @core_e2e @python_e2e
+  @core_e2e @python_e2e @nodejs_e2e
   Scenario: should return error when getting nonexistent file from stage
     Given An empty stage is created
     When GET is executed for a file that does not exist in stage
