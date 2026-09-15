@@ -112,10 +112,24 @@ rules:
 
       **DO NOT FLAG**:
       - Neutral category or mechanism names such as `TOCTOU`, race condition,
-        replay, SSRF, injection, buffer overflow, or constant-time.
+        replay, SSRF, injection, SQL injection, XSS, buffer overflow, or
+        constant-time — including in test file paths, test function names
+        (`test_should_prevent_sql_injection`), comments that describe
+        *preventing* or *testing for* those classes of bug, and defensive
+        secure-coding vocabulary. A word such as "vulnerability" or
+        "injection" without a `CVE-…` / `CWE-\d+` / `GHSA-` token is not
+        a finding.
       - Descriptions of current invariants, technical causes, and known
         limitations that contain no public advisory identifier or link.
       - Bare `SNOW-\d+` references.
+
+      **TEST AND DEFENSIVE CONTEXT**: Stay silent when the only hit is
+      standard security-testing terminology (not an advisory identifier)
+      in `**/test/**`, `**/tests/**`, `*Test.java`, `*_test.rs`,
+      `test_*.py`, `*.feature`, or wording about preventing, detecting,
+      or testing for a weakness. Still flag a literal `CVE-\d{4}-\d+`,
+      `CWE-\d+`, or `GHSA-` token — including in tests — because those
+      identifiers map a weakness to a public advisory.
 
       This rule owns advisory identifiers only. Actionable descriptions and
       affected-release windows are owned by
