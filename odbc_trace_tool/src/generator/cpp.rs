@@ -1810,7 +1810,9 @@ impl<'a> GenContext<'a> {
         self.writeln("// in-flight async op; it runs to natural completion. Poll (re-issuing the");
         self.writeln("// same execute, paced) until it stops reporting SQL_STILL_EXECUTING so the");
         self.writeln("// statement is idle before teardown — otherwise teardown races the worker");
-        self.writeln("// and the driver manager reports the connection busy.");
+        self.writeln("// and the driver manager reports the connection busy. A statement that");
+        self.writeln("// still has not settled after the bound fails the test rather than falling");
+        self.writeln("// through to teardown.");
         self.writeln("{");
         self.indent += 1;
         self.writeln("SQLRETURN ret = SQL_STILL_EXECUTING;");
@@ -1819,6 +1821,11 @@ impl<'a> GenContext<'a> {
         self.indent += 1;
         self.writeln("std::this_thread::sleep_for(std::chrono::milliseconds(100));");
         self.writeln(&format!("ret = {reissue};"));
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("if (ret == SQL_STILL_EXECUTING) {");
+        self.indent += 1;
+        self.writeln("FAIL(\"cancelled async execute did not settle within the poll bound\");");
         self.indent -= 1;
         self.writeln("}");
         self.indent -= 1;
@@ -5225,6 +5232,14 @@ mod tests {
             "cancel of an in-flight async op emits a paced poll-to-settle; output:\n{output}"
         );
         assert!(
+            output.contains("if (ret == SQL_STILL_EXECUTING) {"),
+            "exhausting the settle bound is checked after the loop; output:\n{output}"
+        );
+        assert!(
+            output.contains("FAIL(\"cancelled async execute did not settle within the poll bound\");"),
+            "exhausting the settle bound fails the test rather than falling through to teardown; output:\n{output}"
+        );
+        assert!(
             output.contains("std::this_thread::sleep_for(std::chrono::milliseconds(100));"),
             "the settle paces its polls; output:\n{output}"
         );
@@ -5270,6 +5285,10 @@ mod tests {
         assert!(
             output.contains("while (ret == SQL_STILL_EXECUTING && settle_polls++ < 300) {"),
             "SQLCancelHandle of an in-flight async op also emits the settle; output:\n{output}"
+        );
+        assert!(
+            output.contains("FAIL(\"cancelled async execute did not settle within the poll bound\");"),
+            "SQLCancelHandle settle also fails the test when the bound is exhausted; output:\n{output}"
         );
     }
 
