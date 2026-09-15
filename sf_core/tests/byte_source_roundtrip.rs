@@ -232,7 +232,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
             creds: CloudCredentials::S3 {
                 aws_key_id: "AKIAIOSFODNN7EXAMPLE".into(),
                 aws_secret_key: SensitiveString::from("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
-                aws_token: SensitiveString::from(""),
+                aws_token: None,
             },
             endpoint: Some(mock_server.uri()),
             presigned_url: None,
@@ -773,7 +773,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
             creds: CloudCredentials::S3 {
                 aws_key_id: "AKIAIOSFODNN7EXAMPLE".into(),
                 aws_secret_key: SensitiveString::from("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
-                aws_token: SensitiveString::from(""),
+                aws_token: None,
             },
             endpoint: Some(uri),
             presigned_url: None,
