@@ -125,6 +125,8 @@ rules:
 
       **EXCEPTION (rare)**: Keeping the panic is acceptable ONLY when the value cannot be obtained through a fallible API and the invariant is local and mathematically provable at the call site — e.g. a compile-time-constant regex literal, or `.next()` on an iterator constructed one line above with known-nonzero length. In that case prefer **`.expect("stated invariant")` over `.unwrap()` + a separate `// SAFETY:` comment**: `.expect()` puts the justification in the panic message itself, so a violated invariant surfaces in the crash output instead of relying on a neighboring comment the compiler never checks. The invariant MUST hold within a few lines of the call. If the guaranteeing check is far away or in a different function, treat it as the check-then-unwrap smell above and require the refactor instead.
 
+      **CRATE-CONVENTION SUPPRESSION**: Before flagging `.expect("…")` (or `.unwrap()` that encodes the same local invariant), search the rest of the same crate for the same message string or a closely matching one (about 80% similar). If that idiom already exists on unchanged lines, do NOT flag the new call in isolation. Optionally post at most one crate-level Low note that the same `.expect` already appears elsewhere and that a crate-wide cleanup is more useful than blocking this PR. Mutex poison `.unwrap()` and silent `into_inner` recovery stay findings even when common — those hide inconsistency rather than stating a local invariant.
+
       ```rust
       // ✅ GOOD (rare exception): value can't be obtained fallibly, invariant is local + provable
       // str::split always yields at least one element, so next() is never None here.
