@@ -131,10 +131,14 @@ pub enum OAuthError {
     },
 
     /// DPoP proof JWT could not be constructed because of an underlying
-    /// openssl primitive (key generation, coordinate extraction).
+    /// AWS-LC primitive (key generation, signing, coordinate export).
+    ///
+    /// `Unspecified` carries no detail by design -- AWS-LC does not report
+    /// why a primitive failed, so there is nothing to propagate beyond the
+    /// operation that failed.
     #[snafu(display("Failed to generate DPoP proof JWT"))]
     DPoPProofGeneration {
-        source: openssl::error::ErrorStack,
+        source: aws_lc_rs::error::Unspecified,
         #[snafu(implicit)]
         location: Location,
     },
