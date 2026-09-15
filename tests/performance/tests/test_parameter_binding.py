@@ -17,7 +17,7 @@ from binding_catalog import (
 from runner.test_types import PerfTestType
 
 
-@pytest.mark.supported_drivers("python")
+@pytest.mark.supported_drivers("python", "odbc")
 @pytest.mark.iterations(8)
 @pytest.mark.warmup_iterations(2)
 @pytest.mark.parametrize("type_name", SCALAR_TYPE_NAMES)
@@ -32,7 +32,7 @@ def test_bind_scalar_select(perf_test, type_name):
     )
 
 
-@pytest.mark.supported_drivers("python")
+@pytest.mark.supported_drivers("python", "odbc")
 @pytest.mark.iterations(8)
 @pytest.mark.warmup_iterations(2)
 @pytest.mark.parametrize("type_name", SCALAR_TYPE_NAMES)
@@ -47,7 +47,7 @@ def test_bind_scalar_select_recorded_http(perf_test, type_name):
     )
 
 
-@pytest.mark.supported_drivers("python")
+@pytest.mark.supported_drivers("python", "odbc")
 @pytest.mark.iterations(8)
 @pytest.mark.warmup_iterations(2)
 def test_bind_executemany_inline_insert_15columns(perf_test):
@@ -62,7 +62,7 @@ def test_bind_executemany_inline_insert_15columns(perf_test):
     )
 
 
-@pytest.mark.supported_drivers("python")
+@pytest.mark.supported_drivers("python", "odbc")
 @pytest.mark.iterations(8)
 @pytest.mark.warmup_iterations(2)
 def test_bind_executemany_inline_insert_15columns_recorded_http(perf_test):
@@ -77,7 +77,7 @@ def test_bind_executemany_inline_insert_15columns_recorded_http(perf_test):
     )
 
 
-@pytest.mark.supported_drivers("python")
+@pytest.mark.supported_drivers("python", "odbc")
 @pytest.mark.iterations(8)
 @pytest.mark.warmup_iterations(2)
 def test_bind_executemany_stage_insert_15columns(perf_test):

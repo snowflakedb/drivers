@@ -41,16 +41,15 @@ class MappingTransformer:
                 with open(mapping_file, 'r') as f:
                     data = json.load(f)
                 
-                # Check if mapping should be removed (ALTER SESSION query)
-                if MappingTransformer._is_alter_session(data):
+                if MappingTransformer._should_discard_mapping(data):
                     mapping_file.unlink()
                     stats['removed'] += 1
-                else:
-                    # Transform the mapping (only if not removed)
-                    transformed = MappingTransformer._transform_mapping_content(data)
-                    with open(mapping_file, 'w') as f:
-                        json.dump(transformed, f, indent=2)
-                    stats['transformed'] += 1
+                    continue
+
+                transformed = MappingTransformer._transform_mapping_content(data)
+                with open(mapping_file, 'w') as f:
+                    json.dump(transformed, f, indent=2)
+                stats['transformed'] += 1
                     
             except (json.JSONDecodeError, OSError) as e:
                 stats['errors'] += 1
@@ -148,63 +147,50 @@ class MappingTransformer:
             del request['queryParameters']
     
     @staticmethod
-    def _is_alter_session(mapping: dict[str, Any]) -> bool:
-        """
-        Detect ALTER SESSION queries using two heuristics:
-        1. Text-based: "ALTER SESSION" appears in body/URL/response
-        2. Pattern-based: Response has 1 row with no data chunks
-        """
-        # Heuristic 1: Check for "ALTER SESSION" text
-        if 'request' in mapping:
-            # Check body patterns
-            body_patterns = mapping['request'].get('bodyPatterns', [])
-            for pattern in body_patterns:
-                if 'alter session' in str(pattern).lower():
-                    return True
-            
-            # Check URL
-            url = mapping['request'].get('url', '') + mapping['request'].get('urlPattern', '')
-            if 'alter session' in url.lower():
+    def _should_discard_mapping(mapping: dict[str, Any]) -> bool:
+        """Drop query-request stubs that are not needed when replay skips setup queries."""
+        request = mapping.get('request', {})
+        url = (
+            request.get('urlPath', '')
+            or request.get('url', '')
+            or request.get('urlPattern', '')
+        )
+        if QUERY_REQUEST_ENDPOINT not in url:
+            return False
+
+        for pattern in request.get('bodyPatterns', []):
+            if 'alter session' in str(pattern).lower():
                 return True
-        
-        # Check response body for ALTER SESSION in sqlText
-        response = mapping.get('response', {})
-        response_body = response.get('body', '')
+
+        response_body = mapping.get('response', {}).get('body', '')
         if response_body and 'alter session' in response_body.lower():
             return True
-        
-        # Heuristic 2: metadata-only responses (1 row, no chunks) — but SELECT 1
-        # and other small queries match this shape too, so only strip when the
-        # request is not a data query.
         if not response_body:
             return False
-        
+
         try:
             response_json = json.loads(response_body)
-            data = response_json.get('data', {})
-            
-            # Handle case where data is explicitly None in JSON
-            if data is None:
-                return False
-            
-            # ALTER queries return 1 row, no chunks
-            total = data.get('total', 0)
-            returned = data.get('returned', 0)
-            chunks = data.get('chunks', [])
-            
-            if total == 1 and returned == 1 and len(chunks) == 0:
-                body_patterns = mapping.get('request', {}).get('bodyPatterns', [])
-                for pattern in body_patterns:
-                    ps = str(pattern).lower()
-                    if 'select' in ps or 'insert' in ps or 'update' in ps or 'delete' in ps:
-                        return False
+            data = response_json.get('data') or {}
+            rowtype = data.get('rowtype') or []
+            names = {col.get('name') for col in rowtype if isinstance(col, dict)}
+            if names and (names <= {'status'} or names <= {'VERSION'}):
                 return True
-        except (json.JSONDecodeError, KeyError, TypeError):
-            # Malformed or unexpected response body — not a metadata-only response
+            stats = data.get('stats') or {}
+            if (
+                int(stats.get('numRowsInserted') or 0)
+                or int(stats.get('numRowsUpdated') or 0)
+                or int(stats.get('numRowsDeleted') or 0)
+            ):
+                return False
+            chunks = data.get('chunks') or []
+            if names and ((data.get('total') or 0) > 0 or chunks):
+                return False
+            return True
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             pass
-        
+
         return False
-    
+
     @staticmethod
     def _is_data_chunk(url: str) -> bool:
         """Check if URL is a data chunk download"""

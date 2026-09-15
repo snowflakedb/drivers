@@ -221,7 +221,7 @@ def run_wiremock_performance_test(
                 warmup_iterations=warmup_iterations,
                 driver=driver,
                 driver_type=driver_type,
-                setup_queries=None,  # Skip setup queries in replay mode - they were only recorded once
+                setup_queries=None,
                 use_local_binary=use_local_binary,
                 s3_files_dir=s3_files_dir,
                 wiremock_url=wiremock.get_url(),
