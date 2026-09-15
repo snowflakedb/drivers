@@ -22,6 +22,9 @@
 
 inline constexpr auto READONLY_DB_NAME = "ODBCMETADATATESTDB";
 inline constexpr auto READONLY_SCHEMA_NAME = "CATALOGTESTS";
+// Writable scratch database created by the same setup script. Catalog tests use
+// it as a current database that holds none of the readonly database's objects.
+inline constexpr auto SCRATCH_DB_NAME = "ODBCSCRATCHTESTDB";
 // Second schema in the same database, used to verify that NULL-schema metadata
 // queries span all schemas in the connected database (not just the current one).
 inline constexpr auto READONLY_SECOND_SCHEMA_NAME = "DATATYPETESTS";
@@ -108,29 +111,59 @@ inline constexpr auto DESC_MULTI_TABLE = "DESCMULTITABLE";
 
 }  // namespace readonly_db
 
+inline DataSourceConfig readonly_db_dsn() {
+  return DataSourceConfig::Snowflake().set("DATABASE", READONLY_DB_NAME).set("SCHEMA", READONLY_SCHEMA_NAME);
+}
+
+inline void require_readonly_db_provisioned(SQLHSTMT stmt) {
+  const std::string fqn = std::string(READONLY_DB_NAME) + "." + READONLY_SCHEMA_NAME + "." + readonly_db::BASIC_TABLE;
+  const std::string probe = "SELECT 1 FROM " + fqn + " WHERE 1=0";
+  SQLRETURN ret = SQLExecDirect(stmt, sqlchar(probe.c_str()), SQL_NTS);
+  if (!SQL_SUCCEEDED(ret)) {
+    FAIL("Readonly metadata DB not provisioned (" << fqn
+                                                  << " not found). "
+                                                     "Build with -DBUILD_SETUP_TOOLS=ON and run: "
+                                                     "ctest --test-dir cmake-build -R setup_readonly_db");
+  }
+  SQLFreeStmt(stmt, SQL_CLOSE);
+}
+
 // =============================================================================
 // Fixture for TEST_CASE_METHOD catalog tests (DSN-based connection)
 // =============================================================================
 
 class ReadOnlyDbStmtFixture : public StmtFixture {
  public:
-  ReadOnlyDbStmtFixture()
-      : StmtFixture(
-            DataSourceConfig::Snowflake().set("DATABASE", READONLY_DB_NAME).set("SCHEMA", READONLY_SCHEMA_NAME)) {
-    const std::string fqn = std::string(READONLY_DB_NAME) + "." + READONLY_SCHEMA_NAME + "." + readonly_db::BASIC_TABLE;
-    const std::string probe = "SELECT 1 FROM " + fqn + " WHERE 1=0";
-    SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(probe.c_str()), SQL_NTS);
-    if (!SQL_SUCCEEDED(ret)) {
-      FAIL("Readonly metadata DB not provisioned (" << fqn
-                                                    << " not found). "
-                                                       "Build with -DBUILD_SETUP_TOOLS=ON and run: "
-                                                       "ctest --test-dir cmake-build -R setup_readonly_db");
-    }
-    SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  ReadOnlyDbStmtFixture() : StmtFixture(readonly_db_dsn()) { require_readonly_db_provisioned(stmt_handle()); }
+
+  [[nodiscard]] static auto schema_name() { return READONLY_SCHEMA_NAME; }
+  [[nodiscard]] static auto database_name() { return READONLY_DB_NAME; }
+};
+
+class ReadOnlyDbUseCurrentCatalogStmtFixture : public StmtFixture {
+ public:
+  ReadOnlyDbUseCurrentCatalogStmtFixture() : StmtFixture(readonly_db_dsn().set("UseCurrentCatalog", "true")) {
+    require_readonly_db_provisioned(stmt_handle());
   }
 
   [[nodiscard]] static auto schema_name() { return READONLY_SCHEMA_NAME; }
   [[nodiscard]] static auto database_name() { return READONLY_DB_NAME; }
+};
+
+class UseCurrentCatalogDefaultDSNFixture : public StmtFixture {
+ public:
+  UseCurrentCatalogDefaultDSNFixture() : StmtFixture(DataSourceConfig::Snowflake().set("UseCurrentCatalog", "true")) {}
+};
+
+// Pins the current database to the scratch database, so a NULL CatalogName under
+// UseCurrentCatalog=true resolves to a database that holds none of the readonly
+// database's procedures. The default DSN's database is shared across suites and
+// has accumulated enough schemas that querying its information_schema.procedures
+// can exceed the test timeout.
+class UseCurrentCatalogScratchDbStmtFixture : public StmtFixture {
+ public:
+  UseCurrentCatalogScratchDbStmtFixture()
+      : StmtFixture(DataSourceConfig::Snowflake().set("DATABASE", SCRATCH_DB_NAME).set("UseCurrentCatalog", "true")) {}
 };
 
 // =============================================================================

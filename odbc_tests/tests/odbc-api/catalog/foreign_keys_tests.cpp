@@ -340,69 +340,59 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: Returns non-empty FK_NA
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: NULL catalog and schema resolve from connection context",
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLForeignKeys: NULL catalog and schema resolve from connection context",
                  "[odbc-api][foreignkeys][catalog]") {
   SQLRETURN ret = SQLForeignKeys(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                  sqlchar(readonly_db::FK_CHILD), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
-  NEW_DRIVER_ONLY("BD#88") {
-    ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
 
-    char fkTableCat[256];
-    char fkTableSchem[256];
-    char fkTableName[256];
-    char fkColumnName[256];
-    SQLSMALLINT keySeq = static_cast<SQLSMALLINT>(0xFFFE);
-    std::memset(fkTableCat, 0xFF, sizeof(fkTableCat));
-    std::memset(fkTableSchem, 0xFF, sizeof(fkTableSchem));
-    std::memset(fkTableName, 0xFF, sizeof(fkTableName));
-    std::memset(fkColumnName, 0xFF, sizeof(fkColumnName));
+  char fkTableCat[256];
+  char fkTableSchem[256];
+  char fkTableName[256];
+  char fkColumnName[256];
+  SQLSMALLINT keySeq = static_cast<SQLSMALLINT>(0xFFFE);
+  std::memset(fkTableCat, 0xFF, sizeof(fkTableCat));
+  std::memset(fkTableSchem, 0xFF, sizeof(fkTableSchem));
+  std::memset(fkTableName, 0xFF, sizeof(fkTableName));
+  std::memset(fkColumnName, 0xFF, sizeof(fkColumnName));
 
-    SQLLEN fkTableCatInd = 0;
-    SQLRETURN ret2 = SQLGetData(stmt_handle(), 5, SQL_C_CHAR, fkTableCat, sizeof(fkTableCat), &fkTableCatInd);
-    REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
-    REQUIRE(fkTableCatInd != SQL_NULL_DATA);
+  SQLLEN fkTableCatInd = 0;
+  SQLRETURN ret2 = SQLGetData(stmt_handle(), 5, SQL_C_CHAR, fkTableCat, sizeof(fkTableCat), &fkTableCatInd);
+  REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  REQUIRE(fkTableCatInd != SQL_NULL_DATA);
 
-    SQLLEN fkTableSchemInd = 0;
-    ret2 = SQLGetData(stmt_handle(), 6, SQL_C_CHAR, fkTableSchem, sizeof(fkTableSchem), &fkTableSchemInd);
-    REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
-    REQUIRE(fkTableSchemInd != SQL_NULL_DATA);
+  SQLLEN fkTableSchemInd = 0;
+  ret2 = SQLGetData(stmt_handle(), 6, SQL_C_CHAR, fkTableSchem, sizeof(fkTableSchem), &fkTableSchemInd);
+  REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  REQUIRE(fkTableSchemInd != SQL_NULL_DATA);
 
-    SQLLEN fkTableNameInd = 0;
-    ret2 = SQLGetData(stmt_handle(), 7, SQL_C_CHAR, fkTableName, sizeof(fkTableName), &fkTableNameInd);
-    REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
-    REQUIRE(fkTableNameInd != SQL_NULL_DATA);
+  SQLLEN fkTableNameInd = 0;
+  ret2 = SQLGetData(stmt_handle(), 7, SQL_C_CHAR, fkTableName, sizeof(fkTableName), &fkTableNameInd);
+  REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  REQUIRE(fkTableNameInd != SQL_NULL_DATA);
 
-    SQLLEN fkColumnNameInd = 0;
-    ret2 = SQLGetData(stmt_handle(), 8, SQL_C_CHAR, fkColumnName, sizeof(fkColumnName), &fkColumnNameInd);
-    REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
-    REQUIRE(fkColumnNameInd != SQL_NULL_DATA);
+  SQLLEN fkColumnNameInd = 0;
+  ret2 = SQLGetData(stmt_handle(), 8, SQL_C_CHAR, fkColumnName, sizeof(fkColumnName), &fkColumnNameInd);
+  REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  REQUIRE(fkColumnNameInd != SQL_NULL_DATA);
 
-    SQLLEN keySeqInd = 0;
-    ret2 = SQLGetData(stmt_handle(), 9, SQL_C_SSHORT, &keySeq, 0, &keySeqInd);
-    REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
-    REQUIRE(keySeqInd == sizeof(SQLSMALLINT));
+  SQLLEN keySeqInd = 0;
+  ret2 = SQLGetData(stmt_handle(), 9, SQL_C_SSHORT, &keySeq, 0, &keySeqInd);
+  REQUIRE_THAT(OdbcResult(ret2, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  REQUIRE(keySeqInd == sizeof(SQLSMALLINT));
 
-    REQUIRE(std::string(fkTableCat) == database_name());
-    REQUIRE(std::string(fkTableSchem) == schema_name());
-    REQUIRE(std::string(fkTableName) == readonly_db::FK_CHILD);
-    REQUIRE(std::string(fkColumnName) == "PARENTID");
-    REQUIRE(keySeq == 1);
+  REQUIRE(std::string(fkTableCat) == database_name());
+  REQUIRE(std::string(fkTableSchem) == schema_name());
+  REQUIRE(std::string(fkTableName) == readonly_db::FK_CHILD);
+  REQUIRE(std::string(fkColumnName) == "PARENTID");
+  REQUIRE(keySeq == 1);
 
-    ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_NO_DATA);
-  }
-  OLD_DRIVER_ONLY("BD#88") {
-    // The reference driver's outcome depends on the account's
-    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX session parameter: when it is
-    // enabled the FK-side identifiers resolve from the connection context and the
-    // FK_CHILD row is returned; when it is disabled the call returns an empty
-    // result set. Accept either so the test is not account-dependent.
-    ret = SQLFetch(stmt_handle());
-    REQUIRE((ret == SQL_SUCCESS || ret == SQL_NO_DATA));
-  }
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture,

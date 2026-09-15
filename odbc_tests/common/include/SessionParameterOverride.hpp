@@ -32,6 +32,7 @@ class SessionParameterOverride {
     if (!active_) {
       return;
     }
+    SQLFreeStmt(stmt_, SQL_CLOSE);
     const std::string sql = "ALTER SESSION UNSET " + param_name_;
     SQLExecDirect(stmt_, sqlchar(sql.c_str()), SQL_NTS);
     SQLFreeStmt(stmt_, SQL_CLOSE);

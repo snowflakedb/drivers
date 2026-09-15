@@ -176,6 +176,7 @@ pub fn tables<E: OdbcEncoding>(
 
     let metadata_id = inner.metadata_id;
     let stmt_handle = guard.stmt_handle;
+    let use_current_catalog = conn.use_current_catalog;
     drop(conn);
 
     let is_empty_str = |s: &Option<String>| s.as_deref() == Some("");
@@ -207,17 +208,17 @@ pub fn tables<E: OdbcEncoding>(
         return set_static_table_types(&mut inner);
     }
 
-    // Normal mode: apply SQL_ATTR_METADATA_ID
-    //
-    // Substitute a NULL catalog with the connection's current database (see
-    // resolve_null_catalog_to_connection_context). A NULL schema is deliberately
-    // left NULL so it matches every schema in that database, unless
-    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it below. Identifier mode
-    // (metadata_id=TRUE) still requires non-NULL args → HY009.
+    // Substitute a NULL catalog with the connection's current database when
+    // UseCurrentCatalog is true (see resolve_null_catalog_to_connection_context).
+    // Otherwise the catalog stays NULL so SHOW can run IN ACCOUNT, unless
+    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it below. Identifier
+    // mode (metadata_id=TRUE) still requires non-NULL args → HY009.
     let catalog_raw = if metadata_id {
         catalog_raw
-    } else {
+    } else if use_current_catalog {
         resolve_null_catalog_to_connection_context(catalog_raw, conn_handle)?
+    } else {
+        catalog_raw
     };
     let mut catalog_pattern = catalog_arg_to_pattern(catalog_raw.as_deref(), metadata_id)?;
     let mut schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
@@ -247,11 +248,8 @@ pub fn tables<E: OdbcEncoding>(
 
 /// Substitute a NULL catalog with the connection's current database.
 ///
-/// ODBC NULL means "use connection context" for catalog functions; an
-/// account-wide SHOW omits databases the role can't see. This mirrors the
-/// legacy driver's `SFSemantics::GetFilterForNullCatalog` (gated by its
-/// `UseCurrentCatalog` config): it substitutes the **catalog only**. A NULL
-/// schema is left NULL so it matches all schemas in the database — unless
+/// Called when `UseCurrentCatalog` is true. A NULL schema is left NULL so it
+/// matches all schemas in the database — unless
 /// `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` fills it in `tables()`.
 fn resolve_null_catalog_to_connection_context(
     catalog_raw: Option<String>,
@@ -312,17 +310,20 @@ pub fn columns<E: OdbcEncoding>(
     let metadata_id = inner.metadata_id;
     let numeric_settings = conn.numeric_settings;
     let stmt_handle = guard.stmt_handle;
+    let use_current_catalog = conn.use_current_catalog;
     drop(conn);
 
-    // Substitute a NULL catalog with the connection's current database (see
-    // resolve_null_catalog_to_connection_context). A NULL schema is deliberately
-    // left NULL so it matches every schema in that database, unless
-    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it below. Identifier mode
-    // (metadata_id=TRUE) still requires non-NULL args → HY009.
+    // Substitute a NULL catalog with the connection's current database when
+    // UseCurrentCatalog is true (see resolve_null_catalog_to_connection_context).
+    // Otherwise the catalog stays NULL so SHOW can run IN ACCOUNT, unless
+    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it below. Identifier
+    // mode (metadata_id=TRUE) still requires non-NULL args → HY009.
     let catalog_raw = if metadata_id {
         catalog_raw
-    } else {
+    } else if use_current_catalog {
         resolve_null_catalog_to_connection_context(catalog_raw, conn_handle)?
+    } else {
+        catalog_raw
     };
     let mut catalog_pattern = catalog_arg_to_pattern(catalog_raw.as_deref(), metadata_id)?;
     let mut schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
@@ -397,13 +398,16 @@ fn escape_snowflake_identifier(ident: &str) -> String {
 /// Builds the `IN <scope>` clause for a `SHOW ... KEYS` query, picking the
 /// narrowest object the caller resolved to.
 ///
-/// `resolve_show_identifiers` runs first and fills a missing catalog/schema from
-/// the connection context, so a `None` catalog here means the identifier is
-/// *genuinely unresolved* (e.g. the connection has no current database). In that
-/// case we deliberately widen to `account` scope and rely on the client-side
-/// re-filter ([`ShowKeyScopeFilter`] / `ShowForeignKeyFilter`) to narrow the
-/// result set — Snowflake `SHOW ... KEYS` supports only a single `IN` object and
-/// has no `LIKE`, so there is no narrower server-side option.
+/// `resolve_show_identifiers` fills a missing catalog from the current database
+/// only when `UseCurrentCatalog` or `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX`
+/// is enabled. A missing schema is still filled from the current schema when a
+/// table name is supplied, matching 3.x. `SHOW ... KEYS` accepts only a single
+/// `IN` object and has no `LIKE`, so a still-`None` catalog (both knobs off, or
+/// no current database) widens the server query to `account`; the client-side
+/// re-filter ([`ShowKeyScopeFilter`] / `ShowForeignKeyFilter`) then applies the
+/// filled schema and table. Default `SQLPrimaryKeys`/`SQLForeignKeys(NULL, NULL,
+/// table)` therefore still scopes to the current schema after that account-wide
+/// `SHOW`.
 fn build_show_in_scope(catalog: Option<&str>, schema: Option<&str>, table: Option<&str>) -> String {
     let catalog = catalog.filter(|s| !s.is_empty());
     let schema = schema.filter(|s| !s.is_empty());
@@ -489,11 +493,46 @@ fn fill_null_catalog_schema_from_connection_ctx(
     Ok(())
 }
 
+fn fill_null_procedure_catalog_from_connection(
+    catalog_raw: &Option<String>,
+    schema_raw: &Option<String>,
+    db_name: &mut Option<String>,
+    schema_pattern: &mut Option<String>,
+    conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
+    use_current_catalog: bool,
+) -> OdbcResult<()> {
+    if catalog_raw.is_some() {
+        return Ok(());
+    }
+    let use_ctx = metadata_request_use_connection_ctx(conn_handle)?;
+    if !use_current_catalog && !use_ctx {
+        return Ok(());
+    }
+
+    let rt = global().context(OdbcRuntimeSnafu)?;
+    let info = rt.block_on(async |c| {
+        c.connection_get_info(ConnectionGetInfoRequest {
+            conn_handle: Some(conn_handle),
+            info_codes: vec![],
+            include_master_token: false,
+        })
+        .await
+    })?;
+    if db_name.is_none() {
+        *db_name = info.database;
+    }
+    if use_ctx && schema_raw.is_none() {
+        *schema_pattern = info.schema;
+    }
+    Ok(())
+}
+
 fn resolve_show_identifiers(
     catalog: Option<String>,
     schema: Option<String>,
     table: Option<&str>,
     conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
+    use_current_catalog: bool,
 ) -> OdbcResult<(Option<String>, Option<String>)> {
     if catalog.is_some() && schema.is_some() {
         return Ok((catalog, schema));
@@ -501,8 +540,9 @@ fn resolve_show_identifiers(
 
     let table_specified = table.is_some_and(|t| !t.is_empty());
     let use_ctx = metadata_request_use_connection_ctx(conn_handle)?;
-    let needs_info = catalog.is_none() || (schema.is_none() && (use_ctx || table_specified));
-    if !needs_info {
+    let fill_catalog = catalog.is_none() && (use_current_catalog || use_ctx);
+    let fill_schema = schema.is_none() && (use_ctx || table_specified);
+    if !fill_catalog && !fill_schema {
         return Ok((catalog, schema));
     }
 
@@ -516,8 +556,12 @@ fn resolve_show_identifiers(
         .await
     })?;
 
-    let catalog = catalog.or(info.database);
-    let schema = if use_ctx || table_specified {
+    let catalog = if fill_catalog {
+        catalog.or(info.database)
+    } else {
+        catalog
+    };
+    let schema = if fill_schema {
         schema.or(info.schema)
     } else {
         schema
@@ -759,6 +803,7 @@ pub fn primary_keys<E: OdbcEncoding>(
     };
     let metadata_id = inner.metadata_id;
     let stmt_handle = guard.stmt_handle;
+    let use_current_catalog = conn.use_current_catalog;
     drop(conn);
 
     if metadata_id {
@@ -790,8 +835,13 @@ pub fn primary_keys<E: OdbcEncoding>(
         (catalog_raw, schema_raw, table_raw)
     };
 
-    let (catalog_raw, schema_raw) =
-        resolve_show_identifiers(catalog_raw, schema_raw, table_raw.as_deref(), conn_handle)?;
+    let (catalog_raw, schema_raw) = resolve_show_identifiers(
+        catalog_raw,
+        schema_raw,
+        table_raw.as_deref(),
+        conn_handle,
+        use_current_catalog,
+    )?;
 
     let scope = build_show_in_scope(
         catalog_raw.as_deref(),
@@ -1217,6 +1267,7 @@ pub fn foreign_keys<E: OdbcEncoding>(
     };
     let metadata_id = inner.metadata_id;
     let stmt_handle = guard.stmt_handle;
+    let use_current_catalog = conn.use_current_catalog;
     drop(conn);
 
     if metadata_id
@@ -1258,12 +1309,14 @@ pub fn foreign_keys<E: OdbcEncoding>(
         pk_schema_raw,
         pk_table_raw.as_deref(),
         conn_handle,
+        use_current_catalog,
     )?;
     let (fk_catalog_raw, fk_schema_raw) = resolve_show_identifiers(
         fk_catalog_raw,
         fk_schema_raw,
         fk_table_raw.as_deref(),
         conn_handle,
+        use_current_catalog,
     )?;
 
     let sql = build_show_foreign_keys_command(
@@ -1587,6 +1640,7 @@ pub fn procedures<E: OdbcEncoding>(
     };
     let metadata_id = inner.metadata_id;
     let stmt_handle = guard.stmt_handle;
+    let use_current_catalog = conn.use_current_catalog;
     drop(conn);
 
     // In identifier mode (SQL_ATTR_METADATA_ID = TRUE) every argument is a
@@ -1606,24 +1660,14 @@ pub fn procedures<E: OdbcEncoding>(
     let mut schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
     let proc_pattern = catalog_arg_to_pattern(proc_raw.as_deref(), metadata_id)?;
 
-    // NULL catalog under CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX resolves to
-    // the connection's current database (and schema, if schema is also NULL);
-    // otherwise a NULL catalog enumerates every database (union all).
-    if catalog_raw.is_none() && metadata_request_use_connection_ctx(conn_handle)? {
-        let rt = global().context(OdbcRuntimeSnafu)?;
-        let info = rt.block_on(async |c| {
-            c.connection_get_info(ConnectionGetInfoRequest {
-                conn_handle: Some(conn_handle),
-                info_codes: vec![],
-                include_master_token: false,
-            })
-            .await
-        })?;
-        db_name = info.database;
-        if schema_raw.is_none() {
-            schema_pattern = info.schema;
-        }
-    }
+    fill_null_procedure_catalog_from_connection(
+        &catalog_raw,
+        &schema_raw,
+        &mut db_name,
+        &mut schema_pattern,
+        conn_handle,
+        use_current_catalog,
+    )?;
 
     let db_names = match db_name {
         Some(db) => vec![db],
@@ -2270,6 +2314,7 @@ pub fn procedure_columns<E: OdbcEncoding>(
     let metadata_id = inner.metadata_id;
     let numeric_settings = conn.numeric_settings;
     let stmt_handle = guard.stmt_handle;
+    let use_current_catalog = conn.use_current_catalog;
     drop(conn);
 
     // Identifier mode (SQL_ATTR_METADATA_ID = TRUE): catalog, schema, and proc
@@ -2290,21 +2335,14 @@ pub fn procedure_columns<E: OdbcEncoding>(
     // the signature is parsed (the type strings never reach the server query).
     let column_pattern = catalog_arg_to_pattern(column_raw.as_deref(), metadata_id)?;
 
-    if catalog_raw.is_none() && metadata_request_use_connection_ctx(conn_handle)? {
-        let rt = global().context(OdbcRuntimeSnafu)?;
-        let info = rt.block_on(async |c| {
-            c.connection_get_info(ConnectionGetInfoRequest {
-                conn_handle: Some(conn_handle),
-                info_codes: vec![],
-                include_master_token: false,
-            })
-            .await
-        })?;
-        db_name = info.database;
-        if schema_raw.is_none() {
-            schema_pattern = info.schema;
-        }
-    }
+    fill_null_procedure_catalog_from_connection(
+        &catalog_raw,
+        &schema_raw,
+        &mut db_name,
+        &mut schema_pattern,
+        conn_handle,
+        use_current_catalog,
+    )?;
 
     let db_names = match db_name {
         Some(db) => vec![db],
@@ -5629,6 +5667,12 @@ mod sqltables_tests {
             build_show_objects_sql(Some("DB"), None, None),
             "SHOW OBJECTS IN DATABASE \"DB\""
         );
+        // NULL catalog with an exact schema/table is still account-wide: default
+        // UseCurrentCatalog=false leaves catalog unconstrained.
+        assert_eq!(
+            build_show_objects_sql(None, Some("SCH"), Some("TBL")),
+            "SHOW OBJECTS LIKE 'TBL' IN ACCOUNT"
+        );
         assert_eq!(
             build_show_objects_sql(Some("DB%"), None, None),
             "SHOW OBJECTS IN ACCOUNT"
@@ -5652,6 +5696,14 @@ mod sqltables_tests {
     }
 
     #[test]
+    fn build_show_in_scope_widens_to_account_when_catalog_is_absent() {
+        assert_eq!(
+            build_show_in_scope(None, Some("SCH"), Some("TBL")),
+            "account"
+        );
+    }
+
+    #[test]
     fn build_show_columns_sql_picks_tightest_exact_scope() {
         assert_eq!(
             build_show_columns_sql(Some("DB"), Some("SCH"), Some("TBL"), Some("C%")),
@@ -5664,6 +5716,10 @@ mod sqltables_tests {
         assert_eq!(
             build_show_columns_sql(Some("DB"), None, None, None),
             "SHOW COLUMNS IN DATABASE \"DB\""
+        );
+        assert_eq!(
+            build_show_columns_sql(None, Some("SCH"), Some("TBL"), None),
+            "SHOW COLUMNS IN ACCOUNT"
         );
         assert_eq!(
             build_show_columns_sql(Some("DB%"), None, None, Some("ID")),

@@ -233,6 +233,12 @@ pub mod param_names {
     /// proxy and overrides config/env settings, mirroring legacy ODBC
     /// `AllowEmptyProxy=true`. When `false`, an empty value is ignored.
     pub const ALLOW_EMPTY_PROXY: ParamKey = ParamKey("allow_empty_proxy");
+    /// ODBC-only. When `true`, a NULL `CatalogName` on catalog functions is
+    /// replaced with the current database. When `false` (default, matching
+    /// legacy snowflake-odbc `UseCurrentCatalog`), the catalog stays
+    /// unconstrained unless `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` fills
+    /// it.
+    pub const USE_CURRENT_CATALOG: ParamKey = ParamKey("use_current_catalog");
 
     /// When `true`, run connectivity diagnostics during connect.
     /// Default `false`.
@@ -2163,6 +2169,25 @@ static PARAM_DEFS: &[ParamDef] = &[
         .mutable_after_connect(false)
         .build(),
     ParamDef::builder()
+        .canonical_name(param_names::USE_CURRENT_CATALOG.as_str())
+        // Legacy ODBC DSN `UseCurrentCatalog` (`Snowflake.h`), uppercased by
+        // the connection-string parser. ODBC-only: JDBC/Python/Node have no
+        // equivalent client property.
+        .aliases(aliases![Odbc; "USECURRENTCATALOG"])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description(
+            "When true, a NULL CatalogName on catalog functions is the current \
+             database. When false (default), the catalog is unconstrained unless \
+             CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it",
+        )
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
         .canonical_name(param_names::ENABLE_CONNECTION_DIAG.as_str())
         .value_type(ValueType::Bool)
         // No registry default: the consumer uses `.unwrap_or(false)`.  Omitting
@@ -2462,6 +2487,7 @@ mod tests {
             ("PWD", "password", &[Odbc]),
             ("PROXYWITHENV", "use_proxy_env", &[Odbc]),
             ("ALLOWEMPTYPROXY", "allow_empty_proxy", &[Odbc]),
+            ("USECURRENTCATALOG", "use_current_catalog", &[Odbc]),
             ("PRIV_KEY_FILE", "private_key_file", &[Odbc]),
             ("PRIV_KEY_BASE64", "private_key", &[Odbc]),
             ("PRIV_KEY_FILE_PWD", "private_key_password", &[Odbc]),
