@@ -332,6 +332,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bind_on_an_already_occupied_explicit_port_surfaces_port_bind_error() {
+        // Unlike bind_honors_hint_port (which probes then releases the port
+        // before binding), this test deliberately KEEPS the probe listener
+        // held for the entire test, so bind()'s own attempt to claim the
+        // same port collides for real.
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = held.local_addr().unwrap().port();
+
+        let h = hint(&format!("http://127.0.0.1:{port}/cb"));
+        match bind(Some(&h)).await {
+            Err(OAuthError::PortBind { source, .. }) => {
+                assert_eq!(
+                    source.kind(),
+                    std::io::ErrorKind::AddrInUse,
+                    "occupied explicit port must surface AddrInUse, got: {source}"
+                );
+            }
+            Err(other) => panic!("expected PortBind error, got a different error: {other:?}"),
+            Ok(_) => panic!(
+                "expected binding an already-occupied explicit port to fail, but it succeeded"
+            ),
+        }
+
+        drop(held);
+    }
+
+    #[tokio::test]
     async fn bind_with_localhost_and_explicit_port_uses_exact_port() {
         // The two contract guarantees for `oauth_redirect_uri`:
         //   1. When a port is given (e.g. `http://localhost:8001/cb`),

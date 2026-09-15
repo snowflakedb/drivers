@@ -1151,6 +1151,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resolve_client_credentials_substitutes_local_application_for_snowflake_idp() {
+        let mut config = cfg_with_token_url(server_url());
+        config.client_id = String::new();
+        config.client_secret = SensitiveString::from(String::new());
+
+        let (client_id, client_secret) = resolve_client_credentials(&config, true);
+
+        assert_eq!(client_id, "LOCAL_APPLICATION");
+        assert_eq!(client_secret, "LOCAL_APPLICATION");
+    }
+
+    #[test]
+    fn resolve_client_credentials_keeps_explicit_credentials_even_for_snowflake_idp() {
+        let mut config = cfg_with_token_url(server_url());
+        config.client_id = "explicit-cid".to_string();
+        config.client_secret = SensitiveString::from("explicit-secret".to_string());
+
+        let (client_id, client_secret) = resolve_client_credentials(&config, true);
+
+        assert_eq!(
+            client_id, "explicit-cid",
+            "an explicitly configured client_id must not be overridden even when Snowflake is the IdP"
+        );
+        assert_eq!(client_secret, "explicit-secret");
+    }
+
+    #[test]
+    fn resolve_client_credentials_leaves_empty_credentials_empty_for_external_idp() {
+        let mut config = cfg_with_token_url(server_url());
+        config.client_id = String::new();
+        config.client_secret = SensitiveString::from(String::new());
+
+        let (client_id, client_secret) = resolve_client_credentials(&config, false);
+
+        assert_eq!(
+            client_id, "",
+            "external IdPs require explicit credentials - empty values must not be substituted"
+        );
+        assert_eq!(client_secret, "");
+    }
+
     #[tokio::test]
     async fn cached_access_token_short_circuits_full_flow() {
         let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
@@ -1363,6 +1405,109 @@ mod tests {
         assert_eq!(
             acquired.refresh_token.as_ref().map(|s| s.reveal().as_str()),
             Some("RT-FRESH")
+        );
+    }
+
+    #[tokio::test]
+    async fn authorize_url_carries_pkce_client_id_scope_and_redirect_uri() {
+        // Regression guard: the generator-level PKCE tests (pkce.rs) prove
+        // S256 challenge derivation in isolation, and
+        // build_oauth_client_emits_redirect_uri_verbatim_without_trailing_slash
+        // proves redirect_uri placement separately - but nothing previously
+        // inspected the actual assembled authorize URL the browser is sent
+        // to. This drives the real interactive flow and asserts on that URL.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=authorization_code"))
+            .and(body_string_contains("code=THE-CODE"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-FRESH","refresh_token":"RT-FRESH","token_type":"Bearer","expires_in":600}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+        config.scope = Some("session:role:ANALYST".to_string());
+        config.client_store_temporary_credential = false;
+
+        let captured_url: Arc<Mutex<Option<Url>>> = Arc::new(Mutex::new(None));
+        let captured_url_for_launch = captured_url.clone();
+        let launch: BrowserLaunchFn = Box::new(move |authorize_url, redirect_uri| {
+            let captured_url = captured_url_for_launch.clone();
+            Box::pin(async move {
+                *captured_url.lock().expect("lock captured_url") = Some(authorize_url.clone());
+                let state = authorize_url
+                    .query_pairs()
+                    .find(|(k, _)| k == "state")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_default();
+                let mut s = tokio::net::TcpStream::connect((
+                    redirect_uri.host_str().unwrap(),
+                    redirect_uri.port().unwrap(),
+                ))
+                .await
+                .expect("connect loopback");
+                use tokio::io::AsyncWriteExt;
+                let req = format!(
+                    "GET /?code=THE-CODE&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+                );
+                let _ = s.write_all(req.as_bytes()).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            })
+        });
+
+        let client = reqwest::Client::new();
+        run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            None,
+            launch,
+            false,
+            None,
+        )
+        .await
+        .expect("interactive flow succeeds");
+
+        let authorize_url = captured_url
+            .lock()
+            .expect("lock captured_url")
+            .clone()
+            .expect("launch_browser must have been called with an authorize_url");
+        let params: std::collections::HashMap<String, String> = authorize_url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+
+        assert_eq!(
+            params.get("code_challenge_method").map(String::as_str),
+            Some("S256"),
+            "authorize URL must request PKCE with S256, got params: {params:?}"
+        );
+        assert!(
+            params.contains_key("code_challenge") && !params["code_challenge"].is_empty(),
+            "authorize URL must carry a non-empty code_challenge, got params: {params:?}"
+        );
+        assert_eq!(
+            params.get("client_id").map(String::as_str),
+            Some("cid"),
+            "authorize URL must carry the configured client_id, got params: {params:?}"
+        );
+        assert_eq!(
+            params.get("scope").map(String::as_str),
+            Some("session:role:ANALYST"),
+            "authorize URL must carry the configured scope, got params: {params:?}"
+        );
+        assert!(
+            params.contains_key("redirect_uri") && !params["redirect_uri"].is_empty(),
+            "authorize URL must carry a non-empty redirect_uri, got params: {params:?}"
         );
     }
 

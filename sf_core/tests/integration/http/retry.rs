@@ -4,7 +4,7 @@ use sf_core::http::retry::{HttpContext, HttpError, execute_bytes_with_retry};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
@@ -14,7 +14,7 @@ use tokio::net::TcpListener;
 #[tokio::test]
 async fn should_retry_get_after_transient_failure() {
     // Given a server that fails once then succeeds
-    let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
+    let (addr, attempts, _targets, server) = spawn_test_server(2, |attempt| async move {
         if attempt == 1 {
             b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 0\r\nConnection: close\r\n\r\n"
                 .to_vec()
@@ -42,7 +42,7 @@ async fn should_retry_get_after_transient_failure() {
 #[tokio::test]
 async fn should_fail_when_retry_after_exceeds_deadline() {
     // Given a retry policy with a tight deadline and a server that responds with a Retry-After that is after the deadline
-    let (addr, _, server) = spawn_test_server(1, |_| async move {
+    let (addr, _, _targets, server) = spawn_test_server(1, |_| async move {
         b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 5\r\nConnection: close\r\n\r\n"
             .to_vec()
     })
@@ -87,7 +87,7 @@ async fn should_fail_when_retry_after_exceeds_deadline() {
 #[tokio::test]
 async fn should_retry_idempotent_put_after_transient_failure() {
     // Given an idempotent PUT request that fails once then succeeds
-    let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
+    let (addr, attempts, _targets, server) = spawn_test_server(2, |attempt| async move {
         if attempt == 1 {
             b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 0\r\nConnection: close\r\n\r\n"
                 .to_vec()
@@ -119,7 +119,7 @@ async fn should_retry_idempotent_put_after_transient_failure() {
 #[tokio::test]
 async fn should_fail_after_reaching_max_attempts() {
     // Given a server that always fails with a retryable status
-    let (addr, attempts, server) = spawn_test_server(2, |_| async move {
+    let (addr, attempts, _targets, server) = spawn_test_server(2, |_| async move {
         b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 0\r\nConnection: close\r\n\r\n"
             .to_vec()
     })
@@ -171,7 +171,7 @@ async fn should_fail_after_reaching_max_attempts() {
 #[tokio::test]
 async fn sync_style_fails_on_transient_error() {
     // Given a server that fails once then succeeds
-    let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
+    let (addr, attempts, _targets, server) = spawn_test_server(2, |attempt| async move {
         if attempt == 1 {
             b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                 .to_vec()
@@ -197,7 +197,7 @@ async fn sync_style_fails_on_transient_error() {
 #[tokio::test]
 async fn async_style_retries_transient_error() {
     // Given a server that fails once then succeeds (same setup)
-    let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
+    let (addr, attempts, _targets, server) = spawn_test_server(2, |attempt| async move {
         if attempt == 1 {
             b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 0\r\nConnection: close\r\n\r\n"
                 .to_vec()
@@ -269,7 +269,7 @@ async fn should_retry_after_connection_reset() {
 #[tokio::test]
 async fn should_not_retry_401_unauthorized() {
     // Given a server that returns 401 Unauthorized
-    let (addr, attempts, server) = spawn_test_server(1, |_| async move {
+    let (addr, attempts, _targets, server) = spawn_test_server(1, |_| async move {
         b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 16\r\nConnection: close\r\n\r\nSession expired".to_vec()
     })
     .await;
@@ -289,10 +289,96 @@ async fn should_not_retry_401_unauthorized() {
     server.await.unwrap();
 }
 
+#[tokio::test]
+async fn should_follow_307_redirect_to_a_relative_location() {
+    // Given a server that responds with a 307 pointing at a relative path,
+    // then 200 OK on the redirected request
+    let (addr, attempts, targets, server) = spawn_test_server(2, |attempt| async move {
+        if attempt == 1 {
+            b"HTTP/1.1 307 Temporary Redirect\r\nLocation: /redirected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
+        } else {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec()
+        }
+    })
+    .await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}", addr);
+    let ctx = HttpContext::new(Method::GET, url.clone());
+
+    // When the helper executes the request
+    let body = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default())
+        .await
+        .expect("redirect to be followed and request to succeed");
+
+    // Then the client should have transparently followed the redirect and
+    // returned the final response's body
+    assert_eq!(body, b"ok");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        targets.lock().unwrap().as_slice(),
+        ["/", "/redirected"],
+        "second request must follow Location: /redirected"
+    );
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn should_follow_308_redirect_to_a_relative_location() {
+    // Given a server that responds with a 308 pointing at a relative path,
+    // then 200 OK on the redirected request
+    let (addr, attempts, targets, server) = spawn_test_server(2, |attempt| async move {
+        if attempt == 1 {
+            b"HTTP/1.1 308 Permanent Redirect\r\nLocation: /redirected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
+        } else {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec()
+        }
+    })
+    .await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}", addr);
+    let ctx = HttpContext::new(Method::GET, url.clone());
+
+    // When the helper executes the request
+    let body = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default())
+        .await
+        .expect("redirect to be followed and request to succeed");
+
+    // Then the client should have transparently followed the redirect and
+    // returned the final response's body
+    assert_eq!(body, b"ok");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        targets.lock().unwrap().as_slice(),
+        ["/", "/redirected"],
+        "second request must follow Location: /redirected"
+    );
+    server.await.unwrap();
+}
+
+fn http_request_target(request: &[u8]) -> String {
+    let first_line = request
+        .split(|&b| b == b'\n')
+        .next()
+        .and_then(|line| std::str::from_utf8(line).ok())
+        .unwrap_or("");
+    first_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("")
+        .to_string()
+}
+
 async fn spawn_test_server<F, Fut>(
     max_attempts: usize,
     responder: F,
-) -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)
+) -> (
+    SocketAddr,
+    Arc<AtomicUsize>,
+    Arc<Mutex<Vec<String>>>,
+    tokio::task::JoinHandle<()>,
+)
 where
     F: Fn(usize) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = Vec<u8>> + Send + 'static,
@@ -301,6 +387,8 @@ where
     let addr = listener.local_addr().unwrap();
     let attempts = Arc::new(AtomicUsize::new(0));
     let attempts_clone = attempts.clone();
+    let targets = Arc::new(Mutex::new(Vec::new()));
+    let targets_clone = targets.clone();
     let responder = Arc::new(responder);
 
     let handle = tokio::spawn(async move {
@@ -309,7 +397,11 @@ where
             let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
             let responder = responder.clone();
             let mut buf = [0u8; 1024];
-            let _ = stream.read(&mut buf).await;
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            targets_clone
+                .lock()
+                .unwrap()
+                .push(http_request_target(&buf[..n]));
             let response = responder(attempt).await;
             stream.write_all(&response).await.unwrap();
             let _ = stream.shutdown().await;
@@ -319,5 +411,5 @@ where
         }
     });
 
-    (addr, attempts, handle)
+    (addr, attempts, targets, handle)
 }

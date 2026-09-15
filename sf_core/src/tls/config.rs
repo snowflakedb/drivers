@@ -496,3 +496,36 @@ mod tls_version_tests {
         assert_eq!(versions[0].version, rustls::version::TLS13.version);
     }
 }
+
+#[cfg(test)]
+mod proxy_config_tests {
+    use super::*;
+
+    // ProxyConfig's Debug composes with SensitiveString, so the plaintext
+    // password cannot reach a {:?}-formatted log line.
+    #[test]
+    fn proxy_config_debug_never_leaks_the_password() {
+        const PLAINTEXT_PROXY_PASSWORD: &str = "s3cr3t-proxy-pass"; // pragma: allowlist secret
+        let cfg = ProxyConfig {
+            host: Some("proxy.example.com".to_string()),
+            port: Some(8080),
+            user: Some("proxyuser".to_string()),
+            password: Some(SensitiveString::from(PLAINTEXT_PROXY_PASSWORD)),
+            no_proxy: None,
+            use_proxy_env: false,
+            allow_empty_proxy: true,
+            explicitly_disabled: false,
+        };
+
+        let debug_output = format!("{cfg:?}");
+
+        assert!(
+            !debug_output.contains(PLAINTEXT_PROXY_PASSWORD),
+            "ProxyConfig Debug output must never contain the plaintext proxy password: {debug_output}"
+        );
+        assert!(
+            debug_output.contains("****"),
+            "ProxyConfig Debug output should show the redacted placeholder: {debug_output}"
+        );
+    }
+}

@@ -89,6 +89,32 @@ fn validate_and_log_claims(token: &str) -> Result<(), OidcAttestationError> {
 mod tests {
     use super::*;
 
+    fn config_with_token(oidc_token: Option<&str>) -> WorkloadIdentityConfig {
+        WorkloadIdentityConfig {
+            provider: crate::config::rest_parameters::WifProvider::Oidc,
+            entra_resource: None,
+            impersonation_path: Vec::new(),
+            oidc_token: oidc_token.map(SensitiveString::from),
+            aws_use_outbound_token: false,
+        }
+    }
+
+    #[test]
+    fn get_token_fails_when_no_oidc_token_configured() {
+        let config = config_with_token(None);
+        let err = get_token(&config).expect_err("OIDC provider without a token must fail");
+        assert!(matches!(err, OidcAttestationError::MissingToken { .. }));
+        assert!(err.to_string().contains("requires a pre-acquired token"));
+    }
+
+    #[test]
+    fn get_token_returns_the_configured_token() {
+        let token = make_jwt(r#"{"alg":"RS256"}"#, r#"{"sub":"user@example.com"}"#, "sig");
+        let config = config_with_token(Some(&token));
+        let returned = get_token(&config).expect("OIDC provider with a token must succeed");
+        assert_eq!(returned.reveal(), &token);
+    }
+
     fn make_jwt(header: &str, payload: &str, signature: &str) -> String {
         format!(
             "{}.{}.{}",

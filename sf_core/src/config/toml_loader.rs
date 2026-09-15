@@ -190,6 +190,32 @@ number = 42
 
     #[cfg(unix)]
     #[test]
+    fn check_file_permissions_matches_old_driver_permission_matrix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cases: &[(u32, bool)] = &[
+            (0o740, true),  // group-read, no group-write
+            (0o720, false), // group-write, no group-read
+            (0o711, true),  // group/others execute bits do not matter
+        ];
+
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("permission_matrix.toml");
+        fs::write(&file_path, "").unwrap();
+
+        for (mode, expect_allowed) in cases {
+            fs::set_permissions(&file_path, fs::Permissions::from_mode(*mode)).unwrap();
+            let result = check_file_permissions(&file_path, FilePermissionCheck::Enabled);
+            assert_eq!(
+                result.is_ok(),
+                *expect_allowed,
+                "mode {mode:o}: expected allowed={expect_allowed}, got {result:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn test_check_file_permissions_skipped_when_skip_is_true() {
         use std::os::unix::fs::PermissionsExt;
 

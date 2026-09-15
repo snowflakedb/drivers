@@ -229,6 +229,135 @@ fn empty_config_files() {
     assert!(result.is_err());
 }
 
+/// Typed TOML values stay native (int/bool/double) rather than being
+/// stringified. Uses login_timeout=1, validate_default_parameters=true,
+/// retry_backoff_factor=2.2.
+#[test]
+fn toml_preserves_typed_values_matching_old_drivers_stringified_inputs() {
+    // Given A connections.toml with int/bool/double values
+    let temp_dir = TempDir::new().unwrap();
+    let paths = make_paths(&temp_dir);
+    write_config(
+        &temp_dir,
+        "connections.toml",
+        r#"
+[testconn]
+account = "myaccount"
+login_timeout = 1
+validate_default_parameters = true
+retry_backoff_factor = 2.2
+"#,
+    );
+
+    // When sf_core loads the connection config
+    let explicit = make_explicit(&[("connection_name", "testconn")]);
+    let resolved = resolver::resolve_with_paths(&explicit, &paths, false).unwrap();
+
+    // Then values stay natively typed rather than being stringified
+    assert_eq!(
+        resolved.get(param_names::LOGIN_TIMEOUT),
+        Some(&Setting::Int(1))
+    );
+    assert_eq!(
+        resolved.get(param_names::VALIDATE_DEFAULT_PARAMETERS),
+        Some(&Setting::Bool(true))
+    );
+    assert_eq!(
+        resolved.get(param_names::RETRY_BACKOFF_FACTOR),
+        Some(&Setting::Double(2.2))
+    );
+}
+
+/// Host/User/Password/Private_key_file/Private_key_file_pwd from one TOML
+/// profile all resolve to the canonical parameter names.
+#[test]
+fn toml_resolves_all_python_style_aliases_together() {
+    // Given A connections.toml using Python-connector-style TOML keys
+    let temp_dir = TempDir::new().unwrap();
+    let paths = make_paths(&temp_dir);
+    write_config(
+        &temp_dir,
+        "connections.toml",
+        r#"
+[testconn]
+Host = "myaccount.snowflakecomputing.com"
+User = "myuser"
+Password = "mypassword"
+Private_key_file = "/path/to/key.p8"
+Private_key_file_pwd = "keypass"
+"#,
+    );
+
+    // When sf_core loads the connection config
+    let explicit = make_explicit(&[("connection_name", "testconn")]);
+    let resolved = resolver::resolve_with_paths(&explicit, &paths, false).unwrap();
+
+    // Then every alias resolves to the canonical parameter name
+    assert_eq!(
+        resolved.get(param_names::HOST),
+        Some(&Setting::String("myaccount.snowflakecomputing.com".into()))
+    );
+    assert_eq!(
+        resolved.get(param_names::USER),
+        Some(&Setting::String("myuser".into()))
+    );
+    assert_eq!(
+        resolved.get(param_names::PASSWORD),
+        Some(&Setting::String("mypassword".into()))
+    );
+    assert_eq!(
+        resolved.get(param_names::PRIVATE_KEY_FILE),
+        Some(&Setting::String("/path/to/key.p8".into()))
+    );
+    assert_eq!(
+        resolved.get(param_names::PRIVATE_KEY_PASSWORD),
+        Some(&Setting::String("keypass".into()))
+    );
+}
+
+/// ODBC-scoped TOML keys (SERVER/UID/PWD) are not recognized from TOML and
+/// stay verbatim. DATABASE/SCHEMA resolve case-insensitively from their
+/// canonical names.
+#[test]
+fn toml_odbc_scoped_keys_are_not_resolved_in_toml_context() {
+    // Given A connections.toml using ODBC-scoped DSN-style TOML keys
+    let temp_dir = TempDir::new().unwrap();
+    let paths = make_paths(&temp_dir);
+    write_config(
+        &temp_dir,
+        "connections.toml",
+        r#"
+[testconn]
+SERVER = "myaccount.snowflakecomputing.com"
+UID = "myuser"
+PWD = "mypassword"
+DATABASE = "mydb"
+SCHEMA = "myschema"
+"#,
+    );
+
+    // When sf_core loads the connection config
+    let explicit = make_explicit(&[("connection_name", "testconn")]);
+    let resolved = resolver::resolve_with_paths(&explicit, &paths, false).unwrap();
+
+    // Then ODBC-scoped aliases (SERVER/UID/PWD) are not recognized from TOML:
+    // the TOML loader uses Wrapper::Python scope, so ODBC-only aliases stay
+    // verbatim and are never mapped to the canonical host/user/password keys.
+    assert_eq!(resolved.get(param_names::HOST), None);
+    assert_eq!(resolved.get(param_names::USER), None);
+    assert_eq!(resolved.get(param_names::PASSWORD), None);
+
+    // Then canonical names (DATABASE/SCHEMA) resolve case-insensitively
+    assert_eq!(
+        resolved.get(param_names::DATABASE),
+        Some(&Setting::String("mydb".into()))
+    );
+    assert_eq!(
+        resolved.get(param_names::SCHEMA),
+        Some(&Setting::String("myschema".into()))
+    );
+}
+
 // Tests for non-connection sections
 
 #[test]

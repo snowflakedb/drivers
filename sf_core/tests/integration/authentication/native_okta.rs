@@ -197,6 +197,61 @@ fn should_fail_when_ssourl_does_not_match_configured_okta_url_origin() {
 }
 
 // =============================================================================
+// Authenticator Rejected by Snowflake
+// =============================================================================
+//
+// The authenticator-request step (step 1) can fail *logically* (HTTP 200,
+// `success: false`) rather than transport-fail — e.g. the configured
+// authenticator URL doesn't match any IdP registered for the account, or
+// isn't recognized as a supported authenticator scheme at all. Unlike the
+// other authenticator-request failure modes (IdP URL mismatch, SAML
+// postback mismatch, bad credentials), this path has no dedicated error
+// variant: Snowflake's `message` is dropped and only a generic "HTTP 400"
+// context string surfaces. These tests pin that current behavior so a
+// future fix to surface the real message is a visible diff here.
+
+#[test]
+fn should_fail_generically_when_authenticator_url_not_accepted_by_account_config() {
+    // Given Wiremock is running with Snowflake rejecting the configured authenticator
+    let fixture = OktaTestFixture::new();
+    fixture.mock.mount(okta::authenticator_request_rejected(
+        "The specified authenticator is not accepted by your Snowflake account configuration. \
+         Please contact your local system administrator to get the correct URL to use.",
+    ));
+
+    // When Trying to Connect
+    let result = fixture.connect();
+
+    // Then Connection fails, but Snowflake's specific rejection reason
+    // is not part of the surfaced error — only the generic logical-failure context is.
+    OktaTestFixture::assert_error(
+        result,
+        &["authenticator-request (logical failure)"],
+        "generic authenticator-request logical-failure error",
+    );
+}
+
+#[test]
+fn should_fail_generically_when_authenticator_value_not_supported() {
+    // Given Wiremock is running with Snowflake rejecting an unrecognized authenticator value
+    let fixture = OktaTestFixture::new();
+    fixture.mock.mount(okta::authenticator_request_rejected(
+        "The specified authenticator is not supported, authenticator=https://invalid.abc.com",
+    ));
+
+    // When Trying to Connect
+    let result = fixture.connect();
+
+    // Then Connection fails the same generic way — indistinguishable from the
+    // account-config-mismatch case above.
+    OktaTestFixture::assert_error(
+        result,
+        &["authenticator-request (logical failure)"],
+        "generic authenticator-request logical-failure error",
+    );
+}
+
+// =============================================================================
 // SAML Postback Validation
 // =============================================================================
 

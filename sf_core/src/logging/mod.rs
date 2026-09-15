@@ -301,6 +301,28 @@ mod tests {
     }
 
     #[test]
+    fn url_for_log_strips_query_string_and_fragment() {
+        assert_eq!(
+            url_for_log("https://example.com/oauth/token?token=super-secret&user=jdoe#frag"),
+            "example.com/oauth/token"
+        );
+    }
+
+    #[test]
+    fn url_for_log_returns_host_only_for_root_path() {
+        assert_eq!(
+            url_for_log("https://example.com/?token=super-secret"),
+            "example.com"
+        );
+        assert_eq!(url_for_log("https://example.com"), "example.com");
+    }
+
+    #[test]
+    fn url_for_log_returns_unknown_for_unparseable_url() {
+        assert_eq!(url_for_log("not a url"), "<unknown>");
+    }
+
+    #[test]
     fn should_map_core_info_event_from_metadata() {
         let events = capture_events(|| tracing::info!(target: "sf_core", "core info message"));
         assert_eq!(events.len(), 1);
