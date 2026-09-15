@@ -55,7 +55,7 @@
 //! gate would break documented, supported keys for no regulatory reason.
 
 use aws_lc_rs::cipher::{
-    AES_128, AES_256, DecryptionContext, PaddedBlockDecryptingKey, UnboundCipherKey,
+    AES_128, AES_192, AES_256, DecryptionContext, PaddedBlockDecryptingKey, UnboundCipherKey,
 };
 use aws_lc_rs::iv::{FixedLength, IV_LEN_128_BIT};
 use aws_lc_rs::pbkdf2;
@@ -226,13 +226,8 @@ fn decrypt_payload(
 ) -> Result<Sensitive<Vec<u8>>, PrivateKeyError> {
     match scheme {
         pbes2::EncryptionScheme::Aes128Cbc { iv } => aes_cbc_decrypt(&AES_128, key, iv, ciphertext),
+        pbes2::EncryptionScheme::Aes192Cbc { iv } => aes_cbc_decrypt(&AES_192, key, iv, ciphertext),
         pbes2::EncryptionScheme::Aes256Cbc { iv } => aes_cbc_decrypt(&AES_256, key, iv, ciphertext),
-        // AES-192 is legal in PBES2 but `aws_lc_rs::cipher` exposes no
-        // 192-bit padded-block key, and nothing emits it.
-        pbes2::EncryptionScheme::Aes192Cbc { .. } => UnsupportedCipherSnafu {
-            cipher: "AES-192-CBC",
-        }
-        .fail(),
         pbes2::EncryptionScheme::DesEde3Cbc { iv } => des_ede3_cbc_decrypt(key, iv, ciphertext),
         // Single-DES has no arm because its `pkcs5` variant is behind the
         // `des-insecure` feature we deliberately leave off: a 56-bit key is
@@ -527,6 +522,30 @@ mod tests {
             .expect("encrypted pkcs8 der");
         let loaded = load_rsa_key(&der, Some(PASSPHRASE)).expect("load AES-256-CBC DER");
         assert_recovers(&loaded, &key);
+    }
+
+    /// AES-192-CBC and AES-128-CBC are both legal PBES2 ciphers that
+    /// `openssl pkcs8 -topk8 -v2 aes-192-cbc` / `-v2 aes-128-cbc` emit, so a
+    /// key in either form loaded fine under the OpenSSL loader this replaced.
+    /// The 192-bit arm was originally omitted on the mistaken belief that
+    /// `aws_lc_rs::cipher` exposed no 192-bit key; it exposes `AES_192`, and
+    /// CBC with a 128-bit IV is a valid context for it. Both are
+    /// FIPS-approved and run wholly inside AWS-LC, so there was never a
+    /// compliance reason to refuse them -- only a parity regression to cause.
+    #[test]
+    fn aes192_and_aes128_encrypted_pkcs8_round_trip() {
+        for (label, cipher) in [
+            ("AES-192-CBC", Cipher::aes_192_cbc()),
+            ("AES-128-CBC", Cipher::aes_128_cbc()),
+        ] {
+            let key = openssl_key();
+            let pem = key
+                .private_key_to_pem_pkcs8_passphrase(cipher, PASSPHRASE.as_bytes())
+                .unwrap_or_else(|e| panic!("{label} encrypted pkcs8 pem: {e}"));
+            let loaded = load_rsa_key(&pem, Some(PASSPHRASE))
+                .unwrap_or_else(|e| panic!("load {label} PEM: {e}"));
+            assert_recovers(&loaded, &key);
+        }
     }
 
     /// 3DES is what `openssl pkcs8 -topk8 -v2 des3` produces -- the command
