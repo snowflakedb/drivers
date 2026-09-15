@@ -56,6 +56,32 @@ TEST_CASE("should set heartbeat frequency via connection string", "[session]") {
   OLD_DRIVER_ONLY("BD#57") { CHECK(value == "3600"); }
 }
 
+TEST_CASE("should set CLIENT_PREFETCH_THREADS via connection string", "[session]") {
+  // Given Snowflake client is logged in with connection option CLIENT_PREFETCH_THREADS set to 5
+  auto conn_str = get_connection_string() + "CLIENT_PREFETCH_THREADS=5;";
+  Connection conn(conn_str);
+
+  // When Query "SHOW PARAMETERS LIKE 'CLIENT_PREFETCH_THREADS'" is executed
+  auto stmt = conn.execute_fetch("SHOW PARAMETERS LIKE 'CLIENT_PREFETCH_THREADS'");
+
+  // Then the session parameter value should be "5"
+  auto value = get_data<SQL_C_CHAR>(stmt, 2);
+  CHECK(value == "5");
+}
+
+TEST_CASE("should set CLIENT_PREFETCH_THREADS via ALTER SESSION", "[session]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When CLIENT_PREFETCH_THREADS is set to 7 with ALTER SESSION
+  conn.execute("ALTER SESSION SET CLIENT_PREFETCH_THREADS = 7");
+
+  // Then the session parameter value should be "7"
+  auto stmt = conn.execute_fetch("SHOW PARAMETERS LIKE 'CLIENT_PREFETCH_THREADS'");
+  auto value = get_data<SQL_C_CHAR>(stmt, 2);
+  CHECK(value == "7");
+}
+
 TEST_CASE("should report canonical AUTOCOMMIT values through SQLGetConnectAttr", "[session][autocommit]") {
   struct TestCase {
     const char* value;
