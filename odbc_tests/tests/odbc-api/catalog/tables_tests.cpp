@@ -506,16 +506,35 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: metadata_id=TRUE treats _ an
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: metadata_id=TRUE with NULL CatalogName returns HY009",
                  "[odbc-api][catalog][tables][error]") {
-  // Given SQL_ATTR_METADATA_ID is enabled
   SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // When SQLTables is called with NULL CatalogName (identifier required)
   ret = SQLTables(stmt_handle(), nullptr, 0, sqlchar(schema_name()), SQL_NTS, sqlchar(readonly_db::BASIC_TABLE),
                   SQL_NTS, nullptr, 0);
 
-  // Then HY009 (Invalid use of null pointer) is returned
   REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLTables: metadata_id=TRUE with NULL CatalogName returns HY009 when UseCurrentCatalog is true",
+                 "[odbc-api][catalog][tables][error]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLTables(stmt_handle(), nullptr, 0, sqlchar(schema_name()), SQL_NTS, sqlchar(readonly_db::BASIC_TABLE),
+                  SQL_NTS, nullptr, 0);
+
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLTables: empty CatalogName is not replaced with the current database",
+                 "[odbc-api][catalog][tables]") {
+  SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(""), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                            sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
 }
 
 // Identifier mode folds unquoted identifiers to uppercase, so a lowercase
@@ -638,15 +657,12 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Schema wildcard pattern retu
 // SQLTables - NULL semantics
 // ============================================================================
 
-TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: NULL catalog/schema/table/type returns connection-context tables",
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLTables: NULL catalog/schema/table/type returns connection-context tables",
                  "[odbc-api][catalog][tables]") {
-  // Given all four arguments are NULL: the catalog resolves to the connection's
-  // current database (legacy ODBC semantics), not account-wide. A NULL schema is
-  // left NULL, so the result spans all schemas in that database.
   SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // When fetching results, at least the known table in the current schema exists
   bool found_table = false;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS) {
     const ColumnValue cat = sqltables_get_column(stmt_handle(), 1);
@@ -660,15 +676,9 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: NULL catalog/schema/table/ty
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: NULL schema spans all schemas in the connected database",
                  "[odbc-api][catalog][tables]") {
-  // The connection's current schema is CATALOGTESTS, but a NULL schema must not
-  // narrow results to it: legacy substitutes the catalog only (GetFilterForNullCatalog)
-  // and leaves a NULL schema NULL, so SHOW runs IN DATABASE and spans every schema.
-  // Guards against re-introducing current-schema over-substitution in the wrapper.
-  SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, nullptr, 0, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Expect objects from the current schema (CATALOGTESTS) AND a second schema
-  // (DATATYPETESTS) in the same database to both be present.
   bool found_current_schema = false;
   bool found_second_schema = false;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS) {

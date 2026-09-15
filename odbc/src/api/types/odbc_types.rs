@@ -1741,6 +1741,7 @@ impl Dbc {
                 metadata_id: false,
                 driver_section: None,
                 dsn_name: None,
+                use_current_catalog: false,
             }),
         }
     }
@@ -1796,6 +1797,9 @@ pub struct Connection {
     /// `DSN=...`). Used to find the driver short name via `odbc.ini`
     /// when `driver_section` is absent.
     pub dsn_name: Option<String>,
+    /// Legacy ODBC `UseCurrentCatalog` (default false). When true, a NULL
+    /// CatalogName on catalog functions is replaced with the current database.
+    pub use_current_catalog: bool,
 }
 
 // Safety: Connection contains raw pointers (quiet_mode: sql::Pointer) that are !Send + !Sync.

@@ -706,6 +706,10 @@ fn connect_with_params(
         connection.pre_connection_attrs.clone()
     };
 
+    let use_current_catalog = options
+        .get(param_names::USE_CURRENT_CATALOG.as_str())
+        .is_some_and(config_setting_bool);
+
     let (db_handle, conn_handle) = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         let db_handle = c
             .database_new(DatabaseNewRequest {})
@@ -779,6 +783,7 @@ fn connect_with_params(
         // A freshly-established session has no open transaction, regardless of
         // any stale flag left on a reused handle from a prior connection.
         c.open_transaction = false;
+        c.use_current_catalog = use_current_catalog;
     }
 
     // Fetch the initial catalog value. Failure here is non-fatal: the connection is
@@ -3011,6 +3016,50 @@ mod tests {
         assert_eq!(config_string(&options, "no_proxy"), Some("*.corp"));
         assert_eq!(config_string(&options, "use_proxy_env"), Some("true"));
         assert_eq!(config_string(&options, "allow_empty_proxy"), Some("false"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_use_current_catalog() {
+        for spelling in [
+            "UseCurrentCatalog",
+            "USECURRENTCATALOG",
+            "use_current_catalog",
+        ] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                spelling.to_owned(),
+                "true".to_owned(),
+            )]));
+            assert_eq!(
+                config_string(&options, "use_current_catalog"),
+                Some("true"),
+                "{spelling} should normalize to the canonical key"
+            );
+            assert!(!options.contains_key("USECURRENTCATALOG"));
+        }
+    }
+
+    #[test]
+    fn parse_use_current_catalog_bool_values() {
+        for (raw, expected) in [
+            ("true", true),
+            ("TRUE", true),
+            ("1", false),
+            ("false", false),
+            ("0", false),
+            ("garbage", false),
+        ] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                "UseCurrentCatalog".to_owned(),
+                raw.to_owned(),
+            )]));
+            assert_eq!(
+                options
+                    .get("use_current_catalog")
+                    .is_some_and(config_setting_bool),
+                expected,
+                "{raw}"
+            );
+        }
     }
 
     #[test]

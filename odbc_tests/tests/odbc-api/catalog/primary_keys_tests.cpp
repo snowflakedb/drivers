@@ -221,7 +221,8 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLPrimaryKeys: Various parameter combi
   REQUIRE(count2 == 1);
 }
 
-TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLPrimaryKeys: NULL catalog and schema resolve from connection context",
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLPrimaryKeys: NULL catalog and schema resolve from connection context",
                  "[odbc-api][primarykeys][catalog]") {
   SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);

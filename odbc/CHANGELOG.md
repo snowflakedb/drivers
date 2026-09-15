@@ -2,9 +2,14 @@
 
 ## Upcoming Release
 
+Breaking changes:
+
+- Changed catalog functions so a NULL `CatalogName` is no longer replaced with the current database by default. Set `UseCurrentCatalog=true` (or enable `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX`) to restore that substitution. Unconstrained NULL-catalog searches issue account-wide `SHOW` statements. (snowflakedb/drivers#2005)
+
 New features:
 
 - Added a `PUT_GET_MAX_ATTEMPTS` connection parameter for the shared PUT/GET attempt limit, and accepted the 3.x `PUT_MAXRETRIES` / `GET_MAXRETRIES` spellings as aliases that warn (`01000`) on use. (snowflakedb/drivers#1884)
+- Added the ODBC `UseCurrentCatalog` connection parameter (default false), matching the 3.x DSN key. When true, a NULL `CatalogName` on `SQLTables`, `SQLColumns`, `SQLPrimaryKeys`, `SQLForeignKeys`, `SQLProcedures`, and `SQLProcedureColumns` is the current database. (snowflakedb/drivers#2005)
 
 Changes:
 
@@ -12,6 +17,7 @@ Changes:
 - Removed `Tracing(0-6)` field from the Windows ODBC DSN setup dialog; driver logging uses `sf.odbc.ini` (`LogLevel`, `LogPath`) instead. Legacy `TRACING` values in a DSN or connection string are ignored. (snowflakedb/drivers#2022)
 
 Bug fixes:
+
 - Fixed `SQL_C_DEFAULT` on catalog `SMALLINT` and `INTEGER` columns so `SQLGetTypeInfo` and `SQLColumns` return binary integers instead of failing with SQLSTATE 22003. (snowflakedb/drivers#1896)
 
 ## v4.0.0-rc3

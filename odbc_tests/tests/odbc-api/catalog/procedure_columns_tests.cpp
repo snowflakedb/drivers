@@ -119,6 +119,46 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Returns parameters
   REQUIRE(ret == SQL_NO_DATA);
 }
 
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLProcedureColumns: NULL CatalogName returns the current database procedure columns",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), nullptr, 0, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::MULTI_PARAM_PROC), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  char procCat[256];
+  std::memset(procCat, 0xFF, sizeof(procCat));
+  SQLLEN procCatInd = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 1, SQL_C_CHAR, procCat, sizeof(procCat), &procCatInd) == SQL_SUCCESS);
+  REQUIRE(procCatInd != SQL_NULL_DATA);
+  REQUIRE(std::string(procCat) == database_name());
+}
+
+TEST_CASE_METHOD(UseCurrentCatalogScratchDbStmtFixture,
+                 "SQLProcedureColumns: UseCurrentCatalog=true does not reach a procedure in another database",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  const std::string fqn = std::string(READONLY_DB_NAME) + "." + READONLY_SCHEMA_NAME + "." + readonly_db::BASIC_TABLE;
+  const std::string probe = "SELECT 1 FROM " + fqn + " WHERE 1=0";
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(probe.c_str()), SQL_NTS);
+  if (!SQL_SUCCEEDED(ret)) {
+    FAIL("Readonly metadata DB not provisioned (" << fqn
+                                                  << " not found). "
+                                                     "Build with -DBUILD_SETUP_TOOLS=ON and run: "
+                                                     "ctest --test-dir cmake-build -R setup_readonly_db");
+  }
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLProcedureColumns(stmt_handle(), nullptr, 0, sqlchar(READONLY_SCHEMA_NAME), SQL_NTS,
+                            sqlchar(readonly_db::MULTI_PARAM_PROC), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Non-existent procedure returns empty result set",
                  "[odbc-api][procedurecolumns][catalog]") {
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,

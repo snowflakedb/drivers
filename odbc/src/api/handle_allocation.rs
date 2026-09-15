@@ -108,6 +108,7 @@ pub fn alloc_connection(env_id: HandleId) -> OdbcResult<sql::Handle> {
             metadata_id: false,
             driver_section: None,
             dsn_name: None,
+            use_current_catalog: false,
         }),
     };
     let dbc_handle = global().context(OdbcRuntimeSnafu)?.dbc_registry.add(dbc)?;

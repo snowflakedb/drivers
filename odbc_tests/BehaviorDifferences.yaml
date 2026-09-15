@@ -1623,27 +1623,25 @@ behavior_differences:
 
   88:
     name: "SQLForeignKeys resolves NULL FK catalog and schema from connection context"
-    status: allowed
-    type: bugfix
+    status: fixed
+    type: bug
     reviewed: true
     is_breaking_change: true
     impact: low
     status_rationale: |
-      This is a parameter gating correct behavior. It's worth dropping it to have better consistency with the ODBC API.
+      Default NULL-catalog handling now matches the 3.x driver. Catalog fill for
+      SQLForeignKeys (and SQLPrimaryKeys) happens when UseCurrentCatalog is true or
+      CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX is enabled, not on every NULL catalog.
     old_driver_behavior: |
       When only FKTableName is supplied with NULL FKCatalogName and NULL FKSchemaName, the reference
-      driver's result depends on the account's CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX session
-      parameter. With it disabled the driver returns an empty result set because it does not resolve
-      the FK-side identifiers from the connection context; with it enabled the FK_CHILD row is
-      returned.
+      driver's result depends on UseCurrentCatalog and CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX.
+      With both disabled the catalog stays unconstrained. With UseCurrentCatalog=true (or CTX
+      enabled) the FK_CHILD row is returned from the current database.
     new_driver_behavior: |
-      NULL FK catalog and schema are always resolved from the connection context (the catalog from the
-      current database, and the schema because a table name was supplied), and client-side filtering
-      scopes the result to the requested FK table, so the FK_CHILD row is returned regardless of the
-      session parameter.
+      The same knobs apply. UseCurrentCatalog defaults to false, matching the 3.x DSN
+      parameter. Schema is still filled when a table name is supplied.
     description: |
-      Aligns FK-side identifier resolution with SQLPrimaryKeys and the ODBC catalog-function contract
-      for ordinary (non-pattern) arguments.
+      Restores the 3.x UseCurrentCatalog gate that 4.x had dropped (always filling catalog).
 
   89:
     name: "SQLForeignKeys metadata_id=TRUE allows NULL identifiers on the unspecified side"

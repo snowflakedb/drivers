@@ -15,6 +15,7 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "SessionParameterOverride.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -50,11 +51,41 @@ static std::string to_lower_copy(const std::string& s) {
   return out;
 }
 
+struct ColumnNameAndType {
+  std::string catalog;
+  std::string name;
+  SQLSMALLINT data_type = 0;
+  bool operator==(const ColumnNameAndType& other) const {
+    return catalog == other.catalog && name == other.name && data_type == other.data_type;
+  }
+};
+
+static std::vector<ColumnNameAndType> sqlcolumns_drain_name_and_type(SQLHSTMT stmt) {
+  std::vector<ColumnNameAndType> rows;
+  while (true) {
+    SQLRETURN ret = SQLFetch(stmt);
+    if (ret == SQL_NO_DATA) {
+      break;
+    }
+    REQUIRE(ret == SQL_SUCCESS);
+
+    const auto tableCat = sqlcolumns_get_column(stmt, 1);
+    const auto columnName = sqlcolumns_get_column(stmt, 4);
+    SQLSMALLINT dataType = static_cast<SQLSMALLINT>(0x7FFF);
+    SQLLEN dataTypeInd = 0;
+    ret = SQLGetData(stmt, 5, SQL_C_SSHORT, &dataType, 0, &dataTypeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(dataTypeInd == sizeof(SQLSMALLINT));
+    rows.push_back({tableCat.text, columnName.text, dataType});
+  }
+  return rows;
+}
+
 // ============================================================================
 // SQLColumns - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set has correct number of columns",
+TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture, "SQLColumns: Result set has correct number of columns",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -66,7 +97,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set has correct numb
   REQUIRE(numCols == 19);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture, "SQLColumns: Result set column names match ODBC 3.x spec",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -101,7 +132,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set column names mat
 // (not the DATA_TYPE / TYPE_NAME cell values describing user table columns).
 // Match the reference driver catalog IRD: string cols = SQL_WVARCHAR; numerics =
 // SMALLINT / INTEGER (NUM_PREC_RADIX is INTEGER on the reference driver).
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: result-set IRD concise types match reference driver",
+TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture, "SQLColumns: result-set IRD concise types match reference driver",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -997,6 +1028,144 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: NULL ColumnName returns all
   REQUIRE(rowCount == 2);
 }
 
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLColumns: NULL CatalogName returns the current database table's columns",
+                 "[odbc-api][columns][catalog]") {
+  char dbName[256];
+  std::memset(dbName, 0xFF, sizeof(dbName));
+  SQLSMALLINT nameLen = 0;
+  SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_DATABASE_NAME, dbName, sizeof(dbName), &nameLen);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(nameLen > 0);
+  REQUIRE(std::string(dbName) == database_name());
+
+  ret = SQLColumns(stmt_handle(), nullptr, SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                   sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, nullptr, SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const auto nullCatalogRows = sqlcolumns_drain_name_and_type(stmt_handle());
+  REQUIRE(nullCatalogRows.size() == 4);
+  REQUIRE(nullCatalogRows[0].catalog == database_name());
+  REQUIRE(nullCatalogRows[0].name == "ID");
+  REQUIRE(nullCatalogRows[1].name == "NAME");
+  REQUIRE(nullCatalogRows[2].name == "PRICE");
+  REQUIRE(nullCatalogRows[3].name == "ACTIVE");
+
+  ret = SQLCloseCursor(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                   sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, nullptr, SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  const auto explicitCatalogRows = sqlcolumns_drain_name_and_type(stmt_handle());
+  REQUIRE(explicitCatalogRows == nullCatalogRows);
+}
+
+TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture,
+                 "SQLColumns: UseCurrentCatalog=true does not reach a table in another database",
+                 "[odbc-api][columns][catalog]") {
+  char dbName[256];
+  std::memset(dbName, 0xFF, sizeof(dbName));
+  SQLSMALLINT nameLen = 0;
+  SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_DATABASE_NAME, dbName, sizeof(dbName), &nameLen);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(nameLen > 0);
+  if (to_lower_copy(std::string(dbName)) == to_lower_copy(READONLY_DB_NAME)) {
+    SKIP("The default DSN is connected to " << READONLY_DB_NAME
+                                            << "; this case needs a current database that does not hold the table");
+  }
+
+  const std::string fqn =
+      std::string(READONLY_DB_NAME) + "." + READONLY_SCHEMA_NAME + "." + readonly_db::MULTI_TYPE_TABLE;
+  const std::string probe = "SELECT 1 FROM " + fqn + " WHERE 1=0";
+  ret = SQLExecDirect(stmt_handle(), sqlchar(probe.c_str()), SQL_NTS);
+  if (!SQL_SUCCEEDED(ret)) {
+    FAIL("Readonly metadata DB not provisioned (" << fqn
+                                                  << " not found). "
+                                                     "Build with -DBUILD_SETUP_TOOLS=ON and run: "
+                                                     "ctest --test-dir cmake-build -R setup_readonly_db");
+  }
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLColumns(stmt_handle(), nullptr, SQL_NTS, sqlchar(READONLY_SCHEMA_NAME), SQL_NTS,
+                   sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, nullptr, SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  const auto rows = sqlcolumns_drain_name_and_type(stmt_handle());
+  CHECK(rows.empty());
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLColumns: explicit CatalogName finds columns with UseCurrentCatalog at its default",
+                 "[odbc-api][columns][catalog]") {
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                             sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, nullptr, SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  const auto rows = sqlcolumns_drain_name_and_type(stmt_handle());
+  REQUIRE(rows.size() == 4);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLColumns: metadata_id=TRUE with NULL CatalogName returns HY009 when UseCurrentCatalog is true",
+                 "[odbc-api][columns][catalog][error]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLColumns(stmt_handle(), nullptr, 0, sqlchar(schema_name()), SQL_NTS, sqlchar(readonly_db::MULTI_TYPE_TABLE),
+                   SQL_NTS, sqlchar("ID"), SQL_NTS);
+
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills a NULL catalog",
+                 "[odbc-api][columns][catalog]") {
+  SessionParameterOverride ctx(stmt_handle(), "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "TRUE");
+  REQUIRE(ctx.is_active());
+
+  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                             sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, nullptr, SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  const auto rows = sqlcolumns_drain_name_and_type(stmt_handle());
+  REQUIRE(rows.size() == 4);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLColumns: CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX does not reach a table in another database",
+                 "[odbc-api][columns][catalog]") {
+  char dbName[256];
+  std::memset(dbName, 0xFF, sizeof(dbName));
+  SQLSMALLINT nameLen = 0;
+  SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_DATABASE_NAME, dbName, sizeof(dbName), &nameLen);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(nameLen > 0);
+  if (to_lower_copy(std::string(dbName)) == to_lower_copy(READONLY_DB_NAME)) {
+    SKIP("The default DSN is connected to " << READONLY_DB_NAME
+                                            << "; this case needs a current database that does not hold the table");
+  }
+
+  const std::string fqn =
+      std::string(READONLY_DB_NAME) + "." + READONLY_SCHEMA_NAME + "." + readonly_db::MULTI_TYPE_TABLE;
+  const std::string probe = "SELECT 1 FROM " + fqn + " WHERE 1=0";
+  ret = SQLExecDirect(stmt_handle(), sqlchar(probe.c_str()), SQL_NTS);
+  if (!SQL_SUCCEEDED(ret)) {
+    FAIL("Readonly metadata DB not provisioned (" << fqn
+                                                  << " not found). "
+                                                     "Build with -DBUILD_SETUP_TOOLS=ON and run: "
+                                                     "ctest --test-dir cmake-build -R setup_readonly_db");
+  }
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SessionParameterOverride ctx(stmt_handle(), "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "TRUE");
+  REQUIRE(ctx.is_active());
+
+  ret = SQLColumns(stmt_handle(), nullptr, SQL_NTS, sqlchar(READONLY_SCHEMA_NAME), SQL_NTS,
+                   sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, nullptr, SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  const auto rows = sqlcolumns_drain_name_and_type(stmt_handle());
+  CHECK(rows.empty());
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Specific ColumnName filters results",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
@@ -1102,7 +1271,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Can call multiple times on 
   REQUIRE(count2 == 1);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: SQLRowCount after catalog function call",
+TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture, "SQLColumns: SQLRowCount after catalog function call",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -1192,7 +1361,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative ColumnName
   }
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: 24000 - Cursor already open",
+TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture, "SQLColumns: 24000 - Cursor already open",
                  "[odbc-api][columns][catalog][error]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
