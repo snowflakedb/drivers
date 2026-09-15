@@ -2817,7 +2817,7 @@ mod tests {
                 key_prefix: "prefix/".to_string(),
                 region: "us-east-1".to_string(),
                 creds: CloudCredentials::S3 {
-                    aws_key_id: "AKIA-TEST".to_string(),
+                    aws_key_id: "AKIA-TEST".into(),
                     aws_secret_key: crate::sensitive::SensitiveString::from("secret".to_string()),
                     aws_token: crate::sensitive::SensitiveString::from("token".to_string()),
                 },
@@ -4421,7 +4421,7 @@ mod tests {
             key_prefix: "p".to_string(),
             region: "us-east-1".to_string(),
             creds: CloudCredentials::S3 {
-                aws_key_id: String::new(),
+                aws_key_id: String::new().into(),
                 aws_secret_key: SensitiveString::from(String::new()),
                 aws_token: SensitiveString::from(String::new()),
             },
@@ -4592,7 +4592,7 @@ mod tests {
     ) -> SingleUploadData {
         let creds = match location_type {
             LocationType::S3 => CloudCredentials::S3 {
-                aws_key_id: "AKIA-TEST".to_string(),
+                aws_key_id: "AKIA-TEST".into(),
                 aws_secret_key: SensitiveString::from("secret".to_string()),
                 aws_token: SensitiveString::from("token".to_string()),
             },

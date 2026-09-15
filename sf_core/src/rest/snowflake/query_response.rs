@@ -1199,7 +1199,8 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
                     .context(MissingParameterSnafu {
                         parameter: "credentials -> aws key id",
                     })?
-                    .clone(),
+                    .clone()
+                    .into(),
                 aws_secret_key: creds_data
                     .aws_secret_key
                     .as_ref()

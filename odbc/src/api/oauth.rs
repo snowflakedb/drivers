@@ -14,6 +14,8 @@ pub fn should_persist_to_dsn(key: &str) -> bool {
     !registry().is_sensitive_for(Wrapper::Odbc, key)
 }
 
+const CONSERVATIVE_LOG_REDACT: &[&str] = &["OAUTH_CLIENT_ID"];
+
 /// Returns a borrowed view of `params` with the value of every key the
 /// parameter registry marks sensitive replaced by `"****"`; no allocation is
 /// performed in either branch.
@@ -28,7 +30,11 @@ pub fn redacted_param_map(
     params
         .iter()
         .map(|(k, v)| {
-            let value: std::borrow::Cow<'_, str> = if registry.is_sensitive_for(Wrapper::Odbc, k) {
+            let should_redact = registry.is_sensitive_for(Wrapper::Odbc, k)
+                || CONSERVATIVE_LOG_REDACT
+                    .iter()
+                    .any(|rk| k.eq_ignore_ascii_case(rk));
+            let value: std::borrow::Cow<'_, str> = if should_redact {
                 std::borrow::Cow::Borrowed("****")
             } else {
                 std::borrow::Cow::Borrowed(v.as_str())
@@ -79,12 +85,6 @@ mod tests {
             redacted.get(&"UID".to_owned()).map(|v| v.as_ref()),
             Some("joe")
         );
-        assert_eq!(
-            redacted
-                .get(&"OAUTH_CLIENT_ID".to_owned())
-                .map(|v| v.as_ref()),
-            Some("abc")
-        );
         for sensitive in [
             "PWD",
             "PASSWORD",
@@ -92,6 +92,7 @@ mod tests {
             "PRIV_KEY_PWD",
             "PRIV_KEY_BASE64",
             "PASSCODE",
+            "OAUTH_CLIENT_ID",
             "OAUTH_CLIENT_SECRET",
             "TOKEN",
         ] {

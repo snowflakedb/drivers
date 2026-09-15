@@ -373,7 +373,7 @@ impl StageTransport {
 pub enum CloudCredentials {
     /// AWS S3 credentials (access key + secret + session token).
     S3 {
-        aws_key_id: String,
+        aws_key_id: SensitiveString,
         aws_secret_key: SensitiveString,
         aws_token: SensitiveString,
     },
@@ -946,6 +946,24 @@ mod tests {
         assert!(
             gen2 > gen1,
             "second store must strictly advance the generation"
+        );
+    }
+
+    #[test]
+    fn cloud_credentials_s3_debug_redacts_aws_key_id() {
+        let creds = CloudCredentials::S3 {
+            aws_key_id: "AKIAIOSFODNN7EXAMPLE".into(),
+            aws_secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".into(),
+            aws_token: "session-token".into(),
+        };
+        let debug = format!("{creds:?}");
+        assert!(
+            !debug.contains("AKIAIOSFODNN7EXAMPLE"),
+            "aws_key_id must not appear in Debug output: {debug}"
+        );
+        assert!(
+            debug.contains("****"),
+            "Debug output must contain redaction marker: {debug}"
         );
     }
 }

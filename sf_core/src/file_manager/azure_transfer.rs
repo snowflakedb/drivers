@@ -2067,7 +2067,7 @@ mod tests {
     fn resolve_with_s3_creds_returns_error() {
         let stage = make_stage_info(StageInfoOverrides {
             creds: Some(CloudCredentials::S3 {
-                aws_key_id: "key".to_string(),
+                aws_key_id: "key".into(),
                 aws_secret_key: SensitiveString::from("secret"),
                 aws_token: SensitiveString::from("token"),
             }),

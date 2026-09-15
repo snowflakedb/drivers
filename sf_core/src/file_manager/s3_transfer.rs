@@ -455,7 +455,7 @@ where
 #[cfg(test)]
 fn aws_key_id(creds: &CloudCredentials) -> Option<&str> {
     match creds {
-        CloudCredentials::S3 { aws_key_id, .. } => Some(aws_key_id.as_str()),
+        CloudCredentials::S3 { aws_key_id, .. } => Some(aws_key_id.reveal().as_str()),
         _ => None,
     }
 }
@@ -1690,7 +1690,7 @@ async fn create_s3_client(
     };
 
     let credentials = Credentials::new(
-        aws_key_id,
+        aws_key_id.reveal(),
         aws_secret_key.reveal(),
         Some(aws_token.reveal().to_string()),
         None,
@@ -2187,7 +2187,7 @@ mod tests {
             key_prefix: "prefix/".to_string(),
             region: "us-east-1".to_string(),
             creds: CloudCredentials::S3 {
-                aws_key_id: "k".to_string(),
+                aws_key_id: "k".into(),
                 aws_secret_key: SensitiveString::from("s"),
                 aws_token: SensitiveString::from("t"),
             },
@@ -2397,7 +2397,7 @@ mod tests {
 
     fn s3_creds(key: &str) -> CloudCredentials {
         CloudCredentials::S3 {
-            aws_key_id: key.to_string(),
+            aws_key_id: key.into(),
             aws_secret_key: "secret".to_string().into(),
             aws_token: "token".to_string().into(),
         }
