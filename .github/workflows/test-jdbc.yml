@@ -488,7 +488,11 @@ jobs:
 
   jdbc_tests_reference:
     if: inputs.run_jdbc_reference
-    name: JDBC Old Driver Reference Tests
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp, azure]
+    name: JDBC Old Driver Reference Tests (${{ matrix.cloud }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -516,7 +520,7 @@ jobs:
             ${{ runner.os }}-gradle-
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
           PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
@@ -529,13 +533,14 @@ jobs:
           cd jdbc
           bash ./ci/gradlew_with_resolve_retry.sh referenceTest jacocoReferenceReport
         env:
+          CLOUD_PROVIDER: ${{ matrix.cloud }}
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
       - name: Upload OLD reference artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: jdbc-reference-artifacts
+          name: jdbc-reference-artifacts-${{ matrix.cloud }}
           path: |
             jdbc/build/test-results/referenceTest/**/*.xml
             jdbc/build/jacoco/referenceTest.exec
@@ -547,7 +552,7 @@ jobs:
         run: |
           python3 jdbc/ci/reference_tests/extract_coverage.py \
             --report jdbc/build/reports/jacoco/referenceTest/coverage.xml \
-            --label "OLD JDBC reference" \
+            --label "OLD JDBC reference (${{ matrix.cloud }})" \
             --summary "$GITHUB_STEP_SUMMARY" \
             --allow-missing
 
