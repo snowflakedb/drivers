@@ -10,8 +10,6 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("Replay: excel powerquery raw_sql no_data", "[excel][powerquery][raw_sql]") {
-  // Geography type not implemented yet, thus falls back to text and causes issues
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;

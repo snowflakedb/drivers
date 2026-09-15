@@ -11,19 +11,6 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concurrent_recordsets]") {
-  // Blocked on the new driver. Required to unblock:
-  //   - SQLGetInfo info types (S1C00 - unknown): SQL_ACTIVE_STATEMENTS,
-  //     SQL_DATABASE_NAME, SQL_DEFAULT_TXN_ISOLATION, SQL_TXN_CAPABLE,
-  //     SQL_TXN_ISOLATION_OPTION, SQL_SCROLL_OPTIONS, SQL_SCROLL_CONCURRENCY,
-  //     SQL_POS_OPERATIONS, SQL_LOCK_TYPES, SQL_STATIC_SENSITIVITY,
-  //     SQL_BOOKMARK_PERSISTENCE, SQL_MULT_RESULT_SETS, SQL_NEED_LONG_DATA_LEN,
-  //     SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES1, SQL_STATIC_CURSOR_ATTRIBUTES1,
-  //     SQL_STATIC_CURSOR_ATTRIBUTES2, SQL_KEYSET_CURSOR_ATTRIBUTES1,
-  //     SQL_KEYSET_CURSOR_ATTRIBUTES2.
-  //   - SQLColAttribute fields (S1092 - unknown): SQL_DESC_LABEL, SQL_DESC_UPDATABLE.
-  //   - SQLSetStmtAttr attribute (S1092 - unknown): SQL_ROWSET_SIZE.
-  // Re-run replay_excel against the new driver and remove this skip once implemented.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;
