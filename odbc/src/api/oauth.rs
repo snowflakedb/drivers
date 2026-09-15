@@ -60,6 +60,7 @@ mod tests {
         let params: HashMap<String, String> = [
             ("UID", "joe"),
             ("PWD", "hunter2"),
+            ("PASSWORD", "hunter3"),
             ("PRIV_KEY_FILE_PWD", "kpwd"),
             ("PRIV_KEY_PWD", "kpwd2"),
             ("PRIV_KEY_BASE64", "AAA="),
@@ -86,6 +87,7 @@ mod tests {
         );
         for sensitive in [
             "PWD",
+            "PASSWORD",
             "PRIV_KEY_FILE_PWD",
             "PRIV_KEY_PWD",
             "PRIV_KEY_BASE64",
@@ -108,6 +110,7 @@ mod tests {
         let params: HashMap<String, String> = [
             ("oauth_client_secret", "shhh"),
             ("Pwd", "hunter2"),
+            ("Password", "hunter3"),
             ("token", "jwt.value"),
         ]
         .into_iter()

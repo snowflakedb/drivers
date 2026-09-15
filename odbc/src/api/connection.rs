@@ -3279,6 +3279,7 @@ mod tests {
         let params = HashMap::from([
             ("UID".to_owned(), "joe".to_owned()),
             ("PWD".to_owned(), unique_marker.to_owned()),
+            ("PASSWORD".to_owned(), unique_marker.to_owned()),
             ("PRIV_KEY_FILE_PWD".to_owned(), unique_marker.to_owned()),
             ("PRIV_KEY_PWD".to_owned(), unique_marker.to_owned()),
             ("PRIV_KEY_BASE64".to_owned(), unique_marker.to_owned()),
@@ -3292,19 +3293,59 @@ mod tests {
             !rendered.contains(unique_marker),
             "redacted map leaked sensitive value: {rendered}"
         );
-        // Spot-check a few keys still produce the redaction marker.
-        for sensitive in ["PWD", "OAUTH_CLIENT_SECRET", "TOKEN"] {
+        for sensitive in ["PWD", "PASSWORD", "OAUTH_CLIENT_SECRET", "TOKEN"] {
             assert_eq!(
                 redacted.get(&sensitive.to_owned()).map(|v| v.as_ref()),
                 Some("****"),
                 "{sensitive} should render as ****"
             );
         }
-        // Non-sensitive UID is preserved verbatim.
         assert_eq!(
             redacted.get(&"UID".to_owned()).map(|v| v.as_ref()),
             Some("joe")
         );
+    }
+
+    #[test]
+    fn redacted_param_map_redacts_password_alias() {
+        let unique_marker = "DO_NOT_LEAK_PASSWORD_ALIAS_42";
+        let params = HashMap::from([
+            ("UID".to_owned(), "joe".to_owned()),
+            ("PASSWORD".to_owned(), unique_marker.to_owned()),
+        ]);
+        let redacted = oauth::redacted_param_map(&params);
+        assert_eq!(
+            redacted.get(&"PASSWORD".to_owned()).map(|v| v.as_ref()),
+            Some("****"),
+            "PASSWORD must render as ****"
+        );
+        assert_eq!(
+            redacted.get(&"UID".to_owned()).map(|v| v.as_ref()),
+            Some("joe"),
+        );
+        let rendered = format!("{redacted:?}");
+        assert!(
+            !rendered.contains(unique_marker),
+            "Debug output leaked the PASSWORD value: {rendered}"
+        );
+
+        for variant in ["Password", "password", "passWORD"] {
+            let params = HashMap::from([
+                ("UID".to_owned(), "joe".to_owned()),
+                (variant.to_owned(), unique_marker.to_owned()),
+            ]);
+            let redacted = oauth::redacted_param_map(&params);
+            assert_eq!(
+                redacted.get(&variant.to_owned()).map(|v| v.as_ref()),
+                Some("****"),
+                "{variant} must render as ****"
+            );
+            let rendered = format!("{redacted:?}");
+            assert!(
+                !rendered.contains(unique_marker),
+                "Debug output leaked {variant} value: {rendered}"
+            );
+        }
     }
 
     /// End-to-end parse → normalize for the canonical OAuth
