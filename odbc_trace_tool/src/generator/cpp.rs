@@ -769,6 +769,7 @@ impl<'a> GenContext<'a> {
             OdbcCall::Disconnect(c) => self.emit_disconnect(c),
             OdbcCall::Transact(c) => self.emit_transact(c),
             OdbcCall::Cancel(c) => self.emit_cancel(c),
+            OdbcCall::CancelHandle(c) => self.emit_cancel_handle(c),
             OdbcCall::SpecialColumns(c) => self.emit_special_columns(c),
             OdbcCall::Unsupported(c) => {
                 *self.unsupported.entry(c.function_name.clone()).or_insert(0) += 1;
@@ -1731,6 +1732,95 @@ impl<'a> GenContext<'a> {
         self.indent += 1;
         self.writeln(&format!("SQLRETURN ret = SQLCancel({stmt_var});"));
         self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+        self.emit_post_cancel_settle(&call.handle);
+    }
+
+    fn emit_cancel_handle(&mut self, call: &crate::model::CancelHandle) {
+        let (type_const, var_name) = match call.handle_type {
+            Some(ht) => {
+                let var = call
+                    .handle
+                    .as_ref()
+                    .and_then(|a| self.handle_vars.get(a))
+                    .cloned()
+                    .unwrap_or_else(|| self.default_var_for(ht));
+                (ht.sql_handle_type_constant(), var)
+            }
+            None => ("SQL_HANDLE_STMT", self.stmt_var_for(&call.handle)),
+        };
+        self.writeln("// SQLCancelHandle");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLCancelHandle({type_const}, {var_name});"
+        ));
+        self.emit_return_assertion(call.return_code, type_const, &var_name, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+        self.emit_post_cancel_settle(&call.handle);
+    }
+
+    /// After a `SQLCancel` / `SQLCancelHandle` of a statement that had an
+    /// in-flight async operation — the most recent execute on the handle
+    /// returned `SQL_STILL_EXECUTING` — emit a paced poll-to-settle loop. The
+    /// reference driver's cancel does not interrupt an in-flight async op; it
+    /// runs to natural completion, so re-issue the same execute (sleeping
+    /// between polls) until it stops reporting `SQL_STILL_EXECUTING`, leaving the
+    /// statement idle before teardown. Without the settle, teardown races the
+    /// still-running worker and the driver manager reports the connection busy
+    /// (S1010 on the Windows DM).
+    fn emit_post_cancel_settle(&mut self, handle: &Option<String>) {
+        let Some(h) = handle.as_deref() else {
+            return;
+        };
+        let recent = self.calls[..self.current_idx]
+            .iter()
+            .rev()
+            .find_map(|c| match c {
+                OdbcCall::ExecDirect(e) if e.handle.as_deref() == Some(h) => Some((
+                    e.return_code,
+                    Some(e.sql.as_deref().unwrap_or_default().to_string()),
+                )),
+                OdbcCall::Execute(e) if e.handle.as_deref() == Some(h) => {
+                    Some((e.return_code, None))
+                }
+                _ => None,
+            });
+        let Some((rc, sql)) = recent else {
+            return;
+        };
+        if rc != crate::model::ReturnCode::StillExecuting {
+            return;
+        }
+
+        let stmt_var = self.stmt_var_for(handle);
+        let reissue = match sql {
+            Some(raw) => {
+                let sql = escape_cpp_string_literal(&self.resolve_query(&raw));
+                format!("SQLExecDirect({stmt_var}, sqlchar(\"{sql}\"), SQL_NTS)")
+            }
+            None => format!("SQLExecute({stmt_var})"),
+        };
+
+        self.writeln("// The reference driver's SQLCancel/SQLCancelHandle does not interrupt an");
+        self.writeln("// in-flight async op; it runs to natural completion. Poll (re-issuing the");
+        self.writeln("// same execute, paced) until it stops reporting SQL_STILL_EXECUTING so the");
+        self.writeln("// statement is idle before teardown — otherwise teardown races the worker");
+        self.writeln("// and the driver manager reports the connection busy.");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln("SQLRETURN ret = SQL_STILL_EXECUTING;");
+        self.writeln("int settle_polls = 0;");
+        self.writeln("while (ret == SQL_STILL_EXECUTING && settle_polls++ < 300) {");
+        self.indent += 1;
+        self.writeln("std::this_thread::sleep_for(std::chrono::milliseconds(100));");
+        self.writeln(&format!("ret = {reissue};"));
+        self.indent -= 1;
+        self.writeln("}");
         self.indent -= 1;
         self.writeln("}");
         self.writeln("");
@@ -5097,6 +5187,126 @@ mod tests {
         assert!(
             output.contains("OdbcMatchers::IsSuccess()"),
             "terminal return code is asserted; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn cancel_of_inflight_async_emits_settle() {
+        use crate::model::{Cancel, ExecDirect, OdbcCall, ReturnCode};
+
+        let calls = vec![
+            OdbcCall::ExecDirect(ExecDirect {
+                return_code: ReturnCode::StillExecuting,
+                handle: Some("0xstmt".to_string()),
+                sql: Some("SELECT SYSTEM$WAIT(10, 'SECONDS') AS WAITED".to_string()),
+                sql_truncated: false,
+            }),
+            OdbcCall::Cancel(Cancel {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "cancel settle".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("SQLRETURN ret = SQLCancel("),
+            "the cancel is still replayed; output:\n{output}"
+        );
+        assert!(
+            output.contains("while (ret == SQL_STILL_EXECUTING && settle_polls++ < 300) {"),
+            "cancel of an in-flight async op emits a paced poll-to-settle; output:\n{output}"
+        );
+        assert!(
+            output.contains("std::this_thread::sleep_for(std::chrono::milliseconds(100));"),
+            "the settle paces its polls; output:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "ret = SQLExecDirect(stmt0, sqlchar(\"SELECT SYSTEM$WAIT(10, 'SECONDS') AS WAITED\"), SQL_NTS);"
+            ),
+            "the settle re-issues the in-flight execute; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn cancel_handle_of_inflight_async_emits_call_and_settle() {
+        use crate::model::{CancelHandle, ExecDirect, HandleType, OdbcCall, ReturnCode};
+
+        let calls = vec![
+            OdbcCall::ExecDirect(ExecDirect {
+                return_code: ReturnCode::StillExecuting,
+                handle: Some("0xstmt".to_string()),
+                sql: Some("SELECT SYSTEM$WAIT(10, 'SECONDS') AS WAITED".to_string()),
+                sql_truncated: false,
+            }),
+            OdbcCall::CancelHandle(CancelHandle {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Stmt),
+                handle: Some("0xstmt".to_string()),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "cancel handle settle".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("SQLRETURN ret = SQLCancelHandle(SQL_HANDLE_STMT, stmt0);"),
+            "SQLCancelHandle is replayed with its handle type; output:\n{output}"
+        );
+        assert!(
+            output.contains("while (ret == SQL_STILL_EXECUTING && settle_polls++ < 300) {"),
+            "SQLCancelHandle of an in-flight async op also emits the settle; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn cancel_without_inflight_async_emits_no_settle() {
+        use crate::model::{Cancel, ExecDirect, OdbcCall, ReturnCode};
+
+        // The execute already completed, so the cancel has nothing to settle.
+        let calls = vec![
+            OdbcCall::ExecDirect(ExecDirect {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                sql: Some("SELECT 1".to_string()),
+                sql_truncated: false,
+            }),
+            OdbcCall::Cancel(Cancel {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "cancel no settle".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("SQLRETURN ret = SQLCancel("),
+            "the cancel is still replayed; output:\n{output}"
+        );
+        assert!(
+            !output.contains("settle_polls"),
+            "a cancel with no in-flight async op emits no settle; output:\n{output}"
         );
     }
 

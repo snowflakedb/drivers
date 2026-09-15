@@ -593,6 +593,17 @@ pub struct Cancel {
     pub handle: Option<String>,
 }
 
+/// `SQLCancelHandle` — the ODBC 3.8 handle-based form of `SQLCancel`. On a
+/// statement handle it behaves identically to `SQLCancel`; the emitter and the
+/// post-cancel async settle treat the two the same. The `handle_type` is kept
+/// so the two-argument call is reproduced faithfully.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CancelHandle {
+    pub return_code: ReturnCode,
+    pub handle_type: Option<HandleType>,
+    pub handle: Option<String>,
+}
+
 /// `SQLSpecialColumns` — catalog function returning the optimal row-identifier
 /// (or version) columns for a table. MS Query probes it during navigation.
 /// Snowflake has no row-id concept, so the result set is empty (the trace's
@@ -702,6 +713,8 @@ pub enum OdbcCall {
     SetStmtOption(SetStmtOption),
     #[serde(rename = "SQLCancel")]
     Cancel(Cancel),
+    #[serde(rename = "SQLCancelHandle")]
+    CancelHandle(CancelHandle),
     #[serde(rename = "SQLSpecialColumns")]
     SpecialColumns(SpecialColumns),
     #[serde(rename = "Unsupported")]
@@ -751,6 +764,7 @@ impl OdbcCall {
             Self::SetConnectOption(c) => c.return_code,
             Self::SetStmtOption(c) => c.return_code,
             Self::Cancel(c) => c.return_code,
+            Self::CancelHandle(c) => c.return_code,
             Self::SpecialColumns(c) => c.return_code,
             Self::Unsupported(c) => c.return_code,
         }
@@ -798,6 +812,7 @@ impl OdbcCall {
             Self::SetConnectOption(_) => "SQLSetConnectOption",
             Self::SetStmtOption(_) => "SQLSetStmtOption",
             Self::Cancel(_) => "SQLCancel",
+            Self::CancelHandle(_) => "SQLCancelHandle",
             Self::SpecialColumns(_) => "SQLSpecialColumns",
             Self::Unsupported(c) => &c.function_name,
         }
@@ -854,6 +869,7 @@ impl OdbcCall {
             Self::SetConnectOption(c) => c.handle.as_deref(),
             Self::SetStmtOption(c) => c.handle.as_deref(),
             Self::Cancel(c) => c.handle.as_deref(),
+            Self::CancelHandle(c) => c.handle.as_deref(),
             Self::SpecialColumns(c) => c.handle.as_deref(),
             Self::Unsupported(c) => c.handle.as_deref(),
         }
@@ -912,6 +928,7 @@ impl OdbcCall {
             Self::SetConnectOption(c) => resolve(&mut c.handle, map),
             Self::SetStmtOption(c) => resolve(&mut c.handle, map),
             Self::Cancel(c) => resolve(&mut c.handle, map),
+            Self::CancelHandle(c) => resolve(&mut c.handle, map),
             Self::SpecialColumns(c) => resolve(&mut c.handle, map),
             Self::Unsupported(c) => resolve(&mut c.handle, map),
         }
@@ -1157,6 +1174,7 @@ impl OdbcCall {
                     })
                 })
             }
+            "SQLCancelHandle" => raw::build_cancel_handle(input_params, output_params, return_code),
             _ => {
                 let handle =
                     raw::first_addr(&input_params).or_else(|| raw::first_addr(&output_params));
@@ -1221,6 +1239,28 @@ mod raw {
             .or_else(|| first_handle_addr(&input))
             .or_else(|| first_handle_addr(&output));
         OdbcCall::FreeHandle(FreeHandle {
+            return_code: rc,
+            handle_type,
+            handle,
+        })
+    }
+
+    /// `SQLCancelHandle(HandleType, Handle)` shares `SQLFreeHandle`'s two-argument
+    /// shape, so the handle is extracted the same way.
+    pub fn build_cancel_handle(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle_type = int_or_named(&output, 0)
+            .or_else(|| int_by_name(&input, "Handle Type"))
+            .and_then(HandleType::from_value);
+        let handle = addr_at(&output, 1)
+            .or_else(|| addr_by_name(&input, "Input Handle"))
+            .or_else(|| addr_by_name(&input, "Handle"))
+            .or_else(|| first_handle_addr(&input))
+            .or_else(|| first_handle_addr(&output));
+        OdbcCall::CancelHandle(CancelHandle {
             return_code: rc,
             handle_type,
             handle,
