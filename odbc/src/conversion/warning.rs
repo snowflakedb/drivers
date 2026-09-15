@@ -8,4 +8,9 @@ pub enum Warning {
     OptionValueChanged,
     /// Soft failure during disconnect teardown (SQLSTATE 01002).
     DisconnectError,
+    /// Legacy connection-string key accepted as an alias (SQLSTATE 01000).
+    DeprecatedParameter {
+        parameter: String,
+        replacement: &'static str,
+    },
 }

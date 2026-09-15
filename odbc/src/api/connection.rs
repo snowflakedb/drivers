@@ -61,6 +61,7 @@ const SQL_FALSE: sql::UInteger = 0;
 const ODBC_DRIVER_NAME: &str = "ODBC";
 const ODBC_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const ODBC_API_VERSION: &str = env!("SF_ODBC_API_VER");
+const PUT_GET_MAX_ATTEMPTS_ODBC_KEY: &str = "PUT_GET_MAX_ATTEMPTS";
 
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
 /// Reported by `SQLGetConnectAttr(SQL_ATTR_LOGIN_TIMEOUT)` when the caller has
@@ -97,12 +98,101 @@ fn normalize_crl_value(input_key: &str, value: String) -> String {
     }
 }
 
+fn is_put_get_max_attempts_canonical_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case(PUT_GET_MAX_ATTEMPTS_ODBC_KEY)
+        || key.eq_ignore_ascii_case(param_names::PUT_GET_MAX_ATTEMPTS.as_str())
+}
+
+fn resolve_put_get_max_attempts_value(params: &HashMap<String, String>) -> Option<String> {
+    for (key, value) in params {
+        if is_put_get_max_attempts_canonical_key(key) {
+            return Some(value.clone());
+        }
+    }
+
+    let mut alias_values: Vec<(&str, &str)> = params
+        .iter()
+        .filter_map(|(key, value)| {
+            if is_deprecated_put_get_retry_alias(key) {
+                Some((key.as_str(), value.as_str()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut max_parsed: Option<i64> = None;
+    for (_, value) in &alias_values {
+        if let Ok(parsed) = value.trim().parse::<i64>() {
+            max_parsed = Some(match max_parsed {
+                None => parsed,
+                Some(current) => current.max(parsed),
+            });
+        }
+    }
+    if let Some(value) = max_parsed {
+        return Some(value.to_string());
+    }
+
+    alias_values.sort_by(|(left, _), (right, _)| left.cmp(right));
+    alias_values.first().map(|(_, value)| (*value).to_owned())
+}
+
 fn normalize_connection_string_options(
     connection_string_map: HashMap<String, String>,
 ) -> HashMap<String, ConfigSetting> {
-    connection_string_map
+    let resolved_put_get_max_attempts = resolve_put_get_max_attempts_value(&connection_string_map);
+    let connection_string_map = if resolved_put_get_max_attempts.is_some() {
+        connection_string_map
+            .into_iter()
+            .filter(|(key, _)| {
+                !is_put_get_max_attempts_canonical_key(key)
+                    && !is_deprecated_put_get_retry_alias(key)
+            })
+            .collect()
+    } else {
+        connection_string_map
+    };
+
+    let mut options = connection_string_map
         .into_iter()
         .filter_map(|(key, value)| normalize_connection_string_option(key, value))
+        .collect::<HashMap<String, ConfigSetting>>();
+
+    if let Some(value) = resolved_put_get_max_attempts {
+        options.insert(
+            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_owned(),
+            value.into(),
+        );
+    }
+
+    options
+}
+
+fn is_deprecated_put_get_retry_alias(key: &str) -> bool {
+    key.eq_ignore_ascii_case("PUT_MAXRETRIES") || key.eq_ignore_ascii_case("GET_MAXRETRIES")
+}
+
+fn deprecated_put_get_retry_warnings(params: &HashMap<String, String>) -> Vec<Warning> {
+    let mut aliases: Vec<String> = params
+        .keys()
+        .filter(|key| is_deprecated_put_get_retry_alias(key))
+        .map(|key| key.to_ascii_uppercase())
+        .collect();
+    aliases.sort();
+    aliases
+        .into_iter()
+        .map(|parameter| {
+            tracing::warn!(
+                parameter = %parameter,
+                replacement = PUT_GET_MAX_ATTEMPTS_ODBC_KEY,
+                "Parameter '{parameter}' is deprecated, use '{PUT_GET_MAX_ATTEMPTS_ODBC_KEY}' instead"
+            );
+            Warning::DeprecatedParameter {
+                parameter,
+                replacement: PUT_GET_MAX_ATTEMPTS_ODBC_KEY,
+            }
+        })
         .collect()
 }
 
@@ -376,7 +466,13 @@ pub fn driver_connect<E: OdbcEncoding>(
     let params = merge_dsn_config(params, dsn_name.as_deref())?;
     let completed_conn_str =
         completed_connection_string(&params, driver_section.as_deref(), dsn_name.as_deref());
-    connect_with_params(connection_handle, params, driver_section, dsn_name)?;
+    connect_with_params(
+        connection_handle,
+        params,
+        driver_section,
+        dsn_name,
+        warnings,
+    )?;
 
     // Per the ODBC spec, `SQLDriverConnect` returns the completed connection
     // string — all attributes including those expanded from the DSN — so the
@@ -450,6 +546,7 @@ pub fn browse_connect<E: OdbcEncoding>(
     out_connection_string: *mut E::Char,
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
 ) -> OdbcResult<BrowseOutcome> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
     let incoming = parse_connection_string(&connection_string)?;
@@ -483,7 +580,13 @@ pub fn browse_connect<E: OdbcEncoding>(
         let completed_conn_str = SensitiveString::from(serialize_connection_string(&accumulated));
         (params, driver_section, dsn_name, completed_conn_str)
     };
-    connect_with_params(connection_handle, params, driver_section, dsn_name)?;
+    connect_with_params(
+        connection_handle,
+        params,
+        driver_section,
+        dsn_name,
+        warnings,
+    )?;
 
     // `None` warnings: SQLBrowseConnect signals a short buffer via SQL_NEED_DATA,
     // not a `01004` warning. `*string_length_ptr` still receives the full length.
@@ -511,11 +614,13 @@ fn connect_with_params(
     params: HashMap<String, String>,
     driver_section: Option<String>,
     dsn_name: Option<String>,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::info!(
         "connect_with_params: params={:?}",
         oauth::redacted_param_map(&params)
     );
+    warnings.extend(deprecated_put_get_retry_warnings(&params));
 
     // The caller supplied literally no connection-identifying details (no
     // UID/PWD, no connection-string keys, and any named DSN resolved to
@@ -746,6 +851,7 @@ async fn apply_pre_connection_runtime_attrs_async(
 /// Reads DSN configuration from odbc.ini (ODBCINI env var, ~/.odbc.ini, or /etc/odbc.ini),
 /// merges caller-supplied UID/PWD overrides via `merge_dsn_config`, then delegates to
 /// `connect_with_params` to perform the actual connection.
+#[allow(clippy::too_many_arguments)]
 pub fn connect<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     server_name: *const E::Char,
@@ -754,6 +860,7 @@ pub fn connect<E: OdbcEncoding>(
     name_length2: sql::SmallInt,
     authentication: *const E::Char,
     name_length3: sql::SmallInt,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let dsn = E::read_string(server_name, name_length1 as i32)?;
 
@@ -787,7 +894,7 @@ pub fn connect<E: OdbcEncoding>(
     // resolving the driver's file name via `odbc.ini` → `odbcinst.ini`.
     // SQLConnect never carries a `DRIVER=` keyword, so there is no direct
     // driver section to capture here.
-    connect_with_params(connection_handle, params, None, Some(dsn))
+    connect_with_params(connection_handle, params, None, Some(dsn), warnings)
 }
 
 /// Merge DSN-stored attributes underneath caller-supplied params.
@@ -2906,6 +3013,91 @@ mod tests {
                 "upper-case key must be consumed by normalize"
             );
         }
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_put_get_max_attempts_and_odbc_aliases() {
+        for spelling in ["PUT_GET_MAX_ATTEMPTS", "PUT_MAXRETRIES", "GET_MAXRETRIES"] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                spelling.to_owned(),
+                "3".to_owned(),
+            )]));
+
+            assert_eq!(
+                config_string(&options, "put_get_max_attempts"),
+                Some("3"),
+                "{spelling} should normalize to put_get_max_attempts"
+            );
+            assert!(
+                !options.contains_key(spelling),
+                "{spelling} must not be forwarded as a passthrough key"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_connection_string_options_put_get_max_attempts_precedence() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("PUT_GET_MAX_ATTEMPTS".to_owned(), "5".to_owned()),
+            ("PUT_MAXRETRIES".to_owned(), "3".to_owned()),
+            ("GET_MAXRETRIES".to_owned(), "7".to_owned()),
+        ]));
+        assert_eq!(config_string(&options, "put_get_max_attempts"), Some("5"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_put_get_legacy_aliases_use_max_value() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("PUT_MAXRETRIES".to_owned(), "3".to_owned()),
+            ("GET_MAXRETRIES".to_owned(), "7".to_owned()),
+        ]));
+        assert_eq!(config_string(&options, "put_get_max_attempts"), Some("7"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_put_get_canonical_wins_over_legacy_alias() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("PUT_MAXRETRIES".to_owned(), "3".to_owned()),
+            ("put_get_max_attempts".to_owned(), "9".to_owned()),
+        ]));
+        assert_eq!(config_string(&options, "put_get_max_attempts"), Some("9"));
+    }
+
+    #[test]
+    fn deprecated_put_get_retry_warnings_cover_legacy_aliases_only() {
+        assert_eq!(
+            deprecated_put_get_retry_warnings(&HashMap::from([(
+                "PUT_GET_MAX_ATTEMPTS".to_owned(),
+                "3".to_owned(),
+            )])),
+            Vec::<Warning>::new()
+        );
+        assert_eq!(
+            deprecated_put_get_retry_warnings(&HashMap::from([(
+                "put_maxretries".to_owned(),
+                "3".to_owned(),
+            )])),
+            vec![Warning::DeprecatedParameter {
+                parameter: "PUT_MAXRETRIES".to_owned(),
+                replacement: "PUT_GET_MAX_ATTEMPTS",
+            }]
+        );
+        assert_eq!(
+            deprecated_put_get_retry_warnings(&HashMap::from([
+                ("GET_MAXRETRIES".to_owned(), "4".to_owned()),
+                ("PUT_MAXRETRIES".to_owned(), "3".to_owned()),
+            ])),
+            vec![
+                Warning::DeprecatedParameter {
+                    parameter: "GET_MAXRETRIES".to_owned(),
+                    replacement: "PUT_GET_MAX_ATTEMPTS",
+                },
+                Warning::DeprecatedParameter {
+                    parameter: "PUT_MAXRETRIES".to_owned(),
+                    replacement: "PUT_GET_MAX_ATTEMPTS",
+                },
+            ]
+        );
     }
 
     #[test]

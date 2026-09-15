@@ -7,6 +7,7 @@
 use crate::api::CDataType;
 use crate::api::encoding::WideChar;
 use crate::api::{self, Narrow, ToSqlReturn, Wide};
+use crate::conversion::warning::Warnings;
 use odbc_sys as sql;
 
 /// Set the ODBC tracing dispatcher as the thread-local default for the
@@ -1223,6 +1224,7 @@ pub unsafe extern "system" fn SQLConnect(
 ) -> sql::RetCode {
     set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::connect::<Narrow>(
         connection_handle,
         server_name,
@@ -1231,14 +1233,20 @@ pub unsafe extern "system" fn SQLConnect(
         name_length2,
         authentication,
         name_length3,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     // Record AFTER the call: there is no telemetry-eligible session until
     // connection_init has succeeded; the resolver returns None for a still-
     // Disconnected Dbc, so the failure-path event is silently dropped.
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLConnect");
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -1255,6 +1263,7 @@ pub unsafe extern "system" fn SQLConnectW(
 ) -> sql::RetCode {
     set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::connect::<Wide>(
         connection_handle,
         server_name,
@@ -1263,11 +1272,17 @@ pub unsafe extern "system" fn SQLConnectW(
         name_length2,
         authentication,
         name_length3,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLConnect");
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -1680,9 +1695,13 @@ pub unsafe extern "system" fn SQLDriverConnectW(
 /// same way as any other connect error.
 fn browse_connect_ret_code(
     result: api::OdbcResult<api::connection::BrowseOutcome>,
+    warnings: &Warnings,
 ) -> sql::RetCode {
     match result {
-        Ok(api::connection::BrowseOutcome::Complete) => sql::SqlReturn::SUCCESS.0,
+        Ok(api::connection::BrowseOutcome::Complete) if warnings.is_empty() => {
+            sql::SqlReturn::SUCCESS.0
+        }
+        Ok(api::connection::BrowseOutcome::Complete) => sql::SqlReturn::SUCCESS_WITH_INFO.0,
         Ok(api::connection::BrowseOutcome::NeedData) => sql::SqlReturn::NEED_DATA.0,
         Err(err) => Err::<(), _>(err).to_sql_code(),
     }
@@ -1701,6 +1720,7 @@ pub unsafe extern "system" fn SQLBrowseConnect(
 ) -> sql::RetCode {
     set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::browse_connect::<Narrow>(
         connection_handle,
         in_connection_string,
@@ -1708,11 +1728,17 @@ pub unsafe extern "system" fn SQLBrowseConnect(
         out_connection_string,
         buffer_length,
         out_string_length,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLBrowseConnect");
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    browse_connect_ret_code(result)
+    browse_connect_ret_code(result, &warnings)
 }
 
 /// # Safety
@@ -1728,6 +1754,7 @@ pub unsafe extern "system" fn SQLBrowseConnectW(
 ) -> sql::RetCode {
     set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::browse_connect::<Wide>(
         connection_handle,
         in_connection_string,
@@ -1735,11 +1762,17 @@ pub unsafe extern "system" fn SQLBrowseConnectW(
         out_connection_string,
         buffer_length,
         out_string_length,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLBrowseConnect");
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    browse_connect_ret_code(result)
+    browse_connect_ret_code(result, &warnings)
 }
 
 /// # Safety

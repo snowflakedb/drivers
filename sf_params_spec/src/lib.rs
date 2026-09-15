@@ -1759,7 +1759,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PUT_GET_MAX_ATTEMPTS.as_str(),
-        aliases: aliases![],
+        // ODBC-only 3.x spellings (`Snowflake.h`). The ODBC wrapper resolves conflicts:
+        // `PUT_GET_MAX_ATTEMPTS` wins when present; otherwise the maximum of any
+        // supplied legacy alias values is used.
+        aliases: aliases![Odbc; "PUT_MAXRETRIES", "GET_MAXRETRIES"],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
@@ -2745,6 +2748,11 @@ mod tests {
             // UD-ODBC's own CRL DSN keys (legacy spelled the family `CRL_CHECK`).
             ("CRL_MODE", "crl_check_mode", &[Odbc]),
             ("CRL_ENABLED", "crl_check_mode", &[Odbc]),
+            // 3.x ODBC PUT/GET DSN keys (`Snowflake.h`
+            // `SF_CON_PUT_MAXRETRIES` / `SF_CON_GET_MAXRETRIES`). Both map
+            // onto the shared `put_get_max_attempts` setting.
+            ("PUT_MAXRETRIES", "put_get_max_attempts", &[Odbc]),
+            ("GET_MAXRETRIES", "put_get_max_attempts", &[Odbc]),
             // JDBC-only camelCase properties.
             ("oauthClientId", "oauth_client_id", &[Jdbc]),
             ("oauthClientSecret", "oauth_client_secret", &[Jdbc]),

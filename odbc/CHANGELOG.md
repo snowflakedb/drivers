@@ -2,6 +2,10 @@
 
 ## Upcoming Release
 
+New features:
+
+- Added a `PUT_GET_MAX_ATTEMPTS` connection parameter for the shared PUT/GET attempt limit, and accepted the 3.x `PUT_MAXRETRIES` / `GET_MAXRETRIES` spellings as aliases that warn (`01000`) on use. (snowflake-eng/drivers#1884)
+
 Bug fixes:
 - Fixed `SQL_C_DEFAULT` on catalog `SMALLINT` and `INTEGER` columns so `SQLGetTypeInfo` and `SQLColumns` return binary integers instead of failing with SQLSTATE 22003. (snowflake-eng/drivers#1896)
 
@@ -12,7 +16,6 @@ Breaking changes:
 - Changed `SQLColumns` `BUFFER_LENGTH` for `DATE`/`TIME` from `COLUMN_SIZE` (`10` / `18` for `TIME(9)`) to `6` (`sizeof(SQL_DATE_STRUCT)` / `sizeof(SQL_TIME_STRUCT)`); query-result `SQLColAttribute` octet length for DATE/TIME remains 6. (snowflake-eng/drivers#1485)
 
 New features:
-
 - Added `INTERVAL YEAR TO MONTH` and `INTERVAL DAY TO SECOND` result support: `SQL_C_CHAR`/`SQL_C_WCHAR` fetch returns the canonical ANSI literal (`[-]Y-MM`, `[-]D HH:MM:SS[.f]`), same-family `SQL_C_INTERVAL_*` targets receive the parsed interval struct, and scalar numeric targets receive total months or total whole seconds (reporting `01S07` when sub-second precision is dropped). (snowflake-eng/drivers#1732)
 - Added native AKS Workload Identity support for Azure: when the Azure Workload Identity webhook injects `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE` into a pod and the projected token file exists on disk, `WORKLOAD_IDENTITY_PROVIDER=AZURE` exchanges that federated token for an Entra ID access token directly. `WORKLOAD_IDENTITY_IMPERSONATION_PATH` is not supported in this environment. (snowflake-eng/drivers#1367)
 - Added a `WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN` connection parameter for AWS Workload Identity Federation. When set to true, attestation uses outbound STS `GetWebIdentityToken` instead of the default pre-signed `GetCallerIdentity` token; the connection parameter takes precedence over `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN`. (snowflake-eng/drivers#1551)
