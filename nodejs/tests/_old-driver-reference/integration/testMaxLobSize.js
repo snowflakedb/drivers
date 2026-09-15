@@ -4,11 +4,6 @@ const testUtil = require('./testUtil');
 const crypto = require('crypto');
 const snowflake = require('./../../lib/snowflake').default;
 const connOption = require('./connectionOptions');
-const os = require('os');
-const path = require('path');
-
-const DATABASE_NAME = connOption.valid.database;
-const SCHEMA_NAME = connOption.valid.schema;
 
 function generateRandomString(sizeInBytes) {
   const bufferSize = Math.ceil(sizeInBytes / 2);
@@ -28,10 +23,6 @@ if (process.env.RUN_MANUAL_TESTS_ONLY === 'true') {
 
     const tableName = 'my_lob_test';
     const createTable = `create or replace table ${tableName} (c1 varchar, c2 varchar, c3 int)`;
-    const allowLobExternalScan = 'alter session set ALLOW_LARGE_LOBS_IN_EXTERNAL_SCAN = true';
-    const stageName = `@${DATABASE_NAME}.${SCHEMA_NAME}.%${tableName}`;
-    const copyIntoTable = `copy into ${tableName}`;
-    const removeStage = `remove ${stageName}`;
     const normalInsert = `insert into ${tableName}(c1, c2, c3) values `;
     const positionalBindingInsert = `insert into ${tableName}(c1, c2, c3) values (?, ?, ?)`;
     const namedBindingInsert = `insert into ${tableName}(c1, c2, c3) values (:1, :2, :3)`;
@@ -94,75 +85,7 @@ if (process.env.RUN_MANUAL_TESTS_ONLY === 'true') {
       });
     });
 
-    describe('test put get max LOB size', function () {
-      before(async () => {
-        connection = testUtil.createConnection();
-        await testUtil.connectAsync(connection);
-        await testUtil.executeCmdAsync(connection, createTable);
-        await testUtil.executeCmdAsync(connection, allowLobExternalScan);
-      });
-
-      after(async () => {
-        await testUtil.executeCmdAsync(connection, removeStage);
-        await testUtil.dropTablesIgnoringErrorsAsync(connection, [tableName]);
-        await testUtil.destroyConnectionAsync(connection);
-      });
-
-      it('test - copy to stage where size > 16MB', function (done) {
-        const rowData =
-          mediumSizeTableData.C1 +
-          ',' +
-          mediumSizeTableData.C2 +
-          ',' +
-          mediumSizeTableData.C3 +
-          '\n';
-        const tmpFile = testUtil.createTempFile(
-          os.tmpdir(),
-          testUtil.createRandomFileName(),
-          rowData,
-        );
-
-        let putQuery = `PUT file://${tmpFile} ${stageName}`;
-        // Windows user contains a '~' in the path which causes an error
-        if (process.platform === 'win32') {
-          const fileName = path.basename(tmpFile);
-          putQuery = `PUT file://${process.env.USERPROFILE}\\AppData\\Local\\Temp\\${fileName} ${stageName}`;
-        }
-
-        async.series(
-          [
-            function (callback) {
-              // Upload file
-              connection.execute({
-                sqlText: putQuery,
-                complete: function (err) {
-                  if (err) {
-                    callback(err);
-                  } else {
-                    callback();
-                  }
-                },
-              });
-            },
-            function (callback) {
-              // Copy into temp table
-              connection.execute({
-                sqlText: copyIntoTable,
-                complete: function (err, _, rows) {
-                  if (err) {
-                    callback(err);
-                  } else {
-                    assert.equal(rows[0].status, 'LOADED');
-                    callback();
-                  }
-                },
-              });
-            },
-          ],
-          done,
-        );
-      });
-    });
+    // 'test put get max LOB size' is redundant in new driver (tests server logic)
 
     describe('test literal Insert', function () {
       before(async function () {

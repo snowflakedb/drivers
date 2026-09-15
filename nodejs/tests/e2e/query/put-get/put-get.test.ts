@@ -8,6 +8,7 @@ import {
   deletePathIgnoringErrors,
   toFileUrl,
 } from '../../utils/files.js';
+import { createTempDir, createTemporaryStage } from '../../utils/fixtures.js';
 import getTestParameter from '../../utils/getTestParameter.js';
 import {
   createTestConnection,
@@ -152,5 +153,27 @@ describe('PUT GET', () => {
       const downloadedFile = path.join(downloadDir, rows[0].file as string);
       expect(fs.readFileSync(downloadedFile, 'utf8')).toBe(ROW_DATA);
     });
+  });
+
+  it('should put and get a zero-byte file', async () => {
+    const stage = await createTemporaryStage(connection);
+    const uploadDir = createTempDir();
+    const downloadDir = createTempDir();
+    uploadDir.writeFile('empty.csv', '');
+
+    const { rows: putRows } = await executeAsync(
+      connection,
+      `PUT ${uploadDir.fileUrl('empty.csv')} @${stage} AUTO_COMPRESS=FALSE`,
+    );
+    expect(putRows[0].status).toBe(UPLOADED);
+    expect(putRows[0].sourceSize).toBe(0);
+    expect(putRows[0].targetSize).toBe(isRunningNewDriverWithBD('BD#23') ? 16 : 0);
+
+    const { rows: getRows } = await executeAsync(
+      connection,
+      `GET @${stage} ${downloadDir.fileUrl()}/`,
+    );
+    expect(getRows[0].status).toBe(DOWNLOADED);
+    expect(fs.statSync(downloadDir.resolve(String(getRows[0].file))).size).toBe(0);
   });
 });
