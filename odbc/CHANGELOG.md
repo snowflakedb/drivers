@@ -6,6 +6,10 @@ New features:
 
 - Added a `PUT_GET_MAX_ATTEMPTS` connection parameter for the shared PUT/GET attempt limit, and accepted the 3.x `PUT_MAXRETRIES` / `GET_MAXRETRIES` spellings as aliases that warn (`01000`) on use. (snowflake-eng/drivers#1884)
 
+Changes:
+
+- Changed `SQLDriverConnect` to reject connection-string keywords it does not recognize with a local `01S00` warning (native error 17, "N invalid keys are found in the connection string: <KEY>"); a keyword is recognized when the `sf_core` parameter registry resolves it or it names an ODBC structural keyword (`DSN`, `DRIVER`, `FILEDSN`, `SAVEFILE`). The connection still opens and the keyword is still forwarded to the server. (snowflake-eng/drivers#1926)
+
 Bug fixes:
 - Fixed `SQL_C_DEFAULT` on catalog `SMALLINT` and `INTEGER` columns so `SQLGetTypeInfo` and `SQLColumns` return binary integers instead of failing with SQLSTATE 22003. (snowflake-eng/drivers#1896)
 
