@@ -57,6 +57,13 @@ pub enum TlsError {
         location: Location,
     },
 
+    #[snafu(display("Failed to build rustls client configuration for the linked crypto module"))]
+    RustlsConfig {
+        source: rustls::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to build WebPki verifier"))]
     VerifierBuild {
         source: Box<dyn std::error::Error + Send + Sync>,

@@ -10,8 +10,10 @@ use rustls::server::ParsedCertificate;
 use rustls::{DigitallySignedStruct, Error as TlsError, RootCertStore, SignatureScheme};
 use std::sync::Arc;
 
+/// Signature algorithms for chain and CRL verification, taken from the
+/// linked crypto module so they match the provider that negotiates the handshake.
 fn default_supported_algs() -> WebPkiSupportedAlgorithms {
-    rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms
+    crate::tls::crypto_module::CryptoModule::get().signature_verification_algorithms()
 }
 
 #[derive(Debug)]
@@ -42,7 +44,11 @@ impl CrlServerCertVerifier {
         };
         let root_store = Arc::new(root_store);
         let supported_algs = default_supported_algs();
-        let webpki_verifier = WebPkiServerVerifier::builder(root_store.clone()).build()?;
+        let webpki_verifier = WebPkiServerVerifier::builder_with_provider(
+            root_store.clone(),
+            crate::tls::crypto_module::CryptoModule::get().provider(),
+        )
+        .build()?;
         let crl_validator = Arc::new(CrlValidator::new_with_root_store(
             crl_config.clone(),
             Some(root_store.clone()),

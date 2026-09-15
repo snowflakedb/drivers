@@ -2,6 +2,7 @@ pub mod aws_http_client;
 pub mod client;
 pub mod config;
 pub mod crl_verifier;
+pub mod crypto_module;
 pub mod error;
 pub mod revocation;
 #[cfg(test)]
@@ -57,31 +58,34 @@ pub(crate) fn ensure_crypto_provider() {
     }
 }
 
-/// Whether the rustls crypto provider actually in force is operating in FIPS
-/// mode.
+/// Whether the crypto provider actually in force is operating in FIPS mode.
 ///
-/// Answers a question about **TLS only**, and about the *installed provider*
-/// rather than about this build. A build without `fips-tls` reports `true` if an
-/// embedding application installed a FIPS provider before the driver
-/// initialised — accurate for TLS, and still silent on JWT signing, DPoP, stage
-/// file encryption and key parsing, which run on OpenSSL either way.
+/// Reports on the provider that carries the driver's traffic -- the compiled
+/// module's own -- rather than on build flags. A build without `fips-tls`
+/// links non-FIPS aws-lc-sys and so reports `false`.
 ///
-/// Deliberately not gated on the feature: always compiled, so the Phase 4
-/// wrapper accessor can be built on it without a `#[cfg]` that would make
-/// "you installed the wrong artifact" indistinguishable from "you are running a
-/// driver too old to have the accessor". `#[allow(dead_code)]` covers the
-/// standard build, where both callers (the mismatch log in
-/// `ensure_crypto_provider`, the gate in `require_fips_provider`) are behind
-/// `#[cfg(feature = "fips-tls")]`.
+/// Deliberately not gated on the feature. The wrappers will surface this as a
+/// customer-facing accessor (plan Phase 4), and a function that is *absent*
+/// from standard builds would make "you installed the wrong artifact" look
+/// identical to "you are running a driver too old to have the accessor at
+/// all". Always present, answering `false`, keeps those two distinguishable.
 ///
-/// Crate-private until Phase 4 exports it deliberately. Publishing it now would
-/// put a function named for FIPS mode on the public surface while it can only
-/// speak for the TLS backend — the same overclaim the `fips-tls` feature name
-/// exists to avoid. The eventual public accessor should be named after the TLS
-/// provider, and its wording is compliance's to own.
-#[allow(dead_code)]
-pub(crate) fn fips_mode_active() -> bool {
-    rustls::crypto::CryptoProvider::get_default().is_some_and(|p| p.fips())
+/// `pub` rather than `pub(crate)` for the same reason: its in-crate callers
+/// sit under `#[cfg(feature = "fips-tls")]`, so a crate-private version is
+/// dead code in every standard build. The only ways to keep it crate-private
+/// are an `#[allow(dead_code)]` or the feature gate this doc block just
+/// explained we do not want -- both of which hide the accessor Phase 4 is
+/// going to export anyway.
+///
+/// Phase 3 note: this used to read `CryptoProvider::get_default()`, so that a
+/// standard build into which an embedding application had installed a FIPS
+/// provider reported `true`. That was the honest answer while the driver
+/// *used* whatever won the global slot. It no longer does -- TLS configs are
+/// built from the linked crypto module (`tls::crypto_module`) -- so reading the global
+/// would now report on a module that carries none of our traffic. The
+/// intent is unchanged: answer for whatever is actually doing the work.
+pub fn fips_mode_active() -> bool {
+    crypto_module::CryptoModule::get().fips()
 }
 
 /// Fails closed in `fips-tls` builds when the provider that actually won the
