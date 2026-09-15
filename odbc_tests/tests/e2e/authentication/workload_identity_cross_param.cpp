@@ -35,13 +35,14 @@ TEST_CASE("should reject a WIF param under a non-WIF authenticator on the new dr
   // ignores the WIF param and connects (BD#108).
   NEW_DRIVER_ONLY("BD#108") {
     // sf_core rejects the cross-param combination before login. SQLDriverConnect returns SQL_ERROR
-    // (asserted by require_connection_failed); the diagnostic carries a config-attribute SQLSTATE
-    // and a message naming the offending WIF param. The message check anchors on both the param
-    // name AND the distinguishing rejection phrase sf_core's ConflictingParameters check emits, so
-    // an unrelated error that merely mentions the param name in passing can't satisfy this.
+    // (asserted by require_connection_failed); the diagnostic carries SQLSTATE 28000 because the
+    // offending key is an auth parameter, and a message naming that WIF param. The message check
+    // anchors on both the param name AND the distinguishing rejection phrase sf_core's
+    // ConflictingParameters check emits, so an unrelated error that merely mentions the param name
+    // in passing can't satisfy this.
     auto records = require_connection_failed(conn_str);
     REQUIRE(records.size() >= 1);
-    CHECK(records[0].sqlState == "01S00");
+    CHECK(records[0].sqlState == "28000");
     CHECK_THAT(records[0].messageText, ContainsSubstring("workload_identity_provider"));
     CHECK_THAT(records[0].messageText, ContainsSubstring("was not set to WORKLOAD_IDENTITY"));
   }

@@ -415,6 +415,10 @@ macro_rules! aliases {
 }
 
 /// Defines a single supported configuration parameter.
+///
+/// Construct with [`ParamDef::builder`]. Required setters have no default;
+/// omitted optional setters keep empty aliases, `Required::Never`, and
+/// `None` for the remaining fields.
 pub struct ParamDef {
     /// The canonical key name used internally (e.g. `"host"`).
     pub canonical_name: &'static str,
@@ -446,7 +450,7 @@ pub struct ParamDef {
     /// auth parameter as `28000` (invalid authorization specification) rather
     /// than the generic connection-string-attribute state. Covers the primary
     /// credential family (`user`, `password`, `authenticator`, key-pair,
-    /// pre-acquired `token`) and every OAuth parameter.
+    /// pre-acquired `token`), every OAuth parameter, and every WIF parameter.
     pub auth: bool,
 
     /// Human-readable description.
@@ -488,1970 +492,25 @@ pub enum Required {
     Never,
 }
 
-static PARAM_DEFS: &[ParamDef] = &[
-    // ── Server ──────────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::ACCOUNT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Always,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Snowflake account identifier",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::HOST.as_str(),
-        // `HOST` is redundant with the canonical name (case-insensitive match).
-        // `SERVER` is the ODBC DSN spelling (`Snowflake.h` `SF_HOST_KEY`) and is
-        // ODBC-only: the legacy Python connector has no `server` kwarg, and JDBC
-        // carries the host in the JDBC URL.
-        aliases: aliases![Odbc; "SERVER"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Snowflake server hostname",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PORT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Server port number",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PROTOCOL.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Connection protocol (http or https)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::SSL.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Enable or disable SSL/TLS (sets protocol to https or http)",
-        deprecated_by: Some("protocol"),
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::SERVER_URL.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Full server URL (alternative to host/port/protocol)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.as_str(),
-        // JDBC-only `allowUnderscoresInHost` property (case-insensitive).
-        aliases: aliases![Jdbc; "allowUnderscoresInHost"],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Preserve underscores in the hostname derived from the account name",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // ── Auth ────────────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::USER.as_str(),
-        // ODBC DSN `UID` (`Snowflake.h`). ODBC-only: the legacy Python connector
-        // has no `uid` kwarg.
-        aliases: aliases![Odbc; "UID"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Always,
-        default: None,
-        sensitive: false,
-        auth: true,
-        description: "Login username",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PASSWORD.as_str(),
-        // ODBC DSN `PWD` (`Snowflake.h`). ODBC-only: the legacy Python connector
-        // has no `pwd` kwarg.
-        aliases: aliases![Odbc; "PWD"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::WhenAuthMethod("SNOWFLAKE_PASSWORD"),
-        default: None,
-        sensitive: true,
-        auth: true,
-        description: "Login password",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::AUTHENTICATOR.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: true,
-        description: "Authenticator type for the connection",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PRIVATE_KEY.as_str(),
-        // `PRIV_KEY_BASE64` is the legacy ODBC DSN key (`Snowflake.h`
-        // `SF_PRIV_KEY_BASE64_KEY`); `private_key_base64` is the JDBC property
-        // (`SFSessionProperty.PRIVATE_KEY_BASE64`) — legacy ODBC never accepted
-        // the fully-underscored spelling.
-        aliases: &[
-            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_BASE64"),
-            Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_BASE64"),
-        ],
-        value_type: ValueType::String,
-        additional_value_type: Some(ValueType::Bytes),
-        required: Required::WhenAuthMethod("SNOWFLAKE_JWT"),
-        default: None,
-        sensitive: true,
-        auth: true,
-        description: "Private key for key-pair authentication (base64-encoded or PEM)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PRIVATE_KEY_FILE.as_str(),
-        // ODBC DSN `PRIV_KEY_FILE`.
-        aliases: aliases![Odbc; "PRIV_KEY_FILE"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: true,
-        description: "Path to private key file for key-pair authentication",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PRIVATE_KEY_PASSWORD.as_str(),
-        // `PRIV_KEY_FILE_PWD` / `PRIV_KEY_PWD` are the legacy ODBC DSN
-        // passphrase keys (`Snowflake.h`). `private_key_pwd` and
-        // `private_key_file_pwd` are JDBC properties (`SFSessionProperty`);
-        // `private_key_file_pwd` is also a legacy snowflake-connector-python
-        // kwarg, and needs `Python` scope for the TOML loader, which
-        // canonicalizes through the registry under the Python flavor rather
-        // than through the Python wrapper's generated `_ALIAS_MAP`.
-        aliases: &[
-            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_FILE_PWD"),
-            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_PWD"),
-            Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_PWD"),
-            Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_FILE_PWD"),
-            Alias::scoped(Wrapper::Python, "PRIVATE_KEY_FILE_PWD"),
-        ],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: true,
-        auth: true,
-        description: "Passphrase for encrypted private key",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::TOKEN.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::WhenAuthMethod("PROGRAMMATIC_ACCESS_TOKEN"),
-        default: None,
-        sensitive: true,
-        auth: true,
-        description: "Pre-acquired bearer token (PAT, legacy OAUTH, or OIDC WIF). Alternative to token_file_path",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::TOKEN_FILE_PATH.as_str(),
-        // `tokenFilePath` is legacy snowflake-connector-nodejs' option spelling
-        // (`lib/connection/connection_config.js`). Legacy .NET and JDBC read the
-        // snake_case `token_file_path`, which matches the canonical name
-        // case-insensitively and so needs no alias. This alias is inert for any
-        // wrapper that takes the `Default` presets — see
-        // `WrapperPresets::default`.
-        aliases: aliases![NodeJs; "tokenFilePath"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        // The path is not itself a credential, but supplying it is how the
-        // caller presents one — a bad path is an auth failure, not a bad
-        // connection-string attribute.
-        auth: true,
-        description: "Path to a file containing a pre-acquired bearer token (PAT, legacy OAUTH, or OIDC WIF). If both token and token_file_path are set, the file contents are used",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::SESSION_TOKEN.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: true,
-        auth: false,
-        description: "Pre-acquired session token for session token authentication",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::MASTER_TOKEN.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: true,
-        auth: false,
-        description: "Pre-acquired master token for session token authentication",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::MASTER_VALIDITY_IN_SECONDS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Remaining validity in seconds for the master token (session token auth)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PASSCODE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: true,
-        auth: false,
-        description: "MFA passcode for USERNAME_PASSWORD_MFA authentication",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PASSCODE_IN_PASSWORD.as_str(),
-        // `PASSCODE_IN_PASSWORD` is the legacy snowflake-connector-python kwarg
-        // spelling. It needs `Python` scope for the TOML loader: the canonical
-        // camelCase name does *not* match `passcode_in_password`
-        // case-insensitively (the underscores differ), so a
-        // `config.toml`/`connections.toml` profile would otherwise fail to
-        // canonicalize. Legacy ODBC's DSN key is `PASSCODEINPASSWORD` (no
-        // separators) and is rewritten wrapper-side in
-        // `odbc/src/api/connection.rs`, so no ODBC alias belongs here.
-        aliases: aliases![Python; "PASSCODE_IN_PASSWORD"],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Whether the MFA passcode is appended to the password",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.as_str(),
-        // JDBC-only camelCase property.
-        aliases: aliases![Jdbc; "clientStoreTemporaryCredential"],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Enable MFA token caching for USERNAME_PASSWORD_MFA authentication",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::ENABLE_PUT_GET.as_str(),
-        // JDBC `SFSessionProperty.ENABLE_PUT_GET`. `ParameterKeyNormalizer` does
-        // not carry this key, so the spelling reaches core verbatim and this
-        // alias is what resolves it.
-        aliases: aliases![Jdbc; "enablePutGet"],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(true)),
-        sensitive: false,
-        auth: false,
-        description: "JDBC-only. When false, client-side PUT/GET file transfers are disabled",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(true)),
-        sensitive: false,
-        auth: false,
-        description: "When true (default), enables process-global serialization of interactive auth \
-                      prompts (external browser, MFA, OAuth) so that only one prompt is shown per \
-                      <user, host> when clientStoreTemporaryCredential is enabled. Set to false to \
-                      allow each concurrent connection to show its own prompt.",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::DISABLE_QUERY_CONTEXT_CACHE.as_str(),
-        // Legacy ODBC (libsnowflakeclient `connection.c`) and legacy .NET
-        // (`SFSessionProperty`) spell this `DISABLEQUERYCONTEXTCACHE`; legacy JDBC
-        // (`SFSessionProperty`) and snowflake-connector-nodejs
-        // (`connection_config.js`) spell it `disableQueryContextCache`. The two
-        // differ only by case and resolve identically. Legacy Python's
-        // `disable_query_context_cache` matches the canonical name, so `Python`
-        // is absent here.
-        aliases: &[
-            Alias::scoped(Wrapper::Odbc, "DISABLEQUERYCONTEXTCACHE"),
-            Alias::scoped(Wrapper::DotNet, "DISABLEQUERYCONTEXTCACHE"),
-            Alias::scoped(Wrapper::Jdbc, "disableQueryContextCache"),
-            Alias::scoped(Wrapper::NodeJs, "disableQueryContextCache"),
-        ],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "When true, disables the client-side query context cache. \
-                      No context is sent in requests and server-returned context is ignored.",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::INCLUDE_RETRY_REASON.as_str(),
-        aliases: &[
-            Alias::scoped(Wrapper::Odbc, "includeRetryReason"),
-            Alias::scoped(Wrapper::DotNet, "INCLUDERETRYREASON"),
-            Alias::scoped(Wrapper::NodeJs, "includeRetryReason"),
-            Alias::scoped(Wrapper::Python, "enable_retry_reason_in_query_response"),
-        ],
-        auth: false,
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(true)),
-        sensitive: false,
-        description: "When true, appends retryReason (the HTTP status code that triggered \
-                      the retry, or 0 for transport errors with no HTTP response) \
-                      alongside retryCount on retried query requests.",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::AUTHENTICATION_TIMEOUT.as_str(),
-        // ODBC's LOGIN_TIMEOUT historically means authentication_timeout (it is an
-        // auth-retry budget, not a socket timeout); for the other wrappers
-        // `LOGIN_TIMEOUT` keeps matching the canonical `login_timeout` parameter
-        // below, case-insensitively.
-        aliases: &[Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(120)),
-        sensitive: false,
-        auth: false,
-        description: "Timeout in seconds for native Okta SSO authentication",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OKTA_USERNAME.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Okta username (defaults to the Snowflake user if omitted)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::DISABLE_SAML_URL_CHECK.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Skip the Okta SAML URL host-match safety check",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // ── OAuth ───────────────────────────────────────────────────────────
-    // Cross-driver canonical naming follows JDBC `SFSessionProperty.OAUTH_*`.
-    // All OAuth params are connect-time and immutable for the life of the
-    // connection.
-    //
-    // The camelCase `oauth*` aliases below — and `allowUnderscoresInHost` — are
-    // also rewritten to these canonical names Java-side, by the JDBC bridge's
-    // `ParameterKeyNormalizer.LEGACY_KEY_ALIASES`, which
-    // `SnowflakeConnectionImpl.setOptions` applies to every key. sf_core
-    // therefore sees the camelCase spelling only from a direct `resolve_for`
-    // caller, never from a real JDBC connection; the aliases stay so the
-    // registry remains an accurate record of what JDBC accepts until that
-    // mapping moves wrapper-side wholesale. The other `Jdbc`-scoped aliases
-    // (`clientStoreTemporaryCredential`, `enablePutGet`,
-    // `oauthEnableSingleUseRefreshTokens`, `PRIVATE_KEY_*`) have no Java-side
-    // entry and resolve here only.
-    ParamDef {
-        canonical_name: param_names::OAUTH_CLIENT_ID.as_str(),
-        // `OAUTH_CLIENT_ID` is the canonical spelling (case-insensitive match);
-        // the camelCase form is the JDBC-only `SFSessionProperty` key.
-        aliases: aliases![Jdbc; "oauthClientId"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: true,
-        description: "OAuth client identifier (LOCAL_APPLICATION when Snowflake is the IdP)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_CLIENT_SECRET.as_str(),
-        aliases: aliases![Jdbc; "oauthClientSecret"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: true,
-        auth: true,
-        description: "OAuth client secret (redacted from logs)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_AUTHORIZATION_URL.as_str(),
-        aliases: aliases![Jdbc; "oauthAuthorizationUrl"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: true,
-        description: "IdP authorization endpoint (defaults to https://{host}/oauth/authorize)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_TOKEN_REQUEST_URL.as_str(),
-        // `OAUTH_TOKEN_REQUEST_URL` matches the canonical name case-insensitively,
-        // which is also the legacy Python kwarg and the legacy ODBC DSN key
-        // (`Snowflake.h` `SF_OAUTH_TOKEN_REQUEST_URL_KEY`). Only the camelCase
-        // JDBC property needs an alias; the shorter `OAUTH_TOKEN_URL` was UD-only
-        // leniency (no such kwarg in the legacy connector) and is gone.
-        aliases: aliases![Jdbc; "oauthTokenRequestUrl"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::WhenAuthMethod("OAUTH_CLIENT_CREDENTIALS"),
-        default: None,
-        sensitive: false,
-        auth: true,
-        description: "IdP token endpoint (CC only; defaults to https://{host}/oauth/token-request for AC)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_REDIRECT_URI.as_str(),
-        aliases: aliases![Jdbc; "oauthRedirectUri"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: true,
-        description: "Loopback redirect URI advertised to the IdP (defaults to http://127.0.0.1:<random>)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_SCOPE.as_str(),
-        aliases: aliases![Jdbc; "oauthScope"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: true,
-        description: "OAuth scope (space-separated; defaults to session:role:<role>)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.as_str(),
-        aliases: aliases![Jdbc; "oauthEnableSingleUseRefreshTokens"],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: true,
-        description: "Request single-use refresh-token rotation (Snowflake-IdP only)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_DISABLE_PKCE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: true,
-        description: "Disable PKCE S256 challenge for OAUTH_AUTHORIZATION_CODE (Python-compatible escape hatch)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_ENABLE_DPOP.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: true,
-        description: "Enable RFC 9449 DPoP proof-of-possession (JDBC-compatible)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_CREDENTIALS_IN_BODY.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: true,
-        description: "Send client_id/client_secret in the OAUTH_CLIENT_CREDENTIALS token request body (client_secret_post) instead of the HTTP Basic header",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::OAUTH_DISABLE_CONSOLE_LOGIN.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: true,
-        description: "Disable EXTERNALBROWSER console-login (JDBC parity; does not gate OAuth)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // ── Session ─────────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::DATABASE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Default database to use",
-        deprecated_by: None,
-        scopes: &[ParamScope::Session],
-        used_at_connect: true,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::SCHEMA.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Default schema to use",
-        deprecated_by: None,
-        scopes: &[ParamScope::Session],
-        used_at_connect: true,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::WAREHOUSE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Default warehouse to use",
-        deprecated_by: None,
-        scopes: &[ParamScope::Session],
-        used_at_connect: true,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::ROLE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Default role to use",
-        deprecated_by: None,
-        scopes: &[ParamScope::Session],
-        used_at_connect: true,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::SECONDARY_ROLES.as_str(),
-        // Legacy ODBC's `SecondaryRoles` connection attribute has no separator,
-        // so the connection-string parser uppercases it to `SECONDARYROLES`
-        // (not `SECONDARY_ROLES`); scope that spelling to ODBC so the wrapper
-        // canonicalizes it to `secondary_roles`.
-        aliases: aliases![Odbc; "SECONDARYROLES"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Secondary-roles activation mode sent at login (e.g. ALL or NONE)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // ── TLS ─────────────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::CUSTOM_ROOT_STORE_PATH.as_str(),
-        // No alias: legacy ODBC had no custom-root-store DSN key (only `SSL`), and
-        // the `TLS_`-prefixed spelling had no users — the canonical name resolves
-        // for every wrapper case-insensitively.
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Path to custom root certificate store",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::EXTRA_ROOT_STORE_PATH.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Path to root certificates added to the default root store",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::VERIFY_HOSTNAME.as_str(),
-        // No alias: no legacy TLS-verification DSN key existed, and the
-        // `TLS_VERIFY_HOSTNAME` spelling had no users.
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(true)),
-        sensitive: false,
-        auth: false,
-        description: "Whether to verify the server hostname in TLS",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::VERIFY_CERTIFICATES.as_str(),
-        // No alias: see `verify_hostname` above.
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(true)),
-        sensitive: false,
-        auth: false,
-        description: "Whether to verify TLS certificates",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::TLS_SKIP_VERIFY.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Skip all TLS verification with a single switch: disables both certificate and hostname checks (and, since certificate verification is off, CRL revocation checks are bypassed too). Insecure; intended for testing only",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // TLS protocol-version window.
-    ParamDef {
-        canonical_name: param_names::MIN_TLS_VERSION.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::String("tls12")),
-        sensitive: false,
-        auth: false,
-        description: "Minimum TLS protocol version to negotiate (tls12 or tls13)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::MAX_TLS_VERSION.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::String("tls13")),
-        sensitive: false,
-        auth: false,
-        description: "Maximum TLS protocol version to negotiate (tls12 or tls13)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // ── CRL ─────────────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::CRL_CHECK_MODE.as_str(),
-        // UD-ODBC's own DSN spellings for CRL checking (legacy snowflake-odbc
-        // spelled this family `CRL_CHECK` / `CRL_ADVISORY`, `Snowflake.h:197-202`;
-        // UD has not adopted those names). Wired wrapper-side for value
-        // normalization and exercised by `odbc_tests/tests/e2e/tls/crl_enabled.cpp`.
-        // Python uses the `cert_revocation_check_mode` legacy kwarg, rewritten
-        // wrapper-side by `_LEGACY_REWRITES`.
-        aliases: aliases![Odbc; "CRL_MODE", "CRL_ENABLED"],
-        // Free-form string in core: the ODBC wrapper maps its `CRL_MODE` /
-        // `CRL_ENABLED` wire spellings to the `DISABLED` / `ENABLED` / `ADVISORY`
-        // tokens that `build_crl_config` accepts before the value reaches core.
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::String("DISABLED")),
-        sensitive: false,
-        auth: false,
-        description: "Certificate revocation check mode (DISABLED, ENABLED, ADVISORY)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_ENABLE_DISK_CACHING.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(true)),
-        sensitive: false,
-        auth: false,
-        description: "Enable disk caching for CRL responses",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_ENABLE_MEMORY_CACHING.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(true)),
-        sensitive: false,
-        auth: false,
-        description: "Enable in-memory caching for CRL responses",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_CACHE_DIR.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Directory for CRL cache files",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_MAX_DOWNLOAD_SIZE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(20 * 1024 * 1024)),
-        sensitive: false,
-        auth: false,
-        description: "Maximum CRL download size in bytes before the download is aborted",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_VALIDITY_TIME.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(86400)),
-        sensitive: false,
-        auth: false,
-        description: "Maximum age in seconds of a cached CRL before it is re-fetched",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_ON_DISK_CACHE_REMOVAL_DELAY.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(604800)),
-        sensitive: false,
-        auth: false,
-        description: "Delay in seconds after a CRL's nextUpdate before it is purged from the on-disk cache",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_CACHE_CLEANUP_INTERVAL.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(3600)),
-        sensitive: false,
-        auth: false,
-        description: "Interval in seconds between background CRL cache cleanup passes",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_CACHE_START_CLEANUP.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Run the background CRL cache cleanup task",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_UNSAFE_SKIP_FILE_PERMISSIONS_CHECK.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Skip verification that on-disk CRL cache files and directory are owner-only (0600/0700)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_ALLOW_CERTIFICATES_WITHOUT_CRL_URL.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Allow certificates that do not include a CRL distribution URL",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_HTTP_TIMEOUT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(10)),
-        sensitive: false,
-        auth: false,
-        description: "HTTP timeout in seconds for CRL endpoint requests",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CRL_CONNECTION_TIMEOUT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(10)),
-        sensitive: false,
-        auth: false,
-        description: "Connection timeout in seconds for CRL endpoints",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // ── Client ──────────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::CONNECTION_NAME.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Named connection to load from TOML configuration files",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::LOG_MAX_QUERY_LENGTH.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(80)),
-        sensitive: false,
-        auth: false,
-        description: "Maximum number of characters of a query string to include in log messages",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::LOG_QUERY_TEXT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: Some(ValueType::String),
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Include the (truncated) SQL text in INFO query logs",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::LOG_QUERY_PARAMETERS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: Some(ValueType::String),
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Include the (truncated) JSON bindings in INFO query logs (requires log_query_text)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    // ── Logout ────────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::SERVER_SESSION_KEEP_ALIVE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Enable auto-detection of async queries before logout (SNOW-2314152)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::LOGOUT_ERROR_STRATEGY.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Error handling strategy for logout: 'best_effort' or 'strict'",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::LOGOUT_TOTAL_TIMEOUT_SECONDS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Total timeout budget for logout operation including retries",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::LOGOUT_MAX_ATTEMPTS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Maximum total attempts for logout (1 = no retry, 3 = 2 retries)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::LOGOUT_REQUEST_TIMEOUT_SECONDS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Per-request socket timeout for individual logout attempts",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::RETRY_MAX_ATTEMPTS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(DEFAULT_RETRY_MAX_ATTEMPTS as i64)),
-        sensitive: false,
-        auth: false,
-        description: "Maximum total attempts for general HTTP calls (login, query, logout). 1 = no retry",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::RETRY_EXTRA_STATUS_CODES.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Additional HTTP status codes (comma-separated) to retry on general HTTP and PUT/GET calls, beyond the built-in 408/429/307/308/5xx set",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PUT_GET_MAX_ATTEMPTS.as_str(),
-        // ODBC-only 3.x spellings (`Snowflake.h`). The ODBC wrapper resolves conflicts:
-        // `PUT_GET_MAX_ATTEMPTS` wins when present; otherwise the maximum of any
-        // supplied legacy alias values is used.
-        aliases: aliases![Odbc; "PUT_MAXRETRIES", "GET_MAXRETRIES"],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(DEFAULT_PUT_GET_MAX_ATTEMPTS as i64)),
-        sensitive: false,
-        auth: false,
-        description: "Maximum total attempts for a single PUT/GET file transfer (1 = no retry)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    // ── Retry backoff curve (shared by HTTP and PUT/GET pipelines) ──────
-    ParamDef {
-        canonical_name: param_names::RETRY_BACKOFF_BASE_MS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(DEFAULT_RETRY_BACKOFF_BASE_MS as i64)),
-        sensitive: false,
-        auth: false,
-        description: "Initial exponential-backoff delay in milliseconds between retry attempts",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::RETRY_BACKOFF_CAP_MS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(DEFAULT_RETRY_BACKOFF_CAP_MS as i64)),
-        sensitive: false,
-        auth: false,
-        description: "Maximum exponential-backoff delay in milliseconds between retry attempts",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::RETRY_BACKOFF_FACTOR.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Double,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Double(DEFAULT_RETRY_BACKOFF_FACTOR)),
-        sensitive: false,
-        auth: false,
-        description: "Multiplier applied to the backoff delay after each retry attempt",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::RETRY_BACKOFF_JITTER.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::String(DEFAULT_RETRY_BACKOFF_JITTER)),
-        sensitive: false,
-        auth: false,
-        description: "Backoff jitter strategy: 'none', 'full', or 'decorrelated'",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    // ── Timeout configuration ─────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::LOGIN_TIMEOUT.as_str(),
-        // `LOGIN_TIMEOUT` matches this canonical case-insensitively for every
-        // wrapper except ODBC, where it is scoped to `authentication_timeout`
-        // (see that param's `Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")`).
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(DEFAULT_LOGIN_TIMEOUT_SECS as i64)),
-        sensitive: false,
-        auth: false,
-        description: "Wall-clock timeout in seconds for the entire login operation including retries (0 = no timeout)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::QUERY_TIMEOUT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(DEFAULT_QUERY_TIMEOUT_SECS as i64)),
-        sensitive: false,
-        auth: false,
-        description: "Wall-clock timeout in seconds for query execution including retries (0 = no timeout)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::REQUEST_TIMEOUT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(DEFAULT_REQUEST_TIMEOUT_SECS as i64)),
-        sensitive: false,
-        auth: false,
-        description: "Wall-clock timeout in seconds for all other operations (close session, heartbeat, etc.) including retries (0 = no timeout)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::RETRY_TIMEOUT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Per-request timeout in seconds for a single HTTP attempt within a retry loop (0 or absent = no per-request timeout)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CONNECT_TIMEOUT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "TCP connect timeout in seconds for the HTTP client (0 or absent = system default)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "When true, skip file permission checks on config.toml and connections.toml \
-                      during connection setup. Use in environments where permissions cannot be \
-                      controlled (CI runners, containers). Unix-only; ignored on Windows",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::UNSAFE_FILE_WRITE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "When true, GET downloads use the process umask permissions instead of owner-only \
-                      (0600). Unix-only; ignored on Windows",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::CLIENT_APP_ID.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Driver identity sent as CLIENT_APP_ID in the login request (e.g. PythonConnector, SnowSQL)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CLIENT_APP_VERSION.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Driver version sent as CLIENT_APP_VERSION in the login request",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::APPLICATION.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION (falls back to client_app_id)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: false,
-        mutable_after_connect: false,
-    },
-    // ── Statement ──────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::ASYNC_EXECUTION.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Execute queries asynchronously",
-        deprecated_by: None,
-        scopes: &[ParamScope::Statement],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::MULTI_STATEMENT_COUNT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Exact number of statements in a multi-statement query",
-        deprecated_by: None,
-        scopes: &[ParamScope::Statement],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::QUERY_TAG.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "String label attached to queries and surfaced in QUERY_HISTORY. \
-                      Settable at the session level (connection option or session override, \
-                      forwarded as a login session parameter) and overridable per-statement.",
-        deprecated_by: None,
-        // A session parameter that may also be overridden per-statement.
-        scopes: &[ParamScope::Session, ParamScope::Statement],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::SKIP_UPLOAD_ON_CONTENT_MATCH.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Skip re-uploading a PUT object when the remote stored digest (S3 x-amz-meta-sfc-digest / Azure x-ms-meta-sfcdigest / GCS x-goog-meta-sfc-digest) equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
-        deprecated_by: None,
-        scopes: &[ParamScope::Statement],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::PUT_FASTFAIL.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        // No registry default: unset must resolve to `None` so the dispatch
-        // site can fall back to `WrapperPresets::put_get_fastfail_default`
-        // (true for Python/JDBC, false for ODBC) instead of a fixed value.
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Controls whether a PUT batch stops at the first failing file (true, fail-fast) or attempts every file and reports failures as ERROR-status rows in the result set (false, collect-all). Defaults to the active wrapper's preset when unset. Mirrors old ODBC's PUT_FASTFAIL connection attribute. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
-        deprecated_by: None,
-        scopes: &[
-            ParamScope::Connection,
-            ParamScope::Session,
-            ParamScope::Statement,
-        ],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::GET_FASTFAIL.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        // See PUT_FASTFAIL above: `None` is load-bearing, not an oversight.
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Controls whether a GET batch stops at the first failing file (true, fail-fast) or attempts every file and reports failures as ERROR-status rows in the result set (false, collect-all). Defaults to the active wrapper's preset when unset. Mirrors old ODBC's GET_FASTFAIL connection attribute. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
-        deprecated_by: None,
-        scopes: &[
-            ParamScope::Connection,
-            ParamScope::Session,
-            ParamScope::Statement,
-        ],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    // ── Prefetch ───────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::CLIENT_PREFETCH_THREADS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(4)),
-        sensitive: false,
-        auth: false,
-        description: "Number of concurrent chunk prefetch threads for result set downloading",
-        deprecated_by: None,
-        scopes: &[ParamScope::Session],
-        used_at_connect: true,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::CLIENT_MEMORY_LIMIT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Int(1536)),
-        sensitive: false,
-        auth: false,
-        description: "Memory budget in MB for chunk prefetch buffer (0 = unlimited)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Session],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    // ── Session keep-alive ─────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Keep the session alive with periodic heartbeat requests",
-        deprecated_by: None,
-        scopes: &[ParamScope::Session],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Heartbeat frequency in seconds (clamped to interval master_token_validity/16..master_token_validity/4)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Session],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // ── PUT/GET — S3 regional endpoint ─────────────────────────────────
-    //
-    // Forces the regional S3 endpoint (`s3.<region>.amazonaws.com[.cn]`) for
-    // PUT/GET. Mirrors the OR-with-stage-info-flags semantics that the
-    // Python connector, snowflake-jdbc, and libsnowflakeclient all implement.
-    //
-    // `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` is the server-pushed
-    // session-parameter key (read directly by
-    // `read_use_s3_regional_url_session_param`, not via the registry).
-    // As a connection alias it is the legacy Python kwarg name
-    // (`enable_stage_s3_privatelink_for_us_east_1`), so it is Python-scoped;
-    // the Python wrapper additionally rewrites it via `_DEPRECATED_REWRITES`.
-    ParamDef {
-        canonical_name: param_names::USE_S3_REGIONAL_URL.as_str(),
-        aliases: aliases![Python; "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1"],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Force the S3 regional endpoint for PUT/GET (PrivateLink-to-S3)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Session],
-        used_at_connect: false,
-        mutable_after_connect: true,
-    },
-    ParamDef {
-        canonical_name: param_names::VALIDATE_DEFAULT_PARAMETERS.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Validate that the default database, schema, and warehouse exist on the server at connect time",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // ── Proxy ──────────────────────────────────────────────────────────
-    ParamDef {
-        canonical_name: param_names::PROXY_HOST.as_str(),
-        // The legacy ODBC `PROXY` DSN key uses a different *format* (full URL
-        // with embedded creds), so it is registered as a distinct canonical
-        // param `proxy` rather than aliased here. `build_proxy_config` parses
-        // the URL and merges it with the fields below.
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Proxy server hostname",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PROXY_PORT.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Int,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Proxy server port",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PROXY_USER.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Proxy server username for Basic auth",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::PROXY_PASSWORD.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: true,
-        auth: false,
-        description: "Proxy server password for Basic auth",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::NO_PROXY.as_str(),
-        // No alias: legacy ODBC's DSN key is `NO_PROXY` (`Snowflake.h`
-        // `SF_NO_PROXY_KEY`) and legacy Python's kwarg is `no_proxy`, both of
-        // which match the canonical name case-insensitively. The separator-less
-        // `NOPROXY` was UD-only leniency and is no longer accepted.
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Comma-separated list of hosts to bypass the proxy for",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // ── Workload Identity Federation (WIF) ────────────────────────────
-    ParamDef {
-        canonical_name: param_names::WORKLOAD_IDENTITY_PROVIDER.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::WhenAuthMethod("WORKLOAD_IDENTITY"),
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Cloud provider for WIF attestation (AWS, AZURE, GCP, OIDC)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::WORKLOAD_IDENTITY_ENTRA_RESOURCE.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Azure Entra resource URI for managed-identity token (Azure only; defaults to api://fd3f753b-eed3-462c-b6a7-a4b5bb650aad)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::WORKLOAD_IDENTITY_IMPERSONATION_PATH.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Comma-separated impersonation chain for WIF (AWS role ARNs or GCP service account emails)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Use outbound STS GetWebIdentityToken for AWS WIF (default: pre-signed GetCallerIdentity)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    // Legacy ODBC PROXY URL form (parsed and merged with the fields above).
-    ParamDef {
-        canonical_name: param_names::PROXY.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: true,
-        auth: false,
-        description: "Proxy URL ([scheme://][user:pass@]host[:port]); legacy ODBC `PROXY` form",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::USE_PROXY_ENV.as_str(),
-        // Legacy ODBC DSN `ProxyWithEnv` (`Snowflake.h`), uppercased by the
-        // connection-string parser. ODBC-only: the legacy Python connector has
-        // no equivalent kwarg (it consulted the proxy env vars unconditionally).
-        aliases: aliases![Odbc; "PROXYWITHENV"],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(false)),
-        sensitive: false,
-        auth: false,
-        description: "Honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars when no explicit proxy is set",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::ALLOW_EMPTY_PROXY.as_str(),
-        // Legacy ODBC DSN `AllowEmptyProxy` (`Snowflake.h`), uppercased by the
-        // connection-string parser. ODBC-only: no legacy Python equivalent.
-        aliases: aliases![Odbc; "ALLOWEMPTYPROXY"],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        default: Some(DefaultValue::Bool(true)),
-        sensitive: false,
-        auth: false,
-        description: "Empty PROXY value explicitly disables proxy (overrides env)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::ENABLE_CONNECTION_DIAG.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::Bool,
-        additional_value_type: None,
-        required: Required::Never,
-        // No registry default: the consumer uses `.unwrap_or(false)`.  Omitting
-        // the default keeps the Python dataclass field at `None` so that a
-        // TOML profile setting `enable_connection_diag = true` is not silently
-        // overridden by a Python-side `False` default passed as an explicit
-        // Layer-1 option.
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Run connectivity diagnostics during connect and write a report",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CONNECTION_DIAG_LOG_PATH.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Directory where the diagnostic report file is written (defaults to system tmpdir)",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::CONNECTION_DIAG_ALLOWLIST_PATH.as_str(),
-        aliases: aliases![],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        auth: false,
-        description: "Path to a pre-fetched allowlist.json; if absent the driver fetches it via system$allowlist()",
-        deprecated_by: None,
-        scopes: &[ParamScope::Connection],
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-];
-
 impl ParamDef {
+    pub const fn builder() -> ParamDefBuilder {
+        ParamDefBuilder {
+            canonical_name: None,
+            value_type: None,
+            description: None,
+            scopes: None,
+            used_at_connect: None,
+            mutable_after_connect: None,
+            sensitive: None,
+            auth: None,
+            aliases: &[],
+            additional_value_type: None,
+            required: Required::Never,
+            default: None,
+            deprecated_by: None,
+        }
+    }
+
     /// Alias names visible to `wrapper`: globals plus that wrapper's scoped ones.
     pub fn alias_names_for(&self, wrapper: Wrapper) -> impl Iterator<Item = &'static str> + '_ {
         self.aliases
@@ -2493,6 +552,1599 @@ impl ParamDef {
         self.scopes.contains(&ParamScope::Session)
     }
 }
+
+/// Accumulates a [`ParamDef`]. Required setters have no default.
+/// [`build`](Self::build) panics during const evaluation when one is missing.
+pub struct ParamDefBuilder {
+    canonical_name: Option<&'static str>,
+    value_type: Option<ValueType>,
+    description: Option<&'static str>,
+    scopes: Option<&'static [ParamScope]>,
+    used_at_connect: Option<bool>,
+    mutable_after_connect: Option<bool>,
+    sensitive: Option<bool>,
+    auth: Option<bool>,
+    aliases: &'static [Alias],
+    additional_value_type: Option<ValueType>,
+    required: Required,
+    default: Option<DefaultValue>,
+    deprecated_by: Option<&'static str>,
+}
+
+impl ParamDefBuilder {
+    pub const fn canonical_name(mut self, value: &'static str) -> Self {
+        self.canonical_name = Some(value);
+        self
+    }
+
+    pub const fn value_type(mut self, value: ValueType) -> Self {
+        self.value_type = Some(value);
+        self
+    }
+
+    pub const fn description(mut self, value: &'static str) -> Self {
+        self.description = Some(value);
+        self
+    }
+
+    pub const fn scopes(mut self, value: &'static [ParamScope]) -> Self {
+        self.scopes = Some(value);
+        self
+    }
+
+    pub const fn used_at_connect(mut self, value: bool) -> Self {
+        self.used_at_connect = Some(value);
+        self
+    }
+
+    pub const fn mutable_after_connect(mut self, value: bool) -> Self {
+        self.mutable_after_connect = Some(value);
+        self
+    }
+
+    pub const fn aliases(mut self, value: &'static [Alias]) -> Self {
+        self.aliases = value;
+        self
+    }
+
+    pub const fn additional_value_type(mut self, value: ValueType) -> Self {
+        self.additional_value_type = Some(value);
+        self
+    }
+
+    pub const fn required(mut self, value: Required) -> Self {
+        self.required = value;
+        self
+    }
+
+    pub const fn default(mut self, value: DefaultValue) -> Self {
+        self.default = Some(value);
+        self
+    }
+
+    pub const fn sensitive(mut self, value: bool) -> Self {
+        self.sensitive = Some(value);
+        self
+    }
+
+    pub const fn auth(mut self, value: bool) -> Self {
+        self.auth = Some(value);
+        self
+    }
+
+    pub const fn deprecated_by(mut self, value: &'static str) -> Self {
+        self.deprecated_by = Some(value);
+        self
+    }
+
+    pub const fn build(self) -> ParamDef {
+        ParamDef {
+            canonical_name: match self.canonical_name {
+                Some(value) => value,
+                None => panic!("ParamDef::builder() requires canonical_name"),
+            },
+            value_type: match self.value_type {
+                Some(value) => value,
+                None => panic!("ParamDef::builder() requires value_type"),
+            },
+            description: match self.description {
+                Some(value) => value,
+                None => panic!("ParamDef::builder() requires description"),
+            },
+            scopes: match self.scopes {
+                Some(value) => value,
+                None => panic!("ParamDef::builder() requires scopes"),
+            },
+            used_at_connect: match self.used_at_connect {
+                Some(value) => value,
+                None => panic!("ParamDef::builder() requires used_at_connect"),
+            },
+            mutable_after_connect: match self.mutable_after_connect {
+                Some(value) => value,
+                None => panic!("ParamDef::builder() requires mutable_after_connect"),
+            },
+            sensitive: match self.sensitive {
+                Some(value) => value,
+                None => panic!("ParamDef::builder() requires sensitive"),
+            },
+            auth: match self.auth {
+                Some(value) => value,
+                None => panic!("ParamDef::builder() requires auth"),
+            },
+            aliases: self.aliases,
+            additional_value_type: self.additional_value_type,
+            required: self.required,
+            default: self.default,
+            deprecated_by: self.deprecated_by,
+        }
+    }
+}
+
+static PARAM_DEFS: &[ParamDef] = &[
+    // ── Server ──────────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::ACCOUNT.as_str())
+        .value_type(ValueType::String)
+        .required(Required::Always)
+        .sensitive(false)
+        .auth(false)
+        .description("Snowflake account identifier")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::HOST.as_str())
+        // `HOST` is redundant with the canonical name (case-insensitive match).
+        // `SERVER` is the ODBC DSN spelling (`Snowflake.h` `SF_HOST_KEY`) and is
+        // ODBC-only: the legacy Python connector has no `server` kwarg, and JDBC
+        // carries the host in the JDBC URL.
+        .aliases(aliases![Odbc; "SERVER"])
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Snowflake server hostname")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PORT.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Server port number")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PROTOCOL.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Connection protocol (http or https)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::SSL.as_str())
+        .value_type(ValueType::Bool)
+        .sensitive(false)
+        .auth(false)
+        .description("Enable or disable SSL/TLS (sets protocol to https or http)")
+        .deprecated_by("protocol")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::SERVER_URL.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Full server URL (alternative to host/port/protocol)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.as_str())
+        // JDBC-only `allowUnderscoresInHost` property (case-insensitive).
+        .aliases(aliases![Jdbc; "allowUnderscoresInHost"])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Preserve underscores in the hostname derived from the account name")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // ── Auth ────────────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::USER.as_str())
+        // ODBC DSN `UID` (`Snowflake.h`). ODBC-only: the legacy Python connector
+        // has no `uid` kwarg.
+        .aliases(aliases![Odbc; "UID"])
+        .value_type(ValueType::String)
+        .required(Required::Always)
+        .sensitive(false)
+        .auth(true)
+        .description("Login username")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PASSWORD.as_str())
+        // ODBC DSN `PWD` (`Snowflake.h`). ODBC-only: the legacy Python connector
+        // has no `pwd` kwarg.
+        .aliases(aliases![Odbc; "PWD"])
+        .value_type(ValueType::String)
+        .required(Required::WhenAuthMethod("SNOWFLAKE_PASSWORD"))
+        .sensitive(true)
+        .auth(true)
+        .description("Login password")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::AUTHENTICATOR.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(true)
+        .description("Authenticator type for the connection")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PRIVATE_KEY.as_str())
+        // `PRIV_KEY_BASE64` is the legacy ODBC DSN key (`Snowflake.h`
+        // `SF_PRIV_KEY_BASE64_KEY`); `private_key_base64` is the JDBC property
+        // (`SFSessionProperty.PRIVATE_KEY_BASE64`) — legacy ODBC never accepted
+        // the fully-underscored spelling.
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_BASE64"),
+            Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_BASE64"),
+        ])
+        .value_type(ValueType::String)
+        .additional_value_type(ValueType::Bytes)
+        .required(Required::WhenAuthMethod("SNOWFLAKE_JWT"))
+        .sensitive(true)
+        .auth(true)
+        .description("Private key for key-pair authentication (base64-encoded or PEM)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PRIVATE_KEY_FILE.as_str())
+        // ODBC DSN `PRIV_KEY_FILE`.
+        .aliases(aliases![Odbc; "PRIV_KEY_FILE"])
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(true)
+        .description("Path to private key file for key-pair authentication")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PRIVATE_KEY_PASSWORD.as_str())
+        // `PRIV_KEY_FILE_PWD` / `PRIV_KEY_PWD` are the legacy ODBC DSN
+        // passphrase keys (`Snowflake.h`). `private_key_pwd` and
+        // `private_key_file_pwd` are JDBC properties (`SFSessionProperty`);
+        // `private_key_file_pwd` is also a legacy snowflake-connector-python
+        // kwarg, and needs `Python` scope for the TOML loader, which
+        // canonicalizes through the registry under the Python flavor rather
+        // than through the Python wrapper's generated `_ALIAS_MAP`.
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_FILE_PWD"),
+            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_PWD"),
+            Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_PWD"),
+            Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_FILE_PWD"),
+            Alias::scoped(Wrapper::Python, "PRIVATE_KEY_FILE_PWD"),
+        ])
+        .value_type(ValueType::String)
+        .sensitive(true)
+        .auth(true)
+        .description("Passphrase for encrypted private key")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::TOKEN.as_str())
+        .value_type(ValueType::String)
+        .required(Required::WhenAuthMethod("PROGRAMMATIC_ACCESS_TOKEN"))
+        .sensitive(true)
+        .auth(true)
+        .description("Pre-acquired bearer token (PAT, legacy OAUTH, or OIDC WIF). Alternative to token_file_path")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::TOKEN_FILE_PATH.as_str())
+        // `tokenFilePath` is legacy snowflake-connector-nodejs' option spelling
+        // (`lib/connection/connection_config.js`). Legacy .NET and JDBC read the
+        // snake_case `token_file_path`, which matches the canonical name
+        // case-insensitively and so needs no alias. This alias is inert for any
+        // wrapper that takes the `Default` presets — see
+        // `WrapperPresets::default`.
+        .aliases(aliases![NodeJs; "tokenFilePath"])
+        .value_type(ValueType::String)
+        // The path is not itself a credential, but supplying it is how the
+        // caller presents one — a bad path is an auth failure, not a bad
+        // connection-string attribute.
+        .sensitive(false)
+        .auth(true)
+        .description("Path to a file containing a pre-acquired bearer token (PAT, legacy OAUTH, or OIDC WIF). If both token and token_file_path are set, the file contents are used")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::SESSION_TOKEN.as_str())
+        .value_type(ValueType::String)
+        .sensitive(true)
+        .auth(false)
+        .description("Pre-acquired session token for session token authentication")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::MASTER_TOKEN.as_str())
+        .value_type(ValueType::String)
+        .sensitive(true)
+        .auth(false)
+        .description("Pre-acquired master token for session token authentication")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::MASTER_VALIDITY_IN_SECONDS.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Remaining validity in seconds for the master token (session token auth)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PASSCODE.as_str())
+        .value_type(ValueType::String)
+        .sensitive(true)
+        .auth(false)
+        .description("MFA passcode for USERNAME_PASSWORD_MFA authentication")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PASSCODE_IN_PASSWORD.as_str())
+        // `PASSCODE_IN_PASSWORD` is the legacy snowflake-connector-python kwarg
+        // spelling. It needs `Python` scope for the TOML loader: the canonical
+        // camelCase name does *not* match `passcode_in_password`
+        // case-insensitively (the underscores differ), so a
+        // `config.toml`/`connections.toml` profile would otherwise fail to
+        // canonicalize. Legacy ODBC's DSN key is `PASSCODEINPASSWORD` (no
+        // separators) and is rewritten wrapper-side in
+        // `odbc/src/api/connection.rs`, so no ODBC alias belongs here.
+        .aliases(aliases![Python; "PASSCODE_IN_PASSWORD"])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Whether the MFA passcode is appended to the password")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.as_str())
+        // JDBC-only camelCase property.
+        .aliases(aliases![Jdbc; "clientStoreTemporaryCredential"])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Enable MFA token caching for USERNAME_PASSWORD_MFA authentication")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::ENABLE_PUT_GET.as_str())
+        // JDBC `SFSessionProperty.ENABLE_PUT_GET`. `ParameterKeyNormalizer` does
+        // not carry this key, so the spelling reaches core verbatim and this
+        // alias is what resolves it.
+        .aliases(aliases![Jdbc; "enablePutGet"])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(true))
+        .sensitive(false)
+        .auth(false)
+        .description("JDBC-only. When false, client-side PUT/GET file transfers are disabled")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::DISABLE_PARALLEL_USER_PROMPT.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(true))
+        .sensitive(false)
+        .auth(false)
+        .description("When true (default), enables process-global serialization of interactive auth \
+                      prompts (external browser, MFA, OAuth) so that only one prompt is shown per \
+                      <user, host> when clientStoreTemporaryCredential is enabled. Set to false to \
+                      allow each concurrent connection to show its own prompt.")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::DISABLE_QUERY_CONTEXT_CACHE.as_str())
+        // Legacy ODBC (libsnowflakeclient `connection.c`) and legacy .NET
+        // (`SFSessionProperty`) spell this `DISABLEQUERYCONTEXTCACHE`; legacy JDBC
+        // (`SFSessionProperty`) and snowflake-connector-nodejs
+        // (`connection_config.js`) spell it `disableQueryContextCache`. The two
+        // differ only by case and resolve identically. Legacy Python's
+        // `disable_query_context_cache` matches the canonical name, so `Python`
+        // is absent here.
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "DISABLEQUERYCONTEXTCACHE"),
+            Alias::scoped(Wrapper::DotNet, "DISABLEQUERYCONTEXTCACHE"),
+            Alias::scoped(Wrapper::Jdbc, "disableQueryContextCache"),
+            Alias::scoped(Wrapper::NodeJs, "disableQueryContextCache"),
+        ])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("When true, disables the client-side query context cache. \
+                      No context is sent in requests and server-returned context is ignored.")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::INCLUDE_RETRY_REASON.as_str())
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "includeRetryReason"),
+            Alias::scoped(Wrapper::DotNet, "INCLUDERETRYREASON"),
+            Alias::scoped(Wrapper::NodeJs, "includeRetryReason"),
+            Alias::scoped(Wrapper::Python, "enable_retry_reason_in_query_response"),
+        ])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(true))
+        .sensitive(false)
+        .auth(false)
+        .description("When true, appends retryReason (the HTTP status code that triggered \
+                      the retry, or 0 for transport errors with no HTTP response) \
+                      alongside retryCount on retried query requests.")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::AUTHENTICATION_TIMEOUT.as_str())
+        // ODBC's LOGIN_TIMEOUT historically means authentication_timeout (it is an
+        // auth-retry budget, not a socket timeout); for the other wrappers
+        // `LOGIN_TIMEOUT` keeps matching the canonical `login_timeout` parameter
+        // below, case-insensitively.
+        .aliases(&[Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")])
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(120))
+        .sensitive(false)
+        .auth(false)
+        .description("Timeout in seconds for native Okta SSO authentication")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OKTA_USERNAME.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Okta username (defaults to the Snowflake user if omitted)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::DISABLE_SAML_URL_CHECK.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Skip the Okta SAML URL host-match safety check")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // ── OAuth ───────────────────────────────────────────────────────────
+    // Cross-driver canonical naming follows JDBC `SFSessionProperty.OAUTH_*`.
+    // All OAuth params are connect-time and immutable for the life of the
+    // connection.
+    //
+    // The camelCase `oauth*` aliases below — and `allowUnderscoresInHost` — are
+    // also rewritten to these canonical names Java-side, by the JDBC bridge's
+    // `ParameterKeyNormalizer.LEGACY_KEY_ALIASES`, which
+    // `SnowflakeConnectionImpl.setOptions` applies to every key. sf_core
+    // therefore sees the camelCase spelling only from a direct `resolve_for`
+    // caller, never from a real JDBC connection; the aliases stay so the
+    // registry remains an accurate record of what JDBC accepts until that
+    // mapping moves wrapper-side wholesale. The other `Jdbc`-scoped aliases
+    // (`clientStoreTemporaryCredential`, `enablePutGet`,
+    // `oauthEnableSingleUseRefreshTokens`, `PRIVATE_KEY_*`) have no Java-side
+    // entry and resolve here only.
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_CLIENT_ID.as_str())
+        // `OAUTH_CLIENT_ID` is the canonical spelling (case-insensitive match);
+        // the camelCase form is the JDBC-only `SFSessionProperty` key.
+        .aliases(aliases![Jdbc; "oauthClientId"])
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(true)
+        .description("OAuth client identifier (LOCAL_APPLICATION when Snowflake is the IdP)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_CLIENT_SECRET.as_str())
+        .aliases(aliases![Jdbc; "oauthClientSecret"])
+        .value_type(ValueType::String)
+        .sensitive(true)
+        .auth(true)
+        .description("OAuth client secret (redacted from logs)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_AUTHORIZATION_URL.as_str())
+        .aliases(aliases![Jdbc; "oauthAuthorizationUrl"])
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(true)
+        .description("IdP authorization endpoint (defaults to https://{host}/oauth/authorize)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_TOKEN_REQUEST_URL.as_str())
+        // `OAUTH_TOKEN_REQUEST_URL` matches the canonical name case-insensitively,
+        // which is also the legacy Python kwarg and the legacy ODBC DSN key
+        // (`Snowflake.h` `SF_OAUTH_TOKEN_REQUEST_URL_KEY`). Only the camelCase
+        // JDBC property needs an alias; the shorter `OAUTH_TOKEN_URL` was UD-only
+        // leniency (no such kwarg in the legacy connector) and is gone.
+        .aliases(aliases![Jdbc; "oauthTokenRequestUrl"])
+        .value_type(ValueType::String)
+        .required(Required::WhenAuthMethod("OAUTH_CLIENT_CREDENTIALS"))
+        .sensitive(false)
+        .auth(true)
+        .description("IdP token endpoint (CC only; defaults to https://{host}/oauth/token-request for AC)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_REDIRECT_URI.as_str())
+        .aliases(aliases![Jdbc; "oauthRedirectUri"])
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(true)
+        .description("Loopback redirect URI advertised to the IdP (defaults to http://127.0.0.1:<random>)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_SCOPE.as_str())
+        .aliases(aliases![Jdbc; "oauthScope"])
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(true)
+        .description("OAuth scope (space-separated; defaults to session:role:<role>)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.as_str())
+        .aliases(aliases![Jdbc; "oauthEnableSingleUseRefreshTokens"])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(true)
+        .description("Request single-use refresh-token rotation (Snowflake-IdP only)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_DISABLE_PKCE.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(true)
+        .description("Disable PKCE S256 challenge for OAUTH_AUTHORIZATION_CODE (Python-compatible escape hatch)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_ENABLE_DPOP.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(true)
+        .description("Enable RFC 9449 DPoP proof-of-possession (JDBC-compatible)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_CREDENTIALS_IN_BODY.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(true)
+        .description("Send client_id/client_secret in the OAUTH_CLIENT_CREDENTIALS token request body (client_secret_post) instead of the HTTP Basic header")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::OAUTH_DISABLE_CONSOLE_LOGIN.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(true)
+        .description("Disable EXTERNALBROWSER console-login (JDBC parity; does not gate OAuth)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // ── Session ─────────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::DATABASE.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Default database to use")
+        .scopes(&[ParamScope::Session])
+        .used_at_connect(true)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::SCHEMA.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Default schema to use")
+        .scopes(&[ParamScope::Session])
+        .used_at_connect(true)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::WAREHOUSE.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Default warehouse to use")
+        .scopes(&[ParamScope::Session])
+        .used_at_connect(true)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::ROLE.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Default role to use")
+        .scopes(&[ParamScope::Session])
+        .used_at_connect(true)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::SECONDARY_ROLES.as_str())
+        // Legacy ODBC's `SecondaryRoles` connection attribute has no separator,
+        // so the connection-string parser uppercases it to `SECONDARYROLES`
+        // (not `SECONDARY_ROLES`); scope that spelling to ODBC so the wrapper
+        // canonicalizes it to `secondary_roles`.
+        .aliases(aliases![Odbc; "SECONDARYROLES"])
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Secondary-roles activation mode sent at login (e.g. ALL or NONE)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // ── TLS ─────────────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::CUSTOM_ROOT_STORE_PATH.as_str())
+        // No alias: legacy ODBC had no custom-root-store DSN key (only `SSL`), and
+        // the `TLS_`-prefixed spelling had no users — the canonical name resolves
+        // for every wrapper case-insensitively.
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Path to custom root certificate store")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::EXTRA_ROOT_STORE_PATH.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Path to root certificates added to the default root store")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::VERIFY_HOSTNAME.as_str())
+        // No alias: no legacy TLS-verification DSN key existed, and the
+        // `TLS_VERIFY_HOSTNAME` spelling had no users.
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(true))
+        .sensitive(false)
+        .auth(false)
+        .description("Whether to verify the server hostname in TLS")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::VERIFY_CERTIFICATES.as_str())
+        // No alias: see `verify_hostname` above.
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(true))
+        .sensitive(false)
+        .auth(false)
+        .description("Whether to verify TLS certificates")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::TLS_SKIP_VERIFY.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Skip all TLS verification with a single switch: disables both certificate and hostname checks (and, since certificate verification is off, CRL revocation checks are bypassed too). Insecure; intended for testing only")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // TLS protocol-version window.
+    ParamDef::builder()
+        .canonical_name(param_names::MIN_TLS_VERSION.as_str())
+        .value_type(ValueType::String)
+        .default(DefaultValue::String("tls12"))
+        .sensitive(false)
+        .auth(false)
+        .description("Minimum TLS protocol version to negotiate (tls12 or tls13)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::MAX_TLS_VERSION.as_str())
+        .value_type(ValueType::String)
+        .default(DefaultValue::String("tls13"))
+        .sensitive(false)
+        .auth(false)
+        .description("Maximum TLS protocol version to negotiate (tls12 or tls13)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // ── CRL ─────────────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_CHECK_MODE.as_str())
+        // UD-ODBC's own DSN spellings for CRL checking (legacy snowflake-odbc
+        // spelled this family `CRL_CHECK` / `CRL_ADVISORY`, `Snowflake.h:197-202`;
+        // UD has not adopted those names). Wired wrapper-side for value
+        // normalization and exercised by `odbc_tests/tests/e2e/tls/crl_enabled.cpp`.
+        // Python uses the `cert_revocation_check_mode` legacy kwarg, rewritten
+        // wrapper-side by `_LEGACY_REWRITES`.
+        .aliases(aliases![Odbc; "CRL_MODE", "CRL_ENABLED"])
+        // Free-form string in core: the ODBC wrapper maps its `CRL_MODE` /
+        // `CRL_ENABLED` wire spellings to the `DISABLED` / `ENABLED` / `ADVISORY`
+        // tokens that `build_crl_config` accepts before the value reaches core.
+        .value_type(ValueType::String)
+        .default(DefaultValue::String("DISABLED"))
+        .sensitive(false)
+        .auth(false)
+        .description("Certificate revocation check mode (DISABLED, ENABLED, ADVISORY)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_ENABLE_DISK_CACHING.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(true))
+        .sensitive(false)
+        .auth(false)
+        .description("Enable disk caching for CRL responses")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_ENABLE_MEMORY_CACHING.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(true))
+        .sensitive(false)
+        .auth(false)
+        .description("Enable in-memory caching for CRL responses")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_CACHE_DIR.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Directory for CRL cache files")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_MAX_DOWNLOAD_SIZE.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(20 * 1024 * 1024))
+        .sensitive(false)
+        .auth(false)
+        .description("Maximum CRL download size in bytes before the download is aborted")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_VALIDITY_TIME.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(86400))
+        .sensitive(false)
+        .auth(false)
+        .description("Maximum age in seconds of a cached CRL before it is re-fetched")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_ON_DISK_CACHE_REMOVAL_DELAY.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(604800))
+        .sensitive(false)
+        .auth(false)
+        .description("Delay in seconds after a CRL's nextUpdate before it is purged from the on-disk cache")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_CACHE_CLEANUP_INTERVAL.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(3600))
+        .sensitive(false)
+        .auth(false)
+        .description("Interval in seconds between background CRL cache cleanup passes")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_CACHE_START_CLEANUP.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Run the background CRL cache cleanup task")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_UNSAFE_SKIP_FILE_PERMISSIONS_CHECK.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Skip verification that on-disk CRL cache files and directory are owner-only (0600/0700)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_ALLOW_CERTIFICATES_WITHOUT_CRL_URL.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Allow certificates that do not include a CRL distribution URL")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_HTTP_TIMEOUT.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(10))
+        .sensitive(false)
+        .auth(false)
+        .description("HTTP timeout in seconds for CRL endpoint requests")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CRL_CONNECTION_TIMEOUT.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(10))
+        .sensitive(false)
+        .auth(false)
+        .description("Connection timeout in seconds for CRL endpoints")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // ── Client ──────────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::CONNECTION_NAME.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Named connection to load from TOML configuration files")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::LOG_MAX_QUERY_LENGTH.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(80))
+        .sensitive(false)
+        .auth(false)
+        .description("Maximum number of characters of a query string to include in log messages")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::LOG_QUERY_TEXT.as_str())
+        .value_type(ValueType::Bool)
+        .additional_value_type(ValueType::String)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Include the (truncated) SQL text in INFO query logs")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::LOG_QUERY_PARAMETERS.as_str())
+        .value_type(ValueType::Bool)
+        .additional_value_type(ValueType::String)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Include the (truncated) JSON bindings in INFO query logs (requires log_query_text)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    // ── Logout ────────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::SERVER_SESSION_KEEP_ALIVE.as_str())
+        .value_type(ValueType::Bool)
+        .sensitive(false)
+        .auth(false)
+        .description("Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION.as_str())
+        .value_type(ValueType::Bool)
+        .sensitive(false)
+        .auth(false)
+        .description("Enable auto-detection of async queries before logout (SNOW-2314152)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::LOGOUT_ERROR_STRATEGY.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Error handling strategy for logout: 'best_effort' or 'strict'")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::LOGOUT_TOTAL_TIMEOUT_SECONDS.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Total timeout budget for logout operation including retries")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::LOGOUT_MAX_ATTEMPTS.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Maximum total attempts for logout (1 = no retry, 3 = 2 retries)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::LOGOUT_REQUEST_TIMEOUT_SECONDS.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Per-request socket timeout for individual logout attempts")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::RETRY_MAX_ATTEMPTS.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(DEFAULT_RETRY_MAX_ATTEMPTS as i64))
+        .sensitive(false)
+        .auth(false)
+        .description("Maximum total attempts for general HTTP calls (login, query, logout). 1 = no retry")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::RETRY_EXTRA_STATUS_CODES.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Additional HTTP status codes (comma-separated) to retry on general HTTP and PUT/GET calls, beyond the built-in 408/429/307/308/5xx set")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PUT_GET_MAX_ATTEMPTS.as_str())
+        // ODBC-only 3.x spellings (`Snowflake.h`). The ODBC wrapper resolves conflicts:
+        // `PUT_GET_MAX_ATTEMPTS` wins when present; otherwise the maximum of any
+        // supplied legacy alias values is used.
+        .aliases(aliases![Odbc; "PUT_MAXRETRIES", "GET_MAXRETRIES"])
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(DEFAULT_PUT_GET_MAX_ATTEMPTS as i64))
+        .sensitive(false)
+        .auth(false)
+        .description("Maximum total attempts for a single PUT/GET file transfer (1 = no retry)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    // ── Retry backoff curve (shared by HTTP and PUT/GET pipelines) ──────
+    ParamDef::builder()
+        .canonical_name(param_names::RETRY_BACKOFF_BASE_MS.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(DEFAULT_RETRY_BACKOFF_BASE_MS as i64))
+        .sensitive(false)
+        .auth(false)
+        .description("Initial exponential-backoff delay in milliseconds between retry attempts")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::RETRY_BACKOFF_CAP_MS.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(DEFAULT_RETRY_BACKOFF_CAP_MS as i64))
+        .sensitive(false)
+        .auth(false)
+        .description("Maximum exponential-backoff delay in milliseconds between retry attempts")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::RETRY_BACKOFF_FACTOR.as_str())
+        .value_type(ValueType::Double)
+        .default(DefaultValue::Double(DEFAULT_RETRY_BACKOFF_FACTOR))
+        .sensitive(false)
+        .auth(false)
+        .description("Multiplier applied to the backoff delay after each retry attempt")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::RETRY_BACKOFF_JITTER.as_str())
+        .value_type(ValueType::String)
+        .default(DefaultValue::String(DEFAULT_RETRY_BACKOFF_JITTER))
+        .sensitive(false)
+        .auth(false)
+        .description("Backoff jitter strategy: 'none', 'full', or 'decorrelated'")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    // ── Timeout configuration ─────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::LOGIN_TIMEOUT.as_str())
+        // `LOGIN_TIMEOUT` matches this canonical case-insensitively for every
+        // wrapper except ODBC, where it is scoped to `authentication_timeout`
+        // (see that param's `Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")`).
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(DEFAULT_LOGIN_TIMEOUT_SECS as i64))
+        .sensitive(false)
+        .auth(false)
+        .description("Wall-clock timeout in seconds for the entire login operation including retries (0 = no timeout)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::QUERY_TIMEOUT.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(DEFAULT_QUERY_TIMEOUT_SECS as i64))
+        .sensitive(false)
+        .auth(false)
+        .description("Wall-clock timeout in seconds for query execution including retries (0 = no timeout)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::REQUEST_TIMEOUT.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(DEFAULT_REQUEST_TIMEOUT_SECS as i64))
+        .sensitive(false)
+        .auth(false)
+        .description("Wall-clock timeout in seconds for all other operations (close session, heartbeat, etc.) including retries (0 = no timeout)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::RETRY_TIMEOUT.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Per-request timeout in seconds for a single HTTP attempt within a retry loop (0 or absent = no per-request timeout)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CONNECT_TIMEOUT.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("TCP connect timeout in seconds for the HTTP client (0 or absent = system default)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("When true, skip file permission checks on config.toml and connections.toml \
+                      during connection setup. Use in environments where permissions cannot be \
+                      controlled (CI runners, containers). Unix-only; ignored on Windows")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::UNSAFE_FILE_WRITE.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("When true, GET downloads use the process umask permissions instead of owner-only \
+                      (0600). Unix-only; ignored on Windows")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CLIENT_APP_ID.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Driver identity sent as CLIENT_APP_ID in the login request (e.g. PythonConnector, SnowSQL)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CLIENT_APP_VERSION.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Driver version sent as CLIENT_APP_VERSION in the login request")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::APPLICATION.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION (falls back to client_app_id)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    // ── Statement ──────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::ASYNC_EXECUTION.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Execute queries asynchronously")
+        .scopes(&[ParamScope::Statement])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::MULTI_STATEMENT_COUNT.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Exact number of statements in a multi-statement query")
+        .scopes(&[ParamScope::Statement])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::QUERY_TAG.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("String label attached to queries and surfaced in QUERY_HISTORY. \
+                      Settable at the session level (connection option or session override, \
+                      forwarded as a login session parameter) and overridable per-statement.")
+        // A session parameter that may also be overridden per-statement.
+        .scopes(&[ParamScope::Session, ParamScope::Statement])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::SKIP_UPLOAD_ON_CONTENT_MATCH.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Skip re-uploading a PUT object when the remote stored digest (S3 x-amz-meta-sfc-digest / Azure x-ms-meta-sfcdigest / GCS x-goog-meta-sfc-digest) equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.")
+        .scopes(&[ParamScope::Statement])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PUT_FASTFAIL.as_str())
+        .value_type(ValueType::Bool)
+        // No registry default: unset must resolve to `None` so the dispatch
+        // site can fall back to `WrapperPresets::put_get_fastfail_default`
+        // (true for Python/JDBC, false for ODBC) instead of a fixed value.
+        .sensitive(false)
+        .auth(false)
+        .description("Controls whether a PUT batch stops at the first failing file (true, fail-fast) or attempts every file and reports failures as ERROR-status rows in the result set (false, collect-all). Defaults to the active wrapper's preset when unset. Mirrors old ODBC's PUT_FASTFAIL connection attribute. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.")
+        .scopes(&[
+            ParamScope::Connection,
+            ParamScope::Session,
+            ParamScope::Statement,
+        ])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::GET_FASTFAIL.as_str())
+        .value_type(ValueType::Bool)
+        // See PUT_FASTFAIL above: `None` is load-bearing, not an oversight.
+        .sensitive(false)
+        .auth(false)
+        .description("Controls whether a GET batch stops at the first failing file (true, fail-fast) or attempts every file and reports failures as ERROR-status rows in the result set (false, collect-all). Defaults to the active wrapper's preset when unset. Mirrors old ODBC's GET_FASTFAIL connection attribute. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.")
+        .scopes(&[
+            ParamScope::Connection,
+            ParamScope::Session,
+            ParamScope::Statement,
+        ])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    // ── Prefetch ───────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::CLIENT_PREFETCH_THREADS.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(4))
+        .sensitive(false)
+        .auth(false)
+        .description("Number of concurrent chunk prefetch threads for result set downloading")
+        .scopes(&[ParamScope::Session])
+        .used_at_connect(true)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CLIENT_MEMORY_LIMIT.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(1536))
+        .sensitive(false)
+        .auth(false)
+        .description("Memory budget in MB for chunk prefetch buffer (0 = unlimited)")
+        .scopes(&[ParamScope::Session])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    // ── Session keep-alive ─────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::CLIENT_SESSION_KEEP_ALIVE.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Keep the session alive with periodic heartbeat requests")
+        .scopes(&[ParamScope::Session])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Heartbeat frequency in seconds (clamped to interval master_token_validity/16..master_token_validity/4)")
+        .scopes(&[ParamScope::Session])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // ── PUT/GET — S3 regional endpoint ─────────────────────────────────
+    //
+    // Forces the regional S3 endpoint (`s3.<region>.amazonaws.com[.cn]`) for
+    // PUT/GET. Mirrors the OR-with-stage-info-flags semantics that the
+    // Python connector, snowflake-jdbc, and libsnowflakeclient all implement.
+    //
+    // `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` is the server-pushed
+    // session-parameter key (read directly by
+    // `read_use_s3_regional_url_session_param`, not via the registry).
+    // As a connection alias it is the legacy Python kwarg name
+    // (`enable_stage_s3_privatelink_for_us_east_1`), so it is Python-scoped;
+    // the Python wrapper additionally rewrites it via `_DEPRECATED_REWRITES`.
+    ParamDef::builder()
+        .canonical_name(param_names::USE_S3_REGIONAL_URL.as_str())
+        .aliases(aliases![Python; "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1"])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Force the S3 regional endpoint for PUT/GET (PrivateLink-to-S3)")
+        .scopes(&[ParamScope::Session])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::VALIDATE_DEFAULT_PARAMETERS.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Validate that the default database, schema, and warehouse exist on the server at connect time")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // ── Proxy ──────────────────────────────────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::PROXY_HOST.as_str())
+        // The legacy ODBC `PROXY` DSN key uses a different *format* (full URL
+        // with embedded creds), so it is registered as a distinct canonical
+        // param `proxy` rather than aliased here. `build_proxy_config` parses
+        // the URL and merges it with the fields below.
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Proxy server hostname")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PROXY_PORT.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Proxy server port")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PROXY_USER.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Proxy server username for Basic auth")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PROXY_PASSWORD.as_str())
+        .value_type(ValueType::String)
+        .sensitive(true)
+        .auth(false)
+        .description("Proxy server password for Basic auth")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::NO_PROXY.as_str())
+        // No alias: legacy ODBC's DSN key is `NO_PROXY` (`Snowflake.h`
+        // `SF_NO_PROXY_KEY`) and legacy Python's kwarg is `no_proxy`, both of
+        // which match the canonical name case-insensitively. The separator-less
+        // `NOPROXY` was UD-only leniency and is no longer accepted.
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Comma-separated list of hosts to bypass the proxy for")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // ── Workload Identity Federation (WIF) ────────────────────────────
+    ParamDef::builder()
+        .canonical_name(param_names::WORKLOAD_IDENTITY_PROVIDER.as_str())
+        .value_type(ValueType::String)
+        .required(Required::WhenAuthMethod("WORKLOAD_IDENTITY"))
+        .sensitive(false)
+        .auth(true)
+        .description("Cloud provider for WIF attestation (AWS, AZURE, GCP, OIDC)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::WORKLOAD_IDENTITY_ENTRA_RESOURCE.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(true)
+        .description("Azure Entra resource URI for managed-identity token (Azure only; defaults to api://fd3f753b-eed3-462c-b6a7-a4b5bb650aad)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::WORKLOAD_IDENTITY_IMPERSONATION_PATH.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(true)
+        .description("Comma-separated impersonation chain for WIF (AWS role ARNs or GCP service account emails)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(true)
+        .description("Use outbound STS GetWebIdentityToken for AWS WIF (default: pre-signed GetCallerIdentity)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    // Legacy ODBC PROXY URL form (parsed and merged with the fields above).
+    ParamDef::builder()
+        .canonical_name(param_names::PROXY.as_str())
+        .value_type(ValueType::String)
+        .sensitive(true)
+        .auth(false)
+        .description("Proxy URL ([scheme://][user:pass@]host[:port]); legacy ODBC `PROXY` form")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::USE_PROXY_ENV.as_str())
+        // Legacy ODBC DSN `ProxyWithEnv` (`Snowflake.h`), uppercased by the
+        // connection-string parser. ODBC-only: the legacy Python connector has
+        // no equivalent kwarg (it consulted the proxy env vars unconditionally).
+        .aliases(aliases![Odbc; "PROXYWITHENV"])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars when no explicit proxy is set")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::ALLOW_EMPTY_PROXY.as_str())
+        // Legacy ODBC DSN `AllowEmptyProxy` (`Snowflake.h`), uppercased by the
+        // connection-string parser. ODBC-only: no legacy Python equivalent.
+        .aliases(aliases![Odbc; "ALLOWEMPTYPROXY"])
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(true))
+        .sensitive(false)
+        .auth(false)
+        .description("Empty PROXY value explicitly disables proxy (overrides env)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::ENABLE_CONNECTION_DIAG.as_str())
+        .value_type(ValueType::Bool)
+        // No registry default: the consumer uses `.unwrap_or(false)`.  Omitting
+        // the default keeps the Python dataclass field at `None` so that a
+        // TOML profile setting `enable_connection_diag = true` is not silently
+        // overridden by a Python-side `False` default passed as an explicit
+        // Layer-1 option.
+        .sensitive(false)
+        .auth(false)
+        .description("Run connectivity diagnostics during connect and write a report")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CONNECTION_DIAG_LOG_PATH.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Directory where the diagnostic report file is written (defaults to system tmpdir)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CONNECTION_DIAG_ALLOWLIST_PATH.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Path to a pre-fetched allowlist.json; if absent the driver fetches it via system$allowlist()")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+];
 
 /// The registry singleton. Built once at startup, immutable thereafter.
 pub struct ParamRegistry {
@@ -2893,6 +2545,60 @@ mod tests {
                     alias.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn omitted_fields_take_struct_defaults() {
+        const DEF: ParamDef = ParamDef::builder()
+            .canonical_name("test_only")
+            .value_type(ValueType::String)
+            .sensitive(false)
+            .auth(false)
+            .description("")
+            .scopes(&[ParamScope::Connection])
+            .used_at_connect(false)
+            .mutable_after_connect(false)
+            .build();
+        assert!(DEF.aliases.is_empty());
+        assert_eq!(DEF.additional_value_type, None);
+        assert_eq!(DEF.required, Required::Never);
+        assert_eq!(DEF.default, None);
+        const {
+            assert!(!DEF.sensitive);
+            assert!(!DEF.auth);
+        }
+        assert_eq!(DEF.deprecated_by, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "ParamDef::builder() requires canonical_name")]
+    fn builder_panics_when_required_setters_are_omitted() {
+        let _ = ParamDef::builder().build();
+    }
+
+    #[test]
+    fn credential_like_params_are_sensitive() {
+        fn holds_secret(name: &str) -> bool {
+            name == "private_key"
+                || name == "token"
+                || name == "session_token"
+                || name == "master_token"
+                || name == "passcode"
+                || name == "proxy"
+                || name == "password"
+                || name.ends_with("_password")
+                || name.ends_with("_secret")
+        }
+        for param in registry().all_params() {
+            assert_eq!(
+                param.sensitive,
+                holds_secret(param.canonical_name),
+                "{:?} sensitive={} but holds_secret={}",
+                param.canonical_name,
+                param.sensitive,
+                holds_secret(param.canonical_name)
+            );
         }
     }
 
@@ -3388,9 +3094,11 @@ mod tests {
             );
         }
 
-        // Every OAuth parameter is an auth parameter.
+        // Every OAuth and WIF parameter is an auth parameter.
         for def in r.all_params() {
-            if def.canonical_name.starts_with("oauth_") {
+            if def.canonical_name.starts_with("oauth_")
+                || def.canonical_name.starts_with("workload_identity_")
+            {
                 assert!(
                     r.is_auth_for(Wrapper::Odbc, def.canonical_name),
                     "{} should be an auth parameter",

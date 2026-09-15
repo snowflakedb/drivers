@@ -39,8 +39,8 @@ std::string get_wif_connection_string_without_provider() {
 //
 // New driver: sf_core::config::connection_config::validate_settings reports
 // ValidationCode::MissingRequired for "workload_identity_provider"
-// (validate_wif_missing_provider_reports_issue unit test), which the
-// connection layer surfaces as SQLSTATE 01S00.
+// (validate_wif_missing_provider_reports_issue unit test). WORKLOAD_IDENTITY_PROVIDER
+// is an auth parameter, so the connection layer surfaces that as SQLSTATE 28000.
 TEST_CASE("should fail workload identity authentication when provider is missing", "[workload_identity_auth]") {
   // Given a connection string with Authenticator=workload_identity but no
   // WORKLOAD_IDENTITY_PROVIDER
@@ -61,14 +61,11 @@ TEST_CASE("should fail workload identity authentication when provider is missing
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   REQUIRE(records.size() >= 1);
+  CHECK(records[0].sqlState == "28000");
 
   OLD_DRIVER_ONLY("BD#1") {
-    CHECK(records[0].sqlState == "28000");
     CHECK_THAT(records[0].messageText, ContainsSubstring("Required setting 'WORKLOAD_IDENTITY_PROVIDER'"));
   }
 
-  NEW_DRIVER_ONLY("BD#1") {
-    CHECK(records[0].sqlState == "01S00");
-    CHECK_THAT(records[0].messageText, ContainsSubstring("workload_identity_provider"));
-  }
+  NEW_DRIVER_ONLY("BD#1") { CHECK_THAT(records[0].messageText, ContainsSubstring("workload_identity_provider")); }
 }
