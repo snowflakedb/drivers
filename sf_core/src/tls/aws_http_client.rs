@@ -4,15 +4,22 @@
 //! trust store — no min/max protocol-version knob, no CRL hook, no custom root
 //! store — so it cannot honour the connection's full [`TlsConfig`]. This adapter
 //! instead hands the AWS SDK an [`HttpClient`] over the same `reqwest::Client`
-//! stack that Azure and GCS transfers build via [`configure_tls_builder`], so every
-//! AWS SDK consumer (S3 transfers, the WIF STS calls, platform detection's STS
-//! probe) inherits one implementation of the connection's TLS policy (version
-//! window, CRL, custom root store) and proxy handling (`proxy_host`/
-//! `proxy_port`/`no_proxy`/`use_proxy_env`, HTTPS CONNECT-tunnelling,
-//! `HTTP_PROXY`/`HTTPS_PROXY` fallback).
+//! stack that Azure and GCS transfers build via [`configure_tls_builder`], so
+//! every AWS SDK consumer that *has* a connection — S3 transfers and the WIF
+//! STS calls made during login — inherits one implementation of that
+//! connection's TLS policy (version window, CRL, custom root store) and proxy
+//! handling (`proxy_host`/`proxy_port`/`no_proxy`/`use_proxy_env`, HTTPS
+//! CONNECT-tunnelling, `HTTP_PROXY`/`HTTPS_PROXY` fallback).
 //!
-//! It stops one step short of [`configure_storage_client_builder`](crate::tls::client::configure_storage_client_builder), the storage
-//! clients' entry point, which is that function plus `.no_gzip()`. Gzip has to
+//! The two consumers with no connection to inherit from — platform detection's
+//! STS probe and the `wif_create_attestation` RPC — go through
+//! `AwsSdkReqwestClient::with_default_tls` instead, which has no `TlsConfig`,
+//! no CRL worker and no explicit `ProxyConfig` (only the `HTTP_PROXY`-style
+//! env vars reqwest detects on its own). They still share the SDK-owned
+//! transport adjustments below; they just have no connection policy to apply.
+//!
+//! It stops one step short of [`configure_storage_client_builder`](crate::tls::client::configure_storage_client_builder), the
+//! Azure/GCS entry point, which is that function plus `.no_gzip()`. Gzip has to
 //! be off here too — the driver treats downloaded bytes as opaque, so digest,
 //! Content-Length and ranged-offset math all assume wire bytes are body bytes
 //! (SNOW-4073008) — but [`AwsSdkReqwestClient::with_default_tls`] has no

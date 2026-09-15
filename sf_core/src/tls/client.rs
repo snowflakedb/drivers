@@ -64,9 +64,10 @@ pub(crate) fn build_tls_client_and_rustls_config(
     // to, so a client built before the provider is installed panics with
     // "No provider set".
     super::ensure_crypto_provider();
-    // Fail closed rather than serve traffic on a non-approved module: in `fips`
-    // builds this refuses to build a client when the provider that won the
-    // process-global slot is not FIPS. Compiles away without the feature.
+    // Fail closed rather than serve traffic on a non-approved module: in
+    // `fips-tls` builds this refuses to build a client when the provider that
+    // won the process-global slot is not FIPS. Compiles away without the
+    // feature.
     super::require_fips_provider()?;
 
     if !tls_config.verify_certificates {
@@ -240,8 +241,8 @@ pub(crate) fn configure_tls_builder(
     }
 }
 
-/// [`configure_tls_builder`] plus `.no_gzip()`, for the storage clients
-/// (Azure, GCS, S3) that move opaque, possibly CSE-encrypted bytes whose
+/// [`configure_tls_builder`] plus `.no_gzip()`, for the Azure and GCS
+/// transfers that move opaque, possibly CSE-encrypted bytes whose
 /// downstream SHA-256 digest / Content-Length / ranged-download checks
 /// assume wire bytes == body bytes. Without it, a response carrying
 /// `Content-Encoding: gzip` (e.g. from `gsutil cp -Z`, BigQuery exports, or
@@ -253,9 +254,11 @@ pub(crate) fn configure_tls_builder(
 /// (`storage_client.py:54-59`).
 ///
 /// The GS/REST client still wants gzip, so this can't be folded into
-/// `configure_tls_builder` itself. S3 then chains `.redirect(Policy::none())`
-/// in [`crate::tls::aws_http_client::build_s3_reqwest_client`]. All three
-/// storage clients pin `.http1_only()` on their own builders.
+/// `configure_tls_builder` itself. S3 does not come through here: it reaches
+/// the AWS SDK through [`AwsSdkReqwestClient`](crate::tls::aws_http_client::AwsSdkReqwestClient),
+/// which calls `configure_tls_builder` directly and then applies `.no_gzip()`
+/// alongside the two SDK-only adjustments (`.redirect(Policy::none())`,
+/// `.http1_only()`) that cannot be set on an already-built client.
 pub(crate) fn configure_storage_client_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
