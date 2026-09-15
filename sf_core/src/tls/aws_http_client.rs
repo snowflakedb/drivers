@@ -101,6 +101,13 @@ impl AwsSdkReqwestClient {
     /// Installs the process crypto provider itself (this can be the first
     /// client the process builds) and applies the same fail-closed FIPS gate
     /// as [`configure_tls_builder`].
+    ///
+    /// Because there is no `TlsConfig` here, the builder is left plain and
+    /// reqwest resolves the process-global provider for the handshake. The gate
+    /// is what makes that acceptable under `fips-tls`: it requires the global
+    /// provider to be FIPS as well as the linked module, so this constructor
+    /// cannot hand the AWS SDK a client running non-approved crypto. See
+    /// [`crate::tls::require_fips_provider`].
     pub(crate) fn with_default_tls() -> Result<Self, TlsError> {
         crate::tls::ensure_crypto_provider();
         crate::tls::require_fips_provider()?;
