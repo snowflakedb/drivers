@@ -8,6 +8,12 @@ publish = false
 name = "nodejs_bridge"
 crate-type = ["cdylib"]
 
+[features]
+# Links the FIPS-validated TLS backend (aws-lc-fips-sys) instead of aws-lc-sys.
+# Covers TLS only, which is what the name says -- see the `fips-tls` feature
+# comment in sf_core/Cargo.toml for why this is not a FIPS artifact on its own.
+fips-tls = ["sf_core/fips-tls"]
+
 [dependencies]
 sf_core = { path = "../sf_core" }
 sf_types = { path = "../sf_types" }
