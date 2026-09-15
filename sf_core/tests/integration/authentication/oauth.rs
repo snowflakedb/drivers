@@ -576,6 +576,38 @@ fn should_login_with_client_credentials_using_external_idp() {
 }
 
 #[test]
+fn should_not_short_circuit_client_credentials_from_cached_access_token() {
+    // Given a Client Credentials fixture and an access token already present
+    // in the OS cache for the same IdP URL and user
+    let user = unique_user("oauth_cc_ignore_cache");
+    let fixture = OAuthTestFixture::with_client_credentials(&user);
+    fixture.seed_access_token("preseeded-access-token");
+    fixture
+        .mock
+        .mount(oauth::idp_token_endpoint_success_client_credentials());
+    fixture.mock.mount(oauth::snowflake_login_success_oauth(
+        "cc-access-token-success",
+    ));
+
+    // When Trying to Connect
+    let result = fixture.connect();
+
+    // Then Login succeeds, the IdP token endpoint was hit anyway, and the
+    // pre-seeded cache entry was left untouched (CC is stateless by design).
+    OAuthTestFixture::assert_success(result, "CC connect to succeed");
+    assert_eq!(
+        count_token_endpoint_requests(&fixture.mock),
+        1,
+        "CC must fetch a fresh token from the IdP even when an OAuth access token is already cached"
+    );
+    assert_eq!(
+        fixture.cached_access_token().as_deref(),
+        Some("preseeded-access-token"),
+        "CC must not overwrite the OS token cache"
+    );
+}
+
+#[test]
 fn should_fail_client_credentials_when_idp_returns_500() {
     // Given the CC fixture is wired with an IdP that returns 500
     let user = unique_user("oauth_cc_500");
