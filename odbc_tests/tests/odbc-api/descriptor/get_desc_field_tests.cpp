@@ -141,7 +141,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: IRD fields after execu
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: IRD remaining fields across types",
                  "[odbc-api][getdescfield][descriptor]") {
-  WINDOWS_ONLY { SKIP("SNOW-3720962: Test hangs on Windows — investigating driver-level deadlock"); }
   SQLRETURN ret = SQLExecDirect(stmt_handle(),
                                 sqlchar("SELECT 'hello'::VARCHAR(50) AS STR_COL, "
                                         "42::NUMBER(10,2) AS NUM_COL"),
@@ -206,7 +205,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: IRD remaining fields a
 
   // --- NUMBER column (rec 2) ---
   {
-    SQLSMALLINT case_sensitive = -1;
+    SQLINTEGER case_sensitive = -1;
     ret = SQLGetDescField(ird, 2, SQL_DESC_CASE_SENSITIVE, &case_sensitive, 0, nullptr);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(case_sensitive == SQL_FALSE);
