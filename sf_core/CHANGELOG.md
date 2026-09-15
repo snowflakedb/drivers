@@ -40,6 +40,7 @@ Changes:
 Bug fixes:
 
 - Fixed `ReauthenticationRequest` missing a `cause` attribute and not being importable from `snowflake.connector.network`, which broke Snowpark session-expiry handling. (snowflakedb/drivers#1945)
+- Fixed file operations on S3 external stages without a storage integration by allowing the session token to be absent, matching legacy `snowflake-connector-python`. (snowflakedb/drivers#1950)
 - Fixed OAuth refresh token being evicted after a successful refresh when token rotation is not enabled. When `oauth_enable_single_use_refresh_tokens` is false (the default), a refresh response that omits a new refresh token is spec-compliant (RFC 6749 §6); the existing cached token remains valid and is now retained. Previously the driver incorrectly treated the absent field as an invalidation signal, forcing a browser re-auth on the next access-token expiry. (snowflakedb/drivers#1902)
 - Fixed Azure GET downloads being silently corrupted by transparent gzip decompression of the response body, matching the existing S3 and GCS behavior. (snowflakedb/drivers#1906)
 - Restored `ISA` (host CPU architecture) and `CORE_VERSION` (driver core version) fields to the `CLIENT_ENVIRONMENT` object sent in the login request body, matching the old driver's login payload. (snowflakedb/drivers#1836)

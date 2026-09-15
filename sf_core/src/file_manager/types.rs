@@ -371,11 +371,11 @@ impl StageTransport {
 /// Cloud storage credentials.
 #[derive(Debug, Clone)]
 pub enum CloudCredentials {
-    /// AWS S3 credentials (access key + secret + session token).
+    /// AWS S3 credentials (access key + secret + optional session token).
     S3 {
         aws_key_id: SensitiveString,
         aws_secret_key: SensitiveString,
-        aws_token: SensitiveString,
+        aws_token: Option<SensitiveString>,
     },
     /// Google Cloud Storage credentials (OAuth2 Bearer token).
     /// Token is `None` when operating in presigned-URL-only mode.
@@ -954,7 +954,7 @@ mod tests {
         let creds = CloudCredentials::S3 {
             aws_key_id: "AKIAIOSFODNN7EXAMPLE".into(),
             aws_secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".into(),
-            aws_token: "session-token".into(),
+            aws_token: Some("session-token".into()),
         };
         let debug = format!("{creds:?}");
         assert!(

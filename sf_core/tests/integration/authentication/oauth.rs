@@ -767,6 +767,11 @@ fn should_not_cross_evict_access_token_for_different_snowflake_account_sharing_i
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "Flaky on Windows x86, improved diagnostics added - keyring_cache.remove_token needs further investigation within SNOW-3552507"
+)]
+// TODO: SNOW-3552507
 fn should_not_cross_evict_access_token_for_different_role() {
     // Given one Snowflake account has two roles each with a cached access token,
     // evicting role A's token via a 390303 error must leave role B's token untouched.

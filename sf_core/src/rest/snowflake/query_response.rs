@@ -1212,11 +1212,8 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
                 aws_token: creds_data
                     .aws_token
                     .as_ref()
-                    .context(MissingParameterSnafu {
-                        parameter: "credentials -> aws token",
-                    })?
-                    .clone()
-                    .into(),
+                    .filter(|token| !token.is_empty())
+                    .map(|token| token.clone().into()),
             },
             file_manager::LocationType::Gcs => file_manager::CloudCredentials::Gcs {
                 gcs_access_token: creds_data
@@ -2749,6 +2746,98 @@ mod tests {
         // we keep talking to the global `s3.amazonaws.com` endpoint.
         let info = parse_s3_stage_info(s3_stage_info_value(None, None));
         assert!(!info.use_s3_regional_url);
+    }
+
+    fn s3_creds_value(aws_key_id: Option<&str>, aws_secret_key: Option<&str>) -> serde_json::Value {
+        let mut creds = serde_json::json!({});
+        let obj = creds.as_object_mut().unwrap();
+        if let Some(k) = aws_key_id {
+            obj.insert(
+                "AWS_KEY_ID".to_string(),
+                serde_json::Value::String(k.to_string()),
+            );
+        }
+        if let Some(s) = aws_secret_key {
+            obj.insert(
+                "AWS_SECRET_KEY".to_string(),
+                serde_json::Value::String(s.to_string()),
+            );
+        }
+        serde_json::json!({
+            "locationType": "S3",
+            "location": "my-bucket/some/prefix/",
+            "region": "us-east-1",
+            "endPoint": null,
+            "creds": creds,
+        })
+    }
+
+    #[test]
+    fn s3_credentials_without_aws_token_preserve_required_credentials() {
+        let info = parse_s3_stage_info(s3_creds_value(Some("k"), Some("s")));
+        match info.creds {
+            file_manager::CloudCredentials::S3 {
+                aws_key_id,
+                aws_secret_key,
+                aws_token,
+            } => {
+                assert_eq!(aws_key_id.reveal(), "k");
+                assert_eq!(aws_secret_key.reveal(), "s");
+                assert!(aws_token.is_none());
+            }
+            _ => panic!("expected S3 credentials"),
+        }
+    }
+
+    #[test]
+    fn s3_credentials_with_aws_token_are_preserved() {
+        let info = parse_s3_stage_info(s3_stage_info_value(None, None));
+        match info.creds {
+            file_manager::CloudCredentials::S3 { aws_token, .. } => {
+                assert_eq!(
+                    aws_token.as_ref().map(|token| token.reveal().as_str()),
+                    Some("t")
+                );
+            }
+            _ => panic!("expected S3 credentials"),
+        }
+    }
+
+    #[test]
+    fn s3_credentials_with_empty_aws_token_treat_it_as_absent() {
+        let mut value = s3_stage_info_value(None, None);
+        value["creds"]["AWS_TOKEN"] = serde_json::Value::String(String::new());
+        let info = parse_s3_stage_info(value);
+        match info.creds {
+            file_manager::CloudCredentials::S3 { aws_token, .. } => {
+                assert!(aws_token.is_none());
+            }
+            _ => panic!("expected S3 credentials"),
+        }
+    }
+
+    #[test]
+    fn s3_credentials_missing_aws_key_id_still_errors() {
+        let raw: super::StageInfo =
+            serde_json::from_value(s3_creds_value(None, Some("s"))).expect("parse stage info json");
+        let err = file_manager::StageInfo::try_from(&raw).expect_err("aws key id is mandatory");
+        assert!(matches!(
+            err,
+            QueryResponseError::MissingParameter { ref parameter, .. }
+                if parameter == "credentials -> aws key id"
+        ));
+    }
+
+    #[test]
+    fn s3_credentials_missing_aws_secret_key_still_errors() {
+        let raw: super::StageInfo =
+            serde_json::from_value(s3_creds_value(Some("k"), None)).expect("parse stage info json");
+        let err = file_manager::StageInfo::try_from(&raw).expect_err("aws secret key is mandatory");
+        assert!(matches!(
+            err,
+            QueryResponseError::MissingParameter { ref parameter, .. }
+                if parameter == "credentials -> aws secret key"
+        ));
     }
 
     // --- Session-parameter lookup (ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1) ---

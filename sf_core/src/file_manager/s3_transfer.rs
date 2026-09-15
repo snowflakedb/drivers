@@ -1692,7 +1692,7 @@ async fn create_s3_client(
     let credentials = Credentials::new(
         aws_key_id.reveal(),
         aws_secret_key.reveal(),
-        Some(aws_token.reveal().to_string()),
+        aws_token.as_ref().map(|token| token.reveal().to_string()),
         None,
         provider_name,
     );
@@ -2189,7 +2189,7 @@ mod tests {
             creds: CloudCredentials::S3 {
                 aws_key_id: "k".into(),
                 aws_secret_key: SensitiveString::from("s"),
-                aws_token: SensitiveString::from("t"),
+                aws_token: Some(SensitiveString::from("t")),
             },
             endpoint: endpoint.map(str::to_string),
             presigned_url: None,
@@ -2399,7 +2399,7 @@ mod tests {
         CloudCredentials::S3 {
             aws_key_id: key.into(),
             aws_secret_key: "secret".to_string().into(),
-            aws_token: "token".to_string().into(),
+            aws_token: Some("token".to_string().into()),
         }
     }
 
