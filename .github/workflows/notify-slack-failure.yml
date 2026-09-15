@@ -1,4 +1,10 @@
-# Slack failure notifications for CI runs on main and in the merge queue.
+# Slack failure notifications for CI on snowflake-eng/drivers (main, merge
+# queue, nightly). Copybara publishes this file to snowflakedb/drivers; that
+# is not a second source of truth. Public-main runs are Copybara replays, and
+# Copybara preserves authorship, so an unguarded alert looks like eng `main`
+# is red. Sync health is already posted from mirror.yml. Public contributor
+# PRs are announced by mirror-notify-pr.yml. Leave Pre-commit itself running
+# on the public repo so external PRs still get lint.
 #
 # Fires when any of the listed workflows complete with a failure conclusion,
 # but only when they were triggered by a push to `main` or a merge_group event
@@ -53,10 +59,12 @@ concurrency:
 jobs:
   notify:
     # Only alert on failures caused by a push to main, a merge-queue check, or a nightly schedule run.
+    # Skip the public Copybara mirror (same owner gate as Driver CI).
     # workflow_dispatch is allowed unconditionally for manual testing.
     if: |
       github.event_name == 'workflow_dispatch' ||
       (
+        github.repository_owner != 'snowflakedb' &&
         github.event.workflow_run.conclusion == 'failure' &&
         (
           (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') ||
@@ -150,6 +158,7 @@ jobs:
           TRIGGER_EVENT: ${{ steps.run_info.outputs.trigger_event }}
           FAILED_JOBS_JSON: ${{ steps.run_info.outputs.failed_jobs }}
           AUTHOR_MENTION:   ${{ steps.slack_user.outputs.mention }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           SLACK_CHANNEL: universal-driver-ci-alerts
           SLACK_PAYLOAD_FILE: ${{ runner.temp }}/slack_payload.json
         run: |
@@ -161,6 +170,7 @@ jobs:
           sha         = os.environ['HEAD_SHA'][:8]
           head_branch = os.environ['HEAD_BRANCH']
           event       = os.environ['TRIGGER_EVENT']
+          repo        = os.environ.get('GITHUB_REPOSITORY', '')
           failed_jobs = json.loads(os.environ.get('FAILED_JOBS_JSON') or '[]')
           author      = os.environ.get('AUTHOR_MENTION', '')
           channel     = os.environ['SLACK_CHANNEL']
@@ -203,13 +213,14 @@ jobs:
                   'type': 'header',
                   'text': {
                       'type': 'plain_text',
-                      'text': f'\u274c CI Failure: {workflow}',
+                      'text': f'\u274c CI Failure: {workflow} ({repo})' if repo else f'\u274c CI Failure: {workflow}',
                       'emoji': True,
                   },
               },
               {
                   'type': 'section',
                   'fields': [
+                      {'type': 'mrkdwn', 'text': f'*Repo:*\n`{repo}`'},
                       {'type': 'mrkdwn', 'text': f'*Trigger:*\n{context_str}'},
                       {'type': 'mrkdwn', 'text': f'*Commit:*\n`{sha}`'},
                       {'type': 'mrkdwn', 'text': f'*Author:*\n{author}'},
