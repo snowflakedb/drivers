@@ -102,9 +102,12 @@ impl AwsSdkReqwestClient {
     /// client the process builds) and applies the same fail-closed FIPS gate
     /// as [`configure_tls_builder`].
     ///
-    /// What this does **not** do: honour connection-specific CRL, root-store,
-    /// or proxy settings because none exist on these paths. SNOW-2912540 tracks
-    /// the proxy-config plumbing that connectionless callers would need.
+    /// Because there is no `TlsConfig` here, the builder is left plain and
+    /// reqwest resolves the process-global provider for the handshake. The gate
+    /// is what makes that acceptable under `fips-tls`: it requires the global
+    /// provider to be FIPS as well as the linked module, so this constructor
+    /// cannot hand the AWS SDK a client running non-approved crypto. See
+    /// [`crate::tls::require_fips_provider`].
     pub(crate) fn with_default_tls() -> Result<Self, TlsError> {
         Self::build(
             &TlsConfig::default(),

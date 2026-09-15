@@ -80,35 +80,78 @@ pub(crate) fn ensure_crypto_provider() {
 /// Phase 3 note: this used to read `CryptoProvider::get_default()`, so that a
 /// standard build into which an embedding application had installed a FIPS
 /// provider reported `true`. That was the honest answer while the driver
-/// *used* whatever won the global slot. It no longer does -- TLS configs are
-/// built from the linked crypto module (`tls::crypto_module`) -- so reading the global
-/// would now report on a module that carries none of our traffic. The
-/// intent is unchanged: answer for whatever is actually doing the work.
+/// *used* whatever won the global slot. The configs this crate builds itself
+/// now come from the linked crypto module (`tls::crypto_module`), so reading
+/// the global would report on a module that verifies none of the chains we
+/// validate. The intent is unchanged: answer for whatever is actually doing
+/// the work.
+///
+/// That makes this a *necessary but not sufficient* FIPS answer, which is why
+/// it is not the whole gate. Only the CRL-enabled paths hand their config to
+/// reqwest; elsewhere reqwest still resolves the global provider for the
+/// handshake itself, so `require_fips_provider` checks that too. See its docs
+/// for why the two can diverge and why closing the gap properly is a separate
+/// change.
 pub fn fips_mode_active() -> bool {
     crypto_module::CryptoModule::get().fips()
 }
 
-/// Fails closed in `fips-tls` builds when the provider that actually won the
-/// process-global slot is not in FIPS mode.
+/// Fails closed in `fips-tls` builds unless *both* the linked crypto module and
+/// the process-global provider are in FIPS mode.
 ///
-/// `ensure_crypto_provider` only logs the mismatch, because it cannot fail: it
+/// `ensure_crypto_provider` only logs a mismatch, because it cannot fail: it
 /// runs from constructors and from paths with no error channel, and it sits
 /// beneath an FFI boundary where unwinding is undefined behaviour. Logging
-/// alone would mean a `fips-tls` build silently serving traffic on a non-approved
-/// module, so every TLS client construction routes through here instead, where
-/// there *is* an error channel and the failure propagates as a `TlsError` out
-/// through the normal FFI error path.
+/// alone would mean a `fips-tls` build silently serving traffic on a
+/// non-approved module, so every TLS client construction routes through here
+/// instead, where there *is* an error channel and the failure propagates as a
+/// `TlsError` out through the normal FFI error path.
 ///
 /// Compiles to `Ok(())` without the feature.
 ///
-/// Scope: this gates the clients that carry connection traffic (everything
-/// built through `build_tls_client_and_rustls_config` / `configure_tls_builder`).
-/// Auxiliary raw clients -- telemetry, CRL fetch, IMDS -- have no error channel
-/// to fail into and still rely on the logged mismatch.
+/// # Why the global provider is checked too
+///
+/// Checking the linked module alone was not enough, and the gap was the
+/// default configuration rather than an edge case. Only the CRL-enabled paths
+/// hand reqwest a `ClientConfig` built from the module
+/// (`use_preconfigured_tls`); on every other path -- including the
+/// CRL-disabled one, which is the default (`CertRevocationCheckMode::Disabled`)
+/// -- reqwest builds its own config and resolves crypto through
+/// `CryptoProvider::get_default()`. `ensure_crypto_provider` installs the
+/// module when the slot is free but deliberately honours a provider an
+/// embedding application installed first, so those two can differ. A
+/// module-only check would then pass while reporting on a module carrying none
+/// of that client's traffic -- exactly the "gate says FIPS, handshake runs on
+/// ring" case this must refuse.
+///
+/// The refusal is process-wide rather than per-path on purpose. The auxiliary
+/// raw clients (telemetry, CRL fetch, IMDS) have no error channel to fail into
+/// and always resolve the global provider, so a non-FIPS global in a
+/// `fips-tls` build is a misconfiguration that no individual client can be
+/// exempted from -- including the module-backed CRL path, which would
+/// otherwise look safe in isolation.
+///
+/// The stronger fix is to give every traffic-carrying client a module-backed
+/// config and stop consulting the global slot at all. That is deliberately not
+/// done here: reqwest is configured with *both* `rustls-tls-native-roots-no-provider`
+/// and `rustls-tls-webpki-roots-no-provider`, so its default trust set is
+/// native roots union webpki roots, while the rustls configs this module builds
+/// use native roots only. Switching the default path to
+/// `use_preconfigured_tls` would therefore silently narrow the trust anchors of
+/// every connection, which is a behavioural change that needs its own change
+/// and its own testing rather than riding along with a crypto port.
 pub(crate) fn require_fips_provider() -> Result<(), error::TlsError> {
     #[cfg(feature = "fips-tls")]
-    if !fips_mode_active() {
-        return Err(error::FipsModeUnavailableSnafu.build());
+    {
+        if !fips_mode_active() {
+            return Err(error::FipsModeUnavailableSnafu.build());
+        }
+        // `None` fails closed as well: `ensure_crypto_provider` runs before
+        // every call site, so an empty slot means installation itself failed,
+        // and reqwest would go on to panic with "No provider set" anyway.
+        if !rustls::crypto::CryptoProvider::get_default().is_some_and(|provider| provider.fips()) {
+            return Err(error::FipsGlobalProviderUnavailableSnafu.build());
+        }
     }
     Ok(())
 }
