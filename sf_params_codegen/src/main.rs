@@ -188,23 +188,11 @@ fn is_statement_only(scopes: &[ParamScope]) -> bool {
     !scopes.contains(&ParamScope::Connection) && !scopes.contains(&ParamScope::Session)
 }
 
-/// Wrapper-specific params excluded from the generated Python
-/// `ConnectionConfig` — they stay in `PARAM_DEFS` for the wrappers that own
-/// them but Python never exposed them:
-///   - `put_fastfail` / `get_fastfail` — ODBC connection-string pipeline
-///   - `enable_put_get` — JDBC-only (legacy `enablePutGet` client property)
-///   - `extra_root_store_path` — Node's `NODE_EXTRA_CA_CERTS` bridge
-const PYTHON_EXCLUDED_PARAMS: &[&str] = &[
-    "put_fastfail",
-    "get_fastfail",
-    "enable_put_get",
-    "extra_root_store_path",
-];
-
-/// Whether `canonical` is intentionally excluded from the generated Python
-/// `ConnectionConfig` (see [`PYTHON_EXCLUDED_PARAMS`]).
-fn is_python_excluded(canonical: &str) -> bool {
-    PYTHON_EXCLUDED_PARAMS.contains(&canonical)
+/// Whether `param` belongs on the generated Python `ConnectionConfig`.
+/// Statement-only params belong on the cursor. Wrapper-restricted params
+/// belong only on the wrappers listed in `visible_to`.
+fn include_in_python_config(param: &ParamDef) -> bool {
+    !is_statement_only(param.scopes) && param.is_visible_to(Wrapper::Python)
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +255,7 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
     for p in sorted_params.iter().copied() {
         // Skip statement-only params; they belong on the cursor, not the connection.
         // (A param that is also session/connection-scoped still appears here.)
-        if is_statement_only(p.scopes) || is_python_excluded(p.canonical_name) {
+        if !include_in_python_config(p) {
             continue;
         }
 
@@ -318,7 +306,7 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
     for p in sorted_params.iter().copied() {
         // Skip statement-only params; they belong on the cursor, not the connection.
         // (A param that is also session/connection-scoped still appears here.)
-        if is_statement_only(p.scopes) || is_python_excluded(p.canonical_name) {
+        if !include_in_python_config(p) {
             continue;
         }
 

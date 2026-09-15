@@ -10,7 +10,7 @@
 //! `sf_core` runtime type, keeping this crate std-only. `sf_core` converts a
 //! `DefaultValue` into its own `Setting` at the boundary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use std::sync::LazyLock;
@@ -330,6 +330,18 @@ pub enum Wrapper {
     DotNet,
 }
 
+/// Which wrappers may resolve a parameter's canonical name.
+///
+/// Shared core settings use [`VisibleTo::All`] so a newly added [`Wrapper`]
+/// inherits them. Wrapper-owned settings use [`VisibleTo::Only`] so other
+/// wrappers cannot resolve the canonical name — the same rule already applied
+/// to scoped aliases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisibleTo {
+    All,
+    Only(&'static [Wrapper]),
+}
+
 /// An alternative accepted name for a parameter.
 ///
 /// `wrapper: None` means the alias is accepted by every wrapper (global);
@@ -359,8 +371,8 @@ impl Alias {
 /// Builds the `aliases:` slice for a [`ParamDef`], in either global or
 /// wrapper-scoped form:
 ///
-/// * `aliases![]` — no aliases (the common case; canonical name still resolves
-///   case-insensitively).
+/// * `aliases![]` — no aliases (the common case; a [`VisibleTo::All`]
+///   canonical still resolves case-insensitively).
 /// * `aliases!["A", "B"]` — global aliases visible to every wrapper via
 ///   [`ParamRegistry::resolve`]. **Do not use this form.** After the
 ///   per-wrapper migration no parameter has a global alias, and the
@@ -411,6 +423,20 @@ macro_rules! aliases {
     // One wrapper, one or more names.
     ($wrapper:ident; $($name:expr),+ $(,)?) => {
         &[$($crate::Alias::scoped($crate::Wrapper::$wrapper, $name)),+]
+    };
+}
+
+/// Builds a [`VisibleTo`] value for a [`ParamDef`].
+///
+/// * `visible_to!(All)` — every wrapper (the common case).
+/// * `visible_to!(Odbc)` / `visible_to!(Odbc, Jdbc)` — listed wrappers only.
+#[macro_export]
+macro_rules! visible_to {
+    (All) => {
+        $crate::VisibleTo::All
+    };
+    ($($wrapper:ident),+ $(,)?) => {
+        $crate::VisibleTo::Only(&[$($crate::Wrapper::$wrapper),+])
     };
 }
 
@@ -469,6 +495,12 @@ pub struct ParamDef {
 
     /// When false, connection-level setters must reject changes once connected.
     pub mutable_after_connect: bool,
+
+    /// Wrappers that may resolve this parameter's canonical name. Restricted
+    /// params are invisible to [`ParamRegistry::resolve`] and to
+    /// [`ParamRegistry::resolve_for`] for wrappers not listed here.
+    /// [`ParamRegistry::is_known`] still returns true for every canonical.
+    pub visible_to: VisibleTo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -508,6 +540,7 @@ impl ParamDef {
             required: Required::Never,
             default: None,
             deprecated_by: None,
+            visible_to: VisibleTo::All,
         }
     }
 
@@ -551,6 +584,15 @@ impl ParamDef {
     pub fn is_session_scoped(&self) -> bool {
         self.scopes.contains(&ParamScope::Session)
     }
+
+    /// True when `wrapper` may resolve this parameter's canonical name.
+    #[inline]
+    pub fn is_visible_to(&self, wrapper: Wrapper) -> bool {
+        match self.visible_to {
+            VisibleTo::All => true,
+            VisibleTo::Only(wrappers) => wrappers.contains(&wrapper),
+        }
+    }
 }
 
 /// Accumulates a [`ParamDef`]. Required setters have no default.
@@ -569,6 +611,7 @@ pub struct ParamDefBuilder {
     required: Required,
     default: Option<DefaultValue>,
     deprecated_by: Option<&'static str>,
+    visible_to: VisibleTo,
 }
 
 impl ParamDefBuilder {
@@ -637,6 +680,11 @@ impl ParamDefBuilder {
         self
     }
 
+    pub const fn visible_to(mut self, value: VisibleTo) -> Self {
+        self.visible_to = value;
+        self
+    }
+
     pub const fn build(self) -> ParamDef {
         ParamDef {
             canonical_name: match self.canonical_name {
@@ -676,6 +724,7 @@ impl ParamDefBuilder {
             required: self.required,
             default: self.default,
             deprecated_by: self.deprecated_by,
+            visible_to: self.visible_to,
         }
     }
 }
@@ -975,6 +1024,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .scopes(&[ParamScope::Connection])
         .used_at_connect(true)
         .mutable_after_connect(false)
+        .visible_to(visible_to!(Jdbc))
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::DISABLE_PARALLEL_USER_PROMPT.as_str())
@@ -1296,6 +1346,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .scopes(&[ParamScope::Connection])
         .used_at_connect(true)
         .mutable_after_connect(false)
+        .visible_to(visible_to!(NodeJs))
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::VERIFY_HOSTNAME.as_str())
@@ -1871,6 +1922,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         ])
         .used_at_connect(false)
         .mutable_after_connect(true)
+        .visible_to(visible_to!(Odbc))
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::GET_FASTFAIL.as_str())
@@ -1886,6 +1938,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         ])
         .used_at_connect(false)
         .mutable_after_connect(true)
+        .visible_to(visible_to!(Odbc))
         .build(),
     // ── Prefetch ───────────────────────────────────────────────────────
     ParamDef::builder()
@@ -2149,18 +2202,35 @@ static PARAM_DEFS: &[ParamDef] = &[
 /// The registry singleton. Built once at startup, immutable thereafter.
 pub struct ParamRegistry {
     params: &'static [ParamDef],
-    /// Case-insensitive map: lowercased canonical + global alias → index into `params`.
+    /// Case-insensitive map: lowercased [`VisibleTo::All`] canonical + global
+    /// alias → index into `params`.
     alias_index: HashMap<String, usize>,
-    /// Case-insensitive map: (wrapper, lowercased scoped alias) → index into `params`.
+    /// Case-insensitive map: (wrapper, lowercased scoped alias or restricted
+    /// canonical) → index into `params`.
     wrapper_alias_index: HashMap<(Wrapper, String), usize>,
+    /// Lowercased canonical names of every registered parameter, including
+    /// wrapper-restricted ones. Backs [`Self::is_known`].
+    canonicals: HashSet<String>,
 }
 
 impl ParamRegistry {
     fn new(params: &'static [ParamDef]) -> Self {
         let mut alias_index = HashMap::new();
         let mut wrapper_alias_index = HashMap::new();
+        let mut canonicals = HashSet::new();
         for (i, param) in params.iter().enumerate() {
-            alias_index.insert(param.canonical_name.to_ascii_lowercase(), i);
+            let canonical = param.canonical_name.to_ascii_lowercase();
+            canonicals.insert(canonical.clone());
+            match param.visible_to {
+                VisibleTo::All => {
+                    alias_index.insert(canonical, i);
+                }
+                VisibleTo::Only(wrappers) => {
+                    for wrapper in wrappers {
+                        wrapper_alias_index.insert((*wrapper, canonical.clone()), i);
+                    }
+                }
+            }
             for alias in param.aliases {
                 let key = alias.name.to_ascii_lowercase();
                 match alias.wrapper {
@@ -2177,15 +2247,18 @@ impl ParamRegistry {
             params,
             alias_index,
             wrapper_alias_index,
+            canonicals,
         }
     }
 
-    /// Resolve a global alias or canonical name to its `ParamDef`.
+    /// Resolve a globally visible canonical name or global alias to its
+    /// `ParamDef`.
     ///
     /// Accepts any type that can be viewed as a string — `ParamKey`, `&str`,
     /// or `String` — so callers with a typed key can pass it directly without
-    /// calling `.as_str()`.  Lookup is case-insensitive. Scoped aliases are
-    /// not visible here; use [`Self::resolve_for`].
+    /// calling `.as_str()`.  Lookup is case-insensitive. Scoped aliases and
+    /// [`VisibleTo::Only`] canonicals are not visible here; use
+    /// [`Self::resolve_for`].
     pub fn resolve(&self, key: impl AsRef<str>) -> Option<&ParamDef> {
         self.alias_index
             .get(&key.as_ref().to_ascii_lowercase())
@@ -2245,9 +2318,14 @@ impl ParamRegistry {
         self.params
     }
 
-    /// Check if a key is known as a canonical name or global alias.
+    /// Whether `key` is a registered canonical name (case-insensitive).
+    ///
+    /// Wrapper-restricted canonicals are known: core validation sees them
+    /// after a wrapper has already forwarded the canonical key.
+    /// Wrapper-scoped wire spellings (`SERVER`) are not known without
+    /// wrapper context.
     pub fn is_known(&self, key: &str) -> bool {
-        self.alias_index.contains_key(&key.to_ascii_lowercase())
+        self.canonicals.contains(&key.to_ascii_lowercase())
     }
 }
 
@@ -2264,7 +2342,7 @@ mod tests {
 
     #[test]
     fn canonical_names_resolve_for_every_wrapper() {
-        // SCREAMING_SNAKE spellings that match a canonical name
+        // SCREAMING_SNAKE spellings that match a VisibleTo::All canonical name
         // case-insensitively must resolve for every wrapper (and globally),
         // regardless of alias scoping — they are not aliases at all.
         let r = registry();
@@ -2315,6 +2393,14 @@ mod tests {
             ),
         ];
         for (name, expected_canonical) in canonical_cases {
+            let def = r
+                .resolve(expected_canonical)
+                .unwrap_or_else(|| panic!("{expected_canonical:?} should resolve globally"));
+            assert_eq!(
+                def.visible_to,
+                VisibleTo::All,
+                "{expected_canonical:?} is listed as resolving for every wrapper"
+            );
             for wrapper in [Wrapper::Odbc, Wrapper::Jdbc, Wrapper::Python] {
                 let def = r
                     .resolve_for(wrapper, name)
@@ -2569,6 +2655,7 @@ mod tests {
             assert!(!DEF.auth);
         }
         assert_eq!(DEF.deprecated_by, None);
+        assert_eq!(DEF.visible_to, VisibleTo::All);
     }
 
     #[test]
@@ -2606,11 +2693,95 @@ mod tests {
     fn resolve_canonical_names() {
         let r = registry();
         for param in r.all_params() {
+            if param.visible_to != VisibleTo::All {
+                continue;
+            }
             assert!(
                 r.resolve(param.canonical_name).is_some(),
                 "canonical name {:?} should resolve",
                 param.canonical_name
             );
+        }
+    }
+
+    #[test]
+    fn restricted_canonicals_resolve_only_for_listed_wrappers() {
+        let r = registry();
+        let restricted: Vec<_> = r
+            .all_params()
+            .iter()
+            .filter(|p| p.visible_to != VisibleTo::All)
+            .collect();
+        assert!(
+            !restricted.is_empty(),
+            "expected at least one VisibleTo::Only parameter"
+        );
+
+        let wrappers = [
+            Wrapper::Odbc,
+            Wrapper::Jdbc,
+            Wrapper::Python,
+            Wrapper::NodeJs,
+            Wrapper::DotNet,
+        ];
+        for param in restricted {
+            assert!(
+                r.resolve(param.canonical_name).is_none(),
+                "restricted canonical {:?} must not resolve globally",
+                param.canonical_name
+            );
+            assert!(
+                r.is_known(param.canonical_name),
+                "restricted canonical {:?} must still be known",
+                param.canonical_name
+            );
+            for wrapper in wrappers {
+                let resolved = r
+                    .resolve_for(wrapper, param.canonical_name)
+                    .map(|d| d.canonical_name);
+                if param.is_visible_to(wrapper) {
+                    assert_eq!(
+                        resolved,
+                        Some(param.canonical_name),
+                        "{:?} should resolve for {wrapper:?}",
+                        param.canonical_name
+                    );
+                } else {
+                    assert_eq!(
+                        resolved, None,
+                        "{:?} must not resolve for {wrapper:?}",
+                        param.canonical_name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn aliases_are_subset_of_visible_to() {
+        for param in registry().all_params() {
+            match param.visible_to {
+                VisibleTo::Only(wrappers) => {
+                    assert!(
+                        !wrappers.is_empty(),
+                        "parameter {:?} has VisibleTo::Only(&[])",
+                        param.canonical_name
+                    );
+                }
+                VisibleTo::All => {}
+            }
+            for alias in param.aliases {
+                let Some(wrapper) = alias.wrapper else {
+                    continue;
+                };
+                assert!(
+                    param.is_visible_to(wrapper),
+                    "alias {:?} of {:?} is scoped to {wrapper:?} but the \
+                     parameter is not visible to that wrapper",
+                    alias.name,
+                    param.canonical_name
+                );
+            }
         }
     }
 
@@ -2792,16 +2963,18 @@ mod tests {
     #[test]
     fn is_known_works() {
         let r = registry();
-        // `is_known` reflects the wrapper-agnostic index (canonicals + any
-        // remaining global aliases). Canonical names resolve case-insensitively;
-        // wrapper-scoped wire spellings (e.g. `SERVER`) are deliberately not
-        // "known" without wrapper context.
+        // `is_known` is any registered canonical, including wrapper-restricted
+        // ones. Canonical names match case-insensitively; wrapper-scoped wire
+        // spellings (e.g. `SERVER`) are not known without wrapper context.
         assert!(r.is_known("account"));
         assert!(r.is_known("ACCOUNT"));
         assert!(r.is_known("host"));
         assert!(r.is_known("HOST"));
+        assert!(r.is_known("enable_put_get"));
+        assert!(r.is_known("ENABLE_PUT_GET"));
         assert!(!r.is_known("SERVER"));
         assert!(!r.is_known("unknown_key"));
+        assert!(r.resolve("enable_put_get").is_none());
     }
 
     #[test]
