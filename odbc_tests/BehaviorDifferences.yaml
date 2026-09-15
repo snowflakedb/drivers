@@ -2085,9 +2085,9 @@ behavior_differences:
       record with SQLSTATE 01S00, native error 17, message "N invalid keys are found in the
       connection string: <KEY>", and the connection still opens (SQL_SUCCESS_WITH_INFO). The
       keyword is still forwarded to the server as a session parameter. Recognition is driven by the
-      sf_core parameter registry rather than a ported static allowlist, so a few keys 3.x's snapshot
-      accepted but the registry does not model (e.g. TRACING) also draw the 01S00 warning; they are
-      still forwarded and the connection still opens.
+      sf_core parameter registry rather than a ported static allowlist, plus ODBC structural
+      keywords (`DSN`, `DRIVER`, `FILEDSN`, `SAVEFILE`) and leftover `TRACING` (dropped, not
+      forwarded — see BD#144). The connection still opens.
     description: |
       Aligns with the customer feature request SNOW-3765949. Recognition uses the sf_core registry
       as the single source of truth (plus the ODBC structural keywords the registry does not model),
@@ -2974,3 +2974,30 @@ behavior_differences:
       client; the new HTTP library structurally prevents it. Account and host
       construction is covered by the account allow-list. Session-name CRLF
       rejection is ODBC connect-time compatibility only; parity is not required.
+
+  144:
+    name: "Windows DSN Tracing(0-6) field removed; legacy TRACING connection attribute ignored"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      Logging is process-wide (`sf.odbc.ini` at env alloc), so the Windows
+      Tracing(0-6) field could not drive log level. A no-op DSN control is worse
+      than removing it. Leftover `TRACING` values are dropped, not sent as session
+      parameters. Use `LogLevel`/`LogPath` or troubleshooting env vars instead.
+    old_driver_behavior: |
+      The Windows ODBC setup dialog exposes a Tracing(0-6) field that persists
+      `TRACING` in the DSN registry. Values 0–6 control per-DSN driver trace log
+      verbosity when `LogPath` is configured.
+    new_driver_behavior: |
+      The setup dialog no longer shows or writes `TRACING`. Saving a DSN removes any
+      stored `TRACING` value. `TRACING` in a connection string or pre-existing DSN
+      is ignored at connect time. Driver logging is configured only through
+      `sf.odbc.ini` (`LogLevel`, `LogPath`, …) or troubleshooting env vars.
+    description: |
+      Applications that relied on the Windows dialog or a DSN `TRACING` value to
+      enable driver logs must configure `sf.odbc.ini` instead. The numeric 0–6 scale
+      is not mapped to `LogLevel`.
+

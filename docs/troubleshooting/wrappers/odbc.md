@@ -253,10 +253,11 @@ On Windows the driver is configured through the **ODBC Data Source Administrator
 files. Add a *User* or *System* DSN under the Snowflake driver; the setup dialog
 persists the same connection keys used everywhere else — `SERVER`, `UID`,
 `DATABASE`, `SCHEMA`, `WAREHOUSE`, `ROLE`, `AUTHENTICATOR`, `PROXY`, `NO_PROXY`,
-`PRIV_KEY_FILE`, and the OAuth client fields (`odbc/src/setup_dialog.rs`). The
-dialog also writes a `TRACING` field, but the current core parameter registry does
-**not** consume it — it does not enable logging; use the ODBC INI logging keys
-([Runbook §1.2](../../troubleshooting-runbook.md#12-odbc)) instead.
+`PRIV_KEY_FILE`, and the OAuth client fields (`odbc/src/setup_dialog.rs`).
+Driver logging is configured through `sf.odbc.ini` (`LogLevel`, `LogPath`, …) or
+the troubleshooting env vars — see
+[Runbook §1.2](../../troubleshooting-runbook.md#12-odbc). Legacy ODBC 3.x
+`TRACING` (0–6) in a DSN or connection string is ignored.
 
 Two things are deliberately **not** written to the stored DSN
 (`odbc/src/setup_common.rs`):
