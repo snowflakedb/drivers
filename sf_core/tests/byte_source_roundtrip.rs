@@ -230,7 +230,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
             key_prefix: "".to_string(),
             region: "us-east-1".to_string(),
             creds: CloudCredentials::S3 {
-                aws_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+                aws_key_id: "AKIAIOSFODNN7EXAMPLE".into(),
                 aws_secret_key: SensitiveString::from("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
                 aws_token: SensitiveString::from(""),
             },
@@ -771,7 +771,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
             key_prefix: "photos/2024/".to_string(),
             region: "us-east-1".to_string(),
             creds: CloudCredentials::S3 {
-                aws_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+                aws_key_id: "AKIAIOSFODNN7EXAMPLE".into(),
                 aws_secret_key: SensitiveString::from("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
                 aws_token: SensitiveString::from(""),
             },

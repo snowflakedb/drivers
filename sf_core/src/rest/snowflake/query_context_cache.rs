@@ -211,6 +211,7 @@ impl QueryContextCache {
         self.eviction_order.clear();
     }
 
+    #[cfg(test)]
     fn remove_entry(&mut self, id: i64) {
         self.entries.remove(&id);
         self.eviction_order.retain(|&x| x != id);

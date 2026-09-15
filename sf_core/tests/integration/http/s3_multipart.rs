@@ -127,7 +127,7 @@ fn s3_stage(endpoint: &str) -> StageInfo {
         key_prefix: String::new(),
         region: "us-east-1".to_string(),
         creds: CloudCredentials::S3 {
-            aws_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            aws_key_id: "AKIAIOSFODNN7EXAMPLE".into(),
             aws_secret_key: SensitiveString::from("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
             aws_token: SensitiveString::from(""),
         },
