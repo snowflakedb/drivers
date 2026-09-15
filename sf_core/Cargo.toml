@@ -166,6 +166,16 @@ pkcs8 = { version = "0.10", features = ["3des"] }
 # approved. See `crypto::private_key` for why it must be supported.
 des = "0.8"
 cbc = "0.1"
+# Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) derives its key with
+# OpenSSL's `EVP_BytesToKey`, which is MD5-based -- MD5 is definitional to the
+# format, not a choice. AWS-LC exposes no MD5 digest, so reading those keys
+# needs this. The code that calls it is `#[cfg(not(feature = "fips-tls"))]`, so
+# a FIPS build never derives a key with MD5; see `crypto::private_key`.
+#
+# Not a new SBOM entry: `md-5` is already in the graph unconditionally via
+# `aws-smithy-checksums`, which is finding F9 in the compliance plan rather
+# than anything this adds.
+md-5 = "0.10"
 once_cell = "1.19"
 const-oid = "0.9"
 dirs = "5.0"
