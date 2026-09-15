@@ -17,12 +17,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from runner.pr_smoke_reg_detection.benchstore_baseline import get_main_baseline
 from runner.local_compare import is_main_result_file
 
 logger = logging.getLogger(__name__)
 
 PR_REGRESSION_BENCHMARK = "Universal_Driver_PR_Regression"
+DEFAULT_BASELINE_RUNS = 10
 
 
 @dataclass
@@ -90,6 +90,17 @@ def read_pr_medians(results_dir: Path, driver: str, driver_type: str) -> dict[st
     return medians
 
 
+def exceeds_regression_threshold(
+    pr_median: float,
+    main_median: float,
+    threshold_pct: float,
+) -> bool:
+    """True when PR is slower than main by more than threshold_pct."""
+    if main_median <= 0:
+        return False
+    return (pr_median - main_median) / main_median * 100 > threshold_pct
+
+
 def check_regression(
     pr_results: dict[str, float],
     baselines: dict[str, float],
@@ -104,7 +115,9 @@ def check_regression(
             continue
 
         diff_pct = (pr_median - main_median) / main_median * 100
-        is_regressed = diff_pct > threshold_pct
+        is_regressed = exceeds_regression_threshold(
+            pr_median, main_median, threshold_pct
+        )
 
         results.append(
             RegressionResult(
@@ -433,6 +446,7 @@ def run_regression_check(
     iterations: int = 10,
     warmup_iterations: int = 2,
     max_retries: int = 3,
+    num_runs: int = DEFAULT_BASELINE_RUNS,
 ) -> bool:
     """
     Main entry point: compare PR results against Benchstore baseline.
@@ -459,6 +473,7 @@ def run_regression_check(
         iterations: Iterations for re-runs
         warmup_iterations: Warmup iterations for re-runs
         max_retries: Number of confirmation re-runs for regressed tests (default 3)
+        num_runs: Recent main Benchstore runs to median for the baseline
 
     Returns:
         True if check passed, False if confirmed regression found
@@ -480,6 +495,8 @@ def run_regression_check(
         logger.info(f"  {name}: {val:.4f}s")
 
     # 2. Query Benchstore for baselines
+    from runner.pr_smoke_reg_detection.benchstore_baseline import get_main_baseline
+
     logger.info("")
     logger.info("Querying Benchstore for main branch baselines...")
     baselines, baseline_run_key = get_main_baseline(
@@ -487,6 +504,7 @@ def run_regression_check(
         driver=driver,
         driver_type=driver_type,
         use_local_auth=use_local_auth,
+        num_runs=num_runs,
     )
 
     if not baselines:
@@ -579,8 +597,7 @@ def run_regression_check(
                 regressed_count = sum(
                     1
                     for m in r.confirmation_runs
-                    if r.main_median > 0
-                    and (m - r.main_median) / r.main_median * 100 > threshold_pct
+                    if exceeds_regression_threshold(m, r.main_median, threshold_pct)
                 )
                 r.confirmed = regressed_count == max_retries
                 logger.info(
