@@ -37,6 +37,17 @@ pub enum ConfigError {
         #[snafu(implicit)]
         location: Location,
     },
+    /// One of two interchangeable parameters is required and neither is set.
+    /// `parameter` stays a canonical registry key so wrappers can resolve it;
+    /// `alternative` is named in the message only.
+    #[snafu(display("Missing required parameter: {parameter} or {alternative}"))]
+    #[snafu(visibility(pub(crate)))]
+    MissingEitherParameter {
+        parameter: String,
+        alternative: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Invalid value '{value}' for parameter '{parameter}' - {explanation}"))]
     #[snafu(visibility(pub(crate)))]
     InvalidParameterValue {

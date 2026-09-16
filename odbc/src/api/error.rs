@@ -963,7 +963,7 @@ impl OdbcError {
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
-            OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
+            OdbcError::InvalidPort { .. } => SqlState::GeneralError,
             OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
             OdbcError::PrepareStatement { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
             OdbcError::ExecuteStatement { .. } => SqlState::GeneralError,
@@ -1081,7 +1081,7 @@ impl OdbcError {
                             {
                                 SqlState::InvalidAuthorizationSpecification
                             } else {
-                                SqlState::InvalidConnectionStringAttribute
+                                SqlState::GeneralError
                             }
                         }
                         k if k == ProtoErrorKind::Timeout as i32 => SqlState::TimeoutExpired,
@@ -1114,7 +1114,7 @@ impl OdbcError {
             OdbcError::DataSourceNotFound { .. } => {
                 SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
             }
-            OdbcError::InvalidConnectionString { .. } => SqlState::InvalidConnectionStringAttribute,
+            OdbcError::InvalidConnectionString { .. } => SqlState::GeneralError,
             OdbcError::DaeRequired { .. } => SqlState::GeneralError,
             OdbcError::InvalidDuringDae { .. } => SqlState::FunctionSequenceError,
             OdbcError::NonCharBinarySentInPieces { .. } => {
@@ -2024,12 +2024,6 @@ mod tests {
         ProtoErrorKind::MissingParameter,
     ];
 
-    /// `UID` and `PWD` land here through the `Odbc`-scoped aliases on `user`
-    /// and `password`; the hardcoded set that preceded the registry lookup
-    /// carried only the canonical spellings, so those two reported 01S00.
-    /// Every core path that raises these two kinds names its parameter
-    /// canonically, so no diagnostic changes today — the alias arm covers the
-    /// spelling a wrapper-side raise would use.
     #[test]
     fn auth_parameter_errors_map_to_28000() {
         for kind in PARAMETER_ERROR_KINDS {
@@ -2051,6 +2045,11 @@ mod tests {
                 "token_file_path",
                 "oauth_client_id",
                 "OAUTH_CLIENT_SECRET",
+                "workload_identity_provider",
+                "WORKLOAD_IDENTITY_PROVIDER",
+                "workload_identity_entra_resource",
+                "workload_identity_impersonation_path",
+                "workload_identity_aws_use_outbound_token",
             ] {
                 assert_eq!(
                     core_parameter_error(kind, parameter).to_sql_state(),
@@ -2058,6 +2057,133 @@ mod tests {
                     "kind={kind:?}, parameter={parameter}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn non_auth_parameter_errors_map_to_hy000() {
+        for kind in PARAMETER_ERROR_KINDS {
+            for parameter in [
+                "host",
+                "server_url",
+                "account",
+                "port",
+                "database",
+                "schema",
+                "warehouse",
+                "role",
+                "not_a_registered_parameter",
+            ] {
+                assert_eq!(
+                    core_parameter_error(kind, parameter).to_sql_state(),
+                    SqlState::GeneralError,
+                    "kind={kind:?}, parameter={parameter}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parameter_error_without_a_parameter_name_maps_to_hy000() {
+        for kind in PARAMETER_ERROR_KINDS {
+            let err = OdbcError::CoreError {
+                source: Box::new(CoreProtobufError::Application {
+                    message: "configuration rejected".to_string(),
+                    kind: kind as i32,
+                    error_trace: vec![],
+                    sql_state: None,
+                    vendor_code: None,
+                    query_id: None,
+                    parameter: None,
+                    location: loc(),
+                }),
+                location: loc(),
+            };
+
+            assert_eq!(err.to_sql_state(), SqlState::GeneralError, "kind={kind:?}");
+        }
+    }
+
+    /// `sf_core` reports these two through `MissingEitherParameter`, whose
+    /// `parameter` is the canonical key and whose alternative appears only in
+    /// the message. Both therefore resolve in the registry and classify as
+    /// credential failures, matching what ODBC 3.x reported.
+    #[test]
+    fn either_or_credential_parameters_map_to_28000() {
+        for kind in PARAMETER_ERROR_KINDS {
+            for parameter in ["private_key", "token"] {
+                assert_eq!(
+                    core_parameter_error(kind, parameter).to_sql_state(),
+                    SqlState::InvalidAuthorizationSpecification,
+                    "kind={kind:?}, parameter={parameter}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_port_maps_to_hy000() {
+        let err = OdbcError::InvalidPort {
+            port: "notanumber".to_string(),
+            source: "notanumber".parse::<u16>().unwrap_err(),
+            location: loc(),
+        };
+
+        assert_eq!(err.to_sql_state(), SqlState::GeneralError);
+        assert_eq!(err.to_native_error(), 0);
+    }
+
+    #[test]
+    fn invalid_connection_string_maps_to_hy000() {
+        let err = OdbcError::InvalidConnectionString {
+            reason: "unterminated brace".to_string(),
+            location: loc(),
+        };
+
+        assert_eq!(err.to_sql_state(), SqlState::GeneralError);
+        assert_eq!(err.to_native_error(), 0);
+    }
+
+    /// A client-local connect rejection returns `SQL_ERROR` with no connection
+    /// open, so the state on the diagnostic record has to be error-class. A
+    /// warning-class state reads to callers as "the connection opened anyway",
+    /// which is the inverse of what happened.
+    #[test]
+    fn client_local_connect_rejection_states_are_error_class() {
+        let mut errors = vec![
+            OdbcError::InvalidPort {
+                port: "notanumber".to_string(),
+                source: "notanumber".parse::<u16>().unwrap_err(),
+                location: loc(),
+            },
+            OdbcError::InvalidConnectionString {
+                reason: "unterminated brace".to_string(),
+                location: loc(),
+            },
+        ];
+        for kind in PARAMETER_ERROR_KINDS {
+            for parameter in [
+                "private_key",
+                "token",
+                "user",
+                "host",
+                "port",
+                "unregistered",
+            ] {
+                errors.push(core_parameter_error(kind, parameter));
+            }
+        }
+
+        for err in errors {
+            let state = err.to_sql_state();
+            assert!(
+                state.is_error(),
+                "{err:?} produced non-error state {state:?}"
+            );
+            assert!(
+                !state.is_warning(),
+                "{err:?} produced warning state {state:?}"
+            );
         }
     }
 }

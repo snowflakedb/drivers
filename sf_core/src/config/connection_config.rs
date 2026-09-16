@@ -750,7 +750,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             if !has_private_key_params(settings) {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
-                    parameter: "private_key or private_key_file".into(),
+                    parameter: PRIVATE_KEY.into(),
                     message: "Missing required parameter: 'private_key' or 'private_key_file'"
                         .into(),
                     code: ValidationCode::MissingRequired,

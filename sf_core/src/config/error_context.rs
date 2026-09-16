@@ -75,6 +75,12 @@ impl ConfigError {
                 validation_code: None,
                 class: ConfigErrorClass::MissingParameter,
             },
+            ConfigError::MissingEitherParameter { parameter, .. } => ConfigErrorContext {
+                parameter: Some(parameter.clone()),
+                parameter_value: None,
+                validation_code: None,
+                class: ConfigErrorClass::MissingParameter,
+            },
             ConfigError::ConflictingParameters {
                 parameter, value, ..
             } => ConfigErrorContext {
