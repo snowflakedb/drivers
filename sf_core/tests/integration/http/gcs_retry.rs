@@ -829,6 +829,7 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
         get_fastfail: true,
+        cwd: None,
     };
 
     let results = download_files(
@@ -870,6 +871,7 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
         get_fastfail: true,
+        cwd: None,
     };
 
     let err = download_files(
@@ -1863,6 +1865,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
         get_fastfail: true,
+        cwd: None,
     };
 
     let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
@@ -2041,6 +2044,7 @@ async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
         get_fastfail: true,
+        cwd: None,
     };
 
     let results = download_files(

@@ -130,6 +130,11 @@ export interface StatementOption {
    * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
    */
   binds?: Binds;
+  /**
+   * Current working directory to use for GET/PUT execution using relative paths from a client location
+   * that is different from the connector directory.
+   */
+  cwd?: string;
 }
 
 export interface FetchResultOptions {
@@ -226,11 +231,14 @@ export class Connection {
       // Ignore the error
     }
 
-    const parameters = options.parameters
+    let parameters = options.parameters
       ? Object.fromEntries(
           Object.entries(options.parameters).map(([key, value]) => [key, String(value)]),
         )
       : null;
+    if (options.cwd) {
+      parameters = { ...parameters, cwd: options.cwd };
+    }
 
     return this.#runStatement(this.#core.execute(options.sqlText, bindings, parameters), {
       complete: options.complete,

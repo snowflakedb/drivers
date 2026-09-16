@@ -119,6 +119,9 @@ pub struct UploadData {
     /// Resolved fail-fast (abort) vs collect-all flag; see
     /// [`WrapperPresets::put_get_fastfail_default`](crate::apis::database_driver_v1::WrapperPresets::put_get_fastfail_default).
     pub put_fastfail: bool,
+    /// Directory used to resolve a relative `src_location_pattern`. Absolute
+    /// `src_location_pattern` is left unchanged.
+    pub cwd: Option<PathBuf>,
 }
 
 // TODO: SNOW-3643409 - decouple large bindings and PUT/GET interfaces
@@ -173,6 +176,9 @@ pub struct DownloadData {
     /// Resolved fail-fast (abort) vs collect-all flag; see
     /// [`WrapperPresets::put_get_fastfail_default`](crate::apis::database_driver_v1::WrapperPresets::put_get_fastfail_default).
     pub get_fastfail: bool,
+    /// Directory used to resolve a relative `local_location`. Absolute
+    /// `local_location` is left unchanged.
+    pub cwd: Option<PathBuf>,
 }
 
 #[derive(Debug)]

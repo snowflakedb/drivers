@@ -665,6 +665,7 @@ async fn azure_git_stage_download_succeeds_without_sfcdigest() {
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
         get_fastfail: true,
+        cwd: None,
     };
 
     let results = download_files(

@@ -123,6 +123,7 @@ fn upload_data_for(stage: StageInfo, src: &str) -> UploadData {
         // (e.g. AzureUpload::AzureHttp) from a single-file transfer; collect-all's
         // aggregate `UploadBatchSnafu` would stringify it away.
         put_fastfail: true,
+        cwd: None,
     }
 }
 
@@ -139,6 +140,7 @@ fn download_data_for(stage: StageInfo, src_blob: &str, local_dir: &TempDir) -> D
         unsafe_file_write: false,
         // See `upload_data_for`'s `put_fastfail` comment: same reasoning.
         get_fastfail: true,
+        cwd: None,
     }
 }
 

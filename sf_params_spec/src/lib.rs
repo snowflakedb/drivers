@@ -133,6 +133,7 @@ pub mod param_names {
     pub const MULTI_STATEMENT_COUNT: ParamKey = ParamKey("multi_statement_count");
     pub const QUERY_TAG: ParamKey = ParamKey("query_tag");
     pub const SKIP_UPLOAD_ON_CONTENT_MATCH: ParamKey = ParamKey("skip_upload_on_content_match");
+    pub const CWD: ParamKey = ParamKey("cwd");
     pub const PUT_FASTFAIL: ParamKey = ParamKey("put_fastfail");
     pub const GET_FASTFAIL: ParamKey = ParamKey("get_fastfail");
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
@@ -1908,6 +1909,16 @@ static PARAM_DEFS: &[ParamDef] = &[
         .sensitive(false)
         .auth(false)
         .description("Skip re-uploading a PUT object when the remote stored digest (S3 x-amz-meta-sfc-digest / Azure x-ms-meta-sfcdigest / GCS x-goog-meta-sfc-digest) equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.")
+        .scopes(&[ParamScope::Statement])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CWD.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Directory used to resolve relative local paths in PUT and GET. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.")
         .scopes(&[ParamScope::Statement])
         .used_at_connect(false)
         .mutable_after_connect(true)

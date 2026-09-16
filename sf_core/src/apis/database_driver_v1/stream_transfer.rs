@@ -703,6 +703,7 @@ fn resolve_download_target(
             use_s3_regional_url,
             unsafe_file_write,
             false,
+            None,
             transport,
         )
         .map_err(|e| {

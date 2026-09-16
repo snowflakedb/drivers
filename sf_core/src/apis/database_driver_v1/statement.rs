@@ -668,6 +668,10 @@ impl DatabaseDriverV1 {
         // preset are applied later in `extract_rowset_data`, once `conn` is locked.
         let put_fastfail = stmt.settings.get_bool(param_names::PUT_FASTFAIL);
         let get_fastfail = stmt.settings.get_bool(param_names::GET_FASTFAIL);
+        let cwd = stmt
+            .settings
+            .get_string(param_names::CWD)
+            .map(std::path::PathBuf::from);
 
         let data = response.data;
         let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
@@ -685,6 +689,7 @@ impl DatabaseDriverV1 {
                 skip_upload_on_content_match,
                 put_fastfail,
                 get_fastfail,
+                cwd,
             )
             .await?;
         let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
@@ -713,6 +718,7 @@ impl DatabaseDriverV1 {
         skip_upload_on_content_match: bool,
         put_fastfail_override: Option<bool>,
         get_fastfail_override: Option<bool>,
+        cwd: Option<std::path::PathBuf>,
     ) -> Result<query_response::RowsetData, ApiError> {
         match data.command.as_deref() {
             Some(command) => {
@@ -777,6 +783,7 @@ impl DatabaseDriverV1 {
                     skip_upload_on_content_match,
                     put_fastfail,
                     get_fastfail,
+                    cwd,
                     unsafe_file_write,
                     tls_config,
                     proxy_config,
@@ -1019,13 +1026,13 @@ impl DatabaseDriverV1 {
             };
             // This is the path a PUT/GET submitted earlier is retrieved on, so
             // `operation_ctx` is forwarded: a cancel here tears down the cloud transfer
-            // rather than only abandoning this request. The three `None`s that
-            // follow `data` are unrelated to it — there is no `Statement` on this
+            // rather than only abandoning this request. The four `None`s that
+            // follow `refresh_sql` are unrelated to it — there is no `Statement` on this
             // path to carry per-statement PUT/GET overrides, so
             // `extract_rowset_data` falls back to connection/session and then the
             // wrapper preset. `skip_upload_on_content_match` is defensively false.
             let rowset_data = self
-                .extract_rowset_data(operation_ctx, &conn_ptr, data, refresh_sql, false, None, None)
+                .extract_rowset_data(operation_ctx, &conn_ptr, data, refresh_sql, false, None, None, None)
                 .await?;
             let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
             Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, None))
