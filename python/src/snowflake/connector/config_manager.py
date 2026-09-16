@@ -358,6 +358,7 @@ CONFIG_MANAGER = ConfigManager(
 
 CONFIG_MANAGER.add_option(
     name="connections",
+    parse_str=tomlkit.parse,
     default=dict(),
 )
 
