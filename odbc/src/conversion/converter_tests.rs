@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::conversion::error::ConversionError;
-    use crate::conversion::{Binding, NumericSettings, column_size_from_field, make_converter};
+    use crate::conversion::{
+        Binding, NumericSettings, column_size_from_field, decimal_digits_from_field, make_converter,
+    };
     use arrow::array::{ArrayRef, Int8Array, Int16Array, Int32Array, Int64Array};
     use arrow::datatypes::{DataType, Field};
     use std::collections::HashMap;
@@ -216,6 +218,59 @@ mod tests {
 
         let array: ArrayRef = Arc::new(Int32Array::from(vec![Some(2_000_000_000i32)]));
         assert_eq!(char_of_value(converter.as_ref(), &array), "0 00:00:02");
+    }
+
+    #[test]
+    fn interval_day_time_day_to_second_subtype_renders_nine_fraction_digits() {
+        let field = interval_day_time_field(3, DataType::Int64);
+        let ns = NumericSettings::default();
+        let converter = make_converter(&field, &ns).expect("converter for INTERVAL DAY TO SECOND");
+        assert_eq!(
+            decimal_digits_from_field(&field, &ns).expect("decimal digits"),
+            9
+        );
+        assert_eq!(
+            column_size_from_field(&field, &ns).expect("column size"),
+            21
+        );
+
+        let array: ArrayRef = Arc::new(Int64Array::from(vec![Some(1_200_000_000i64)]));
+        assert_eq!(
+            char_of_value(converter.as_ref(), &array),
+            "0 00:00:01.200000000"
+        );
+    }
+
+    #[test]
+    fn interval_day_time_second_subtype_renders_nine_fraction_digits() {
+        let field = interval_day_time_field(12, DataType::Int64);
+        let ns = NumericSettings::default();
+        let converter = make_converter(&field, &ns).expect("converter for INTERVAL SECOND");
+
+        let array: ArrayRef = Arc::new(Int64Array::from(vec![Some(1_200_000_000i64)]));
+        assert_eq!(
+            char_of_value(converter.as_ref(), &array),
+            "0 00:00:01.200000000"
+        );
+    }
+
+    #[test]
+    fn interval_day_time_minute_to_second_subtype_does_not_underflow() {
+        let field = interval_day_time_field(10, DataType::Int64);
+        let ns = NumericSettings::default();
+        let converter =
+            make_converter(&field, &ns).expect("converter for INTERVAL MINUTE TO SECOND");
+        assert_eq!(
+            decimal_digits_from_field(&field, &ns).expect("decimal digits"),
+            9
+        );
+
+        let nanos = 30 * 60 * 1_000_000_000i64 + 45 * 1_000_000_000 + 123_000_000;
+        let array: ArrayRef = Arc::new(Int64Array::from(vec![Some(nanos)]));
+        assert_eq!(
+            char_of_value(converter.as_ref(), &array),
+            "0 00:30:45.123000000"
+        );
     }
 
     // Multi-row block-cursor striding: `convert_arrow_range` must write each

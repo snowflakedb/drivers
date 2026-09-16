@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn day_time_char_scale_zero() {
         let array = Int64Array::from(vec![Some(day_time_nanos(1, 2, 3, 4) as i64)]);
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let value = reader.read_arrow_type(&array, 0).unwrap();
         assert_eq!(
             char_of(|b| reader.write_odbc_type(value, b, &mut None)),
@@ -128,7 +128,7 @@ mod tests {
     fn day_time_char_scale_six() {
         let nanos = day_time_nanos(0, 2, 3, 4) + 500_000_000;
         let array = Int64Array::from(vec![Some(nanos as i64)]);
-        let reader = IntervalDayTimeReader { scale: 6 };
+        let reader = IntervalDayTimeReader { fraction_scale: 6 };
         let value = reader.read_arrow_type(&array, 0).unwrap();
         assert_eq!(
             char_of(|b| reader.write_odbc_type(value, b, &mut None)),
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn day_time_char_negative() {
         let array = Int64Array::from(vec![Some(-(day_time_nanos(1, 2, 3, 4) as i64))]);
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let value = reader.read_arrow_type(&array, 0).unwrap();
         assert_eq!(
             char_of(|b| reader.write_odbc_type(value, b, &mut None)),
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn day_time_char_zero() {
         let array = Int64Array::from(vec![Some(0)]);
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let value = reader.read_arrow_type(&array, 0).unwrap();
         assert_eq!(
             char_of(|b| reader.write_odbc_type(value, b, &mut None)),
@@ -162,7 +162,7 @@ mod tests {
     fn day_time_char_from_decimal128_beyond_i64() {
         let beyond = i64::MAX as i128 + NANOS_PER_SECOND;
         let array = Decimal128Array::from(vec![Some(beyond)]);
-        let reader = IntervalDayTimeReader { scale: 9 };
+        let reader = IntervalDayTimeReader { fraction_scale: 9 };
         let value = reader.read_arrow_type(&array, 0).unwrap();
         assert_eq!(value, beyond);
     }
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn day_time_to_interval_day_to_second() {
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let mut interval = zero_interval();
         let mut str_len: sql::Len = 0;
         let binding =
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn day_time_negative_to_interval_day_to_second() {
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let mut interval = zero_interval();
         let mut str_len: sql::Len = 0;
         let binding =
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn day_time_to_single_field_interval_day() {
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let mut interval = zero_interval();
         let mut str_len: sql::Len = 0;
         let binding = binding_for_interval(CDataType::IntervalDay, &mut interval, &mut str_len);
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn day_time_to_year_month_target_is_unsupported() {
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let mut interval = zero_interval();
         let mut str_len: sql::Len = 0;
         let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn day_time_to_sbigint_is_whole_seconds() {
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let mut value: i64 = 0;
         let mut str_len: sql::Len = 0;
         let binding = binding_for_fixed(CDataType::SBigInt, &mut value, &mut str_len);
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn day_time_fractional_seconds_truncate_with_warning() {
-        let reader = IntervalDayTimeReader { scale: 9 };
+        let reader = IntervalDayTimeReader { fraction_scale: 9 };
         let mut value: i64 = 0;
         let mut str_len: sql::Len = 0;
         let binding = binding_for_fixed(CDataType::SBigInt, &mut value, &mut str_len);
@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn day_time_negative_to_sbigint() {
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let mut value: i64 = 0;
         let mut str_len: sql::Len = 0;
         let binding = binding_for_fixed(CDataType::SBigInt, &mut value, &mut str_len);
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn day_time_to_numeric() {
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let mut value = sql::Numeric {
             precision: 0,
             scale: 0,
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn day_time_null_is_null_value_error() {
         let array = Int64Array::from(vec![None, Some(1)]);
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         let err = reader.read_arrow_type(&array, 0).unwrap_err();
         assert!(matches!(err, ReadArrowError::NullValue { .. }));
     }
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn day_time_metadata_scale_zero() {
-        let reader = IntervalDayTimeReader { scale: 0 };
+        let reader = IntervalDayTimeReader { fraction_scale: 0 };
         assert_eq!(reader.sql_type(), sql::SqlDataType(110));
         assert_eq!(reader.column_size(), 11);
         assert_eq!(reader.decimal_digits(), 0);
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn day_time_metadata_scale_six() {
-        let reader = IntervalDayTimeReader { scale: 6 };
+        let reader = IntervalDayTimeReader { fraction_scale: 6 };
         assert_eq!(reader.column_size(), 18);
         assert_eq!(reader.decimal_digits(), 6);
     }

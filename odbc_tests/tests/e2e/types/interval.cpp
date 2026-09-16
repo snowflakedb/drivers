@@ -1,14 +1,6 @@
 // INTERVAL datatype ODBC E2E tests
 // Based on: tests/definitions/shared/types/interval.feature
-//
-// Snowflake INTERVAL has two families:
-//   - YEAR/MONTH: stored as signed month count (e.g., "14" for 1 year 2 months).
-//   - DAY/TIME: stored as scaled nanosecond duration (e.g., "1000000.000" for 1 second).
-// The reference ODBC driver surfaces all INTERVAL types as SQL_VARCHAR with
-// numeric string values (column_size=134217728, decimal_digits=0).
-//
-// The new driver does not yet support INTERVAL Arrow format; most tests
-// are skipped via SKIP_NEW_DRIVER_NOT_IMPLEMENTED() until support lands.
+
 #include <sql.h>
 #include <sqlext.h>
 
@@ -20,16 +12,26 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "HandleWrapper.hpp"
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
+
+namespace {
+
+void check_interval_char(const StatementHandleWrapper& stmt, SQLUSMALLINT col, const char* old_value,
+                         const char* new_value) {
+  NEW_DRIVER_ONLY("BD#145") { CHECK(get_data<SQL_C_CHAR>(stmt, col) == new_value); }
+  OLD_DRIVER_ONLY("BD#145") { CHECK(get_data<SQL_C_CHAR>(stmt, col) == old_value); }
+}
+
+}  // namespace
 
 // ============================================================================
 // TYPE CASTING
 // ============================================================================
 
 TEST_CASE("should cast INTERVAL values to appropriate type for YEAR TO MONTH and DAY TO SECOND", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -49,14 +51,17 @@ TEST_CASE("should cast INTERVAL values to appropriate type for YEAR TO MONTH and
     SQLRETURN ret =
         SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size, &decimal_digits, nullptr);
     REQUIRE_ODBC(ret, stmt);
-    CHECK(data_type == SQL_VARCHAR);
+    NEW_DRIVER_ONLY("BD#145") {
+      CHECK(data_type == (col <= 2 ? SQL_INTERVAL_YEAR_TO_MONTH : SQL_INTERVAL_DAY_TO_SECOND));
+    }
+    OLD_DRIVER_ONLY("BD#145") { CHECK(data_type == SQL_VARCHAR); }
   }
 
   // And values should match the canonical numeric representation
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "14");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "11999999999");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "1200000.000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "8639999999999999.000");
+  check_interval_char(stmt, 1, "14", "1-02");
+  check_interval_char(stmt, 2, "11999999999", "999999999-11");
+  check_interval_char(stmt, 3, "1200000.000", "0 00:00:01.200000000");
+  check_interval_char(stmt, 4, "8639999999999999.000", "99999 23:59:59.999999000");
 }
 
 // ============================================================================
@@ -64,7 +69,6 @@ TEST_CASE("should cast INTERVAL values to appropriate type for YEAR TO MONTH and
 // ============================================================================
 
 TEST_CASE("should select INTERVAL YEAR TO MONTH literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -77,15 +81,14 @@ TEST_CASE("should select INTERVAL YEAR TO MONTH literals", "[interval]") {
       "'-999999999-11'::INTERVAL YEAR TO MONTH");
 
   // Then the result should contain expected INTERVAL YEAR TO MONTH literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "14");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-15");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "11999999999");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-11999999999");
+  check_interval_char(stmt, 1, "0", "0-00");
+  check_interval_char(stmt, 2, "14", "1-02");
+  check_interval_char(stmt, 3, "-15", "-1-03");
+  check_interval_char(stmt, 4, "11999999999", "999999999-11");
+  check_interval_char(stmt, 5, "-11999999999", "-999999999-11");
 }
 
 TEST_CASE("should select INTERVAL DAY TO SECOND literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -98,15 +101,14 @@ TEST_CASE("should select INTERVAL DAY TO SECOND literals", "[interval]") {
       "'-99999 23:59:59.999999'::INTERVAL DAY TO SECOND");
 
   // Then the result should contain expected INTERVAL DAY TO SECOND literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "1047845678000.000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-93784567000.000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "8639999999999999.000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-8639999999999999.000");
+  check_interval_char(stmt, 1, "0.000", "0 00:00:00.000000000");
+  check_interval_char(stmt, 2, "1047845678000.000", "12 03:04:05.678000000");
+  check_interval_char(stmt, 3, "-93784567000.000", "-1 02:03:04.567000000");
+  check_interval_char(stmt, 4, "8639999999999999.000", "99999 23:59:59.999999000");
+  check_interval_char(stmt, 5, "-8639999999999999.000", "-99999 23:59:59.999999000");
 }
 
 TEST_CASE("should select INTERVAL YEAR literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -117,15 +119,14 @@ TEST_CASE("should select INTERVAL YEAR literals", "[interval]") {
       "'999999999'::INTERVAL YEAR, '-999999999'::INTERVAL YEAR");
 
   // Then the result should contain expected INTERVAL YEAR literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.0");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "1.2");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-1.2");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "1199999998.8");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-1199999998.8");
+  check_interval_char(stmt, 1, "0.0", "0-00");
+  check_interval_char(stmt, 2, "1.2", "1-00");
+  check_interval_char(stmt, 3, "-1.2", "-1-00");
+  check_interval_char(stmt, 4, "1199999998.8", "999999999-00");
+  check_interval_char(stmt, 5, "-1199999998.8", "-999999999-00");
 }
 
 TEST_CASE("should select INTERVAL MONTH literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -136,15 +137,14 @@ TEST_CASE("should select INTERVAL MONTH literals", "[interval]") {
       "'999999999'::INTERVAL MONTH, '-999999999'::INTERVAL MONTH");
 
   // Then the result should contain expected INTERVAL MONTH literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.00");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "0.01");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-0.01");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "9999999.99");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-9999999.99");
+  check_interval_char(stmt, 1, "0.00", "0-00");
+  check_interval_char(stmt, 2, "0.01", "0-01");
+  check_interval_char(stmt, 3, "-0.01", "-0-01");
+  check_interval_char(stmt, 4, "9999999.99", "83333333-03");
+  check_interval_char(stmt, 5, "-9999999.99", "-83333333-03");
 }
 
 TEST_CASE("should select INTERVAL DAY literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -155,15 +155,14 @@ TEST_CASE("should select INTERVAL DAY literals", "[interval]") {
       "'999999999'::INTERVAL DAY, '-999999999'::INTERVAL DAY");
 
   // Then the result should contain expected INTERVAL DAY literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "86400000.000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-86400000.000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "86399999913600000.000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-86399999913600000.000000");
+  check_interval_char(stmt, 1, "0.000000", "0 00:00:00");
+  check_interval_char(stmt, 2, "86400000.000000", "1 00:00:00");
+  check_interval_char(stmt, 3, "-86400000.000000", "-1 00:00:00");
+  check_interval_char(stmt, 4, "86399999913600000.000000", "999999999 00:00:00");
+  check_interval_char(stmt, 5, "-86399999913600000.000000", "-999999999 00:00:00");
 }
 
 TEST_CASE("should select INTERVAL HOUR literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -174,15 +173,14 @@ TEST_CASE("should select INTERVAL HOUR literals", "[interval]") {
       "'999999999'::INTERVAL HOUR, '-999999999'::INTERVAL HOUR");
 
   // Then the result should contain expected INTERVAL HOUR literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "3600.000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-3600.000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "3599999996400.000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-3599999996400.000000000");
+  check_interval_char(stmt, 1, "0.000000000", "0 00:00:00");
+  check_interval_char(stmt, 2, "3600.000000000", "0 01:00:00");
+  check_interval_char(stmt, 3, "-3600.000000000", "-0 01:00:00");
+  check_interval_char(stmt, 4, "3599999996400.000000000", "41666666 15:00:00");
+  check_interval_char(stmt, 5, "-3599999996400.000000000", "-41666666 15:00:00");
 }
 
 TEST_CASE("should select INTERVAL MINUTE literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -193,15 +191,14 @@ TEST_CASE("should select INTERVAL MINUTE literals", "[interval]") {
       "'999999999'::INTERVAL MINUTE, '-999999999'::INTERVAL MINUTE");
 
   // Then the result should contain expected INTERVAL MINUTE literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.00000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "0.60000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-0.60000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "599999999.40000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-599999999.40000000000");
+  check_interval_char(stmt, 1, "0.00000000000", "0 00:00:00");
+  check_interval_char(stmt, 2, "0.60000000000", "0 00:01:00");
+  check_interval_char(stmt, 3, "-0.60000000000", "-0 00:01:00");
+  check_interval_char(stmt, 4, "599999999.40000000000", "694444 10:39:00");
+  check_interval_char(stmt, 5, "-599999999.40000000000", "-694444 10:39:00");
 }
 
 TEST_CASE("should select INTERVAL SECOND literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -212,15 +209,14 @@ TEST_CASE("should select INTERVAL SECOND literals", "[interval]") {
       "'999999999.999999'::INTERVAL SECOND, '-999999999.999999'::INTERVAL SECOND");
 
   // Then the result should contain expected INTERVAL SECOND literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.000000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "0.001000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-0.001000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "999999.999999999000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-999999.999999999000");
+  check_interval_char(stmt, 1, "0.000000000000", "0 00:00:00.000000000");
+  check_interval_char(stmt, 2, "0.001000000000", "0 00:00:01.000000000");
+  check_interval_char(stmt, 3, "-0.001000000000", "-0 00:00:01.000000000");
+  check_interval_char(stmt, 4, "999999.999999999000", "11574 01:46:39.999999000");
+  check_interval_char(stmt, 5, "-999999.999999999000", "-11574 01:46:39.999999000");
 }
 
 TEST_CASE("should select INTERVAL DAY TO HOUR literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -231,13 +227,12 @@ TEST_CASE("should select INTERVAL DAY TO HOUR literals", "[interval]") {
       "'-1 2'::INTERVAL DAY TO HOUR");
 
   // Then the result should contain expected INTERVAL DAY TO HOUR literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.00000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "936000000.00000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-936000000.00000");
+  check_interval_char(stmt, 1, "0.00000", "0 00:00:00");
+  check_interval_char(stmt, 2, "936000000.00000", "1 02:00:00");
+  check_interval_char(stmt, 3, "-936000000.00000", "-1 02:00:00");
 }
 
 TEST_CASE("should select INTERVAL DAY TO HOUR max literal", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -245,11 +240,10 @@ TEST_CASE("should select INTERVAL DAY TO HOUR max literal", "[interval]") {
   auto stmt = conn.execute_fetch("SELECT '999999999 23'::INTERVAL DAY TO HOUR");
 
   // Then the result should contain expected INTERVAL DAY TO HOUR max value
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "863999999964000000.00000");
+  check_interval_char(stmt, 1, "863999999964000000.00000", "999999999 23:00:00");
 }
 
 TEST_CASE("should select INTERVAL DAY TO HOUR min literal", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -257,11 +251,10 @@ TEST_CASE("should select INTERVAL DAY TO HOUR min literal", "[interval]") {
   auto stmt = conn.execute_fetch("SELECT '-999999999 23'::INTERVAL DAY TO HOUR");
 
   // Then the result should contain expected INTERVAL DAY TO HOUR min value
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-863999999964000000.00000");
+  check_interval_char(stmt, 1, "-863999999964000000.00000", "-999999999 23:00:00");
 }
 
 TEST_CASE("should select INTERVAL DAY TO MINUTE literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -272,13 +265,12 @@ TEST_CASE("should select INTERVAL DAY TO MINUTE literals", "[interval]") {
       "'-1 2:30'::INTERVAL DAY TO MINUTE");
 
   // Then the result should contain expected INTERVAL DAY TO MINUTE literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.0000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "9540000000.0000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-9540000000.0000");
+  check_interval_char(stmt, 1, "0.0000", "0 00:00:00");
+  check_interval_char(stmt, 2, "9540000000.0000", "1 02:30:00");
+  check_interval_char(stmt, 3, "-9540000000.0000", "-1 02:30:00");
 }
 
 TEST_CASE("should select INTERVAL DAY TO MINUTE max literal", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -286,11 +278,10 @@ TEST_CASE("should select INTERVAL DAY TO MINUTE max literal", "[interval]") {
   auto stmt = conn.execute_fetch("SELECT '999999999 23:59'::INTERVAL DAY TO MINUTE");
 
   // Then the result should contain expected INTERVAL DAY TO MINUTE max value
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "8639999999994000000.0000");
+  check_interval_char(stmt, 1, "8639999999994000000.0000", "999999999 23:59:00");
 }
 
 TEST_CASE("should select INTERVAL DAY TO MINUTE min literal", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -298,11 +289,10 @@ TEST_CASE("should select INTERVAL DAY TO MINUTE min literal", "[interval]") {
   auto stmt = conn.execute_fetch("SELECT '-999999999 23:59'::INTERVAL DAY TO MINUTE");
 
   // Then the result should contain expected INTERVAL DAY TO MINUTE min value
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-8639999999994000000.0000");
+  check_interval_char(stmt, 1, "-8639999999994000000.0000", "-999999999 23:59:00");
 }
 
 TEST_CASE("should select INTERVAL HOUR TO MINUTE literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -315,15 +305,14 @@ TEST_CASE("should select INTERVAL HOUR TO MINUTE literals", "[interval]") {
       "'-999999999:59'::INTERVAL HOUR TO MINUTE");
 
   // Then the result should contain expected INTERVAL HOUR TO MINUTE literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.00000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "54000.00000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-54000.00000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "35999999999400.00000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-35999999999400.00000000");
+  check_interval_char(stmt, 1, "0.00000000", "0 00:00:00");
+  check_interval_char(stmt, 2, "54000.00000000", "0 01:30:00");
+  check_interval_char(stmt, 3, "-54000.00000000", "-0 01:30:00");
+  check_interval_char(stmt, 4, "35999999999400.00000000", "41666666 15:59:00");
+  check_interval_char(stmt, 5, "-35999999999400.00000000", "-41666666 15:59:00");
 }
 
 TEST_CASE("should select INTERVAL HOUR TO SECOND literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -336,15 +325,14 @@ TEST_CASE("should select INTERVAL HOUR TO SECOND literals", "[interval]") {
       "'-999999999:59:59.999999'::INTERVAL HOUR TO SECOND");
 
   // Then the result should contain expected INTERVAL HOUR TO SECOND literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.0000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "544512.3000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-544512.3000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "359999999999999.9999000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-359999999999999.9999000");
+  check_interval_char(stmt, 1, "0.0000000", "0 00:00:00.000000000");
+  check_interval_char(stmt, 2, "544512.3000000", "0 01:30:45.123000000");
+  check_interval_char(stmt, 3, "-544512.3000000", "-0 01:30:45.123000000");
+  check_interval_char(stmt, 4, "359999999999999.9999000", "41666666 15:59:59.999999000");
+  check_interval_char(stmt, 5, "-359999999999999.9999000", "-41666666 15:59:59.999999000");
 }
 
 TEST_CASE("should select INTERVAL MINUTE TO SECOND literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -357,15 +345,14 @@ TEST_CASE("should select INTERVAL MINUTE TO SECOND literals", "[interval]") {
       "'-999999999:59.999999'::INTERVAL MINUTE TO SECOND");
 
   // Then the result should contain expected INTERVAL MINUTE TO SECOND literal values in order
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.0000000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "184.5123000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-184.5123000000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "5999999999.9999999000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-5999999999.9999999000");
+  check_interval_char(stmt, 1, "0.0000000000", "0 00:00:00.000000000");
+  check_interval_char(stmt, 2, "184.5123000000", "0 00:30:45.123000000");
+  check_interval_char(stmt, 3, "-184.5123000000", "-0 00:30:45.123000000");
+  check_interval_char(stmt, 4, "5999999999.9999999000", "694444 10:39:59.999999000");
+  check_interval_char(stmt, 5, "-5999999999.9999999000", "-694444 10:39:59.999999000");
 }
 
 TEST_CASE("should select NULL INTERVAL literals", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -1389,7 +1376,6 @@ TEST_CASE("should support complex INTERVAL with mixed units and abbreviations", 
 }
 
 TEST_CASE("should add two INTERVAL YEAR TO MONTH values", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -1397,11 +1383,10 @@ TEST_CASE("should add two INTERVAL YEAR TO MONTH values", "[interval]") {
   const auto stmt = conn.execute_fetch("SELECT '1-2'::INTERVAL YEAR TO MONTH + '0-3'::INTERVAL YEAR TO MONTH AS i");
 
   // Then the result should contain expected INTERVAL YEAR TO MONTH value '1-5'
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "17");
+  check_interval_char(stmt, 1, "17", "1-05");
 }
 
 TEST_CASE("should add two INTERVAL DAY TO SECOND values", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -1410,11 +1395,10 @@ TEST_CASE("should add two INTERVAL DAY TO SECOND values", "[interval]") {
       conn.execute_fetch("SELECT '1 2:30:00.0'::INTERVAL DAY TO SECOND + '0 1:45:30.5'::INTERVAL DAY TO SECOND AS i");
 
   // Then the result should contain expected INTERVAL DAY TO SECOND value '1 4:15:30.500000'
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "101730500000.000");
+  check_interval_char(stmt, 1, "101730500000.000", "1 04:15:30.500000000");
 }
 
 TEST_CASE("should negate an INTERVAL value", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -1425,12 +1409,11 @@ TEST_CASE("should negate an INTERVAL value", "[interval]") {
       "-('3 12:0:0.0'::INTERVAL DAY TO SECOND) AS dt");
 
   // Then the result should contain expected negated INTERVAL values '-1-6' and '-3 12:0:0.000000'
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-18");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "-302400000000.000");
+  check_interval_char(stmt, 1, "-18", "-1-06");
+  check_interval_char(stmt, 2, "-302400000000.000", "-3 12:00:00.000000000");
 }
 
 TEST_CASE("should subtract two INTERVAL values", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -1441,12 +1424,11 @@ TEST_CASE("should subtract two INTERVAL values", "[interval]") {
       "'1 4:15:30.5'::INTERVAL DAY TO SECOND - '0 1:45:30.5'::INTERVAL DAY TO SECOND AS dt");
 
   // Then the result should contain expected INTERVAL values '1-2' and '1 2:30:00.000000'
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "14");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "95400000000.000");
+  check_interval_char(stmt, 1, "14", "1-02");
+  check_interval_char(stmt, 2, "95400000000.000", "1 02:30:00.000000000");
 }
 
 TEST_CASE("should multiply INTERVAL by a scalar", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -1457,12 +1439,11 @@ TEST_CASE("should multiply INTERVAL by a scalar", "[interval]") {
       "2 * '1 0:0:0.0'::INTERVAL DAY TO SECOND AS dt");
 
   // Then the result should contain expected INTERVAL values '1-6' and '2 0:0:0.000000'
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "18");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "172800000000.000");
+  check_interval_char(stmt, 1, "18", "1-06");
+  check_interval_char(stmt, 2, "172800000000.000", "2 00:00:00.000000000");
 }
 
 TEST_CASE("should divide INTERVAL by a scalar", "[interval]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -1473,6 +1454,6 @@ TEST_CASE("should divide INTERVAL by a scalar", "[interval]") {
       "'2 0:0:0.0'::INTERVAL DAY TO SECOND / 2 AS dt");
 
   // Then the result should contain expected INTERVAL values '0-6' and '1 0:0:0.000000'
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "6");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "86400000000.000");
+  check_interval_char(stmt, 1, "6", "0-06");
+  check_interval_char(stmt, 2, "86400000000.000", "1 00:00:00.000000000");
 }

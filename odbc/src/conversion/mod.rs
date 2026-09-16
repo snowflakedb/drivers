@@ -548,9 +548,11 @@ impl SnowflakeFieldType {
                 interval_result::IntervalYearMonthReader,
             )),
             "INTERVAL_DAY_TIME" => {
-                let scale = get_field_metadata(field, "scale")?;
+                let subtype = get_field_metadata(field, "scale")?;
                 Ok(Self::IntervalDayTime(
-                    interval_result::IntervalDayTimeReader { scale },
+                    interval_result::IntervalDayTimeReader {
+                        fraction_scale: sf_output_format::day_time_fraction_scale(subtype),
+                    },
                 ))
             }
             "OBJECT" | "ARRAY" | "VARIANT" => {
