@@ -174,8 +174,10 @@ pub struct SessionTokens {
     pub session_token: SensitiveString,
     /// Token used to refresh an expired session token
     pub master_token: SensitiveString,
-    /// Server-assigned session ID
-    pub session_id: i64,
+    /// Server-assigned session ID. `None` when the server has not reported one
+    /// for these tokens, which is the state the session-token bypass holds them
+    /// in until its RENEW returns.
+    pub session_id: Option<i64>,
     /// When the session token expires
     pub session_expires_at: Option<std::time::Instant>,
     /// When the master token expires (after this, full re-auth is needed)
@@ -1110,7 +1112,7 @@ pub async fn snowflake_login_with_client(
         let temp_tokens = SessionTokens {
             session_token: session_token.clone(),
             master_token: master_token.clone(),
-            session_id: 0, // unknown until refresh_session returns the real id
+            session_id: None,
             session_expires_at: None,
             master_expires_at: master_validity.map(|d| std::time::Instant::now() + d),
             master_validity,
@@ -1481,7 +1483,7 @@ pub async fn snowflake_login_with_client(
         tokens: SessionTokens {
             session_token,
             master_token,
-            session_id,
+            session_id: Some(session_id),
             session_expires_at,
             master_expires_at,
             master_validity: auth_response.data.master_validity,
@@ -1596,7 +1598,7 @@ pub async fn refresh_session(
     Ok(SessionTokens {
         session_token: data.session_token,
         master_token: data.master_token,
-        session_id: data.session_id,
+        session_id: Some(data.session_id),
         session_expires_at,
         master_expires_at,
         master_validity: data.master_validity,

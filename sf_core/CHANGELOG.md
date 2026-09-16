@@ -78,6 +78,7 @@ Internal improvements:
 - Raised the default multipart block size for PUT uploads to internal Azure stages from 4 MiB to 8 MiB, matching the S3/GCS default and improving throughput for typical file sizes.
 - Response-body reads for the OAuth token exchange and GCP metadata server now stream against a fixed size limit using a running byte count (shared `read_body_capped` helper) rather than relying on the advertised `Content-Length`. (snowflakedb/drivers#1053)
 - Improved on-disk CRL cache file handling: cache files are written with owner-only permissions and each cache entry is read through a single file handle. (snowflakedb/drivers#1056)
+- Changed `SessionTokens.session_id` to `Option<i64>` so a token pair the server has not yet reported a session id for is no longer carried as `0`. A connection without a session id is left out of the telemetry registry instead of being filed under a placeholder id. (snowflakedb/drivers#2041)
 
 Test improvements:
 
