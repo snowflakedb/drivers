@@ -172,8 +172,8 @@ pipeline {
                                     def cloud = params.CLOUD ?: 'aws'
 
                                     def hatchEnv = ""
-                                    if (params.DRIVER == 'core') {
-                                        hatchEnv = "core"
+                                    if (params.DRIVER == 'core' || params.DRIVER == 'sqlapi' || params.DRIVER == 'adbc') {
+                                        hatchEnv = "${params.DRIVER}"
                                     } else {
                                         hatchEnv = "${params.DRIVER}-${params.DRIVER_TYPE}"
                                     }
@@ -184,7 +184,7 @@ pipeline {
                                     
                                     echo "Hatch environment: ${hatchEnv}"
                                     echo "TEST_ARGS parameter: '${testArgs ?: '(empty - will run all tests)'}'"
-                                    
+
                                     if (testArgs) {
                                         echo "Running specific test(s): ${testArgs}"
                                         sh """
@@ -192,6 +192,16 @@ pipeline {
                                             export CLOUD=${cloud}
                                             echo "Executing: python -m hatch run ${hatchEnv} -- ${testArgs}"
                                             python -m hatch run ${hatchEnv} -- ${testArgs}
+                                        """
+                                    } else if (params.DRIVER == 'sqlapi') {
+                                        // SQL API Arrow needs ENABLE_SQL_API_ARROW_V1.
+                                        // Until that flag is on the account under test, run JSON only.
+                                        echo "sqlapi: skipping Arrow session until ENABLE_SQL_API_ARROW_V1; JSON only"
+                                        sh """
+                                            source .venv/bin/activate
+                                            export CLOUD=${cloud}
+                                            echo "Executing: python -m hatch run ${hatchEnv} -- tests/ -m supports_json --result-format=json"
+                                            python -m hatch run ${hatchEnv} -- tests/ -m supports_json --result-format=json
                                         """
                                     } else {
                                         echo "Running all tests"
@@ -201,19 +211,20 @@ pipeline {
                                             echo "Executing: python -m hatch run ${hatchEnv}"
                                             python -m hatch run ${hatchEnv}
                                         """
-                                    }
 
-                                    // JSON is a second session so RESULT_FORMAT stays a run-level tag.
-                                    // -m supports_json keeps collection to e2e small/mid SELECT.
-                                    // Skip when the user asked for a custom subset.
-                                    if (!userTestArgs) {
-                                        echo "Running JSON result-format pass"
-                                        sh """
-                                            source .venv/bin/activate
-                                            export CLOUD=${cloud}
-                                            echo "Executing: python -m hatch run ${hatchEnv} -- tests/ -m supports_json --result-format=json"
-                                            python -m hatch run ${hatchEnv} -- tests/ -m supports_json --result-format=json
-                                        """
+                                        // JSON is a second session so RESULT_FORMAT stays a run-level tag.
+                                        // -m supports_json keeps collection to e2e small/mid SELECT plus
+                                        // SQL API 1M (marked supports_json while Arrow is flag-gated).
+                                        // ADBC is Arrow-native (fetch_record_batch); skip the JSON session.
+                                        if (params.DRIVER != 'adbc') {
+                                            echo "Running JSON result-format pass"
+                                            sh """
+                                                source .venv/bin/activate
+                                                export CLOUD=${cloud}
+                                                echo "Executing: python -m hatch run ${hatchEnv} -- tests/ -m supports_json --result-format=json"
+                                                python -m hatch run ${hatchEnv} -- tests/ -m supports_json --result-format=json
+                                            """
+                                        }
                                     }
                                 }
                             }

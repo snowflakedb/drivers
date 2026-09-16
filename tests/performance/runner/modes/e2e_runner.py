@@ -28,6 +28,7 @@ def run_performance_test(
     binding_mode: str = "execute",
     binding_params: list | tuple | None = None,
     expected_row_count: int | None = None,
+    result_format: str = "arrow",
 ) -> list[Path]:
     """
     Run a performance test with the specified configuration.
@@ -62,8 +63,10 @@ def run_performance_test(
         f"Running {test_name} ({driver_label}): {iterations} iterations [type={test_type}{extra}]"
     )
 
-    env_vars = {}
-    if test_type != PerfTestType.CONCURRENT:
+    env_vars = {"RESULT_FORMAT": result_format}
+    if expected_row_count is not None:
+        env_vars["EXPECTED_ROW_COUNT"] = str(expected_row_count)
+    elif test_type != PerfTestType.CONCURRENT:
         expected = extract_limit_from_sql(sql_command)
         if expected:
             env_vars["EXPECTED_ROW_COUNT"] = str(expected)
@@ -76,8 +79,6 @@ def run_performance_test(
     if test_type == PerfTestType.PARAMETER_BINDING:
         env_vars["BINDING_MODE"] = binding_mode
         env_vars["BINDING_PARAMS_JSON"] = json.dumps(binding_params)
-        if expected_row_count is not None:
-            env_vars["EXPECTED_ROW_COUNT"] = str(expected_row_count)
 
     execute_test(
         test_name=test_name,
@@ -121,6 +122,7 @@ def run_comparison_test(
     binding_mode: str = "execute",
     binding_params: list | tuple | None = None,
     expected_row_count: int | None = None,
+    result_format: str = "arrow",
 ) -> dict[str, list[Path]]:
     """
     Run the same test on both universal and old driver implementations.
@@ -167,6 +169,7 @@ def run_comparison_test(
         binding_mode=binding_mode,
         binding_params=binding_params,
         expected_row_count=expected_row_count,
+        result_format=result_format,
     )
 
     # Run Old driver second
@@ -191,6 +194,7 @@ def run_comparison_test(
         binding_mode=binding_mode,
         binding_params=binding_params,
         expected_row_count=expected_row_count,
+        result_format=result_format,
     )
 
     return results

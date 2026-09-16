@@ -1,7 +1,7 @@
 """Unit tests for PR-check percent threshold (no Benchstore).
 
-The 10-run main median is the production stabilizer for the date-test
-window shift (#1991 / #1872). These tests only cover the percent rule.
+The 10-run main median is the production stabilizer for short-window
+median jitter. These tests only cover the percent rule.
 """
 from runner.pr_smoke_reg_detection.regression_check import (
     check_regression,
@@ -10,8 +10,7 @@ from runner.pr_smoke_reg_detection.regression_check import (
 
 
 def test_percent_over_threshold_is_a_regression():
-    # Same numbers as the #1991 date flake vs a 3-run baseline.
-    # 10-run median is what should absorb that in Benchstore; the % rule still flags it.
+    # Short 3-run windows can look like a 10%+ shift; the % rule still flags it.
     assert exceeds_regression_threshold(0.120, 0.102, 10.0)
     assert exceeds_regression_threshold(1.04, 0.94, 10.0)
     # number_1M ~30ms: +50% must still flag (a 25ms floor would have hidden this).

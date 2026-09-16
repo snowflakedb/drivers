@@ -81,3 +81,12 @@ def _variant(suffix: str) -> Variant:
 
 def _drivers(suffix: str, suffixes) -> tuple[str, ...]:
     return tuple(driver for driver, ss in suffixes.items() if suffix in ss)
+
+
+def with_mark(params, mark):
+    """Copy pytest params and add an extra mark (e.g. supports_json)."""
+    out = []
+    for p in params:
+        existing = p.marks if isinstance(p.marks, (list, tuple)) else (p.marks,)
+        out.append(pytest.param(*p.values, id=p.id, marks=(*existing, mark)))
+    return out

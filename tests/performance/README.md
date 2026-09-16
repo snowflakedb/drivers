@@ -52,6 +52,8 @@
    hatch run build-core
    hatch run build-odbc
    hatch run build-jdbc
+   hatch run build-sqlapi
+   hatch run build-adbc
    ```
 
 #### Platform Architecture
@@ -77,6 +79,8 @@ hatch run odbc-universal-local
 hatch run odbc-old-local
 hatch run odbc-both-local
 hatch run jdbc-universal-local
+hatch run sqlapi-local
+hatch run adbc-local
 hatch run core-local-no-docker
 ```
 
@@ -98,6 +102,8 @@ hatch run odbc-universal
 hatch run odbc-old
 hatch run odbc-both
 hatch run jdbc-universal
+hatch run sqlapi
+hatch run adbc
 ```
 
 ### Cloud Provider Selection
@@ -245,7 +251,7 @@ def test_put_files_12mx100(perf_test):
 ```
 
 **Notes**: 
-- **SELECT tests**: `--result-format` (default `arrow`) prepends the session parameters: `PYTHON_CONNECTOR_QUERY_RESULT_FORMAT` (Python), `JDBC_QUERY_RESULT_FORMAT` (JDBC), `ODBC_QUERY_RESULT_FORMAT` (ODBC), and `UNIVERSAL_DRIVER_QUERY_RESULT_FORMAT` (core). `QUERY_RESULT_FORMAT` is also set. Node.js (`JavaScript`) is hardcoded to JSON by GS, so the JSON pass is skipped for that driver. Metric names stay unchanged (including an `_arrow` infix); the wire format is the `RESULT_FORMAT` tag, not the name. `RESULT_FORMAT` is always uploaded as a regular tag; it is comparable only for JSON so Arrow continues the untagged historical series. `pandas` / `arrow_batches` are skipped for JSON (old `fetch_pandas_all` requires Arrow). JSON runs only tests marked `@pytest.mark.supports_json` (e2e small/mid SELECT up to 100k). Recorded-HTTP, 1M, 50M, PUT/GET, concurrent, and cold-start stay Arrow. The nightly Jenkins job runs a second pytest session with `tests/ -m supports_json --result-format=json` after the Arrow pass. PR regression baselines query `RESULT_FORMAT=ARROW` and fall back to untagged history.
+- **SELECT tests**: `--result-format` (default `arrow`) prepends the session parameters: `PYTHON_CONNECTOR_QUERY_RESULT_FORMAT` (Python), `JDBC_QUERY_RESULT_FORMAT` (JDBC), `ODBC_QUERY_RESULT_FORMAT` (ODBC), and `UNIVERSAL_DRIVER_QUERY_RESULT_FORMAT` (core). `QUERY_RESULT_FORMAT` is also set. The e2e runner always passes `RESULT_FORMAT` into the container (SQL API reads that env instead of grepping `SETUP_QUERIES`). Node.js (`JavaScript`) is hardcoded to JSON by GS, so the JSON pass is skipped for that driver. Metric names stay unchanged (including an `_arrow` infix); the wire format is the `RESULT_FORMAT` tag, not the name. `RESULT_FORMAT` is always uploaded as a regular tag; it is comparable only for JSON so Arrow continues the untagged historical series. `pandas` / `arrow_batches` are skipped for JSON (old `fetch_pandas_all` requires Arrow). JSON runs only tests marked `@pytest.mark.supports_json` (e2e small/mid SELECT up to 100k, plus SQL API 1M while Arrow is flag-gated). Recorded-HTTP, 1M (except SQL API), 50M, PUT/GET, concurrent, and cold-start stay Arrow. The nightly Jenkins job runs a second pytest session with `tests/ -m supports_json --result-format=json` after the Arrow pass (sqlapi: JSON session only until `ENABLE_SQL_API_ARROW_V1`). PR regression baselines query `RESULT_FORMAT=ARROW` and fall back to untagged history.
 - **PUT/GET tests**: `USE DATABASE {database}` is added to any provided `setup_queries`. This is required for `CREATE TEMPORARY STAGE` operations which need a database context.
 - PUT/GET tests use `test_type=PerfTestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
 - The `s3_download_url` parameter triggers automatic download of test files from S3 before test execution
@@ -374,6 +380,23 @@ Each driver image contains both the **universal driver** (built from this reposi
 - `DRIVER_TYPE=old`: Uses the latest released production driver
 - `DRIVER_TYPE=both`: Each test runs twice - first with universal driver, then with old driver
 - Core driver only supports `universal` (no old implementation)
+- SQL API (`--driver=sqlapi`) also has a single implementation. Image `sqlapi-perf-driver:latest`. Auth is KEYPAIR_JWT from the existing private key, or `SNOWFLAKE_TEST_PAT` / `SNOWFLAKE_TEST_SQLAPI_PAT` if present. Sequential partition download uses the same `test_name` as python/jdbc/odbc `fetchmany`. Not on PR-check; run the 6h performance job with `DRIVER=sqlapi`. Until `ENABLE_SQL_API_ARROW_V1` is on the account under test, Jenkins runs the JSON session only.
+- ADBC (`--driver=adbc`) is a single implementation. Image `adbc-perf-driver:latest`. Same JWT/PAT auth as SQL API. Fetch iterates `cursor.fetch_record_batch()` (Arrow-native). The LINEITEM 1M case publishes as `select_string_1M_arrow_arrow_batches` so it overlays Python `fetch_arrow_batches`. Arrow-only (no JSON Jenkins session). Not on PR-check; run `DRIVER=adbc`.
+
+### Fair comparison matrix
+
+Use these series when telling a customer which path is fastest **for their fetch style**.
+
+SQL API sequential overlays python/jdbc/odbc `fetchmany` (`select_string_1M_arrow` with `DRIVER=sqlapi`): same SQL, HTTP partitions vs PEP-249 tuples. ADBC overlays python `fetch_arrow_batches` only (`select_string_1M_arrow_arrow_batches` with `DRIVER=adbc`).
+
+| Path | `test_name` | What it measures |
+|------|--------------------|------------------|
+| python / jdbc / odbc old vs universal `fetchmany` | `select_string_1M_arrow` | PEP-249 row materialization |
+| python old / universal `fetch_arrow_batches` | `select_string_1M_arrow_arrow_batches` | Stay in Arrow |
+| SQL API sequential | `select_string_1M_arrow` (`DRIVER=sqlapi`) | HTTP partitions + decode |
+| ADBC record-batch iterate | `select_string_1M_arrow_arrow_batches` (`DRIVER=adbc`) | Arrow-native Go driver |
+
+Do not rename historical python `select_string_1M_arrow`. SQL API Arrow requires the account parameter `ENABLE_SQL_API_ARROW_V1`. Until that is enabled, empty `TEST_ARGS` with `DRIVER=sqlapi` runs the JSON session only. Force Arrow with `TEST_ARGS=tests/test_select_1M.py` (a single Arrow session; no JSON second pass). sqlapi and adbc are opt-in 1M cases only (not PR-check, not recorded-HTTP).
 
 This allows performance comparison between the universal driver and the existing production driver within the same test run.
 
@@ -396,7 +419,8 @@ All drivers receive their configuration through **environment variables**. The r
 | `DRIVER_TYPE`   | String     | `"universal"` or `"old"`                                                                                                                 | `"universal"` |
 | `TEST_TYPE`     | String     | `"select"`, `"put_get"`, `"cold_start"`, or `"concurrent"`                                                                               | `"select"`    |
 | `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, `QUERY_RESULT_FORMAT` and the PYTHON/JDBC/ODBC connector overrides from `--result-format` are prepended. For PUT/GET tests, `USE DATABASE` is prepended.             | `[]`          |
-| `FETCH_MODE`    | String     | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, `"pandas"`, `"arrow_batches"`, or `"aio"` (concurrent UD only) | `"fetchmany"` |
+| `FETCH_MODE`    | String     | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, `"pandas"`, `"arrow_batches"`, `"aio"` (concurrent UD only). SQL API maps `fetchmany` to sequential HTTP partitions. ADBC maps `fetchmany` / `arrow_batches` to `cursor.fetch_record_batch()`. | `"fetchmany"` (SQL API: sequential; ADBC: arrow_batches) |
+| `RESULT_FORMAT` | String     | Wire format for the SQL API driver (`arrow` / `json`). Set by the e2e runner from `--result-format`. Other drivers use `SETUP_QUERIES` session parameters. | `"arrow"` |
 | `BIND_MODE`     | String     | ODBC column bind target: `"char"` (`SQL_C_CHAR`) or `"default"` (`SQL_C_DEFAULT`). Ignored by other drivers.                             | `"char"`      |
 | `WORKER_COUNT`  | Integer    | Concurrent workers for `TEST_TYPE=concurrent`. Python: one shared connection, one statement per thread. ODBC and JDBC: one connection per worker (opened before burst timing; setup queries run on each). | `"1"`         |
 
@@ -422,6 +446,8 @@ The `PARAMETERS_JSON` environment variable must contain a JSON object with a `te
   }
 }
 ```
+
+SQL API (`--driver=sqlapi`) and ADBC (`--driver=adbc`) use that same private key as KEYPAIR_JWT / `auth_jwt`. Optional override: `SNOWFLAKE_TEST_PAT` or `SNOWFLAKE_TEST_SQLAPI_PAT`. Do not send the connector password to `/api/v2`.
 
 ### Expected Outputs
 
