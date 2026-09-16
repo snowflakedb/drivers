@@ -21,7 +21,7 @@ use crate::api::error::{
 use crate::api::runtime::global;
 use crate::api::statement::{execute_show_query_collect_batch, set_state_for_catalog};
 use crate::api::utils::{
-    ApiExitLog, ESCAPE_CHAR, catalog_arg_to_pattern, config_setting_bool, escape_like_wildcards,
+    ESCAPE_CHAR, catalog_arg_to_pattern, config_setting_bool, escape_like_wildcards,
 };
 use crate::api::{
     ConnectionState, ExecutionOrigin, OdbcResult, StatementInner, StatementState, stmt_from_handle,
@@ -780,9 +780,6 @@ pub fn primary_keys<E: OdbcEncoding>(
     table_name: *const E::Char,
     name_length3: sql::SmallInt,
 ) -> OdbcResult<()> {
-    tracing::info!("SQLPrimaryKeys: entry");
-    let _exit = ApiExitLog("SQLPrimaryKeys");
-
     let catalog_raw = read_opt_str::<E>(catalog_name, name_length1)?;
     let schema_raw = read_opt_str::<E>(schema_name, name_length2)?;
     let table_raw = read_opt_str::<E>(table_name, name_length3)?;
@@ -1241,9 +1238,6 @@ pub fn foreign_keys<E: OdbcEncoding>(
     fk_table_name: *const E::Char,
     name_length6: sql::SmallInt,
 ) -> OdbcResult<()> {
-    tracing::info!("SQLForeignKeys: entry");
-    let _exit = ApiExitLog("SQLForeignKeys");
-
     let pk_catalog_raw = read_opt_str::<E>(pk_catalog_name, name_length1)?;
     let pk_schema_raw = read_opt_str::<E>(pk_schema_name, name_length2)?;
     let pk_table_raw = read_opt_str::<E>(pk_table_name, name_length3)?;
@@ -1620,9 +1614,6 @@ pub fn procedures<E: OdbcEncoding>(
     proc_name: *const E::Char,
     name_length3: sql::SmallInt,
 ) -> OdbcResult<()> {
-    tracing::info!("SQLProcedures: entry");
-    let _exit = ApiExitLog("SQLProcedures");
-
     let catalog_raw = read_opt_str::<E>(catalog_name, name_length1)?;
     let schema_raw = read_opt_str::<E>(schema_name, name_length2)?;
     let proc_raw = read_opt_str::<E>(proc_name, name_length3)?;
@@ -2292,9 +2283,6 @@ pub fn procedure_columns<E: OdbcEncoding>(
     column_name: *const E::Char,
     name_length4: sql::SmallInt,
 ) -> OdbcResult<()> {
-    tracing::info!("SQLProcedureColumns: entry");
-    let _exit = ApiExitLog("SQLProcedureColumns");
-
     let catalog_raw = read_opt_str::<E>(catalog_name, name_length1)?;
     let schema_raw = read_opt_str::<E>(schema_name, name_length2)?;
     let proc_raw = read_opt_str::<E>(proc_name, name_length3)?;

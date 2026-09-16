@@ -230,26 +230,11 @@ fn load_ini_config() {
 mod tests {
     use crate::api::handle_registry::{HandleKind, HandleManager};
     use crate::api::runtime::OdbcGlobals;
+    use crate::api::tracing_capture::CaptureLayer;
     use sf_core::apis::database_driver_v1::DriverProviders;
     use sf_core::protobuf::apis::database_driver_v1::database_driver_client_with;
-    use std::sync::{Arc, Mutex as StdMutex};
-    use tracing::Subscriber;
-    use tracing_subscriber::Layer;
-    use tracing_subscriber::layer::{Context, SubscriberExt};
-
-    struct CaptureLayer {
-        messages: Arc<StdMutex<Vec<String>>>,
-    }
-
-    impl<S: Subscriber> Layer<S> for CaptureLayer {
-        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
-            let normalized = sf_core::logging::normalize_event(event);
-            self.messages
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(normalized.message);
-        }
-    }
+    use std::sync::Arc;
+    use tracing_subscriber::layer::SubscriberExt;
 
     fn test_globals(dispatch: tracing::dispatcher::Dispatch) -> OdbcGlobals {
         test_globals_with_workers(dispatch, 1)
@@ -276,11 +261,9 @@ mod tests {
 
     #[test]
     fn spawn_propagates_tracing_dispatch_to_task() {
-        let messages = Arc::new(StdMutex::new(Vec::new()));
+        let layer = CaptureLayer::new();
         let dispatch =
-            tracing::dispatcher::Dispatch::new(tracing_subscriber::registry().with(CaptureLayer {
-                messages: Arc::clone(&messages),
-            }));
+            tracing::dispatcher::Dispatch::new(tracing_subscriber::registry().with(layer.clone()));
         let globals = test_globals(dispatch);
 
         let handle = globals.spawn(async {
@@ -288,7 +271,7 @@ mod tests {
         });
         globals.block_on(async move |_c| handle.await.expect("spawned task"));
 
-        let captured = messages.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let captured = layer.snapshot();
         assert!(
             captured.iter().any(|m| m.contains("spawned_task_event")),
             "event emitted inside OdbcGlobals::spawn must reach the globals' \
@@ -303,12 +286,10 @@ mod tests {
         const AFTER: &str = "after_await_on_possibly_other_worker";
 
         for _ in 0..40 {
-            let messages = Arc::new(StdMutex::new(Vec::new()));
-            let dispatch = tracing::dispatcher::Dispatch::new(tracing_subscriber::registry().with(
-                CaptureLayer {
-                    messages: Arc::clone(&messages),
-                },
-            ));
+            let layer = CaptureLayer::new();
+            let dispatch = tracing::dispatcher::Dispatch::new(
+                tracing_subscriber::registry().with(layer.clone()),
+            );
             let globals = test_globals_with_workers(dispatch, 4);
             let (tx, rx) = tokio::sync::oneshot::channel();
             let handle = globals.spawn(async move {
@@ -323,7 +304,7 @@ mod tests {
             });
             let (before, after) =
                 globals.block_on(async move |_c| handle.await.expect("spawned task"));
-            let captured = messages.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let captured = layer.snapshot();
             if before == after {
                 continue;
             }
