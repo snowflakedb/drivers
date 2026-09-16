@@ -252,6 +252,11 @@ impl DatabaseDriverV1 {
     }
 
     pub fn with_providers(providers: DriverProviders) -> Self {
+        let xp_slot = Arc::new(match providers.running_inside_xp {
+            Some(inside) => XpSlot::new(inside, providers.xp_backend),
+            None => XpSlot::from_env(providers.xp_backend),
+        });
+        crate::xp_backend::registry::install_c_registration_target(Arc::clone(&xp_slot));
         Self {
             databases: HandleManager::new(),
             connections: HandleManager::new(),
@@ -268,10 +273,7 @@ impl DatabaseDriverV1 {
                 .prompt_locks
                 .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(HashMap::new()))),
             crl_worker: providers.crl_worker.unwrap_or_else(CrlWorker::new_lazy),
-            xp_slot: Arc::new(match providers.running_inside_xp {
-                Some(inside) => XpSlot::new(inside, providers.xp_backend),
-                None => XpSlot::from_env(providers.xp_backend),
-            }),
+            xp_slot,
         }
     }
 

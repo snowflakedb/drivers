@@ -124,13 +124,11 @@ jobs:
 
 
       - name: Run pre-commit on all files
-        # Skip `generate-connection-config` in CI: it regenerates the file,
-        # reformats via hatch, and `git add`s — all pointless on ephemeral
-        # runners where the commit never happens. The `Verify ConnectionConfig`
-        # step below replaces it with a drift check that fails if a PR forgot
-        # to run the local hook.
+        # Skip regenerate-and-git-add hooks in CI: they `git add` on an
+        # ephemeral runner. The Verify ConnectionConfig and
+        # Verify sf_core_providers.h steps below replace them with drift checks.
         env:
-          SKIP: generate-connection-config
+          SKIP: generate-connection-config,generate-xp-providers-header
         run: pre-commit run --all-files --show-diff-on-failure
 
       - name: Verify ConnectionConfig is up to date
@@ -151,6 +149,12 @@ jobs:
             echo "::error::connection_config.py is out of date. Run the 'generate-connection-config' pre-commit hook locally and commit the result."
             exit 1
           fi
+
+      - name: Install cbindgen
+        run: cargo install cbindgen --version 0.29.2 --locked
+
+      - name: Verify sf_core_providers.h is up to date
+        run: scripts/generate_providers_header.sh --check
 
       - name: Save Rust cache
         if: always()

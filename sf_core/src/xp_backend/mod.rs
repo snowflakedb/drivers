@@ -17,6 +17,10 @@ use async_trait::async_trait;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::rest::snowflake::{LoginResult, QueryExecutionMode, QueryInput, query_response};
 
+/// C ABI used by Snowflake's execution platform. XP does not run on Windows,
+/// so this module is compiled only for unix.
+#[cfg(unix)]
+pub mod ffi;
 pub(crate) mod registry;
 pub(crate) use registry::XpSlot;
 
