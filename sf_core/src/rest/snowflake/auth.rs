@@ -117,7 +117,7 @@ pub struct AuthRequestData {
     /// to sign the RFC 9449 DPoP proof JWT attached as an HTTP header
     /// (matching JDBC's `DPoPUtil` pattern).
     #[serde(skip)]
-    pub dpop_jwk_json: Option<String>,
+    pub dpop_jwk_json: Option<SensitiveString>,
     /// Whether this request uses a cached token (ID token or MFA token).
     /// Guards the evict-and-retry path so we don't retry pointlessly when
     /// the original login didn't use a cached token.

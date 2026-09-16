@@ -69,13 +69,22 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
         return vec!["disabled".to_string()];
     }
 
-    // Endpoint detectors need an HTTP client; env-only detection does not.
-    // Pin rustls first because this may be the first client in the process.
-    // `http` is declared before `detectors` so it outlives the borrowed futures.
+    // Env-only detection needs no HTTP client. Endpoint probes may run before
+    // any connection, so pin the process-global crypto provider before building
+    // their client; in a FIPS build, do not send traffic through another provider.
+    // `http` outlives the detector futures that borrow it.
     let http = if config.timeout.is_zero() {
         None
     } else {
         crate::tls::ensure_crypto_provider();
+        #[cfg(feature = "fips-tls")]
+        if let Err(e) = crate::tls::require_fips_provider() {
+            tracing::error!(
+                error = %e,
+                "skipping platform detection: crypto provider is not FIPS in a `fips-tls` build"
+            );
+            return vec!["disabled".to_string()];
+        }
         match crate::tls::client::apply_http_pool_settings(reqwest::Client::builder()).build() {
             Ok(c) => Some(c),
             Err(e) => {

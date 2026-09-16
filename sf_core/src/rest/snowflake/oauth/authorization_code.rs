@@ -110,7 +110,7 @@ pub(crate) struct AcquiredOAuthToken {
     pub(crate) refresh_token: Option<SensitiveString>,
     /// Present iff DPoP was negotiated. Carries the JWK JSON so the
     /// Snowflake login-request can reuse the same key when signing.
-    pub(crate) dpop_jwk_json: Option<String>,
+    pub(crate) dpop_jwk_json: Option<SensitiveString>,
     /// IdP-reported lifetime of the access token, when present. Snowflake
     /// drives session validity itself, so this is informational only.
     #[allow(dead_code)]
@@ -396,7 +396,7 @@ async fn try_cache_short_circuit(
         // the caller. A corrupt JWK would only surface later when
         // the Snowflake-login DPoP signing path tries to rehydrate
         // the key, so fail fast here and evict the bad entry.
-        match dpop::DPoPKey::from_jwk_json(&jwk_json) {
+        match dpop::DPoPKey::from_jwk_json(jwk_json.reveal()) {
             Ok(_) => {
                 tracing::debug!("OAuth access token served from DPoP-bundled cache");
                 return Some(AcquiredOAuthToken {
@@ -878,7 +878,7 @@ async fn persist_access_token(
         return;
     }
 
-    if let Some(jwk_json) = acquired.dpop_jwk_json.as_deref() {
+    if let Some(jwk_json) = acquired.dpop_jwk_json.as_ref().map(SensitiveString::reveal) {
         token::store_oauth_dpop_bundled(
             idp_url,
             snowflake_url,

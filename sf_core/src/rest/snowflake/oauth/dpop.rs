@@ -127,7 +127,14 @@ impl DPoPKey {
     /// Serialize the key as a JWK including the private component, so it
     /// can be reused across the token-acquisition leg and the Snowflake
     /// login-request leg (the JDBC bundled-cache pattern).
-    pub(crate) fn to_jwk_json(&self) -> Result<String, OAuthError> {
+    ///
+    /// Wrapped rather than returned bare because the `d` member *is* the
+    /// private key. It is carried on `AcquiredOAuthToken` and
+    /// `AuthRequestData`, both of which derive `Debug`, so an unwrapped
+    /// `String` puts a usable signing key one `tracing` field or `{:?}` away
+    /// from a log. `SensitiveString` renders as `****` and zeroizes on drop;
+    /// callers `reveal()` only at the point of use.
+    pub(crate) fn to_jwk_json(&self) -> Result<SensitiveString, OAuthError> {
         let (x_b64, y_b64) = self.public_xy_b64()?;
         let d = self
             .key
@@ -135,9 +142,9 @@ impl DPoPKey {
             .as_be_bytes()
             .context(DPoPProofGenerationSnafu)?;
         let d_b64 = URL_SAFE_NO_PAD.encode(d.as_ref());
-        Ok(format!(
+        Ok(SensitiveString::from(format!(
             r#"{{"crv":"P-256","d":"{d_b64}","kty":"EC","x":"{x_b64}","y":"{y_b64}"}}"#
-        ))
+        )))
     }
 
     /// Affine coordinates, sliced out of the uncompressed SEC1 point.
@@ -328,18 +335,34 @@ mod tests {
         (header, claims, sig)
     }
 
+    /// The serialized JWK contains `d`, the private scalar. It rides on
+    /// `AcquiredOAuthToken` and `AuthRequestData`, both of which derive
+    /// `Debug`, so the wrapper is what keeps a `{:?}` or a `tracing` field
+    /// from printing a usable signing key.
+    #[test]
+    fn private_jwk_is_redacted_when_formatted() {
+        let key = DPoPKey::generate().expect("generate");
+        let jwk = key.to_jwk_json().expect("to_jwk_json");
+
+        assert!(
+            jwk.reveal().contains(r#""d":"#),
+            "the test is meaningless unless the JWK really carries the private scalar"
+        );
+        assert_eq!(format!("{jwk:?}"), "****", "Debug must not print the key");
+        assert_eq!(format!("{jwk}"), "****", "Display must not print the key");
+    }
     #[test]
     fn generated_key_round_trips_through_jwk_json() {
         let k = DPoPKey::generate().expect("generate");
         let json = k.to_jwk_json().expect("to_jwk_json");
-        let k2 = DPoPKey::from_jwk_json(&json).expect("from_jwk_json");
+        let k2 = DPoPKey::from_jwk_json(json.reveal()).expect("from_jwk_json");
         assert_eq!(
             jwk_thumbprint(&k).unwrap(),
             jwk_thumbprint(&k2).unwrap(),
             "thumbprint must be stable across roundtrip"
         );
         let json_again = k2.to_jwk_json().unwrap();
-        assert_eq!(json, json_again);
+        assert_eq!(json.reveal(), json_again.reveal());
     }
 
     #[test]
@@ -513,10 +536,10 @@ mod tests {
     fn jwk_json_round_trip_preserves_the_key() {
         let key = DPoPKey::generate().unwrap();
         let json = key.to_jwk_json().unwrap();
-        let restored = DPoPKey::from_jwk_json(&json).unwrap();
+        let restored = DPoPKey::from_jwk_json(json.reveal()).unwrap();
         assert_eq!(
-            json,
-            restored.to_jwk_json().unwrap(),
+            json.reveal(),
+            restored.to_jwk_json().unwrap().reveal(),
             "rehydrated key should serialize identically"
         );
         assert_eq!(
@@ -534,7 +557,7 @@ mod tests {
         let a = DPoPKey::generate().unwrap();
         let b = DPoPKey::generate().unwrap();
         let (a_x, _) = a.public_xy_b64().unwrap();
-        let b_jwk: Value = serde_json::from_str(&b.to_jwk_json().unwrap()).unwrap();
+        let b_jwk: Value = serde_json::from_str(b.to_jwk_json().unwrap().reveal()).unwrap();
         // b's private scalar and y, but a's x.
         let mismatched = format!(
             r#"{{"crv":"P-256","d":"{}","kty":"EC","x":"{a_x}","y":"{}"}}"#,
