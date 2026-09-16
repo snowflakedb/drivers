@@ -353,7 +353,7 @@ behavior_differences:
 
   16:
     name: "FFn against TIME renders only the column's real scale digits, not always n zero-padded digits"
-    status: allowed
+    status: todo
     type: bugfix
     reviewed: false
     is_breaking_change: true
@@ -366,7 +366,7 @@ behavior_differences:
     new_driver_behavior: |
       The universal driver renders only min(n, scale) real digits and nothing invented.
     description: |
-      The new driver consults the column's real scale. Verified live against both drivers.
+      Seems like a bug. Why scale wins, but no scale always respect output format?
 
   17:
     name: "fetchAsString: ['Number'] can spell a FLOAT differently than the server did"

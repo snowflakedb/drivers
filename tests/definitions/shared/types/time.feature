@@ -21,7 +21,7 @@ Feature: TIME type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario Outline: should select time <values>
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -33,7 +33,7 @@ Feature: TIME type support
       | midnight     | '00:00:00'::TIME                                     | 00:00:00                     |
       | microseconds | '10:30:00.123456'::TIME                              | 10:30:00.123456              |
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario Outline: should handle time precision <scale>
     Given Snowflake client is logged in
     When Query "SELECT '10:30:00.123456789'::TIME(<scale>)" is executed
@@ -48,7 +48,7 @@ Feature: TIME type support
   # Python's datetime.time supports microsecond precision (6 digits); nanoseconds are truncated.
   # Java's java.sql.Time supports only milliseconds; sub-ms precision cannot be observed via the getter.
   # Nanosecond-precision testing is handled by driver-specific tests where applicable.
-  @python_not_needed @jdbc_not_needed
+  @python_not_needed @jdbc_not_needed @nodejs_e2e
   Scenario: should preserve nanosecond precision for time
     Given Snowflake client is logged in
     When Query "SELECT '10:30:00.123456789'::TIME" is executed
@@ -70,7 +70,7 @@ Feature: TIME type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario Outline: should select <values> from table for time
     Given Snowflake client is logged in
     And Table with TIME column exists with values <insert_values>
@@ -95,19 +95,19 @@ Feature: TIME type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select time using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIME, ?::TIME, ?::TIME" is executed with bound time values [10:30:00, 14:45:30, 23:59:59]
     Then Result should contain times [10:30:00, 14:45:30, 23:59:59]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should select null time using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIME" is executed with bound NULL value
     Then Result should contain [NULL]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should insert time using parameter binding
     Given Snowflake client is logged in
     And Table with TIME column exists
@@ -115,7 +115,7 @@ Feature: TIME type support
     And Query "SELECT * FROM <table> ORDER BY col" is executed
     Then Result should contain times [00:00:00, 10:30:00, 14:45:30, 23:59:59]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should insert time with fractional seconds using parameter binding
     Given Snowflake client is logged in
     And Table with TIME column exists
