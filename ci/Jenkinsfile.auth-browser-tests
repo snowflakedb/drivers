@@ -314,7 +314,7 @@ pipeline {
             }
             stage('Universal') {
               steps {
-                sh label: 'Run Node.js OAuth test (universal)', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh nodejs universal"
+                sh label: 'Run Node.js auth browser tests (universal)', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh nodejs universal"
               }
             }
           }
