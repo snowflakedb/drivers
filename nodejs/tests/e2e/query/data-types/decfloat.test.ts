@@ -113,7 +113,7 @@ describe('DECFLOAT data type', () => {
       // When Query "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT" is executed
       const { rows } = await executeAsync(
         connection,
-        `SELECT NULL::DECFLOAT AS COL1, 42.5::DECFLOAT AS COL2, NULL::DECFLOAT AS COL3`,
+        `SELECT NULL::DECFLOAT AS NULL1, 42.5::DECFLOAT, NULL::DECFLOAT AS NULL2`,
       );
 
       // Then Result should contain [NULL, 42.5, NULL]

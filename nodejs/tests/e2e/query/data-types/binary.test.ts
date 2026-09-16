@@ -51,7 +51,7 @@ describe('BINARY data type', () => {
       // When Query "SELECT TO_BINARY('48656C6C6F', 'HEX')::BINARY, TO_BINARY('V29ybGQ=', 'BASE64')::BINARY" is executed
       const { statement, rows } = await executeAsync(
         connection,
-        `SELECT TO_BINARY('48656C6C6F', 'HEX')::BINARY AS COL1, TO_BINARY('V29ybGQ=', 'BASE64')::BINARY AS COL2`,
+        `SELECT TO_BINARY('48656C6C6F', 'HEX')::BINARY, TO_BINARY('V29ybGQ=', 'BASE64')::BINARY`,
       );
 
       // Then All values should be returned as appropriate binary type
@@ -75,9 +75,9 @@ describe('BINARY data type', () => {
       // When Queries selecting binary literals are executed:
       const { rows } = await executeAsync(
         connection,
-        `SELECT X'48656C6C6F'::BINARY AS BIN1,
-                TO_BINARY('48656C6C6F', 'HEX')::BINARY AS BIN2,
-                TO_BINARY('ASNFZ4mrze8=', 'BASE64')::BINARY AS BIN3`,
+        `SELECT X'48656C6C6F'::BINARY,
+                TO_BINARY('48656C6C6F', 'HEX')::BINARY,
+                TO_BINARY('ASNFZ4mrze8=', 'BASE64')::BINARY`,
       );
 
       // Then the results should contain expected binary values
@@ -111,7 +111,7 @@ describe('BINARY data type', () => {
       // When Query "SELECT NULL::{type}, X'ABCD', NULL::{type}" is executed
       const { rows } = await executeAsync(
         connection,
-        `SELECT NULL::BINARY AS COL1, X'ABCD' AS COL2, NULL::BINARY AS COL3`,
+        `SELECT NULL::BINARY AS NULL1, X'ABCD', NULL::BINARY AS NULL2`,
       );
 
       // Then Result should contain [NULL, 0xABCD, NULL]
