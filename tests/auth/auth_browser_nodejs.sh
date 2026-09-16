@@ -18,5 +18,5 @@ echo "=== Installing Node.js dependencies ==="
 npm install
 
 echo ""
-echo "=== Running Node.js legacy OAuth E2E test ==="
-npx vitest run --project e2e tests/e2e/authentication/oauth.test.ts
+echo "=== Running Node.js authentication E2E tests ==="
+npx vitest run --project e2e tests/e2e/authentication/
