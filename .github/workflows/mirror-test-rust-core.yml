@@ -36,6 +36,9 @@ jobs:
         # tests/ integration harness which requires a live Snowflake connection.
         run: cargo test --locked --lib --package sf_core
 
+      - name: Run sf_params_spec tests
+        run: cargo test --locked --package sf_params_spec
+
       - name: Save Rust cache
         if: always()
         timeout-minutes: 20
