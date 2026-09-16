@@ -28,7 +28,7 @@ describe('BOOLEAN data type', () => {
       // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN" is executed
       const { statement, rows } = await executeAsync(
         connection,
-        `SELECT TRUE::BOOLEAN AS C1, FALSE::BOOLEAN AS C2, TRUE::BOOLEAN AS C3`,
+        `SELECT TRUE::BOOLEAN AS TRUE1, FALSE::BOOLEAN, TRUE::BOOLEAN AS TRUE2`,
       );
 
       // Then All values should be returned as appropriate type
@@ -60,7 +60,7 @@ describe('BOOLEAN data type', () => {
       // When Query "SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN" is executed
       const { rows } = await executeAsync(
         connection,
-        `SELECT FALSE::BOOLEAN AS C1, NULL::BOOLEAN AS C2, TRUE::BOOLEAN AS C3, NULL::BOOLEAN AS C4`,
+        `SELECT FALSE::BOOLEAN, NULL::BOOLEAN AS NULL1, TRUE::BOOLEAN, NULL::BOOLEAN AS NULL2`,
       );
 
       // Then Result should contain [FALSE, NULL, TRUE, NULL]
@@ -115,7 +115,7 @@ describe('BOOLEAN data type', () => {
         // When Query "SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN" is executed with bound boolean values [TRUE, FALSE, TRUE]
         const { rows } = await executeAsync(
           connection,
-          'SELECT ?::BOOLEAN AS C1, ?::BOOLEAN AS C2, ?::BOOLEAN AS C3',
+          'SELECT ?::BOOLEAN AS COL1, ?::BOOLEAN AS COL2, ?::BOOLEAN AS COL3',
           { binds: [true, false, true] },
         );
 
@@ -202,11 +202,9 @@ describe('BOOLEAN data type', () => {
 
   describe('fetchAsString', () => {
     it('should render booleans as upper-case strings', async () => {
-      const { rows } = await executeAsync(
-        connection,
-        'SELECT TRUE::BOOLEAN AS C1, FALSE::BOOLEAN AS C2',
-        { fetchAsString: ['Boolean'] },
-      );
+      const { rows } = await executeAsync(connection, 'SELECT TRUE::BOOLEAN, FALSE::BOOLEAN', {
+        fetchAsString: ['Boolean'],
+      });
       expect(Object.values(rows[0])).toEqual(['TRUE', 'FALSE']);
     });
 

@@ -311,7 +311,7 @@ describe('semi-structured data type', () => {
     it('should return VARIANT as the raw text the server sent when fetchAsString is set', async () => {
       const { rows } = await executeAsync(
         connection,
-        `SELECT parse_json('{"a": 1}') AS PARSED, OBJECT_CONSTRUCT('key', 'value') AS CONSTRUCTED`,
+        `SELECT parse_json('{"a": 1}'), OBJECT_CONSTRUCT('key', 'value')`,
         { fetchAsString: ['JSON'] },
       );
       // The 'JSON' token stringifies the VARIANT column but not the OBJECT column, so
