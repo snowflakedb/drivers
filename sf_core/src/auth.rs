@@ -490,8 +490,29 @@ mod tests {
 
         // Sanity: correct password succeeds, proving the encrypted fixture
         // above is genuinely encrypted and genuinely decryptable.
+        //
+        // Not under `fips-tls`, though. `private_key_to_pem_passphrase` writes
+        // traditional PKCS#1 (`Proc-Type: 4,ENCRYPTED`), and that format
+        // derives its key with OpenSSL's MD5-based `EVP_BytesToKey` -- MD5 is
+        // definitional to the format, not a parameter of it, and AWS-LC
+        // exposes none, so a FIPS build refuses the key instead of reading it.
+        // Which also means the two rejections above hold there for a different
+        // reason than on a standard build: the format is refused before any
+        // password is examined. The password semantics this test is really
+        // about stay covered on both lanes by the PKCS#8 tests in
+        // `crypto::private_key` (`wrong_passphrase_is_rejected` and the
+        // encrypted round-trips), and the refusal itself by
+        // `legacy_encrypted_pem_is_rejected_in_fips_builds`.
+        let correct = generate_jwt_token("acct", "user", &encrypted_pem, Some("correct_password"));
+        #[cfg(not(feature = "fips-tls"))]
         assert!(
-            generate_jwt_token("acct", "user", &encrypted_pem, Some("correct_password")).is_ok()
+            correct.is_ok(),
+            "correct password should load the key, got: {correct:?}"
+        );
+        #[cfg(feature = "fips-tls")]
+        assert!(
+            matches!(correct, Err(AuthError::InvalidPrivateKeyFormat { .. })),
+            "fips-tls refuses traditional encrypted PEM whatever the password, got: {correct:?}"
         );
     }
 }
