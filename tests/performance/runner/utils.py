@@ -7,6 +7,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Drivers with a single implementation (no universal/old split). Image name is
+# `{driver}-perf-driver:latest`; CSV/metadata filenames omit driver_type.
+SINGLE_IMPL_DRIVERS = frozenset({"core", "sqlapi", "adbc"})
+
+
+def is_single_impl_driver(driver: str) -> bool:
+    return driver in SINGLE_IMPL_DRIVERS
+
 
 def repo_root() -> Path:
     """

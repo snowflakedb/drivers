@@ -1,6 +1,8 @@
 import logging
 from pathlib import Path
 
+from runner.utils import is_single_impl_driver
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,12 +29,10 @@ def verify_results(
     Raises:
         RuntimeError: If no result files are found or they're invalid
     """
-    # For drivers with type variants, include driver type in pattern
-    # Core only has universal implementation
-    driver_type_dir = driver_type if (driver != "core" and driver_type) else "universal"
+    driver_type_dir = driver_type if (not is_single_impl_driver(driver) and driver_type) else "universal"
     test_dir = results_dir / driver_type_dir / test_name
 
-    if driver != "core" and driver_type:
+    if not is_single_impl_driver(driver) and driver_type:
         pattern = f"{test_name}_{driver}_{driver_type}_*.csv"
     else:
         pattern = f"{test_name}_{driver}_*.csv"

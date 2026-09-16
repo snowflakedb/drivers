@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from testcontainers.core.container import DockerContainer
 from runner.test_types import PerfTestType
+from runner.utils import is_single_impl_driver
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def create_perf_container(
     Create and configure a Docker container for performance testing.
     
     Args:
-        driver: Driver name (core, python, odbc, jdbc, nodejs)
+        driver: Driver name (core, python, odbc, jdbc, nodejs, sqlapi, adbc)
         parameters_json: JSON string with connection parameters
         sql_command: SQL command to execute
         test_name: Name of the test
@@ -81,7 +82,7 @@ def create_perf_container(
     Returns:
         Configured DockerContainer instance
     """
-    if driver == "core" or not driver_type:
+    if is_single_impl_driver(driver) or not driver_type:
         image_name = f"{driver}-perf-driver:latest"
     else:
         image_name = f"{driver}-perf-driver-{driver_type}:latest"
@@ -109,15 +110,22 @@ def create_perf_container(
     )
 
     # Overlay the host test app so local executor changes run without a full
-    # image rebuild (Artifactory pulls are not always available).
-    if driver == "python":
-        app_dir = Path(__file__).resolve().parents[1] / "drivers" / "python" / "app"
+    # image rebuild (Artifactory pulls are not always available). Bind _shared
+    # at /opt/shared, not under /workdir: the app mount is read-only and has no
+    # _shared subdirectory, so a nested /workdir/_shared mount fails with
+    # "mkdir .../workdir/_shared: read-only file system".
+    if driver in ("python", "sqlapi", "adbc"):
+        drivers_root = Path(__file__).resolve().parents[1] / "drivers"
+        app_dir = drivers_root / driver / "app"
+        shared_dir = drivers_root / "_shared"
         container = container.with_volume_mapping(str(app_dir), "/workdir", mode="ro")
+        container = container.with_volume_mapping(str(shared_dir), "/opt/shared", mode="ro")
+        container = container.with_env("PYTHONPATH", "/opt/shared")
     
     if setup_queries:
         container = container.with_env("SETUP_QUERIES", json.dumps(setup_queries))
     
-    if driver != "core" and driver_type:
+    if not is_single_impl_driver(driver) and driver_type:
         container = container.with_env("DRIVER_TYPE", driver_type)
 
     # Mount S3 files directory if provided (for PUT/GET tests)

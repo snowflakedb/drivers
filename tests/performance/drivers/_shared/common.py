@@ -20,7 +20,7 @@ def run_warmup(execute_fn: Callable, cursor, sql: str, warmup_iterations: int) -
     """Generic warmup execution for any test type."""
     if warmup_iterations == 0:
         return
-    
+
     for _ in range(warmup_iterations):
         execute_fn(cursor, sql)
 
@@ -30,11 +30,11 @@ def run_test_iterations(
 ) -> List[Dict[str, Any]]:
     """Generic test iteration execution for any test type."""
     results = []
-    
+
     for _ in range(iterations):
         result = execute_fn(cursor, sql)
         results.append(result)
-    
+
     return results
 
 
@@ -49,7 +49,7 @@ def _calculate_statistics(values: List[float]) -> Dict[str, float]:
     """Calculate median, min, max for a list of values."""
     if not values:
         return {"median": 0.0, "min": 0.0, "max": 0.0}
-    
+
     return {
         "median": statistics.median(values),
         "min": min(values),

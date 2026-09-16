@@ -59,6 +59,8 @@ build-core = "bash -c 'cd drivers/core && ./build.sh'"
 build-odbc = "bash -c 'cd drivers/odbc && ./build.sh'"
 build-jdbc = "bash -c 'cd drivers/jdbc && ./build.sh'"
 build-nodejs = "bash -c 'cd drivers/nodejs && ./build.sh'"
+build-sqlapi = "bash -c 'cd drivers/sqlapi && ./build.sh'"
+build-adbc = "bash -c 'cd drivers/adbc && ./build.sh'"
 build-wiremock = "bash -c 'cd wiremock && ./build.sh'"
 build = "bash -c 'cd drivers/python && ./build.sh && cd ../core && ./build.sh && cd ../odbc && ./build.sh && cd ../jdbc && ./build.sh && cd ../nodejs && ./build.sh && cd ../wiremock && ./build.sh'"
 
@@ -81,6 +83,10 @@ jdbc-both-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python 
 nodejs-universal-local = ["build-nodejs", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=nodejs --driver-type=universal --preserve-mappings -s -v"]
 nodejs-old-local = ["build-nodejs", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=nodejs --driver-type=old --preserve-mappings -s -v"]
 nodejs-both-local = ["build-nodejs", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=nodejs --driver-type=both --preserve-mappings -s -v"]
+# SQL API v2 (no old/universal split, no WireMock). Sequential HTTP overlays fetchmany.
+sqlapi-local = ["build-sqlapi", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=sqlapi --preserve-mappings -s -v"]
+# ADBC Snowflake (Arrow-native record batches). Overlays Python fetch_arrow_batches.
+adbc-local = ["build-adbc", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=adbc --preserve-mappings -s -v"]
 
 # CI
 core = "python -m pytest {args:tests/} --driver=core --upload-to-benchstore -s -v"
@@ -96,6 +102,8 @@ jdbc-both = "python -m pytest {args:tests/} --driver=jdbc --driver-type=both --u
 nodejs-universal = "python -m pytest {args:tests/} --driver=nodejs --driver-type=universal --upload-to-benchstore -s -v"
 nodejs-old = "python -m pytest {args:tests/} --driver=nodejs --driver-type=old --upload-to-benchstore -s -v"
 nodejs-both = "python -m pytest {args:tests/} --driver=nodejs --driver-type=both --upload-to-benchstore -s -v"
+sqlapi = "python -m pytest {args:tests/} --driver=sqlapi --upload-to-benchstore -s -v"
+adbc = "python -m pytest {args:tests/} --driver=adbc --upload-to-benchstore -s -v"
 
 # Clean all generated files and results
 clean = """python -c '

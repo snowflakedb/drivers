@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from runner.test_types import PerfTestType
-from runner.utils import perf_tests_root, collect_node_info, log_node_info
+from runner.utils import perf_tests_root, collect_node_info, log_node_info, is_single_impl_driver
 import pytest
 
 logger = logging.getLogger(__name__)
@@ -64,13 +64,13 @@ def pytest_addoption(parser):
         "--driver",
         action="store",
         default="core",
-        help="Driver to test: core, python, odbc, jdbc, nodejs",
+        help="Driver to test: core, python, odbc, jdbc, nodejs, sqlapi, adbc",
     )
     parser.addoption(
         "--driver-type",
         action="store",
         default="universal",
-        help="Driver type: universal, old, both (runs both sequentially). Not applicable for core (only has universal).",
+        help="Driver type: universal, old, both (runs both sequentially). Not applicable for core, sqlapi, or adbc.",
     )
     parser.addoption(
         "--upload-to-benchstore",
@@ -279,11 +279,10 @@ def driver_type(request):
     driver_type_value = request.config.getoption("--driver-type") or os.getenv("DRIVER_TYPE", "universal")
     driver_value = _resolve_driver(request.config)
     
-    # Validate: Core driver only has universal implementation
-    if driver_value == "core" and driver_type_value != "universal":
+    if is_single_impl_driver(driver_value) and driver_type_value != "universal":
         raise pytest.UsageError(
             f"--driver-type is not supported for {driver_value} driver. "
-            f"Core only has one implementation (universal). "
+            f"{driver_value} only has one implementation. "
             f"Got: --driver={driver_value} --driver-type={driver_type_value}"
         )
     
@@ -356,18 +355,18 @@ def _derive_test_name(func_name: str) -> str:
 
 
 def _normalize_driver_type(driver: str, driver_type: str) -> str:
-    """Normalize driver type (Core only has universal implementation)."""
-    return None if driver == "core" else driver_type
+    """Normalize driver type (core/sqlapi/adbc have a single implementation)."""
+    return None if is_single_impl_driver(driver) else driver_type
 
 
 def _should_run_comparison(driver: str, driver_type: str) -> bool:
     """Check if test should run as comparison (both driver types)."""
-    return driver_type == "both" and driver != "core"
+    return driver_type == "both" and not is_single_impl_driver(driver)
 
 
 def _validate_wiremock_old_driver(driver: str, driver_type: str):
     """Validate that old driver is not used alone with WireMock tests."""
-    if driver_type == "old" and driver != "core":
+    if driver_type == "old" and not is_single_impl_driver(driver):
         raise pytest.UsageError(
             f"WireMock tests cannot run with --driver-type=old only.\n"
             f"The old {driver} driver requires mappings from the universal driver.\n"
@@ -676,6 +675,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 binding_mode=binding_mode,
                 binding_params=binding_params,
                 expected_row_count=expected_row_count,
+                result_format=result_format,
             )
         else:
             return run_performance_test(
@@ -697,6 +697,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 binding_mode=binding_mode,
                 binding_params=binding_params,
                 expected_row_count=expected_row_count,
+                result_format=result_format,
             )
     
     def _compare_local_results(result, test_name, driver, driver_type, is_comparison, results_dir):
@@ -784,6 +785,28 @@ def _skip_unsupported_driver(item):
         )
 
 
+_OPT_IN_DRIVERS = frozenset({"sqlapi", "adbc"})
+
+
+def _skip_opt_in_driver_unmarked(item):
+    """SQL API and ADBC only run tests that opt in via supported_drivers(...).
+
+    Unit tests under tests/unit/ are harness tests and always run.
+    """
+    driver = _resolve_driver(item.config).lower()
+    if driver not in _OPT_IN_DRIVERS:
+        return
+    path = str(getattr(item, "path", "") or getattr(item, "fspath", ""))
+    if "/tests/unit/" in path.replace("\\", "/"):
+        return
+    marker = item.get_closest_marker("supported_drivers")
+    supported = {name.lower() for name in marker.args} if marker else set()
+    if driver not in supported:
+        pytest.skip(
+            f"'{item.name}' is not marked supported_drivers('{driver}'); skipping"
+        )
+
+
 def _skip_universal_only(item):
     """Skip tests marked universal_only when --driver-type=old."""
     if item.get_closest_marker("universal_only") is None:
@@ -820,6 +843,7 @@ def _skip_json_unsupported(item):
 def pytest_runtest_setup(item):
     """Hook called before each test starts - gate by driver, add visual separation."""
     _skip_unsupported_driver(item)
+    _skip_opt_in_driver_unmarked(item)
     _skip_universal_only(item)
     _skip_json_unsupported(item)
     logger.info("")

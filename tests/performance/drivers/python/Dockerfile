@@ -24,7 +24,9 @@ RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)
 
 # Copy test application
 COPY tests/performance/drivers/python/app/ /workdir/
+COPY tests/performance/drivers/_shared/ /opt/shared/
 
+ENV PYTHONPATH=/opt/shared
 ENV PYTHONUNBUFFERED=1
 
 # ============================================================================

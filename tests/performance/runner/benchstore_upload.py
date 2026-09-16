@@ -255,7 +255,7 @@ def parse_csv_filename(filename: str) -> Optional[Dict[str, str]]:
     
     Expected formats: 
       - {test_name}_{driver}_{driver_type}_{timestamp}.csv (python, odbc, jdbc, nodejs)
-      - {test_name}_{driver}_{timestamp}.csv (core only has universal)
+      - {test_name}_{driver}_{timestamp}.csv (core, sqlapi, adbc)
     Examples:
       - fetch_string_1000000_rows_odbc_universal_1761569440.csv
       - fetch_string_1000000_rows_core_1761569440.csv
@@ -278,15 +278,15 @@ def parse_csv_filename(filename: str) -> Optional[Dict[str, str]]:
             'timestamp': match.group(4),
         }
     
-    # Try pattern without driver_type (core only has universal)
-    pattern_core = r'(.+)_(core)_(\d+)\.csv'
-    match = re.match(pattern_core, filename)
+    # Single-implementation drivers (core, sqlapi, adbc): no driver_type in the filename
+    pattern_single = r'(.+)_(core|sqlapi|adbc)_(\d+)\.csv'
+    match = re.match(pattern_single, filename)
     
     if match:
         return {
             'test_name': match.group(1),
             'driver': match.group(2),
-            'driver_type': 'universal',  # core only has universal
+            'driver_type': 'universal',
             'timestamp': match.group(3),
         }
     
@@ -355,7 +355,7 @@ def parse_memory_timeline_filename(filename: str) -> Optional[Dict[str, str]]:
     
     Expected formats:
       - memory_timeline_{test_name}_{driver}_{driver_type}_{timestamp}.csv
-      - memory_timeline_{test_name}_{driver}_{timestamp}.csv (core)
+      - memory_timeline_{test_name}_{driver}_{timestamp}.csv (core, sqlapi, adbc)
     Examples:
       - memory_timeline_select_string_1M_arrow_recorded_http_python_universal_1773658001.csv
       - memory_timeline_select_string_1M_arrow_recorded_http_core_1773658001.csv
@@ -376,8 +376,8 @@ def parse_memory_timeline_filename(filename: str) -> Optional[Dict[str, str]]:
             'timestamp': match.group(4),
         }
     
-    pattern_core = r'memory_timeline_(.+)_(core)_(\d+)\.csv'
-    match = re.match(pattern_core, filename)
+    pattern_single = r'memory_timeline_(.+)_(core|sqlapi|adbc)_(\d+)\.csv'
+    match = re.match(pattern_single, filename)
     if match:
         return {
             'test_name': match.group(1),
