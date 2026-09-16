@@ -2370,7 +2370,7 @@ pub unsafe extern "system" fn SQLBindParameter(
 ) -> sql::RetCode {
     set_dispatch!();
     log_api!("SQLBindParameter");
-    record_api!(sql::HandleType::Stmt, statement_handle, "SQLBindParameter");
+    // omit record_api! - so n binds are not n telemetry RPCs
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::bind_parameter(
         statement_handle,
