@@ -34,14 +34,13 @@ use crate::tls::error::{ClientBuildSnafu, TlsError};
 ///
 /// Delegates to [`configure_storage_client_builder`] — the exact TLS + proxy +
 /// `.no_gzip()` path Azure and GCS transfers use — so S3 gets identical
-/// `TlsConfig`/`ProxyConfig` handling and wire-byte bodies, then chains two
-/// S3-only `reqwest` options the AWS SDK must own itself: redirect following
-/// (SigV4 re-signing) and HTTP/1.1 (`http1_only`) so this client matches the
-/// AWS SDK's own default connector rather than negotiating HTTP/2 via the
-/// enabled `http2` feature. Pinning those here, at the S3-specific call site,
-/// leaves the shared Azure/GCS path untouched. No request-level `.timeout()` is
-/// set: the SDK's `TimeoutConfig` (`operation_attempt_timeout`/`operation_timeout`)
-/// governs S3 request timing.
+/// `TlsConfig`/`ProxyConfig` handling and wire-byte bodies, then chains
+/// `.redirect(Policy::none())` because a SigV4-signed request cannot be
+/// followed without re-signing. `.http1_only()` matches the Azure/GCS storage
+/// builders and the AWS SDK's default connector (the crate compiles reqwest
+/// with `http2`). No request-level `.timeout()` is set: the SDK's
+/// `TimeoutConfig` (`operation_attempt_timeout`/`operation_timeout`) governs
+/// S3 request timing.
 ///
 /// Connection-pool tuning is deliberately left at `reqwest`'s defaults (no
 /// `pool_idle_timeout`/`pool_max_idle_per_host`/`tcp_keepalive`), matching

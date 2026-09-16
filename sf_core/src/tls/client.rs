@@ -233,9 +233,9 @@ pub(crate) fn configure_tls_builder(
 /// (`storage_client.py:54-59`).
 ///
 /// The GS/REST client still wants gzip, so this can't be folded into
-/// `configure_tls_builder` itself. S3 chains additional options
-/// (`.redirect(Policy::none())`, `.http1_only()`) on the returned builder
-/// in [`crate::tls::aws_http_client::build_s3_reqwest_client`].
+/// `configure_tls_builder` itself. S3 then chains `.redirect(Policy::none())`
+/// in [`crate::tls::aws_http_client::build_s3_reqwest_client`]. All three
+/// storage clients pin `.http1_only()` on their own builders.
 pub(crate) fn configure_storage_client_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,

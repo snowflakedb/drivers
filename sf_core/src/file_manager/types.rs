@@ -827,6 +827,9 @@ pub struct TransferCtx<'a> {
     /// scheduler sized from its own `MultipartParams`
     /// (`file_manager::scheduler_for`).
     pub(crate) scheduler: Option<&'a TransferScheduler>,
+    /// The batch HTTP client when this transfer joined a `BatchTransport`.
+    /// `None` means a single-file caller or test; the callee builds its own.
+    pub(crate) http_client: Option<&'a reqwest::Client>,
 }
 
 impl<'a> TransferCtx<'a> {
@@ -840,7 +843,8 @@ impl<'a> TransferCtx<'a> {
     }
 
     /// Refresh + cleanup, from the optional handles the callers hold. Leaves
-    /// `scheduler` unset; chain [`Self::with_scheduler`] to join a batch budget.
+    /// `scheduler`/`http_client` unset; chain [`Self::with_scheduler`] to join a
+    /// batch budget.
     pub fn new(
         refresher: Option<&'a dyn StageInfoRefresher>,
         cleanup: Option<&'a CleanupScope>,
@@ -849,6 +853,7 @@ impl<'a> TransferCtx<'a> {
             refresher,
             cleanup,
             scheduler: None,
+            http_client: None,
         }
     }
 
@@ -860,6 +865,13 @@ impl<'a> TransferCtx<'a> {
     pub(crate) fn with_scheduler(self, scheduler: &'a TransferScheduler) -> Self {
         Self {
             scheduler: Some(scheduler),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_http_client(self, client: &'a reqwest::Client) -> Self {
+        Self {
+            http_client: Some(client),
             ..self
         }
     }

@@ -465,12 +465,12 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 ),
                 0,
                 &test_scheduler(MultipartParams::default()),
-                None,
                 false,
                 sf_core::file_manager::internal::CloudSpillTarget::Temp {
                     dir: std::env::temp_dir().as_path(),
                     cleanup: None,
                 },
+                TransferCtx::default(),
             )
             .await
             .expect("GCS streaming download must succeed")
@@ -511,7 +511,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                     dir: std::env::temp_dir().as_path(),
                     cleanup: None,
                 },
-                None,
+                TransferCtx::default(),
             )
             .await
             .expect("Azure streaming download must succeed")
@@ -665,12 +665,12 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
             ),
             0,
             &test_scheduler(MultipartParams::default()),
-            None,
             false,
             sf_core::file_manager::internal::CloudSpillTarget::Temp {
                 dir: std::env::temp_dir().as_path(),
                 cleanup: None,
             },
+            TransferCtx::default(),
         ),
     )
     .await

@@ -279,9 +279,14 @@ pub(super) async fn upload_to_s3_or_skip(
         let s3_key = s3_key.clone();
         let policy = policy.clone();
         async move {
-            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_UPLOAD_PROVIDER, &policy)
-                .await
-                .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
+            let s3_client = create_s3_client(
+                &stage_info,
+                SNOWFLAKE_UPLOAD_PROVIDER,
+                &policy,
+                tx.http_client,
+            )
+            .await
+            .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
 
             let remote = if head_needed {
                 probe_remote_object(&s3_client, &stage_info, &s3_key, overwrite)
@@ -1229,9 +1234,9 @@ pub(super) async fn download_from_s3(
     filename: &str,
     base_policy: &RetryPolicy,
     scheduler: &TransferScheduler,
-    refresher: Option<&dyn StageInfoRefresher>,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
+    tx: TransferCtx<'_>,
 ) -> Result<S3Download, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -1241,9 +1246,14 @@ pub(super) async fn download_from_s3(
         let s3_key = s3_key.clone();
         let policy = policy.clone();
         async move {
-            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy)
-                .await
-                .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
+            let s3_client = create_s3_client(
+                &stage_info,
+                SNOWFLAKE_DOWNLOAD_PROVIDER,
+                &policy,
+                tx.http_client,
+            )
+            .await
+            .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
             s3_download_attempt(
                 &s3_client,
                 &stage_info,
@@ -1257,7 +1267,7 @@ pub(super) async fn download_from_s3(
     };
 
     run_s3_with_sts_refresh(
-        refresher,
+        tx.refresher,
         &stage_info.creds,
         |e| download_file_error::StageInfoRefreshSnafu.into_error(e),
         |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
@@ -1356,9 +1366,10 @@ pub(super) async fn download_from_s3_streaming(
         let s3_key = s3_key.clone();
         let policy = policy.clone();
         async move {
-            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy)
-                .await
-                .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
+            let s3_client =
+                create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy, None)
+                    .await
+                    .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
             s3_get_streaming(&s3_client, &stage_info, &s3_key, scheduler).await
         }
     };
@@ -1679,6 +1690,7 @@ async fn create_s3_client(
     stage_info: &StageInfo,
     provider_name: &'static str,
     policy: &RetryPolicy,
+    shared: Option<&reqwest::Client>,
 ) -> Result<S3Client, CreateS3ClientError> {
     let super::types::CloudCredentials::S3 {
         ref aws_key_id,
@@ -1702,11 +1714,13 @@ async fn create_s3_client(
     // store) and proxy handling (explicit proxy, `no_proxy`, `use_proxy_env`)
     // through one shared implementation. Fails the build on a bad custom root
     // store or CRL verifier, matching Azure/GCS.
-    let http_client = crate::tls::aws_http_client::build_s3_reqwest_client(
-        &stage_info.tls_config,
-        Some(&stage_info.proxy_config),
-        stage_info.crl_worker.clone(),
-    )
+    let http_client = cloud_http::shared_or_build_client(shared, || {
+        crate::tls::aws_http_client::build_s3_reqwest_client(
+            &stage_info.tls_config,
+            Some(&stage_info.proxy_config),
+            stage_info.crl_worker.clone(),
+        )
+    })
     .map_err(CreateS3ClientError::HttpClient)?;
 
     let loader = aws_config::defaults(BehaviorVersion::latest())
@@ -3797,12 +3811,12 @@ mod tests {
             "f.dat",
             &base_policy(),
             &test_scheduler(always_multipart()),
-            None,
             false,
             cloud_http::CloudSpillTarget::Temp {
                 dir: spill.path(),
                 cleanup: None,
             },
+            TransferCtx::default(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -3853,9 +3867,9 @@ mod tests {
             "f.dat",
             &base_policy(),
             &test_scheduler(always_multipart()),
-            None,
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
+            TransferCtx::default(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -3903,9 +3917,9 @@ mod tests {
             "f.dat",
             &base_policy_with_attempts(1), // single attempt: fail fast
             &test_scheduler(always_multipart()),
-            None,
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
+            TransferCtx::default(),
         )
         .await;
 
