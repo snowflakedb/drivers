@@ -16,6 +16,8 @@ export declare class Column {
   isBinary(): boolean
   isNumber(): boolean
   isDecfloat(): boolean
+  isIntervalYearMonth(): boolean
+  isIntervalDayTime(): boolean
   isBoolean(): boolean
   isDate(): boolean
   isTime(): boolean

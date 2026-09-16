@@ -36,7 +36,6 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 
 ### statement.getColumn() API
 
-- The `is*` methods (e.g. `isString()`) do not cover every data type value that can be returned by `.getType()`. For example, `decfloat` is not covered by any `is*` method. The new driver adds `isDecfloat()` to close this specific gap; old driver has no equivalent method.
 - The `isArray` and `isObject` methods are bugged and return false because server doesn't return `fieldsMetadata`
 
 ### TIME has no month — `MMMM` → `January` is a converter accident

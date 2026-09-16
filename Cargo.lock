@@ -3243,7 +3243,6 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "sf_core",
- "sf_output_format",
  "sf_types",
  "tokio",
  "tracing",
