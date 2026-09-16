@@ -405,6 +405,26 @@ fn decode_pem(input: &[u8]) -> Result<Option<Pem>, PrivateKeyError> {
         }
         .fail();
     };
+
+    // The END label has to match the BEGIN label. Without this, armour closed
+    // by a different marker still "parses": the body is taken verbatim and
+    // handed to a parser chosen by the BEGIN label, so a truncated file that
+    // runs into the next object's footer fails later as "key rejected as
+    // PKCS#8" rather than as the framing error it is.
+    let after_end = &rest[end + "-----END ".len()..];
+    let end_label = after_end
+        .find("-----")
+        .map(|i| after_end[..i].trim())
+        .with_context(|| MalformedPemSnafu {
+            detail: "END line is not terminated by `-----`",
+        })?;
+    if end_label != label {
+        return MalformedPemSnafu {
+            detail: format!("BEGIN label `{label}` does not match END label `{end_label}`"),
+        }
+        .fail();
+    }
+
     let body_text = &rest[..end];
 
     // Traditional PKCS#1 encryption ("Proc-Type: 4,ENCRYPTED" plus "DEK-Info")
@@ -996,5 +1016,23 @@ mod tests {
             load_rsa_key(pem.as_bytes(), None),
             Err(PrivateKeyError::UnsupportedPemLabel { .. })
         ));
+    }
+
+    /// A mismatched END label is a framing error and must be reported as one.
+    /// Without the check it parses: the body is taken verbatim and handed to
+    /// the parser the *BEGIN* label selected, so the failure surfaces as a
+    /// confusing "rejected as PKCS#1" much further down.
+    #[test]
+    fn mismatched_pem_end_label_is_rejected() {
+        let key = openssl_key();
+        let pem = String::from_utf8(key.private_key_to_pem_pkcs8().expect("pkcs8 pem"))
+            .expect("pem is utf8");
+        let mangled = pem.replace("-----END PRIVATE KEY-----", "-----END CERTIFICATE-----");
+        let err = load_rsa_key(mangled.as_bytes(), None).expect_err("must be refused");
+        assert!(
+            matches!(&err, PrivateKeyError::MalformedPem { detail, .. }
+                if detail.contains("does not match END label")),
+            "expected a framing error naming both labels, got: {err}"
+        );
     }
 }
