@@ -108,6 +108,8 @@ class HTMLGenerator:
             lang_lower = lang.lower()
             if lang_lower == 'rust':
                 normalized_languages.add('core')
+            elif lang_lower == 'javascript':
+                normalized_languages.add('nodejs')
             else:
                 normalized_languages.add(lang_lower)
         
@@ -129,6 +131,8 @@ class HTMLGenerator:
             return 'Odbc'  # odbc maps back to Odbc in the data structure
         elif normalized_lang == 'python':
             return 'Python'  # python maps back to Python in the data structure
+        elif normalized_lang == 'nodejs':
+            return 'JavaScript'
         else:
             return normalized_lang.capitalize()  # Default: capitalize first letter
     

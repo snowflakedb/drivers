@@ -2878,6 +2878,229 @@ fn test_private_key_auth() {
     Ok(())
 }
 
+#[test]
+fn gherkin_structure_nodejs_test_missing_then_is_flagged() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+    workspace.create_feature_file(
+        "authentication",
+        "external_browser",
+        r#"@nodejs
+Feature: External Browser
+
+  @nodejs_e2e
+  Scenario: should authenticate with external browser
+    Given External browser authentication is configured
+    When Trying to Connect
+    Then Login is successful
+"#,
+    )?;
+    let test_dir = workspace
+        .workspace_root
+        .join("nodejs/tests/e2e/authentication");
+    fs::create_dir_all(&test_dir)?;
+    fs::write(
+        test_dir.join("external-browser.test.ts"),
+        r#"
+it('should authenticate with external browser', async () => {
+  // Given External browser authentication is configured
+  const connection = createConnection();
+  // When Trying to Connect
+  await connection.connectAsync();
+});
+"#,
+    )?;
+
+    let violations = workspace
+        .get_validator()?
+        .validate_gherkin_step_structure()?;
+
+    assert_eq!(violations.len(), 1);
+    assert_eq!(
+        violations[0].violations[0].method_name,
+        "should authenticate with external browser"
+    );
+    assert_eq!(
+        violations[0].violations[0].missing_keywords,
+        vec!["Then"]
+    );
+    Ok(())
+}
+
+#[test]
+fn gherkin_structure_nodejs_unmapped_methods_in_mapped_file_are_skipped() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+    workspace.create_feature_file(
+        "types",
+        "boolean",
+        r#"@nodejs
+Feature: BOOLEAN type support
+
+  @nodejs_e2e
+  Scenario: should select boolean literals
+    Given Snowflake client is logged in
+    When Query "SELECT TRUE::BOOLEAN" is executed
+    Then Result should contain TRUE
+"#,
+    )?;
+    let test_dir = workspace
+        .workspace_root
+        .join("nodejs/tests/e2e/query/data-types");
+    fs::create_dir_all(&test_dir)?;
+    fs::write(
+        test_dir.join("boolean.test.ts"),
+        r#"
+it('should select boolean literals', async () => {
+  // Given Snowflake client is logged in
+  // When Query "SELECT TRUE::BOOLEAN" is executed
+  await executeAsync(connection, 'SELECT TRUE::BOOLEAN');
+  // Then Result should contain TRUE
+  expect(true).toBe(true);
+});
+
+it('should render booleans as upper-case strings', async () => {
+  expect(true).toBe(true);
+});
+"#,
+    )?;
+
+    let violations = workspace
+        .get_validator()?
+        .validate_gherkin_step_structure()?;
+    assert!(
+        violations.is_empty(),
+        "Driver-specific methods colocated with Gherkin coverage should not be When/Then-checked: {:?}",
+        violations
+    );
+
+    let orphan_results = workspace.get_validator()?.find_orphaned_tests()?;
+    let has_javascript_orphans = orphan_results.iter().any(|result| {
+        result.language == tests_format_validator::Language::JavaScript
+            && !result.orphaned_files.is_empty()
+    });
+    assert!(
+        !has_javascript_orphans,
+        "Driver-specific methods colocated with Gherkin coverage should not be reported as orphans"
+    );
+    Ok(())
+}
+
+#[test]
+fn orphan_nodejs_unmapped_method_is_not_reported() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+    workspace.create_feature_file(
+        "authentication",
+        "external_browser",
+        r#"@nodejs
+Feature: External Browser
+
+  @nodejs_e2e
+  Scenario: should authenticate with external browser
+    Given External browser authentication is configured
+    When Trying to Connect
+    Then Login is successful
+"#,
+    )?;
+    let test_dir = workspace
+        .workspace_root
+        .join("nodejs/tests/e2e/authentication");
+    fs::create_dir_all(&test_dir)?;
+    fs::write(
+        test_dir.join("external-browser.test.ts"),
+        "it('unmapped browser test', () => {});\n",
+    )?;
+
+    let orphan_results = workspace.get_validator()?.find_orphaned_tests()?;
+    let has_javascript_orphans = orphan_results.iter().any(|result| {
+        result.language == tests_format_validator::Language::JavaScript
+            && !result.orphaned_files.is_empty()
+    });
+    assert!(
+        !has_javascript_orphans,
+        "Unmapped Node methods in a Gherkin-mapped file should not be reported as orphans"
+    );
+    Ok(())
+}
+
+#[test]
+fn gherkin_structure_nodejs_e2e_without_nodejs_tags_is_skipped() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+    workspace.create_feature_file(
+        "pooling",
+        "connection_pool",
+        r#"@jdbc
+Feature: Connection pooling
+
+  @jdbc_e2e
+  Scenario: should borrow logical connection
+    Given Snowflake connection pool data source is configured
+    When A logical connection is borrowed and closed
+    Then A new logical connection can run queries
+"#,
+    )?;
+    let test_dir = workspace.workspace_root.join("nodejs/tests/e2e");
+    fs::create_dir_all(&test_dir)?;
+    fs::write(
+        test_dir.join("connection-pool.test.ts"),
+        "it('creates a pool', () => {});\n",
+    )?;
+
+    let violations = workspace
+        .get_validator()?
+        .validate_gherkin_step_structure()?;
+    assert!(
+        violations.is_empty(),
+        "Node e2e files that only share a stem with a non-Node feature should not be When/Then-checked: {:?}",
+        violations
+    );
+
+    let orphan_results = workspace.get_validator()?.find_orphaned_tests()?;
+    let has_javascript_orphans = orphan_results.iter().any(|result| {
+        result.language == tests_format_validator::Language::JavaScript
+            && !result.orphaned_files.is_empty()
+    });
+    assert!(
+        !has_javascript_orphans,
+        "Node e2e files that only share a stem with a non-Node feature should not be orphan-checked"
+    );
+    Ok(())
+}
+
+#[test]
+fn gherkin_structure_nodejs_int_todo_in_e2e_dir_is_skipped() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+    workspace.create_feature_file(
+        "authentication",
+        "external_browser",
+        r#"@nodejs
+Feature: External Browser
+
+  @nodejs_int
+  Scenario: should fail with timeout when no browser callback arrives
+    Given Wiremock returns a response
+    When Trying to Connect
+    Then Connection fails
+"#,
+    )?;
+    let test_dir = workspace
+        .workspace_root
+        .join("nodejs/tests/e2e/authentication");
+    fs::create_dir_all(&test_dir)?;
+    fs::write(
+        test_dir.join("external-browser.test.ts"),
+        "it.todo('should fail with timeout when no browser callback arrives');\n",
+    )?;
+
+    let violations = workspace
+        .get_validator()?
+        .validate_gherkin_step_structure()?;
+    assert!(
+        violations.is_empty(),
+        "Pending Node methods colocated in e2e for @nodejs_int scenarios should not be When/Then-checked: {:?}",
+        violations
+    );
+    Ok(())
+}
+
 // ===== Helper Structs and Test Data =====
 
 /// Helper to create a temporary workspace with features and test files

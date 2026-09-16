@@ -209,6 +209,8 @@ class CoverageReportGenerator:
                         # Handle core -> rust mapping
                         if lang_lower == 'rust':
                             tag_to_check = '@core'
+                        elif lang_lower == 'javascript':
+                            tag_to_check = '@nodejs'
                         else:
                             tag_to_check = f'@{lang_lower}'
                         
@@ -234,6 +236,8 @@ class CoverageReportGenerator:
                         # Handle core -> rust mapping
                         if lang_lower == 'rust':
                             tag_to_check = '@core'
+                        elif lang_lower == 'javascript':
+                            tag_to_check = '@nodejs'
                         else:
                             tag_to_check = f'@{lang_lower}'
                         
@@ -266,7 +270,7 @@ class CoverageReportGenerator:
         for i, component in enumerate(path_parts):
             if component == "definitions" and i + 1 < len(path_parts):
                 org_dir = path_parts[i + 1]
-                if org_dir in ('core', 'python', 'odbc', 'jdbc', 'dotnet', 'javascript'):
+                if org_dir in ('core', 'python', 'odbc', 'jdbc', 'dotnet', 'javascript', 'nodejs'):
                     return True, org_dir
                 elif org_dir == 'shared':
                     return False, ''
@@ -384,6 +388,8 @@ class CoverageReportGenerator:
             lang_lower = lang.lower()
             if lang_lower == 'rust':
                 normalized_languages.add('core')
+            elif lang_lower == 'javascript':
+                normalized_languages.add('nodejs')
             else:
                 normalized_languages.add(lang_lower)
         
@@ -405,6 +411,8 @@ class CoverageReportGenerator:
             return 'Odbc'  # odbc maps back to Odbc in the data structure
         elif normalized_lang == 'python':
             return 'Python'  # python maps back to Python in the data structure
+        elif normalized_lang == 'nodejs':
+            return 'JavaScript'
         else:
             return normalized_lang.capitalize()  # Default: capitalize first letter
     
@@ -558,6 +566,12 @@ class CoverageReportGenerator:
                 return self.workspace_root / f"odbc_tests/tests/integration/{subdir}/{feature_name}.cpp"
             else:
                 return self.workspace_root / f"odbc_tests/tests/integration/{feature_name}.cpp"
+        elif language.lower() == 'nodejs':
+            file_name = feature_name.replace('_', '-')
+            if subdir:
+                return self.workspace_root / f"nodejs/tests/integ/{subdir}/{file_name}.test.ts"
+            else:
+                return self.workspace_root / f"nodejs/tests/integ/{file_name}.test.ts"
         else:
             # Fallback - return a non-existent path
             return self.workspace_root / "non_existent_path"
@@ -1061,7 +1075,7 @@ class CoverageReportGenerator:
                 # Check if we have organizational dir (shared, core, python, odbc)
                 if def_idx + 2 < len(path_parts):
                     org_dir = path_parts[def_idx + 1]
-                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'dotnet', 'javascript'):
+                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'dotnet', 'javascript', 'nodejs'):
                         # New structure: get category after organizational dir
                         folder = path_parts[def_idx + 2] if def_idx + 2 < len(path_parts) else 'other'
                     else:
@@ -1497,6 +1511,10 @@ class CoverageReportGenerator:
                                 test_file = self.workspace_root / 'python' / 'tests' / 'e2e' / category / f"test_{feature_file_stem}.py"
                             elif lang.lower() == 'odbc':
                                 test_file = self.workspace_root / 'odbc' / 'tests' / f"{feature_file_stem}.rs"
+                            elif lang.lower() == 'nodejs':
+                                feature_path_obj = Path(feature_data['path'])
+                                category = feature_path_obj.parent.name
+                                test_file = self.workspace_root / 'nodejs' / 'tests' / 'e2e' / category / f"{feature_file_stem.replace('_', '-')}.test.ts"
                             else:
                                 test_file = None
                             
@@ -1603,7 +1621,7 @@ class CoverageReportGenerator:
                 # Check if we have organizational dir (shared, core, python, odbc)
                 if def_idx + 2 < len(path_parts):
                     org_dir = path_parts[def_idx + 1]
-                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'dotnet', 'javascript'):
+                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'dotnet', 'javascript', 'nodejs'):
                         # New structure: get category after organizational dir
                         folder = path_parts[def_idx + 2] if def_idx + 2 < len(path_parts) else 'other'
                     else:
@@ -2392,6 +2410,8 @@ class CoverageReportGenerator:
             lang_key = lang_name.lower()
             if lang_key == 'rust':
                 lang_key = 'core'
+            elif lang_key == 'javascript':
+                lang_key = 'nodejs'
 
             for section_label, section_files in [('E2E', e2e_files), ('Integration', integration_files)]:
                 if not section_files:

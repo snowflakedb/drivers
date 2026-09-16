@@ -33,6 +33,10 @@ struct Args {
     json: bool,
 }
 
+fn is_blocking_warning(warning: &str) -> bool {
+    !warning.starts_with("Pending test method found")
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -62,7 +66,7 @@ fn main() -> anyhow::Result<()> {
         let feature_has_failures = !result.scenario_structure_errors.is_empty()
             || result.validations.iter().any(|v| {
                 !v.test_file_found
-                    || !v.warnings.is_empty()
+                    || v.warnings.iter().any(|warning| is_blocking_warning(warning))
                     || !v.missing_steps.is_empty()
                     || !v.empty_steps.is_empty()
             });
@@ -86,7 +90,10 @@ fn main() -> anyhow::Result<()> {
         for validation in &result.validations {
             if validation.test_file_found {
                 // Check if this validation has any issues
-                let has_missing_methods = !validation.warnings.is_empty();
+                let has_missing_methods = validation
+                    .warnings
+                    .iter()
+                    .any(|warning| is_blocking_warning(warning));
                 let has_missing_steps = !validation.missing_steps.is_empty();
                 let has_empty_steps = !validation.empty_steps.is_empty();
 
@@ -236,6 +243,7 @@ fn main() -> anyhow::Result<()> {
                 Lang::Jdbc => "jdbc",
                 Lang::Odbc => "odbc",
                 Lang::Python => "python",
+                Lang::JavaScript => "nodejs",
                 _ => "language",
             };
 

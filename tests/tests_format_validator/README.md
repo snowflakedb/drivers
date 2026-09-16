@@ -13,9 +13,10 @@ All feature files must live under `tests/definitions/shared/`. Language-specific
 - `@jdbc_e2e` / `@jdbc_int` - JDBC in `jdbc/.../e2e/` or `integration/`
 - `@odbc_e2e` / `@odbc_int` - ODBC in `odbc_tests/tests/e2e/` or `integration/`
 - `@python_e2e` / `@python_int` - Python in `python/tests/e2e/` or `integ/`
+- `@nodejs_e2e` / `@nodejs_int` - Node.js in `nodejs/tests/e2e/` or `integ/`
 
 **Feature-level tags** (optional):
-- Generic language tags: `@core`, `@jdbc`, `@odbc`, `@python` - indicate planned implementations (TODOs)
+- Generic language tags: `@core`, `@jdbc`, `@odbc`, `@python`, `@nodejs` - indicate planned implementations
 - Exclusion tags: `@core_not_needed`, `@jdbc_not_needed`, etc. - exclude languages entirely
 - ⚠️ Level-specific tags (`@core_e2e`, `@core_int`) NOT allowed at feature level
 
@@ -108,6 +109,8 @@ A step comment with no code between it and the next step (or end of method) is f
 ### Required When/Then
 
 Every test method must have at least one non-empty `When` and one non-empty `Then` step comment.
+
+Node.js is an exception for language-specific files: `nodejs/tests/e2e/**/*.test.ts` is checked only when a matching shared feature declares `@nodejs_e2e` or `@nodejs_int`. Untagged Node e2e tests (connection, query, put-get, and the rest) are not Gherkin-mapped and are not required to carry step comments. In a mapped Node file, only methods whose names match a tagged scenario need When/Then comments; colocated driver-specific tests in the same file are not treated as Gherkin orphans.
 
 ## Usage
 
