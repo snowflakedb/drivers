@@ -12,7 +12,6 @@
 
 TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][powerquery][navigator]") {
   // TODO(SNOW-4039377): The new driver's SQLPrimaryKeys/SQLForeignKeys string IRD remains SQL_VARCHAR (12).
-  // TODO(SNOW-4039378): The new driver's GEOGRAPHY SQLColumns sizes remain 16M/64M instead of the pinned 128M.
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   auto config = DataSourceConfig::Snowflake().install();
 
@@ -10302,7 +10301,12 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
     SQLRETURN ret = SQLGetData(stmt2, 7, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 8
@@ -10312,7 +10316,12 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
     SQLRETURN ret = SQLGetData(stmt2, 8, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 9
@@ -10390,7 +10399,12 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
     SQLRETURN ret = SQLGetData(stmt2, 16, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 17
@@ -16768,12 +16782,19 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 8); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 12); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"CHAR");
       CHECK(ind == 16);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"VECTOR");
+      CHECK(ind == 24);
     }
   }
 
@@ -16859,12 +16880,19 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 12); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 20); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"LENGTH");
       CHECK(ind == 24);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"max length");
+      CHECK(ind == 40);
     }
   }
 
@@ -16942,12 +16970,19 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 10); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 6); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"WCHAR");
       CHECK(ind == 20);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"OWN");
+      CHECK(ind == 12);
     }
   }
 
@@ -17040,12 +17075,19 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 14); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 8); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"VARCHAR");
       CHECK(ind == 28);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"CHAR");
+      CHECK(ind == 16);
     }
   }
 
@@ -17209,12 +17251,19 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 16); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 10); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"WVARCHAR");
       CHECK(ind == 32);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"WCHAR");
+      CHECK(ind == 20);
     }
   }
 
@@ -17304,11 +17353,18 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
       NEW_DRIVER_ONLY("BD#119") { CHECK(actual == u"VARCHAR"); }
       CHECK(ind == 14);
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"BOOLEAN");
+      CHECK(ind == 28);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"VARCHAR");
       CHECK(ind == 28);
     }
   }
@@ -17344,7 +17400,10 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
     SQLRETURN ret = SQLGetData(stmt3, 4, SQL_C_WCHAR, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
     OLD_DRIVER_ONLY("BD#119") { CHECK(ind == SQL_NULL_DATA); }
-    NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 2); }
+    NEW_DRIVER_ONLY("BD#119") {
+      NON_IODBC { CHECK(ind == 2); }
+      IODBC_ONLY { CHECK(ind == 4); }
+    }
   }
 
   // SQLGetData col 5
@@ -17354,7 +17413,10 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
     SQLRETURN ret = SQLGetData(stmt3, 5, SQL_C_WCHAR, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
     OLD_DRIVER_ONLY("BD#119") { CHECK(ind == SQL_NULL_DATA); }
-    NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 2); }
+    NEW_DRIVER_ONLY("BD#119") {
+      NON_IODBC { CHECK(ind == 2); }
+      IODBC_ONLY { CHECK(ind == 4); }
+    }
   }
 
   // SQLGetData col 6
@@ -17364,7 +17426,10 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
     SQLRETURN ret = SQLGetData(stmt3, 6, SQL_C_WCHAR, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
     OLD_DRIVER_ONLY("BD#119") { CHECK(ind == SQL_NULL_DATA); }
-    NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 12); }
+    NEW_DRIVER_ONLY("BD#119") {
+      NON_IODBC { CHECK(ind == 12); }
+      IODBC_ONLY { CHECK(ind == 24); }
+    }
   }
 
   // SQLGetData col 7
@@ -17442,12 +17507,19 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][power
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 6); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 16); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"BIT");
       CHECK(ind == 12);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"WVARCHAR");
+      CHECK(ind == 32);
     }
   }
 

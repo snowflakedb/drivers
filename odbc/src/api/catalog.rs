@@ -3254,11 +3254,22 @@ fn catalog_num_prec_radix(
 /// rather than `narrow_char_byte_width()`.
 const CATALOG_TEXT_MAX_BYTES_PER_CHAR: i32 = 4;
 
+/// Types whose catalog sizes follow the session `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`
+/// instead of the sizes `SHOW COLUMNS` reports for them.
+fn catalog_type_is_session_sized(logical_type: &str) -> bool {
+    matches!(
+        logical_type.to_ascii_uppercase().as_str(),
+        "VARIANT" | "OBJECT" | "ARRAY" | "GEOGRAPHY" | "GEOMETRY"
+    )
+}
+
 fn catalog_uses_snowflake_text_byte_length(logical_type: &str) -> bool {
+    if catalog_type_is_session_sized(logical_type) {
+        return false;
+    }
     match logical_type.to_ascii_uppercase().as_str() {
-        // BINARY reports 1× byte length; semi-structured types follow the
-        // session VARCHAR max rather than SHOW COLUMNS byteLength.
-        "BINARY" | "VARIANT" | "OBJECT" | "ARRAY" => false,
+        // BINARY reports 1× byte length.
+        "BINARY" => false,
         // Fixed transfer sizes (struct or precision-derived).
         "FIXED" | "DECFLOAT" | "REAL" | "BOOLEAN" | "DATE" | "TIME" | "TIMESTAMP"
         | "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" | "VECTOR" => false,
@@ -3388,15 +3399,16 @@ struct FlatColumnRow {
     user_data_type: Option<i16>,
 }
 
-/// SHOW COLUMNS VARIANT/OBJECT/ARRAY blobs often include `charLength`
+/// SHOW COLUMNS blobs for session-sized types often include `charLength`
 /// 134217728 (Snowflake's historical TEXT max). SQLColumns must not advertise
 /// that constant: omit charLength so `SnowflakeFieldType::from_field` falls
 /// back to session `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`. Query-result
 /// ColAttribute still uses the GS field metadata as-is.
 fn catalog_char_length_for_sqlcolumns(logical_type: &str, char_length: Option<i64>) -> Option<i64> {
-    match logical_type {
-        "VARIANT" | "OBJECT" | "ARRAY" => None,
-        _ => char_length,
+    if catalog_type_is_session_sized(logical_type) {
+        None
+    } else {
+        char_length
     }
 }
 
@@ -5375,7 +5387,7 @@ mod procedure_columns_tests {
             catalog_char_octet_length("NOT_A_SNOWFLAKE_TYPE", &unmodelled, &ns),
             Some(400)
         );
-        for logical_type in ["VARIANT", "OBJECT", "ARRAY"] {
+        for logical_type in ["VARIANT", "OBJECT", "ARRAY", "GEOGRAPHY", "GEOMETRY"] {
             assert!(
                 !catalog_uses_snowflake_text_byte_length(logical_type),
                 "{logical_type} must not use TEXT catalog byte-length rules"
@@ -5413,6 +5425,8 @@ mod procedure_columns_tests {
             "variant",
             "object",
             "array",
+            "geography",
+            "geometry",
             "fixed",
             "date",
             "timestamp_ntz",
@@ -5432,27 +5446,28 @@ mod procedure_columns_tests {
     }
 
     #[test]
-    fn sqlcolumns_char_octet_for_semi_structured_equals_buffer_length_not_128m() {
+    fn sqlcolumns_session_sized_types_equal_column_size_not_128m() {
         let ns = NumericSettings::default();
         const LEGACY_128M: i64 = 134_217_728;
-        for lt in ["VARIANT", "OBJECT", "ARRAY"] {
+        for lt in ["VARIANT", "OBJECT", "ARRAY", "GEOGRAPHY", "GEOMETRY"] {
             let char_len = catalog_char_length_for_sqlcolumns(lt, Some(LEGACY_128M));
             let field = rehydrate_field(lt, None, None, char_len, Some(LEGACY_128M), true);
             let buf = catalog_buffer_length(lt, &field, &ns);
             let octet = catalog_char_octet_length(lt, &field, &ns);
+            let col_size = column_size_from_field(&field, &ns)
+                .ok()
+                .and_then(|s| i32::try_from(s).ok());
             assert_eq!(
                 octet, buf,
                 "{lt} CHAR_OCTET_LENGTH must equal BUFFER_LENGTH"
             );
+            assert_eq!(buf, col_size, "{lt} BUFFER_LENGTH must equal COLUMN_SIZE");
             assert!(octet.is_some(), "{lt} CHAR_OCTET_LENGTH must not be NULL");
             assert_ne!(
                 octet,
                 Some(LEGACY_128M as i32),
                 "{lt} must not keep SHOW COLUMNS 128M"
             );
-            let col_size = column_size_from_field(&field, &ns)
-                .ok()
-                .and_then(|s| i32::try_from(s).ok());
             if let (Some(o), Some(cs)) = (octet, col_size) {
                 assert_ne!(
                     o,
@@ -5829,8 +5844,8 @@ mod sqlcolumns_decode_tests {
     }
 
     #[test]
-    fn sqlcolumns_drops_show_columns_char_length_for_semi_structured() {
-        for lt in ["VARIANT", "OBJECT", "ARRAY"] {
+    fn sqlcolumns_drops_show_columns_char_length_for_session_sized_types() {
+        for lt in ["VARIANT", "OBJECT", "ARRAY", "GEOGRAPHY", "GEOMETRY"] {
             assert_eq!(
                 catalog_char_length_for_sqlcolumns(lt, Some(134_217_728)),
                 None,
@@ -5841,6 +5856,19 @@ mod sqlcolumns_decode_tests {
             catalog_char_length_for_sqlcolumns("TEXT", Some(255)),
             Some(255)
         );
+    }
+
+    #[test]
+    fn session_sized_classification_is_case_insensitive() {
+        for lt in ["geography", "Geometry", "VARIANT"] {
+            assert!(catalog_type_is_session_sized(lt), "{lt}");
+            assert_eq!(
+                catalog_char_length_for_sqlcolumns(lt, Some(134_217_728)),
+                None
+            );
+            assert!(!catalog_uses_snowflake_text_byte_length(lt), "{lt}");
+        }
+        assert!(!catalog_type_is_session_sized("TEXT"));
     }
 
     #[test]

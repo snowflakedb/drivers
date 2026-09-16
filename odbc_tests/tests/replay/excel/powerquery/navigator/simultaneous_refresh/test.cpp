@@ -45435,7 +45435,12 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[excel][po
     SQLRETURN ret = SQLGetData(stmt8, 7, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt8), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 8
@@ -45445,7 +45450,12 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[excel][po
     SQLRETURN ret = SQLGetData(stmt8, 8, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt8), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 9
@@ -45525,7 +45535,12 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[excel][po
     SQLRETURN ret = SQLGetData(stmt8, 16, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt8), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 17
@@ -87298,7 +87313,12 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[excel][po
     SQLRETURN ret = SQLGetData(stmt19, 7, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt19), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 8
@@ -87308,7 +87328,12 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[excel][po
     SQLRETURN ret = SQLGetData(stmt19, 8, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt19), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 9
@@ -87388,7 +87413,12 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[excel][po
     SQLRETURN ret = SQLGetData(stmt19, 16, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt19), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 17
