@@ -54,7 +54,7 @@ pub fn make_active_session(server_url: &str) -> Arc<ExporterSession> {
     let tokens = SessionTokens {
         session_token: SensitiveString::from("test_token"),
         master_token: SensitiveString::from("master_token"),
-        session_id: SESSION_ID,
+        session_id: Some(SESSION_ID),
         session_expires_at: None,
         master_expires_at: None,
         master_validity: None,

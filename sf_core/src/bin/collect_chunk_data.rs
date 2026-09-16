@@ -364,7 +364,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Logging in to Snowflake...");
     let login_result = snowflake_login(&login_params, None, crl_worker.clone()).await?;
     println!(
-        "Login successful (session_id={})",
+        "Login successful (session_id={:?})",
         login_result.tokens.session_id
     );
 

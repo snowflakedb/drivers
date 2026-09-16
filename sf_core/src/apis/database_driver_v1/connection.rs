@@ -619,7 +619,7 @@ impl DatabaseDriverV1 {
                     // methods can stamp `snowflake.session.id` on their spans
                     // by reading the field under the same mutex they already
                     // take to do their work.
-                    conn.session_id = Some(session_id);
+                    conn.session_id = session_id;
 
                     // Telemetry setup: check if the server has opted this session
                     // into in-band telemetry and a session registry is configured,
@@ -634,7 +634,10 @@ impl DatabaseDriverV1 {
                             .map(|v| v.coerce_bool().unwrap_or(false))
                             .unwrap_or(true);
 
-                    if telemetry_enabled {
+                    // The registry is keyed by the server-assigned session id, so a
+                    // connection that never learned one is left unregistered rather
+                    // than filed under a placeholder.
+                    if let Some(session_id) = session_id.filter(|_| telemetry_enabled) {
                         use crate::telemetry::snowflake_exporter::ExporterSession;
 
                         let Some(http_client) = conn.http_client.clone() else {
@@ -2066,7 +2069,7 @@ impl DatabaseDriverV1 {
                     match tokens_guard.as_ref() {
                         Some(tokens) => (
                             Some(tokens.session_token.clone()),
-                            Some(tokens.session_id),
+                            tokens.session_id,
                             Some(tokens.master_token.clone()),
                             tokens.session_expires_at_epoch_ms(),
                             tokens.master_expires_at_epoch_ms(),
@@ -4007,7 +4010,7 @@ mod tests {
             let tokens = SessionTokens {
                 session_token: "test-session-token".into(),
                 master_token: "test-master-token".into(),
-                session_id: 1,
+                session_id: Some(1),
                 session_expires_at: None,
                 master_expires_at: None,
                 master_validity: None,
@@ -4196,7 +4199,7 @@ mod tests {
             let tokens = SessionTokens {
                 session_token: "test-session-token".into(),
                 master_token: "test-master-token".into(),
-                session_id: 1,
+                session_id: Some(1),
                 session_expires_at: None,
                 master_expires_at: Some(
                     std::time::Instant::now() + std::time::Duration::from_secs(14400),
@@ -4322,7 +4325,7 @@ mod tests {
         let tokens = SessionTokens {
             session_token: "keep-session".into(),
             master_token: "keep-master".into(),
-            session_id: 7,
+            session_id: Some(7),
             session_expires_at: None,
             master_expires_at: None,
             master_validity: None,
@@ -4342,7 +4345,7 @@ mod tests {
             .expect("XP refresh must not send HTTP");
         assert_eq!(renewed.session_token.reveal(), "keep-session");
         assert_eq!(renewed.master_token.reveal(), "keep-master");
-        assert_eq!(renewed.session_id, 7);
+        assert_eq!(renewed.session_id, Some(7));
     }
 
     #[tokio::test]

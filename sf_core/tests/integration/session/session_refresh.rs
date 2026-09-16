@@ -75,7 +75,7 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
     let tokens = SessionTokens {
         session_token: SensitiveString::from("old-session-token"),
         master_token: SensitiveString::from("valid-master-token"),
-        session_id: 12345,
+        session_id: Some(12345),
         session_expires_at: None,
         master_expires_at: None,
         master_validity: None,

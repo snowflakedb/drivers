@@ -204,7 +204,7 @@ mod tests {
         SessionTokens {
             session_token: SensitiveString::from(session_token.to_string()),
             master_token: SensitiveString::from("master_token".to_string()),
-            session_id: 1,
+            session_id: Some(1),
             session_expires_at: None,
             master_expires_at: Some(std::time::Instant::now() + Duration::from_secs(14400)),
             master_validity: Some(Duration::from_secs(14400)),

@@ -223,7 +223,7 @@ mod tests {
         let tokens = SessionTokens {
             session_token: SensitiveString::from("test_token"),
             master_token: SensitiveString::from("master_token"),
-            session_id: 1,
+            session_id: Some(1),
             session_expires_at: None,
             master_expires_at: None,
             master_validity: None,

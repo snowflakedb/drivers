@@ -16,7 +16,7 @@ fn test_tokens() -> SessionTokens {
     SessionTokens {
         session_token: SensitiveString::from("old-session-token"),
         master_token: SensitiveString::from("valid-master-token"),
-        session_id: 12345,
+        session_id: Some(12345),
         session_expires_at: None,
         master_expires_at: None,
         master_validity: None,
@@ -46,7 +46,7 @@ async fn should_refresh_session_successfully() {
     let new_tokens = result.expect("refresh should succeed");
     assert_eq!(new_tokens.session_token.reveal(), "new-session-token");
     assert_eq!(new_tokens.master_token.reveal(), "new-master-token");
-    assert_eq!(new_tokens.session_id, 67890);
+    assert_eq!(new_tokens.session_id, Some(67890));
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
     server.await.unwrap();
 }

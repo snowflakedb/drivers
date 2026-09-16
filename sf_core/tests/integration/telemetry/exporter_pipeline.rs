@@ -186,7 +186,7 @@ async fn telemetry_handles_token_revoked_between_flushes() {
     let tokens = SessionTokens {
         session_token: SensitiveString::from("valid_token"),
         master_token: SensitiveString::from("master"),
-        session_id: SESSION_ID,
+        session_id: Some(SESSION_ID),
         session_expires_at: None,
         master_expires_at: None,
         master_validity: None,
@@ -224,7 +224,7 @@ async fn telemetry_uses_refreshed_token() {
     let initial_tokens = SessionTokens {
         session_token: SensitiveString::from("old_token"),
         master_token: SensitiveString::from("master"),
-        session_id: SESSION_ID,
+        session_id: Some(SESSION_ID),
         session_expires_at: None,
         master_expires_at: None,
         master_validity: None,
@@ -253,7 +253,7 @@ async fn telemetry_uses_refreshed_token() {
     *token_store.write().await = Some(SessionTokens {
         session_token: SensitiveString::from("new_refreshed_token"),
         master_token: SensitiveString::from("master"),
-        session_id: SESSION_ID,
+        session_id: Some(SESSION_ID),
         session_expires_at: None,
         master_expires_at: None,
         master_validity: None,

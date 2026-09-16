@@ -368,7 +368,7 @@ impl From<XpSessionInfo> for LoginResult {
             tokens: SessionTokens {
                 session_token: SensitiveString::from(info.session_token),
                 master_token: SensitiveString::from(info.master_token),
-                session_id: info.session_id,
+                session_id: Some(info.session_id),
                 session_expires_at: session_validity.map(|d| now + d),
                 master_expires_at: master_validity.map(|d| now + d),
                 master_validity,
@@ -1113,7 +1113,7 @@ mod tests {
         let result: LoginResult = info.into();
         assert_eq!(result.tokens.session_token.reveal(), "session");
         assert_eq!(result.tokens.master_token.reveal(), "master");
-        assert_eq!(result.tokens.session_id, 42);
+        assert_eq!(result.tokens.session_id, Some(42));
         assert_eq!(
             result.tokens.master_validity,
             Some(std::time::Duration::from_secs(14400))
