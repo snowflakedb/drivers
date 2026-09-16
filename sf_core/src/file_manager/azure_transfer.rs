@@ -19,10 +19,8 @@ use futures::TryStreamExt as _;
 use reqwest::Method;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::marker::PhantomData;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
-
-const REQUEST_TIMEOUT_SECS: u64 = 300;
 
 // Azure metadata header names
 const AZURE_META_SFC_DIGEST: &str = "x-ms-meta-sfcdigest";
@@ -470,7 +468,7 @@ async fn azure_get_with_refresh(
     policy: &RetryPolicy,
     refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<reqwest::Response, AzureDownloadError> {
-    let client = create_azure_client(stage_info)?;
+    let client = create_azure_client(stage_info, None)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let attempt = |creds: CloudCredentials| {
         let stage_info = with_creds(stage_info, creds);
@@ -565,7 +563,7 @@ pub(super) async fn upload_to_azure_or_skip(
 
     // Build the client once — TLS config is creds-independent; only the SAS in
     // `stage_info.creds` rotates on refresh — and clone it into each attempt.
-    let client = create_azure_client(stage_info)?;
+    let client = create_azure_client(stage_info, tx.http_client)?;
     // On-cloud byte count (ciphertext length under CSE) decides single-PUT vs
     // multipart; computed once, outside the per-attempt closure.
     let body_len = multipart::upload_body_len(&prepared)
@@ -1225,28 +1223,17 @@ fn map_http_error(e: HttpError) -> AzureRequestError {
 
 // --- Helpers ---
 
-fn create_azure_client(stage_info: &StageInfo) -> Result<reqwest::Client, AzureRequestError> {
-    let builder = crate::tls::client::configure_storage_client_builder(
-        reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
-        &stage_info.tls_config,
-        // Honour the connection's explicit proxy (proxy_host/proxy_port/no_proxy)
-        // and its use_proxy_env env-detection policy for Azure Blob transfers —
-        // the same logic the GS/REST client uses.
-        Some(&stage_info.proxy_config),
-        stage_info.crl_worker.clone(),
-    )
-    .map_err(|e| {
-        HttpSnafu {
-            detail: e.to_string(),
-        }
-        .build()
-    })?;
-    builder.build().map_err(|e| {
-        HttpSnafu {
-            detail: e.to_string(),
-        }
-        .build()
-    })
+fn create_azure_client(
+    stage_info: &StageInfo,
+    shared: Option<&reqwest::Client>,
+) -> Result<reqwest::Client, AzureRequestError> {
+    cloud_http::shared_or_build_client(shared, || cloud_http::build_azure_client(stage_info))
+        .map_err(|e| {
+            HttpSnafu {
+                detail: e.to_string(),
+            }
+            .build()
+        })
 }
 
 /// Constructs the Azure Blob Storage URL and extracts the SAS token from stage info.
@@ -1468,11 +1455,11 @@ pub async fn download_from_azure_streaming(
     policy: &RetryPolicy,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
     // Build the client once (TLS config is creds-independent); only the SAS in
     // `stage_info.creds` rotates on refresh.
-    let client = create_azure_client(stage_info)?;
+    let client = create_azure_client(stage_info, tx.http_client)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
 
     // The routing HEAD + the ranged/single GET all run INSIDE the refresh
@@ -1581,7 +1568,7 @@ pub async fn download_from_azure_streaming(
     };
 
     let result = run_azure_with_sas_refresh(
-        refresher,
+        tx.refresher,
         &stage_info.creds,
         "GET",
         |e| azure_download_error::StageInfoRefreshSnafu.into_error(e),
@@ -1924,6 +1911,7 @@ mod tests {
     use crate::config::retry::Jitter;
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
+    use std::time::Duration;
 
     // Zero-backoff test policy lives in `file_manager::internal` so the in-crate
     // and external integration tests share one definition (the base put/get
@@ -2603,7 +2591,7 @@ mod tests {
                 dir: std::env::temp_dir().as_path(),
                 cleanup: None,
             },
-            Some(&fake as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&fake as &dyn StageInfoRefresher),
         )
         .await
         .expect("streaming GET must refresh on the routing-HEAD 403 and succeed");
@@ -2666,7 +2654,7 @@ mod tests {
                 dir: std::env::temp_dir().as_path(),
                 cleanup: None,
             },
-            None,
+            TransferCtx::default(),
         )
         .await;
         // `CloudStreamingDownload` is not Debug; assert on the extracted error.
@@ -4178,7 +4166,7 @@ mod tests {
                 dir: spill.path(),
                 cleanup: None,
             },
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -4247,7 +4235,7 @@ mod tests {
                 dir: spill.path(),
                 cleanup: None,
             },
-            Some(&fake as &dyn StageInfoRefresher),
+            TransferCtx::with_refresher(&fake as &dyn StageInfoRefresher),
         )
         .await
         .expect("a ranged-GET 403 must refresh and re-drive the download");
@@ -4298,7 +4286,7 @@ mod tests {
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
-            None,
+            TransferCtx::default(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -4352,7 +4340,7 @@ mod tests {
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
-            None,
+            TransferCtx::default(),
         )
         .await;
 

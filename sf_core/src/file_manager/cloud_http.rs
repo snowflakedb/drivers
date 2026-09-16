@@ -7,14 +7,16 @@
 //! `futures_core::Stream` and needs its own drain loop.
 
 use super::encryption::Encryptor;
-use super::types::{ByteSource, EncryptedFileMetadata};
+use super::types::{ByteSource, EncryptedFileMetadata, LocationType, StageInfo};
 use crate::apis::operation_ctx::{CleanupScope, with_cleanup_scope_opt};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::log_foreign_error;
+use crate::tls::error::{ClientBuildSnafu, TlsError};
 use bytes::Bytes;
 use futures::StreamExt as _;
 use futures::stream::Stream;
 use reqwest::StatusCode;
+use snafu::ResultExt as _;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,7 +30,7 @@ const UPLOAD_CHUNK_SIZE_BYTES: usize = 64 * 1024;
 /// Per-attempt HTTP timeout. Matches the cloud transfer modules' historical
 /// 300s cap; the retry budget (`policy.max_elapsed`) must exceed this so at
 /// least one full attempt can complete.
-const REQUEST_TIMEOUT_SECS: u64 = 300;
+pub(super) const REQUEST_TIMEOUT_SECS: u64 = 300;
 
 use std::collections::BTreeSet;
 
@@ -43,6 +45,66 @@ pub(super) fn is_retryable_status(status: u16, extra: &BTreeSet<u16>) -> bool {
 pub(super) fn next_delay_ms(current: f64, backoff: &BackoffConfig) -> f64 {
     let next = current * backoff.factor;
     next.min(backoff.cap.as_millis() as f64)
+}
+
+pub(super) fn build_azure_client(stage_info: &StageInfo) -> Result<reqwest::Client, TlsError> {
+    crate::tls::client::configure_storage_client_builder(
+        reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
+        &stage_info.tls_config,
+        Some(&stage_info.proxy_config),
+        stage_info.crl_worker.clone(),
+    )?
+    .http1_only()
+    .build()
+    .context(ClientBuildSnafu)
+}
+
+pub(super) fn build_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client, TlsError> {
+    crate::tls::client::configure_storage_client_builder(
+        reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
+        &stage_info.tls_config,
+        Some(&stage_info.proxy_config),
+        stage_info.crl_worker.clone(),
+    )?
+    .http1_only()
+    .build()
+    .context(ClientBuildSnafu)
+}
+
+pub(super) fn shared_or_build_client(
+    shared: Option<&reqwest::Client>,
+    build: impl FnOnce() -> Result<reqwest::Client, TlsError>,
+) -> Result<reqwest::Client, TlsError> {
+    match shared {
+        Some(client) => Ok(client.clone()),
+        None => build(),
+    }
+}
+
+pub(crate) enum StorageHttp {
+    S3(reqwest::Client),
+    Gcs(reqwest::Client),
+    Azure(reqwest::Client),
+}
+
+impl StorageHttp {
+    pub(crate) fn for_stage(stage_info: &StageInfo) -> Result<Self, TlsError> {
+        Ok(match stage_info.location_type {
+            LocationType::Azure => Self::Azure(build_azure_client(stage_info)?),
+            LocationType::Gcs => Self::Gcs(build_gcs_client(stage_info)?),
+            LocationType::S3 => Self::S3(crate::tls::aws_http_client::build_s3_reqwest_client(
+                &stage_info.tls_config,
+                Some(&stage_info.proxy_config),
+                stage_info.crl_worker.clone(),
+            )?),
+        })
+    }
+
+    pub(crate) fn client(&self) -> &reqwest::Client {
+        match self {
+            Self::S3(c) | Self::Gcs(c) | Self::Azure(c) => c,
+        }
+    }
 }
 
 /// Reads a non-2xx response body for inclusion in error messages. Always

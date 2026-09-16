@@ -20,8 +20,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
-const REQUEST_TIMEOUT_SECS: u64 = 300;
-
 // GCS metadata header names
 const GCS_META_SFC_DIGEST: &str = "x-goog-meta-sfc-digest";
 const GCS_META_ENCRYPTIONDATA: &str = "x-goog-meta-encryptiondata";
@@ -134,7 +132,7 @@ pub async fn upload_to_gcs_or_skip(
     tx: TransferCtx<'_>,
 ) -> Result<UploadStatus, GcsUploadError> {
     let scheduler = &super::scheduler_for(tx, multipart);
-    let client = create_gcs_client(stage_info)?;
+    let client = create_gcs_client(stage_info, tx.http_client)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let using_presigned_url = stage_info.presigned_url.is_some();
     let refresher = tx.refresher;
@@ -369,9 +367,9 @@ async fn gcs_get_with_refresh(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    refresher: Option<&dyn StageInfoRefresher>,
+    tx: TransferCtx<'_>,
 ) -> Result<reqwest::Response, GcsDownloadError> {
-    let client = create_gcs_client(stage_info)?;
+    let client = create_gcs_client(stage_info, tx.http_client)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     // Either presigned-URL source enables the 400-handling: the URL may
     // have expired and reissuing it produces a fresh signature. The
@@ -379,7 +377,7 @@ async fn gcs_get_with_refresh(
     // and both subject to the same expiry semantics.
     let using_presigned_url =
         per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
-    let has_refresher = refresher.is_some();
+    let has_refresher = tx.refresher.is_some();
     // With a refresher, 400 is removed from the wire-level retry list — we
     // handle it reactively here. Without a refresher, the injected policy
     // keeps the legacy 400-retry-with-same-URL fallback so today's tests pass.
@@ -431,7 +429,7 @@ async fn gcs_get_with_refresh(
     };
 
     let first = run_gcs_with_token_refresh(
-        refresher,
+        tx.refresher,
         stage_info,
         |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info, initial_per_file_url.clone()),
@@ -460,7 +458,7 @@ async fn gcs_get_with_refresh(
             "GCS GET returned 400 in presigned mode; refreshing per-file URL and retrying"
         );
         let (refreshed_stage_info, refreshed_per_file_url) = {
-            let Some(r) = refresher else {
+            let Some(r) = tx.refresher else {
                 // Invariant: needs_url_refresh is only true when has_refresher
                 // is true, so refresher must be Some here.
                 unreachable!("refresher is Some: needs_url_refresh requires has_refresher");
@@ -487,7 +485,7 @@ async fn gcs_get_with_refresh(
         };
 
         let second = run_gcs_with_token_refresh(
-            refresher,
+            tx.refresher,
             &refreshed_stage_info,
             |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
             make_attempt(&refreshed_stage_info, refreshed_per_file_url),
@@ -529,7 +527,7 @@ pub async fn download_from_gcs(
         per_file_presigned_url,
         policy,
         per_file_index,
-        refresher,
+        TransferCtx::new(refresher, None),
     )
     .await?;
 
@@ -1296,25 +1294,18 @@ fn map_http_error(e: HttpError) -> GcsRequestError {
 // (`gcs_get_with_refresh`) call sites — if client construction is ever split
 // per direction (as `create_s3_client`'s `provider_name` param anticipates),
 // add the equivalent GCS case here too.
-fn create_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client, GcsRequestError> {
-    let builder = crate::tls::client::configure_storage_client_builder(
-        reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
-        &stage_info.tls_config,
-        // Honour the connection's explicit proxy (proxy_host/proxy_port/no_proxy)
-        // and its use_proxy_env env-detection policy for GCS transfers — the same
-        // logic the GS/REST client uses.
-        Some(&stage_info.proxy_config),
-        stage_info.crl_worker.clone(),
+fn create_gcs_client(
+    stage_info: &StageInfo,
+    shared: Option<&reqwest::Client>,
+) -> Result<reqwest::Client, GcsRequestError> {
+    cloud_http::shared_or_build_client(shared, || cloud_http::build_gcs_client(stage_info)).map_err(
+        |e| {
+            ClientSetupSnafu {
+                detail: e.to_string(),
+            }
+            .build()
+        },
     )
-    .map_err(|e| {
-        ClientSetupSnafu {
-            detail: e.to_string(),
-        }
-        .build()
-    })?;
-    builder
-        .build()
-        .map_err(|source| GcsRequestError::Http { source })
 }
 
 /// Constructs the GCS URL and extracts the bearer token from stage info.
@@ -1475,9 +1466,9 @@ pub async fn download_from_gcs_streaming(
     policy: &RetryPolicy,
     per_file_index: usize,
     scheduler: &TransferScheduler,
-    refresher: Option<&dyn StageInfoRefresher>,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
+    tx: TransferCtx<'_>,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
     // Ranged (multipart) download applies only on the access-token path — a
     // presigned URL is signed for one specific GET and can't serve a HEAD/Range
@@ -1491,9 +1482,9 @@ pub async fn download_from_gcs_streaming(
             filename,
             policy,
             scheduler,
-            refresher,
             unsafe_file_write,
             spill_target,
+            tx,
         )
         .await?
     {
@@ -1509,8 +1500,8 @@ pub async fn download_from_gcs_streaming(
         per_file_presigned_url,
         policy,
         per_file_index,
-        refresher,
         scheduler,
+        tx,
     )
     .await
 }
@@ -1527,8 +1518,8 @@ pub(super) async fn gcs_get_streaming(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    refresher: Option<&dyn StageInfoRefresher>,
     scheduler: &TransferScheduler,
+    tx: TransferCtx<'_>,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
     let slot = scheduler.acquire_request().await;
     let response = gcs_get_with_refresh(
@@ -1537,7 +1528,7 @@ pub(super) async fn gcs_get_streaming(
         per_file_presigned_url,
         policy,
         per_file_index,
-        refresher,
+        tx,
     )
     .await?;
 
@@ -1631,11 +1622,11 @@ async fn gcs_try_ranged_download(
     filename: &str,
     policy: &RetryPolicy,
     scheduler: &TransferScheduler,
-    refresher: Option<&dyn StageInfoRefresher>,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
+    tx: TransferCtx<'_>,
 ) -> Result<Option<CloudStreamingDownload>, GcsDownloadError> {
-    let client = create_gcs_client(stage_info)?;
+    let client = create_gcs_client(stage_info, tx.http_client)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
 
     let make_attempt = |base: &StageInfo| {
@@ -1669,7 +1660,7 @@ async fn gcs_try_ranged_download(
     };
 
     run_gcs_with_token_refresh(
-        refresher,
+        tx.refresher,
         stage_info,
         |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info),
@@ -2682,7 +2673,7 @@ mod tests {
             "max_elapsed must exceed REQUEST_TIMEOUT_SECS (300s)"
         );
         assert!(
-            policy.max_elapsed > Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
+            policy.max_elapsed > Some(Duration::from_secs(cloud_http::REQUEST_TIMEOUT_SECS)),
             "retry budget must be larger than a single request timeout"
         );
     }
@@ -3044,7 +3035,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri()), None).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(
             &client,
@@ -3071,7 +3062,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri()), None).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(
             &client,
@@ -3099,7 +3090,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri()), None).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(
             &client,
@@ -3121,7 +3112,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri()), None).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(
             &client,
@@ -3146,7 +3137,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri()), None).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(
             &client,
@@ -3175,7 +3166,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri()), None).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(
             &client,
@@ -3720,12 +3711,12 @@ mod tests {
             ),
             /* per_file_index */ 0,
             &test_scheduler(always_multipart()),
-            /* refresher */ None,
             /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Temp {
                 dir: spill.path(),
                 cleanup: None,
             },
+            TransferCtx::default(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -3771,9 +3762,9 @@ mod tests {
             ),
             /* per_file_index */ 0,
             &test_scheduler(always_multipart()),
-            /* refresher */ None,
             /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Part(&part_path),
+            TransferCtx::default(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -3826,9 +3817,9 @@ mod tests {
             ),
             /* per_file_index */ 0,
             &test_scheduler(always_multipart()),
-            /* refresher */ None,
             /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Part(&part_path),
+            TransferCtx::default(),
         )
         .await;
 

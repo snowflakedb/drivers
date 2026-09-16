@@ -9,4 +9,5 @@ mod retry;
 mod s3_cse_headers;
 mod s3_multipart;
 mod session_refresh;
+mod shared_client_reuse;
 mod sync_retry;

@@ -193,6 +193,7 @@ use crate::apis::operation_ctx::with_cleanup_scope_opt;
 use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::retry::RetryPolicy;
+use crate::tls::error::TlsError;
 use azure_transfer::{azure_get_streaming, download_from_azure_streaming, upload_to_azure_or_skip};
 use cloud_http::{
     CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo,
@@ -444,12 +445,8 @@ pub async fn upload_files(
     // See `BatchAbort` for why a flag rather than dropping the stream.
     let abort = BatchAbort::new(data.put_fastfail);
 
-    // One budget for the whole batch: every cloud request each file issues —
-    // whole-file PUT, `UploadPart`, resumable chunk — takes a slot from it, so
-    // part-level and (later) file-level concurrency cannot multiply. Resolved
-    // here, once, and threaded down via `tx`; see `scheduler_for`.
-    let scheduler = scheduler_for(tx, data.multipart);
-    let tx = tx.with_scheduler(&scheduler);
+    let batch = BatchTransport::for_command(tx, data.multipart, &data.stage_info)?;
+    let tx = batch.join(tx);
 
     // The refresher owns the latest stage info (creds + presigned URLs) for
     // the batch via its shared `StageInfoCache`; per-file calls read from
@@ -505,7 +502,7 @@ pub async fn upload_files(
         // file and callers (and the wrappers' tests) read them positionally, so
         // the row order must stay the input order regardless of which transfer
         // finishes first.
-        .buffered(scheduler.file_fanout())
+        .buffered(batch.scheduler.file_fanout())
         .collect::<Vec<_>>()
         .await;
 
@@ -540,6 +537,29 @@ pub async fn upload_files(
     Ok(results)
 }
 
+struct BatchTransport {
+    scheduler: TransferScheduler,
+    http: cloud_http::StorageHttp,
+}
+
+impl BatchTransport {
+    fn for_command(
+        tx: TransferCtx<'_>,
+        multipart: MultipartParams,
+        stage_info: &StageInfo,
+    ) -> Result<Self, FileManagerError> {
+        Ok(Self {
+            scheduler: scheduler_for(tx, multipart),
+            http: cloud_http::StorageHttp::for_stage(stage_info).context(BatchHttpClientSnafu)?,
+        })
+    }
+
+    fn join<'a>(&'a self, tx: TransferCtx<'a>) -> TransferCtx<'a> {
+        tx.with_scheduler(&self.scheduler)
+            .with_http_client(self.http.client())
+    }
+}
+
 /// The scheduler a transfer should run under: the batch budget the caller
 /// joined via [`TransferCtx::with_scheduler`], or a fresh batch-of-one for a
 /// caller that supplied none (an internal single-file caller, or a test).
@@ -547,10 +567,6 @@ pub async fn upload_files(
 /// Cloning a `Some` is an `Arc` bump, not a new budget — the returned scheduler
 /// shares the caller's semaphores, so resolving again in a nested layer is free
 /// and cannot accidentally mint a second budget.
-///
-/// A batch entry point must resolve *once* and pass the result down through
-/// `tx`; resolving per file would give each file a private budget and defeat the
-/// whole point.
 fn scheduler_for(tx: TransferCtx<'_>, multipart: MultipartParams) -> TransferScheduler {
     tx.scheduler
         .cloned()
@@ -958,6 +974,10 @@ pub async fn download_files(
     policy: &RetryPolicy,
     tx: TransferCtx<'_>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
+    if data.src_locations.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let local_location = resolve_against_cwd(&data.local_location, data.cwd.as_deref())
         .to_string_lossy()
         .into_owned();
@@ -969,9 +989,8 @@ pub async fn download_files(
     // allowed to finish rather than being dropped.
     let abort = BatchAbort::new(data.get_fastfail);
 
-    // One budget for the whole batch — see the mirror comment in `upload_files`.
-    let scheduler = scheduler_for(tx, data.multipart);
-    let tx = tx.with_scheduler(&scheduler);
+    let batch = BatchTransport::for_command(tx, data.multipart, &data.stage_info)?;
+    let tx = batch.join(tx);
 
     // Three-way zip: src_locations / encryption_materials / presigned_urls.
     // `presigned_urls` is built in `query_response::to_file_download_data` to
@@ -1028,7 +1047,7 @@ pub async fn download_files(
         // `buffered`, not `buffer_unordered`: GET emits one result row per
         // requested file and callers read them positionally, so row order must
         // stay the input order regardless of completion order.
-        .buffered(scheduler.file_fanout())
+        .buffered(batch.scheduler.file_fanout())
         .collect::<Vec<_>>()
         .await;
 
@@ -1373,9 +1392,9 @@ async fn download_single_file_to(
                 data.src_location.as_str(),
                 policy,
                 &scheduler,
-                tx.refresher,
                 unsafe_file_write,
                 spill_target,
+                tx,
             )
             .await
             .context(S3DownloadSnafu)?;
@@ -1517,9 +1536,9 @@ async fn download_single_file_to(
                 ),
                 per_file_index,
                 &scheduler,
-                tx.refresher,
                 unsafe_file_write,
                 spill_target,
+                tx,
             )
             .await
             .context(GcsDownloadSnafu)?;
@@ -1622,7 +1641,7 @@ async fn download_single_file_to(
                 policy,
                 unsafe_file_write,
                 spill_target,
-                tx.refresher,
+                tx,
             )
             .await
             .context(AzureDownloadSnafu)?;
@@ -1789,8 +1808,8 @@ pub async fn open_gcs_download_stream(
         per_file_presigned_url,
         &gcs_retry_policy(using_presigned_url, policy),
         0,
-        refresher,
         &scheduler,
+        TransferCtx::new(refresher, None),
     )
     .await
     .context(GcsDownloadSnafu)?;
@@ -2487,6 +2506,13 @@ pub enum FileManagerError {
     UploadBatch {
         failure_count: usize,
         failures: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to build the PUT/GET batch HTTP client"))]
+    BatchHttpClient {
+        #[snafu(source(from(TlsError, Box::new)))]
+        source: Box<TlsError>,
         #[snafu(implicit)]
         location: Location,
     },
