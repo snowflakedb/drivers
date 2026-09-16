@@ -300,16 +300,15 @@ fn unwrap_file_key(
     // into the file key. Copying it out instead would leave a second live
     // copy of the key sitting in `wrapped` until the function returns.
     let mut wrapped = encrypted_file_key;
-    let file_key_len =
-        PaddedBlockDecryptingKey::ecb_pkcs7(cipher_suite.unbound_key(&master_key)?)
-            .context(CryptoSnafu {
-                operation: "initializing AES-ECB key unwrap",
-            })?
-            .decrypt(&mut wrapped, DecryptionContext::None)
-            .context(CryptoSnafu {
-                operation: "decrypting file key with AES-ECB",
-            })?
-            .len();
+    let file_key_len = PaddedBlockDecryptingKey::ecb_pkcs7(cipher_suite.unbound_key(&master_key)?)
+        .context(CryptoSnafu {
+            operation: "initializing AES-ECB key unwrap",
+        })?
+        .decrypt(&mut wrapped, DecryptionContext::None)
+        .context(CryptoSnafu {
+            operation: "decrypting file key with AES-ECB",
+        })?
+        .len();
     wrapped.truncate(file_key_len);
     let file_key = wrapped;
     ensure!(
