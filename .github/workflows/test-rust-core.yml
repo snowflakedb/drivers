@@ -97,6 +97,19 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  # std-only crate: no Snowflake credentials, no llvm-cov. Kept off the sf_core
+  # coverage lane so the lcov report stays scoped to `--package sf_core`.
+  test_sf_params_spec:
+    if: inputs.run_rust_core
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Run sf_params_spec tests
+        run: cargo test --locked --package sf_params_spec
+
   build-without-protobuf:
     if: inputs.run_rust_core
     runs-on: ubuntu-latest
@@ -829,7 +842,7 @@ jobs:
             --parameter-path "${{ github.workspace }}/parameters.json"
 
   rust-core-status:
-    needs: [format, build-without-protobuf, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
+    needs: [format, test_sf_params_spec, build-without-protobuf, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -842,12 +855,14 @@ jobs:
           # a downstream job to be auto-skipped, which would otherwise be
           # misread as "no relevant changes detected" and pass.
           if [[ "${{ needs.format.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.test_sf_params_spec.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.build-without-protobuf.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_windows_arm64_nonfips.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_windows_x86.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Rust Core tests were RUN and FAILED or CANCELLED"
             echo "  - format: ${{ needs.format.result }}"
+            echo "  - test_sf_params_spec: ${{ needs.test_sf_params_spec.result }}"
             echo "  - build-without-protobuf: ${{ needs.build-without-protobuf.result }}"
             echo "  - test: ${{ needs.test.result }}"
             echo "  - test_windows_arm64_nonfips: ${{ needs.test_windows_arm64_nonfips.result }}"

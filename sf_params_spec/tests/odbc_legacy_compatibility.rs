@@ -43,6 +43,7 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("disableQueryContextCache", "disable_query_context_cache"),
     ("includeRetryReason", "include_retry_reason"),
     ("AllowEmptyProxy", "allow_empty_proxy"),
+    ("UseCurrentCatalog", "use_current_catalog"),
     ("enable_connection_diag", "enable_connection_diag"),
     ("connection_diag_log_path", "connection_diag_log_path"),
     (
@@ -141,7 +142,6 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     "ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE",
     "ODBC_SCHEMA_CACHING",
     "OUT_OF_RANGE_TIMESTAMP_EXCEPTION",
-    "UseCurrentCatalog",
     "EnableDescribeDirectExec",
     "RetryOn403",
     // Legacy DSN spellings that do not resolve as ODBC aliases.
