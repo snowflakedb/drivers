@@ -206,7 +206,7 @@ use futures::StreamExt as _;
 use gcs_transfer::{
     download_from_gcs_streaming, gcs_get_streaming, gcs_retry_policy, upload_to_gcs_or_skip,
 };
-use path_expansion::{PathExpansionError, expand_filenames};
+use path_expansion::{PathExpansionError, expand_filenames, resolve_against_cwd};
 use s3_transfer::{
     S3Download, S3DownloadBody, S3StreamingDownload, download_from_s3, download_from_s3_streaming,
     upload_to_s3_or_skip,
@@ -425,11 +425,12 @@ pub async fn upload_files(
     // (stat/readlink syscalls per path component), so it runs in
     // `spawn_blocking` to keep the runtime thread free, matching every other
     // blocking-I/O call in this file.
-    let pattern = data.src_location_pattern.clone();
-    let file_locations = tokio::task::spawn_blocking(move || expand_filenames(&pattern))
-        .await
-        .context(BlockingTaskSnafu)?
-        .context(PathExpansionSnafu)?;
+    let pattern = resolve_against_cwd(&data.src_location_pattern, data.cwd.as_deref());
+    let file_locations =
+        tokio::task::spawn_blocking(move || expand_filenames(&pattern.to_string_lossy()))
+            .await
+            .context(BlockingTaskSnafu)?
+            .context(PathExpansionSnafu)?;
 
     if file_locations.is_empty() {
         return NoFilesMatchedSnafu {
@@ -956,6 +957,9 @@ pub async fn download_files(
     policy: &RetryPolicy,
     tx: TransferCtx<'_>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
+    let local_location = resolve_against_cwd(&data.local_location, data.cwd.as_deref())
+        .to_string_lossy()
+        .into_owned();
     if let Some(message) = duplicate_download_basenames_warning(&data.src_locations) {
         tracing::warn!("{message}");
     }
@@ -986,6 +990,7 @@ pub async fn download_files(
         .collect();
 
     let data = &data;
+    let local_location = &local_location;
     let outcomes = futures::stream::iter(download_iter)
         .map(
             |(index, ((file_location, encryption_material), presigned_url))| {
@@ -1000,7 +1005,7 @@ pub async fn download_files(
                     }
                     let single_download_data = SingleDownloadData {
                         src_location: file_location,
-                        local_location: data.local_location.clone(),
+                        local_location: local_location.clone(),
                         // Read per file, not once for the batch: an earlier
                         // file's refresh must be picked up by those that follow.
                         stage_info: current_stage_info(&data.stage_info, tx.refresher),
@@ -2840,6 +2845,7 @@ mod tests {
             skip_upload_on_content_match: false,
             multipart: MultipartParams::default(),
             put_fastfail,
+            cwd: None,
         }
     }
 
@@ -3222,6 +3228,7 @@ mod tests {
             multipart: upload.multipart,
             unsafe_file_write: false,
             get_fastfail,
+            cwd: None,
         }
     }
 

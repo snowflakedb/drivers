@@ -4,6 +4,7 @@
 
 New features:
 
+- Added a `cwd` statement option that resolves relative local paths in PUT and GET against a caller-supplied directory. (snowflakedb/drivers#1932)
 - Added `session_token_expires_at_ms` and `master_token_expires_at_ms` to `ConnectionGetInfo`, reporting token expiry as milliseconds since the Unix epoch. Both are reported regardless of `include_master_token`, so a wrapper can answer a client-side token-validity check without handling the master token itself. (snowflakedb/drivers#1941)
 - Added an `extra_root_store_path` connection parameter that extends the default TLS root store with certificates from a PEM bundle while preserving `custom_root_store_path` replacement behavior. (snowflakedb/drivers#1827)
 - Added `retryReason` to retried query requests, carrying the HTTP status code that triggered the retry (e.g. `retryReason=503`) or `0` for transport-level failures such as connection resets. The parameter is enabled by default alongside the existing `retryCount`; set `include_retry_reason` to `false` on the connection to suppress it. Non-query endpoints (login, token refresh) carry neither parameter. (snowflakedb/drivers#TBD)

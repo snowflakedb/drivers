@@ -386,6 +386,7 @@ impl Data {
     ///
     /// `transport` supplies `StageInfo`'s TLS/proxy/CRL settings, which the
     /// wire-decoded response can't provide — see [`file_manager::StageTransport`].
+    #[allow(clippy::too_many_arguments)]
     pub fn to_file_upload_data(
         &self,
         flavor: PutGetResultsetFlavor,
@@ -393,6 +394,7 @@ impl Data {
         skip_upload_on_content_match: bool,
         use_s3_regional_url_session_param: bool,
         put_fastfail: bool,
+        cwd: Option<std::path::PathBuf>,
         transport: &file_manager::StageTransport,
     ) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
@@ -486,6 +488,7 @@ impl Data {
             skip_upload_on_content_match,
             multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
             put_fastfail,
+            cwd,
         })
     }
 
@@ -573,6 +576,7 @@ impl Data {
         use_s3_regional_url_session_param: bool,
         unsafe_file_write: bool,
         get_fastfail: bool,
+        cwd: Option<std::path::PathBuf>,
         transport: &file_manager::StageTransport,
     ) -> Result<file_manager::DownloadData, QueryResponseError> {
         let src_locations = self
@@ -649,6 +653,7 @@ impl Data {
             multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
             unsafe_file_write,
             get_fastfail,
+            cwd,
         })
     }
 
@@ -1679,6 +1684,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1696,6 +1702,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1713,6 +1720,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1732,6 +1740,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1751,6 +1760,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1772,6 +1782,7 @@ mod tests {
             false,
             false,
             false,
+            None,
             &file_manager::StageTransport::for_test(),
         );
         assert!(result.is_err());
@@ -1793,6 +1804,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1811,6 +1823,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1849,6 +1862,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    None,
                     &file_manager::StageTransport::for_test(),
                 )
                 .unwrap();
@@ -1872,6 +1886,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    None,
                     &file_manager::StageTransport::for_test(),
                 )
                 .unwrap();
@@ -1906,6 +1921,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1921,6 +1937,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1964,6 +1981,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1991,6 +2009,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -2013,6 +2032,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -2042,6 +2062,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -2079,6 +2100,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -2113,6 +2135,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -2135,6 +2158,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -2153,6 +2177,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -2169,6 +2194,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -2960,6 +2986,7 @@ mod tests {
             false,
             use_s3_regional_url_session_param,
             false,
+            None,
             &file_manager::StageTransport::for_test(),
         )
         .expect("convert to UploadData")

@@ -82,6 +82,7 @@ pub(super) async fn perform_put_get_transfer(
     skip_upload_on_content_match: bool,
     put_fastfail: bool,
     get_fastfail: bool,
+    cwd: Option<std::path::PathBuf>,
     unsafe_file_write: bool,
     tls_config: crate::tls::config::TlsConfig,
     proxy_config: crate::tls::config::ProxyConfig,
@@ -121,6 +122,7 @@ pub(super) async fn perform_put_get_transfer(
                     skip_upload_on_content_match,
                     use_s3_regional_url_session_param,
                     put_fastfail,
+                    cwd,
                     &transport,
                 )
                 .context(FileTransferPreparationSnafu)?;
@@ -134,6 +136,7 @@ pub(super) async fn perform_put_get_transfer(
             use_s3_regional_url_session_param,
             unsafe_file_write,
             get_fastfail,
+            cwd,
             &transport,
         ) {
             Ok(file_download_data) => {
@@ -197,6 +200,7 @@ pub(super) async fn build_and_upload_stream(
             // never enters the `upload_files` batch loop, so `put_fastfail` is
             // inert here — seed it from the wrapper preset for consistency.
             wrapper_presets.put_get_fastfail_default,
+            None,
             transport,
         )
         .context(FileTransferPreparationSnafu)?;

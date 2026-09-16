@@ -3,6 +3,7 @@ mod proxy_stream_live_mitm;
 mod put_get_auto_compress;
 mod put_get_azure_content_encoding;
 mod put_get_basic_operations;
+mod put_get_cwd;
 mod put_get_errors;
 mod put_get_gcs_multi_file;
 mod put_get_multipart_proxy_live_mitm;

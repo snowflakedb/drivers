@@ -322,6 +322,7 @@ async fn should_keep_completed_files_and_skip_the_rest_when_a_batch_is_cancelled
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
         get_fastfail: true,
+        cwd: None,
     };
 
     let (reached_mid_body, mid_body) = once_partial_file_exists(partial_path(&dir, "two"));
@@ -411,6 +412,7 @@ async fn should_clean_up_every_in_flight_file_when_a_batch_is_cancelled_at_fan_o
         multipart: MultipartParams::from_server(None, Some(2)),
         unsafe_file_write: false,
         get_fastfail: true,
+        cwd: None,
     };
 
     let (reached_one, mid_one) = once_partial_file_exists(partial_path(&dir, "one"));

@@ -1,6 +1,19 @@
 use crate::config::path_resolver::expand_tilde;
 use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+pub fn resolve_against_cwd(path: &str, cwd: Option<&Path>) -> PathBuf {
+    let Some(cwd) = cwd else {
+        return PathBuf::from(path);
+    };
+    let expanded = expand_tilde(path, dirs::home_dir().as_deref());
+    if expanded.is_absolute() {
+        PathBuf::from(path)
+    } else {
+        cwd.join(path)
+    }
+}
 
 /// Expands file names using glob patterns, returning a list of valid file paths.
 ///
@@ -108,6 +121,50 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+    use test_case::test_case;
+
+    #[test_case(Some("relative/path"), "./data.csv", "relative/path/./data.csv" ; "relative path against a relative cwd")]
+    #[test_case(Some("~/uploads"), "./data.csv", "~/uploads/./data.csv" ; "relative path against a cwd that starts with tilde")]
+    #[test_case(Some("relative/path"), ".", "relative/path/." ; "GET . against a relative cwd")]
+    #[test_case(Some("relative/path"), "../data.csv", "relative/path/../data.csv" ; "parent path against a relative cwd")]
+    #[test_case(Some("relative/path"), "../../data.csv", "relative/path/../../data.csv" ; "parent path past a relative cwd")]
+    #[test_case(Some("/absolute/path"), "./data.csv", "/absolute/path/./data.csv" ; "relative path against a posix cwd")]
+    #[test_case(Some("/absolute/path"), ".", "/absolute/path/." ; "GET . against a posix cwd")]
+    #[test_case(Some("/absolute/path"), "../data.csv", "/absolute/path/../data.csv" ; "parent path against a posix cwd")]
+    #[test_case(Some("/absolute/path"), "../../../data.csv", "/absolute/path/../../../data.csv" ; "parent path past posix root stays in the join")]
+    #[test_case(Some("/absolute/path"), "~/data.csv", "~/data.csv" ; "tilde file path ignores a posix cwd")]
+    #[test_case(Some("relative/path"), "~/data.csv", "~/data.csv" ; "tilde file path ignores a relative cwd")]
+    #[test_case(None, "./data.csv", "./data.csv" ; "cwd omitted leaves a original path")]
+    #[test_case(None, "~/data.csv", "~/data.csv" ; "cwd omitted leaves a tilde path")]
+    #[test_case(Some("/absolute/path"), "./data/*.csv", "/absolute/path/./data/*.csv" ; "glob wildcard stays in the basename")]
+    fn resolve_against_cwd_cases(cwd: Option<&str>, path: &str, expected: &str) {
+        assert_eq!(
+            resolve_against_cwd(path, cwd.map(Path::new)),
+            PathBuf::from(expected),
+        );
+    }
+
+    #[cfg(unix)]
+    #[test_case(Some("/absolute/path"), "/already/abs.csv", "/already/abs.csv" ; "posix absolute path ignores cwd")]
+    fn resolve_against_cwd_unix_cases(cwd: Option<&str>, path: &str, expected: &str) {
+        assert_eq!(
+            resolve_against_cwd(path, cwd.map(Path::new)),
+            PathBuf::from(expected),
+        );
+    }
+
+    #[cfg(windows)]
+    #[test_case(Some(r"C:\absolute\path"), "./data.csv", r"C:\absolute\path\.\data.csv" ; "relative path against a Windows cwd")]
+    #[test_case(Some(r"C:\absolute\path"), ".", r"C:\absolute\path\." ; "GET . against a Windows cwd")]
+    #[test_case(Some(r"D:\other"), r"C:\already\abs.csv", r"C:\already\abs.csv" ; "Windows absolute path ignores cwd")]
+    #[test_case(Some(r"C:\absolute\path"), r"..\data.csv", r"C:\absolute\path\..\data.csv" ; "parent path against a Windows cwd")]
+    #[test_case(Some(r"C:\absolute\path"), r"..\..\..\data.csv", r"C:\absolute\path\..\..\..\data.csv" ; "parent path past Windows root stays in the join")]
+    fn resolve_against_cwd_windows_cases(cwd: Option<&str>, path: &str, expected: &str) {
+        assert_eq!(
+            resolve_against_cwd(path, cwd.map(Path::new)),
+            PathBuf::from(expected),
+        );
+    }
 
     #[test]
     fn absolute_path_is_returned_unchanged() {
