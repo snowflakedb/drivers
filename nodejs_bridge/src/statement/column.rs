@@ -82,6 +82,16 @@ impl Column {
     }
 
     #[napi]
+    pub fn is_interval_year_month(&self) -> bool {
+        self.type_name == "interval_year_month"
+    }
+
+    #[napi]
+    pub fn is_interval_day_time(&self) -> bool {
+        self.type_name == "interval_day_time"
+    }
+
+    #[napi]
     pub fn is_boolean(&self) -> bool {
         self.type_name == "boolean"
     }

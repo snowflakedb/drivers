@@ -12,7 +12,6 @@ use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
 use super::time_format;
 use crate::session_params::KnownSessionParameters;
-use sf_output_format::{format_day_time, format_year_month};
 use sf_types::{ReadArrowError, ReadArrowType};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -21,9 +20,6 @@ use std::sync::Arc;
 /// `TIME(9)`). A local naming choice, not an established convention —
 /// `odbc`'s and `sf_core`'s equivalent arithmetic leave this bare.
 const MAX_TIME_SCALE: u32 = 9;
-/// Snowflake's maximum `INTERVAL DAY TO SECOND` fractional-second precision,
-/// bounding the fraction width [`format_day_time`] emits.
-const MAX_INTERVAL_DAY_TIME_SCALE: u32 = 9;
 /// Seconds in a day — the exclusive upper bound for a valid
 /// `secs_since_midnight` component of the `secs * 10^scale + frac` TIME
 /// encoding (see [`validate_time_range`]).
@@ -69,10 +65,7 @@ pub(crate) enum ColumnReader {
     },
     Vector(FixedSizeListArray),
     IntervalYearMonth(IntColumn),
-    IntervalDayTime {
-        values: IntColumn,
-        scale: u32,
-    },
+    IntervalDayTime(IntColumn),
 }
 
 impl ColumnReader {
@@ -240,20 +233,11 @@ impl ColumnReader {
                 "INTERVAL_YEAR_MONTH",
                 field.name(),
             )?)),
-            Some("INTERVAL_DAY_TIME") => {
-                let scale = usize_from_metadata(field, "scale")? as u32;
-                if scale > MAX_INTERVAL_DAY_TIME_SCALE {
-                    return Err(format!(
-                        "column {:?} has INTERVAL scale {scale} exceeding maximum of \
-                         {MAX_INTERVAL_DAY_TIME_SCALE}",
-                        field.name()
-                    ));
-                }
-                Ok(Self::IntervalDayTime {
-                    values: IntColumn::from_column(column, "INTERVAL_DAY_TIME", field.name())?,
-                    scale,
-                })
-            }
+            Some("INTERVAL_DAY_TIME") => Ok(Self::IntervalDayTime(IntColumn::from_column(
+                column,
+                "INTERVAL_DAY_TIME",
+                field.name(),
+            )?)),
             Some(logical_type) => Err(format!(
                 "no decoder registered for logicalType {logical_type:?}"
             )),
@@ -350,10 +334,8 @@ impl ColumnReader {
                 };
                 JsCell::NumberArray(numbers)
             }),
-            Self::IntervalYearMonth(values) => read_int(values, row_index, format_year_month),
-            Self::IntervalDayTime { values, scale } => {
-                read_int(values, row_index, |nanos| format_day_time(nanos, *scale))
-            }
+            Self::IntervalYearMonth(values) => read_int(values, row_index, |v| v.to_string()),
+            Self::IntervalDayTime(values) => read_int(values, row_index, |v| v.to_string()),
         }
     }
 }
@@ -1047,7 +1029,7 @@ mod tests {
     }
 
     #[test]
-    fn interval_year_month_int64_reads_ansi_literal_and_null() {
+    fn interval_year_month_int64_reads_raw_month_count_and_null() {
         let field = field("INTERVAL_YEAR_MONTH", DataType::Int64, &[]);
         let array = Int64Array::from(vec![Some(27), Some(-27), Some(0), None]);
         let reader = reader(&field, &array);
@@ -1055,9 +1037,9 @@ mod tests {
             matches!(reader, ColumnReader::IntervalYearMonth(IntColumn::I64(_))),
             "INTERVAL_YEAR_MONTH should route to the IntervalYearMonth arm on an I64 IntColumn"
         );
-        assert_eq!(reader.read(0), str_cell("2-03"));
-        assert_eq!(reader.read(1), str_cell("-2-03"));
-        assert_eq!(reader.read(2), str_cell("0-00"));
+        assert_eq!(reader.read(0), str_cell("27"));
+        assert_eq!(reader.read(1), str_cell("-27"));
+        assert_eq!(reader.read(2), str_cell("0"));
         assert_eq!(reader.read(3), JsCell::Null);
     }
 
@@ -1070,7 +1052,7 @@ mod tests {
             matches!(i8_reader, ColumnReader::IntervalYearMonth(IntColumn::I8(_))),
             "Int8 INTERVAL_YEAR_MONTH should keep an I8 IntColumn, not widen to Int64"
         );
-        assert_eq!(i8_reader.read(0), str_cell("1-02"));
+        assert_eq!(i8_reader.read(0), str_cell("14"));
 
         let i16_field = field("INTERVAL_YEAR_MONTH", DataType::Int16, &[]);
         let i16 = Int16Array::from(vec![Some(13i16)]);
@@ -1082,7 +1064,7 @@ mod tests {
             ),
             "Int16 INTERVAL_YEAR_MONTH should keep an I16 IntColumn, not widen to Int64"
         );
-        assert_eq!(i16_reader.read(0), str_cell("1-01"));
+        assert_eq!(i16_reader.read(0), str_cell("13"));
 
         let i32_field = field("INTERVAL_YEAR_MONTH", DataType::Int32, &[]);
         let i32 = Int32Array::from(vec![Some(13)]);
@@ -1094,22 +1076,19 @@ mod tests {
             ),
             "Int32 INTERVAL_YEAR_MONTH should keep an I32 IntColumn, not widen to Int64"
         );
-        assert_eq!(i32_reader.read(0), str_cell("1-01"));
+        assert_eq!(i32_reader.read(0), str_cell("13"));
 
-        let dt32_field = field("INTERVAL_DAY_TIME", DataType::Int32, &[("scale", "0")]);
+        let dt32_field = field("INTERVAL_DAY_TIME", DataType::Int32, &[]);
         let dt32 = Int32Array::from(vec![Some(2_000_000_000)]);
         let dt32_reader = reader(&dt32_field, &dt32);
         assert!(
             matches!(
                 dt32_reader,
-                ColumnReader::IntervalDayTime {
-                    values: IntColumn::I32(_),
-                    ..
-                }
+                ColumnReader::IntervalDayTime(IntColumn::I32(_))
             ),
             "Int32 INTERVAL_DAY_TIME should keep an I32 IntColumn, not widen to Int64"
         );
-        assert_eq!(dt32_reader.read(0), str_cell("0 00:00:02"));
+        assert_eq!(dt32_reader.read(0), str_cell("2000000000"));
     }
 
     #[test]
@@ -1118,65 +1097,33 @@ mod tests {
         let array = Decimal128Array::from(vec![Some(25i128)])
             .with_precision_and_scale(38, 0)
             .unwrap();
-        assert_eq!(reader(&field, &array).read(0), str_cell("2-01"));
+        assert_eq!(reader(&field, &array).read(0), str_cell("25"));
     }
 
     #[test]
-    fn interval_day_time_int64_scale_nine_and_null() {
-        let field = field("INTERVAL_DAY_TIME", DataType::Int64, &[("scale", "9")]);
+    fn interval_day_time_int64_reads_raw_nanos_and_null() {
+        let field = field("INTERVAL_DAY_TIME", DataType::Int64, &[]);
         let nanos: i64 = (86_400 + 2 * 3_600 + 3 * 60 + 4) * 1_000_000_000 + 500_000_000;
         let array = Int64Array::from(vec![Some(nanos), None]);
         let reader = reader(&field, &array);
         assert!(
-            matches!(
-                reader,
-                ColumnReader::IntervalDayTime {
-                    values: IntColumn::I64(_),
-                    ..
-                }
-            ),
+            matches!(reader, ColumnReader::IntervalDayTime(IntColumn::I64(_))),
             "INTERVAL_DAY_TIME should route to the IntervalDayTime arm on an I64 IntColumn"
         );
-        assert_eq!(reader.read(0), str_cell("1 02:03:04.500000000"));
+        assert_eq!(reader.read(0), str_cell("93784500000000"));
         assert_eq!(reader.read(1), JsCell::Null);
     }
 
     #[test]
-    fn interval_day_time_scale_zero_omits_fraction() {
-        let field = field("INTERVAL_DAY_TIME", DataType::Int64, &[("scale", "0")]);
-        let array = Int64Array::from(vec![Some(4 * 1_000_000_000)]);
-        assert_eq!(reader(&field, &array).read(0), str_cell("0 00:00:04"));
-    }
-
-    #[test]
     fn interval_day_time_decimal128_beyond_i64() {
-        let field = field(
-            "INTERVAL_DAY_TIME",
-            DataType::Decimal128(38, 0),
-            &[("scale", "9")],
-        );
+        let field = field("INTERVAL_DAY_TIME", DataType::Decimal128(38, 0), &[]);
         let beyond = i64::MAX as i128 + 1;
         let array = Decimal128Array::from(vec![Some(beyond)])
             .with_precision_and_scale(38, 0)
             .unwrap();
         assert_eq!(
             reader(&field, &array).read(0),
-            str_cell("106751 23:47:16.854775808")
-        );
-    }
-
-    #[test]
-    fn interval_day_time_rejects_scale_above_nine() {
-        let field = field("INTERVAL_DAY_TIME", DataType::Int64, &[("scale", "10")]);
-        let array = Int64Array::from(vec![Some(0)]);
-        let err = expect_err(ColumnReader::for_field(
-            &field,
-            &array,
-            &session_params("HH24:MI:SS"),
-        ));
-        assert!(
-            err.contains("scale 10"),
-            "error should name the invalid scale, got: {err}"
+            str_cell("9223372036854775808")
         );
     }
 }

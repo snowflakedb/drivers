@@ -9,6 +9,10 @@
 //! `nodejs_bridge` and `odbc` render the same bytes. The literal matches the
 //! grammar the ODBC bind path (`interval_str.rs`) parses, so an ODBC
 //! `SQL_C_INTERVAL_*` target re-reads this output through the existing parser.
+//!
+//! Arrow `scale` on `INTERVAL_DAY_TIME` is a subtype code, not TIME-style
+//! precision. [`day_time_fraction_scale`] maps that code to the `0`/`9` width
+//! [`format_day_time`] consumes.
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 const SECONDS_PER_MINUTE: u128 = 60;

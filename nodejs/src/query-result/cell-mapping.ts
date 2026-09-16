@@ -23,6 +23,8 @@ const CONVERTERS_BY_COLUMN_TYPE: Record<
   real: { asValue: null, asString: realAsStringConverter },
   vector: { asValue: null, asString: vectorAsStringConverter },
   decfloat: { asValue: null, asString: textAsStringConverter },
+  interval_year_month: { asValue: null, asString: textAsStringConverter },
+  interval_day_time: { asValue: null, asString: textAsStringConverter },
   boolean: { asValue: null, asString: booleanAsStringConverter },
   binary: { asValue: null, asString: binaryAsStringConverter },
   date: { asValue: null, asString: dateAsStringConverter },
@@ -33,7 +35,7 @@ const CONVERTERS_BY_COLUMN_TYPE: Record<
 };
 
 const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
-  String: ['text', 'decfloat'],
+  String: ['text', 'decfloat', 'interval_year_month', 'interval_day_time'],
   Number: ['fixed', 'real', 'vector'],
   Boolean: ['boolean'],
   Buffer: ['binary'],
