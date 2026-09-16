@@ -677,19 +677,15 @@ TEST_CASE("Replay: excel vba_ado prepared_exec", "[excel][vba_ado][prepared_exec
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
   }
 
-  // SQLFetch - this loop drains SQLGetTypeInfo(SQL_ALL_TYPES), not a data query.
-  // The connection is SQL_OV_ODBC2, so the reference driver returns 22 type rows (BIGINT is
-  // ODBC-3-only and datetime codes are 9/10/11), making this terminal fetch SQL_NO_DATA.
-  // The new driver ignores SQL_ATTR_ODBC_VERSION: SQLGetTypeInfo returns a static 23-row table
-  // (always includes BIGINT, uses TYPE_* datetime codes 91/92/93), so this fetch returns the
-  // 23rd row (SQL_SUCCESS) instead. Remove this skip once SNOW-3779779 makes SQLGetTypeInfo
-  // replicate the reference driver's version-dependent type set.
+  // SQLFetch
   {
     SQLRETURN ret = SQLFetch(stmt1);
-    SKIP_NEW_DRIVER("SNOW-3779779",
-                    "SQLGetTypeInfo ignores SQL_ATTR_ODBC_VERSION: returns 23 ODBC-3-shaped rows "
-                    "(incl. BIGINT + TYPE_* datetime codes) to an ODBC-2 app; reference driver "
-                    "returns 22");
+    NEW_DRIVER_ONLY("BD#119") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess()); }
+    OLD_DRIVER_ONLY("BD#119") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsNoData()); }
+  }
+
+  NEW_DRIVER_ONLY("BD#119") {
+    SQLRETURN ret = SQLFetch(stmt1);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsNoData());
   }
 
