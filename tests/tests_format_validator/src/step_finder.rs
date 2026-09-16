@@ -46,6 +46,9 @@ static JS_TEST_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     ))
     .unwrap()
 });
+static JS_PENDING_TEST_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\b(?:it|test)\.(?:todo|skip)\s*\(\s*['"]([^'"]+)['"]"#).unwrap()
+});
 
 /// Returns true if the trimmed line is a recognized xUnit C# test attribute.
 fn is_dotnet_test_attribute(s: &str) -> bool {
@@ -197,6 +200,11 @@ impl MethodBoundaryFinder {
                         methods.push((method_name, i + 1)); // +1 for 1-indexed line numbers
                     }
                 }
+                "test(" => {
+                    if let Some(captures) = JS_TEST_REGEX.captures(trimmed) {
+                        methods.push((captures[1].to_string(), i + 1));
+                    }
+                }
                 "TEST_CASE(" => {
                     // C++ Catch2: TEST_CASE("method_name") or TEST_CASE_METHOD(Fixture, "method_name")
                     // Declarations may span multiple lines.
@@ -334,6 +342,7 @@ impl MethodBoundaryFinder {
 
             // Special handling for Python - the declaration line (def test_foo(...):) is
             // itself the match, unlike Java/C#/C++ where a separate annotation line precedes it.
+            // JavaScript is already resolved above, against the whole file content.
             if self.config.test_annotation == "def test_" {
                 if method_regex.as_ref().is_some_and(|re| re.is_match(trimmed)) {
                     method_start_line = Some(i);
@@ -1016,6 +1025,9 @@ impl StepFinder {
 
         let mut violations = Vec::new();
         for (method_name, line_number) in all_methods {
+            if JS_PENDING_TEST_REGEX.is_match(lines[line_number.saturating_sub(1)].trim()) {
+                continue;
+            }
             // line_number is 1-indexed; convert to 0-indexed start
             let start_idx = line_number.saturating_sub(1);
             let end_idx = boundary_finder.find_method_end_from(&lines, start_idx);
@@ -1058,6 +1070,21 @@ impl StepFinder {
                 self.find_javascript_test_methods_with_lines(&content, scenario_name)
             }
         }
+    }
+
+    pub fn is_pending_test_method(&self, file_path: &Path, method_name: &str) -> Result<bool> {
+        if self.language != Language::JavaScript {
+            return Ok(false);
+        }
+        let content = std::fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
+        Ok(JS_PENDING_TEST_REGEX
+            .captures_iter(&content)
+            .any(|captures| {
+                captures
+                    .get(1)
+                    .is_some_and(|name| name.as_str() == method_name)
+            }))
     }
 
     fn find_rust_test_methods_with_lines(
@@ -1578,5 +1605,56 @@ public class IntTests {
 
         assert_eq!(methods.len(), 1);
         assert_eq!(methods[0].0, "shouldSelectIntegerLiteralsForIntAndSynonyms");
+    }
+
+    #[test]
+    fn javascript_extracts_active_and_pending_test_names() {
+        let finder = MethodBoundaryFinder::new(LanguageConfig::javascript());
+        let content = r#"
+it('active scenario', () => {});
+it.todo('todo scenario');
+test.skip("skipped scenario", () => {});
+it.skipIf(false)('conditional scenario', () => {});
+"#;
+
+        let methods = finder
+            .find_all_test_methods_with_lines(content)
+            .expect("JavaScript methods should parse");
+
+        assert_eq!(
+            methods,
+            vec![
+                ("active scenario".to_string(), 2),
+                ("todo scenario".to_string(), 3),
+                ("skipped scenario".to_string(), 4),
+                ("conditional scenario".to_string(), 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn javascript_excludes_pending_tests_from_when_then_validation() {
+        let temp = tempfile::NamedTempFile::new().expect("temporary file should open");
+        std::fs::write(
+            temp.path(),
+            r#"
+it.todo('pending scenario');
+it('active scenario', () => {
+  // When work runs
+  run();
+});
+"#,
+        )
+        .expect("temporary file should be writable");
+
+        let finder = StepFinder::new(Language::JavaScript);
+        let violations = finder
+            .find_methods_missing_when_then(temp.path())
+            .expect("JavaScript methods should validate");
+
+        assert_eq!(
+            violations,
+            vec![("active scenario".to_string(), 3, vec!["Then".to_string()])]
+        );
     }
 }

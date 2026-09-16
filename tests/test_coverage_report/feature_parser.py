@@ -15,6 +15,9 @@ TEST_CASE_PATTERN = re.compile(r'TEST_CASE\s*\(\s*"([^"]+)"')
 CPP_METHOD_PATTERN = re.compile(r'void\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
 RUST_FUNCTION_PATTERN = re.compile(r'fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
 PYTHON_TEST_PATTERN = re.compile(r'def\s+(test_[a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
+JAVASCRIPT_TEST_PATTERN = re.compile(
+    r"""(?:it|test)(?:(?:\.(?:todo|skip|only|concurrent))|(?:\.skipIf\([^)]*\)))?\s*\(\s*['"]([^'"]+)['"]"""
+)
 
 # All recognized Gherkin scenario keywords (longest prefixes first so that
 # "Scenario Outline:" and "Scenario Template:" are matched before "Scenario:").
@@ -283,6 +286,14 @@ class FeatureParser:
                 python_test_match = PYTHON_TEST_PATTERN.search(line_stripped)
                 if python_test_match:
                     method_name = python_test_match.group(1)
+                    for scenario in scenario_names:
+                        if self._method_matches_scenario(method_name, scenario):
+                            methods[scenario] = i
+                            break
+
+                javascript_test_match = JAVASCRIPT_TEST_PATTERN.search(line_stripped)
+                if javascript_test_match:
+                    method_name = javascript_test_match.group(1)
                     for scenario in scenario_names:
                         if self._method_matches_scenario(method_name, scenario):
                             methods[scenario] = i

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use walkdir::WalkDir;
@@ -28,6 +28,12 @@ static CATCH2_TEST_CASE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 static PYTHON_TEST_FN_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"def\s+(test_\w+)\s*\(").unwrap());
+static JS_TEST_FN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?:it|test)(?:(?:\.(?:todo|skip|only|concurrent))|(?:\.skipIf\([^)]*\)))?\s*\(\s*['"]([^'"]+)['"]"#,
+    )
+    .unwrap()
+});
 static BD_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"BD#\d+").unwrap());
 static RUST_FN_DECL_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:async\s+)?fn\s+(\w+)\s*\(").unwrap());
@@ -216,6 +222,7 @@ impl GherkinValidator {
         // Integration test files are only orphan-checked when a matching shared feature
         // declares integration-level scenarios for that language.
         let integration_defined = self.build_integration_defined_set()?;
+        let javascript_defined = self.build_javascript_defined_set()?;
 
         // Check each language's test directories
         for language in &[
@@ -224,6 +231,7 @@ impl GherkinValidator {
             Language::Odbc,
             Language::Python,
             Language::Dotnet,
+            Language::JavaScript,
         ] {
             let orphaned_files = self.find_orphaned_files_for_language(
                 language,
@@ -231,6 +239,7 @@ impl GherkinValidator {
                 &feature_language_requirements,
                 &scenario_language_requirements,
                 &integration_defined,
+                &javascript_defined,
             )?;
             if !orphaned_files.is_empty() {
                 orphan_validations.push(OrphanValidation {
@@ -272,11 +281,17 @@ impl GherkinValidator {
     /// at least one non-empty `When` step comment and at least one non-empty `Then` step comment.
     ///
     /// Rules:
-    /// - E2E test files: always checked.
+    /// - E2E test files: always checked, except JavaScript — Node keeps language-specific
+    ///   e2e tests in `nodejs/tests/e2e/` that are not Gherkin-mapped, so those files are
+    ///   checked only when a matching shared feature declares `@nodejs_e2e` or `@nodejs_int`.
+    ///   In a mapped Node file, only methods whose names match a tagged scenario are
+    ///   required to carry When/Then comments; colocated driver-specific `it()` cases
+    ///   are not Gherkin-mapped.
     /// - Integration test files: only checked when the matching shared feature
     ///   declares @{language}_int scenario-level tags for that language.
     pub fn validate_gherkin_step_structure(&self) -> Result<Vec<FileGherkinValidation>> {
         let integration_defined = self.build_integration_defined_set()?;
+        let javascript_defined = self.build_javascript_defined_set()?;
 
         let mut results = Vec::new();
 
@@ -285,6 +300,7 @@ impl GherkinValidator {
             Language::Jdbc,
             Language::Odbc,
             Language::Python,
+            Language::JavaScript,
         ] {
             let step_finder = StepFinder::new(language.clone());
 
@@ -300,24 +316,32 @@ impl GherkinValidator {
                     .filter(|e| self.is_test_file_for_language(e.path(), language))
                     .filter(|e| !self.is_utility_file(e.path()))
                 {
-                    // For integration dirs, only check files whose matching shared feature
-                    // declares integration-level scenarios for this language.
-                    if is_integration {
-                        let file_name = entry
-                            .path()
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("");
-                        let has_integration_definition =
-                            integration_defined.iter().any(|(lang, stem)| {
-                                lang == language && self.file_name_matches_feature(file_name, stem)
-                            });
-                        if !has_integration_definition {
-                            continue;
-                        }
+                    let file_name = entry
+                        .path()
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("");
+                    if !self.should_validate_gherkin_structure(
+                        language,
+                        is_integration,
+                        file_name,
+                        &integration_defined,
+                        &javascript_defined,
+                    ) {
+                        continue;
                     }
 
-                    let violations = step_finder.find_methods_missing_when_then(entry.path())?;
+                    let mut violations =
+                        step_finder.find_methods_missing_when_then(entry.path())?;
+                    if *language == Language::JavaScript {
+                        let mapped_scenarios =
+                            self.javascript_scenario_names_for_file(file_name)?;
+                        violations.retain(|(method_name, _, _)| {
+                            mapped_scenarios.iter().any(|scenario| {
+                                self.method_name_matches_scenario(method_name, scenario)
+                            })
+                        });
+                    }
                     if !violations.is_empty() {
                         results.push(FileGherkinValidation {
                             file_path: entry.path().to_path_buf(),
@@ -375,7 +399,10 @@ impl GherkinValidator {
                     .join("dotnet/tests/Snowflake.Data.Tests.Reference"),
                 false,
             )],
-            _ => vec![],
+            Language::JavaScript => vec![
+                (self._workspace_root.join("nodejs/tests/e2e"), false),
+                (self._workspace_root.join("nodejs/tests/integ"), true),
+            ],
         }
     }
 
@@ -436,10 +463,54 @@ impl GherkinValidator {
     fn build_integration_defined_set(
         &self,
     ) -> Result<std::collections::HashSet<(Language, String)>> {
-        use crate::feature_parser::Feature;
-        use crate::test_discovery::TestLevel;
+        self.build_defined_set(Some(TestLevel::Integration))
+    }
 
-        let mut integration_defined = std::collections::HashSet::new();
+    fn javascript_scenario_names_for_file(&self, file_name: &str) -> Result<HashSet<String>> {
+        let mut names = HashSet::new();
+
+        for entry in WalkDir::new(&self.features_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
+        {
+            let feature_stem = entry
+                .path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if !self.file_name_matches_feature(file_name, feature_stem) {
+                continue;
+            }
+
+            let feature = Feature::parse_from_file(entry.path())?;
+            for scenario in &feature.scenarios {
+                if TestDiscovery::get_target_languages(&scenario.tags)
+                    .contains(&Language::JavaScript)
+                {
+                    names.insert(scenario.name.clone());
+                }
+            }
+        }
+
+        Ok(names)
+    }
+
+    /// Stems whose shared feature declares `@nodejs_e2e` or `@nodejs_int`. Node colocates
+    /// pending integration scenarios in `nodejs/tests/e2e/` until a dedicated integ tree exists.
+    fn build_javascript_defined_set(&self) -> Result<std::collections::HashSet<String>> {
+        Ok(self
+            .build_defined_set(None)?
+            .into_iter()
+            .filter_map(|(language, stem)| (language == Language::JavaScript).then_some(stem))
+            .collect())
+    }
+
+    fn build_defined_set(
+        &self,
+        level_filter: Option<TestLevel>,
+    ) -> Result<std::collections::HashSet<(Language, String)>> {
+        let mut defined = std::collections::HashSet::new();
 
         for entry in WalkDir::new(&self.features_dir)
             .into_iter()
@@ -455,21 +526,38 @@ impl GherkinValidator {
                 .to_string();
 
             for scenario in &feature.scenarios {
-                for language in
-                    crate::test_discovery::TestDiscovery::get_target_languages(&scenario.tags)
-                {
-                    if crate::test_discovery::TestDiscovery::get_test_level_for_language(
-                        &scenario.tags,
-                        &language,
-                    ) == TestLevel::Integration
-                    {
-                        integration_defined.insert((language, feature_stem.clone()));
+                for language in TestDiscovery::get_target_languages(&scenario.tags) {
+                    let level =
+                        TestDiscovery::get_test_level_for_language(&scenario.tags, &language);
+                    if level_filter.as_ref().is_none_or(|wanted| level == *wanted) {
+                        defined.insert((language, feature_stem.clone()));
                     }
                 }
             }
         }
 
-        Ok(integration_defined)
+        Ok(defined)
+    }
+
+    fn should_validate_gherkin_structure(
+        &self,
+        language: &Language,
+        is_integration: bool,
+        file_name: &str,
+        integration_defined: &std::collections::HashSet<(Language, String)>,
+        javascript_defined: &std::collections::HashSet<String>,
+    ) -> bool {
+        if *language == Language::JavaScript && !is_integration {
+            return javascript_defined
+                .iter()
+                .any(|stem| self.file_name_matches_feature(file_name, stem));
+        }
+        if is_integration {
+            return integration_defined.iter().any(|(lang, stem)| {
+                lang == language && self.file_name_matches_feature(file_name, stem)
+            });
+        }
+        true
     }
 
     fn collect_all_scenarios_and_languages(
@@ -553,6 +641,7 @@ impl GherkinValidator {
         feature_language_requirements: &std::collections::HashMap<String, Vec<Language>>,
         scenario_language_requirements: &std::collections::HashMap<(String, String), Vec<Language>>,
         integration_defined: &std::collections::HashSet<(Language, String)>,
+        javascript_defined: &std::collections::HashSet<String>,
     ) -> Result<Vec<OrphanedTestFile>> {
         let mut orphaned_files = Vec::new();
 
@@ -578,16 +667,14 @@ impl GherkinValidator {
                     .unwrap()
                     .to_string();
 
-                // For integration dirs, only check files whose matching shared feature
-                // declares @{language}_int scenarios — same filter as When/Then check.
-                if is_integration {
-                    let has_integration_definition =
-                        integration_defined.iter().any(|(lang, stem)| {
-                            lang == language && self.file_name_matches_feature(&file_name, stem)
-                        });
-                    if !has_integration_definition {
-                        continue;
-                    }
+                if !self.should_validate_gherkin_structure(
+                    language,
+                    is_integration,
+                    &file_name,
+                    integration_defined,
+                    javascript_defined,
+                ) {
+                    continue;
                 }
 
                 let orphaned_methods = self.find_orphaned_methods_in_file(
@@ -692,7 +779,7 @@ impl GherkinValidator {
                 Language::Odbc => extension == "cpp",
                 Language::Python => extension == "py",
                 Language::Dotnet => extension == "cs",
-                _ => false,
+                Language::JavaScript => extension == "ts",
             }
         } else {
             false
@@ -704,6 +791,7 @@ impl GherkinValidator {
 
         // Remove common test prefixes and suffixes
         let clean_file_name = file_name
+            .trim_end_matches(".test")
             .trim_start_matches("test_") // Python: test_feature_name.py
             .trim_end_matches("Test") // JDBC: FeatureNameTest.java
             .trim_end_matches("Tests") // JDBC: FeatureNameTests.java
@@ -722,6 +810,10 @@ impl GherkinValidator {
         all_scenarios: &[(String, String)],
         scenario_language_requirements: &std::collections::HashMap<(String, String), Vec<Language>>,
     ) -> Result<Vec<String>> {
+        if *language == Language::JavaScript {
+            return Ok(vec![]);
+        }
+
         let content = std::fs::read_to_string(file_path)
             .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
 
@@ -815,7 +907,11 @@ impl GherkinValidator {
                     methods.push(captures[1].to_string());
                 }
             }
-            _ => {}
+            Language::JavaScript => {
+                for captures in JS_TEST_FN_REGEX.captures_iter(content) {
+                    methods.push(captures[1].to_string());
+                }
+            }
         }
 
         // Remove duplicates (e.g., if file has duplicate test method names)
@@ -1209,6 +1305,15 @@ impl GherkinValidator {
 
                     // For each test method found, check if it implements all scenario steps
                     for (method_name, line_number) in test_methods_with_lines {
+                        if step_finder
+                            .is_pending_test_method(actual_test_file_path, &method_name)?
+                        {
+                            warnings.push(format!(
+                                "Pending test method found for scenario: {}",
+                                scenario.name
+                            ));
+                            continue;
+                        }
                         let method_steps = step_finder
                             .find_steps_in_method(actual_test_file_path, &method_name)?;
                         let scenario_steps: Vec<String> = scenario
@@ -1375,6 +1480,7 @@ impl GherkinValidator {
             Language::Odbc,
             Language::Python,
             Language::Dotnet,
+            Language::JavaScript,
         ] {
             let mut e2e_files: Vec<LanguageSpecificTestFile> = Vec::new();
             let mut integration_files: Vec<LanguageSpecificTestFile> = Vec::new();
@@ -1426,6 +1532,7 @@ impl GherkinValidator {
                         Language::Python => Some(&PYTHON_TEST_FN_REGEX),
                         Language::Odbc => Some(&ODBC_TEST_CASE_DECL_REGEX),
                         Language::Jdbc => Some(&JDBC_METHOD_DECL_REGEX),
+                        Language::JavaScript => Some(&JS_TEST_FN_REGEX),
                         _ => None,
                     };
 
@@ -1612,6 +1719,15 @@ mod tests {
             .expect("regex should not fail")
     }
 
+    fn get_javascript_methods(content: &str) -> Vec<String> {
+        let validator =
+            GherkinValidator::new(std::path::PathBuf::from("."), std::path::PathBuf::from("."))
+                .expect("validator creation should not fail");
+        validator
+            .get_all_test_methods_in_file(content, &Language::JavaScript)
+            .expect("regex should not fail")
+    }
+
     #[test]
     fn test_plain_test_attribute() {
         let content = r#"
@@ -1669,5 +1785,84 @@ pub fn public_fn() {}
 async fn async_helper() {}
 "#;
         assert!(get_rust_methods(content).is_empty());
+    }
+
+    #[test]
+    fn javascript_extracts_vitest_methods() {
+        let content = r#"
+it('active scenario', () => {});
+it.todo('todo scenario');
+test.skip("skipped scenario", () => {});
+it.skipIf(false)('conditional scenario', () => {});
+"#;
+        assert_eq!(
+            get_javascript_methods(content),
+            vec![
+                "active scenario",
+                "conditional scenario",
+                "skipped scenario",
+                "todo scenario"
+            ]
+        );
+    }
+
+    #[test]
+    fn javascript_test_file_name_matches_feature() {
+        let validator =
+            GherkinValidator::new(std::path::PathBuf::from("."), std::path::PathBuf::from("."))
+                .expect("validator creation should not fail");
+
+        assert!(validator.file_name_matches_feature("external-browser.test", "external_browser"));
+    }
+
+    #[test]
+    fn javascript_pending_scenario_is_reported_without_missing_steps() {
+        let temp = tempfile::TempDir::new().expect("temporary directory should open");
+        let feature_path = temp
+            .path()
+            .join("tests/definitions/shared/authentication/external_browser.feature");
+        let test_path = temp
+            .path()
+            .join("nodejs/tests/e2e/authentication/external-browser.test.ts");
+        std::fs::create_dir_all(
+            feature_path
+                .parent()
+                .expect("feature path should have a parent"),
+        )
+        .expect("feature directory should be created");
+        std::fs::create_dir_all(test_path.parent().expect("test path should have a parent"))
+            .expect("test directory should be created");
+        std::fs::write(
+            &feature_path,
+            "@nodejs\nFeature: External Browser Authentication\n\n  @nodejs_int\n  Scenario: should fail with timeout when no browser callback arrives\n    Given Wiremock returns a response\n    When Trying to Connect\n    Then Connection fails\n",
+        )
+        .expect("feature should be writable");
+        std::fs::write(
+            &test_path,
+            "it.todo('should fail with timeout when no browser callback arrives');\n",
+        )
+        .expect("test should be writable");
+
+        let feature = Feature::parse_from_file(&feature_path).expect("feature should parse");
+        let validator = GherkinValidator::new(
+            temp.path().to_path_buf(),
+            temp.path().join("tests/definitions"),
+        )
+        .expect("validator creation should not fail");
+        let result = validator
+            .validate_feature_with_path(&feature, &feature_path)
+            .expect("feature should validate");
+        let javascript = result
+            .validations
+            .iter()
+            .find(|validation| validation.language == Language::JavaScript)
+            .expect("JavaScript validation should exist");
+
+        assert!(javascript.missing_steps.is_empty());
+        assert!(javascript.missing_steps_by_method.is_empty());
+        assert_eq!(
+            javascript.warnings,
+            vec!["Pending test method found for scenario: should fail with timeout when no browser callback arrives"]
+        );
     }
 }
