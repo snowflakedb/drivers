@@ -200,6 +200,7 @@ use cloud_http::{
 };
 use encryption::{
     EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
+    wrapped_key_matches_material,
 };
 use flate2::write::GzDecoder;
 use futures::StreamExt as _;
@@ -1218,6 +1219,34 @@ fn prepare_download_output_paths(
     Ok((output_path, partial_path))
 }
 
+fn cse_info_from_s3_object(
+    file_metadata: Option<EncryptedFileMetadata>,
+    digest: Option<String>,
+    enc_material: Option<&EncryptionMaterial>,
+) -> Result<Option<CseDownloadInfo>, FileManagerError> {
+    // TODO(SNOW-4115038): missing CSE headers and placeholder wraps currently
+    // return Ok(None) so GET writes raw bytes. Legacy Python/JDBC/Node fail
+    // the GET when encryption_material is set.
+    let Some(enc_material) = enc_material else {
+        return Ok(None);
+    };
+    let Some(metadata) = file_metadata else {
+        tracing::debug!(
+            "encryption_material present but S3 encryption headers absent; \
+             writing raw bytes"
+        );
+        return Ok(None);
+    };
+    if !wrapped_key_matches_material(&metadata, enc_material).context(DecryptionSnafu)? {
+        tracing::debug!(
+            "S3 encryption headers present but wrapped key does not match encryption material; \
+             treating as raw bytes"
+        );
+        return Ok(None);
+    }
+    Ok(Some(CseDownloadInfo { metadata, digest }))
+}
+
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
 ///
 /// `per_file_index` is the file's index inside the GET batch — i.e. its
@@ -1295,11 +1324,9 @@ async fn download_single_file_to(
     // in memory and spills large ranged downloads to a tempfile (renamed into
     // place on the SSE path); GCS/Azure stream from the network.
     //
-    // CSE verifies the SHA-256 digest at finalize time rather than pre-checking
-    // it: pre-verification would require buffering the full ciphertext, which
-    // defeats the streaming refactor. The integrity guarantee is preserved (a
-    // tampered byte still yields DigestMismatch); only the failure-mode timing
-    // differs. Every branch writes to `partial_path` and renames on success — the
+    // When a digest is present, CSE verifies it at finalize rather than
+    // pre-checking: pre-verification would require buffering the full ciphertext.
+    // Every branch writes to `partial_path` and renames on success — the
     // user-visible destination only ever appears as a complete artefact, even if
     // a concurrent FS observer is racing.
     // Extract enc_material and unsafe_file_write before the match so all three
@@ -1353,6 +1380,7 @@ async fn download_single_file_to(
             .await
             .context(S3DownloadSnafu)?;
 
+            let cse_info = cse_info_from_s3_object(file_metadata, digest, enc_material.as_ref())?;
             let partial_path2 = partial_path.clone();
 
             // Write to `<dst>.part` but do NOT rename inside spawn_blocking.
@@ -1361,40 +1389,27 @@ async fn download_single_file_to(
             // blocking task. The `.await` itself is the cancellation point.
             let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(
                 move || -> Result<(i64, Option<tempfile::TempPath>), FileManagerError> {
-                    match (enc_material, file_metadata, digest) {
-                        // Client-side-encrypted object: decrypt the ciphertext
-                        // (from the in-memory buffer or the spilled tempfile),
-                        // verifying the SHA-256 digest at finalize time.
-                        (Some(enc_material), Some(enc_metadata), Some(d)) => {
+                    match (enc_material, cse_info) {
+                        // CSE: decrypt the ciphertext (in-memory buffer or spilled tempfile).
+                        (Some(enc_material), Some(cse)) => {
                             let reader = body.into_reader().context(IoSnafu)?;
                             let mut output_file =
                                 create_output_file(&partial_path2, unsafe_file_write)
                                     .context(IoSnafu)?;
                             let result = decrypt_ciphertext_to_writer(
                                 reader,
-                                &enc_metadata,
-                                d.as_str(),
+                                &cse.metadata,
+                                cse.digest.as_deref(),
                                 &enc_material,
                                 &mut output_file,
                             )
                             .context(DecryptionSnafu);
                             write_or_cleanup(output_file, &partial_path2, result).map(|n| (n, None))
                         }
-                        // Non-decrypting cases — the cloud bytes are already the
-                        // final plaintext:
-                        //   * SSE stage — no `encryption_material` (server-side
-                        //     decryption).
-                        //   * `encryption_material` present but the object carries no
-                        //     client-side-encryption headers (e.g. git-stage objects
-                        //     on S3) — write raw bytes, matching legacy connector
-                        //     behaviour (SNOW git-stage fix).
-                        (maybe_enc, _, _) => {
-                            if maybe_enc.is_some() {
-                                tracing::debug!(
-                                    "encryption_material present but S3 encryption headers absent; \
-                                     writing raw bytes"
-                                );
-                            }
+                        // SSE (no encryption_material) or git-stage (CSE-shaped
+                        // headers whose wrap is not this query-stage master key):
+                        // already plaintext.
+                        _ => {
                             match body {
                                 // Non-encrypted ranged download: the parallel GETs already
                                 // assembled the whole object straight into `.part`. Nothing to
@@ -1734,10 +1749,7 @@ pub async fn open_s3_download_stream(
         .await
         .context(S3DownloadSnafu)?;
 
-    let cse_info = match (file_metadata, digest) {
-        (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
-        _ => None,
-    };
+    let cse_info = cse_info_from_s3_object(file_metadata, digest, encryption_material.as_ref())?;
     let (reader, producer_abort) = spawn_s3_byte_stream_producer(body, slot);
 
     Ok(spawn_download_stream_pipeline(
@@ -2026,13 +2038,12 @@ fn run_streaming_download_pipeline<R: Read>(
     };
 
     match (encryption_material, cse_info) {
-        // Client-side-encrypted object: decrypt the ciphertext stream,
-        // verifying the SHA-256 digest at finalize time.
+        // CSE: decrypt; verify digest when present.
         (Some(enc_material), Some(CseDownloadInfo { metadata, digest })) => {
             decrypt_ciphertext_to_writer(
                 &mut reader,
                 &metadata,
-                digest.as_str(),
+                digest.as_deref(),
                 &enc_material,
                 &mut sink,
             )
@@ -2041,6 +2052,9 @@ fn run_streaming_download_pipeline<R: Read>(
         // `encryption_material` present but no CSE headers (e.g. git-stage
         // objects — same handling as `download_single_file` /
         // `write_cloud_download`'s non-streaming path) — stream raw bytes.
+        // TODO(SNOW-4115038): this arm writes raw bytes. Legacy Python/JDBC/Node
+        // fail the GET when encryption_material is set and unwrap/decrypt cannot
+        // succeed.
         (maybe_enc, _) => {
             if maybe_enc.is_some() {
                 tracing::debug!(
@@ -2103,13 +2117,13 @@ fn warn_remove_partial(partial_path: &Path) {
 /// bytes.
 ///
 /// How the writer *ends* differs by path, and only one of them cleans up after
-/// itself. On a CSE object, `decrypt_ciphertext_to_writer` fails its digest check on
-/// the truncated body, so [`write_or_cleanup`] removes `.part` — dropping the file
-/// handle first, which is what makes that removal work on Windows. On a plain SSE
-/// object the closed channel reads as a clean EOF ([`cloud_http::StreamReader`]
-/// returns `Ok(0)`), `std::io::copy` returns `Ok`, and nothing is removed. So on SSE
-/// this guard stops the fetch but leaves `.part` behind for
-/// [`remove_partial_after_cancel`] to deal with.
+/// itself. On a CSE object with a digest, `decrypt_ciphertext_to_writer` fails
+/// its digest check on the truncated body, so [`write_or_cleanup`] removes `.part`
+/// — dropping the file handle first, which is what makes that removal work on
+/// Windows. On SSE, or CSE with no digest, the closed channel reads as a clean
+/// EOF ([`cloud_http::StreamReader`] returns `Ok(0)`), the write returns `Ok`,
+/// and nothing is removed. This guard then stops the fetch but leaves `.part`
+/// behind for [`remove_partial_after_cancel`] to deal with.
 ///
 /// `Drop`-based rather than registered as cleanup: the abort is synchronous, so
 /// there is nothing to await, and a guard fires even when the caller had no
@@ -2250,7 +2264,7 @@ fn write_cloud_download(
     unsafe_file_write: bool,
 ) -> Result<(i64, Option<tempfile::TempPath>), FileManagerError> {
     match (enc_material, cse_info) {
-        // Client-side-encrypted object: decrypt (verifying the digest).
+        // CSE: decrypt; verify digest when present.
         (Some(enc_material), Some(cse)) => {
             let reader = body.into_reader().context(IoSnafu)?;
             let mut output_file =
@@ -2258,7 +2272,7 @@ fn write_cloud_download(
             let result = decrypt_ciphertext_to_writer(
                 reader,
                 &cse.metadata,
-                &cse.digest,
+                cse.digest.as_deref(),
                 &enc_material,
                 &mut output_file,
             )
@@ -2270,6 +2284,9 @@ fn write_cloud_download(
         // sfcdigest; the download path sets cse_info=None (see cloud git-stage fix).
         // Treat as raw bytes: the spill_target was Temp (because enc_material.is_some()),
         // so hand the temp out for the caller to rename, or copy a streamed body.
+        // TODO(SNOW-4115038): this arm writes raw bytes. Legacy Python/JDBC/Node
+        // fail the GET when encryption_material is set and unwrap/decrypt cannot
+        // succeed.
         (Some(_), None) => {
             tracing::debug!(
                 "enc_material present but cse_info absent; treating as raw bytes (git-stage)"

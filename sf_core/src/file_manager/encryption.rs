@@ -1,6 +1,6 @@
 use super::types::{ByteSource, EncryptedFileMetadata, EncryptionMaterial, MaterialDescription};
 use crate::sensitive::Sensitive;
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, ResultExt, Snafu, ensure};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_ENGINE};
 use openssl::{
@@ -212,16 +212,39 @@ impl<R: Read> Read for EncryptingReader<R> {
     }
 }
 
-/// Decrypts `ciphertext` into `output`, verifying the SHA-256 digest at
-/// finalize time. On `DigestMismatch`, partial plaintext may already have
-/// been written — callers must discard the partial output.
-pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
-    mut ciphertext: R,
+/// Whether `metadata`'s wrapped file key unwraps with `encryption_material` to
+/// an AES key of the master-key length.
+///
+/// `Ok(false)`: the wrap is not a CSE key wrap for this master key (git-stage
+/// dummy `"test-key"`, wrong ciphertext length). GET writes raw bytes.
+///
+/// `Err`: the wrap length matches a real CSE key wrap and unwrap still failed.
+/// GET fails instead of writing ciphertext.
+///
+/// TODO(SNOW-4115038): `Ok(false)` still writes raw bytes. Legacy
+/// Python/JDBC/Node fail the GET. Loud failure is the intended contract.
+pub(super) fn wrapped_key_matches_material(
     metadata: &EncryptedFileMetadata,
-    digest: &str,
     encryption_material: &EncryptionMaterial,
-    output: &mut W,
-) -> Result<i64, EncryptionError> {
+) -> Result<bool, EncryptionError> {
+    let master_key = BASE64_ENGINE
+        .decode(encryption_material.query_stage_master_key.reveal())
+        .context(Base64DecodeSnafu {
+            context: "master key",
+        })?;
+    let cipher_suite = CipherSuite::from_key_len(master_key.len())?;
+    match BASE64_ENGINE.decode(&metadata.encrypted_key) {
+        Ok(wrapped) if wrapped.len() == cipher_suite.key_len + AES_BLOCK_SIZE_IN_BYTES => {
+            unwrap_file_key(metadata, encryption_material).map(|_| true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn unwrap_file_key(
+    metadata: &EncryptedFileMetadata,
+    encryption_material: &EncryptionMaterial,
+) -> Result<(Vec<u8>, CipherSuite), EncryptionError> {
     let master_key = BASE64_ENGINE
         .decode(encryption_material.query_stage_master_key.reveal())
         .context(Base64DecodeSnafu {
@@ -235,17 +258,37 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
             .context(Base64DecodeSnafu {
                 context: "encrypted file key",
             })?;
-    let iv = BASE64_ENGINE
-        .decode(&metadata.iv)
-        .context(Base64DecodeSnafu {
-            context: "initialization vector",
-        })?;
 
     let file_key = decrypt(cipher_suite.ecb, &master_key, None, &encrypted_file_key).context(
         OpenSSLSnafu {
             operation: "decrypting file key with AES-ECB",
         },
     )?;
+    ensure!(
+        file_key.len() == cipher_suite.key_len,
+        UnsupportedKeySizeSnafu {
+            key_size: file_key.len()
+        }
+    );
+    Ok((file_key, cipher_suite))
+}
+
+/// Decrypts `ciphertext` into `output`. When `digest` is present it is
+/// verified at finalize; on `DigestMismatch`, callers must discard any
+/// already-written output.
+pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
+    mut ciphertext: R,
+    metadata: &EncryptedFileMetadata,
+    digest: Option<&str>,
+    encryption_material: &EncryptionMaterial,
+    output: &mut W,
+) -> Result<i64, EncryptionError> {
+    let (file_key, cipher_suite) = unwrap_file_key(metadata, encryption_material)?;
+    let iv = BASE64_ENGINE
+        .decode(&metadata.iv)
+        .context(Base64DecodeSnafu {
+            context: "initialization vector",
+        })?;
 
     let mut crypter = Crypter::new(cipher_suite.cbc, Mode::Decrypt, &file_key, Some(&iv)).context(
         OpenSSLSnafu {
@@ -256,9 +299,13 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
 
     // The digest stored on upload is the SHA-256 of the (compressed) plaintext,
     // not the ciphertext, so verification hashes the decrypted output.
-    let mut hasher = Hasher::new(MessageDigest::sha256()).context(OpenSSLSnafu {
-        operation: "initializing SHA-256 hasher for decryption",
-    })?;
+    let mut hasher = digest
+        .map(|_| {
+            Hasher::new(MessageDigest::sha256()).context(OpenSSLSnafu {
+                operation: "initializing SHA-256 hasher for decryption",
+            })
+        })
+        .transpose()?;
 
     let mut cipher_buf = vec![0u8; CRYPT_CHUNK_SIZE];
     let mut plain_buf = vec![0u8; CRYPT_CHUNK_SIZE + AES_BLOCK_SIZE_IN_BYTES];
@@ -278,9 +325,11 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
             })?;
         if written > 0 {
             let plaintext = &plain_buf[..written];
-            hasher.update(plaintext).context(OpenSSLSnafu {
-                operation: "hashing plaintext chunk",
-            })?;
+            if let Some(hasher) = hasher.as_mut() {
+                hasher.update(plaintext).context(OpenSSLSnafu {
+                    operation: "hashing plaintext chunk",
+                })?;
+            }
             output.write_all(plaintext).context(IoSnafu {
                 operation: "writing decrypted chunk to output",
             })?;
@@ -293,21 +342,25 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
     })?;
     if tail_written > 0 {
         let plaintext = &plain_buf[..tail_written];
-        hasher.update(plaintext).context(OpenSSLSnafu {
-            operation: "hashing final plaintext block",
-        })?;
+        if let Some(hasher) = hasher.as_mut() {
+            hasher.update(plaintext).context(OpenSSLSnafu {
+                operation: "hashing final plaintext block",
+            })?;
+        }
         output.write_all(plaintext).context(IoSnafu {
             operation: "writing final decrypted block",
         })?;
         output_byte_len += tail_written as i64;
     }
 
-    let computed_bytes = hasher.finish().context(OpenSSLSnafu {
-        operation: "finalizing SHA-256 digest for verification",
-    })?;
-    let computed = BASE64_ENGINE.encode(computed_bytes);
-    if computed != digest {
-        return DigestMismatchSnafu.fail();
+    if let (Some(expected), Some(mut hasher)) = (digest, hasher) {
+        let computed_bytes = hasher.finish().context(OpenSSLSnafu {
+            operation: "finalizing SHA-256 digest for verification",
+        })?;
+        let computed = BASE64_ENGINE.encode(computed_bytes);
+        if computed != expected {
+            return DigestMismatchSnafu.fail();
+        }
     }
 
     Ok(output_byte_len)
@@ -523,7 +576,7 @@ mod tests {
         decrypt_ciphertext_to_writer(
             &ciphertext[..],
             &metadata,
-            &digest,
+            Some(&digest),
             &material,
             &mut decrypted,
         )
@@ -545,7 +598,7 @@ mod tests {
         let result = decrypt_ciphertext_to_writer(
             &ciphertext[..],
             &metadata,
-            &wrong_digest,
+            Some(&wrong_digest),
             &material,
             &mut output,
         );
@@ -554,5 +607,73 @@ mod tests {
             result,
             Err(EncryptionError::DigestMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn decrypt_succeeds_without_digest_when_absent() {
+        let plaintext = b"payload with no digest header";
+        let material = test_material();
+
+        let (enc, metadata) = build_encryptor(&material, plaintext.len() as i64).unwrap();
+        let ciphertext = encrypt_to_vec(&enc, plaintext);
+
+        let mut decrypted = Vec::new();
+        decrypt_ciphertext_to_writer(&ciphertext[..], &metadata, None, &material, &mut decrypted)
+            .unwrap();
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn wrapped_key_matches_material_accepts_real_cse_wrap() {
+        let material = test_material();
+        let (_enc, metadata) = build_encryptor(&material, 8).unwrap();
+        assert!(wrapped_key_matches_material(&metadata, &material).unwrap());
+    }
+
+    #[test]
+    fn wrapped_key_matches_material_rejects_placeholder_key() {
+        let material = test_material();
+        let metadata = EncryptedFileMetadata {
+            encrypted_key: BASE64_ENGINE.encode(b"test-key"),
+            iv: BASE64_ENGINE.encode([0u8; AES_BLOCK_SIZE_IN_BYTES]),
+            material_desc: MaterialDescription {
+                query_id: material.query_id.clone(),
+                smk_id: material.smk_id.clone(),
+                key_size: "256".to_string(),
+            },
+        };
+        assert!(!wrapped_key_matches_material(&metadata, &material).unwrap());
+    }
+
+    #[test]
+    fn wrapped_key_matches_material_rejects_mismatched_key_length() {
+        let material = test_material();
+        let master_key = BASE64_ENGINE
+            .decode(material.query_stage_master_key.reveal())
+            .unwrap();
+        let short_key = [9u8; AES_128_KEY_SIZE_IN_BYTES];
+        let wrapped = encrypt(Cipher::aes_256_ecb(), &master_key, None, &short_key).unwrap();
+        let metadata = EncryptedFileMetadata {
+            encrypted_key: BASE64_ENGINE.encode(wrapped),
+            iv: BASE64_ENGINE.encode([0u8; AES_BLOCK_SIZE_IN_BYTES]),
+            material_desc: MaterialDescription {
+                query_id: material.query_id.clone(),
+                smk_id: material.smk_id.clone(),
+                key_size: "256".to_string(),
+            },
+        };
+        assert!(!wrapped_key_matches_material(&metadata, &material).unwrap());
+    }
+
+    #[test]
+    fn wrapped_key_matches_material_errors_when_cse_shaped_wrap_is_corrupt() {
+        let material = test_material();
+        let (_enc, mut metadata) = build_encryptor(&material, 8).unwrap();
+        let mut wrapped = BASE64_ENGINE.decode(&metadata.encrypted_key).unwrap();
+        let last = wrapped.len() - 1;
+        wrapped[last] ^= 0xff;
+        metadata.encrypted_key = BASE64_ENGINE.encode(wrapped);
+        assert!(wrapped_key_matches_material(&metadata, &material).is_err());
     }
 }

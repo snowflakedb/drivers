@@ -1600,10 +1600,11 @@ fn parse_gcs_cse_info(
     let material_desc: MaterialDescription =
         serde_json::from_str(&mat_desc_str).context(gcs_download_error::DeserializationSnafu)?;
 
-    // A CSE object should carry its content digest alongside the encryption
-    // headers. If sfc-digest is absent (e.g. git stage objects on GCS), fall
-    // through to raw bytes, matching the S3 behaviour fixed in #117.
+    // Git-stage objects on GCS carry encryption headers but no sfc-digest.
     let Some(digest) = digest else {
+        // TODO(SNOW-4115038): missing digest currently writes raw bytes.
+        // Legacy Python/JDBC/Node fail the GET when encryption_material is set
+        // and unwrap/decrypt cannot succeed.
         tracing::debug!("GCS encryptiondata present but sfc-digest absent; returning raw bytes");
         return Ok(None);
     };
@@ -1614,7 +1615,7 @@ fn parse_gcs_cse_info(
             iv: enc_data.content_encryption_iv,
             material_desc,
         },
-        digest,
+        digest: Some(digest),
     }))
 }
 

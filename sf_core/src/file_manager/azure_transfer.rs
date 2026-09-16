@@ -1503,8 +1503,14 @@ pub async fn download_from_azure_streaming(
                 parse_azure_file_metadata(head.headers()).map_err(AzureAttemptError::Other)?;
             // Git-stage objects carry encryption headers but no sfcdigest — non-CSE.
             let cse_info = match (file_metadata, digest) {
-                (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
+                (Some(metadata), Some(digest)) => Some(CseDownloadInfo {
+                    metadata,
+                    digest: Some(digest),
+                }),
                 (Some(_), None) => {
+                    // TODO(SNOW-4115038): missing digest currently writes raw bytes.
+                    // Legacy Python/JDBC/Node fail the GET when encryption_material
+                    // is set and unwrap/decrypt cannot succeed.
                     tracing::debug!(
                         "Azure: encryptiondata present but {AZURE_META_SFC_DIGEST} absent \
                          (git-stage object); treating as non-CSE"

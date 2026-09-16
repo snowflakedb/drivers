@@ -216,17 +216,11 @@ pub(super) fn spawn_s3_byte_stream_producer(
     (StreamReader::new(rx), abort_handle)
 }
 
-/// Client-side-encryption inputs a download carries for the decrypt path,
-/// bundled so they are present together or not at all. A downloaded CSE object
-/// always carries both the encryption-metadata headers and the matching
-/// SHA-256 digest, and `decrypt_ciphertext_to_writer` needs both; SSE / raw
-/// objects carry neither and the caller sees `None`. Keeping these as one
-/// `Option` rather than two makes the "metadata present, digest absent" state
-/// (always invalid) unrepresentable — the download path validates both
-/// headers at the boundary before constructing this.
+/// CSE decrypt inputs. `digest` is verified after decrypt when present;
+/// some S3 objects carry key-wrap headers without `sfc-digest`.
 pub struct CseDownloadInfo {
     pub metadata: EncryptedFileMetadata,
-    pub digest: String,
+    pub digest: Option<String>,
 }
 
 /// Result of a streaming download from a reqwest-based cloud transport.
@@ -245,8 +239,7 @@ pub struct CloudStreamingDownload {
     /// [`StreamReader::bytes_read_handle`] in that case, which still counts
     /// on-cloud ciphertext bytes (not the decrypted plaintext length).
     pub cloud_byte_count: i64,
-    /// `Some` for a client-side-encrypted object (both metadata + digest
-    /// headers were present); `None` for SSE / raw objects.
+    /// CSE key-wrap metadata and optional digest; `None` for SSE / raw objects.
     pub cse_info: Option<CseDownloadInfo>,
     /// Running total of on-cloud (pre-decryption) ciphertext bytes pulled off
     /// the wire. `load` it after the decrypt task joins to recover the
@@ -290,8 +283,14 @@ impl CloudStreamingDownload {
         // Git-stage objects carry encryption headers but no sfc-digest —
         // treat as non-CSE, matching every other download path.
         let cse_info = match (file_metadata, digest) {
-            (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
+            (Some(metadata), Some(digest)) => Some(CseDownloadInfo {
+                metadata,
+                digest: Some(digest),
+            }),
             (Some(_), None) => {
+                // TODO(SNOW-4115038): missing digest currently writes raw bytes.
+                // Legacy Python/JDBC/Node fail the GET when encryption_material
+                // is set and unwrap/decrypt cannot succeed.
                 tracing::debug!(
                     "encryptiondata present but sfc-digest absent (git-stage object); \
                      treating as non-CSE"
