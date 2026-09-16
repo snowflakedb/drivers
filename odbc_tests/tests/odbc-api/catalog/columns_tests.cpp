@@ -15,6 +15,7 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "SchemaFixtures.hpp"
 #include "SessionParameterOverride.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
@@ -873,6 +874,107 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: VARIANT/OBJECT/ARRAY size f
       CHECK(colSize == kLegacySemiStructuredSize);
       CHECK(bufLen == kLegacySemiStructuredSize);
       CHECK(charOctet == kLegacySemiStructuredSize);
+    }
+  }
+}
+
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLColumns: GEOGRAPHY/GEOMETRY sizes follow session max varchar",
+                 "[odbc-api][columns][catalog]") {
+  constexpr SQLINTEGER kOldDriverSize = 134217728;
+  const std::string table = "SQLCOLUMNS_GEO_SESSION_MAX";
+
+  const std::string createTable =
+      "CREATE TEMPORARY TABLE " + table + " (GEOGRAPHY_COL GEOGRAPHY, GEOMETRY_COL GEOMETRY)";
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(createTable.c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  char varcharQuery[] = "SELECT NULL::VARCHAR";
+  ret = SQLExecDirect(stmt_handle(), reinterpret_cast<SQLCHAR*>(varcharQuery), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLCHAR varcharColumnName[64];
+  std::memset(varcharColumnName, 0xFF, sizeof(varcharColumnName));
+  SQLSMALLINT varcharColumnNameLength = 0;
+  SQLSMALLINT varcharDataType = 0;
+  SQLULEN sessionVarcharSize = 0;
+  SQLSMALLINT varcharDecimalDigits = 0;
+  SQLSMALLINT varcharNullable = 0;
+  ret = SQLDescribeCol(stmt_handle(), 1, varcharColumnName, sizeof(varcharColumnName), &varcharColumnNameLength,
+                       &varcharDataType, &sessionVarcharSize, &varcharDecimalDigits, &varcharNullable);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(varcharDataType == SQL_VARCHAR);
+  REQUIRE(sessionVarcharSize > 0);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  char dbName[256];
+  std::memset(dbName, 0xFF, sizeof(dbName));
+  SQLSMALLINT dbNameLen = 0;
+  ret = SQLGetInfo(dbc_handle(), SQL_DATABASE_NAME, dbName, sizeof(dbName), &dbNameLen);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(dbNameLen > 0);
+  const std::string catalog(dbName, dbNameLen);
+
+  // The database, schema, and table names all contain '_'. In pattern mode the
+  // drivers disagree on how to scope them: the new driver reads CatalogName as a
+  // pattern and needs '_' escaped to resolve an exact scope rather than widening
+  // SHOW COLUMNS to the account, while the reference driver matches CatalogName
+  // literally and finds nothing when it is escaped. Identifier mode is exact for
+  // all four arguments on both drivers, so neither escaping nor a wide scan applies.
+  ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Identifier mode rejects a NULL ColumnName with HY009, so each column is requested by name.
+  SQLINTEGER geographyColumnSize = 0;
+  for (const auto* column : {"GEOGRAPHY_COL", "GEOMETRY_COL"}) {
+    INFO("column " << column);
+
+    ret = SQLColumns(stmt_handle(), sqlchar(catalog.c_str()), SQL_NTS, sqlchar(Schema::name().c_str()), SQL_NTS,
+                     sqlchar(table.c_str()), SQL_NTS, sqlchar(column), SQL_NTS);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    ret = SQLFetch(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(sqlcolumns_get_column(stmt_handle(), 4).text == column);
+
+    SQLINTEGER columnSize = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN columnSizeInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 7, SQL_C_SLONG, &columnSize, 0, &columnSizeInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(columnSizeInd == sizeof(SQLINTEGER));
+
+    SQLINTEGER bufferLength = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN bufferLengthInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 8, SQL_C_SLONG, &bufferLength, 0, &bufferLengthInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(bufferLengthInd == sizeof(SQLINTEGER));
+
+    SQLINTEGER charOctetLength = static_cast<SQLINTEGER>(0x7FFFFFFF);
+    SQLLEN charOctetLengthInd = SQL_NULL_DATA;
+    ret = SQLGetData(stmt_handle(), 16, SQL_C_SLONG, &charOctetLength, 0, &charOctetLengthInd);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(charOctetLengthInd == sizeof(SQLINTEGER));
+
+    ret = SQLCloseCursor(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
+
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK(static_cast<SQLULEN>(columnSize) == sessionVarcharSize);
+      CHECK(bufferLength == columnSize);
+      CHECK(charOctetLength == columnSize);
+    }
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK(columnSize == kOldDriverSize);
+      CHECK(bufferLength == kOldDriverSize);
+      CHECK(charOctetLength == kOldDriverSize);
+    }
+
+    if (std::string(column) == "GEOGRAPHY_COL") {
+      geographyColumnSize = columnSize;
+    } else {
+      CHECK(columnSize == geographyColumnSize);
     }
   }
 }

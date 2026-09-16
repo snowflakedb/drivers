@@ -17,7 +17,6 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[excel][powerquer
   SKIP_IODBC("BD#79 - SQL_C_WCHAR indicator widths are recorded as UTF-16; iODBC fetches string columns as UTF-32");
 
   // TODO(SNOW-4039377): The new driver's SQLPrimaryKeys/SQLForeignKeys string IRD remains SQL_VARCHAR (12).
-  // TODO(SNOW-4039378): The new driver's GEOGRAPHY SQLColumns sizes remain 16M/64M instead of the pinned 128M.
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   auto config = DataSourceConfig::Snowflake().install();
 
@@ -10287,7 +10286,12 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[excel][powerquer
     SQLRETURN ret = SQLGetData(stmt2, 7, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 8
@@ -10297,7 +10301,12 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[excel][powerquer
     SQLRETURN ret = SQLGetData(stmt2, 8, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 9
@@ -10375,7 +10384,12 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[excel][powerquer
     SQLRETURN ret = SQLGetData(stmt2, 16, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    OLD_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
+    }
+    NEW_DRIVER_ONLY("BD#146") {
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+    }
   }
 
   // SQLGetData col 17
