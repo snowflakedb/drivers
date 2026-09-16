@@ -3,10 +3,12 @@ use std::fs;
 use base64::{Engine as _, engine::general_purpose};
 use openssl::pkey::PKey;
 
+use crate::config::param_names::{PRIVATE_KEY, PRIVATE_KEY_FILE};
 use crate::config::settings::{Setting, Settings};
 use crate::config::toml_loader::{FilePermissionCheck, check_file_permissions};
 use crate::config::{
-    ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
+    ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu,
+    MissingEitherParameterSnafu,
 };
 use crate::sensitive::SensitiveString;
 
@@ -155,8 +157,9 @@ pub(super) fn read_private_key(settings: &dyn Settings) -> Result<SensitiveStrin
         return Ok(SensitiveString::from(private_key));
     }
 
-    MissingParameterSnafu {
-        parameter: "private_key or private_key_file".to_string(),
+    MissingEitherParameterSnafu {
+        parameter: PRIVATE_KEY.to_string(),
+        alternative: PRIVATE_KEY_FILE.to_string(),
     }
     .fail()
 }
@@ -306,7 +309,7 @@ mod tests {
         let settings = settings_with(&[]);
         assert!(matches!(
             read_private_key(&settings),
-            Err(ConfigError::MissingParameter { .. })
+            Err(ConfigError::MissingEitherParameter { .. })
         ));
     }
 

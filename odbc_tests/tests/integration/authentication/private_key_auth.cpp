@@ -81,10 +81,12 @@ void verify_connection_fails_with_missing_private_key_error(ConnectionHandleWrap
   }
 
   NEW_DRIVER_ONLY("BD#1") {
-    CHECK(records[0].sqlState == "01S00");
+    // Both drivers report 28000; the native error still differs (BD#1). 4.x derives the native
+    // error from the server's vendor code, and no server was contacted, so it is 0.
+    CHECK(records[0].sqlState == "28000");
     CHECK(records[0].nativeError == 0);
     CHECK_THAT(records[0].messageText,
-               ContainsSubstring("Missing required parameter: private_key or private_key_file"));
+               ContainsSubstring("Missing required parameter: 'private_key' or 'private_key_file'"));
   }
 }
 

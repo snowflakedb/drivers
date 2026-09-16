@@ -64,8 +64,14 @@ TEST_CASE("should fail workload identity authentication when provider is missing
   CHECK(records[0].sqlState == "28000");
 
   OLD_DRIVER_ONLY("BD#1") {
+    CHECK(records[0].sqlState == "28000");
+    CHECK(records[0].nativeError == 20032);
     CHECK_THAT(records[0].messageText, ContainsSubstring("Required setting 'WORKLOAD_IDENTITY_PROVIDER'"));
   }
 
-  NEW_DRIVER_ONLY("BD#1") { CHECK_THAT(records[0].messageText, ContainsSubstring("workload_identity_provider")); }
+  NEW_DRIVER_ONLY("BD#1") {
+    CHECK(records[0].sqlState == "28000");
+    CHECK(records[0].nativeError == 0);
+    CHECK_THAT(records[0].messageText, ContainsSubstring("workload_identity_provider"));
+  }
 }

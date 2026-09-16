@@ -6,7 +6,7 @@ use snafu::OptionExt;
 use crate::config::param_names::{TOKEN, TOKEN_FILE_PATH};
 use crate::config::settings::Settings;
 use crate::config::toml_loader::{FilePermissionCheck, check_file_permissions};
-use crate::config::{ConfigError, InvalidParameterValueSnafu, MissingParameterSnafu};
+use crate::config::{ConfigError, InvalidParameterValueSnafu, MissingEitherParameterSnafu};
 use crate::sensitive::SensitiveString;
 
 /// Whether `token` or `token_file_path` is set to a non-empty value.
@@ -43,8 +43,9 @@ pub(super) fn read_optional_bearer_token(
 pub(super) fn read_required_bearer_token(
     settings: &dyn Settings,
 ) -> Result<SensitiveString, ConfigError> {
-    read_optional_bearer_token(settings)?.context(MissingParameterSnafu {
-        parameter: format!("'{TOKEN}' (or '{TOKEN_FILE_PATH}')"),
+    read_optional_bearer_token(settings)?.context(MissingEitherParameterSnafu {
+        parameter: TOKEN.to_string(),
+        alternative: TOKEN_FILE_PATH.to_string(),
     })
 }
 
@@ -218,10 +219,14 @@ mod tests {
         assert!(
             matches!(
                 err,
-                ConfigError::MissingParameter { ref parameter, .. }
-                    if parameter == "'token' (or 'token_file_path')"
+                ConfigError::MissingEitherParameter { ref parameter, ref alternative, .. }
+                    if parameter == TOKEN.as_str() && alternative == TOKEN_FILE_PATH.as_str()
             ),
-            "expected MissingParameter naming both token sources, got: {err}"
+            "expected MissingEitherParameter naming both token sources, got: {err}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "Missing required parameter: token or token_file_path"
         );
     }
 }

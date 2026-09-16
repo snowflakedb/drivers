@@ -21,20 +21,32 @@
 
 behavior_differences:
   1:
-    name: "Returns misconfiguration SQL state instead of allowing the connection and failing on the server side"
+    name: "Reports native error 0 instead of 20032 for a client-locally rejected missing credential"
     status: allowed
     type: bugfix
     reviewed: true
     status_rationale: |
-      Returning a client-local misconfiguration diagnostic (SQLSTATE 01S00, native error 0) is intentional - we reject invalid client configuration before a server round-trip. The discrepancy with the legacy driver using SQLSTATE 28000 is accepted as deliberate  cleanup.
+      Both drivers now report SQLSTATE 28000 for a missing authentication parameter, so only the
+      native error and the message wording still differ. 4.x derives the native error from the
+      server's vendor code, and a client-local rejection never reaches the server, so it reports 0.
+      Inventing a client-side native error to match 3.x's 20032 would mean fabricating a server
+      vendor code, which is why the difference is accepted rather than fixed.
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Returns SQLSTATE 28000 and 20032 native error.
+      Returns SQLSTATE 28000 with native error 20032 and a message of the form "Required setting
+      'PRIV_KEY_FILE' is not present" (likewise 'WORKLOAD_IDENTITY_PROVIDER' for a WIF connection),
+      from SimbaEngine's connection-settings validation.
     new_driver_behavior: |
-      Returns SQLSTATE 01S00 and 0 native error.
+      Returns SQLSTATE 28000 with native error 0 and a message naming the canonical parameter, e.g.
+      "Missing required parameter: 'private_key' or 'private_key_file'", or one naming
+      workload_identity_provider for a WIF connection.
     description: |
-      The native error should come from the server, and in this case we catch the issue early, in the driver.
+      Both drivers reject the missing authentication parameter locally and return SQL_ERROR with
+      SQLSTATE 28000. 4.x reserves the native error for the server's vendor code, so a diagnostic
+      raised before any server round-trip carries 0. This covers every parameter the shared
+      parameter registry flags as participating in authentication, including the key-pair
+      credentials, the bearer token, and the Workload Identity Federation parameters.
 
   2:
     name: "Compression type is now returned in uppercase"
