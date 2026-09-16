@@ -21,13 +21,10 @@ Feature: INTERVAL datatype handling
   # drivers without native support.
   #
   # Python >= 3.18.0, JDBC >= 3.27.0 handle the native interval types. The
-  # reference ODBC driver does not have native support, so intervals are
-  # surfaced as SQL_VARCHAR with numeric string values (total months for
-  # YEAR/MONTH family, scaled nanoseconds for DAY/TIME family). Column
-  # metadata is identical between default and text-fallback modes.
-  #
-  # TODO: The UD ODBC driver should map INTERVAL columns to SQL_INTERVAL_*
-  # types once Arrow-level interval support is implemented in the Rust driver.
+  # reference ODBC driver surfaces intervals as SQL_VARCHAR with numeric
+  # strings (total months for YEAR/MONTH, scaled nanoseconds for DAY/TIME).
+  # 4.x ODBC maps INTERVAL columns to SQL_INTERVAL_YEAR_TO_MONTH /
+  # SQL_INTERVAL_DAY_TO_SECOND and fetches the canonical ANSI literal.
   #
   # Test coverage: These tests cover the default path (native interval
   # metadata with numeric values). The two other backend modes are
@@ -47,7 +44,7 @@ Feature: INTERVAL datatype handling
   Scenario: should cast INTERVAL values to appropriate type for YEAR TO MONTH and DAY TO SECOND
     # Python: YEAR TO MONTH as canonical string, DAY TO SECOND as timedelta
     # JDBC: YEAR TO MONTH as java.time.Period, DAY TO SECOND as java.time.Duration
-    # ODBC: FIXED/NUMBER string via SQL_C_CHAR
+    # ODBC: old driver VARCHAR numeric string; new driver SQL_INTERVAL_* + ANSI literal
     Given Snowflake client is logged in
     When Query "SELECT '1-2'::INTERVAL YEAR TO MONTH, '999999999-11'::INTERVAL YEAR TO MONTH, '0 0:0:1.2'::INTERVAL DAY TO SECOND, '99999 23:59:59.999999'::INTERVAL DAY TO SECOND" is executed
     Then all INTERVAL values should be returned as appropriate type for the driver

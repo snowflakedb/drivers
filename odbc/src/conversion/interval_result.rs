@@ -109,7 +109,7 @@ impl WriteODBCType for IntervalYearMonthReader {
 /// Snowflake INTERVAL DAY TO SECOND result column, decoded as a total
 /// nanosecond count and rendered as the ANSI `[-]D HH:MM:SS[.f]` literal.
 pub(crate) struct IntervalDayTimeReader {
-    pub scale: u32,
+    pub fraction_scale: u32,
 }
 
 impl SnowflakeType for IntervalDayTimeReader {
@@ -140,15 +140,15 @@ impl WriteODBCType for IntervalDayTimeReader {
 
     fn column_size(&self) -> sql::ULen {
         let base = INTERVAL_LEADING_PRECISION + 9;
-        if self.scale > 0 {
-            base + 1 + self.scale as sql::ULen
+        if self.fraction_scale > 0 {
+            base + 1 + self.fraction_scale as sql::ULen
         } else {
             base
         }
     }
 
     fn decimal_digits(&self) -> sql::SmallInt {
-        self.scale as sql::SmallInt
+        self.fraction_scale as sql::SmallInt
     }
 
     fn write_odbc_type(
@@ -157,7 +157,7 @@ impl WriteODBCType for IntervalDayTimeReader {
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
-        let literal = format_day_time(snowflake_value, self.scale);
+        let literal = format_day_time(snowflake_value, self.fraction_scale);
         match binding.target_type {
             CDataType::Default | CDataType::Char => {
                 Ok(binding.write_char_string(&literal, get_data_offset))

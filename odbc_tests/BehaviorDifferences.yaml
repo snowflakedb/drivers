@@ -2999,3 +2999,28 @@ behavior_differences:
       enable driver logs must configure `sf.odbc.ini` instead. The numeric 0–6 scale
       is not mapped to `LogLevel`.
 
+  145:
+    name: "INTERVAL results are native SQL_INTERVAL_* types with ANSI literals"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    status_rationale: |
+      The 3.x VARCHAR numeric strings are leftover handling of an unimplemented
+      type. Each qualifier uses a different scale of the same stored integer 
+      (months for YEAR/MONTH, scaled nanoseconds for DAY/TIME), so 
+      `'1'::INTERVAL YEAR` and `'1'::INTERVAL SECOND` are not comparable and the 
+      numbers are not ANSI literals. Matching that encoding would block 
+      SQL_INTERVAL_* and SQL_C_INTERVAL_* (the bind path re-reads the ANSI form).
+    old_driver_behavior: |
+      INTERVAL columns are SQL_VARCHAR. SQL_C_CHAR fetch returns a scaled numeric
+      string (total months for YEAR/MONTH, scaled nanoseconds for DAY/TIME).
+    new_driver_behavior: |
+      INTERVAL columns are SQL_INTERVAL_YEAR_TO_MONTH or SQL_INTERVAL_DAY_TO_SECOND.
+      SQL_C_CHAR / SQL_C_WCHAR fetch returns the canonical ANSI literal: YEAR-MONTH
+      is [-]Y-MM; day-time is [-]D HH:MM:SS. SECOND-bearing subtypes
+      (DAY TO SECOND, HOUR TO SECOND, MINUTE TO SECOND, SECOND) append nine
+      fractional digits; subtypes without SECOND omit the fraction. Arrow
+      INTERVAL scale is a qualifier subtype id, not TIME-style precision.
+
