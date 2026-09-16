@@ -1,13 +1,103 @@
 //! Write-once host-transport slot owned by [`crate::apis::database_driver_v1::DatabaseDriverV1`].
 //!
-//! Lookups are `OnceLock::get` after init. The C registration entry point
-//! attaches by calling [`crate::apis::database_driver_v1::DatabaseDriverV1::register_xp_backend`]
-//! on the wrapper's existing driver instance.
+//! Lookups are `OnceLock::get` after init. The C registration entry point attaches
+//! to the [`XpSlot`] installed when the first
+//! [`crate::apis::database_driver_v1::DatabaseDriverV1`] is constructed, or
+//! parks the adapter until that construction if the host registers first.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::{BackendError, SnowflakeBackend};
 use crate::env_vars;
+#[cfg(not(test))]
+use crate::utils::sync::MutexRecoverExt;
+
+static C_TARGET: OnceLock<Arc<XpSlot>> = OnceLock::new();
+static C_PENDING: Mutex<Option<Arc<dyn SnowflakeBackend>>> = Mutex::new(None);
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_TARGET: std::cell::RefCell<Option<Arc<XpSlot>>> =
+        const { std::cell::RefCell::new(None) };
+    static TEST_PENDING: std::cell::RefCell<Option<Arc<dyn SnowflakeBackend>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn install_c_registration_target(slot: Arc<XpSlot>) {
+    let _ = C_TARGET.set(slot);
+}
+
+pub(crate) fn register_backend(backend: Arc<dyn SnowflakeBackend>) -> Result<(), BackendError> {
+    if let Some(slot) = current_c_target() {
+        return slot.register(backend);
+    }
+    park_pending(backend)
+}
+
+fn current_c_target() -> Option<Arc<XpSlot>> {
+    #[cfg(test)]
+    {
+        TEST_TARGET.with(|target| target.borrow().clone())
+    }
+    #[cfg(not(test))]
+    C_TARGET.get().cloned()
+}
+
+fn park_pending(backend: Arc<dyn SnowflakeBackend>) -> Result<(), BackendError> {
+    #[cfg(test)]
+    {
+        TEST_PENDING.with(|pending| {
+            if pending.borrow().is_some() {
+                return Err(BackendError::already_registered());
+            }
+            *pending.borrow_mut() = Some(backend);
+            Ok(())
+        })
+    }
+    #[cfg(not(test))]
+    {
+        let mut pending = C_PENDING.lock_recover();
+        if pending.is_some() {
+            return Err(BackendError::already_registered());
+        }
+        *pending = Some(backend);
+        Ok(())
+    }
+}
+
+fn take_pending_c_backend() -> Option<Arc<dyn SnowflakeBackend>> {
+    #[cfg(test)]
+    {
+        TEST_PENDING.with(|pending| pending.borrow_mut().take())
+    }
+    #[cfg(not(test))]
+    C_PENDING.lock_recover().take()
+}
+
+#[cfg(test)]
+pub(crate) struct TestCRegistration;
+
+#[cfg(test)]
+impl TestCRegistration {
+    pub(crate) fn isolate() -> Self {
+        TEST_TARGET.with(|target| *target.borrow_mut() = None);
+        TEST_PENDING.with(|pending| *pending.borrow_mut() = None);
+        Self
+    }
+
+    pub(crate) fn attach_to(slot: Arc<XpSlot>) -> Self {
+        TEST_TARGET.with(|target| *target.borrow_mut() = Some(slot));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestCRegistration {
+    fn drop(&mut self) {
+        TEST_TARGET.with(|target| *target.borrow_mut() = None);
+        TEST_PENDING.with(|pending| *pending.borrow_mut() = None);
+    }
+}
 
 enum XpMode {
     Http,
@@ -21,6 +111,7 @@ pub struct XpSlot {
 impl XpSlot {
     pub fn new(running_inside_xp: bool, backend: Option<Arc<dyn SnowflakeBackend>>) -> Self {
         let mode = if running_inside_xp {
+            let backend = backend.or_else(take_pending_c_backend);
             if backend.is_some() {
                 tracing::info!("registered host backend; queries will route through it");
             } else {
@@ -156,6 +247,49 @@ mod tests {
             .expect_err("second registration should fail");
 
         assert_eq!(err.code, crate::xp_backend::error_codes::ALREADY_REGISTERED);
+    }
+
+    #[test]
+    fn pending_c_backend_is_consumed_by_the_first_xp_slot_only() {
+        let _isolation = TestCRegistration::isolate();
+
+        register_backend(Arc::new(TestBackend)).expect("first park should succeed");
+        let err = register_backend(Arc::new(TestBackend)).expect_err("second park should fail");
+        assert_eq!(err.code, crate::xp_backend::error_codes::ALREADY_REGISTERED);
+
+        let first = XpSlot::new(true, None);
+        first
+            .active()
+            .expect("pending backend should attach")
+            .expect("XP mode should use the pending backend");
+
+        let second = XpSlot::new(true, None);
+        let err = match second.active() {
+            Err(err) => err,
+            Ok(_) => panic!("second slot should not see the consumed pending backend"),
+        };
+        assert_eq!(err.code, crate::xp_backend::error_codes::NOT_REGISTERED);
+    }
+
+    #[test]
+    fn http_slot_does_not_consume_pending_c_backend() {
+        let _isolation = TestCRegistration::isolate();
+        let backend: Arc<dyn SnowflakeBackend> = Arc::new(TestBackend);
+
+        register_backend(Arc::clone(&backend)).expect("parking should succeed");
+        let http = XpSlot::new(false, None);
+        assert!(
+            http.active()
+                .expect("HTTP mode should not require a backend")
+                .is_none()
+        );
+
+        let xp = XpSlot::new(true, None);
+        let active = xp
+            .active()
+            .expect("pending backend should attach")
+            .expect("XP mode should use the pending backend");
+        assert!(Arc::ptr_eq(active, &backend));
     }
 
     #[test]

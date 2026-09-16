@@ -60,6 +60,7 @@ allowed_folders:
   - "nodejs"
   # --- Committed shim (not generator output; include! of OUT_DIR) ---
   - "sf_core/src/protobuf"
+  - "sf_core/include"
   # --- Generated output: build-time, gitignored (listed so a PR that commits
   #     one anyway is visible to the bot) ---
   # `sf_core/src/protobuf_gen` is NOT the cargo path (`build.rs` writes
@@ -143,6 +144,7 @@ rules:
       | `odbc/src/setup/version_generated.h` | `odbc/build.rs` |
       | `python/…/nanoarrow_cpp/ArrowIterator/arrow_stream_iterator.cpp` | `arrow_stream_iterator.pyx` (Cython input) |
       | `ci/test_matrix/generated/**` | `ci/test_matrix/generate_matrix.py` |
+      | `sf_core/include/sf_core_providers.h` | `sf_core/src/xp_backend/ffi.rs` or `sf_core/cbindgen-xp-providers.toml` (hook `generate-xp-providers-header`) |
 
       Rust protobuf is **not** in this table: `sf_core/build.rs` writes
       `$OUT_DIR/database_driver_v1.rs`, included from
