@@ -6,7 +6,12 @@ from unittest import mock
 
 import pytest
 
-from snowflake.connector.config_manager import CONFIG_MANAGER, ConfigManager, ConfigOption
+from snowflake.connector.config_manager import (
+    CONFIG_MANAGER,
+    ConfigManager,
+    ConfigOption,
+    _get_default_connection_params,
+)
 
 
 class TestConfigOptionConstructor:
@@ -34,3 +39,15 @@ class TestConfigOptionConstructor:
     def test_get_default_connection_name_from_env(self):
         value = CONFIG_MANAGER["default_connection_name"]
         assert value == "test"
+
+    @mock.patch.dict(
+        os.environ,
+        {
+            "SNOWFLAKE_CONNECTIONS": '[default]\naccount = "env_acct"\nuser = "u"\n',
+            "SNOWFLAKE_DEFAULT_CONNECTION_NAME": "default",
+        },
+    )
+    def test_connections_env_parses_as_toml(self):
+        params = _get_default_connection_params()
+        assert params["account"] == "env_acct"
+        assert params["user"] == "u"
