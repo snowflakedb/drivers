@@ -153,29 +153,39 @@ rules:
 
   - id: ud-log-public-api-entry-and-exit
     rule: |
-      **OBJECTIVE**: Public API entry points are logged on both entry and exit so a single call can be traced end to end. See `docs/logging/logging-guidelines.md` § "Public API".
+      **OBJECTIVE**: Public API entry points are logged on both entry and exit so a single call can be traced end to end. Wrapper entry/exit is a diagnostic trace, not a default-INFO operational event — high-frequency APIs (fetch, getData) would flood logs at INFO. See `docs/logging/logging-guidelines.md` § "Public API".
 
       **REQUIREMENT**:
-      - In a **wrapper**, a public API entry point (the methods the host application calls — `connect`, `execute`, `fetch`, `close`, etc.) MUST log on entry AND on exit at the **INFO** level.
+      - In a **wrapper**, a public API entry point (the methods the host application calls — `connect`, `execute`, `fetch`, `close`, `SQLExecDirect`, `SQLFetch`, etc.) MUST log on entry AND on exit at **TRACE** in Rust (`tracing::trace!`) or **DEBUG** in Python, Java, and JS (`logger.debug` / equivalent). Do not use INFO for this pair.
       - In the **core**, a procedure defined and exposed across the boundary MUST log entry AND exit at the **DEBUG** level.
 
-      Flag a newly added public API entry point / exposed core procedure that logs only on entry (or only on exit), or at the wrong level. Entry/exit logs must of course obey `ud-log-never-log-secrets` (do not dump arguments).
+      Flag a newly added public API entry point / exposed core procedure that logs only on entry (or only on exit), or at INFO (or any level coarser than TRACE/DEBUG) for wrapper entry/exit. Entry/exit logs must of course obey `ud-log-never-log-secrets` (do not dump arguments).
 
       ❌ **BAD:**
       ```python
       def execute(self, sql, params=None):
-          logger.info("execute called")          # entry only, no exit log
-          return self._run(sql, params)
+          logger.info("execute: entry")          # INFO floods at default verbosity
+          try:
+              return self._run(sql, params)
+          finally:
+              logger.info("execute: exit")
+      ```
+      ```rust
+      tracing::info!("SQLFetch: entry");         // wrapper public API at INFO
       ```
 
       ✅ **GOOD:**
       ```python
       def execute(self, sql, params=None):
-          logger.info("execute: entry")
+          logger.debug("execute: entry")
           try:
               return self._run(sql, params)
           finally:
-              logger.info("execute: exit")
+              logger.debug("execute: exit")
+      ```
+      ```rust
+      tracing::trace!("SQLExecDirect: entry");
+      let _api_exit = ApiExitLog("SQLExecDirect"); // Drop logs "SQLExecDirect: exit" at TRACE
       ```
 
   - id: ud-log-underlying-error-cause-type-only

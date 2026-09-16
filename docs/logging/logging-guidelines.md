@@ -20,12 +20,13 @@ in [logging-architecture.md](logging-architecture.md).
 
 ## Log levels
 
-The driver supports **ERROR**, **WARN**, **INFO**, and **DEBUG**:
+The driver supports **ERROR**, **WARN**, **INFO**, and **DEBUG**. Rust also emits **TRACE** for wrapper public-API entry/exit; Python/JDBC/Node map that to **DEBUG** (see [logging-architecture.md](logging-architecture.md)).
 
 - **ERROR** - unrecoverable failures and unhandled exceptions.
 - **WARN** - handled but notable failures (e.g. retried errors, degraded behavior).
-- **INFO** - significant operational events that let a user or support engineer understand what the driver did without turning on DEBUG. Examples: HTTP round-trips, wrapper public API entry/exit, connection lifecycle, authentication steps, retries, token refresh, opt-in query text/parameters.
+- **INFO** - significant operational events that let a user or support engineer understand what the driver did without turning on DEBUG. Examples: HTTP round-trips, connection lifecycle, authentication steps, retries, token refresh, opt-in query text/parameters.
 - **DEBUG** - core API entry/exit, third-party error cause messages, verbose diagnostics.
+- **TRACE** (Rust) / **DEBUG** (Python, JDBC, Node.js) - wrapper public API entry/exit. These stay off at the default INFO level so high-frequency calls (fetch, getData) do not flood logs. Python and JDBC have no finer level than DEBUG; inbound `tracing::trace!` is delivered as DEBUG (see [logging-architecture.md](logging-architecture.md)).
 
 #### Rules
 
@@ -146,7 +147,7 @@ Safe to log about a result:
 
 Public API entry points should be logged on both entry and exit, so a single call can be traced end to end:
 
-- **INFO** - on entering and exiting a public API entry point in the **wrapper**.
+- **TRACE** (Rust `tracing::trace!`) / **DEBUG** (Python, JDBC, Node.js) - on entering and exiting a public API entry point in the **wrapper**. INFO is too noisy at default verbosity.
 - **DEBUG** - on entering and exiting a procedure defined and exposed in the **core**.
 
 > [TODO(SNOW-2881781)]: Define wrapper-level configuration for enabling and controlling public API entry/exit logging - this can be expensive at scale.
@@ -156,7 +157,7 @@ Public API entry points should be logged on both entry and exit, so a single cal
 ### Rules
 
 - `.ai/review/universal-driver-logging.yaml` (`ud-log-public-api-entry-and-exit`) - wrapper entry points log
-  entry+exit at INFO; exposed core procedures log entry+exit at DEBUG.
+  entry+exit at TRACE (Rust) or DEBUG (Python/JDBC/Node); exposed core procedures log entry+exit at DEBUG.
 
 ---
 

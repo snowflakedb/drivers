@@ -16,9 +16,7 @@ use crate::api::error::{
 use crate::api::handle_registry::{HandleId, HandleKind};
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
-use crate::api::utils::{
-    ApiExitLogDebug, config_setting_bool, config_setting_string, config_setting_u64,
-};
+use crate::api::utils::{config_setting_bool, config_setting_string, config_setting_u64};
 use crate::api::{
     ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, ExplicitDesc,
     FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK,
@@ -1891,7 +1889,6 @@ pub fn set_cursor_name<E: OdbcEncoding>(
     name_length: sql::SmallInt,
 ) -> OdbcResult<()> {
     tracing::debug!("set_cursor_name: statement_handle={statement_handle:?}");
-    let _exit = ApiExitLogDebug("SQLSetCursorName");
 
     let guard = stmt_from_handle(statement_handle)?;
     let self_id = HandleId::from(statement_handle).require_kind(HandleKind::Stmt)?;
@@ -1984,7 +1981,6 @@ pub fn get_cursor_name<E: OdbcEncoding>(
     warnings: &mut crate::conversion::warning::Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("get_cursor_name: statement_handle={statement_handle:?}");
-    let _exit = ApiExitLogDebug("SQLGetCursorName");
 
     // Validate the handle before the buffer length so a bad handle reports
     // INVALID_HANDLE rather than HY090, matching `describe_col` and the other
@@ -2722,7 +2718,6 @@ pub fn set_param_options(
     warnings: &mut crate::conversion::warning::Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("set_param_options: statement_handle={statement_handle:?}");
-    let _exit = ApiExitLogDebug("SQLParamOptions");
 
     use crate::api::StmtAttr;
     set_stmt_attr(

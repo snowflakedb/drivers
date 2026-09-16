@@ -19,6 +19,8 @@ pub mod runtime;
 pub mod sql_state;
 pub mod statement;
 pub mod telemetry;
+#[cfg(test)]
+pub(crate) mod tracing_capture;
 pub mod types;
 pub mod utils;
 

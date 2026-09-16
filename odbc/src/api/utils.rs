@@ -60,26 +60,14 @@ pub(crate) fn config_setting_string(setting: &ConfigSetting) -> Option<String> {
         _ => None,
     }
 }
-/// Logs `"{name}: exit"` at INFO when dropped — pair with a matching
-/// `tracing::info!("{name}: entry")` at the top of a public wrapper API
-/// function so a single call can be traced end to end, per the logging
-/// guidelines (`ud-log-public-api-entry-and-exit`).
+/// Logs `"{name}: exit"` at TRACE when dropped — pair with a matching
+/// `tracing::trace!("{name}: entry")` at the top of a public wrapper API
+/// function so a single call can be traced end to end.
 pub(crate) struct ApiExitLog(pub(crate) &'static str);
 
 impl Drop for ApiExitLog {
     fn drop(&mut self) {
-        tracing::info!("{}: exit", self.0);
-    }
-}
-
-/// Logs `"{name}: exit"` at DEBUG when dropped — use for core (non-wrapper)
-/// API functions where entry/exit logging belongs at DEBUG level per
-/// `ud-log-public-api-entry-and-exit`.
-pub(crate) struct ApiExitLogDebug(pub(crate) &'static str);
-
-impl Drop for ApiExitLogDebug {
-    fn drop(&mut self) {
-        tracing::debug!("{}: exit", self.0);
+        tracing::trace!("{}: exit", self.0);
     }
 }
 
@@ -545,6 +533,18 @@ pub(crate) fn zero_padded_driver_version(version: &str) -> String {
 mod tests {
     use super::*;
     use crate::api::error::OdbcError;
+    use crate::api::tracing_capture::capture_messages;
+
+    #[test]
+    fn api_exit_log_emits_exit_on_drop() {
+        let captured = capture_messages(|| {
+            let _exit = ApiExitLog("SQLAllocHandle");
+        });
+        assert!(
+            captured.iter().any(|m| m == "SQLAllocHandle: exit"),
+            "ApiExitLog drop must emit SQLAllocHandle: exit; captured = {captured:?}"
+        );
+    }
 
     // ---- config_setting_bool ----
 

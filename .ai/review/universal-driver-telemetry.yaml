@@ -16,7 +16,7 @@ status: enabled
 #     `ud-risk-telemetry-requires-server-opt-in` (`universal-driver-risks.yaml`)
 #   - Payload contents (no SQL/bindings/results/secrets in attributes):
 #     `ud-risk-telemetry-payload-metadata-only` (`universal-driver-risks.yaml`)
-#   - Log entry/exit on public APIs (INFO/DEBUG logs, not telemetry events):
+#   - Log entry/exit on public APIs (TRACE/DEBUG logs, not telemetry events):
 #     `ud-log-public-api-entry-and-exit` (`universal-driver-logging.yaml`)
 allowed_folders:
   - "sf_core/src"
@@ -41,7 +41,7 @@ allowed_file_extensions:
 rules:
   - id: ud-tel-wrapper-public-api-records-api-call
     rule: |
-      **OBJECTIVE**: Every wrapper public entry the host application calls must record the shared `api_call` event so usage is comparable across Python, JDBC, Node.js, and ODBC. This is telemetry, not logging — do not treat INFO entry/exit logs as a substitute (`ud-log-public-api-entry-and-exit`).
+      **OBJECTIVE**: Every wrapper public entry the host application calls must record the shared `api_call` event so usage is comparable across Python, JDBC, Node.js, and ODBC. This is telemetry, not logging — do not treat TRACE/DEBUG entry/exit logs as a substitute (`ud-log-public-api-entry-and-exit`).
 
       **REQUIREMENT**: A newly added or newly public wrapper method equivalent to connect / execute / fetch / close (and language-specific siblings: `connectAsync`, `executeQuery`, `SQLExecDirect`, `destroy`/`SQLDisconnect`, `createStatement`, …) MUST emit the existing API-usage family:
       1. Call the language seam that forwards to `telemetry_send_api_usage` (Python `@api_telemetry` / `TelemetryClient.send_api_usage`, JDBC `Telemetry.recordApiUsage`, ODBC `record_api_usage` / `record_api!`). Do not invent a parallel exporter, HTTP `/telemetry/send` client, or OpenTelemetry exporter in the wrapper.
