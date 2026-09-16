@@ -6,9 +6,9 @@ use odbc_sys as sql;
 
 pub(crate) const SQL_TRUE: sql::Integer = 1;
 
-const SQL_OV_ODBC2: sql::Integer = 2;
-const SQL_OV_ODBC3: sql::Integer = 3;
-const SQL_OV_ODBC3_80: sql::Integer = 380;
+pub(crate) const SQL_OV_ODBC2: sql::Integer = 2;
+pub(crate) const SQL_OV_ODBC3: sql::Integer = 3;
+pub(crate) const SQL_OV_ODBC3_80: sql::Integer = 380;
 
 fn to_env_attr(attribute: i32) -> Option<sql::EnvironmentAttribute> {
     match attribute {

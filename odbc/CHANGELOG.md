@@ -22,6 +22,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed `SQLGetTypeInfo` to return type information matching the application's configured ODBC version. (snowflakedb/drivers#2008)
 - Fixed `SQL_C_DEFAULT` on catalog `SMALLINT` and `INTEGER` columns so `SQLGetTypeInfo` and `SQLColumns` return binary integers instead of failing with SQLSTATE 22003. (snowflakedb/drivers#1896)
 - Fixed INTERVAL DAY-TIME result fetch for subtypes whose Arrow scale is not TIME precision (`MINUTE TO SECOND`, `SECOND`, and truncated `DAY TO SECOND` fractions). (snowflakedb/drivers#2002)
 - Fixed `SQLColumns` sizes for `GEOGRAPHY` and `GEOMETRY` to follow the session VARCHAR maximum. (snowflakedb/drivers#2009)

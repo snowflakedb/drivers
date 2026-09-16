@@ -2,7 +2,9 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <algorithm>
 #include <cstring>
+#include <initializer_list>
 #include <set>
 #include <string>
 #include <utility>
@@ -10,6 +12,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "HandleWrapper.hpp"
+#include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
@@ -903,6 +907,72 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering whe
     REQUIRE(types[20].first == SQL_WCHAR);
     REQUIRE(types[21].first == SQL_WVARCHAR);
     REQUIRE(types[22].first == SQL_BIT);
+  }
+}
+
+TEST_CASE("SQLGetTypeInfo: Result set follows SQL_ATTR_ODBC_VERSION", "[odbc-api][gettypeinfo][driver_info][version]") {
+  auto config = DataSourceConfig::Snowflake().install();
+
+  for (const SQLINTEGER version : {SQL_OV_ODBC2, SQL_OV_ODBC3}) {
+    CAPTURE(version);
+
+    EnvironmentHandleWrapper env;
+    SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(version), 0);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    SQLHDBC rawDbc = SQL_NULL_HDBC;
+    ret = SQLAllocHandle(SQL_HANDLE_DBC, env.getHandle(), &rawDbc);
+    ConnectedConnectionWrapper dbc(rawDbc);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    ret = SQLConnect(dbc.getHandle(), sqlchar(config.dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    StatementHandleWrapper stmt(dbc.getHandle(), SQL_HANDLE_STMT);
+    ret = SQLGetTypeInfo(stmt.getHandle(), SQL_ALL_TYPES);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    std::vector<SQLSMALLINT> dataTypes;
+    while ((ret = SQLFetch(stmt.getHandle())) == SQL_SUCCESS) {
+      SQLSMALLINT dataType = 0x7FFF;
+      SQLLEN indicator = -1;
+      ret = SQLGetData(stmt.getHandle(), 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &indicator);
+      REQUIRE(ret == SQL_SUCCESS);
+      REQUIRE(indicator == static_cast<SQLLEN>(sizeof(dataType)));
+      dataTypes.push_back(dataType);
+    }
+    REQUIRE(ret == SQL_NO_DATA);
+
+    const auto contains = [&dataTypes](SQLSMALLINT dataType) {
+      return std::find(dataTypes.begin(), dataTypes.end(), dataType) != dataTypes.end();
+    };
+
+    if (version == SQL_OV_ODBC2) {
+      NEW_DRIVER_ONLY("BD#119") { REQUIRE(dataTypes.size() == 23); }
+      OLD_DRIVER_ONLY("BD#119") { REQUIRE(dataTypes.size() == 22); }
+      CHECK_FALSE(contains(SQL_BIGINT));
+      NEW_DRIVER_ONLY("BD#119") { CHECK(contains(2006)); }
+      OLD_DRIVER_ONLY("BD#119") { CHECK_FALSE(contains(2006)); }
+      CHECK(contains(SQL_DATE));
+      CHECK(contains(SQL_TIME));
+      CHECK(contains(SQL_TIMESTAMP));
+      CHECK_FALSE(contains(SQL_TYPE_DATE));
+      CHECK_FALSE(contains(SQL_TYPE_TIME));
+      CHECK_FALSE(contains(SQL_TYPE_TIMESTAMP));
+    } else {
+      const auto standardTypeCount =
+          std::count_if(dataTypes.begin(), dataTypes.end(), [](SQLSMALLINT dataType) { return dataType != 2006; });
+      REQUIRE(standardTypeCount == 23);
+      NEW_DRIVER_ONLY("BD#119") { REQUIRE(dataTypes.size() == 24); }
+      OLD_DRIVER_ONLY("BD#119") { REQUIRE(dataTypes.size() == 23); }
+      CHECK(contains(SQL_BIGINT));
+      CHECK(contains(SQL_TYPE_DATE));
+      CHECK(contains(SQL_TYPE_TIME));
+      CHECK(contains(SQL_TYPE_TIMESTAMP));
+      CHECK_FALSE(contains(SQL_DATE));
+      CHECK_FALSE(contains(SQL_TIME));
+      CHECK_FALSE(contains(SQL_TIMESTAMP));
+    }
   }
 }
 

@@ -7,12 +7,9 @@
 //!
 //! `SQLColumns` likewise runs wrapper-owned `SHOW COLUMNS`, maps rows into
 //! the flat 19-column ODBC result set, and re-filters with [`like_match`].
-//!
-//! `SQLGetTypeInfo` is entirely static — it returns a hard-coded table of the
-//! 23 Snowflake SQL types, matching the legacy driver's `InitializeData()` in
-//! `SFTypeInfoMetadataSource`. No server round-trip is needed.
 
 use crate::api::encoding::OdbcEncoding;
+use crate::api::environment::{SQL_OV_ODBC2, SQL_OV_ODBC3, SQL_OV_ODBC3_80};
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, AsyncInProgressSnafu, CursorAlreadyOpenSnafu,
     DisconnectedSnafu, InvalidDuringDaeSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
@@ -3988,6 +3985,7 @@ const SQL_ALL_TYPES: sql::SmallInt = 0;
 /// `AUTO_UNIQUE_VALUE` and `INTERVAL_PRECISION` are always NULL for all
 /// Snowflake types and are omitted from the row struct; `build_type_info_batch`
 /// fills those columns with `None` unconditionally.
+#[derive(Clone, Copy)]
 struct TypeInfoRow {
     type_name: &'static str,
     /// Concise SQL data type code (ODBC DATA_TYPE column).
@@ -4599,18 +4597,35 @@ fn build_type_info_batch(rows: &[&TypeInfoRow]) -> OdbcResult<RecordBatch> {
     .context(crate::api::error::RecordBatchBuildSnafu)
 }
 
-/// Implements `SQLGetTypeInfo`: returns a static result set describing
-/// Snowflake's supported SQL data types.
-///
-/// When `data_type == SQL_ALL_TYPES` (0), all 23 rows are returned in legacy
-/// insertion order. For any other value, only the row whose `DATA_TYPE` column
-/// matches is returned. An unknown type yields an empty result set (legacy
-/// behavior; the ODBC spec allows `HY004` but compatibility requires success).
+fn type_info_rows(odbc_version: sql::Integer, data_type: sql::SmallInt) -> Vec<TypeInfoRow> {
+    let is_odbc3 = matches!(odbc_version, SQL_OV_ODBC3 | SQL_OV_ODBC3_80);
+    ALL_SF_TYPE_INFO
+        .iter()
+        .filter(|row| is_odbc3 || row.data_type != -5)
+        .map(|row| {
+            let mut row = *row;
+            if odbc_version == SQL_OV_ODBC2 {
+                row.data_type = match row.data_type {
+                    91 => 9,
+                    92 => 10,
+                    93 => 11,
+                    other => other,
+                };
+            }
+            row
+        })
+        .filter(|row| data_type == SQL_ALL_TYPES || row.data_type == data_type)
+        .collect()
+}
+
 pub fn get_type_info(statement_handle: sql::Handle, data_type: sql::SmallInt) -> OdbcResult<()> {
     tracing::debug!("SQLGetTypeInfo called");
 
     let guard = stmt_from_handle(statement_handle)?;
     let dbc = guard.conn()?;
+    let globals = global().context(OdbcRuntimeSnafu)?;
+    let env = globals.env_registry.get(dbc.env_id)?;
+    let odbc_version = env.environment.lock().odbc_version;
     let conn = dbc.connection.lock();
     let mut inner = guard.inner.lock();
 
@@ -4622,17 +4637,11 @@ pub fn get_type_info(statement_handle: sql::Handle, data_type: sql::SmallInt) ->
     }
     drop(conn);
 
-    let filtered: Vec<&TypeInfoRow> = if data_type == SQL_ALL_TYPES {
-        ALL_SF_TYPE_INFO.iter().collect()
-    } else {
-        ALL_SF_TYPE_INFO
-            .iter()
-            .filter(|r| r.data_type == data_type)
-            .collect()
-    };
+    let filtered = type_info_rows(odbc_version, data_type);
+    let filtered_refs: Vec<&TypeInfoRow> = filtered.iter().collect();
 
     let schema = type_info_schema();
-    let batch = build_type_info_batch(&filtered)?;
+    let batch = build_type_info_batch(&filtered_refs)?;
     let reader = reader_from_record_batch(batch, schema)?;
 
     set_state_for_catalog(
@@ -4735,6 +4744,38 @@ mod type_info_tests {
         ];
         let actual: Vec<i16> = ALL_SF_TYPE_INFO.iter().map(|r| r.data_type).collect();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn odbc2_uses_legacy_type_set_and_datetime_codes() {
+        let rows = type_info_rows(SQL_OV_ODBC2, SQL_ALL_TYPES);
+        let data_types: Vec<i16> = rows.iter().map(|row| row.data_type).collect();
+        assert_eq!(rows.len(), 23);
+        assert!(!data_types.contains(&-5));
+        assert!(data_types.contains(&2006));
+        assert!(data_types.contains(&9));
+        assert!(data_types.contains(&10));
+        assert!(data_types.contains(&11));
+        assert!(!data_types.contains(&91));
+        assert!(!data_types.contains(&92));
+        assert!(!data_types.contains(&93));
+    }
+
+    #[test]
+    fn odbc3_versions_use_modern_type_set_and_datetime_codes() {
+        for version in [SQL_OV_ODBC3, SQL_OV_ODBC3_80] {
+            let rows = type_info_rows(version, SQL_ALL_TYPES);
+            let data_types: Vec<i16> = rows.iter().map(|row| row.data_type).collect();
+            assert_eq!(rows.len(), 24);
+            assert!(data_types.contains(&-5));
+            assert!(data_types.contains(&2006));
+            assert!(data_types.contains(&91));
+            assert!(data_types.contains(&92));
+            assert!(data_types.contains(&93));
+            assert!(!data_types.contains(&9));
+            assert!(!data_types.contains(&10));
+            assert!(!data_types.contains(&11));
+        }
     }
 }
 
