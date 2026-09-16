@@ -150,9 +150,20 @@ jobs:
       # the feature is turned on, and neither runs a test. The assertions exist --
       # `cargo test --features fips-tls --lib` runs them locally -- but no CI lane
       # executes them, so a regression in provider installation or
-      # `ClientConfig::fips()` would not be caught here. The lanes that will run
-      # them are added with the FIPS release pipelines, which need the pinned
-      # GCC 13 toolchain `aws-lc-fips-sys` requires.
+      # `ClientConfig::fips()` would not be caught here.
+      #
+      # This is an owned deferral, not an oversight: the lanes that execute them
+      # are added with the FIPS release pipelines, which need the pinned GCC 13
+      # toolchain `aws-lc-fips-sys` 0.13.x requires (stock GCC >= 14 fails at
+      # aws-lc's delocate step). Confirmed as Snowflake-side follow-up work by
+      # @sfc-gh-pfus on PR #1345; review bots have flagged the gap on both #1345
+      # and #1346, so it is written down here rather than re-litigated per PR.
+      #
+      # For whoever adds that lane: `tls::fips_tests` asserts on the *installed
+      # process-default* provider, so it must run in a binary where
+      # `ensure_crypto_provider()` has run. The tests call it themselves, so
+      # `cargo test --features fips-tls --lib` is sufficient -- but a lane that
+      # only builds proves nothing, which is exactly the situation above.
       - name: Compile library unit tests without protobuf feature
         run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips-tls
 

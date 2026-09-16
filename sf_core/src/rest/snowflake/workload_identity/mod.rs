@@ -82,7 +82,14 @@ pub enum AttestationError {
     /// client is not built through those factories. OIDC reads a token it was
     /// already given and so cannot reach this, but the gate runs before the
     /// dispatch that would tell them apart.
-    #[snafu(display("Refusing Workload Identity attestation"))]
+    /// `{source}` is carried into the message deliberately. The `TlsError`
+    /// underneath is the whole diagnosis -- it distinguishes "wrong artifact
+    /// linked" from "the host application installed a non-FIPS provider first",
+    /// which have different remedies. The ODBC layer's trace rendering is a
+    /// user-settable toggle (`error_trace_enabled`), so with it off this
+    /// `Display` is all an operator sees, and a bare "Refusing Workload
+    /// Identity attestation" would send them looking at the wrong thing.
+    #[snafu(display("Refusing Workload Identity attestation: {source}"))]
     CryptoProvider {
         source: crate::tls::error::TlsError,
         #[snafu(implicit)]
