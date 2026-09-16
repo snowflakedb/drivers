@@ -1776,7 +1776,7 @@ pub fn bind_parameter(
         },
     );
 
-    tracing::info!(
+    tracing::debug!(
         "bind_parameter: Successfully bound parameter {}",
         parameter_number
     );
