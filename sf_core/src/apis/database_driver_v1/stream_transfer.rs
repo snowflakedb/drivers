@@ -275,6 +275,8 @@ impl DatabaseDriverV1 {
                 .fail();
             }
 
+            let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
+
             let (query_parameters, http_client, retry_policy, xp_backend) =
                 query_context(&conn_ptr).await?;
 
@@ -331,7 +333,7 @@ impl DatabaseDriverV1 {
             };
 
             if xp_backend.is_some() {
-                return Err(crate::rest::snowflake::RestError::from(
+                return Err(RestError::from(
                     crate::xp_backend::BackendError::unsupported("upload_stream"),
                 ))
                 .context(QuerySnafu);
@@ -401,6 +403,8 @@ impl DatabaseDriverV1 {
             // tempfile::tempdir(), not the caller.
             let get_sql = build_get_sql(&stage_path, tmp_dir.path());
             drop(tmp_dir);
+
+            let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
 
             let (query_parameters, http_client, retry_policy, xp_backend) =
                 query_context(&conn_ptr).await?;

@@ -74,6 +74,8 @@ pub struct WrapperPresets {
     /// refresh token unless `client_store_temporary_credential` is set
     /// explicitly. When false, caching stays off until the caller opts in.
     pub oauth_authorization_code_cache_default: bool,
+    /// when `true` one in-flight session operation per connection
+    pub serialize_session_operations: bool,
 }
 
 impl Default for WrapperPresets {
@@ -97,6 +99,7 @@ impl Default for WrapperPresets {
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: true,
             oauth_authorization_code_cache_default: false,
+            serialize_session_operations: false,
         }
     }
 }
@@ -121,6 +124,7 @@ impl WrapperPresets {
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: false,
             oauth_authorization_code_cache_default: true,
+            serialize_session_operations: true,
         }
     }
 
@@ -469,6 +473,14 @@ mod tests {
         assert!(!WrapperPresets::python().honor_put_get_disable);
         assert!(!WrapperPresets::odbc().honor_put_get_disable);
         assert!(!WrapperPresets::default().honor_put_get_disable);
+    }
+
+    #[test]
+    fn session_rpc_serialization_follows_wrapper() {
+        assert!(!WrapperPresets::default().serialize_session_operations);
+        assert!(!WrapperPresets::python().serialize_session_operations);
+        assert!(!WrapperPresets::jdbc().serialize_session_operations);
+        assert!(WrapperPresets::odbc().serialize_session_operations);
     }
 
     #[test]

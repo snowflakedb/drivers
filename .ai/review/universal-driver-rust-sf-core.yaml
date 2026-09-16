@@ -559,3 +559,30 @@ rules:
       // PUT syntax does not support parameterized stage paths.
       // BIND_STAGE_NAME is a compile-time const; request_id is Uuid (hex+dashes, no metacharacters).
       ```
+
+  - id: ud-session-guard-serialization
+    rule: |
+      **OBJECTIVE**: When `serialize_session_operations` is enabled, only one session
+      operation may be in flight per connection.
+
+      **REQUIREMENT**: After resolving the connection, take
+      `let _session_guard = self.lock_session_if_needed(&conn).await;` and keep it
+      until the operation returns. Do not drop it early. Do not call
+      `lock_session_if_needed` from `Connection` methods — it is a driver-level
+      gate. The connection mutex is not a substitute. Skip paths that already
+      inherit a live guard from their caller.
+
+      ❌ **BAD:**
+      ```rust
+      let _session_guard = self.lock_session_if_needed(&conn).await;
+      let response = run_sql_against_gs(...).await?;
+      drop(_session_guard);
+      build_and_upload_stream(...).await?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let _session_guard = self.lock_session_if_needed(&conn).await;
+      let response = run_sql_against_gs(...).await?;
+      build_and_upload_stream(...).await?;
+      ```

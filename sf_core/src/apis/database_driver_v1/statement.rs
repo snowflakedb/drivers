@@ -338,9 +338,7 @@ impl DatabaseDriverV1 {
             .instrument(crate::snowflake_op_span!("statement_prepare", session_id))
             .await
     }
-}
 
-impl DatabaseDriverV1 {
     pub async fn statement_execute_query<'a>(
         &self,
         operation_ctx: Option<&OperationCtx>,
@@ -455,6 +453,7 @@ impl DatabaseDriverV1 {
         timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
         let query = extract_query(stmt)?;
+        let _session_guard = self.lock_session_if_needed(&stmt.conn).await;
 
         self.ensure_file_transfer_allowed(&query, &stmt.conn)
             .await?;
@@ -680,6 +679,7 @@ impl DatabaseDriverV1 {
         {
             return Ok(multi);
         }
+
         let rowset_data = self
             .extract_rowset_data(
                 operation_ctx,
@@ -826,6 +826,7 @@ impl DatabaseDriverV1 {
             let mut stmt = stmt_ptr.lock().await;
 
             let query = extract_query(&stmt)?;
+            let _session_guard = self.lock_session_if_needed(&stmt.conn).await;
 
             self.ensure_file_transfer_allowed(&query, &stmt.conn)
                 .await?;
@@ -993,6 +994,7 @@ impl DatabaseDriverV1 {
                     argument: "Connection handle not found".to_string(),
                 }
             })?;
+            let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
 
             let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
             let descriptor = response_to_descriptor(&data, &self.wrapper_presets);

@@ -8,7 +8,7 @@ use crate::apis::operation_ctx::OperationCtx;
 use crate::stage_binding::{AtomicStageState, StageState};
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, Notify, RwLock as AsyncRwLock};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard, RwLock as AsyncRwLock};
 use tracing::Instrument;
 
 use super::async_query_registry::AsyncQueryRegistry;
@@ -65,15 +65,21 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr.lock().await;
-                if conn.is_post_connect() {
+                let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
+                let is_post_connect = {
+                    let conn = conn_ptr.lock().await;
+                    conn.is_post_connect()
+                };
+
+                if is_post_connect {
                     let sql = if autocommit {
                         "ALTER SESSION SET AUTOCOMMIT = TRUE"
                     } else {
                         "ALTER SESSION SET AUTOCOMMIT = FALSE"
                     };
-                    self.execute_session_sql(&mut conn, sql).await
+                    self.execute_session_sql(&conn_ptr, sql).await
                 } else {
+                    let mut conn = conn_ptr.lock().await;
                     conn.init_session_parameters
                         .get_or_insert_with(HashMap::new)
                         .insert("AUTOCOMMIT".to_string(), autocommit.to_string());
@@ -107,15 +113,18 @@ impl DatabaseDriverV1 {
 
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr.lock().await;
-                if !conn.is_post_connect() {
-                    return InvalidArgumentSnafu {
-                        argument: "connection_use_database called before connection is open"
-                            .to_string(),
+                let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
+                {
+                    let conn = conn_ptr.lock().await;
+                    if !conn.is_post_connect() {
+                        return InvalidArgumentSnafu {
+                            argument: "connection_use_database called before connection is open"
+                                .to_string(),
+                        }
+                        .fail();
                     }
-                    .fail();
                 }
-                self.execute_session_sql(&mut conn, &sql).await
+                self.execute_session_sql(&conn_ptr, &sql).await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -147,14 +156,17 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr.lock().await;
-                if !conn.is_post_connect() {
-                    return InvalidArgumentSnafu {
-                        argument: format!("{sql} called before connection is open"),
+                let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
+                {
+                    let conn = conn_ptr.lock().await;
+                    if !conn.is_post_connect() {
+                        return InvalidArgumentSnafu {
+                            argument: format!("{sql} called before connection is open"),
+                        }
+                        .fail();
                     }
-                    .fail();
                 }
-                self.execute_session_sql(&mut conn, sql).await
+                self.execute_session_sql(&conn_ptr, sql).await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -181,17 +193,20 @@ impl DatabaseDriverV1 {
 
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr.lock().await;
-                if !conn.is_post_connect() {
-                    return InvalidArgumentSnafu {
-                        argument: "connection_use_schema called before connection is open"
-                            .to_string(),
+                let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
+                let sql = {
+                    let conn = conn_ptr.lock().await;
+                    if !conn.is_post_connect() {
+                        return InvalidArgumentSnafu {
+                            argument: "connection_use_schema called before connection is open"
+                                .to_string(),
+                        }
+                        .fail();
                     }
-                    .fail();
-                }
-                let database = resolve_session_database(&conn)?;
-                let sql = build_use_schema_sql(database.as_deref(), schema);
-                self.execute_session_sql(&mut conn, &sql).await
+                    let database = resolve_session_database(&conn)?;
+                    build_use_schema_sql(database.as_deref(), schema)
+                };
+                self.execute_session_sql(&conn_ptr, &sql).await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -201,17 +216,25 @@ impl DatabaseDriverV1 {
     }
 
     /// Execute a session-scoped SQL command without creating a statement.
-    async fn execute_session_sql(&self, conn: &mut Connection, sql: &str) -> Result<(), ApiError> {
+    async fn execute_session_sql(
+        &self,
+        conn_ptr: &Arc<Mutex<Connection>>,
+        sql: &str,
+    ) -> Result<(), ApiError> {
         let query_input = QueryInput::new(sql);
-        let query_parameters = conn.query_transport_parameters()?;
-        let http_client = conn
-            .http_client
-            .clone()
-            .context(ConnectionNotInitializedSnafu)?;
-        let retry_policy = conn.retry_policy.clone();
-        let xp_backend = conn.xp_backend_arc().context(QuerySnafu)?;
+        let (query_parameters, http_client, retry_policy, xp_backend) = {
+            let conn = conn_ptr.lock().await;
+            (
+                conn.query_transport_parameters()?,
+                conn.http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?,
+                conn.retry_policy.clone(),
+                conn.xp_backend_arc().context(QuerySnafu)?,
+            )
+        };
 
-        let mut refresh_ctx = RefreshContext::new(conn)?;
+        let mut refresh_ctx = RefreshContext::from_arc(conn_ptr).await?;
         let mut last_error = None;
         let response = loop {
             let session_token = refresh_ctx.refresh_token(last_error).await?;
@@ -233,6 +256,7 @@ impl DatabaseDriverV1 {
             }
         }?;
 
+        let mut conn = conn_ptr.lock().await;
         conn.query_context_cache
             .update_query_context_cache(
                 response.data.query_context.as_ref(),
@@ -1142,6 +1166,9 @@ pub struct Connection {
     /// CSV bindings.
     pub stage_state: Arc<AtomicStageState>,
     pub(crate) xp_slot: Arc<XpSlot>,
+
+    /// gate when [`WrapperPresets::serialize_session_operations`] is true
+    session_mutex: Arc<Mutex<()>>,
 }
 
 impl Default for Connection {
@@ -1182,6 +1209,7 @@ impl Connection {
             heartbeat_handle: None,
             stage_state: Arc::new(AtomicStageState::new(StageState::Unknown)),
             xp_slot: Arc::new(XpSlot::new(false, None)),
+            session_mutex: Arc::new(Mutex::new(())),
         }
     }
 
@@ -2147,6 +2175,7 @@ impl DatabaseDriverV1 {
                     .with_context(|| InvalidArgumentSnafu {
                         argument: "Connection handle not found".to_string(),
                     })?;
+            let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
 
             let (http_client, server_url, client_info, retry_policy, xp_backend) = {
                 let conn = conn_ptr.lock().await;
@@ -2866,6 +2895,18 @@ impl DatabaseDriverV1 {
         }
         returned
     }
+
+    pub(super) async fn lock_session_if_needed(
+        &self,
+        conn: &Arc<Mutex<Connection>>,
+    ) -> Option<OwnedMutexGuard<()>> {
+        if !self.wrapper_presets.serialize_session_operations {
+            return None;
+        }
+
+        let mutex = conn.lock().await.session_mutex.clone();
+        Some(mutex.lock_owned().await)
+    }
 }
 
 /// Where a connection is in its close lifecycle.
@@ -2959,6 +3000,7 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::apis::database_driver_v1::global_state::DriverProviders;
     use crate::config::ParamStore;
     use crate::config::param_registry::param_names;
 
@@ -4380,5 +4422,33 @@ mod tests {
         assert_eq!(info.user_agent, Some(expected_ua));
 
         ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn session_guard_excludes_a_second_holder_when_serializing() {
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            wrapper_presets: WrapperPresets::odbc(),
+            ..Default::default()
+        });
+        let conn = Arc::new(Mutex::new(Connection::new()));
+        let session_guard = ds.lock_session_if_needed(&conn).await;
+        assert!(session_guard.is_some());
+        let raced_guard =
+            tokio::time::timeout(Duration::from_millis(20), ds.lock_session_if_needed(&conn)).await;
+        assert!(raced_guard.is_err(), "second holder must wait on the gate");
+        drop(session_guard);
+        assert!(ds.lock_session_if_needed(&conn).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn session_guard_is_absent_when_not_serializing() {
+        for presets in [WrapperPresets::python(), WrapperPresets::jdbc()] {
+            let ds = DatabaseDriverV1::with_providers(DriverProviders {
+                wrapper_presets: presets,
+                ..Default::default()
+            });
+            let conn = Arc::new(Mutex::new(Connection::new()));
+            assert!(ds.lock_session_if_needed(&conn).await.is_none());
+        }
     }
 }
