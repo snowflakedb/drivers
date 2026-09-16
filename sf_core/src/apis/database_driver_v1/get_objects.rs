@@ -209,6 +209,7 @@ impl DatabaseDriverV1 {
             .context(InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
             })?;
+        let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
 
         let (catalog_filter, schema_filter) = {
             let conn = conn_ptr.lock().await;

@@ -33,7 +33,6 @@ The gate is **not** held for:
 
 - cancel
 - result-chunk download / `get_stream` / `get_chunks`
-- PUT/GET body transfer after backend's response
 - heartbeat, login, logout, and local-only option/parameter writes
 
 > Note: when the wrapper is stricter (and e.g. serializes connection operations in wrapper) then this setting is not
