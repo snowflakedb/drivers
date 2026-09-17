@@ -383,7 +383,7 @@ pub(crate) fn wide_unit_len(s: &str) -> usize {
 /// # Safety
 /// `buf` must point to a writable buffer of at least
 /// `max_units * enc.byte_size()` bytes that remains valid for the
-/// duration of the call.
+/// duration of the call. The address may be unaligned.
 #[doc(hidden)]
 pub(crate) unsafe fn write_wide_buffer_in(
     s: &str,
@@ -417,16 +417,26 @@ pub(crate) unsafe fn write_wide_buffer_in(
                 {
                     break;
                 }
-                unsafe { std::ptr::write(buf.add(written), u) };
+                // SAFETY: `written` is within `max_units`, so this slot is inside
+                // the caller-sized buffer and may be unaligned.
+                unsafe {
+                    std::ptr::write_unaligned((buf as *mut u8).add(written * 2) as *mut u16, u)
+                };
                 written += 1;
             }
             written
         }
         WCharEncoding::Utf32 => {
-            let buf32 = buf as *mut u32;
             let mut written = 0;
             for c in s.chars().skip(offset_units).take(max_units) {
-                unsafe { std::ptr::write(buf32.add(written), c as u32) };
+                // SAFETY: `written` is within `max_units`, so this slot is inside
+                // the caller-sized buffer and may be unaligned.
+                unsafe {
+                    std::ptr::write_unaligned(
+                        (buf as *mut u8).add(written * 4) as *mut u32,
+                        c as u32,
+                    )
+                };
                 written += 1;
             }
             written
@@ -453,7 +463,7 @@ pub(crate) unsafe fn write_wide_buffer(
 ///
 /// # Safety
 /// `buf.add(pos)` (UTF-16) or `(buf as *mut u32).add(pos)` (UTF-32) must
-/// be a valid writable address.
+/// be a valid writable address. The address may be unaligned.
 #[doc(hidden)]
 pub(crate) unsafe fn write_wide_null_in(buf: *mut WideChar, pos: usize, enc: WCharEncoding) {
     // Match the short-circuit in [`write_wide_buffer_in`] when the DM
@@ -462,10 +472,16 @@ pub(crate) unsafe fn write_wide_null_in(buf: *mut WideChar, pos: usize, enc: WCh
         return;
     }
     match enc {
-        WCharEncoding::Utf16 => unsafe { std::ptr::write(buf.add(pos), 0) },
-        WCharEncoding::Utf32 => unsafe {
-            std::ptr::write((buf as *mut u32).add(pos), 0);
-        },
+        WCharEncoding::Utf16 => {
+            // SAFETY: this terminator slot is inside the caller-sized buffer and
+            // may be unaligned.
+            unsafe { std::ptr::write_unaligned((buf as *mut u8).add(pos * 2) as *mut u16, 0) }
+        }
+        WCharEncoding::Utf32 => {
+            // SAFETY: this terminator slot is inside the caller-sized buffer and
+            // may be unaligned.
+            unsafe { std::ptr::write_unaligned((buf as *mut u8).add(pos * 4) as *mut u32, 0) }
+        }
     }
 }
 
@@ -1121,11 +1137,47 @@ mod tests {
     }
 
     #[test]
+    fn write_wide_buffer_in_utf16_accepts_unaligned_pointer() {
+        let mut bytes = vec![0u8; 1 + 4 * 2];
+        // SAFETY: One prefix byte followed by four UTF-16 units.
+        let buf = unsafe { bytes.as_mut_ptr().add(1) as *mut WideChar };
+        let n = unsafe { write_wide_buffer_in("Hi", buf, 3, 0, WCharEncoding::Utf16) };
+        assert_eq!(n, 2);
+        unsafe { write_wide_null_in(buf, n, WCharEncoding::Utf16) };
+        unsafe {
+            assert_eq!(std::ptr::read_unaligned(buf), b'H' as u16);
+            assert_eq!(
+                std::ptr::read_unaligned((buf as *const u8).add(2) as *const u16),
+                b'i' as u16
+            );
+            assert_eq!(
+                std::ptr::read_unaligned((buf as *const u8).add(4) as *const u16),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn write_wide_buffer_in_utf32_accepts_unaligned_pointer() {
+        let mut bytes = vec![0u8; 1 + 4 * 4];
+        // SAFETY: One prefix byte followed by four UTF-32 units.
+        let buf = unsafe { bytes.as_mut_ptr().add(1) as *mut WideChar };
+        let n = unsafe { write_wide_buffer_in("Hi", buf, 3, 0, WCharEncoding::Utf32) };
+        assert_eq!(n, 2);
+        unsafe { write_wide_null_in(buf, n, WCharEncoding::Utf32) };
+        let buf32 = buf as *const u8;
+        unsafe {
+            assert_eq!(std::ptr::read_unaligned(buf32 as *const u32), b'H' as u32);
+            assert_eq!(
+                std::ptr::read_unaligned(buf32.add(4) as *const u32),
+                b'i' as u32
+            );
+            assert_eq!(std::ptr::read_unaligned(buf32.add(8) as *const u32), 0);
+        }
+    }
+
+    #[test]
     fn write_wide_buffer_in_utf32_round_trip() {
-        // 4-aligned u32 backing buffer: write_wide_buffer_in's UTF-32
-        // branch reinterprets the pointer as *mut u32, which requires
-        // 4-byte alignment. Casting at the call site preserves the
-        // public *mut WideChar signature.
         let mut buf = [0u32; 4];
         let n = unsafe {
             write_wide_buffer_in(

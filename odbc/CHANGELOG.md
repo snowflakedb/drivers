@@ -35,6 +35,7 @@ Bug fixes:
 - Fixed `SQL_C_DEFAULT` on catalog `SMALLINT` and `INTEGER` columns so `SQLGetTypeInfo` and `SQLColumns` return binary integers instead of failing with SQLSTATE 22003. (snowflakedb/drivers#1896)
 - Fixed INTERVAL DAY-TIME result fetch for subtypes whose Arrow scale is not TIME precision (`MINUTE TO SECOND`, `SECOND`, and truncated `DAY TO SECOND` fractions). (snowflakedb/drivers#2002)
 - Fixed `SQLColumns` sizes for `GEOGRAPHY` and `GEOMETRY` to follow the session VARCHAR maximum. (snowflakedb/drivers#2009)
+- Fixed row-wise fetches with unaligned `SQL_ATTR_ROW_BIND_TYPE` strides so length, indicator, character, wide-character, and fixed-width value writes do not crash. (snowflakedb/drivers#2006)
 
 ## v4.0.0-rc3
 

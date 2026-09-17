@@ -247,19 +247,27 @@ impl Binding {
                 if self.indicator_ptr.is_null() {
                     return IndicatorRequiredSnafu.fail();
                 }
+                // SAFETY: `indicator_ptr` is non-null, the application owns at least
+                // `size_of::<sql::Len>()` bytes at that address, and the address may
+                // be unaligned when `SQL_ATTR_ROW_BIND_TYPE` is a non-aligned stride.
                 unsafe {
-                    std::ptr::write(self.indicator_ptr, crate::api::SQL_NULL_DATA);
+                    std::ptr::write_unaligned(self.indicator_ptr, crate::api::SQL_NULL_DATA);
                 }
                 Ok(())
             }
             LengthOrNull::Length(length) => {
-                if !self.octet_length_ptr.is_null() {
-                    if !self.indicator_ptr.is_null() {
-                        unsafe { std::ptr::write(self.indicator_ptr, 0) };
+                // SAFETY: each non-null length/indicator pointer is application-owned
+                // for `size_of::<sql::Len>()` bytes and may be unaligned under a
+                // row-wise `SQL_ATTR_ROW_BIND_TYPE` stride.
+                unsafe {
+                    if !self.octet_length_ptr.is_null() {
+                        if !self.indicator_ptr.is_null() {
+                            std::ptr::write_unaligned(self.indicator_ptr, 0);
+                        }
+                        std::ptr::write_unaligned(self.octet_length_ptr, length);
+                    } else if !self.indicator_ptr.is_null() {
+                        std::ptr::write_unaligned(self.indicator_ptr, length as sql::Len);
                     }
-                    unsafe { std::ptr::write(self.octet_length_ptr, length) };
-                } else if !self.indicator_ptr.is_null() {
-                    unsafe { std::ptr::write(self.indicator_ptr, length as sql::Len) };
                 }
                 Ok(())
             }
@@ -267,9 +275,12 @@ impl Binding {
     }
 
     pub fn write_fixed<T>(&self, value: T) {
-        unsafe {
-            if !self.target_value_ptr.is_null() {
-                std::ptr::write(self.target_value_ptr as *mut T, value);
+        if !self.target_value_ptr.is_null() {
+            // SAFETY: `target_value_ptr` is non-null, the bind buffer is at least
+            // `size_of::<T>()` bytes, and the address may be unaligned under a
+            // row-wise `SQL_ATTR_ROW_BIND_TYPE` stride.
+            unsafe {
+                std::ptr::write_unaligned(self.target_value_ptr as *mut T, value);
             }
         }
         let _ =
@@ -315,7 +326,10 @@ impl Binding {
         let copy_len = std::cmp::min(src.len(), max_len - 1);
         unsafe {
             std::ptr::copy_nonoverlapping(src.as_ptr(), self.target_value_ptr as *mut u8, copy_len);
-            std::ptr::write((self.target_value_ptr as *mut u8).add(copy_len), 0);
+            // SAFETY: `copy_len` is strictly less than `buffer_length`, so the
+            // terminator sits in the bind buffer; a `u8` store is well-defined at
+            // any address.
+            std::ptr::write_unaligned((self.target_value_ptr as *mut u8).add(copy_len), 0);
         }
         let _ = self.write_length_or_null(LengthOrNull::Length(src.len() as sql::Len));
         src.len() > max_len - 1
@@ -350,7 +364,10 @@ impl Binding {
                 self.target_value_ptr as *mut u8,
                 copy_len,
             );
-            std::ptr::write((self.target_value_ptr as *mut u8).add(copy_len), 0);
+            // SAFETY: `copy_len` is strictly less than `buffer_length`, so the
+            // terminator sits in the bind buffer; a `u8` store is well-defined at
+            // any address.
+            std::ptr::write_unaligned((self.target_value_ptr as *mut u8).add(copy_len), 0);
         }
 
         let _ = self.write_length_or_null(LengthOrNull::Length(remaining.len() as sql::Len));
@@ -399,8 +416,14 @@ impl Binding {
         let mut written = 0;
         for pos in offset..offset + max_write_len {
             if let Some(element) = converter(pos) {
+                // SAFETY: `written` is within `max_write_len`, so `target.add(written)`
+                // is inside the caller-sized bind buffer and may be unaligned under a
+                // row-wise `SQL_ATTR_ROW_BIND_TYPE` stride.
                 unsafe {
-                    std::ptr::write(target.add(written), element);
+                    std::ptr::write_unaligned(
+                        target.byte_add(written * std::mem::size_of::<T>()),
+                        element,
+                    );
                 }
                 written += 1;
             } else {
@@ -439,7 +462,9 @@ impl Binding {
         let written = unsafe {
             let target = self.target_value_ptr as *mut u8;
             let written = Self::write_from_fn_impl(target, offset, max_write_len, converter);
-            std::ptr::write(target.add(written), 0);
+            // SAFETY: `written` is at most `max_write_len`, so the terminator sits in
+            // the extra byte reserved in `buffer_length`.
+            std::ptr::write_unaligned(target.add(written), 0);
             written
         };
 
@@ -496,7 +521,14 @@ impl Binding {
                 let mut w = 0;
                 for pos in offset..offset + max_write_len {
                     if let Some(unit) = converter(pos) {
-                        std::ptr::write(target.add(w), unit);
+                        // SAFETY: `w` is within `max_write_len` units of `target`, which
+                        // the bind buffer owns, and the address may be unaligned under a
+                        // row-wise `SQL_ATTR_ROW_BIND_TYPE` stride.
+                        std::ptr::write_unaligned(
+                            (target as *mut u8).add(w * std::mem::size_of::<WideChar>())
+                                as *mut WideChar,
+                            unit,
+                        );
                         w += 1;
                     } else {
                         break;
@@ -505,11 +537,16 @@ impl Binding {
                 w
             },
             WCharEncoding::Utf32 => unsafe {
-                let target32 = target as *mut u32;
                 let mut w = 0;
                 for pos in offset..offset + max_write_len {
                     if let Some(unit) = converter(pos) {
-                        std::ptr::write(target32.add(w), unit as u32);
+                        // SAFETY: `w` is within `max_write_len` units of `target`, which
+                        // the bind buffer owns, and the address may be unaligned under a
+                        // row-wise `SQL_ATTR_ROW_BIND_TYPE` stride.
+                        std::ptr::write_unaligned(
+                            (target as *mut u8).add(w * 4) as *mut u32,
+                            unit as u32,
+                        );
                         w += 1;
                     } else {
                         break;
@@ -805,6 +842,169 @@ mod binding_strides_tests {
         assert_eq!(row2.target_value_ptr as usize - value_base, 2 * 64);
         assert_eq!(row2.octet_length_ptr as usize - octet_base, 2 * 64);
         assert_eq!(row2.indicator_ptr as usize - indicator_base, 2 * 64);
+    }
+
+    #[test]
+    fn writes_length_to_unaligned_row_wise_pointer() {
+        let mut bytes = vec![0u8; size_of::<sql::Len>() + 1];
+        // SAFETY: The allocation has one prefix byte followed by enough bytes for `sql::Len`.
+        let ptr = unsafe { bytes.as_mut_ptr().add(1) as *mut sql::Len };
+        let binding = Binding {
+            octet_length_ptr: ptr,
+            indicator_ptr: ptr,
+            ..Default::default()
+        };
+
+        binding
+            .write_length_or_null(LengthOrNull::Length(7))
+            .expect("unaligned length write must succeed");
+
+        // SAFETY: `ptr` addresses the initialized bytes written through `binding`.
+        assert_eq!(unsafe { std::ptr::read_unaligned(ptr) }, 7);
+    }
+
+    #[test]
+    fn writes_fixed_value_to_unaligned_row_wise_pointer() {
+        let mut value_bytes = vec![0u8; size_of::<i64>() + 4];
+        let mut indicator_bytes = vec![0u8; size_of::<sql::Len>() + 4];
+        // SAFETY: Both allocations have four prefix bytes followed by room for the written type.
+        let (value_ptr, indicator_ptr) = unsafe {
+            (
+                value_bytes.as_mut_ptr().add(4) as *mut i64,
+                indicator_bytes.as_mut_ptr().add(4) as *mut sql::Len,
+            )
+        };
+        let binding = Binding {
+            target_value_ptr: value_ptr as sql::Pointer,
+            octet_length_ptr: indicator_ptr,
+            indicator_ptr,
+            ..Default::default()
+        };
+
+        binding.write_fixed(-9_007_199_254_740_993i64);
+
+        // SAFETY: Both pointers address the bytes written through `binding`.
+        unsafe {
+            assert_eq!(
+                std::ptr::read_unaligned(value_ptr),
+                -9_007_199_254_740_993i64
+            );
+            assert_eq!(
+                std::ptr::read_unaligned(indicator_ptr),
+                size_of::<i64>() as sql::Len
+            );
+        }
+    }
+
+    #[test]
+    fn writes_wchar_string_to_unaligned_row_wise_pointer() {
+        let unit = wchar_byte_size();
+        let mut value_bytes = vec![0u8; unit * 3 + 1];
+        let mut indicator_bytes = vec![0u8; size_of::<sql::Len>() + 1];
+        // SAFETY: Each allocation has one prefix byte followed by room for the
+        // written wide string (value plus terminator) or `sql::Len`.
+        let (value_ptr, indicator_ptr) = unsafe {
+            (
+                value_bytes.as_mut_ptr().add(1) as sql::Pointer,
+                indicator_bytes.as_mut_ptr().add(1) as *mut sql::Len,
+            )
+        };
+        let binding = Binding {
+            target_value_ptr: value_ptr,
+            buffer_length: (unit * 3) as sql::Len,
+            octet_length_ptr: indicator_ptr,
+            indicator_ptr,
+            ..Default::default()
+        };
+
+        let mut offset = None;
+        let warnings = binding.write_wchar_string("x", &mut offset);
+        assert!(warnings.is_empty());
+        assert_eq!(offset, None);
+
+        // SAFETY: Both pointers address the bytes written through `binding`.
+        unsafe {
+            match current_wchar_encoding() {
+                WCharEncoding::Utf16 => {
+                    assert_eq!(
+                        std::ptr::read_unaligned(value_ptr as *const u16),
+                        b'x' as u16
+                    );
+                }
+                WCharEncoding::Utf32 => {
+                    assert_eq!(
+                        std::ptr::read_unaligned(value_ptr as *const u32),
+                        b'x' as u32
+                    );
+                }
+            }
+            assert_eq!(std::ptr::read_unaligned(indicator_ptr), unit as sql::Len);
+        }
+    }
+
+    #[test]
+    fn writes_wchar_from_fn_to_unaligned_row_wise_pointer() {
+        let unit = wchar_byte_size();
+        let mut value_bytes = vec![0u8; unit * 3 + 1];
+        let mut indicator_bytes = vec![0u8; size_of::<sql::Len>() + 1];
+        // SAFETY: Each allocation has one prefix byte followed by room for two
+        // wide units plus a terminator, or for `sql::Len`.
+        let (value_ptr, indicator_ptr) = unsafe {
+            (
+                value_bytes.as_mut_ptr().add(1) as sql::Pointer,
+                indicator_bytes.as_mut_ptr().add(1) as *mut sql::Len,
+            )
+        };
+        let binding = Binding {
+            target_value_ptr: value_ptr,
+            buffer_length: (unit * 3) as sql::Len,
+            octet_length_ptr: indicator_ptr,
+            indicator_ptr,
+            ..Default::default()
+        };
+
+        let mut offset = None;
+        let warnings = binding.write_wchar_from_fn(
+            |i| b"xy".get(i).copied().map(|b| b as WideChar),
+            2,
+            &mut offset,
+        );
+        assert!(warnings.is_empty());
+        assert_eq!(offset, None);
+
+        // SAFETY: Both pointers address the bytes written through `binding`.
+        unsafe {
+            match current_wchar_encoding() {
+                WCharEncoding::Utf16 => {
+                    assert_eq!(
+                        std::ptr::read_unaligned(value_ptr as *const u16),
+                        b'x' as u16
+                    );
+                    assert_eq!(
+                        std::ptr::read_unaligned(
+                            (value_ptr as *const u8).add(size_of::<u16>()) as *const u16
+                        ),
+                        b'y' as u16
+                    );
+                }
+                WCharEncoding::Utf32 => {
+                    assert_eq!(
+                        std::ptr::read_unaligned(value_ptr as *const u32),
+                        b'x' as u32
+                    );
+                    assert_eq!(
+                        std::ptr::read_unaligned(
+                            (value_ptr as *const u8).add(size_of::<u32>()) as *const u32
+                        ),
+                        b'y' as u32
+                    );
+                }
+            }
+            assert_eq!(
+                std::ptr::read_unaligned(indicator_ptr),
+                (2 * unit) as sql::Len
+            );
+        }
     }
 
     #[test]

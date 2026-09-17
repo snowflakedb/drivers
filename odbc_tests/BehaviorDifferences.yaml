@@ -3083,3 +3083,27 @@ behavior_differences:
       GEOGRAPHY and GEOMETRY report SQL_VARCHAR as DATA_TYPE, so their
       character and buffer sizes use the same session maximum as other
       session-sized VARCHAR-compatible catalog types.
+
+  147:
+    name: "SQLSetStmtAttr SQL_ATTR_ROW_BIND_TYPE misaligned value accepted on all platforms"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLSetStmtAttr(SQL_ATTR_ROW_BIND_TYPE, 65540) returns SQL_SUCCESS on Windows and
+      Linux x86_64 but SQL_ERROR with native error 11700 on Linux aarch64 and macOS.
+      Under SQL_OV_ODBC3 the posted SQLSTATE is HY000; under SQL_OV_ODBC2 it is S1000.
+      Neither is the documented SQLSTATE for an invalid attribute value (that would be
+      HY024).
+    new_driver_behavior: |
+      SQLSetStmtAttr(SQL_ATTR_ROW_BIND_TYPE, 65540) returns SQL_SUCCESS on all platforms,
+      and a two-row fetch writes the second row through that stride without crashing, for
+      wide-character (including 1-mod-2 value offsets) and fixed-width numeric bindings.
+    description: |
+      The spec treats a non-zero SQLULEN as a row-wise byte stride with no alignment requirement.
+      Applications setting that stride no longer receive HY000 (or S1000 under ODBC 2.x) on
+      non-x86_64 Unix with the new driver. The driver uses unaligned writes for the row-wise
+      length and indicator pointers, for character and wide-character bind buffers, and for
+      fixed-width bound values produced by such a stride.

@@ -27,8 +27,10 @@ class EnvFixture {
   std::optional<EnvironmentHandleWrapper> env_wrapper;
 
  public:
-  // Constructor with optional DSN configuration
-  explicit EnvFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt) {
+  // Constructor with optional DSN configuration. `odbc_version` is
+  // SQL_ATTR_ODBC_VERSION; it must be set before a connection is allocated.
+  explicit EnvFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt,
+                      SQLINTEGER odbc_version = SQL_OV_ODBC3) {
     // Install DSN BEFORE creating ENV handle (critical for UnixODBC caching)
     if (dsn_config.has_value()) {
       config = dsn_config->install();
@@ -37,7 +39,7 @@ class EnvFixture {
     // Create ENV handle (will see installed DSN)
     env_wrapper.emplace();
     SQLRETURN ret =
-        SQLSetEnvAttr(env_wrapper->getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+        SQLSetEnvAttr(env_wrapper->getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(odbc_version), 0);
     REQUIRE(ret == SQL_SUCCESS);
   }
 
@@ -68,7 +70,8 @@ class DbcFixture : public EnvFixture {
 
  public:
   // Constructor with optional DSN configuration
-  explicit DbcFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt) : EnvFixture(std::move(dsn_config)) {
+  explicit DbcFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt, SQLINTEGER odbc_version = SQL_OV_ODBC3)
+      : EnvFixture(std::move(dsn_config), odbc_version) {
     dbc_wrapper.emplace(create_connection_handle());
   }
 
@@ -122,7 +125,9 @@ class StmtFixture : public DbcFixture {
   SQLHSTMT stmt = SQL_NULL_HSTMT;
 
  public:
-  explicit StmtFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt) : DbcFixture(std::move(dsn_config)) {
+  explicit StmtFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt,
+                       SQLINTEGER odbc_version = SQL_OV_ODBC3)
+      : DbcFixture(std::move(dsn_config), odbc_version) {
     const std::string dsn = dsn_name();
 
     constexpr int max_retries = 3;
@@ -168,6 +173,11 @@ class StmtFixture : public DbcFixture {
 class StmtDefaultDSNFixture : public StmtFixture {
  public:
   StmtDefaultDSNFixture() : StmtFixture(DataSourceConfig::Snowflake()) {}
+};
+
+class StmtDefaultDSNOdbc2Fixture : public StmtFixture {
+ public:
+  StmtDefaultDSNOdbc2Fixture() : StmtFixture(DataSourceConfig::Snowflake(), SQL_OV_ODBC2) {}
 };
 
 // ============================================================================
