@@ -317,6 +317,11 @@ pipeline {
                 sh label: 'Run Node.js auth browser tests (universal)', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh nodejs universal"
               }
             }
+            stage('Reference') {
+              steps {
+                sh label: 'Run Node.js auth browser tests (reference)', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh nodejs reference"
+              }
+            }
           }
         }
       }
