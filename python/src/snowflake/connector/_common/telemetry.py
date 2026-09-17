@@ -72,12 +72,17 @@ class TelemetryClient:
         self._conn_handle = conn_handle
         self._closed = False
 
+    def close(self) -> None:
+        self._closed = True
+
     def send_api_usage(self, api_method: str, passed_arguments: list[str] | None = None) -> None:
         """Record an API method call for telemetry.
 
         ``passed_arguments`` lists the names of the arguments the caller
         explicitly supplied (names only, no values, defaults omitted).
         """
+        if self._closed:
+            return
         try:
             core_driver.telemetry_send_api_usage(
                 conn_handle=self._conn_handle,
@@ -89,6 +94,8 @@ class TelemetryClient:
 
     def send_wrapper_error(self, exception_type: str, error_source: str) -> None:
         """Record a wrapper error for telemetry."""
+        if self._closed:
+            return
         try:
             core_driver.telemetry_send_wrapper_error(
                 conn_handle=self._conn_handle,
@@ -151,12 +158,17 @@ class AsyncTelemetryClient:
         self._conn_handle = conn_handle
         self._closed = False
 
+    def close(self) -> None:
+        self._closed = True
+
     async def send_api_usage(self, api_method: str, passed_arguments: list[str] | None = None) -> None:
         """Record an API method call for telemetry.
 
         ``passed_arguments`` lists the names of the arguments the caller
         explicitly supplied (names only, no values, defaults omitted).
         """
+        if self._closed:
+            return
         try:
             await async_core_driver.telemetry_send_api_usage(
                 conn_handle=self._conn_handle,
@@ -168,6 +180,8 @@ class AsyncTelemetryClient:
 
     async def send_wrapper_error(self, exception_type: str, error_source: str) -> None:
         """Record a wrapper error for telemetry."""
+        if self._closed:
+            return
         try:
             await async_core_driver.telemetry_send_wrapper_error(
                 conn_handle=self._conn_handle,

@@ -224,6 +224,7 @@ class Connection(ConnectionMixin[CursorInstance]):
         # at the START of connection_close (before HTTP logout), so this returns True
         # even while another thread's logout is still in-flight.
         if self.is_closed():
+            self._close_telemetry_client()
             return
 
         self._session_parameters.freeze()
@@ -234,6 +235,7 @@ class Connection(ConnectionMixin[CursorInstance]):
             del self._messages[:]
             conn_handle, self.conn_handle = self.conn_handle, None
             db_handle, self.db_handle = self.db_handle, None
+            self._close_telemetry_client()
 
         # All I/O outside the lock, using local handle copies.
         # try/finally ensures handles are always released — on success, Strict

@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import logging
 
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -189,6 +190,56 @@ class TestConnectionApiTelemetry:
         methods = _get_api_methods(mock_db_api)
         assert "Connection.close" in methods
 
+    def test_should_not_send_api_usage_when_is_closed_after_close(self, connection, mock_db_api):
+        connection.close()
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        assert connection.is_closed()
+        assert mock_db_api.telemetry_send_api_usage.call_count == 0
+
+    def test_should_not_send_api_usage_when_cursor_closes_after_connection_close(self, connection, mock_db_api):
+        cursor = connection.cursor()
+        connection.close()
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        cursor.close()
+        assert mock_db_api.telemetry_send_api_usage.call_count == 0
+
+    def test_should_not_send_api_usage_on_second_close(self, connection, mock_db_api):
+        connection.close()
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        connection.close()
+        assert mock_db_api.telemetry_send_api_usage.call_count == 0
+
+    def test_should_not_emit_handle_not_found_when_is_closed_after_close(self, caplog, monkeypatch):
+        from snowflake.connector._common.telemetry import TelemetryClient
+        from snowflake.connector._internal.api_client.client_api import core_driver
+        from snowflake.connector.connection import Connection
+
+        def _connect(self: Connection) -> None:
+            self._telemetry_client = TelemetryClient(self.conn_handle)
+            self.auto_cleanup = False
+
+        monkeypatch.setattr(Connection, "_connect", _connect)
+        monkeypatch.setattr(core_driver, "connection_close", lambda **_kwargs: None)
+
+        conn = Connection(user="test_user", account="test_account")
+        conn._client_param_telemetry_enabled = True
+        monkeypatch.setattr(conn, "_server_param_telemetry_enabled", lambda: True)
+
+        conn.close()
+        assert conn._telemetry_client._closed
+
+        caplog.clear()
+        with caplog.at_level(logging.ERROR, logger="snowflake.connector._core"):
+            assert conn.is_closed()
+            conn.close()
+
+        assert not any("Handle not found, cannot get object" in record.getMessage() for record in caplog.records), (
+            caplog.text
+        )
+
     def test_get_autocommit_sends_telemetry(self, connection, mock_db_api):
         mock_db_api.telemetry_send_api_usage.reset_mock()
         connection.get_autocommit()
@@ -332,11 +383,11 @@ class TestApiTelemetryResetBehavior:
     def test_tracking_resets_after_method_returns(self, connection, mock_db_api):
         """After a tracked method returns, subsequent calls should also be tracked."""
         mock_db_api.telemetry_send_api_usage.reset_mock()
-        connection.close()
+        connection.cursor()
         connection.get_autocommit()
 
         methods = _get_api_methods(mock_db_api)
-        assert "Connection.close" in methods
+        assert "Connection.cursor" in methods
         assert "Connection.get_autocommit" in methods
         assert mock_db_api.telemetry_send_api_usage.call_count == 2
 
@@ -678,6 +729,13 @@ class TestAsyncConnectionApiTelemetry:
         methods = _get_api_methods(mock_async_db_api)
         assert "async Connection.close" in methods
         assert "Connection.close" not in methods
+
+    def test_should_not_send_api_usage_when_is_closed_after_close(self, async_connection, mock_async_db_api):
+        _run_async(async_connection.close())
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+
+        assert async_connection.is_closed()
+        assert mock_async_db_api.telemetry_send_api_usage.call_count == 0
 
     def test_commit_suppresses_inner_calls(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_api_usage.reset_mock()

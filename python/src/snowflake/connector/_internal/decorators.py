@@ -265,9 +265,12 @@ def _telemetry_client_if_enabled(self: Any) -> Any:
     else:
         raise TypeError(f"Unexpected telemetry target: {type(self)!r}")
 
+    client = getattr(connection, "_telemetry_client", None)
+    if client is None or getattr(client, "_closed", False):
+        return None
     if not (connection._client_param_telemetry_enabled and connection._server_param_telemetry_enabled()):
         return None
-    return connection._telemetry_client
+    return client
 
 
 def _passed_argument_names(

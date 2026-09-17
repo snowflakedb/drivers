@@ -156,6 +156,11 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
     # Handle release
     # ------------------------------------------------------------------
 
+    def _close_telemetry_client(self) -> None:
+        client = getattr(self, "_telemetry_client", None)
+        if client is not None:
+            client.close()
+
     def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
         """Release the Rust-side connection handle."""
         try:

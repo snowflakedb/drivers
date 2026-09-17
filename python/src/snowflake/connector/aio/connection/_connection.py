@@ -184,6 +184,7 @@ class Connection(ConnectionMixin[CursorInstance]):
     async def close(self, retry: bool = True) -> None:
         """Close the connection, send logout, and release handles."""
         if self.conn_handle is None or self.is_closed():
+            self._close_telemetry_client()
             return
 
         session_parameters = self._session_parameters
@@ -195,6 +196,7 @@ class Connection(ConnectionMixin[CursorInstance]):
             del self._messages[:]
             conn_handle, self.conn_handle = self.conn_handle, None
             db_handle, self.db_handle = self.db_handle, None
+            self._close_telemetry_client()
 
         try:
             if conn_handle and not retry:
