@@ -2,6 +2,8 @@
 
 ## Upcoming Release
 
+## v4.0.0-rc4
+
 Breaking changes:
 
 - Changed catalog functions so a NULL `CatalogName` is no longer replaced with the current database by default. Set `UseCurrentCatalog=true` (or enable `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX`) to restore that substitution. Unconstrained NULL-catalog searches issue account-wide `SHOW` statements. (snowflakedb/drivers#2005)
@@ -19,6 +21,8 @@ Changes:
 - Changed client-local rejection of a non-credential connection parameter to report SQLSTATE `HY000` instead of the warning-class `01S00`; affected cases are an invalid `PORT`, an unparseable connection string, and any invalid or missing non-credential parameter. `01S00` is defined by the ODBC specification as a `SQL_SUCCESS_WITH_INFO` warning meaning the connection opened anyway, so returning it on `SQL_ERROR` led applications that branch on the SQLSTATE class to treat a failed connection as a warning. ODBC 3.x returned `28000` (native error `20032`) for these cases. (snowflakedb/drivers#1883)
 - Changed a missing key-pair credential (`PRIVATE_KEY` / `PRIVATE_KEY_FILE`) and a missing bearer token (`TOKEN` / `TOKEN_FILE_PATH`) to report SQLSTATE `28000` instead of `01S00`, matching ODBC 3.x and the SQLSTATE already reported when either parameter is named on its own. (snowflakedb/drivers#1883)
 - Changed rejection of a Workload Identity Federation parameter (`WORKLOAD_IDENTITY_PROVIDER`, `WORKLOAD_IDENTITY_ENTRA_RESOURCE`, `WORKLOAD_IDENTITY_IMPERSONATION_PATH`, `WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN`) to report SQLSTATE `28000` rather than a general error, so a missing or invalid one is reported as the authentication failure it is. ODBC 3.x reported `28000` for a missing `WORKLOAD_IDENTITY_PROVIDER`. (snowflakedb/drivers#1883)
+- Changed the diagnostic message on a failed login to lead with the server's own text: `SQLGetDiagRec` now reads `Failed to login: Login error: <server text>, code: <code>` on its first line, where the server sentence previously appeared only inside the error trace. SQLSTATE and native error code are unchanged. (snowflakedb/drivers#1881)
+- Improved log output to mask OAuth client IDs and AWS access-key IDs. (snowflakedb/drivers#1840)
 
 Bug fixes:
 
@@ -56,10 +60,6 @@ Changes:
 - Changed an unreadable or empty `TOKEN_FILE_PATH` to report SQLSTATE `28000` instead of `01S00`. (snowflakedb/drivers#1477)
 - Improved GET to warn when a downloaded batch contains multiple files that resolve to the same local filename. (snowflakedb/drivers#1651)
 - Improved external-browser callback handling to cap HTTP header size on the localhost listener. (snowflakedb/drivers#1201)
-
-Changes:
-
-- Changed the diagnostic message on a failed login to lead with the server's own text: `SQLGetDiagRec` now reads `Failed to login: Login error: <server text>, code: <code>` on its first line, where the server sentence previously appeared only inside the error trace. SQLSTATE and native error code are unchanged. (snowflakedb/drivers#1881)
 
 Bug fixes:
 
