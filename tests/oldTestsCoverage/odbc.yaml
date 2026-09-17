@@ -206,25 +206,45 @@ tests:
   AuthenticationTests/AuthLatestTest/OktaLatestTest.cpp:
   - test_name: should authenticate using okta
     ud_tests:
-    - sf_core/tests/e2e/authentication/native_okta.rs - vpn_should_authenticate_using_native_okta
-    - sf_core/tests/integration/authentication/native_okta.rs - should_login_with_native_okta_using_saml_flow
-    - odbc_tests/tests/e2e/authentication/native_okta.cpp - should authenticate using native okta
+    - path: "sf_core/tests/e2e/authentication/native_okta.rs - vpn_should_authenticate_using_native_okta"
+    - path: "sf_core/tests/integration/authentication/native_okta.rs - should_login_with_native_okta_using_saml_flow"
+    - path: "odbc_tests/tests/e2e/authentication/native_okta.cpp - should authenticate using native okta"
+    status: mapped
   - test_name: should throw error for wrong okta credentials
     ud_tests:
-    - sf_core/tests/e2e/authentication/native_okta.rs - vpn_should_fail_native_okta_authentication_with_wrong_credentials
-    - sf_core/tests/integration/authentication/native_okta.rs - should_fail_with_bad_credentials_when_okta_returns_401
-    - sf_core/tests/integration/authentication/native_okta.rs - should_fail_with_bad_credentials_when_okta_returns_403
-    - odbc_tests/tests/e2e/authentication/native_okta.cpp - should fail native okta authentication with wrong credentials
+    - path: "sf_core/tests/e2e/authentication/native_okta.rs - vpn_should_fail_native_okta_authentication_with_wrong_credentials"
+    - path: "sf_core/tests/integration/authentication/native_okta.rs - should_fail_with_bad_credentials_when_okta_returns_401"
+    - path: "sf_core/tests/integration/authentication/native_okta.rs - should_fail_with_bad_credentials_when_okta_returns_403"
+    - path: "odbc_tests/tests/e2e/authentication/native_okta.cpp - should fail native okta authentication with wrong credentials"
+    status: mapped
+    notes: |
+      Old test asserts the literal "Failed to connect to okta. Error code=401" message.
+      UD's assertion checks a typed BadCredentials signal plus "401"/"credentials" substrings
+      rather than that exact sentence - same underlying condition (Okta 401), different message
+      shape. Not filed as a new BD since no old-vs-new message-text comparison was done for
+      this specific line (unlike the Okta authenticator-rejection case, which pins a
+      concretely different resulting error for a different scenario).
   - test_name: should throw error for wrong okta url
     ud_tests:
-    - sf_core/tests/e2e/authentication/native_okta.rs - vpn_should_fail_native_okta_authentication_with_wrong_okta_url
-    - sf_core/tests/integration/authentication/native_okta.rs - should_fail_when_tokenurl_does_not_match_configured_okta_url_origin
-    - sf_core/tests/integration/authentication/native_okta.rs - should_fail_when_ssourl_does_not_match_configured_okta_url_origin
-    - odbc_tests/tests/e2e/authentication/native_okta.cpp - should fail native okta authentication with wrong okta url
+    - path: "odbc_tests/tests/e2e/authentication/native_okta.cpp - should fail native okta authentication with wrong okta url"
+    status: partial
+    gaps:
+      - "Old test asserts the literal message \"The specified authenticator is not accepted by your Snowflake account configuration...\". The authenticator-request logical-failure path discards Snowflake's specific rejection reason and surfaces only a generic context. The E2E citation (VPN-gated) already anticipates this: it accepts either the specific message or the generic fallback."
+    notes: |
+      Pre-existing ud_tests on this entry incorrectly cited
+      should_fail_when_tokenurl_does_not_match_configured_okta_url_origin /
+      should_fail_when_ssourl_does_not_match_configured_okta_url_origin - those cover a
+      *different* failure mode (Snowflake-returned IdP endpoint URLs not matching the
+      configured Okta URL's origin, checked *after* the authenticator is accepted), not
+      Snowflake rejecting the authenticator value itself. Corrected here.
   - test_name: should throw error for wrong url without okta path
-    ud_tests:
-    - sf_core/tests/integration/authentication/native_okta.rs - should_fail_when_tokenurl_does_not_match_configured_okta_url_origin
-    - sf_core/tests/integration/authentication/native_okta.rs - should_fail_when_ssourl_does_not_match_configured_okta_url_origin
+    ud_tests: []
+    status: unmapped
+    gaps:
+      - "Old test asserts the literal message \"The specified authenticator is not supported, authenticator=...\". Client-side parsing treats any https:// authenticator value as a native-Okta attempt and defers rejection to Snowflake's authenticator-request step, same generic-failure path as the sibling test above. No ODBC test exists for this specific input."
+    notes: |
+      Pre-existing ud_tests on this entry incorrectly cited the same two IdP-URL-mismatch
+      tests as the sibling "wrong okta url" entry (see note there) - removed.
   AuthenticationTests/AuthLatestTest/PATLatestTest.cpp:
   - test_name: should authenticate using PAT
     ud_tests:
@@ -382,7 +402,19 @@ tests:
     ud_tests: []
   EndToEndTests/ApplicationTest/ApplicationTest.cpp:
   - test_name: Set Application Name
-    ud_tests: []
+    ud_tests:
+    - path: "odbc/src/api/connection.rs - apply_pre_connection_overrides_routes_application_attr"
+    - path: "odbc/src/api/connection.rs - apply_pre_connection_overrides_application_attr_overrides_connection_string"
+    - path: "odbc/src/api/connection.rs - normalize_connection_string_options_maps_application_key"
+    status: mapped
+    notes: |
+      Old test's core assertion is a SQLSetConnectAttr(SQL_SF_CONN_ATTR_APPLICATION) ->
+      SQLGetConnectAttr round trip. The set-side routing into pre_connection_attrs is
+      directly tested above; the get-side (connection.rs get_connect_attr,
+      ConnectionAttribute::Application arm) is a 3-line read of the same map through the
+      shared, independently-tested write_string_bytes_i32 encoder (odbc/src/api/encoding.rs,
+      20 existing tests) - composing these proves the full round trip without a redundant
+      new test.
   EndToEndTests/ArrowBulkLatestTest/ArrowBulkLatestTest.cpp:
   - test_name: BULKTEST ALL_NUMBER
     ud_tests: []
@@ -550,19 +582,61 @@ tests:
     ud_tests: []
   EndToEndTests/CancelLatestTest/CancelLatestTest.cpp:
   - test_name: cancel query with large result set
-    ud_tests: []
+    ud_tests:
+    - path: "odbc_tests/tests/odbc-api/terminating_statement/close_cursor_tests.cpp - SQLCloseCursor: Close after partial fetch of multi-row result"
+    - path: "odbc_tests/tests/e2e/query/large_result_set.cpp - should process one million row result set"
+    status: partial
+    gaps:
+      - "Old test's specific assertion is a TIMING bound: SQLCloseCursor + SQLFreeHandle on a still-downloading 1M-row result must complete within 15 seconds (i.e. close must not block on the in-flight download). No UD test asserts a wall-clock bound on close-while-downloading; the cited tests prove close-during-fetch works, not that it's non-blocking within a time budget."
   - test_name: cancel when fetching on large result set
-    ud_tests: []
+    ud_tests:
+    - path: "odbc_tests/tests/odbc-api/terminating_statement/cancel_handle_tests.cpp - SQLCancelHandle: Cancel after fetch"
+    - path: "odbc_tests/tests/odbc-api/terminating_statement/cancel_tests.cpp - SQLCancel: Cancel after fetch"
+    status: partial
+    gaps:
+      - "Old test races a fetch-thread against a SQLCloseCursor-thread concurrently on the same statement (both Arrow and JSON result formats), accepting either HY008 (canceled mid-fetch) or HY010 (sequence error, if the race lost) as valid outcomes - a genuine concurrent-thread race. The cited tests exercise cancel/close after fetch sequentially, not the actual concurrent race; no UD test drives two threads against SQLFetch/SQLCloseCursor on the same handle simultaneously."
   - test_name: cancel with binding parameter array not supported by server
-    ud_tests: []
+    ud_tests:
+    - path: "odbc_tests/tests/odbc-api/terminating_statement/cancel_tests.cpp - SQLCancel: Cross-thread cancel interrupts execution with HY008"
+    status: partial
+    gaps:
+      - "Old test's core mechanism (async execute + cross-thread SQLCancel + eventual HY008) is covered by the cited test, which documents the exact same old-driver-vs-new-driver cancel_result divergence (BD#47) the old test's retry loop accommodates. The array-bound-parameter (SQL_ATTR_PARAMSET_SIZE) specific variant of the async-execute path is not separately exercised by any cancel test."
   EndToEndTests/CancelTest/CancelTest.cpp:
   - test_name: basic SQLCancel()
-    ud_tests: []
+    ud_tests:
+    - path: "odbc_tests/tests/odbc-api/terminating_statement/cancel_tests.cpp - SQLCancel: Cross-thread cancel interrupts execution with HY008"
+    - path: "odbc_tests/tests/odbc-api/terminating_statement/cancel_handle_tests.cpp - SQLCancelHandle: Cancel after fetch"
+    status: mapped
+    notes: |
+      BD#47 ("Cross-thread SQLCancel/SQLCancelHandle always returns SQL_SUCCESS") documents
+      exactly the divergence the old test's retry loop was accommodating (old driver's cancel
+      call could return SQL_SUCCESS or SQL_ERROR depending on timing; new driver always
+      SQL_SUCCESS) - both drivers converge on the executing statement seeing HY008.
   - test_name: cancel with data SQLCancel()
-    ud_tests: []
+    ud_tests:
+    - path: "odbc_tests/tests/odbc-api/terminating_statement/cancel_tests.cpp - SQLCancel: Cancel DAE from SQLExecDirect restores Created state"
+    - path: "odbc_tests/tests/odbc-api/terminating_statement/cancel_tests.cpp - SQLCancel: Cancel in S10 after SQLPutData discards accumulated data"
+    - path: "odbc/src/api/statement.rs - cancel() (AwaitingParamData/AwaitingPutData/PutDataCalled -> origin.restore_state())"
+    status: mapped
+    notes: |
+      BD#86 ("SQLCancel during data-at-execution discards accumulated SQLPutData") documents
+      the one real behavior delta: old driver retains partial SQLPutData across a DAE cancel
+      and prepends it on the next attempt; new driver discards it. The old test's actual
+      assertion (cancel resets state so the statement is immediately reusable, and a
+      subsequent unrelated statement on the handle works fine) holds on both drivers.
   EndToEndTests/CompatibilityTest/CompatibilityTest.cpp:
   - test_name: Test compatibility
-    ud_tests: []
+    ud_tests:
+    - path: "odbc/src/api/environment.rs - odbc_version_round_trips_to_odbc2_and_back"
+    - path: "odbc/src/api/environment.rs - odbc_version_defaults_to_odbc3"
+    status: mapped
+    notes: |
+      Old test's core assertion is that an app declaring itself SQL_OV_ODBC2 via
+      SQLSetEnvAttr connects and disconnects successfully. environment.rs had zero
+      existing test coverage for SQL_ATTR_ODBC_VERSION before this pass; closed here
+      with 2 new local tests (SQLSetEnvAttr/SQLGetEnvAttr round trip). odbc_version is
+      stored on the environment but not consulted anywhere else in the connect path
+      (grepped), so accepting and echoing the declaration is the whole behavior surface.
   EndToEndTests/ConcurrentPutsLatestTest/ConcurrentPutsLatestTest.cpp:
   - test_name: SET_MAX_CONCURRENT_JOBS
     ud_tests: []
@@ -660,6 +734,14 @@ tests:
   EndToEndTests/FeatureTest/FeatureTest.cpp:
   - test_name: ESCAPE CHARACTERS
     ud_tests: []
+    status: not-applicable
+    notes: |
+      Asserts that a single-quoted SQL string literal containing C-style backslash
+      escapes (\r\n\t\b\f\\\"/) round-trips through a plain SELECT and fetch. This is
+      server-side SQL literal parsing (grepped odbc/src and sf_core/src for an
+      escape-mode toggle - none exists), not driver behavior; any generic
+      SELECT-a-string-literal-and-fetch test already exercises the same client-side
+      mechanism (execute + fetch), which is all the driver contributes here.
   EndToEndTests/FunctionCatchTest/FunctionCatchTest.cpp:
   - test_name: Test Time/Date functions
     ud_tests: []
@@ -675,34 +757,98 @@ tests:
   EndToEndTests/GSRetryTest/GSRetryTest.cpp:
   - test_name: GSRetryTest
     ud_tests: []
+    status: unmapped
+    notes: |
+      Tests SNOW-225928 (a server-side query-compile retry must not cause a double
+      INSERT). The retry being tested is entirely server-side (the server retries
+      compilation internally); the client only ever issues one HTTP request per
+      SQLExecDirect regardless. Not reproducible without live server-side
+      fault-injection infrastructure, and there is nothing client-observable to unit
+      test. Same "blocked on live infra" category as Stage Operations/ConcurrentPuts.
   - test_name: GSRetryTestWithBind
     ud_tests: []
+    status: unmapped
+    notes: |
+      Same as GSRetryTest above, plus a documented old-driver bug workaround
+      (combined-describe + bound params fails, "TODO: SNOW-227539") that has no
+      bearing on UD's architecture. Blocked on live server-side fault-injection infra.
   EndToEndTests/IncidentLatestTest/IncidentLatestTest.cpp:
   - test_name: Test incident send as inband telemetry
     ud_tests: []
+    status: not-applicable
+    notes: |
+      Relies on an old-driver-only internal test-only connection attribute that
+      exists solely to let tests manually fire an "incident" report without a real
+      fault. No equivalent test-only trigger hook or "incident"-labeled telemetry
+      concept exists in UD's architecture. Per this repo's own design-discipline
+      guidance against shipping test seams as product code, adding one to close
+      this gap is not recommended.
   EndToEndTests/JwtTest/JwtTest.cpp:
   - test_name: JWT renew
     ud_tests: []
+    status: unmapped
+    notes: |
+      Old test exercises JWT_CNXN_WAIT_TIME - a mid-connection JWT renewal/re-sign
+      loop when the initial token is about to expire while still connecting. Grepped
+      sf_core/src for "jwt" + "renew"/"refresh" - zero hits. UD's generate_jwt_token
+      (sf_core/src/rest/snowflake/auth.rs) mints one 120-second-expiry token per
+      create_credentials() call with no retry/renewal loop; there is no UD parameter
+      or mechanism this could map to.
   - test_name: Load base64 encoded private key
     ud_tests:
-    - odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should authenticate using private_key as base64 string
-    - odbc_tests/tests/integration/authentication/private_key_auth.cpp - should forward base64 private key set via SQLSetConnectAttr to core
+    - path: "odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should authenticate using private_key as base64 string"
+    - path: "sf_core/src/config/private_key.rs - read_private_key_accepts_base64_encoded_pem"
+    - path: "sf_core/src/config/private_key.rs - read_private_key_rejects_invalid_base64"
+    - path: "sf_core/src/config/private_key.rs - read_private_key_rejects_base64_encoded_non_pem_der"
+    status: partial
+    gaps:
+      - "No test covers a PKCS8-*encrypted* base64-encoded key with a passcode (correct/wrong/empty/absent) - only the unencrypted-PEM and invalid-input paths are verified for the base64 route specifically."
+    notes: |
+      Pre-existing ud_tests cited a second test
+      ("...private_key_auth.cpp - should forward base64 private key set via
+      SQLSetConnectAttr to core") that does not exist in that file (verified via grep,
+      105-line file, only 1 TEST_CASE) - removed as a stale/incorrect citation.
   - test_name: Load private key through EVP_PKEY structure
     ud_tests: []
+    status: not-applicable
+    notes: |
+      SQL_SF_CONN_ATTR_PRIV_KEY (raw EVP_PKEY* pointer) is explicitly rejected by UD
+      (odbc/src/api/connection.rs set_connect_attr, ConnectionAttribute::PrivKey arm:
+      "not supported. Use PrivKeyContent or PrivKeyBase64 instead") - a deliberate,
+      reviewed, accepted removal (BD#10). Not portable; callers must migrate to the
+      PRIV_KEY_CONTENT/PRIV_KEY_BASE64 string-based surface, which the sibling entries
+      below cover.
   - test_name: Load private key through PEM file
     ud_tests:
-    - odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should authenticate using private file with password
-    - odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should authenticate using unencrypted private key file
+    - path: "odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should authenticate using private file with password"
+    - path: "odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should authenticate using unencrypted private key file"
+    - path: "odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should fail JWT authentication when invalid private key provided"
+    - path: "sf_core/src/config/private_key.rs - read_private_key_accepts_plaintext_pem_with_leading_whitespace"
+    status: partial
+    gaps:
+      - "The old test's encrypted-PKCS8-PEM-file passcode matrix (correct/no/wrong/empty passcode -> success/HY000/HY000/HY000) is not separately verified: \"should fail JWT authentication when invalid private key provided\" covers a malformed key, not a wrong passcode on an otherwise-valid encrypted key."
   - test_name: Load private key through PEM file with unicode path
     ud_tests: []
+    status: unmapped
+    notes: |
+      No test anywhere (grepped odbc_tests/ and sf_core/tests/) exercises a private-key
+      file path containing non-ASCII characters. Key-file reading goes through standard
+      Rust std::fs (UTF-8/OS-string paths), so this is plausibly fine by construction,
+      but nothing proves it.
   - test_name: Load private key through key file content
     ud_tests:
-    - odbc_tests/tests/integration/authentication/private_key_auth.cpp - should forward private key content set via SQLSetConnectAttr to core
-    - odbc_tests/tests/integration/authentication/private_key_auth.cpp - should forward private key password set via SQLSetConnectAttr to core
+    - path: "sf_core/tests/e2e/authentication/private_key_auth.rs - should_authenticate_using_private_key_as_pem_string"
+    status: partial
+    gaps:
+      - "Pre-existing ud_tests cited two odbc_tests/.../private_key_auth.cpp test names (\"should forward private key content/password set via SQLSetConnectAttr to core\") that do not exist in that file (verified via grep) - removed as stale/incorrect citations. The cited sf_core e2e test proves core-layer PRIV_KEY_CONTENT parsing; no test proves the ODBC SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT/_PASSWORD connection *attributes* (as opposed to connection-string keys) plumb through to the same place, nor the passcode-variant matrix (no/wrong/empty passcode) this old test exercises."
   - test_name: Missing private key
     ud_tests:
-    - odbc_tests/tests/integration/authentication/private_key_auth.cpp - should fail JWT authentication when no private file provided
-    - odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should fail JWT authentication when invalid private key provided
+    - path: "odbc_tests/tests/integration/authentication/private_key_auth.cpp - should fail JWT authentication when no private file provided"
+    - path: "odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should fail JWT authentication when invalid private key provided"
+    - path: "sf_core/src/config/private_key.rs - read_private_key_missing_returns_error"
+    - path: "sf_core/src/config/private_key.rs - read_private_key_file_missing_returns_read_error"
+    - path: "sf_core/src/config/private_key.rs - has_private_key_params_with_neither"
+    status: mapped
   EndToEndTests/LOBCatchLatestTest/LOBCatchLatestTest.cpp:
   - test_name: InsertLobDataWithBindings
     ud_tests: []
@@ -724,11 +870,54 @@ tests:
   EndToEndTests/LogTest/LogTest.cpp:
   - test_name: Test ClientConfig Log Created
     ud_tests: []
+    status: unmapped
+    gaps:
+      - "The sf_client_config.json / CLIENT_CONFIG_FILE mechanism (a per-connection JSON file setting log_level/log_path) is not ported to UD at all - see BD#135, already filed while mapping UnitTests/UnitClientConfigTest/UnitClientConfigTest.cpp (confirmed there via exhaustive grep across sf_core/, odbc/, python/, jdbc/, nodejs/). UD's logging config comes from the standard sf.odbc.ini file (odbc/src/api/ini_paths.rs + sf_core::config::load_ini_files), not a per-connection override file."
   - test_name: Test Log Directory Created With Proper Permissions
     ud_tests: []
+    status: unmapped
+    gaps:
+      - "Same root cause as the sibling entry above (BD#135) - the CLIENT_CONFIG_FILE mechanism this test configures its log_path through does not exist in UD, so the directory-auto-create-with-restricted-permissions behavior it checks has no reachable UD equivalent to test."
+      - "Even independent of BD#135, this test's two specific assertions don't hold on the sf.odbc.ini path either: log_manager.rs's create_dir_all(log_path) can fail SILENTLY (falls back to an EmptyLayer with no error surfaced), and only troubleshooting logs get restrictive 0o600/owner-only permissions (ensure_troubleshooting_log_permissions) - regular application logs inherit tracing-appender's RollingFileAppender defaults with no permission enforcement at all. Both would need product-code changes, not just a new test, so left as unmapped rather than a closable test-only gap."
+  - test_name: Test Normal Select Query
+    ud_tests:
+    - path: "sf_core/tests/integration/logging/query_logging.rs - sync_query_emits_info_log_without_sql_when_flag_off"
+    - path: "sf_core/tests/integration/logging/query_logging.rs - sync_query_emits_info_log_with_sql_when_text_flag_on"
+    status: partial
+    gaps:
+      - "Old test's \"fail with enabled\"/\"fail with disabled\" sections assert the query text still appears/doesn't-appear in the log for a FAILING query. The cited tests only exercise the success path; the log-emission call site precedes the result outcome so this is very likely fine by construction, but no test exercises the failure path directly."
+  - test_name: Test Parameterized Select Query
+    ud_tests:
+    - path: "sf_core/tests/integration/logging/query_logging.rs - sync_query_emits_info_log_with_sql_and_bindings_when_both_flags_on"
+    status: partial
+    gaps:
+      - "Same failure-path gap as \"Test Normal Select Query\" above, for the LOG_QUERY_PARAMETERS=true case specifically."
+  - test_name: Test Batch Execution Query
+    ud_tests:
+    - path: "sf_core/tests/integration/logging/query_logging.rs - sync_query_emits_info_log_with_sql_and_bindings_when_both_flags_on"
+    status: partial
+    gaps:
+      - "The cited test proves LOG_QUERY_PARAMETERS logs a single bound value; no UD test proves an array-bound (SQL_ATTR_PARAMSET_SIZE batch) parameter set logs every value in the array the way this old test checks."
+  - test_name: Test Put Get Query
+    ud_tests: []
+    status: unmapped
+    gaps:
+      - "No UD test proves PUT/GET SQL text appears in the query log when LOG_QUERY_TEXT is enabled. PUT/GET statements likely execute through a different code path than snowflake_query_with_client (the function the cited query-logging tests exercise), so the sync/async SELECT coverage above may not carry over - unverified."
   EndToEndTests/LongRunningQueryLatestTest/LongRunningQueryLatestTest.cpp:
   - test_name: long running query
-    ud_tests: []
+    ud_tests:
+    - path: "sf_core/tests/integration/session/heartbeat.rs - heartbeat_refreshes_on_401_then_retries"
+    - path: "sf_core/tests/integration/session/heartbeat.rs - heartbeat_sends_periodic_requests"
+    - path: "sf_core/tests/integration/session/heartbeat.rs - heartbeat_started_when_keep_alive_true"
+    status: mapped
+    notes: |
+      Old test's concern (a query polling for 130s must survive a 10-second
+      SESSION_TOKEN_VALIDITY) is addressed by a different mechanism in UD: a
+      per-connection background heartbeat task (sf_core/src/apis/database_driver_v1/heartbeat.rs)
+      rather than explicit token-refresh-on-poll. heartbeat_refreshes_on_401_then_retries
+      directly proves the keep-alive mechanism recovers from an expired session token,
+      which is the same observable guarantee (long operations survive short session-token
+      validity) via a different, well-tested code path.
   EndToEndTests/MultiStatementLatestTest/MultiStatementLatestTest.cpp:
   - test_name: testMultiStmtAlterSessionParams
     ud_tests: []
@@ -851,10 +1040,23 @@ tests:
   EndToEndTests/TelemetryTest/TelemetryTest.cpp:
   - test_name: Test Exception Created
     ud_tests: []
+    status: partial
+    gaps:
+      - "The exception-trigger half relies on an old-driver-only internal test hook with no UD equivalent (not reproducible without live server-side fault-injection infrastructure) - same category as IncidentLatestTest above, not portable without adding a test-only seam to product code."
+      - "The CLIENT_TELEMETRY_ENABLED=false half IS a real, implemented UD gate (sf_core/src/apis/database_driver_v1/connection.rs:597-604 - gates whether a session is registered in the telemetry-session registry at all) but has zero test coverage anywhere in sf_core/tests (grepped) - a genuine, closable gap not addressed in this pass."
   - test_name: Test many telemetry queued after disconnect
     ud_tests: []
+    status: not-applicable
+    notes: |
+      Depends entirely on an old-driver-only internal test hook (see above) to
+      generate telemetry events without a real fault; no portable UD equivalent.
   - test_name: telemetry with concurrent Connections
     ud_tests: []
+    status: not-applicable
+    notes: |
+      Same dependency on an old-driver-only internal test hook as above - a concurrency
+      stress test for the telemetry queue that has no trigger mechanism to drive it
+      in UD without a real fault per connection.
   EndToEndTests/TomlConfigurationTest/TomlConfigurationTest.cpp:
   - test_name: Invalid Toml file
     ud_tests: []
@@ -874,25 +1076,72 @@ tests:
     ud_tests: []
   EndToEndTests/WcharTest/WcharTest.cpp:
   - test_name: wchar_t
-    ud_tests: []
+    ud_tests:
+    - path: "odbc_tests/tests/e2e/types/string_wide_unicode.cpp - should round-trip ASCII + BMP + supplementary plane via SQL_C_WCHAR"
+    - path: "odbc_tests/tests/e2e/types/string_wide_unicode.cpp - should bind SQL_C_WCHAR with supplementary plane and read back"
+    - path: "odbc_tests/tests/e2e/types/string_wide_unicode.cpp - should not split a code point across chunked SQLGetData calls"
+    - path: "odbc_tests/tests/e2e/types/string_wide_unicode.cpp - should fetch empty string as SQL_C_WCHAR without error"
+    - path: "odbc_tests/tests/e2e/types/string_wide_unicode.cpp - should bind empty SQL_C_WCHAR string with SQL_NTS"
+    status: partial
+    gaps:
+      - "\"Error message in WCHAR\" section: no test exists for SQLGetDiagRecW specifically (grepped odbc_tests/tests/ - only the narrow SQLGetDiagRec is covered, e.g. odbc_tests/tests/odbc-api/diagnostic/diag_rec_tests.cpp). More importantly, the old test's literal per-character assertion (message starts with \"SQL compilation\") would not hold as-is: BD#110 documents that server-originated diagnostic messages on UD are now prefixed with \"[Snowflake][Snowflake ODBC Driver][Snowflake]\" before the server's own text - a W-variant test would need the corrected expected prefix, not a direct port of the old assertion."
+    notes: |
+      "bind SQLWCHAR" section (non-ASCII wide-char parameter bind + bound-column
+      fetch) is directly and thoroughly covered by string_wide_unicode.cpp's 5
+      TEST_CASEs (ASCII+BMP+supplementary-plane round trip, surrogate-pair chunking
+      guard, empty-string edge cases) plus 8 existing BehaviorDifferences entries
+      with paired OLD_DRIVER_ONLY/NEW_DRIVER_ONLY C++ assertions elsewhere (BD#22,
+      #39, #48, #49, #67, #73, #74, #79) - not a single untested edge case. The old
+      test itself is Windows-only by its own comment ("NOTE: ONLY for Windows. Linux
+      support is TBD"); this environment's CI runs Linux, so exact parity was not
+      re-verified here.
   SSOTest/SSOTest.cpp:
   - test_name: OKTA OAuth
     ud_tests: []
+    status: partial
+    gaps:
+      - "No UD test citation on this branch - the authoritative mapping lives on the not-yet-merged ODBC MFA-cluster branch, where AuthenticationTests/AuthLatestTest/OauthOktaAuthorizationCodeLatestTest.cpp's \"should authenticate using external oauth okta authorization code\" covers this same underlying OAuth-via-Okta authorization-code flow (this legacy DSN \"SnowflakeDSII_OKTA_OAuth\" test is a plain connect-disconnect smoke test with no caching/repeat-connect assertions of its own)."
   - test_name: SF External Browser with Token Cache
     ud_tests: []
+    status: partial
+    gaps:
+      - "Repeat-connect-reuses-cached-token semantics: BD#121 (filed on the ODBC MFA-cluster branch, not yet merged) documents that old driver caches the ID token by default on a plain external-browser login, while UD only caches when CLIENT_STORE_TEMPORARY_CREDENTIAL=true is explicitly set - directly matching this test's name and intent (\"...with Token Cache\")."
   - test_name: SF OAuth
     ud_tests: []
+    status: partial
+    gaps:
+      - "No UD test citation on this branch - the authoritative mapping lives on the not-yet-merged ODBC MFA-cluster branch, where OauthSnowflakeAuthorizationCodeLatestTest.cpp's \"should authenticate using snowflake authorization code\" covers this same underlying flow (this legacy DSN \"SnowflakeDSII_SF_OAuth\" test adds no assertions of its own beyond connect success)."
   - test_name: SF OAuth CC
     ud_tests: []
+    status: partial
+    gaps:
+      - "No UD test citation on this branch - the authoritative mapping lives on the not-yet-merged ODBC MFA-cluster branch, where OauthOktaClientCredentialsLatestTest.cpp covers this same underlying client-credentials flow (this legacy DSN \"SnowflakeDSII_SF_OAuth_CC\" test adds no assertions of its own beyond connect success)."
   - test_name: mfa
     ud_tests: []
+    status: partial
+    gaps:
+      - "Repeat-connect (\"2nd connection reads the cache file and uses the id token, no MFA approval\"): same BD#121 token-caching-default divergence as the External Browser entry above applies to MFA's id-token cache too."
+    notes: |
+      Base MFA authentication itself is mapped via
+      AuthenticationTests/AuthLatestTest/MfaLatestTest.cpp's "should authenticate
+      using MFA with TOTP codes from generator" (mapped on the ODBC MFA-cluster
+      branch) - this entry's only distinct assertion is the repeat-connect caching
+      behavior captured in the gap above.
   - test_name: okta
     ud_tests:
-    - sf_core/tests/e2e/authentication/native_okta.rs - vpn_should_authenticate_using_native_okta
-    - sf_core/tests/integration/authentication/native_okta.rs - should_login_with_native_okta_using_saml_flow
-    - odbc_tests/tests/e2e/authentication/native_okta.cpp - should authenticate using native okta
+    - path: "sf_core/tests/e2e/authentication/native_okta.rs - vpn_should_authenticate_using_native_okta"
+    - path: "sf_core/tests/integration/authentication/native_okta.rs - should_login_with_native_okta_using_saml_flow"
+    - path: "odbc_tests/tests/e2e/authentication/native_okta.cpp - should authenticate using native okta"
+    status: mapped
+    notes: |
+      Two independent connect/disconnect cycles via native Okta, no caching assertion
+      (native Okta is synchronous credential-based, not browser/token-cache-based) -
+      the cited single-connect tests fully cover what this test actually checks.
   - test_name: sso
     ud_tests: []
+    status: partial
+    gaps:
+      - "Same BD#121 token-caching-default divergence as \"SF External Browser with Token Cache\" above - this is the externalbrowser-authenticator DSN variant of the same repeat-connect-reuses-cache assertion, plus long-running queries between reconnects (already covered separately by LongRunningQueryLatestTest's mapping above)."
   UnitTests/InbandTelemetryTest/InbandTelemetryTest.cpp:
   - test_name: Negative Test case
     ud_tests: []

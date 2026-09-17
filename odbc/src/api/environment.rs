@@ -6,13 +6,14 @@ use odbc_sys as sql;
 
 pub(crate) const SQL_TRUE: sql::Integer = 1;
 
+const SQL_ATTR_ODBC_VERSION: sql::Integer = 200;
 pub(crate) const SQL_OV_ODBC2: sql::Integer = 2;
 pub(crate) const SQL_OV_ODBC3: sql::Integer = 3;
 pub(crate) const SQL_OV_ODBC3_80: sql::Integer = 380;
 
 fn to_env_attr(attribute: i32) -> Option<sql::EnvironmentAttribute> {
     match attribute {
-        200 => Some(sql::EnvironmentAttribute::OdbcVersion),
+        SQL_ATTR_ODBC_VERSION => Some(sql::EnvironmentAttribute::OdbcVersion),
         201 => Some(sql::EnvironmentAttribute::ConnectionPooling),
         202 => Some(sql::EnvironmentAttribute::CpMatch),
         10001 => Some(sql::EnvironmentAttribute::OutputNts),
@@ -176,5 +177,84 @@ pub fn get_env_attribute(
             write_string_length();
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::handle_allocation::{alloc_environment, free_environment};
+
+    fn get_odbc_version(env_handle: sql::Handle) -> sql::Integer {
+        let mut value: sql::Integer = 0;
+        get_env_attribute(
+            env_handle,
+            SQL_ATTR_ODBC_VERSION,
+            &mut value as *mut sql::Integer as sql::Pointer,
+            std::mem::size_of::<sql::Integer>() as sql::Integer,
+            std::ptr::null_mut(),
+        )
+        .expect("get_env_attribute(OdbcVersion)");
+        value
+    }
+
+    #[test]
+    fn odbc_version_defaults_to_odbc3() {
+        let _guard = crate::api::HANDLE_ALLOC_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let env_handle = alloc_environment().expect("alloc_environment");
+
+        assert_eq!(get_odbc_version(env_handle), SQL_OV_ODBC3);
+
+        free_environment(env_handle).expect("free_environment");
+    }
+
+    #[test]
+    fn odbc_version_round_trips_to_odbc2_and_back() {
+        // Mirrors the old ODBC driver's "Test compatibility" case: an app
+        // declaring itself ODBC 2.x via SQL_ATTR_ODBC_VERSION must have that
+        // declaration accepted and faithfully echoed back by SQLGetEnvAttr.
+        let _guard = crate::api::HANDLE_ALLOC_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let env_handle = alloc_environment().expect("alloc_environment");
+
+        set_env_attribute(
+            env_handle,
+            SQL_ATTR_ODBC_VERSION,
+            SQL_OV_ODBC2 as sql::Pointer,
+            0,
+        )
+        .expect("set_env_attribute(OdbcVersion, ODBC2)");
+        assert_eq!(get_odbc_version(env_handle), SQL_OV_ODBC2);
+
+        set_env_attribute(
+            env_handle,
+            SQL_ATTR_ODBC_VERSION,
+            SQL_OV_ODBC3 as sql::Pointer,
+            0,
+        )
+        .expect("set_env_attribute(OdbcVersion, ODBC3)");
+        assert_eq!(get_odbc_version(env_handle), SQL_OV_ODBC3);
+
+        free_environment(env_handle).expect("free_environment");
+    }
+
+    #[test]
+    fn odbc_version_rejects_unrecognized_value() {
+        let _guard = crate::api::HANDLE_ALLOC_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let env_handle = alloc_environment().expect("alloc_environment");
+
+        let err = set_env_attribute(env_handle, SQL_ATTR_ODBC_VERSION, 99 as sql::Pointer, 0)
+            .expect_err("unrecognized ODBC version must be rejected");
+        assert!(matches!(
+            err,
+            crate::api::error::OdbcError::InvalidAttributeValue { .. }
+        ));
+
+        free_environment(env_handle).expect("free_environment");
     }
 }

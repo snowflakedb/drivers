@@ -2522,6 +2522,32 @@ behavior_differences:
       decimal NUM_PREC_RADIX value of 10. The paired NEW_DRIVER_ONLY / OLD_DRIVER_ONLY
       assertions are in odbc-api/catalog/columns_tests.cpp.
 
+  172:
+    name: "Native Okta authenticator-request rejection reason is discarded, unlike other Okta failure modes"
+    status: unknown
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      When Snowflake rejects the configured native-Okta authenticator value at
+      the authenticator-request step (the URL does not match any IdP registered
+      for the account, or is not a supported authenticator scheme), the old
+      driver surfaces Snowflake's rejection message verbatim, for example
+      "The specified authenticator is not accepted by your Snowflake account
+      configuration..." or "The specified authenticator is not supported,
+      authenticator=<value>".
+    new_driver_behavior: |
+      The same authenticator-request logical failure collapses into a generic
+      "Native Okta SSO failed" connection error. The specific rejection reason
+      is not part of the surfaced message. Other Okta failure modes (IdP URL
+      mismatch, SAML destination mismatch, missing SAML form action, bad
+      credentials, MFA required) still have distinct messages.
+    description: |
+      Users who misconfigure the Okta URL lose the server's reason and only
+      see a generic authentication failure. Pending a decision on whether to
+      restore the specific rejection message.
+
   124:
     name: "Remove OCSP support in favor of CRLs"
     status: allowed

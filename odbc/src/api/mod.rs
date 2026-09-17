@@ -29,3 +29,6 @@ pub use error::OdbcError;
 pub use sql_state::SqlState;
 pub use types::OdbcResult;
 pub use types::*;
+
+#[cfg(test)]
+pub(crate) static HANDLE_ALLOC_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());

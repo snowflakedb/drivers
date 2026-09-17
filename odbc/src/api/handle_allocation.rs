@@ -534,13 +534,14 @@ mod tests {
     where
         F: FnOnce(sql::Handle, HandleId) -> R,
     {
-        // Every test in this module operates on the same process-global handle
-        // registries. Serialize them so a concurrent test's live handles can't
-        // perturb slot-index or registry-emptiness assertions under the parallel
-        // test runner. Recover from a poisoned lock so one failing test doesn't
-        // cascade into spurious failures in the rest of the module.
-        static TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Every test that allocates handles operates on the same process-global
+        // registries. Serialize them via a crate-wide mutex so concurrent tests
+        // from any module can't perturb slot-index or registry-emptiness
+        // assertions under the parallel test runner. Recover from a poisoned
+        // lock so one failing test doesn't cascade into spurious failures.
+        let _guard = crate::api::HANDLE_ALLOC_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         let env_handle = alloc_environment().expect("alloc_environment");
         let env_id = HandleId::from(env_handle);
@@ -1004,6 +1005,9 @@ mod tests {
 
     #[test]
     fn free_environment_fails_when_connections_non_empty() {
+        let _guard = crate::api::HANDLE_ALLOC_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let env_handle = alloc_environment().expect("alloc_environment");
         let env_id = HandleId::from(env_handle);
         let dbc_handle = alloc_tracked_dbc(env_id);
