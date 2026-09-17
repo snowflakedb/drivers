@@ -42,6 +42,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed `SNOWFLAKE_CONNECTIONS` being read as a raw string instead of TOML, which made Snowpark `Session.builder.create()` fail with `TypeError: string indices must be integers`. (snowflakedb/drivers#2060)
 - Fixed GET downloads from an S3-backed stage returning undecrypted, unreadable data for files written by a server-side unload (e.g. `COPY INTO` with `SINGLE=TRUE`) onto a client-side-encrypted stage, without treating git-stage objects as client-side-encrypted. (snowflakedb/drivers#1942)
 - Fixed GET of a client-side-encrypted S3 object with a corrupted key-wrap header writing ciphertext as a successful download; that case now fails the GET. Git-stage placeholder wraps are unchanged. (snowflakedb/drivers#1942)
 - Fixed native Okta login discarding Snowflake's reason when the configured authenticator URL is rejected. The server's rejection message is now included in the error. (snowflakedb/drivers#2037)
