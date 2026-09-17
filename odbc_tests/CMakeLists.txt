@@ -1,18 +1,6 @@
 cmake_minimum_required(VERSION 4.0)
 project(odbc_tests)
 
-# Windows ARM64: Catch2 POST_BUILD (CatchAddTests.cmake) and vcpkg z-applocal
-# copy DLLs into the same per-directory output folder. Parallel links then
-# fail with "The process cannot access the file because it is being used by
-# another process" (Driver CI build_odbc_tests_cpp). Serialize Ninja links;
-# compiles can still run in parallel. Must be set before any targets.
-if(WIN32 AND CMAKE_GENERATOR STREQUAL "Ninja")
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|ARM64EC")
-    set_property(GLOBAL PROPERTY JOB_POOLS odbc_win_arm64_link=1)
-    set(CMAKE_JOB_POOL_LINK odbc_win_arm64_link)
-  endif()
-endif()
-
 enable_testing()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -65,6 +53,19 @@ function(add_odbc_test name)
     target_link_libraries(${name} PRIVATE ${CMAKE_DL_LIBS})
   endif()
   target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/../odbc/include)
+  # Windows: Catch2 POST_BUILD and vcpkg z-applocal copy DLLs next to the
+  # executable. Sharing CMAKE_CURRENT_BINARY_DIR (tests/e2e has ~200 binaries)
+  # races under parallel Ninja ("being used by another process"). Isolate each
+  # test's runtime dir so copies do not collide; ctest uses TARGET_FILE.
+  if(WIN32)
+    set(_odbc_test_outdir "${CMAKE_CURRENT_BINARY_DIR}/${name}")
+    set_target_properties(${name} PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${_odbc_test_outdir}"
+      RUNTIME_OUTPUT_DIRECTORY_DEBUG "${_odbc_test_outdir}"
+      RUNTIME_OUTPUT_DIRECTORY_RELEASE "${_odbc_test_outdir}"
+      RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${_odbc_test_outdir}"
+      RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${_odbc_test_outdir}")
+  endif()
   catch_discover_tests(${name} TEST_PREFIX "${name}: " ADD_TAGS_AS_LABELS)
 endfunction()
 

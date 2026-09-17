@@ -260,14 +260,9 @@ jobs:
           }
 
           $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
-          # Catch2 POST_BUILD + vcpkg z-applocal copy shared DLLs into tests/e2e.
-          # Those POST_BUILD copies are not in CMAKE_JOB_POOL_LINK, so they still
-          # race at -j 2. Serialize the whole ARM64 cmake --build.
-          $parallelism = if ("${{ matrix.msvc_arch }}" -eq "arm64") {
-            1
-          } else {
-            $NPROC
-          }
+          # Per-target RUNTIME_OUTPUT_DIRECTORY on Windows isolates z-applocal /
+          # Catch2 POST_BUILD DLL copies, so ARM64 can use full $NPROC like x64.
+          $parallelism = $NPROC
           Push-Location odbc_tests
           try {
             $useNinja = (Get-Command ninja.exe -ErrorAction SilentlyContinue) `
