@@ -13,6 +13,8 @@ from __future__ import annotations
 import ctypes
 import threading
 
+from decimal import Decimal
+
 import pytest
 
 from snowflake.connector._internal.arrow_context import ArrowConverterContext
@@ -83,6 +85,28 @@ EPOCH_YEAR_9999 = 253402300799
 EPOCH_YEAR_0001 = -62135596800
 # In-range control for nanosecond precision.
 EPOCH_YEAR_2024 = 1705314600
+
+# INTERVAL DAY TO SECOND is stored as nanoseconds. Values that fit in int64 use
+# a physical Int64 column; larger magnitudes (past ~106_751 days) use Decimal128.
+NANOS_PER_SECOND = 1_000_000_000
+NANOS_PER_DAY = 86_400 * NANOS_PER_SECOND
+# Spec-max compound interval without sub-ms digits: 999_999_999 days + 23:59:59.
+EXTREME_DAY_TIME_NS = (
+    999_999_999 * NANOS_PER_DAY + 23 * 3_600 * NANOS_PER_SECOND + 59 * 60 * NANOS_PER_SECOND + 59 * NANOS_PER_SECOND
+)
+
+
+def _as_int64(value: int) -> int:
+    return int((value + 2**63) % 2**64 - 2**63)
+
+
+def _interval_day_time_decimal_column(name: str, nanos: int) -> tuple[pa.Field, pa.Array]:
+    field = pa.field(
+        name,
+        pa.decimal128(38, 0),
+        metadata={"logicalType": "INTERVAL_DAY_TIME", "scale": "9"},
+    )
+    return field, pa.array([Decimal(nanos)], type=pa.decimal128(38, 0))
 
 
 def _timestamp_column(
@@ -255,6 +279,28 @@ def test_should_truncate_out_of_range_nanoseconds_when_microsecond_precision_is_
     # Then digits 7-9 are dropped and the value converts cleanly
     assert batches[0].schema.field("ts").type == pa.timestamp("us")
     assert batches[0].column("ts")[0].as_py().microsecond == 123456
+
+
+@pytest.mark.parametrize(
+    "nanos",
+    [EXTREME_DAY_TIME_NS, -EXTREME_DAY_TIME_NS],
+    ids=["spec max", "spec min"],
+)
+def test_should_silently_wrap_extreme_interval_day_time_decimal128_to_int64_duration_ns(nanos: int):
+    # Given an INTERVAL_DAY_TIME Decimal128 nanosecond count that does not fit in int64
+    columns = [_interval_day_time_decimal_column("iv", nanos)]
+
+    # When convertBatch rewrites the column to Arrow duration[ns]
+    batches = _iterate_batches(columns)
+
+    # Then conversion succeeds (no overflow error) and the duration value is the
+    # low 64 bits of the nanosecond count, not the original magnitude
+    duration_type = batches[0].schema.field("iv").type
+    assert pa.types.is_duration(duration_type)
+    assert duration_type.unit == "ns"
+    wrapped = _as_int64(nanos)
+    assert batches[0].column("iv")[0].value == wrapped
+    assert wrapped != nanos
 
 
 def test_should_keep_nanosecond_precision_for_in_range_timestamp():
