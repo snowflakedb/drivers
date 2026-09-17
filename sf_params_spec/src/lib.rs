@@ -282,6 +282,20 @@ pub mod param_names {
     /// Reuses the existing `token` param key for OIDC so callers that
     /// already set `token` do not need a separate key.
     pub const WORKLOAD_IDENTITY_TOKEN: ParamKey = ParamKey("token");
+
+    // ── ODBC keywords the driver accepts and does not apply ───────────
+    pub const DSN: ParamKey = ParamKey("dsn");
+    pub const DRIVER: ParamKey = ParamKey("driver");
+    pub const FILEDSN: ParamKey = ParamKey("filedsn");
+    pub const SAVEFILE: ParamKey = ParamKey("savefile");
+    pub const DESCRIPTION: ParamKey = ParamKey("description");
+    pub const LOCALE: ParamKey = ParamKey("locale");
+    pub const SETUP: ParamKey = ParamKey("setup");
+    pub const DRIVER_ODBC_VER: ParamKey = ParamKey("driverodbcver");
+    pub const API_LEVEL: ParamKey = ParamKey("apilevel");
+    pub const SQL_LEVEL: ParamKey = ParamKey("sqllevel");
+    pub const CONNECT_FUNCTIONS: ParamKey = ParamKey("connectfunctions");
+    pub const TRACING: ParamKey = ParamKey("tracing");
 }
 
 /// Default `retry_max_attempts` for general HTTP calls (mirrors the `ParamDef`).
@@ -508,6 +522,11 @@ pub struct ParamDef {
     /// [`ParamRegistry::resolve_for`] for wrappers not listed here.
     /// [`ParamRegistry::is_known`] still returns true for every canonical.
     pub visible_to: VisibleTo,
+
+    /// When true, wrappers drop the key during option normalization. The
+    /// parameter is registered so it is not an unknown session parameter, and
+    /// its value is not applied.
+    pub ignored: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -548,6 +567,7 @@ impl ParamDef {
             default: None,
             deprecated_by: None,
             visible_to: VisibleTo::All,
+            ignored: false,
         }
     }
 
@@ -619,6 +639,7 @@ pub struct ParamDefBuilder {
     default: Option<DefaultValue>,
     deprecated_by: Option<&'static str>,
     visible_to: VisibleTo,
+    ignored: bool,
 }
 
 impl ParamDefBuilder {
@@ -692,6 +713,11 @@ impl ParamDefBuilder {
         self
     }
 
+    pub const fn ignored(mut self, value: bool) -> Self {
+        self.ignored = value;
+        self
+    }
+
     pub const fn build(self) -> ParamDef {
         ParamDef {
             canonical_name: match self.canonical_name {
@@ -732,6 +758,7 @@ impl ParamDefBuilder {
             default: self.default,
             deprecated_by: self.deprecated_by,
             visible_to: self.visible_to,
+            ignored: self.ignored,
         }
     }
 }
@@ -2236,7 +2263,35 @@ static PARAM_DEFS: &[ParamDef] = &[
         .used_at_connect(true)
         .mutable_after_connect(false)
         .build(),
+    // ── ODBC keywords the driver accepts and does not apply ───────────
+    ignored_odbc_param(param_names::DSN.as_str()),
+    ignored_odbc_param(param_names::DRIVER.as_str()),
+    ignored_odbc_param(param_names::FILEDSN.as_str()),
+    ignored_odbc_param(param_names::SAVEFILE.as_str()),
+    ignored_odbc_param(param_names::DESCRIPTION.as_str()),
+    ignored_odbc_param(param_names::LOCALE.as_str()),
+    ignored_odbc_param(param_names::SETUP.as_str()),
+    ignored_odbc_param(param_names::DRIVER_ODBC_VER.as_str()),
+    ignored_odbc_param(param_names::API_LEVEL.as_str()),
+    ignored_odbc_param(param_names::SQL_LEVEL.as_str()),
+    ignored_odbc_param(param_names::CONNECT_FUNCTIONS.as_str()),
+    ignored_odbc_param(param_names::TRACING.as_str()),
 ];
+
+const fn ignored_odbc_param(canonical: &'static str) -> ParamDef {
+    ParamDef::builder()
+        .canonical_name(canonical)
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("ODBC keyword the driver accepts and does not apply.")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .ignored(true)
+        .visible_to(visible_to!(Odbc))
+        .build()
+}
 
 /// The registry singleton. Built once at startup, immutable thereafter.
 pub struct ParamRegistry {
@@ -2696,6 +2751,50 @@ mod tests {
         }
         assert_eq!(DEF.deprecated_by, None);
         assert_eq!(DEF.visible_to, VisibleTo::All);
+        const {
+            assert!(!DEF.ignored);
+        }
+    }
+
+    #[test]
+    fn ignored_odbc_params_resolve_only_for_odbc_and_are_unused() {
+        let r = registry();
+        for (key, canonical) in [
+            ("DSN", "dsn"),
+            ("DRIVER", "driver"),
+            ("FILEDSN", "filedsn"),
+            ("SAVEFILE", "savefile"),
+            ("DESCRIPTION", "description"),
+            ("LOCALE", "locale"),
+            ("SETUP", "setup"),
+            ("DriverODBCVer", "driverodbcver"),
+            ("APILevel", "apilevel"),
+            ("SQLLevel", "sqllevel"),
+            ("ConnectFunctions", "connectfunctions"),
+            ("TRACING", "tracing"),
+        ] {
+            let def = r
+                .resolve_for(Wrapper::Odbc, key)
+                .unwrap_or_else(|| panic!("{key} should resolve for ODBC"));
+            assert_eq!(def.canonical_name, canonical);
+            assert!(def.ignored, "{canonical} should be ignored");
+            assert!(!def.used_at_connect, "{canonical} is unused at connect");
+            assert!(
+                r.resolve(key).is_none(),
+                "{key} must not resolve without wrapper context"
+            );
+            for wrapper in [
+                Wrapper::Jdbc,
+                Wrapper::Python,
+                Wrapper::NodeJs,
+                Wrapper::DotNet,
+            ] {
+                assert!(
+                    r.resolve_for(wrapper, key).is_none(),
+                    "{key} must not resolve for {wrapper:?}"
+                );
+            }
+        }
     }
 
     #[test]

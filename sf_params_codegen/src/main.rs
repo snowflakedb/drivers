@@ -190,9 +190,10 @@ fn is_statement_only(scopes: &[ParamScope]) -> bool {
 
 /// Whether `param` belongs on the generated Python `ConnectionConfig`.
 /// Statement-only params belong on the cursor. Wrapper-restricted params
-/// belong only on the wrappers listed in `visible_to`.
+/// belong only on the wrappers listed in `visible_to`. Ignored params are
+/// accepted and unused; they are not Python kwargs.
 fn include_in_python_config(param: &ParamDef) -> bool {
-    !is_statement_only(param.scopes) && param.is_visible_to(Wrapper::Python)
+    !is_statement_only(param.scopes) && param.is_visible_to(Wrapper::Python) && !param.ignored
 }
 
 // ---------------------------------------------------------------------------

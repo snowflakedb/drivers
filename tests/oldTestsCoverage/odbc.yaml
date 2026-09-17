@@ -612,7 +612,7 @@ tests:
       - path: "odbc/src/api/diagnostic.rs - from_warning_unrecognized_keys_maps_to_01s00_native_17"
       - path: "odbc/src/api/connection.rs - unrecognized_connection_string_keys_flags_unknown_key"
     status: mapped
-    notes: "The old test connects with DSN=SnowflakeDSII;INVALIDKEY=abc and asserts SQL_SUCCESS_WITH_INFO with a 01S00 record naming INVALIDKEY. BD#106 (now fixed): the UD performs an equivalent local unknown-keyword check, recognizing keys via the sf_core registry (plus ODBC structural keywords) - the odbc-api test asserts the 01S00 record on both drivers (IODBC_ONLY carve-out per BD#61, where neither driver posts the record), the diagnostic.rs unit test pins the 01S00/native-17/message mapping, and the connection.rs unit tests pin the registry-based unrecognized-key detection."
+    notes: "The old test connects with DSN=SnowflakeDSII;INVALIDKEY=abc and asserts SQL_SUCCESS_WITH_INFO with a 01S00 record naming INVALIDKEY. BD#106 (now fixed): the UD performs an equivalent local unknown-keyword check, recognizing keys via the sf_core registry - the odbc-api test asserts the 01S00 record on both drivers (IODBC_ONLY carve-out per BD#61, where neither driver posts the record), the diagnostic.rs unit test pins the 01S00/native-17/message mapping, and the connection.rs unit tests pin the registry-based unrecognized-key detection."
   - test_name: Retry On 429
     ud_tests: []
   - test_name: RetryOn403

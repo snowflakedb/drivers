@@ -203,22 +203,20 @@ fn deprecated_put_get_retry_warnings(params: &HashMap<String, String>) -> Vec<Wa
 /// name, so core receives canonical keys and no longer has to remap ODBC wire
 /// spellings. Keys unknown to the registry are forwarded uppercased as
 /// session/unknown parameters (matching how ODBC passes server session params
-/// through). `DRIVER` is dropped (it only names the driver library).
-/// Legacy ODBC `TRACING` (0–6) is dropped; driver logging uses `sf.odbc.ini`
-/// (`LogLevel` / `LogPath`) instead.
+/// through). Registry entries marked `ignored` (ODBC driver-manager metadata
+/// such as `DRIVER` and `DSN`, and leftover `TRACING`) are dropped.
 fn normalize_connection_string_option(
     key: String,
     value: String,
 ) -> Option<(String, ConfigSetting)> {
     let upper = key.to_ascii_uppercase();
-    if upper == "DRIVER" || upper == "TRACING" {
-        return None;
-    }
-
     let registry = sf_core::config::param_registry::registry();
     let Some(def) = registry.resolve_for(Wrapper::Odbc, &upper) else {
         return Some((upper, value.into()));
     };
+    if def.ignored {
+        return None;
+    }
 
     // `CRL_MODE`/`CRL_ENABLED` are `Odbc`-scoped aliases of `crl_check_mode`
     // (see `sf_params_spec`) but carry legacy value spellings (`CRL_MODE`'s
@@ -309,33 +307,18 @@ fn apply_global_ssl_version_override(
     Ok(())
 }
 
-/// ODBC connection-string keywords that describe the connection mechanics
-/// (data source, driver library, file DSN) rather than a Snowflake setting, so
-/// the `sf_core` registry does not model them. They are recognized regardless
-/// of the registry; without this, every `DSN=...` connection would draw a
-/// spurious 01S00. Upper-cased to match [`parse_connection_string`] keys.
-const ODBC_STRUCTURAL_KEYS: &[&str] = &["DSN", "DRIVER", "FILEDSN", "SAVEFILE"];
-
-/// Legacy 3.x DSN/connection-string keys this driver no longer models. They
-/// are recognized so leftover values do not draw 01S00, then dropped before
-/// connect rather than forwarded as session parameters.
-const ODBC_IGNORED_KEYS: &[&str] = &["TRACING"];
-
-/// Connection-string keys that neither resolve through the `sf_core` registry
-/// under the ODBC flavor nor name ODBC connection mechanics
-/// ([`ODBC_STRUCTURAL_KEYS`]) or ignored leftover keys ([`ODBC_IGNORED_KEYS`]),
-/// sorted for a stable diagnostic. A key the registry resolves stays
-/// recognized, so any parameter this driver models is accepted without a
-/// warning.
+/// Connection-string keys that do not resolve through the `sf_core` registry
+/// under the ODBC flavor, sorted for a stable diagnostic. A key the registry
+/// resolves stays recognized, including `ignored` entries, so leftover
+/// driver-manager and `TRACING` keywords do not draw 01S00.
 fn unrecognized_connection_string_keys(params: &HashMap<String, String>) -> Vec<String> {
     let registry = sf_core::config::param_registry::registry();
     let mut keys: Vec<String> = params
         .keys()
         .filter(|key| {
-            let upper = key.to_ascii_uppercase();
-            !ODBC_STRUCTURAL_KEYS.contains(&upper.as_str())
-                && !ODBC_IGNORED_KEYS.contains(&upper.as_str())
-                && registry.resolve_for(Wrapper::Odbc, &upper).is_none()
+            registry
+                .resolve_for(Wrapper::Odbc, key.to_ascii_uppercase())
+                .is_none()
         })
         .cloned()
         .collect();
@@ -3592,6 +3575,31 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_drops_ignored_odbc_dm_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("DSN".to_owned(), "MyDsn".to_owned()),
+            ("DRIVER".to_owned(), "SnowflakeDSIIDriver".to_owned()),
+            ("FILEDSN".to_owned(), "/tmp/snow.dsn".to_owned()),
+            ("SAVEFILE".to_owned(), "/tmp/out.dsn".to_owned()),
+            ("DESCRIPTION".to_owned(), "My Snowflake DSN".to_owned()),
+            ("LOCALE".to_owned(), "en-US".to_owned()),
+            ("SETUP".to_owned(), "libsfodbcS.so".to_owned()),
+            ("DriverODBCVer".to_owned(), "03.52".to_owned()),
+            ("APILevel".to_owned(), "1".to_owned()),
+            ("SQLLevel".to_owned(), "1".to_owned()),
+            ("ConnectFunctions".to_owned(), "YYY".to_owned()),
+            ("SERVER".to_owned(), "example.com".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "host"), Some("example.com"));
+        assert_eq!(
+            options.len(),
+            1,
+            "ignored ODBC DM keys should be dropped: {options:?}"
+        );
+    }
+
+    #[test]
     fn normalize_connection_string_options_canonicalizes_known_query_tag() {
         // QUERY_TAG is a canonical parameter, so it resolves and is emitted
         // under its canonical lowercase name (not forwarded uppercased).
@@ -3876,9 +3884,7 @@ mod tests {
     }
 
     #[test]
-    fn unrecognized_connection_string_keys_accepts_registry_and_structural_keys() {
-        // UID/SERVER/WAREHOUSE resolve via the ODBC registry; DSN is an ODBC
-        // structural keyword.
+    fn unrecognized_connection_string_keys_accepts_registry_keys() {
         let params =
             parse_connection_string("DSN=my_dsn;UID=admin;SERVER=foo;WAREHOUSE=wh").unwrap();
         assert!(unrecognized_connection_string_keys(&params).is_empty());

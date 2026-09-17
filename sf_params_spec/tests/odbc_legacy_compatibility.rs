@@ -80,31 +80,29 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ),
     ("QUERY_TAG", "query_tag"),
     ("CLIENT_PREFETCH_THREADS", "CLIENT_PREFETCH_THREADS"),
+    ("DSN", "dsn"),
+    ("DRIVER", "driver"),
+    ("FILEDSN", "filedsn"),
+    ("SAVEFILE", "savefile"),
+    ("DESCRIPTION", "description"),
+    ("LOCALE", "locale"),
+    ("SETUP", "setup"),
+    ("DriverODBCVer", "driverodbcver"),
+    ("APILevel", "apilevel"),
+    ("SQLLevel", "sqllevel"),
+    ("ConnectFunctions", "connectfunctions"),
+    ("TRACING", "tracing"),
 ];
 
 /// Accepted by snowflake-odbc but not a registry parameter. Grouped by why
 /// the key stays out of the registry.
 const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
-    // ODBC manager / installer metadata. The manager consumes these; they
-    // are not driver connection parameters.
-    "DSN",
-    "DRIVER",
-    "FILEDSN",
-    "SAVEFILE",
-    "DESCRIPTION",
-    "LOCALE",
-    "SETUP",
-    "DriverODBCVer",
-    "APILevel",
-    "SQLLevel",
-    "ConnectFunctions",
     // Wrapper-owned logging and Simba diagnostics. These configure the
     // driver's logger, not `sf_core`. `CPTIMEOUT` is the installer
     // connection-pool idle timeout; the legacy driver accepted the key and
     // never applied it. `CLIENT_CONFIG_FILE` is the `sf_client_config.json`
     // path: `Snowflake.h` defines it and `SFConnection` reads it, but it is
     // not in `initAcceptedConnectionKeys`.
-    "TRACING",
     "LogLevel",
     "LogPath",
     "LogFileSize",
