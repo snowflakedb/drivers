@@ -79,6 +79,14 @@ public interface CoreDriverApi {
   ConnectionSetOptionsResponse connectionSetOptions(
       ConnectionHandle connHandle, Map<String, ConfigSetting> options);
 
+  /**
+   * Sets options for a caller that supplied no connection-identifying option, letting the core
+   * resolve the default profile from connections.toml. The {@code options} map may still carry
+   * bookkeeping params the wrapper injected; those do not identify a connection.
+   */
+  ConnectionSetOptionsResponse connectionSetOptionsForDefaultProfile(
+      ConnectionHandle connHandle, Map<String, ConfigSetting> options);
+
   ConnectionSetAutocommitResponse connectionSetAutocommit(
       ConnectionHandle connHandle, boolean autocommit);
 

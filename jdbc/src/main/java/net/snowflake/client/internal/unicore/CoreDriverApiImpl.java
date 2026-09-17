@@ -167,10 +167,23 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   public ConnectionSetOptionsResponse connectionSetOptions(
       ConnectionHandle connHandle, Map<String, ConfigSetting> options) {
+    return setOptions(connHandle, options, false);
+  }
+
+  public ConnectionSetOptionsResponse connectionSetOptionsForDefaultProfile(
+      ConnectionHandle connHandle, Map<String, ConfigSetting> options) {
+    return setOptions(connHandle, options, true);
+  }
+
+  private ConnectionSetOptionsResponse setOptions(
+      ConnectionHandle connHandle,
+      Map<String, ConfigSetting> options,
+      boolean noConnectionDetails) {
     ConnectionSetOptionsRequest request =
         ConnectionSetOptionsRequest.newBuilder()
             .setConnHandle(connHandle)
             .putAllOptions(options)
+            .setNoConnectionDetails(noConnectionDetails)
             .build();
     return invoke(() -> client.connectionSetOptions(request));
   }
