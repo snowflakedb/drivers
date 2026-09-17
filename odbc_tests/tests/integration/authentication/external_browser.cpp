@@ -2,6 +2,7 @@
 #include <sqlext.h>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <thread>
 
@@ -163,14 +164,28 @@ TEST_CASE("should fail with timeout when no browser callback arrives", "[externa
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                    SQL_DRIVER_NOPROMPT);
 
+  /* CI may surface AuthenticationTimeout, OperationTimeout ("timed out after"),
+     or retry exhaustion. UNSCOPED_INFO dumps SQLGetDiagRec on mismatch. */
   // Then Connection fails with timeout or browser error
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   REQUIRE(!records.empty());
-  bool has_relevant_error = std::any_of(records.begin(), records.end(), [](const auto& r) {
-    auto msg = r.messageText;
-    std::transform(msg.begin(), msg.end(), msg.begin(), ::tolower);
-    return msg.find("timeout") != std::string::npos || msg.find("browser") != std::string::npos;
+  std::string all_msgs;
+  for (const auto& r : records) {
+    all_msgs += "[" + r.sqlState + "] " + r.messageText + " || ";
+  }
+  UNSCOPED_INFO("ODBC diagnostics: " << all_msgs);
+  auto lowercase = [](std::string msg) {
+    std::transform(msg.begin(), msg.end(), msg.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return msg;
+  };
+  bool has_relevant_error = std::any_of(records.begin(), records.end(), [&](const auto& record) {
+    const auto message = lowercase(record.messageText);
+    const bool retry_budget_exhausted =
+        message.find("retry") != std::string::npos && message.find("exhausted") != std::string::npos;
+    return message.find("timeout") != std::string::npos || message.find("timed out") != std::string::npos ||
+           message.find("browser") != std::string::npos || retry_budget_exhausted;
   });
   std::string diag;
   for (const auto& r : records) {
