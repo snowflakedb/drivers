@@ -68,6 +68,12 @@ pub struct WrapperPresets {
     /// are treated as absent (cache unchanged). JDBC and ODBC keeps `false` to match
     /// the original driver behavior.
     pub clear_query_context_on_null_entries: bool,
+    /// When true, `ALTER SESSION SET` assignments are parsed out of the
+    /// submitted SQL and written to the session-parameter cache without waiting
+    /// for the server to echo them, which keeps Python's `_session_parameters`
+    /// proxy in sync for parameters the response omits. When false, the cache
+    /// only ever reflects parameters a response carries.
+    pub optimistic_alter_session_param_cache: bool,
     /// when `true` one in-flight session operation per connection
     pub serialize_session_operations: bool,
 }
@@ -92,6 +98,7 @@ impl Default for WrapperPresets {
             legacy_empty_get_on_missing: false,
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: true,
+            optimistic_alter_session_param_cache: false,
             serialize_session_operations: false,
         }
     }
@@ -99,11 +106,11 @@ impl Default for WrapperPresets {
 
 impl WrapperPresets {
     /// Presets for the Python connector.
-    ///
-    /// Currently identical to `Default` — listed explicitly so that
-    /// future Python-specific overrides have a clear home.
     pub fn python() -> Self {
-        Self::default()
+        Self {
+            optimistic_alter_session_param_cache: true,
+            ..Self::default()
+        }
     }
 
     /// Presets for the ODBC driver.
@@ -116,6 +123,7 @@ impl WrapperPresets {
             legacy_empty_get_on_missing: false,
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: false,
+            optimistic_alter_session_param_cache: false,
             serialize_session_operations: true,
         }
     }

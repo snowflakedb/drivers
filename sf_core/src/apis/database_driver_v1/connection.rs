@@ -1121,7 +1121,11 @@ pub struct Connection {
     /// CSV bindings.
     pub stage_state: Arc<AtomicStageState>,
     pub(crate) xp_slot: Arc<XpSlot>,
-
+    /// Captured from [`WrapperPresets::optimistic_alter_session_param_cache`] at
+    /// [`Self::initialize`]; gates the `ALTER SESSION SET` parse in
+    /// [`Self::update_session_params_cache`]. `false` until login completes, so
+    /// a pre-login cache write never parses SQL.
+    pub(crate) optimistic_alter_session_param_cache: bool,
     /// gate when [`WrapperPresets::serialize_session_operations`] is true
     session_mutex: Arc<Mutex<()>>,
 }
@@ -1164,6 +1168,7 @@ impl Connection {
             heartbeat_handle: None,
             stage_state: Arc::new(AtomicStageState::new(StageState::Unknown)),
             xp_slot: Arc::new(XpSlot::new(false, None)),
+            optimistic_alter_session_param_cache: false,
             session_mutex: Arc::new(Mutex::new(())),
         }
     }
@@ -1385,6 +1390,8 @@ impl Connection {
         self.resolved_connect = Some(resolved_connect);
         self.query_context_cache
             .init(self.resolved_connect.as_ref(), &wrapper_presets);
+        self.optimistic_alter_session_param_cache =
+            wrapper_presets.optimistic_alter_session_param_cache;
         self.session_overrides = ParamStore::new();
         self.logout_config = logout_config;
 
@@ -1415,18 +1422,22 @@ impl Connection {
         // 1. ALTER SESSION SET detection: optimistically update the cache based on user's query.
         // This is necessary as Snowflake returns only part of session parameters in response.
         // Details: SNOW-3104303
-        cache.extend(
-            super::alter_session_parser::parse_all_alter_sessions(query)
-                .into_iter()
-                .map(|p| {
-                    tracing::debug!(
-                        param_name = %p.name,
-                        param_value = %p.value,
-                        "Detected ALTER SESSION SET, updating cache optimistically"
-                    );
-                    (p.name.clone(), Setting::String(p.value.clone()))
-                }),
-        );
+        // Only wrappers that opt in via
+        // `WrapperPresets::optimistic_alter_session_param_cache` read parameter
+        // changes out of the SQL; for the rest the cache follows the response.
+        if self.optimistic_alter_session_param_cache {
+            cache.extend(
+                super::alter_session_parser::parse_all_alter_sessions(query)
+                    .into_iter()
+                    .map(|p| {
+                        tracing::debug!(
+                            param_name = %p.name,
+                            "Detected ALTER SESSION SET, updating cache optimistically"
+                        );
+                        (p.name.clone(), Setting::String(p.value.clone()))
+                    }),
+            );
+        }
 
         // 2. Response parameters: merge any server-returned session parameters into the cache.
         if let Some(parameters) = response_parameters {
@@ -4004,6 +4015,66 @@ mod tests {
         let names = conn.final_session_names.read().unwrap();
         assert_eq!(names.database, Some("new_db".into()));
         assert_eq!(names.schema, Some("new_schema".into()));
+    }
+
+    #[tokio::test]
+    async fn update_session_params_cache_applies_alter_session_when_opted_in() {
+        let mut conn = Connection::new();
+        conn.optimistic_alter_session_param_cache = true;
+
+        conn.update_session_params_cache(
+            "ALTER SESSION SET QUERY_TAG = 'tag_from_sql'",
+            None,
+            &FinalSessionNames::default(),
+        )
+        .await;
+
+        assert_eq!(
+            conn.session_parameters.read().await.get("QUERY_TAG"),
+            Some(&Setting::String("tag_from_sql".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn update_session_params_cache_ignores_alter_session_sql_when_not_opted_in() {
+        let conn = Connection::new();
+
+        conn.update_session_params_cache(
+            "ALTER SESSION SET QUERY_TAG = 'tag_from_sql'",
+            None,
+            &FinalSessionNames::default(),
+        )
+        .await;
+
+        assert!(
+            conn.session_parameters
+                .read()
+                .await
+                .get("QUERY_TAG")
+                .is_none(),
+            "the SQL parse must not run for a wrapper that did not opt in"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_session_params_cache_applies_response_parameters_without_opt_in() {
+        let conn = Connection::new();
+        let parameters = vec![crate::rest::snowflake::query_response::NameValueParameter {
+            name: "QUERY_TAG".into(),
+            value: serde_json::Value::String("tag_from_response".into()),
+        }];
+
+        conn.update_session_params_cache(
+            "ALTER SESSION SET QUERY_TAG = 'tag_from_sql'",
+            Some(&parameters),
+            &FinalSessionNames::default(),
+        )
+        .await;
+
+        assert_eq!(
+            conn.session_parameters.read().await.get("QUERY_TAG"),
+            Some(&Setting::String("tag_from_response".into()))
+        );
     }
 
     async fn setup_connection_for_http_tests(ds: &DatabaseDriverV1) -> Handle {

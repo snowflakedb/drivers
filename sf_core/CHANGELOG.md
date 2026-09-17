@@ -37,6 +37,7 @@ New features:
 Changes:
 
 - Changed `client_store_temporary_credential` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)
+- Changed the session-parameter cache to read `ALTER SESSION SET` values out of the submitted SQL for Python only. Every other wrapper now updates the cache from the parameters a query response carries, so `ConnectionGetParameter` and `ConnectionGetAllParameters` no longer report a parameter the server did not echo back. (snowflakedb/drivers#2080)
 - Changed the message on a failed login to carry the server's own text: `ApiError::Login` renders as `Failed to login: <server text>` instead of a bare `Failed to login`, and for coded server errors as `Failed to login: Login error: <server text>, code: <code>`. The server sentence previously reached applications only through the error trace. This is what `DriverException.message` carries; error kinds, vendor codes and SQLSTATEs are unchanged. (snowflakedb/drivers#1881)
 
 Bug fixes:

@@ -2,8 +2,10 @@
 ///
 /// This module provides functionality to parse ALTER SESSION SET SQL statements
 /// and extract the parameter name and value. This allows for optimistic cache
-/// updates before the query response is received, matching the behavior of
-/// existing Python and other drivers.
+/// updates before the query response is received, matching the behavior of the
+/// legacy Python connector. Only wrappers that set
+/// `WrapperPresets::optimistic_alter_session_param_cache` update their cache
+/// this way.
 /// Represents a parsed ALTER SESSION SET statement
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlterSessionParameter {
