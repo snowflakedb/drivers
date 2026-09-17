@@ -35,6 +35,7 @@ use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::config::settings::Setting;
+use crate::crl::config::CertRevocationCheckMode;
 use crate::crl::worker::SharedCrlWorker;
 use crate::http::retry::{
     HttpContext, HttpError, LastStatus, RetryState, TransportSnafu, execute_with_retry,
@@ -460,6 +461,12 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             os: login_parameters.client_info.os.clone(),
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
+            cert_revocation_check_mode: match login_parameters.client_info.crl_config.check_mode {
+                CertRevocationCheckMode::Disabled => "DISABLED",
+                CertRevocationCheckMode::Enabled => "ENABLED",
+                CertRevocationCheckMode::Advisory => "ADVISORY",
+            }
+            .to_string(),
             platforms: login_parameters.client_info.platforms.clone(),
             runtime_version: login_parameters.client_info.runtime_version.clone(),
             runtime_name: login_parameters.client_info.runtime_name.clone(),
@@ -3679,6 +3686,56 @@ mod tests {
         let core_version = &data.client_environment.core_version;
         assert!(!isa.is_empty(), "ISA must be non-empty");
         assert!(!core_version.is_empty(), "CORE_VERSION must be non-empty");
+    }
+
+    #[test]
+    fn base_auth_request_data_sets_cert_revocation_check_mode_disabled_by_default() {
+        let login_params = test_login_params();
+        let data = base_auth_request_data(&login_params);
+        assert_eq!(
+            data.client_environment.cert_revocation_check_mode,
+            "DISABLED"
+        );
+    }
+
+    #[test]
+    fn base_auth_request_data_sets_cert_revocation_check_mode_enabled() {
+        use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
+        let login_params = LoginParameters {
+            client_info: ClientInfo {
+                crl_config: CrlConfig {
+                    check_mode: CertRevocationCheckMode::Enabled,
+                    ..CrlConfig::default()
+                },
+                ..test_client_info()
+            },
+            ..test_login_params()
+        };
+        let data = base_auth_request_data(&login_params);
+        assert_eq!(
+            data.client_environment.cert_revocation_check_mode,
+            "ENABLED"
+        );
+    }
+
+    #[test]
+    fn base_auth_request_data_sets_cert_revocation_check_mode_advisory() {
+        use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
+        let login_params = LoginParameters {
+            client_info: ClientInfo {
+                crl_config: CrlConfig {
+                    check_mode: CertRevocationCheckMode::Advisory,
+                    ..CrlConfig::default()
+                },
+                ..test_client_info()
+            },
+            ..test_login_params()
+        };
+        let data = base_auth_request_data(&login_params);
+        assert_eq!(
+            data.client_environment.cert_revocation_check_mode,
+            "ADVISORY"
+        );
     }
 
     #[test]

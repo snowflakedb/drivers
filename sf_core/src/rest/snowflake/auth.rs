@@ -43,6 +43,8 @@ pub struct AuthRequestClientEnvironment {
     pub os_version: String,
     #[serde(rename = "OCSP_MODE", skip_serializing_if = "Option::is_none")]
     pub ocsp_mode: Option<String>,
+    #[serde(rename = "CERT_REVOCATION_CHECK_MODE")]
+    pub cert_revocation_check_mode: String,
     #[serde(rename = "PLATFORM")]
     pub platforms: Vec<String>,
     #[serde(rename = "RUNTIME_VERSION", skip_serializing_if = "Option::is_none")]
@@ -266,6 +268,45 @@ mod tests {
             json.get("OCSP_MODE").is_none(),
             "None OCSP_MODE should be skipped"
         );
+    }
+
+    #[test]
+    fn test_client_environment_serializes_cert_revocation_check_mode_disabled() {
+        let env = AuthRequestClientEnvironment {
+            application: "ODBC".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.10".to_string(),
+            cert_revocation_check_mode: "DISABLED".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["CERT_REVOCATION_CHECK_MODE"], "DISABLED");
+    }
+
+    #[test]
+    fn test_client_environment_serializes_cert_revocation_check_mode_enabled() {
+        let env = AuthRequestClientEnvironment {
+            application: "ODBC".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.10".to_string(),
+            cert_revocation_check_mode: "ENABLED".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["CERT_REVOCATION_CHECK_MODE"], "ENABLED");
+    }
+
+    #[test]
+    fn test_client_environment_serializes_cert_revocation_check_mode_advisory() {
+        let env = AuthRequestClientEnvironment {
+            application: "ODBC".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.10".to_string(),
+            cert_revocation_check_mode: "ADVISORY".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["CERT_REVOCATION_CHECK_MODE"], "ADVISORY");
     }
 
     #[test]
