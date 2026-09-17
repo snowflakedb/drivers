@@ -295,6 +295,32 @@ impl Binding {
         }
     }
 
+    /// Write a complete ASCII value for a bound-column fetch.
+    ///
+    /// Unlike [`write_char_string`](Self::write_char_string), this specialized
+    /// path does not need a resumable `SQLGetData` offset and reports the only
+    /// possible warning as a boolean, avoiding a temporary `Warnings` vector
+    /// for every row. Batched CHAR kernels only produce ASCII.
+    #[inline]
+    pub(crate) fn write_ascii_char_string_once(&self, src: &str) -> bool {
+        debug_assert!(src.is_ascii());
+        let src = src.as_bytes();
+
+        if self.target_value_ptr.is_null() || self.buffer_length <= 0 {
+            let _ = self.write_length_or_null(LengthOrNull::Length(src.len() as sql::Len));
+            return !src.is_empty();
+        }
+
+        let max_len = self.buffer_length as usize;
+        let copy_len = std::cmp::min(src.len(), max_len - 1);
+        unsafe {
+            std::ptr::copy_nonoverlapping(src.as_ptr(), self.target_value_ptr as *mut u8, copy_len);
+            std::ptr::write((self.target_value_ptr as *mut u8).add(copy_len), 0);
+        }
+        let _ = self.write_length_or_null(LengthOrNull::Length(src.len() as sql::Len));
+        src.len() > max_len - 1
+    }
+
     fn write_char_bytes(&self, src: &[u8], get_data_offset: &mut Option<usize>) -> Warnings {
         let offset = get_data_offset.unwrap_or(0);
         let remaining = &src[offset..];
