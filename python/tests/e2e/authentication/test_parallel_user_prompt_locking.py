@@ -291,9 +291,7 @@ class TestParallelUserPromptLocking:
     ):
         # Given clientStoreTemporaryCredential is disabled and DISABLE_PARALLEL_USER_PROMPT is true
         user = f"eb_nocache_{uuid.uuid4().hex}"
-        # client_store_temporary_credential left unset defaults to false, so the prompt
-        # lock is not eligible even though disable_parallel_user_prompt defaults to true.
-        params = _eb_connect_params(wiremock, user)
+        params = _eb_connect_params(wiremock, user, client_store_temporary_credential=False)
 
         # And Wiremock returns valid ssoUrl and proofKey for each authenticator-request
         wiremock.add_mapping("auth/external_browser_authenticator_request.json")

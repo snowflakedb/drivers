@@ -87,7 +87,7 @@ fn eb_client_no_caching(mock: &MockServerWithTls, user: &str) -> SnowflakeTestCl
     c.set_connection_option("authenticator", "EXTERNALBROWSER");
     c.set_connection_option("user", user);
     c.set_connection_option("authentication_timeout", "30");
-    // client_store_temporary_credential intentionally NOT set (defaults to false)
+    c.set_connection_option("client_store_temporary_credential", "false");
     c
 }
 

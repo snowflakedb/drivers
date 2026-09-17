@@ -291,16 +291,6 @@ impl DatabaseDriverV1 {
                     )
                     .context(ConfigurationSnafu)?;
                     normalize_host_underscores(&mut resolved);
-                    // `effective_seed`, not `connection_seed`: the user can set
-                    // `client_store_temporary_credential` on the database handle
-                    // too, and that layer is absent from the connection seed.
-                    // Checking the seed alone overwrote a database-level `false`
-                    // and turned credential caching on against the caller's wish.
-                    self.wrapper_presets
-                        .apply_oauth_authorization_code_cache_default(
-                            &mut resolved,
-                            &effective_seed,
-                        );
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
                     let port = resolved.get_int(param_names::PORT);

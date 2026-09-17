@@ -10,9 +10,7 @@ use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
 use super::stream_transfer::{DownloadStream, UploadStreamSession};
-use crate::config::ParamStore;
-use crate::config::param_registry::{Wrapper, param_names};
-use crate::config::settings::Setting;
+use crate::config::param_registry::Wrapper;
 use crate::crl::worker::{CrlWorker, SharedCrlWorker};
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
@@ -70,10 +68,6 @@ pub struct WrapperPresets {
     /// are treated as absent (cache unchanged). JDBC and ODBC keeps `false` to match
     /// the original driver behavior.
     pub clear_query_context_on_null_entries: bool,
-    /// When true, `OAUTH_AUTHORIZATION_CODE` connections cache the access /
-    /// refresh token unless `client_store_temporary_credential` is set
-    /// explicitly. When false, caching stays off until the caller opts in.
-    pub oauth_authorization_code_cache_default: bool,
     /// when `true` one in-flight session operation per connection
     pub serialize_session_operations: bool,
 }
@@ -98,7 +92,6 @@ impl Default for WrapperPresets {
             legacy_empty_get_on_missing: false,
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: true,
-            oauth_authorization_code_cache_default: false,
             serialize_session_operations: false,
         }
     }
@@ -123,7 +116,6 @@ impl WrapperPresets {
             legacy_empty_get_on_missing: false,
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: false,
-            oauth_authorization_code_cache_default: true,
             serialize_session_operations: true,
         }
     }
@@ -146,42 +138,6 @@ impl WrapperPresets {
             put_get_resultset_flavor: PutGetResultsetFlavor::NodeJs,
             ..Self::default()
         }
-    }
-
-    /// Default `client_store_temporary_credential` on for the OAuth
-    /// authorization-code flow, for wrappers whose legacy driver cached those
-    /// tokens by default.
-    ///
-    /// `user_seed` must carry every layer the user can set the flag through —
-    /// the database handle as well as the connection — because this only fills
-    /// in a default and must never overwrite a value the caller chose. Passing a
-    /// narrower seed silently re-enables caching for anyone who disabled it on
-    /// the layer that was left out.
-    pub fn apply_oauth_authorization_code_cache_default(
-        &self,
-        resolved: &mut ParamStore,
-        user_seed: &ParamStore,
-    ) {
-        if !self.oauth_authorization_code_cache_default {
-            return;
-        }
-        let authenticator = resolved
-            .get_string(param_names::AUTHENTICATOR)
-            .or_else(|| user_seed.get_string(param_names::AUTHENTICATOR))
-            .unwrap_or_default();
-        if !authenticator.eq_ignore_ascii_case("OAUTH_AUTHORIZATION_CODE") {
-            return;
-        }
-        if user_seed
-            .get_bool(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL)
-            .is_some()
-        {
-            return;
-        }
-        resolved.insert(
-            param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.into(),
-            Setting::Bool(true),
-        );
     }
 }
 
@@ -481,87 +437,6 @@ mod tests {
         assert!(!WrapperPresets::python().serialize_session_operations);
         assert!(!WrapperPresets::jdbc().serialize_session_operations);
         assert!(WrapperPresets::odbc().serialize_session_operations);
-    }
-
-    #[test]
-    fn only_odbc_defaults_oauth_ac_token_cache_on() {
-        assert!(WrapperPresets::odbc().oauth_authorization_code_cache_default);
-        assert!(!WrapperPresets::python().oauth_authorization_code_cache_default);
-        assert!(!WrapperPresets::jdbc().oauth_authorization_code_cache_default);
-        assert!(!WrapperPresets::default().oauth_authorization_code_cache_default);
-    }
-
-    fn oauth_ac_stores(cache_in_seed: Option<bool>) -> (ParamStore, ParamStore) {
-        let mut resolved = ParamStore::new();
-        resolved.insert(
-            param_names::AUTHENTICATOR.into(),
-            Setting::String("OAUTH_AUTHORIZATION_CODE".into()),
-        );
-        resolved.insert(
-            param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.into(),
-            Setting::Bool(false),
-        );
-        let mut seed = ParamStore::new();
-        seed.insert(
-            param_names::AUTHENTICATOR.into(),
-            Setting::String("OAUTH_AUTHORIZATION_CODE".into()),
-        );
-        if let Some(explicit) = cache_in_seed {
-            seed.insert(
-                param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.into(),
-                Setting::Bool(explicit),
-            );
-        }
-        (resolved, seed)
-    }
-
-    #[test]
-    fn odbc_oauth_ac_cache_default_fills_true_when_unset() {
-        let (mut resolved, seed) = oauth_ac_stores(None);
-        WrapperPresets::odbc().apply_oauth_authorization_code_cache_default(&mut resolved, &seed);
-        assert_eq!(
-            resolved.get_bool(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn odbc_oauth_ac_cache_default_honors_explicit_false() {
-        let (mut resolved, seed) = oauth_ac_stores(Some(false));
-        WrapperPresets::odbc().apply_oauth_authorization_code_cache_default(&mut resolved, &seed);
-        assert_eq!(
-            resolved.get_bool(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn python_oauth_ac_cache_default_leaves_registry_false() {
-        let (mut resolved, seed) = oauth_ac_stores(None);
-        WrapperPresets::python().apply_oauth_authorization_code_cache_default(&mut resolved, &seed);
-        assert_eq!(
-            resolved.get_bool(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn odbc_oauth_ac_cache_default_ignores_other_authenticators() {
-        let mut resolved = ParamStore::new();
-        resolved.insert(
-            param_names::AUTHENTICATOR.into(),
-            Setting::String("USERNAME_PASSWORD_MFA".into()),
-        );
-        resolved.insert(
-            param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.into(),
-            Setting::Bool(false),
-        );
-        let seed = ParamStore::new();
-        WrapperPresets::odbc().apply_oauth_authorization_code_cache_default(&mut resolved, &seed);
-        assert_eq!(
-            resolved.get_bool(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL),
-            Some(false)
-        );
     }
 
     #[test]

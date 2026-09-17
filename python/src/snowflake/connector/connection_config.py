@@ -58,8 +58,12 @@ class ConnectionConfig(ConnectionConfigMixin):
     client_app_version: str | None = None
     """Driver version sent as CLIENT_APP_VERSION in the login request"""
 
-    client_store_temporary_credential: bool | None = False
-    """Enable MFA token caching for USERNAME_PASSWORD_MFA authentication. Default: False"""
+    client_store_temporary_credential: bool | None = True
+    """When true, persist ID, OAuth, and MFA tokens in the OS credential store. Defaults to true. An explicit value
+    always wins.
+
+    Default: True
+    """
 
     connect_timeout: int | None = None
     """TCP connect timeout in seconds for the HTTP client (0 or absent = system default)"""

@@ -299,7 +299,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             passcode: settings.get_sensitive_string(PASSCODE),
             client_store_temporary_credential: settings
                 .get_bool(CLIENT_STORE_TEMPORARY_CREDENTIAL)
-                .unwrap_or(false),
+                .unwrap_or(true),
         }),
         "PROGRAMMATIC_ACCESS_TOKEN" => Ok(AuthConfig::Pat {
             // SNOW-3647715: `user` optional — PAT encodes the principal.
@@ -361,7 +361,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             authentication_timeout_secs: parse_authentication_timeout(settings),
             client_store_temporary_credential: settings
                 .get_bool(CLIENT_STORE_TEMPORARY_CREDENTIAL)
-                .unwrap_or(false),
+                .unwrap_or(true),
         }),
         "WORKLOAD_IDENTITY" => {
             let provider_str = settings
@@ -2050,7 +2050,7 @@ mod tests {
                 assert_eq!(password.reveal(), "mypassword");
                 assert!(!passcode_in_password);
                 assert!(passcode.is_none());
-                assert!(!client_store_temporary_credential);
+                assert!(*client_store_temporary_credential);
             }
             other => panic!("Expected Mfa auth, got {other:?}"),
         }

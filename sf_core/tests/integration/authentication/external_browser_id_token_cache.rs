@@ -365,7 +365,7 @@ fn should_not_cache_id_token_when_caching_disabled() {
     client.set_connection_option("authenticator", "EXTERNALBROWSER");
     client.set_connection_option("user", "eb_no_cache");
     client.set_connection_option("authentication_timeout", "10");
-    // client_store_temporary_credential is NOT set (defaults to false)
+    client.set_connection_option("client_store_temporary_credential", "false");
 
     mock.mount(external_browser::authenticator_request(
         "https://idp.example.com/sso",

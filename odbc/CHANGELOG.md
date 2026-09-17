@@ -14,6 +14,7 @@ New features:
 
 Changes:
 
+- Changed `CLIENT_STORE_TEMPORARY_CREDENTIAL` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)
 - Changed `SQLDriverConnect` to reject connection-string keywords it does not recognize with a local `01S00` warning (native error 17, "N invalid keys are found in the connection string: <KEY>"); a keyword is recognized when the `sf_core` parameter registry resolves it or it names an ODBC structural keyword (`DSN`, `DRIVER`, `FILEDSN`, `SAVEFILE`). The connection still opens and the keyword is still forwarded to the server. (snowflakedb/drivers#1926)
 - Removed `Tracing(0-6)` field from the Windows ODBC DSN setup dialog; driver logging uses `sf.odbc.ini` (`LogLevel`, `LogPath`) instead. Legacy `TRACING` values in a DSN or connection string are ignored. (snowflakedb/drivers#2022)
 - Changed client-local rejection of a non-credential connection parameter to report SQLSTATE `HY000` instead of the warning-class `01S00`; affected cases are an invalid `PORT`, an unparseable connection string, and any invalid or missing non-credential parameter. `01S00` is defined by the ODBC specification as a `SQL_SUCCESS_WITH_INFO` warning meaning the connection opened anyway, so returning it on `SQL_ERROR` led applications that branch on the SQLSTATE class to treat a failed connection as a warning. ODBC 3.x returned `28000` (native error `20032`) for these cases. (snowflakedb/drivers#1883)

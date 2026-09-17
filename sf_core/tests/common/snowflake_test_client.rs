@@ -158,6 +158,7 @@ impl SnowflakeTestClient {
         };
 
         test_client.set_options_from_parameters();
+        test_client.set_connection_option("client_store_temporary_credential", "false");
         test_client
     }
 

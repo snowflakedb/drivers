@@ -172,6 +172,11 @@ TEST_CASE("should fail with timeout when no browser callback arrives", "[externa
     std::transform(msg.begin(), msg.end(), msg.begin(), ::tolower);
     return msg.find("timeout") != std::string::npos || msg.find("browser") != std::string::npos;
   });
+  std::string diag;
+  for (const auto& r : records) {
+    diag += "[" + r.sqlState + "] " + r.messageText + "; ";
+  }
+  INFO(diag);
   CHECK(has_relevant_error);
 }
 

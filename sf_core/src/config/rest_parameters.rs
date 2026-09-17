@@ -788,7 +788,7 @@ impl OAuthAuthorizationCodeConfig {
         let disable_pkce = settings.get_bool_or("oauth_disable_pkce", false);
         let enable_dpop = settings.get_bool_or("oauth_enable_dpop", false);
         let client_store_temporary_credential =
-            settings.get_bool_or("client_store_temporary_credential", false);
+            settings.get_bool_or("client_store_temporary_credential", true);
         let authentication_timeout_secs = settings
             .get_u64("authentication_timeout")
             .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
@@ -990,7 +990,7 @@ impl LoginMethod {
                 passcode_in_password: settings.get_bool_or("passcodeInPassword", false),
                 passcode: settings.get_string("passcode").map(SensitiveString::from),
                 client_store_temporary_credential: settings
-                    .get_bool_or("client_store_temporary_credential", false),
+                    .get_bool_or("client_store_temporary_credential", true),
             }),
             "EXTERNALBROWSER" => {
                 let authentication_timeout_secs = settings
@@ -1002,7 +1002,7 @@ impl LoginMethod {
                         .context(MissingParameterSnafu { parameter: "user" })?,
                     authentication_timeout_secs,
                     client_store_temporary_credential: settings
-                        .get_bool_or("client_store_temporary_credential", false),
+                        .get_bool_or("client_store_temporary_credential", true),
                 })
             }
             "WORKLOAD_IDENTITY" => Ok(Self::WorkloadIdentity(
@@ -1732,7 +1732,7 @@ mod tests {
                 assert!(!cfg.enable_single_use_refresh_tokens);
                 assert!(!cfg.disable_pkce);
                 assert!(!cfg.flow_options.enable_dpop);
-                assert!(!cfg.client_store_temporary_credential);
+                assert!(cfg.client_store_temporary_credential);
                 assert_eq!(
                     cfg.flow_options.authentication_timeout_secs,
                     DEFAULT_AUTHENTICATION_TIMEOUT_SECS
@@ -2096,7 +2096,7 @@ mod tests {
         let (user, timeout, store_cred) = external_browser_config(vec![]);
         assert_eq!(user, "browser_user");
         assert_eq!(timeout, DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
-        assert!(!store_cred);
+        assert!(store_cred);
     }
 
     #[test]

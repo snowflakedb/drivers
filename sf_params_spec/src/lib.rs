@@ -1009,10 +1009,13 @@ static PARAM_DEFS: &[ParamDef] = &[
         // JDBC-only camelCase property.
         .aliases(aliases![Jdbc; "clientStoreTemporaryCredential"])
         .value_type(ValueType::Bool)
-        .default(DefaultValue::Bool(false))
+        .default(DefaultValue::Bool(true))
         .sensitive(false)
         .auth(false)
-        .description("Enable MFA token caching for USERNAME_PASSWORD_MFA authentication")
+        .description(
+            "When true, persist ID, OAuth, and MFA tokens in the OS credential store. \
+             Defaults to true. An explicit value always wins",
+        )
         .scopes(&[ParamScope::Connection])
         .used_at_connect(true)
         .mutable_after_connect(false)
@@ -2840,6 +2843,14 @@ mod tests {
 
         // Canonical name also resolves.
         assert!(r.resolve("disable_parallel_user_prompt").is_some());
+    }
+
+    #[test]
+    fn client_store_temporary_credential_defaults_true() {
+        let def = registry()
+            .resolve("client_store_temporary_credential")
+            .expect("client_store_temporary_credential should resolve");
+        assert_eq!(def.default, Some(DefaultValue::Bool(true)));
     }
 
     #[test]

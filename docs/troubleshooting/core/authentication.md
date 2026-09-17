@@ -237,11 +237,11 @@ Keep-alive prevents *session-token* expiry on an idle connection — nothing mor
 
 ## On-disk token cache
 
-`client_store_temporary_credential` (default **off**) opts into caching the
-issued credential on disk so browser-SSO / MFA flows don't re-prompt on every
-process start. Leave it off unless you need the convenience; when on, the cache
-file holds a live credential and should be protected like any secret. It is a
-per-user convenience, not a way to share credentials between users.
+`client_store_temporary_credential` (default **on**) caches the issued
+credential on disk so browser-SSO / MFA / OAuth flows don't re-prompt on every
+process start. Set it to false to opt out. When on, the cache file holds a live
+credential and should be protected like any secret. It is a per-user
+convenience, not a way to share credentials between users.
 
 ---
 
@@ -261,5 +261,5 @@ per-user convenience, not a way to share credentials between users.
 | `oauth_authorization_url` / `oauth_token_request_url` | OAuth code / client-credentials | IdP endpoints. |
 | `okta_username` / `authentication_timeout` / `disable_saml_url_check` | native Okta | SSO tuning. |
 | `workload_identity_provider` | `workload_identity` | `AWS` / `AZURE` / `GCP` / `OIDC`. |
-| `client_store_temporary_credential` | SSO / MFA | Opt-in on-disk credential cache. |
+| `client_store_temporary_credential` | SSO / MFA / OAuth AC | On-disk credential cache. Default on; an explicit value always wins. |
 | `CLIENT_SESSION_KEEP_ALIVE` | long-idle sessions | Background heartbeat renews the session token; default off. |

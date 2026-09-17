@@ -269,6 +269,7 @@ inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
   ss << "ACCOUNT=testaccount;";
   ss << "UID=testuser;";
   ss << "PWD=testpass;";
+  ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;";
   ss << "SSL=off;";
   ss << "DisableOCSPCheck=true;";
   return ss.str();

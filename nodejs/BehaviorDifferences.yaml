@@ -789,3 +789,20 @@ behavior_differences:
       The old driver never implemented INTERVAL, so the missing predicates are
       leftover handling of an unknown type, not a documented contract. The two is*
       helpers are additive and do not change any existing cell value.
+
+  39:
+    name: 'clientStoreTemporaryCredential defaults true and is always overridable'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      The connection option defaults to false. Callers must set
+      clientStoreTemporaryCredential=true to cache ID, OAuth, or MFA tokens.
+    new_driver_behavior: |
+      clientStoreTemporaryCredential defaults to true. An explicit true or false
+      always wins.
+    description: |
+      Callers that omitted the option now cache tokens. Set
+      clientStoreTemporaryCredential=false to keep the old opt-in behavior.

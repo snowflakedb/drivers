@@ -70,7 +70,7 @@ static std::string eb_conn_str_no_caching(const WiremockClient& wm) {
   ss << "ACCOUNT=testaccount;";
   ss << "UID=eb_nocache_user;";
   ss << "AUTHENTICATOR=EXTERNALBROWSER;";
-  // CLIENT_STORE_TEMPORARY_CREDENTIAL intentionally not set → locking disabled
+  ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;";
   ss << "SSL=off;";
   ss << "DisableOCSPCheck=true;";
   return ss.str();

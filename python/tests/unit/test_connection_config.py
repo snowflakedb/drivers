@@ -102,6 +102,11 @@ class TestFromKwargs:
             )
         assert config.client_store_temporary_credential is False
 
+    def test_unset_client_store_temporary_credential_defaults_true(self):
+        config = ConnectionConfig.from_kwargs(user="u")
+        assert config.client_store_temporary_credential is True
+        assert config.to_options()["client_store_temporary_credential"] is True
+
     def test_client_fetch_threads_maps_to_prefetch_with_warning(self):
         with pytest.warns(DeprecationWarning, match="client_fetch_threads"):
             config = ConnectionConfig.from_kwargs(client_fetch_threads=8)

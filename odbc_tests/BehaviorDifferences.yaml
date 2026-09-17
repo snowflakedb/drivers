@@ -2859,23 +2859,22 @@ behavior_differences:
       default. Applications must switch to AUTHENTICATION_TIMEOUT. Applications
       matching on the old timeout message must update to the new wording.
   139:
-    name: "External-browser (ID token) credential caching defaults to off; old driver cached it by default"
-    status: unknown
+    name: "External-browser (ID token) credential caching defaults on, matching the old driver"
+    status: fixed
     type: enhancement
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: medium
     old_driver_behavior: |
       After a successful external-browser (SSO) login with no explicit caching
-      parameter set, the old driver caches the ID token locally by default, so a
-      subsequent connection for the same user can skip the browser step.
+      parameter set, the old driver caches the ID token locally on every platform,
+      so a subsequent connection for the same user can skip the browser step.
     new_driver_behavior: |
-      The new driver only caches the ID token when
-      CLIENT_STORE_TEMPORARY_CREDENTIAL=true is explicitly set. By default, every
-      external-browser connection re-opens the browser; nothing is cached.
+      CLIENT_STORE_TEMPORARY_CREDENTIAL defaults to true on every platform. An
+      explicit true or false always wins.
     description: |
-      Applications that rely on implicit external-browser caching on the old driver
-      must add CLIENT_STORE_TEMPORARY_CREDENTIAL=true on the new driver.
+      Applications that omit the flag keep implicit ID-token caching, as on the
+      old driver. Set CLIENT_STORE_TEMPORARY_CREDENTIAL=false to opt out.
 
   140:
     name: "External-browser IDP-user-mismatch message carries a prefix and an error trace"

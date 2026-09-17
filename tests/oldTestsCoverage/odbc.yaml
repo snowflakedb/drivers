@@ -23,7 +23,7 @@ tests:
       - path: "sf_core/tests/integration/authentication/external_browser.rs - should_login_with_external_browser_using_simulated_callback"
     status: partial
     gaps:
-      - "Old test observes a temporary-credential file is written after a plain browser login with no explicit caching parameter set (old driver caches the ID token by default). UD only caches when CLIENT_STORE_TEMPORARY_CREDENTIAL=true is explicitly set (the ODBC e2e equivalent sets it false for this scenario) - not covered by BD#85 (OAuth-AC specific) or BD#137 (MFA param rename); see new BD#139."
+      - "Old test observes a temporary-credential file is written after a plain browser login with no explicit caching parameter set (both drivers cache the ID token by default; BD#139). The ODBC e2e equivalent sets CLIENT_STORE_TEMPORARY_CREDENTIAL=false for this scenario."
     notes: "SNOW-3548054. Connect-success + SELECT-1 assertions fully covered; wire-level body (AUTHENTICATOR/TOKEN/PROOF_KEY/LOGIN_NAME) verified by the integration + sf_core tests."
     jira: "SNOW-3548054"
   - test_name: should throw error for browser timeout
@@ -98,7 +98,7 @@ tests:
       - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_authorization_code_using_cached_refresh_token"
       - path: "sf_core/src/rest/snowflake/oauth/authorization_code.rs - cached_access_token_short_circuits_full_flow"
     status: mapped
-    notes: "AC (Authorization Code + PKCE) browser happy path against a custom/external Okta IdP. UD e2e drives the browser leg + SELECT 1; sf_core wiremock covers custom IdP endpoint forwarding without a real browser. Old test's implicit temp-credential-file creation is BD#85 (legacy caches AC tokens by default; UD defaults off). Cross-driver mirrors: python/jdbc e2e OauthTests."
+    notes: "AC (Authorization Code + PKCE) browser happy path against a custom/external Okta IdP. UD e2e drives the browser leg + SELECT 1; sf_core wiremock covers custom IdP endpoint forwarding without a real browser. Old test's implicit temp-credential-file creation is BD#85 (both drivers cache AC tokens by default). Cross-driver mirrors: python/jdbc e2e OauthTests."
     jira: "SNOW-2205633"
   - test_name: should authenticate using external oauth okta authorization code -
       token cache
@@ -162,7 +162,7 @@ tests:
       - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_authorization_code_using_cached_access_token"
       - path: "sf_core/tests/integration/authentication/oauth.rs - should_login_with_authorization_code_using_cached_refresh_token"
     status: mapped
-    notes: "AC against the internal Snowflake IdP (derived /oauth/authorize + /oauth/token-request). The ODBC e2e AC happy-path test is exactly this flow (SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_* params). Implicit temp-credential file assertion is BD#85 (legacy caches by default; UD defaults off). Cross-driver mirrors: python/jdbc e2e OauthTests."
+    notes: "AC against the internal Snowflake IdP (derived /oauth/authorize + /oauth/token-request). The ODBC e2e AC happy-path test is exactly this flow (SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_* params). Implicit temp-credential file assertion is BD#85 (both drivers cache by default). Cross-driver mirrors: python/jdbc e2e OauthTests."
     jira: "SNOW-2205633"
   - test_name: should authenticate using snowflake authorization code - token cache
     ud_tests:

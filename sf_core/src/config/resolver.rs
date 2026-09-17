@@ -1474,4 +1474,27 @@ password = "mypassword"
 
         assert_eq!(resolved.get_int(param_names::LOGIN_TIMEOUT), Some(30));
     }
+
+    #[test]
+    fn client_store_temporary_credential_defaults_true() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+
+        let resolved = resolve_with_paths(&ParamStore::new(), &paths, false).unwrap();
+        assert_eq!(
+            resolved.get_bool(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL),
+            Some(true)
+        );
+
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.into(),
+            Setting::Bool(false),
+        );
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
+        assert_eq!(
+            resolved.get_bool(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL),
+            Some(false)
+        );
+    }
 }

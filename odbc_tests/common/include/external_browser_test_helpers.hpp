@@ -62,6 +62,7 @@ inline std::string get_external_browser_connection_string(const WiremockClient& 
   ss << "ACCOUNT=testaccount;";
   ss << "UID=" << user << ";";
   ss << "AUTHENTICATOR=EXTERNALBROWSER;";
+  ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;";
   ss << "SSL=off;";
   ss << "DisableOCSPCheck=true;";
   return ss.str();
