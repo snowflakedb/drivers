@@ -63,20 +63,22 @@ def _login_requests(wiremock: WiremockClient) -> list[dict]:
 class TestProxyConnectionParams:
     """Connection-parameter-driven proxy routing."""
 
-    def test_should_route_request_through_proxy_when_proxy_host_is_configured(self, connector_adapter, wiremock):
+    def test_should_route_request_through_proxy_when_proxy_host_and_port_are_configured(
+        self, connector_adapter, wiremock
+    ):
         """Driver configured with proxy_host/port should route login through
         the proxy. Legacy snowflake-connector-python kwargs."""
         # Given a forward-proxy WireMock serving a canned login response
         wiremock.add_mapping("auth/login_success_jwt.json")
 
-        # When the driver connects with proxy_host and proxy_port pointing at the proxy
+        # When the driver connects with the proxy host and port pointing at the proxy
         conn = _build_connection(
             connector_adapter,
             proxy_host="localhost",
             proxy_port=wiremock.http_port,
         )
         try:
-            # Then the proxy received the login request
+            # Then the connect succeeds and the proxy received the login request
             assert len(_login_requests(wiremock)) >= 1, "Login request should have been routed through the proxy"
         finally:
             conn.close(retry=False)
@@ -85,19 +87,19 @@ class TestProxyConnectionParams:
         reason="Legacy ODBC PROXY URL form is universal-driver-only; reference connector "
         "uses proxy_host/proxy_port instead"
     )
-    def test_should_route_login_through_proxy_using_legacy_odbc_proxy_url(self, connector_adapter, wiremock):
+    def test_should_route_request_through_proxy_when_proxy_url_is_configured(self, connector_adapter, wiremock):
         """Legacy ODBC ``PROXY=http://host:port`` URL form is parsed by sf_core
         and merged with individual fields."""
         # Given a forward-proxy WireMock serving a canned login response
         wiremock.add_mapping("auth/login_success_jwt.json")
 
-        # When the driver connects with PROXY pointing at the proxy
+        # When the driver connects with the proxy url pointing at the proxy
         conn = _build_connection(
             connector_adapter,
             proxy=f"http://localhost:{wiremock.http_port}",
         )
         try:
-            # Then the proxy received the login request
+            # Then the connect succeeds and the proxy received the login request
             assert len(_login_requests(wiremock)) >= 1, "Login should have been routed through the proxy URL"
         finally:
             conn.close(retry=False)
@@ -106,13 +108,13 @@ class TestProxyConnectionParams:
         reason="Reference connector ignores no_proxy when no proxy host is configured; "
         "test asserts new-driver semantics"
     )
-    def test_should_bypass_proxy_when_no_proxy_matches_the_target_host(self, connector_adapter, wiremock):
+    def test_should_bypass_proxy_when_the_target_host_is_excluded_from_proxying(self, connector_adapter, wiremock):
         """``no_proxy`` matching the target host should bypass the proxy and let
         direct resolution fail."""
         # Given a forward-proxy WireMock serving a canned login response
         wiremock.add_mapping("auth/login_success_jwt.json")
 
-        # When the driver connects with proxy_host and no_proxy matching the target
+        # When the driver connects with a proxy and the target host excluded from proxying
         with pytest.raises(Exception):  # noqa: B017 — driver-specific class varies
             _build_connection(
                 connector_adapter,
@@ -137,7 +139,7 @@ class TestProxyEnvVars:
     @pytest.mark.skip_reference(
         reason="use_proxy_env is a universal-driver-only opt-in; reference connector always reads env vars"
     )
-    def test_should_route_request_through_proxy_when_use_proxy_env_is_true(
+    def test_should_route_request_through_proxy_when_proxy_env_vars_are_enabled(
         self, connector_adapter, wiremock, monkeypatch
     ):
         # Given HTTP_PROXY env var points at a forward-proxy WireMock
@@ -145,7 +147,7 @@ class TestProxyEnvVars:
 
         monkeypatch.setenv("HTTP_PROXY", wiremock.http_url())
 
-        # When the driver connects with use_proxy_env=True
+        # When the driver connects with proxy env vars enabled
         conn = _build_connection(connector_adapter, use_proxy_env=True)
         try:
             # WiremockClient admin queries use the requests library, which
@@ -153,7 +155,7 @@ class TestProxyEnvVars:
             # query reaches wiremock directly.
             monkeypatch.delenv("HTTP_PROXY")
 
-            # Then the proxy received the login request
+            # Then the connect succeeds and the proxy received the login request
             assert len(_login_requests(wiremock)) >= 1, (
                 "use_proxy_env=True with HTTP_PROXY env var should route through proxy"
             )
@@ -161,7 +163,7 @@ class TestProxyEnvVars:
             conn.close(retry=False)
 
     @pytest.mark.skip_reference(reason="Reference connector always reads env vars; default-deny is universal-only")
-    def test_should_ignore_http_proxy_env_var_by_default(self, connector_adapter, wiremock, monkeypatch):
+    def test_should_ignore_proxy_env_vars_by_default(self, connector_adapter, wiremock, monkeypatch):
         """Default ``use_proxy_env=False``: env vars are NOT consulted, so the
         login attempt fails on direct DNS resolution rather than transiting
         the proxy."""
@@ -170,7 +172,7 @@ class TestProxyEnvVars:
 
         monkeypatch.setenv("HTTP_PROXY", wiremock.http_url())
 
-        # When the driver connects without use_proxy_env
+        # When the driver connects without proxy env vars enabled
         with pytest.raises(Exception):  # noqa: B017 — driver-specific class varies
             _build_connection(connector_adapter)
 

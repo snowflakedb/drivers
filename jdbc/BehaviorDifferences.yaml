@@ -1173,3 +1173,47 @@ behavior_differences:
     description: |
       Pinned by sf_core `should_fail_generically_when_authenticator_url_not_accepted_by_account_config`
       and `should_fail_generically_when_authenticator_value_not_supported`.
+  64:
+    name: "JVM SOCKS system properties are not honored"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      With `disableSocksProxy` unset or false, `-DsocksProxyHost` /
+      `-DsocksProxyPort` apply to the driver's HTTP sockets. `disableSocksProxy=true`
+      (or `on`) opens those sockets with no SOCKS proxy.
+    new_driver_behavior: |
+      `-DsocksProxyHost` / `-DsocksProxyPort` have no effect. `disableSocksProxy`
+      is accepted on the DataSource and as a connection property and does not
+      change routing.
+    description: |
+      Snowflake HTTP in the new driver does not use `java.net.Socket`, so JVM
+      SOCKS settings cannot apply. This is not a missing wire-up; there is no
+      SOCKS path to enable. `disableSocksProxy=true` already matches the old
+      driver. The only divergent case is the old default (`false`) plus a
+      configured SOCKS proxy. Callers that need a proxy use `useProxy` /
+      `proxyHost` / `proxyPort` or the JVM `http.proxy*` / `https.proxy*`
+      properties.
+  65:
+    name: "nonProxyHosts matching is broader than the old driver's globs"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `nonProxyHosts=*.foo.com` bypasses `bar.foo.com` and does not bypass
+      `foo.com`. `nonProxyHosts=foo.com` bypasses only the exact host
+      `foo.com`.
+    new_driver_behavior: |
+      `nonProxyHosts=*.foo.com` and `nonProxyHosts=foo.com` both bypass
+      `foo.com` and every subdomain (`bar.foo.com`, `a.b.foo.com`).
+    description: |
+      The native `no_proxy` matcher has no exact-only form and no
+      subdomain-only form: a domain entry always matches that host and its
+      subdomains. The `*.foo.com` → `.foo.com` rewrite is required so the
+      glob matches anything at all; leaving `*.foo.com` literal would match
+      almost nothing. This is not a missing JDBC property. Closing it needs
+      a Java-glob matcher in the native transport.

@@ -63,11 +63,14 @@ public enum SessionProperty implements Property {
   ALLOW_UNDERSCORES_IN_HOST("allowUnderscoresInHost"),
 
   // Proxy
+  USE_PROXY("useProxy"),
   PROXY_HOST("proxyHost"),
   PROXY_PORT("proxyPort"),
   PROXY_USER("proxyUser"),
   PROXY_PASSWORD("proxyPassword"),
   NON_PROXY_HOSTS("nonProxyHosts"),
+  PROXY_PROTOCOL("proxyProtocol"),
+  DISABLE_SOCKS_PROXY("disableSocksProxy"),
 
   // Connection diagnostics
   ENABLE_DIAGNOSTICS("enableDiagnostics"),

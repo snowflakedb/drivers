@@ -26,10 +26,10 @@ class SnowflakeDataSourceReferenceParityTest {
    * <p>Intentionally dropped setters include OCSP ({@code setOcspFailOpen}), HTTP header
    * customizers ({@code setHttpHeadersCustomizers}), easy-logging ({@code setClientConfigFile}),
    * and other legacy-only or no-op properties such as {@code setNetworkTimeout}, {@code
-   * setEnablePutGet}, {@code setStringsQuotedForColumnDef}, {@code setUseProxy}/{@code
-   * setProxyProtocol}/{@code setDisableSocksProxy}, {@code setDisableGcsDefaultCredentials}, {@code
-   * setEnableClientRequestMfaToken}, and {@code setEnableClientStoreTemporaryCredential} (see BD#5;
-   * replaced by {@code setClientStoreTemporaryCredential}).
+   * setEnablePutGet}, {@code setStringsQuotedForColumnDef}, {@code
+   * setDisableGcsDefaultCredentials}, {@code setEnableClientRequestMfaToken}, and {@code
+   * setEnableClientStoreTemporaryCredential} (see BD#5; replaced by {@code
+   * setClientStoreTemporaryCredential}).
    *
    * <p>{@code setArrowTreatDecimalAsInt} stores {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT}, matching
    * snowflake-jdbc.
@@ -74,11 +74,14 @@ class SnowflakeDataSourceReferenceParityTest {
                   "setQueryTimeout",
                   "setMaxHttpRetries",
                   "setPutGetMaxRetries",
+                  "setDisableSocksProxy",
+                  "setUseProxy",
                   "setProxyHost",
                   "setProxyPort",
                   "setProxyUser",
                   "setProxyPassword",
                   "setNonProxyHosts",
+                  "setProxyProtocol",
                   "setEnableDiagnostics",
                   "setDiagnosticsAllowlistFile",
                   "setBrowserResponseTimeout",

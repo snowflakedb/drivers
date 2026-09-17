@@ -88,6 +88,10 @@ public interface SnowflakeDataSource extends DataSource {
 
   void setPutGetMaxRetries(int putGetMaxRetries);
 
+  void setDisableSocksProxy(boolean disableSocksProxy);
+
+  void setUseProxy(boolean useProxy);
+
   void setProxyHost(String proxyHost);
 
   void setProxyPort(int proxyPort);
@@ -97,6 +101,8 @@ public interface SnowflakeDataSource extends DataSource {
   void setProxyPassword(String proxyPassword);
 
   void setNonProxyHosts(String nonProxyHosts);
+
+  void setProxyProtocol(String proxyProtocol);
 
   void setEnableDiagnostics(boolean enableDiagnostics);
 

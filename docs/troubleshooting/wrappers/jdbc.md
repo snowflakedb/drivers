@@ -197,8 +197,11 @@ value handling that explains a setting "not taking":
 
 | Property | Behavior |
 |---|---|
-| `proxyHost` / `proxyPort` / `proxyUser` / `proxyPassword` | The driver's proxy, set as connection properties (or the matching `SnowflakeDataSource` setters). The Rust-native transport reads its proxy config from **these**, not from the JVM's `-Dhttp.proxyHost` system properties — a common source of "the proxy is ignored". See [proxy-tls.md](../core/crl-tls/proxy-tls.md). |
+| `useProxy` | `true` or `on` activates the connection-level proxy and requires both `proxyHost` and `proxyPort`. When false or absent, the driver falls back to JVM proxy properties only when `-Dhttp.useProxy=true`. |
+| `proxyHost` / `proxyPort` / `proxyUser` / `proxyPassword` | The driver's proxy, set as connection properties (or the matching `SnowflakeDataSource` setters). These map to the core's `proxy_host`, `proxy_port`, `proxy_user`, and `proxy_password` settings. Connection-level settings take precedence over JVM proxy settings. See [proxy-tls.md](../core/crl-tls/proxy-tls.md). |
 | `nonProxyHosts` | Hosts that bypass the proxy. Accepts the **legacy Java forms** — pipe-delimited (`host1\|host2`) and the `*.host` subdomain glob — and normalizes them (pipe→comma, `*.foo.com`→`.foo.com`). Note the resulting leading-dot form matches the **apex** host too, a slight over-match versus Java's subdomain-only glob. |
+| JVM proxy properties | With `-Dhttp.useProxy=true`, the driver reads the legacy `http.proxy*`, `https.proxy*`, `http.proxyProtocol`, and `http.nonProxyHosts` properties and combines `NO_PROXY` with the bypass list. |
+| `proxyProtocol` / `disableSocksProxy` | Accepted on `SnowflakeDataSource` for source compatibility. `proxyProtocol=https` is discarded — the hop to the proxy is HTTP (TODO(SNOW-4109352)). `disableSocksProxy` does not change routing; the native transport does not use JVM SOCKS. |
 | `loginTimeout` / `queryTimeoutSeconds` | Login and query time budgets (seconds) as connection properties. `Statement.setQueryTimeout(int)` sets the query budget per statement. |
 | `maxHttpRetries` / `putGetMaxRetries` | Retry-count caps for query HTTP calls and for PUT/GET transfers, respectively. |
 | `allowUnderscoresInHost` | Permits `_` in the account host. Relevant to the SSO underscore→hyphen rule — see [authentication.md](../core/authentication.md). |

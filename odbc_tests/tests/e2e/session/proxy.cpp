@@ -50,7 +50,7 @@ std::string build_unresolvable_connection_string(const std::string& extra) {
 
 }  // namespace
 
-TEST_CASE("should route login through forward proxy via PROXY URL", "[session][proxy]") {
+TEST_CASE("should route request through proxy when proxy url is configured", "[session][proxy]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
@@ -62,13 +62,13 @@ TEST_CASE("should route login through forward proxy via PROXY URL", "[session][p
   extra << "PROXY=http://localhost:" << wm.port() << ";";
   auto conn_str = build_unresolvable_connection_string(extra.str());
 
-  // When SQLDriverConnect is invoked with PROXY pointing at the proxy
+  // When the driver connects with the proxy url pointing at the proxy
   auto env = Connection::initEnv();
   auto dbc = env.createConnectionHandle();
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                    SQL_DRIVER_NOPROMPT);
 
-  // Then the connect succeeds and the proxy received exactly one login request
+  // Then the connect succeeds and the proxy received the login request
   REQUIRE_ODBC(ret, dbc);
   CHECK(wm.get_request_count("POST", "/session/v1/login-request") == 1);
 }
@@ -96,7 +96,7 @@ TEST_CASE("should disable proxy when PROXY is empty and AllowEmptyProxy is true"
   CHECK(wm.get_request_count("POST", "/session/v1/login-request") == 0);
 }
 
-TEST_CASE("should ignore HTTP_PROXY env var when USE_PROXY_ENV is not set", "[session][proxy]") {
+TEST_CASE("should ignore proxy env vars by default", "[session][proxy]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
@@ -109,7 +109,7 @@ TEST_CASE("should ignore HTTP_PROXY env var when USE_PROXY_ENV is not set", "[se
 
   auto conn_str = build_unresolvable_connection_string("");
 
-  // When SQLDriverConnect is invoked without USE_PROXY_ENV
+  // When the driver connects without proxy env vars enabled
   auto env = Connection::initEnv();
   auto dbc = env.createConnectionHandle();
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
@@ -120,7 +120,7 @@ TEST_CASE("should ignore HTTP_PROXY env var when USE_PROXY_ENV is not set", "[se
   CHECK(wm.get_request_count("POST", "/session/v1/login-request") == 0);
 }
 
-TEST_CASE("should pick up HTTP_PROXY env var when USE_PROXY_ENV is true", "[session][proxy]") {
+TEST_CASE("should route request through proxy when proxy env vars are enabled", "[session][proxy]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
@@ -134,13 +134,13 @@ TEST_CASE("should pick up HTTP_PROXY env var when USE_PROXY_ENV is true", "[sess
 
   auto conn_str = build_unresolvable_connection_string("USE_PROXY_ENV=true;");
 
-  // When SQLDriverConnect is invoked with USE_PROXY_ENV=true
+  // When the driver connects with proxy env vars enabled
   auto env = Connection::initEnv();
   auto dbc = env.createConnectionHandle();
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                    SQL_DRIVER_NOPROMPT);
 
-  // Then the connect succeeds and the proxy received exactly one login request
+  // Then the connect succeeds and the proxy received the login request
   REQUIRE_ODBC(ret, dbc);
   CHECK(wm.get_request_count("POST", "/session/v1/login-request") == 1);
 }

@@ -4,6 +4,7 @@ import static net.snowflake.client.internal.api.implementation.connection.Snowfl
 import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertConnectionClosedException;
 import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertFeatureNotSupported;
 import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.boundary;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -1588,11 +1589,14 @@ class SnowflakeConnectionImplTest {
   class ConnectionOptions extends MockCoreApiConnectionSupport {
 
     @Test
-    void shouldNormalizeDataSourceNonProxyHostsWhenConnecting() throws Exception {
+    void shouldResolveLegacyProxyPropertiesWhenConnecting() throws Exception {
       Properties props = new Properties();
       props.setProperty("account", "test_account");
       props.setProperty("user", "test_user");
       props.setProperty("password", "dummy");
+      props.setProperty("useProxy", "true");
+      props.setProperty("proxyHost", "proxy.example.com");
+      props.setProperty("proxyPort", "8080");
       props.setProperty("nonProxyHosts", "*.foo.com|host1");
 
       @SuppressWarnings("unchecked")
@@ -1602,7 +1606,11 @@ class SnowflakeConnectionImplTest {
           "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
 
       verify(mockCoreApi).connectionSetOptions(any(), optionsCaptor.capture());
-      assertEquals(".foo.com,host1", optionsCaptor.getValue().get("no_proxy").getStringValue());
+      Map<String, ConfigSetting> options = optionsCaptor.getValue();
+      assertAll(
+          () -> assertEquals("proxy.example.com", options.get("proxy_host").getStringValue()),
+          () -> assertEquals(8080L, options.get("proxy_port").getIntValue()),
+          () -> assertEquals(".foo.com,host1", options.get("no_proxy").getStringValue()));
     }
   }
 

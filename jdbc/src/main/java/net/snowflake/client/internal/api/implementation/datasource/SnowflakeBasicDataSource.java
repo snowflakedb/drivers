@@ -377,6 +377,16 @@ public class SnowflakeBasicDataSource
   }
 
   @Override
+  public void setDisableSocksProxy(boolean disableSocksProxy) {
+    setProperty(SessionProperty.DISABLE_SOCKS_PROXY, disableSocksProxy);
+  }
+
+  @Override
+  public void setUseProxy(boolean useProxy) {
+    setProperty(SessionProperty.USE_PROXY, useProxy);
+  }
+
+  @Override
   public void setProxyHost(String proxyHost) {
     setProperty(SessionProperty.PROXY_HOST, proxyHost);
   }
@@ -399,6 +409,11 @@ public class SnowflakeBasicDataSource
   @Override
   public void setNonProxyHosts(String nonProxyHosts) {
     setProperty(SessionProperty.NON_PROXY_HOSTS, nonProxyHosts);
+  }
+
+  @Override
+  public void setProxyProtocol(String proxyProtocol) {
+    setProperty(SessionProperty.PROXY_PROTOCOL, proxyProtocol);
   }
 
   @Override

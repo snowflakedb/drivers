@@ -195,6 +195,14 @@ class PoolDataSourceConfigurationTests {
   static Stream<Arguments> proxyProperties() {
     return Stream.of(
         Arguments.of(
+            "disableSocksProxy",
+            "true",
+            (Consumer<SnowflakePooledConnectionDataSource>) ds -> ds.setDisableSocksProxy(true)),
+        Arguments.of(
+            "useProxy",
+            "true",
+            (Consumer<SnowflakePooledConnectionDataSource>) ds -> ds.setUseProxy(true)),
+        Arguments.of(
             "proxyHost",
             "proxy.example.com",
             (Consumer<SnowflakePooledConnectionDataSource>)
@@ -215,8 +223,11 @@ class PoolDataSourceConfigurationTests {
         Arguments.of(
             "nonProxyHosts",
             "localhost",
-            (Consumer<SnowflakePooledConnectionDataSource>)
-                ds -> ds.setNonProxyHosts("localhost")));
+            (Consumer<SnowflakePooledConnectionDataSource>) ds -> ds.setNonProxyHosts("localhost")),
+        Arguments.of(
+            "proxyProtocol",
+            "https",
+            (Consumer<SnowflakePooledConnectionDataSource>) ds -> ds.setProxyProtocol("https")));
   }
 
   @ParameterizedTest

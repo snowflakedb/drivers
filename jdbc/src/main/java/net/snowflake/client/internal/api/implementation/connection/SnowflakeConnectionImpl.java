@@ -55,6 +55,7 @@ import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParameterKeyNormalizer;
 import net.snowflake.client.internal.api.implementation.parameters.ParameterValueNormalizer;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
+import net.snowflake.client.internal.api.implementation.parameters.ProxyOptionsResolver;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
@@ -178,7 +179,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   private SQLWarning setOptions(ConnectionHandle connHandle, String url, Properties properties) {
-    Properties resolvedProperties = ConnectionOptionsResolver.resolve(url, properties);
+    Properties resolvedProperties =
+        ProxyOptionsResolver.resolve(ConnectionOptionsResolver.resolve(url, properties));
     Map<String, ConfigSetting> options = new HashMap<>();
 
     // JDBC convention: Connection.close() must not throw on logout failure.

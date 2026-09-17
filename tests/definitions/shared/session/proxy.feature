@@ -1,37 +1,38 @@
-@python @odbc
+@python @odbc @jdbc
 Feature: HTTP proxy support
 
   The driver should route requests through an HTTP proxy when configured
   via connection parameters or environment variables.
 
+  Scenarios are worded in driver-neutral terms so one scenario covers every
+  wrapper that implements the behavior. Each wrapper spells the settings its
+  own way — `proxy_host`/`proxy_port` in Python, `useProxy`/`proxyHost`/
+  `proxyPort` in JDBC, `PROXY` in ODBC — and the per-wrapper spelling lives in
+  the test, not in the scenario name.
+
   # ===========================================================================
   #                    Connection-parameter-driven routing
   # ===========================================================================
 
-  @python_e2e
-  Scenario: should route request through proxy when proxy_host is configured
+  @python_e2e @jdbc_e2e
+  Scenario: should route request through proxy when proxy host and port are configured
     Given a forward-proxy WireMock serving a canned login response
-    When the driver connects with proxy_host and proxy_port pointing at the proxy
-    Then the proxy received the login request
+    When the driver connects with the proxy host and port pointing at the proxy
+    Then the connect succeeds and the proxy received the login request
 
-  @python_e2e
-  Scenario: should route login through proxy using legacy ODBC PROXY URL
+  @python_e2e @odbc_e2e
+  Scenario: should route request through proxy when proxy url is configured
     Given a forward-proxy WireMock serving a canned login response
-    When the driver connects with PROXY pointing at the proxy
-    Then the proxy received the login request
+    When the driver connects with the proxy url pointing at the proxy
+    Then the connect succeeds and the proxy received the login request
 
-  @odbc_e2e
-  Scenario: should route login through forward proxy via PROXY URL
+  @python_e2e @jdbc_e2e
+  Scenario: should bypass proxy when the target host is excluded from proxying
     Given a forward-proxy WireMock serving a canned login response
-    When SQLDriverConnect is invoked with PROXY pointing at the proxy
-    Then the connect succeeds and the proxy received exactly one login request
-
-  @python_e2e
-  Scenario: should bypass proxy when no_proxy matches the target host
-    Given a forward-proxy WireMock serving a canned login response
-    When the driver connects with proxy_host and no_proxy matching the target
+    When the driver connects with a proxy and the target host excluded from proxying
     Then the connect fails and the proxy received no requests
 
+  # AllowEmptyProxy has no counterpart outside the ODBC DSN surface.
   @odbc_e2e
   Scenario: should disable proxy when PROXY is empty and AllowEmptyProxy is true
     Given a forward-proxy WireMock serving a canned login response
@@ -42,29 +43,17 @@ Feature: HTTP proxy support
   #                    Environment-variable-driven routing
   # ===========================================================================
 
-  @python_e2e
-  Scenario: should route request through proxy when use_proxy_env is true
+  @python_e2e @odbc_e2e
+  Scenario: should route request through proxy when proxy env vars are enabled
     Given HTTP_PROXY env var points at a forward-proxy WireMock
-    When the driver connects with use_proxy_env=True
-    Then the proxy received the login request
+    When the driver connects with proxy env vars enabled
+    Then the connect succeeds and the proxy received the login request
 
-  @python_e2e
-  Scenario: should ignore HTTP_PROXY env var by default
+  @python_e2e @odbc_e2e
+  Scenario: should ignore proxy env vars by default
     Given HTTP_PROXY env var points at a forward-proxy WireMock
-    When the driver connects without use_proxy_env
+    When the driver connects without proxy env vars enabled
     Then the connect fails and the proxy received no requests
-
-  @odbc_e2e
-  Scenario: should ignore HTTP_PROXY env var when USE_PROXY_ENV is not set
-    Given HTTP_PROXY env var points at a forward-proxy WireMock
-    When SQLDriverConnect is invoked without USE_PROXY_ENV
-    Then the connect fails and the proxy received no requests
-
-  @odbc_e2e
-  Scenario: should pick up HTTP_PROXY env var when USE_PROXY_ENV is true
-    Given HTTP_PROXY env var points at a forward-proxy WireMock
-    When SQLDriverConnect is invoked with USE_PROXY_ENV=true
-    Then the connect succeeds and the proxy received exactly one login request
 
   # ===========================================================================
   #                    Precedence: params vs env vars

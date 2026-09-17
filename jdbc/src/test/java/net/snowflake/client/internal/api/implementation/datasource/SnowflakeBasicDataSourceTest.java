@@ -544,6 +544,11 @@ public class SnowflakeBasicDataSourceTest {
             "true",
             (DataSourceConfigurer) ds -> ds.setAllowUnderscoresInHost(true)),
         Arguments.of(
+            "disableSocksProxy",
+            "true",
+            (DataSourceConfigurer) ds -> ds.setDisableSocksProxy(true)),
+        Arguments.of("useProxy", "true", (DataSourceConfigurer) ds -> ds.setUseProxy(true)),
+        Arguments.of(
             "proxyHost",
             "proxy.example.com",
             (DataSourceConfigurer) ds -> ds.setProxyHost("proxy.example.com")),
@@ -558,6 +563,8 @@ public class SnowflakeBasicDataSourceTest {
             "nonProxyHosts",
             "localhost",
             (DataSourceConfigurer) ds -> ds.setNonProxyHosts("localhost")),
+        Arguments.of(
+            "proxyProtocol", "https", (DataSourceConfigurer) ds -> ds.setProxyProtocol("https")),
         Arguments.of(
             "enableDiagnostics",
             "true",
