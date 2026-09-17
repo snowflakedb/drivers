@@ -26,6 +26,7 @@ use tokio_stream::wrappers::ReceiverStream;
 // AWS SDK imports
 use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_credential_types::Credentials;
+use aws_sdk_s3::config::RequestChecksumCalculation;
 use aws_sdk_s3::config::retry::RetryConfig as AwsRetryConfig;
 use aws_sdk_s3::config::timeout::TimeoutConfig as AwsTimeoutConfig;
 use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
@@ -644,11 +645,10 @@ fn if_none_match_for_write(overwrite: bool) -> Option<String> {
 }
 
 pin_project_lite::pin_project! {
-    /// Wraps a streaming body to advertise an exact `Content-Length`. The AWS
-    /// SDK's checksum interceptor rejects a streaming request body of unknown
-    /// size (`UnsizedRequestBody`); the file-path `ByteStream` avoids this
-    /// because it reports the file length. The encrypting stream's length is
-    /// known analytically (`Encryptor::cipher_len`), so we surface it here.
+    /// Wraps a streaming body to advertise an exact `Content-Length` for CSE
+    /// uploads whose ciphertext length is known analytically
+    /// (`Encryptor::cipher_len`). File-path SSE uploads use the SDK's
+    /// `ByteStream::read_from`, which reports length from disk metadata.
     struct SizedBody<B> {
         #[pin]
         inner: B,
@@ -1743,10 +1743,10 @@ async fn create_s3_client(
 /// they wire the AWS config the same way.
 fn build_s3_client(config: &SdkConfig, endpoint_url: Option<String>) -> S3Client {
     let mut s3_config = aws_sdk_s3::config::Builder::from(config);
-    // Keep the SDK's default CRC32 checksum on PUT. It streams as an `aws-chunked`
-    // trailer (no buffering), with `SizedBody` advertising the body's exact size so
-    // the checksum interceptor accepts the stream instead of rejecting it as
-    // `UnsizedRequestBody`. S3 then verifies the checksum on receipt.
+    // Snowflake PUT uploads already know the body length (file metadata or analytic
+    // ciphertext length) and match libsnowflakeclient: plain `UNSIGNED-PAYLOAD` with
+    // `Content-Length`, not the SDK default `WhenSupported` aws-chunked CRC32 trailer.
+    s3_config = s3_config.request_checksum_calculation(RequestChecksumCalculation::WhenRequired);
     if let Some(ep) = endpoint_url {
         tracing::debug!("Using S3 endpoint: {ep}");
         s3_config = s3_config.endpoint_url(ep);
@@ -2600,10 +2600,8 @@ mod tests {
         .expect("upload should succeed against the mock");
     }
 
-    // SSE body is sent whole (`UNSIGNED-PAYLOAD`). The CSE path's unsigned-payload
-    // sentinel (`STREAMING-UNSIGNED-PAYLOAD-TRAILER`) is asserted in
-    // `put_object_encrypted_streams_with_crc32_trailer`, which exercises the same
-    // upload end-to-end.
+    // SSE and CSE bodies are sent as plain `UNSIGNED-PAYLOAD` PUTs (no aws-chunked
+    // CRC32 trailer); see the multichunk and encrypted wire-contract tests below.
     #[tokio::test(flavor = "multi_thread")]
     async fn put_object_sends_unsigned_payload_for_unencrypted_upload() {
         assert_put_sends_unsigned_payload(PreparedUpload {
@@ -2617,7 +2615,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn put_object_streams_multichunk_sse_file_with_crc32_trailer() {
+    async fn put_object_streams_multichunk_sse_file_without_checksum_trailer() {
         use std::io::Write;
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -2647,7 +2645,7 @@ mod tests {
                     req.headers
                         .get("x-amz-content-sha256")
                         .and_then(|v| v.to_str().ok())
-                        == Some("STREAMING-UNSIGNED-PAYLOAD-TRAILER"),
+                        == Some("UNSIGNED-PAYLOAD"),
                     Ordering::SeqCst,
                 );
                 ResponseTemplate::new(200)
@@ -2691,25 +2689,24 @@ mod tests {
             ),
         )
         .await
-        .expect("multi-chunk SSE upload hung — aws-chunked Content-Length regressed")
+        .expect("multi-chunk SSE upload hung")
         .expect("multi-chunk SSE file upload should succeed against the mock");
 
         assert!(
             seen_unsigned_payload.load(Ordering::SeqCst),
-            "the streamed body must be payload-unsigned (STREAMING-UNSIGNED-PAYLOAD-TRAILER)",
+            "the streamed body must use plain UNSIGNED-PAYLOAD (no aws-chunked checksum framing)",
         );
         assert!(
-            seen_crc32_trailer.load(Ordering::SeqCst),
-            "the streamed body must carry a CRC32 trailer for S3 to verify on receipt",
+            !seen_crc32_trailer.load(Ordering::SeqCst),
+            "PUT must not carry an x-amz-checksum-crc32 trailer",
         );
     }
 
-    // Pins the wire contract for the lazy encrypting `SdkBody`: the SDK streams
-    // it under `aws-chunked` with a CRC32 trailer (so S3 verifies integrity on
-    // receipt) while conveying the exact ciphertext length analytically via
-    // `x-amz-decoded-content-length` — i.e. CRC32 without buffering the body.
+    // Pins the wire contract for the lazy encrypting `SdkBody`: plain
+    // `UNSIGNED-PAYLOAD` with `Content-Length` set from the analytic ciphertext
+    // length — matching libsnowflakeclient, not the SDK default aws-chunked CRC32.
     #[tokio::test(flavor = "multi_thread")]
-    async fn put_object_encrypted_streams_with_crc32_trailer() {
+    async fn put_object_encrypted_streams_without_checksum_trailer() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
         use wiremock::Request;
@@ -2727,21 +2724,21 @@ mod tests {
         let expected_len = encryptor.cipher_len() as u64;
 
         let mock = MockServer::start().await;
-        let seen_decoded_len = Arc::new(AtomicU64::new(u64::MAX));
+        let seen_content_length = Arc::new(AtomicU64::new(u64::MAX));
         let seen_crc32_trailer = Arc::new(AtomicBool::new(false));
         let seen_unsigned_payload = Arc::new(AtomicBool::new(false));
-        let seen_decoded_len_c = seen_decoded_len.clone();
+        let seen_content_length_c = seen_content_length.clone();
         let seen_crc32_trailer_c = seen_crc32_trailer.clone();
         let seen_unsigned_payload_c = seen_unsigned_payload.clone();
         Mock::given(method("PUT"))
             .respond_with(move |req: &Request| {
                 if let Some(len) = req
                     .headers
-                    .get("x-amz-decoded-content-length")
+                    .get("content-length")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|s| s.parse::<u64>().ok())
                 {
-                    seen_decoded_len_c.store(len, Ordering::SeqCst);
+                    seen_content_length_c.store(len, Ordering::SeqCst);
                 }
                 let crc32 = req
                     .headers
@@ -2753,7 +2750,7 @@ mod tests {
                     .headers
                     .get("x-amz-content-sha256")
                     .and_then(|v| v.to_str().ok())
-                    == Some("STREAMING-UNSIGNED-PAYLOAD-TRAILER");
+                    == Some("UNSIGNED-PAYLOAD");
                 seen_unsigned_payload_c.store(unsigned, Ordering::SeqCst);
                 ResponseTemplate::new(200)
             })
@@ -2799,17 +2796,17 @@ mod tests {
         .expect("encrypted S3 upload should succeed against the mock");
 
         assert_eq!(
-            seen_decoded_len.load(Ordering::SeqCst),
+            seen_content_length.load(Ordering::SeqCst),
             expected_len,
-            "x-amz-decoded-content-length must equal the analytic ciphertext length",
+            "Content-Length must equal the analytic ciphertext length",
         );
         assert!(
-            seen_crc32_trailer.load(Ordering::SeqCst),
-            "the streamed body must carry a CRC32 checksum trailer for S3 to verify on receipt",
+            !seen_crc32_trailer.load(Ordering::SeqCst),
+            "PUT must not carry an x-amz-checksum-crc32 trailer",
         );
         assert!(
             seen_unsigned_payload.load(Ordering::SeqCst),
-            "the CSE body must stay payload-unsigned (STREAMING-UNSIGNED-PAYLOAD-TRAILER)",
+            "the CSE body must use plain UNSIGNED-PAYLOAD",
         );
     }
 

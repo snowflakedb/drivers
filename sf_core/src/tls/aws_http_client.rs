@@ -69,8 +69,7 @@ pub(crate) fn reqwest_aws_http_client(client: reqwest::Client) -> impl HttpClien
 /// Adapts a `reqwest::Client` to smithy's [`HttpConnector`]: convert the smithy
 /// request into a `reqwest::Request`, execute it, and convert the response back.
 /// Request and response bodies are *wrapped*, never buffered, so large multipart
-/// PUT uploads and ranged GET downloads stream — and http-body trailer frames
-/// (e.g. the `aws-chunked` checksum trailer on PUT) survive the round-trip.
+/// PUT uploads and ranged GET downloads stream end-to-end.
 #[derive(Clone, Debug)]
 struct ReqwestConnector {
     client: reqwest::Client,

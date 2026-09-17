@@ -242,23 +242,6 @@ fn gunzip(body: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Strips the `aws-chunked` framing the S3 SDK wraps around a streamed
-/// (file-backed) upload body sent with a trailing checksum — the bind-stage
-/// upload's gzip output is spooled to a tempfile rather than kept in memory,
-/// which triggers this framing. Only the single-chunk case is handled; a
-/// multi-chunk body would fail loudly (bounds panic or a failed equality
-/// assertion) rather than pass silently, so that's safe to leave unhandled.
-fn strip_aws_chunked_framing(body: &[u8]) -> Vec<u8> {
-    let header_end = body
-        .windows(2)
-        .position(|w| w == b"\r\n")
-        .expect("aws-chunked body must start with a `{hex-length}\\r\\n` chunk header");
-    let hex_len = std::str::from_utf8(&body[..header_end]).expect("chunk length must be ASCII");
-    let chunk_len = usize::from_str_radix(hex_len, 16).expect("chunk length must be a hex number");
-    let data_start = header_end + 2;
-    body[data_start..data_start + chunk_len].to_vec()
-}
-
 /// Mount a GS PUT response whose Azure `stageInfo` pins `endPoint` at
 /// `azure_endpoint` (an `https://…invalid` origin, taken verbatim per
 /// `build_azure_url`'s scheme-detection branch), with no client-side
@@ -1085,9 +1068,9 @@ async fn should_route_bind_stage_csv_upload_through_proxy() {
     // so the S3 key is "0.gz" (unlike the `AUTO_COMPRESS=FALSE` test above).
     assert_eq!(puts[0].url.path(), "/0.gz", "PUT must target the S3 key");
     assert_eq!(
-        gunzip(&strip_aws_chunked_framing(&puts[0].body)),
+        gunzip(&puts[0].body),
         build_bind_stage_csv(),
-        "recorded PUT body must de-chunk and gunzip back to the uploaded CSV bindings exactly"
+        "recorded PUT body must gunzip back to the uploaded CSV bindings exactly"
     );
     assert_has_marker(puts[0]);
 }
