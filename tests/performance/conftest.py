@@ -462,6 +462,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_download_url: str = None,  # S3 URL for PUT/GET tests
         s3_download_dir: str = None,  # Local directory for downloaded files
         s3_max_files: int = None,  # If set, download only the first N objects from the prefix
+        local_file_size_bytes: int = None,  # Generate local PUT/GET files instead of S3 download
         fetch_mode: str = "fetchmany",  # Cursor fetch strategy for SELECT tests
         bind_mode: str = "char",  # ODBC: "char" (SQL_C_CHAR) or "default" (SQL_C_DEFAULT)
         worker_count: int = 1,
@@ -501,7 +502,10 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
             test_type, parameters_json, setup_queries, result_format
         )
         s3_files_dir = _download_s3_files_if_needed(
-            s3_download_url, s3_download_dir, s3_max_files
+            s3_download_url,
+            s3_download_dir,
+            s3_max_files,
+            local_file_size_bytes=local_file_size_bytes,
         )
         universal_only = request.node.get_closest_marker("universal_only") is not None
         effective_driver_type = (
@@ -1021,39 +1025,52 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def _download_s3_files_if_needed(
-    s3_download_url: str = None, s3_download_dir: str = None, s3_max_files: int = None
+    s3_download_url: str = None,
+    s3_download_dir: str = None,
+    s3_max_files: int = None,
+    local_file_size_bytes: int = None,
 ):
     """
-    Download S3 files if needed (for PUT/GET tests).
+    Prepare PUT/GET test files from S3 or a local generator.
     
     Args:
         s3_download_url: S3 URL to download files from
         s3_download_dir: Local directory to download files to (optional)
         s3_max_files: If set, download only the first N objects from the prefix
+        local_file_size_bytes: If set, create local files of this size instead of S3
     
     Returns:
         Path to downloaded files directory, or None if no download needed
     """
-    if not s3_download_url:
+    if local_file_size_bytes is None and not s3_download_url:
         return None
-    
-    from runner.s3_utils import download_s3_files
-    
-    # Default download dir: tests/performance/put_get_files/{dataset_name_from_s3_url}
+
+    from runner.s3_utils import download_s3_files, ensure_local_put_get_files
+
+    s3_files_base = perf_tests_root() / "put_get_files"
     if s3_download_dir is None:
-        s3_files_base = perf_tests_root() / "put_get_files"
-        # Extract dataset name from S3 URL
-        # e.g., "s3://bucket/path/12Mx100/" -> "12Mx100"
-        dataset_name = s3_download_url.rstrip('/').split('/')[-1]
+        if local_file_size_bytes is not None:
+            dataset_name = f"local_{local_file_size_bytes}"
+        else:
+            # e.g., "s3://bucket/path/12Mx100/" -> "12Mx100"
+            dataset_name = s3_download_url.rstrip('/').split('/')[-1]
         if s3_max_files is not None:
             dataset_name = f"{dataset_name}_n{s3_max_files}"
         s3_download_dir = str(s3_files_base / dataset_name)
-    
+
     s3_files_dir = Path(s3_download_dir)
-    
+    file_count = s3_max_files if s3_max_files is not None else 1
+
     try:
-        download_s3_files(s3_download_url, s3_files_dir, max_files=s3_max_files)
+        if local_file_size_bytes is not None:
+            ensure_local_put_get_files(
+                s3_files_dir,
+                file_size_bytes=local_file_size_bytes,
+                file_count=file_count,
+            )
+        else:
+            download_s3_files(s3_download_url, s3_files_dir, max_files=s3_max_files)
     except Exception as e:
-        pytest.fail(f"S3 download failed: {e}")
-    
+        pytest.fail(f"PUT/GET test file preparation failed: {e}")
+
     return s3_files_dir

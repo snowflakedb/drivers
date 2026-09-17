@@ -10,9 +10,40 @@ from runner.s3_utils import (
     _download_s3_prefix_subset,
     _list_s3_object_keys,
     download_s3_files,
+    ensure_local_put_get_files,
 )
 
 S3_URL = "s3://sfc-eng-data/ecosystem/1.2Gx10/"
+
+
+def test_ensure_local_put_get_files_creates_requested_files(tmp_path):
+    dest = tmp_path / "local"
+    count = ensure_local_put_get_files(dest, file_size_bytes=1024, file_count=1)
+
+    assert count == 1
+    created = list(dest.glob("file_*.bin"))
+    assert len(created) == 1
+    assert created[0].stat().st_size == 1024
+
+
+def test_ensure_local_put_get_files_skips_when_cache_matches(tmp_path):
+    dest = tmp_path / "local"
+    ensure_local_put_get_files(dest, file_size_bytes=512, file_count=1)
+    mtime = (dest / "file_1.bin").stat().st_mtime
+
+    ensure_local_put_get_files(dest, file_size_bytes=512, file_count=1)
+
+    assert (dest / "file_1.bin").stat().st_mtime == mtime
+
+
+def test_ensure_local_put_get_files_recreates_when_size_mismatch(tmp_path):
+    dest = tmp_path / "local"
+    ensure_local_put_get_files(dest, file_size_bytes=512, file_count=1)
+    (dest / "file_1.bin").write_bytes(b"x" * 256)
+
+    ensure_local_put_get_files(dest, file_size_bytes=512, file_count=1)
+
+    assert (dest / "file_1.bin").stat().st_size == 512
 
 
 def test_list_s3_object_keys_returns_top_level_objects_in_list_order():

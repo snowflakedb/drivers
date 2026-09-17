@@ -7,6 +7,65 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+_WRITE_CHUNK_SIZE = 64 * 1024
+
+
+def ensure_local_put_get_files(
+    local_dir: Path,
+    file_size_bytes: int,
+    file_count: int = 1,
+    filename_prefix: str = "file",
+) -> int:
+    """
+    Create fixed-size local files for PUT/GET perf tests.
+
+    Skips creation when local_dir already holds file_count files of the
+    requested size. Removes local_dir on failure so a partial write is not reused.
+    """
+    if file_count < 1:
+        raise ValueError(f"file_count must be >= 1, got {file_count}")
+    if file_size_bytes < 1:
+        raise ValueError(f"file_size_bytes must be >= 1, got {file_size_bytes}")
+
+    expected_names = {f"{filename_prefix}_{index + 1}.bin" for index in range(file_count)}
+
+    if local_dir.exists():
+        existing = [path for path in local_dir.iterdir() if path.is_file()]
+        if (
+            len(existing) == file_count
+            and {path.name for path in existing} == expected_names
+            and all(path.stat().st_size == file_size_bytes for path in existing)
+        ):
+            logger.info(
+                f"✓ Local PUT/GET files already present in {local_dir} "
+                f"({file_count} x {file_size_bytes} bytes)"
+            )
+            return file_count
+        logger.info(f"Local PUT/GET cache miss in {local_dir}, recreating files.")
+        shutil.rmtree(local_dir)
+
+    local_dir.mkdir(parents=True, exist_ok=True)
+    chunk = b"\0" * _WRITE_CHUNK_SIZE
+
+    try:
+        for index in range(file_count):
+            path = local_dir / f"{filename_prefix}_{index + 1}.bin"
+            remaining = file_size_bytes
+            with path.open("wb") as handle:
+                while remaining > 0:
+                    write_size = min(remaining, len(chunk))
+                    handle.write(chunk[:write_size])
+                    remaining -= write_size
+        logger.info(
+            f"✓ Created {file_count} local PUT/GET file(s) in {local_dir} "
+            f"({file_size_bytes} bytes each)"
+        )
+        return file_count
+    except OSError:
+        if local_dir.exists():
+            shutil.rmtree(local_dir)
+        raise
+
 
 def download_s3_files(s3_url: str, local_dir: Path, max_files: int | None = None) -> int:
     """

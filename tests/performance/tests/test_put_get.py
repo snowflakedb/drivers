@@ -4,6 +4,7 @@ from runner.test_types import PerfTestType
 
 S3_TEST_DATA_12MX100 = "s3://sfc-eng-data/ecosystem/12Mx100/"
 S3_TEST_DATA_1_2G = "s3://sfc-eng-data/ecosystem/1.2Gx10/"
+LOCAL_FILE_SIZE_1M = 1_000_000
 
 
 def test_put_files_12mx100(perf_test):
@@ -14,6 +15,26 @@ def test_put_files_12mx100(perf_test):
     perf_test(
         test_type=PerfTestType.PUT_GET,
         s3_download_url=S3_TEST_DATA_12MX100,
+        setup_queries=[
+            "CREATE TEMPORARY STAGE put_test_stage"
+        ],
+        sql_command=(
+            "PUT file:///put_get_files/* @put_test_stage "
+            "AUTO_COMPRESS=FALSE overwrite=true"
+        )
+    )
+
+
+@pytest.mark.iterations(15)
+def test_put_file_1m(perf_test):
+    """
+    PUT test: Upload one 1MB file from local disk to temporary stage.
+    Single file below the multipart threshold.
+    """
+    perf_test(
+        test_type=PerfTestType.PUT_GET,
+        local_file_size_bytes=LOCAL_FILE_SIZE_1M,
+        s3_max_files=1,
         setup_queries=[
             "CREATE TEMPORARY STAGE put_test_stage"
         ],
@@ -60,6 +81,28 @@ def test_get_files_12mx100(perf_test):
         sql_command=(
             "GET @get_test_stage "
             "file:///get_files/get_files_12mx100/"
+        )
+    )
+
+
+@pytest.mark.iterations(15)
+def test_get_file_1m(perf_test):
+    """
+    GET test: Download one 1MB file from temporary stage to local disk.
+    Single file below the multipart threshold.
+    """
+    perf_test(
+        test_type=PerfTestType.PUT_GET,
+        local_file_size_bytes=LOCAL_FILE_SIZE_1M,
+        s3_max_files=1,
+        setup_queries=[
+            "CREATE TEMPORARY STAGE get_test_stage",
+            "PUT file:///put_get_files/* @get_test_stage "
+            "AUTO_COMPRESS=FALSE overwrite=false"
+        ],
+        sql_command=(
+            "GET @get_test_stage "
+            "file:///get_files/get_file_1m/"
         )
     )
 
