@@ -114,4 +114,9 @@ class TestNativeOktaAuthentication:
             )
 
         # Then Connection fails with authentication error
-        verify_login_error(exception, keywords=["authenticator"])
+        verify_login_error(exception, keywords=[])
+        error_msg = str(exception.value).lower()
+        assert "http 400" not in error_msg, f"Logical failure must not be rewritten as HTTP 400, got: {exception.value}"
+        assert "not accepted" in error_msg or "does not match" in error_msg, (
+            f"Expected authenticator rejection or IdP URL mismatch, got: {exception.value}"
+        )

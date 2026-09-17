@@ -1158,9 +1158,12 @@ behavior_differences:
       Callers who set a count above the legacy cap get more PUT/GET attempts than before.
   63:
     name: "Native Okta authenticator-request logical failures drop the Snowflake message"
-    status: unknown
+    status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Restores parity: the 4.x driver includes the GS message in the
+      connection error Display string.
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -1168,11 +1171,11 @@ behavior_differences:
       GS `message` (e.g. "not accepted by your Snowflake account configuration" or
       "is not supported") is included in the connection error.
     new_driver_behavior: |
-      The same failure displays as `Snowflake authenticator-request (logical failure) failed
-      with HTTP 400`. The GS `message` is kept on the error body but omitted from Display.
+      When Snowflake rejects authenticator-request with HTTP 200 and `success: false`, the
+      GS `message` is included in the connection error.
     description: |
-      Pinned by sf_core `should_fail_generically_when_authenticator_url_not_accepted_by_account_config`
-      and `should_fail_generically_when_authenticator_value_not_supported`.
+      Regression fixed. Applications again see the GS authenticator-request rejection
+      message in the connection error, matching the legacy driver.
   64:
     name: "JVM SOCKS system properties are not honored"
     status: allowed

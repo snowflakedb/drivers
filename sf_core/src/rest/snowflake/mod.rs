@@ -2641,7 +2641,7 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Native Okta SSO failed"))]
+    #[snafu(display("Native Okta SSO failed: {source}"))]
     NativeOkta {
         source: native_okta::NativeOktaError,
         #[snafu(implicit)]

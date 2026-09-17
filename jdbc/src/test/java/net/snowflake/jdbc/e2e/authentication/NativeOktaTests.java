@@ -1,6 +1,5 @@
 package net.snowflake.jdbc.e2e.authentication;
 
-import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -50,9 +49,10 @@ class NativeOktaTests implements WithQueryUtils, WithConnect {
 
     // Then Connection fails with authentication error
     SQLException exception = assertThrows(SQLException.class, connect);
-    if (isNewDriver()) {
-      assertTrue(exception.getMessage().toLowerCase().contains("rejected credentials"));
-    }
+    String msg = exception.getMessage().toLowerCase();
+    assertTrue(
+        msg.contains("okta"),
+        () -> "Expected error to mention Okta, got: " + exception.getMessage());
   }
 
   @Test
@@ -68,8 +68,10 @@ class NativeOktaTests implements WithQueryUtils, WithConnect {
 
     // Then Connection fails with authentication error
     SQLException exception = assertThrows(SQLException.class, connect);
-    if (isNewDriver()) {
-      assertTrue(exception.getMessage().toLowerCase().contains("bad request"));
-    }
+    String msg = exception.getMessage().toLowerCase();
+    assertTrue(
+        msg.contains("not accepted") || msg.contains("does not match"),
+        () ->
+            "Expected authenticator rejection or IdP URL mismatch, got: " + exception.getMessage());
   }
 }

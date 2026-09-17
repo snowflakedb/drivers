@@ -68,6 +68,12 @@ pub enum NativeOktaError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("{message}"))]
+    AuthenticatorRejected {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("{context} failed with HTTP {status}"))]
     HttpStatus {
         context: &'static str,
@@ -300,18 +306,13 @@ async fn request_authenticator_endpoints(
 
     let idp: AuthenticatorRequestResponse = serde_json::from_str(&text).context(JsonParseSnafu)?;
     if !idp.success {
-        let msg = idp.message.unwrap_or_else(|| "Unknown error".to_string());
+        let message = idp.message.unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(
-            message = %msg,
+            message = %message,
             elapsed_ms = start.elapsed().as_millis(),
             "Snowflake authenticator-request returned logical failure"
         );
-        return HttpStatusSnafu {
-            context: "Snowflake authenticator-request (logical failure)",
-            status: StatusCode::BAD_REQUEST,
-            body: msg,
-        }
-        .fail();
+        return AuthenticatorRejectedSnafu { message }.fail();
     }
     let data = idp.data.ok_or_else(|| NativeOktaError::MissingField {
         field: "data",
@@ -657,6 +658,17 @@ mod tests {
     // =========================================================================
     // Error Enrichment Tests
     // =========================================================================
+
+    #[test]
+    fn should_display_authenticator_rejection_as_snowflake_message() {
+        let message =
+            "The specified authenticator is not accepted by your Snowflake account configuration.";
+        let err = AuthenticatorRejectedSnafu {
+            message: message.to_string(),
+        }
+        .build();
+        assert_eq!(err.to_string(), message);
+    }
 
     #[test]
     fn should_enrich_okta_error_body_with_error_code_and_summary() {
