@@ -1002,4 +1002,20 @@ mod tests {
         assert!(!unknown.contains_key("host"));
         assert!(!unknown.contains_key("HOST"));
     }
+
+    #[test]
+    fn collect_unknown_settings_forwards_gcs_use_downscoped_credential() {
+        let mut store = ParamStore::new();
+        store.insert(
+            "gcs_use_downscoped_credential".to_string(),
+            Setting::String("true".to_string()),
+        );
+
+        let unknown = collect_unknown_settings(&store);
+
+        assert_eq!(
+            unknown.get("GCS_USE_DOWNSCOPED_CREDENTIAL"),
+            Some(&"true".to_string())
+        );
+    }
 }

@@ -2681,8 +2681,10 @@ tests:
   - test_name: testPutDisable
     ud_tests: []
   - test_name: testPutGetGcsDownscopedCredential
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/put_get/GcsDownscopedCredentialTest.java#shouldPutAndGetOnGcsWithDownscopedCredential
   - test_name: testPutGetGcsDownscopedCredentialWithDisabledDefaultCredentials
+    # PUT with GCS_USE_DOWNSCOPED_CREDENTIAL=false fails on this GCP account on snowflake-jdbc and UD.
     ud_tests: []
   - test_name: testPutGetLargeFileAzure
     ud_tests: []

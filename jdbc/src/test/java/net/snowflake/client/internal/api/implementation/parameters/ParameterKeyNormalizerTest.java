@@ -59,6 +59,9 @@ class ParameterKeyNormalizerTest {
   @Test
   void shouldLeaveUnknownKeysUnchanged() {
     assertEquals("authenticator", ParameterKeyNormalizer.normalize("authenticator"));
+    assertEquals(
+        "GCS_USE_DOWNSCOPED_CREDENTIAL",
+        ParameterKeyNormalizer.normalize("GCS_USE_DOWNSCOPED_CREDENTIAL"));
   }
 
   @Test
