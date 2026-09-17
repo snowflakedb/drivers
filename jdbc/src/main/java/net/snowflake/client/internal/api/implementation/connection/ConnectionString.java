@@ -67,7 +67,9 @@ public class ConnectionString {
           .applyDefaultPortForEffectiveScheme()
           .build();
     } catch (IllegalArgumentException | SFSQLException ex) {
-      logger.warn("Exception thrown while parsing Snowflake connect string", ex);
+      logger.warn(
+          "Exception thrown while parsing Snowflake connect string: {}",
+          ex.getClass().getSimpleName());
       return INVALID_CONNECT_STRING;
     }
   }
@@ -202,9 +204,10 @@ public class ConnectionString {
       account = host.substring(0, host.indexOf('.'));
       if (host.contains(".global.")) {
         int idx = account.lastIndexOf('-');
-        if (idx > 0) {
-          account = account.substring(0, idx);
+        if (idx <= 0) {
+          throw new IllegalArgumentException("Global host requires an account locator");
         }
+        account = account.substring(0, idx);
       }
       parameters.put("ACCOUNT", account);
       return this;
@@ -243,6 +246,9 @@ public class ConnectionString {
       if ("ssl".equalsIgnoreCase(key) && isSslDisabled(value)) {
         scheme = "http";
       } else if ("account".equalsIgnoreCase(key)) {
+        if (value.contains("=")) {
+          throw new IllegalArgumentException("Invalid account identifier");
+        }
         account = value;
       }
       parameters.put(key.toUpperCase(Locale.US), value);
