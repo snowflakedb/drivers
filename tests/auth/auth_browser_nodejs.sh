@@ -7,10 +7,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/auth_browser_common.sh"
 
-if [ "${AUTH_BROWSER_MODE:-universal}" != "universal" ]; then
-    echo "ERROR: Node.js reference auth tests are not enabled yet" >&2
-    exit 1
-fi
+case "${AUTH_BROWSER_MODE:-universal}" in
+    universal)
+        VITEST_PROJECT=e2e
+        ;;
+    reference)
+        VITEST_PROJECT=e2e-old-driver
+        ;;
+    *)
+        echo "ERROR: unknown AUTH_BROWSER_MODE '${AUTH_BROWSER_MODE:-}'" >&2
+        exit 1
+        ;;
+esac
 
 cd "${WORKSPACE_ROOT}/nodejs"
 
@@ -19,4 +27,4 @@ npm install
 
 echo ""
 echo "=== Running Node.js authentication E2E tests ==="
-npx vitest run --project e2e tests/e2e/authentication/
+npx vitest run --project "${VITEST_PROJECT}" tests/e2e/authentication/
