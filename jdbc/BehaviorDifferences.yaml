@@ -1217,3 +1217,67 @@ behavior_differences:
       glob matches anything at all; leaving `*.foo.com` literal would match
       almost nothing. This is not a missing JDBC property. Closing it needs
       a Java-glob matcher in the native transport.
+
+  66:
+    name: "Malformed connection-string diagnostics redact the URL"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `Driver.getPropertyInfo` includes the complete malformed JDBC URL in its
+      `Invalid Connect String: <url>.` exception message.
+    new_driver_behavior: |
+      `Driver.getPropertyInfo` reports `Connection string is invalid. Unable to parse.` without
+      reproducing the malformed URL. SQLState `08000` and vendor code `200059` are unchanged.
+    description: |
+      Omitting the URL prevents credentials and tokens in malformed query strings from appearing
+      in exception logs.
+  67:
+    name: "getPropertyInfo validates snake_case proxy alias types"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `Driver.getPropertyInfo` does not reject a non-String `proxy_host` or `proxy_port` value.
+    new_driver_behavior: |
+      `Driver.getPropertyInfo` rejects a non-String `proxy_host` or `proxy_port` with SQLState
+      `22023` and vendor code `200033`, matching the camelCase `proxyHost` / `proxyPort` checks.
+    description: |
+      Snake-case aliases are first-class names in this driver, so invalid types must fail the same
+      way as the canonical spellings.
+  68:
+    name: "getPropertyInfo treats an empty authenticator as Snowflake password auth"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `Driver.getPropertyInfo` with `authenticator=""` reports no missing properties. Legacy
+      `isSnowflakeAuthenticator()` is false for the empty string, so `user` and `password` are
+      not requested.
+    new_driver_behavior: |
+      `Driver.getPropertyInfo` with `authenticator=""` reports missing `user` and `password`, the
+      same as an unspecified authenticator.
+    description: |
+      An empty authenticator is treated as the default Snowflake password flow rather than as a
+      distinct authenticator that needs no credentials.
+  69:
+    name: "getPropertyInfo reports user and password for USERNAME_PASSWORD_MFA"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `Driver.getPropertyInfo` with `authenticator=USERNAME_PASSWORD_MFA` reports no missing
+      properties.
+    new_driver_behavior: |
+      `Driver.getPropertyInfo` with `authenticator=USERNAME_PASSWORD_MFA` reports missing `user`
+      and `password`, matching other username/password authenticators.
+    description: |
+      Username/password MFA still needs those credentials, so introspection asks for them.

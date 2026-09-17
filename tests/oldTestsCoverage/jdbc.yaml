@@ -2669,7 +2669,11 @@ tests:
   - test_name: testGetDisable
     ud_tests: []
   - test_name: testGetPropertyInfo
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#shouldReportServerUrlWhenPropertyInfoHasNoUrl
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#shouldReportMissingCredentialsAndEnabledProxyProperties
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#shouldNotRequirePasswordCredentialsWhenPrivateKeyCredentialsArePresent
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#shouldRejectMalformedStandardUrlsDuringPropertyInfo
   - test_name: testGetSessionID
     ud_tests: []
   - test_name: testHTAPOptimizations

@@ -1,5 +1,6 @@
 package net.snowflake.client.api.driver;
 
+import static java.util.stream.Collectors.toList;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -7,18 +8,24 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
+import java.security.PrivateKey;
 import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.Properties;
 import java.util.stream.Stream;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.jdbc.utils.DriverCompatibility;
+import net.snowflake.jdbc.utils.SkipOldDriver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** Basic tests for the Snowflake JDBC Driver. */
 public class SnowflakeDriverTest {
@@ -64,11 +71,205 @@ public class SnowflakeDriverTest {
   }
 
   @Test
-  public void testGetPropertyInfo() throws SQLException {
-    SnowflakeDriver driver = new SnowflakeDriver();
-    DriverPropertyInfo[] props =
-        driver.getPropertyInfo("jdbc:snowflake://test.snowflakecomputing.com", new Properties());
-    assertNotNull(props, "Property info should not be null");
+  public void shouldReportServerUrlWhenPropertyInfoHasNoUrl() throws SQLException {
+    DriverPropertyInfo[] properties = new SnowflakeDriver().getPropertyInfo(null, new Properties());
+
+    assertEquals(1, properties.length);
+    assertEquals("serverURL", properties[0].name);
+    assertEquals(
+        "server URL in form of <protocol>://<host or domain>:<port number>/<path of resource>",
+        properties[0].description);
+  }
+
+  @Test
+  public void shouldReportMissingCredentialsAndEnabledProxyProperties() throws SQLException {
+    DriverPropertyInfo[] properties =
+        new SnowflakeDriver()
+            .getPropertyInfo(
+                "jdbc:snowflake://test.snowflakecomputing.com?useProxy=true", new Properties());
+
+    assertEquals(
+        Arrays.asList("user", "password", "proxyHost", "proxyPort"),
+        Arrays.stream(properties).map(property -> property.name).collect(toList()));
+  }
+
+  @Test
+  public void shouldNotRequirePasswordCredentialsForExternalBrowser() throws SQLException {
+    DriverPropertyInfo[] properties =
+        new SnowflakeDriver()
+            .getPropertyInfo(
+                "jdbc:snowflake://test.snowflakecomputing.com?authenticator=externalbrowser",
+                new Properties());
+
+    assertEquals(0, properties.length);
+  }
+
+  @Test
+  public void shouldReportMissingCredentialsForHttpsAuthenticator() throws SQLException {
+    DriverPropertyInfo[] properties =
+        new SnowflakeDriver()
+            .getPropertyInfo(
+                "jdbc:snowflake://test.snowflakecomputing.com"
+                    + "?authenticator=https%3A%2F%2Fidp.snowflake.com",
+                new Properties());
+
+    assertEquals(
+        Arrays.asList("user", "password"),
+        Arrays.stream(properties).map(property -> property.name).collect(toList()));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"username_password_mfa", "USERNAME_PASSWORD_MFA"})
+  @SkipOldDriver("BD#69")
+  public void shouldReportMissingCredentialsForUsernamePasswordMfa(String authenticator)
+      throws SQLException {
+    Properties info = new Properties();
+    info.setProperty("authenticator", authenticator);
+
+    DriverPropertyInfo[] properties =
+        new SnowflakeDriver().getPropertyInfo("jdbc:snowflake://test.snowflakecomputing.com", info);
+
+    assertEquals(
+        Arrays.asList("user", "password"),
+        Arrays.stream(properties).map(property -> property.name).collect(toList()));
+  }
+
+  @Test
+  @SkipOldDriver("BD#68")
+  public void shouldReportMissingCredentialsForEmptyAuthenticator() throws SQLException {
+    Properties info = new Properties();
+    info.setProperty("authenticator", "");
+
+    DriverPropertyInfo[] properties =
+        new SnowflakeDriver().getPropertyInfo("jdbc:snowflake://test.snowflakecomputing.com", info);
+
+    assertEquals(
+        Arrays.asList("user", "password"),
+        Arrays.stream(properties).map(property -> property.name).collect(toList()));
+  }
+
+  @ParameterizedTest
+  @MethodSource("privateKeyCredentialProperties")
+  public void shouldNotRequirePasswordCredentialsWhenPrivateKeyCredentialsArePresent(
+      String propertyName, Object propertyValue, String authenticator) throws SQLException {
+    Properties info = new Properties();
+    info.put(propertyName, propertyValue);
+    if (authenticator != null) {
+      info.setProperty("authenticator", authenticator);
+    }
+
+    DriverPropertyInfo[] properties =
+        new SnowflakeDriver().getPropertyInfo("jdbc:snowflake://test.snowflakecomputing.com", info);
+
+    assertEquals(0, properties.length);
+  }
+
+  private static Stream<Arguments> privateKeyCredentialProperties() {
+    return Stream.of(
+        Arguments.of("privateKey", mock(PrivateKey.class), null),
+        Arguments.of("private_key_file", "/tmp/key.p8", null),
+        Arguments.of("private_key_base64", "AQ==", null),
+        Arguments.of("privateKey", mock(PrivateKey.class), ""),
+        Arguments.of("private_key_file", "/tmp/key.p8", ""),
+        Arguments.of("private_key_base64", "AQ==", ""));
+  }
+
+  @ParameterizedTest
+  @MethodSource("invalidTypedPropertyValues")
+  public void shouldRejectInvalidTypedPropertiesDuringIntrospection(
+      String propertyName, Object propertyValue, String expectedType) {
+    assertRejectsInvalidTypedProperty(propertyName, propertyValue, expectedType);
+  }
+
+  @ParameterizedTest
+  @MethodSource("invalidTypedSnakeCaseProxyPropertyValues")
+  @SkipOldDriver("BD#67")
+  public void shouldRejectInvalidTypedSnakeCaseProxyAliasesDuringIntrospection(
+      String propertyName, Object propertyValue, String expectedType) {
+    assertRejectsInvalidTypedProperty(propertyName, propertyValue, expectedType);
+  }
+
+  private static void assertRejectsInvalidTypedProperty(
+      String propertyName, Object propertyValue, String expectedType) {
+    Properties info = new Properties();
+    info.put(propertyName, propertyValue);
+
+    SQLException exception =
+        assertThrows(
+            SQLException.class,
+            () ->
+                new SnowflakeDriver()
+                    .getPropertyInfo("jdbc:snowflake://test.snowflakecomputing.com", info));
+
+    assertEquals(
+        "Invalid parameter value type: "
+            + propertyValue.getClass().getName()
+            + ", expected type: "
+            + expectedType
+            + ".",
+        exception.getMessage());
+    assertEquals("22023", exception.getSQLState());
+    assertEquals(200033, exception.getErrorCode());
+  }
+
+  private static Stream<Arguments> invalidTypedPropertyValues() {
+    return Stream.of(
+        Arguments.of("user", 42, String.class.getName()),
+        Arguments.of("password", 42, String.class.getName()),
+        Arguments.of("authenticator", 42, String.class.getName()),
+        Arguments.of("useProxy", 42, Boolean.class.getName()),
+        Arguments.of("proxyHost", 42, String.class.getName()),
+        Arguments.of("proxyPort", 42, String.class.getName()),
+        Arguments.of("privateKey", 42, PrivateKey.class.getName()),
+        Arguments.of("private_key_file", 42, String.class.getName()),
+        Arguments.of("private_key_base64", 42, String.class.getName()));
+  }
+
+  private static Stream<Arguments> invalidTypedSnakeCaseProxyPropertyValues() {
+    return Stream.of(
+        Arguments.of("proxy_host", 42, String.class.getName()),
+        Arguments.of("proxy_port", 42, String.class.getName()));
+  }
+
+  @Test
+  public void shouldTreatEmptyProxyPropertiesAsPresent() throws SQLException {
+    Properties info = new Properties();
+    info.setProperty("proxyHost", "");
+    info.setProperty("proxyPort", "");
+
+    DriverPropertyInfo[] properties =
+        new SnowflakeDriver()
+            .getPropertyInfo("jdbc:snowflake://test.snowflakecomputing.com?useProxy=true", info);
+
+    assertEquals(
+        Arrays.asList("user", "password"),
+        Arrays.stream(properties).map(property -> property.name).collect(toList()));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"jdbc:snowflake://", "jdbc:snowflake://?user=test"})
+  public void shouldRejectMalformedStandardUrlsDuringPropertyInfo(String url) {
+    SnowflakeSQLException exception =
+        assertThrows(
+            SnowflakeSQLException.class,
+            () -> new SnowflakeDriver().getPropertyInfo(url, new Properties()));
+    assertEquals("08000", exception.getSQLState());
+    assertEquals(200059, exception.getErrorCode());
+  }
+
+  @Test
+  @SkipOldDriver("BD#66")
+  public void shouldRedactMalformedUrlFromPropertyInfoError() {
+    String url = "jdbc:snowflake://?password=secret";
+
+    SnowflakeSQLException exception =
+        assertThrows(
+            SnowflakeSQLException.class,
+            () -> new SnowflakeDriver().getPropertyInfo(url, new Properties()));
+
+    assertEquals("Connection string is invalid. Unable to parse.", exception.getMessage());
+    assertEquals("08000", exception.getSQLState());
+    assertEquals(200059, exception.getErrorCode());
   }
 
   @Test

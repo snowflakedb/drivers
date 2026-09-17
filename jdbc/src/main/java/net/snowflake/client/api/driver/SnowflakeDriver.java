@@ -16,6 +16,7 @@ import net.snowflake.client.internal.api.implementation.connection.SnowflakeConn
 import net.snowflake.client.internal.api.implementation.exception.SqlExceptionMapper;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.util.DriverPropertyInfoUtil;
 
 /**
  * Snowflake JDBC Driver implementation
@@ -98,7 +99,7 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) throws SQLException {
-    return new DriverPropertyInfo[0];
+    return SqlExceptionMapper.call(() -> DriverPropertyInfoUtil.getPropertyInfo(url, info));
   }
 
   @Override
