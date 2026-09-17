@@ -49,6 +49,30 @@ public class SqlExceptionMapperTest {
   }
 
   @Test
+  public void shouldPreserveSuppressedCleanupFailuresOnTheTranslatedSqlException() {
+    SFSQLException primary = SFSQLException.fromErrorCode(ErrorCode.CONNECTION_CLOSED);
+    AssertionError cleanupFailure = new AssertionError("release failed");
+    primary.addSuppressed(cleanupFailure);
+
+    SQLException translated = SqlExceptionMapper.translate(primary);
+
+    assertEquals(1, translated.getSuppressed().length);
+    assertSame(cleanupFailure, translated.getSuppressed()[0]);
+  }
+
+  @Test
+  public void shouldNotSuppressTheSurfacedSqlExceptionOnItself() {
+    SnowflakeSQLException surfaced = new SnowflakeSQLException("surface");
+    SFSQLException carrier = SFSQLException.surfacing(surfaced);
+    carrier.addSuppressed(surfaced);
+
+    SQLException translated = SqlExceptionMapper.translate(carrier);
+
+    assertSame(surfaced, translated);
+    assertEquals(0, translated.getSuppressed().length);
+  }
+
+  @Test
   public void shouldRenderFormattedMessageForSfExceptionWithTemplate() {
     SFSQLException sf =
         SFSQLException.fromErrorCode(ErrorCode.INVALID_VALUE_CONVERT, "VARIANT", "INT", "abc");

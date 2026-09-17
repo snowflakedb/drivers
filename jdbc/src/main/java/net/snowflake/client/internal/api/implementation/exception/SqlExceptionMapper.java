@@ -49,9 +49,17 @@ public final class SqlExceptionMapper {
     if (t instanceof SQLException) {
       return (SQLException) t;
     }
+    SQLException translated;
     if (t instanceof DriverRuntimeException) {
-      return ((DriverRuntimeException) t).toSQLException();
+      translated = ((DriverRuntimeException) t).toSQLException();
+    } else {
+      translated = new SnowflakeSQLException(t.getMessage(), t);
     }
-    return new SnowflakeSQLException(t.getMessage(), t);
+    for (Throwable suppressed : t.getSuppressed()) {
+      if (suppressed != translated) {
+        translated.addSuppressed(suppressed);
+      }
+    }
+    return translated;
   }
 }
