@@ -3232,10 +3232,18 @@ mod tests {
     /// single-PUT branch: a body above the multipart threshold with a
     /// matching remote digest must skip without issuing
     /// `CreateMultipartUpload`.
+    ///
+    /// Path-anchored to a unique object so stray `UploadPart` from concurrent
+    /// multi-thread tests (or MockServer port reuse) cannot trip `expect(0)`,
+    /// matching `mount_head_and_put`.
     #[tokio::test(flavor = "multi_thread")]
     async fn skip_on_content_match_also_gates_multipart_branch() {
+        const FILE: &str = "skip-mp-content-match.dat";
+        const OBJECT_PATH: &str = "/test-bucket/prefix/skip-mp-content-match.dat";
+
         let mock = MockServer::start().await;
         Mock::given(method("HEAD"))
+            .and(path(OBJECT_PATH))
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("x-amz-meta-sfc-digest", "matching-digest"),
@@ -3244,12 +3252,14 @@ mod tests {
             .mount(&mock)
             .await;
         Mock::given(method("POST"))
+            .and(path(OBJECT_PATH))
             .and(query_param("uploads", ""))
             .respond_with(ResponseTemplate::new(200))
             .expect(0)
             .mount(&mock)
             .await;
         Mock::given(method("PUT"))
+            .and(path(OBJECT_PATH))
             .respond_with(ResponseTemplate::new(200))
             .expect(0)
             .mount(&mock)
@@ -3267,7 +3277,7 @@ mod tests {
         let status = upload_to_s3_or_skip(
             prepared,
             &mp_stage(mock.uri()),
-            "f.dat",
+            FILE,
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
             &base_policy(),
