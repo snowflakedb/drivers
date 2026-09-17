@@ -23,7 +23,7 @@ use crate::api::CDataType;
 use crate::conversion::ColumnConverter;
 use crate::conversion::error::{ConversionError, WriteOdbcError, WriteOdbcValueSnafu};
 use crate::conversion::traits::{Binding, BindingStrides, LengthOrNull};
-use crate::conversion::warning::Warnings;
+use crate::conversion::warning::{Warning, Warnings};
 use arrow::array::Array;
 use snafu::ResultExt;
 
@@ -77,6 +77,27 @@ pub(crate) trait CharKernel {
     /// `SQLSTATE 22003` overflow; every other kernel uses the default no-op.
     fn post_write_check(&self, _s: &str, _binding: &Binding) -> Result<(), WriteOdbcError> {
         Ok(())
+    }
+
+    /// Convert and write one non-null cell. Kernels with a cheaper direct
+    /// representation (BOOLEAN) can override this to bypass materialization,
+    /// scratch, and infallible `Result` plumbing.
+    #[inline]
+    fn write_non_null(
+        &self,
+        array: &Self::Array,
+        idx: usize,
+        binding: &Binding,
+        scratch: &mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<bool, ConversionError> {
+        let value = self.read_validate(array, idx)?;
+        let s = self
+            .format_into(&value, binding, scratch)
+            .context(WriteOdbcValueSnafu)?;
+        let truncated = binding.write_ascii_char_string_once(s);
+        self.post_write_check(s, binding)
+            .context(WriteOdbcValueSnafu)?;
+        Ok(truncated)
     }
 }
 
@@ -144,31 +165,13 @@ pub(crate) fn convert_char_range<K: CharKernel>(
             continue;
         }
 
-        let result = (|| {
-            let value = kernel.read_validate(array, batch_idx)?;
-            let s = kernel
-                .format_into(&value, &binding, &mut scratch)
-                .context(WriteOdbcValueSnafu)?;
-            let warnings = binding.write_char_string(s, &mut None);
-            kernel
-                .post_write_check(s, &binding)
-                .context(WriteOdbcValueSnafu)?;
-            Ok::<Warnings, ConversionError>(warnings)
-        })();
-
-        match result {
-            Ok(w) => {
-                // Warnings are rare; gating the `outputs[i]` index + extend on the
-                // empty-warning check is worth ~3% on NUMBER fetches. Kept as a
-                // nested `if` (not a `&& let` chain) per review preference — the
-                // clippy collapse suggestion would reintroduce the let-chain.
-                #[allow(clippy::collapsible_if)]
-                if !w.is_empty() {
-                    if let Ok(existing) = &mut outputs[i] {
-                        existing.extend(w);
-                    }
+        match kernel.write_non_null(array, batch_idx, &binding, &mut scratch) {
+            Ok(true) => {
+                if let Ok(existing) = &mut outputs[i] {
+                    existing.push(Warning::StringDataTruncated);
                 }
             }
+            Ok(false) => {}
             Err(e) => outputs[i] = Err(e),
         }
     }
