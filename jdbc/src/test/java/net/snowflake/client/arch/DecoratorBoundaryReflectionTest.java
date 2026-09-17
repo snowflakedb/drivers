@@ -26,7 +26,10 @@ import org.junit.jupiter.api.TestFactory;
  * Guards the self-propagating decorator boundary the "runtime exception carrier" refactor relies
  * on: a JDBC object handed back from another JDBC object must return <em>decorated</em>, or it
  * silently escapes the telemetry + exception-translation boundary. That property is behavioural, so
- * ArchUnit (structure-only) can't see it — hence a reflection test.
+ * ArchUnit (structure-only) can't see it — hence a reflection test. {@link Statement} and {@link
+ * ResultSet} here are samples of JDBC types {@link Decorators} wraps with an {@code instanceof}
+ * ladder; those factories discover every concrete raw impl of those types, not a fixed class list.
+ * Connection uses a cast, not a ladder.
  *
  * <p>The impl tier wraps returns two ways: the {@link Decorators} factory (statement / result set /
  * connection) and direct {@code new Decorated*} construction (metadata, clob, prepared / callable,
