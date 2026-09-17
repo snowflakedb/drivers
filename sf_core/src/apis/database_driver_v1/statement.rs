@@ -2,11 +2,15 @@ use snafu::{OptionExt, ResultExt, Snafu};
 use tokio::sync::Mutex;
 use tracing::Instrument;
 
-use super::connection::{Connection, RefreshContext, with_valid_session};
+use super::connection::{Connection, RefreshContext, with_session_refresh, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::multistatement;
 use super::query::{StageInfoRefreshContext, perform_put_get_transfer};
+use super::query_submit::{
+    AbortReport, abort_on_cancel, abort_query_by_request_id, query_context, submit_query,
+    update_caches,
+};
 use super::result_set::{
     ColumnMetadata, ExecuteQueryResult, fetch_query_response_data, resolve_reader_ctx,
     response_to_descriptor,
@@ -22,29 +26,16 @@ use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    AbortOutcome, MissingQueryIdSnafu, QueryExecutionMode, QueryIds, QueryInput, QueryOptions,
-    query_response, snowflake_abort_query, snowflake_cancel_query, snowflake_query_with_client,
+    AbortOutcome, MissingQueryIdSnafu, QueryExecutionMode, QueryIds, QueryInput, query_response,
+    snowflake_abort_query,
 };
-use crate::utils::sync::MutexRecoverExt;
 
 use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::async_exec::submit_statement_async;
 use arrow::array::RecordBatchReader;
 use serde_json::value::RawValue;
-use std::sync::atomic::Ordering;
 use std::{collections::HashMap, sync::Arc};
-
-/// Upper bound on how long [`abort_query_by_request_id`] waits for the
-/// abort-request to be processed before giving up — applied to both callers (the
-/// operation-cancellation cleanup and the client-side query-timeout path). The
-/// abort is best-effort — the executing thread observes the actual cancellation —
-/// so a generous-but-finite bound is enough to keep the caller from stalling on a
-/// slow/hung server.
-///
-/// Distinct from `OperationCtx`'s cleanup wait, which bounds how long a
-/// *cancelled caller* blocks rather than the abort POST itself.
-const ABORT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Pointer to raw bytes in memory - used by query bindings
 #[derive(Debug)]
@@ -92,47 +83,6 @@ pub enum BindingType<'a> {
     Json(DataPtr<'a>),
     /// CSV bindings - pointer to raw CSV data bytes for bulk upload.
     Csv(DataPtr<'a>),
-}
-
-/// Channel by which a cancelled operation's abort-cleanup reports what it
-/// achieved, so the `Cancelled` error can carry the acknowledgement out to the
-/// caller.
-///
-/// A shared slot rather than the cleanup's return value because there is no way
-/// to read that: the cleanup runs on a task spawned by
-/// [`OperationCtx::with_cleanup`](crate::apis::operation_ctx::OperationCtx::with_cleanup),
-/// deliberately outliving the execute future that armed it, and the future is
-/// gone by the time it finishes.
-///
-/// `std::sync::Mutex`, not `tokio`'s: the critical sections are a single
-/// assignment and a single read, and the read happens on a path that must not
-/// have to `.await` to see the value.
-#[derive(Clone, Debug, Default)]
-struct AbortReport(Arc<std::sync::Mutex<Option<CancellationAbortResult>>>);
-
-impl AbortReport {
-    /// Record what the abort achieved. Later calls overwrite earlier ones, which
-    /// is how the cleanup upgrades its own pessimistic `NotConfirmed` to the real
-    /// outcome.
-    fn set(&self, outcome: CancellationAbortResult) {
-        *self.0.lock_recover() = Some(outcome);
-    }
-
-    /// Attach this report to `error` if it is a cancellation, leaving every other
-    /// error untouched.
-    ///
-    /// Applied on the way out of the operation rather than where the error is
-    /// raised, because the raiser ([`OperationCtx::run`]) is generic machinery
-    /// that knows nothing about abort-requests.
-    fn attach(&self, error: ApiError) -> ApiError {
-        match error {
-            ApiError::Cancelled { location, .. } => ApiError::Cancelled {
-                abort: *self.0.lock_recover(),
-                location,
-            },
-            other => other,
-        }
-    }
 }
 
 /// Run a query-submitting operation under `operation_ctx`, attaching to a resulting
@@ -458,8 +408,7 @@ impl DatabaseDriverV1 {
         self.ensure_file_transfer_allowed(&query, &stmt.conn)
             .await?;
 
-        let (query_parameters, http_client, retry_policy, xp_backend) =
-            query_context(&stmt.conn).await?;
+        let transport = query_context(&stmt.conn).await?;
 
         let execution_mode = stmt.execution_mode(Some(&query));
 
@@ -480,9 +429,9 @@ impl DatabaseDriverV1 {
                 .upload_csv_bindings_to_stage(
                     operation_ctx,
                     &conn_arc,
-                    &http_client,
-                    &query_parameters,
-                    &retry_policy,
+                    &transport.http_client,
+                    &transport.query_parameters,
+                    &transport.retry_policy,
                     bytes,
                 )
                 .await?;
@@ -492,14 +441,10 @@ impl DatabaseDriverV1 {
             None
         };
 
-        let (query_context, query_deadline) = {
+        let (query_context, query_timeout) = {
             let conn = conn_arc.lock().await;
             let qctx = conn.query_context_cache.get_query_context_snapshot().await;
-            let deadline = conn
-                .timeout_config
-                .query_timeout
-                .map(|budget| (budget, tokio::time::Instant::now() + budget));
-            (qctx, deadline)
+            (qctx, conn.timeout_config.query_timeout)
         };
 
         let query_input = QueryInput {
@@ -511,151 +456,18 @@ impl DatabaseDriverV1 {
             query_context,
         };
 
-        // Abort the query server-side if the operation is cancelled while the
-        // request below is in flight. The identity is moved into the cleanup
-        // rather than looked up when it runs: the cleanup task outlives this
-        // future by design, so it cannot borrow anything from it.
-        //
-        // Armed only here, once the query is actually about to be sent. Until
-        // then there is nothing for the server to abort, so a cancel arriving
-        // during (say) a large bind-variable upload correctly issues no abort.
-        let abort_cleanup = {
-            let (conn_arc, req, sql) = (conn_arc.clone(), request_id.to_string(), query.clone());
-            let report = report.clone();
-            async move {
-                // Record "issued, result unknown" *before* awaiting, so that a
-                // cleanup which never gets to finish (it errored, or the caller
-                // was released after `CLEANUP_WAIT`) is still distinguishable
-                // from one that was never armed at all. That is what lets an
-                // unset report mean exactly "no abort was issued".
-                report.set(CancellationAbortResult::NotConfirmed);
-                match abort_query_by_request_id(&conn_arc, req, sql).await {
-                    Ok(outcome) => {
-                        report.set(match outcome {
-                            AbortOutcome::Aborted => CancellationAbortResult::Aborted,
-                            AbortOutcome::NotRunning => CancellationAbortResult::NotRunning,
-                        });
-                        tracing::debug!(?outcome, "aborted query after cancellation");
-                    }
-                    // Best-effort: the caller is already being told the operation
-                    // was cancelled, so there is nobody to return this to — the
-                    // report keeps `NotConfirmed` set above.
-                    Err(error) => {
-                        tracing::warn!(%error, "failed to abort query after cancellation")
-                    }
-                }
-            }
-        };
-
-        // Boxed for the same reason as the outer `run_opt` call — see clippy.toml.
-        let response = with_cleanup_opt(
-            operation_ctx,
-            abort_cleanup,
-            Box::pin(async {
-                // Named `refresh_ctx`, not `operation_ctx`: shadowing the operation operation_ctx here
-                // would silently hide it from anything added inside this loop.
-                let mut refresh_ctx = RefreshContext::from_arc(&conn_arc).await?;
-                let mut last_error = None;
-                loop {
-                    let session_token = refresh_ctx.refresh_token(last_error).await?;
-                    let query_call = snowflake_query_with_client(
-                        &http_client,
-                        query_parameters.clone(),
-                        session_token.reveal(),
-                        query_input.clone(),
-                        QueryOptions {
-                            retry_policy: retry_policy.clone(),
-                            execution_mode,
-                            request_id: Some(request_id),
-                        },
-                        xp_backend.as_deref(),
-                    );
-                    let result = if let Some((budget, deadline)) = query_deadline {
-                        match tokio::time::timeout_at(deadline, query_call).await {
-                            Ok(inner) => inner,
-                            Err(_) => {
-                                // Aborted inline rather than by cancelling the token so
-                                // the caller still gets `QueryTimeout` (distinct from
-                                // `Cancelled`; ODBC maps them to different SQLSTATEs),
-                                // and so it also works on the sync paths that have no
-                                // operation_ctx.
-                                // Fire-and-forget the abort to avoid blocking the timeout error
-                                // return on slow/hung abort requests. Spawn it rather than awaiting
-                                // inline so the test can observe a timeout at the configured
-                                // threshold rather than timeout + abort latency.
-                                let conn_arc_clone = conn_arc.clone();
-                                let request_id_clone = request_id.to_string();
-                                let query_clone = query.clone();
-                                tokio::spawn(async move {
-                                    match abort_query_by_request_id(
-                                        &conn_arc_clone,
-                                        request_id_clone,
-                                        query_clone,
-                                    )
-                                    .await
-                                    {
-                                        Ok(_) => {
-                                            tracing::debug!(
-                                                "successfully aborted query after timeout"
-                                            );
-                                        }
-                                        Err(error) => {
-                                            tracing::warn!(
-                                                %error,
-                                                "failed to abort query after client-side timeout"
-                                            );
-                                        }
-                                    }
-                                });
-                                return Err(QueryTimeoutSnafu { budget, request_id }.build());
-                            }
-                        }
-                    } else {
-                        query_call.await
-                    };
-                    match result {
-                        Ok(result) => break Ok(result),
-                        Err(e) => {
-                            // Update QCC from failed queries — the server may include
-                            // queryContext even in error responses.
-                            if let RestError::QueryFailed {
-                                query_context: Some(qctx),
-                                ..
-                            } = &e
-                            {
-                                let mut conn = conn_arc.lock().await;
-                                conn.query_context_cache
-                                    .update_query_context_cache(Some(qctx), None)
-                                    .await;
-                            }
-                            last_error = Some(e);
-                        }
-                    }
-                }
-            }),
+        let response = submit_query(
+            operation_ctx.map(|operation_ctx| (operation_ctx, report)),
+            &conn_arc,
+            &transport,
+            query_input,
+            execution_mode,
+            request_id,
+            query_timeout,
         )
         .await?;
 
-        if response.success {
-            let mut conn = conn_arc.lock().await;
-            conn.update_session_params_cache(
-                &query,
-                response.data.parameters.as_ref(),
-                &super::connection::FinalSessionNames {
-                    database: response.data.final_database_name.clone(),
-                    schema: response.data.final_schema_name.clone(),
-                    warehouse: response.data.final_warehouse_name.clone(),
-                    role: response.data.final_role_name.clone(),
-                },
-            )
-            .await;
-            conn.query_context_cache
-                .update_query_context_cache(
-                    response.data.query_context.as_ref(),
-                    response.data.parameters.as_ref(),
-                )
-                .await;
-        }
+        update_caches(&conn_arc, &query, &response).await;
 
         stmt.state = StatementState::Executed;
         let skip_upload_on_content_match = stmt
@@ -685,7 +497,7 @@ impl DatabaseDriverV1 {
                 operation_ctx,
                 &conn_arc,
                 data,
-                Some((query, query_parameters)),
+                Some((query, transport.query_parameters)),
                 skip_upload_on_content_match,
                 put_fastfail,
                 get_fastfail,
@@ -831,8 +643,7 @@ impl DatabaseDriverV1 {
             self.ensure_file_transfer_allowed(&query, &stmt.conn)
                 .await?;
 
-            let (query_parameters, http_client, retry_policy, xp_backend) =
-                query_context(&stmt.conn).await?;
+            let transport = query_context(&stmt.conn).await?;
             let mut query_parameter_map = build_query_parameters(&stmt.settings);
             let conn_arc = stmt.conn.clone();
 
@@ -843,9 +654,9 @@ impl DatabaseDriverV1 {
                     .upload_csv_bindings_to_stage(
                         operation_ctx,
                         &conn_arc,
-                        &http_client,
-                        &query_parameters,
-                        &retry_policy,
+                        &transport.http_client,
+                        &transport.query_parameters,
+                        &transport.retry_policy,
                         bytes,
                     )
                     .await?;
@@ -869,67 +680,33 @@ impl DatabaseDriverV1 {
             };
             let request_id = uuid::Uuid::new_v4();
 
-            // Same shape as `execute_query_internal`'s: the identity is moved in
-            // rather than looked up when it runs, because the cleanup task
-            // outlives this future by design.
-            let abort_cleanup = {
-                let (conn_arc, req, sql) =
-                    (conn_arc.clone(), request_id.to_string(), query.clone());
-                let report = cleanup_report;
-                async move {
-                    // Recorded before awaiting so a cleanup that never finishes is
-                    // still distinguishable from one that was never armed.
-                    report.set(CancellationAbortResult::NotConfirmed);
-                    match abort_query_by_request_id(&conn_arc, req, sql).await {
-                        Ok(outcome) => {
-                            report.set(match outcome {
-                                AbortOutcome::Aborted => CancellationAbortResult::Aborted,
-                                AbortOutcome::NotRunning => CancellationAbortResult::NotRunning,
-                            });
-                            tracing::debug!(
-                                ?outcome,
-                                "aborted async submission after cancellation"
-                            );
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                %error,
-                                "failed to abort async submission after cancellation"
-                            )
-                        }
-                    }
-                }
-            };
+            let abort_cleanup = abort_on_cancel(
+                conn_arc.clone(),
+                request_id,
+                query.clone(),
+                &cleanup_report,
+                "async submission",
+            );
 
             let result = with_cleanup_opt(
                 operation_ctx,
                 abort_cleanup,
-                Box::pin(async {
-                    // Named `refresh_ctx`, not `operation_ctx`: shadowing the operation operation_ctx
-                    // here would silently hide it from anything added inside this
-                    // loop.
-                    let mut refresh_ctx = RefreshContext::from_arc(&conn_arc).await?;
-                    let mut last_error = None;
-                    loop {
-                        let session_token = refresh_ctx.refresh_token(last_error).await?;
-                        match submit_statement_async(
-                            &http_client,
-                            &query_parameters,
-                            session_token.reveal(),
-                            &query_input,
+                Box::pin(with_session_refresh(&conn_arc, |token| {
+                    let transport = &transport;
+                    let query_input = &query_input;
+                    async move {
+                        submit_statement_async(
+                            &transport.http_client,
+                            &transport.query_parameters,
+                            token.reveal(),
+                            query_input,
                             request_id,
-                            &retry_policy,
-                            xp_backend.as_deref(),
+                            &transport.retry_policy,
+                            transport.xp_backend.as_deref(),
                         )
                         .await
-                        {
-                            Ok(submit_result) => break Ok(submit_result),
-                            Err(e) => {
-                                last_error = Some(e);
-                            }
-                        }
                     }
-                }),
+                })),
             )
             .await?;
 
@@ -1013,9 +790,9 @@ impl DatabaseDriverV1 {
             // is disabled for this path.
             let refresh_sql = match data.command.as_deref() {
                 Some(_) => {
-                    let (query_parameters, ..) = query_context(&conn_ptr).await?;
+                    let transport = query_context(&conn_ptr).await?;
                     match data.sql_text.clone() {
-                        Some(sql) => Some((sql, query_parameters)),
+                        Some(sql) => Some((sql, transport.query_parameters)),
                         None => {
                             tracing::debug!(
                                 "async PUT/GET response missing sqlText; stage-info refresh disabled"
@@ -1060,20 +837,18 @@ impl DatabaseDriverV1 {
                         argument: "Connection handle not found".to_string(),
                     })?;
 
-            let (query_parameters, http_client, _, xp_backend) = query_context(&conn_ptr).await?;
+            let transport = query_context(&conn_ptr).await?;
 
             with_valid_session(&conn_ptr, |token| {
-                let http_client = &http_client;
-                let query_parameters = &query_parameters;
+                let transport = &transport;
                 let query_id = &query_id;
-                let xp_backend = xp_backend.clone();
                 async move {
                     snowflake_abort_query(
-                        http_client,
-                        query_parameters,
+                        &transport.http_client,
+                        &transport.query_parameters,
                         token.reveal(),
                         query_id,
-                        xp_backend.as_deref(),
+                        transport.xp_backend.as_deref(),
                     )
                     .await
                 }
@@ -1088,28 +863,15 @@ impl DatabaseDriverV1 {
     }
 }
 
-/// Abort a submitted query by the `requestId` it was sent with, via
-/// `POST /queries/v1/abort-request`.
-///
-/// Both callers are inside
-/// [`execute_query_internal`](DatabaseDriverV1::execute_query_internal), which is
-/// what makes "at most one abort per query" structural rather than something to
-/// coordinate: the cancellation cleanup and the client-side query-timeout path
-/// are mutually exclusive (whichever ends the query is the one that aborts it),
-/// and each holds the `requestId` as a local rather than reading it from shared
-/// state a second caller could also find.
-///
-/// Aborts are idempotent server-side anyway — a repeat for the same `requestId`
-/// comes back `000605`/not-executing — so a retry costs a round trip, not
-/// correctness.
 /// Abort a submission GS accepted but whose `query_id` never reached the caller.
 ///
 /// Distinct from the cancellation cleanup: that one is armed against the operation
 /// token and disarmed as soon as the submit future returns, so it cannot cover a
 /// submit that *succeeded* at the HTTP level while yielding nothing the caller can
-/// abort with. Best-effort and bounded by [`ABORT_REQUEST_TIMEOUT`]; the outcome is
-/// logged rather than returned, because the error the caller receives is not a
-/// cancellation and has nowhere to carry an abort acknowledgement.
+/// abort with. Best-effort and bounded by
+/// [`ABORT_REQUEST_TIMEOUT`](super::query_submit::ABORT_REQUEST_TIMEOUT); the
+/// outcome is logged rather than returned, because the error the caller receives
+/// is not a cancellation and has nowhere to carry an abort acknowledgement.
 async fn abort_unnameable_submission(
     conn_arc: &Arc<Mutex<Connection>>,
     request_id: uuid::Uuid,
@@ -1127,81 +889,6 @@ async fn abort_unnameable_submission(
             "failed to abort an async submission that returned no query id"
         ),
     }
-}
-
-async fn abort_query_by_request_id(
-    conn_arc: &Arc<Mutex<Connection>>,
-    request_id: String,
-    sql_text: String,
-) -> Result<AbortOutcome, ApiError> {
-    let (query_parameters, http_client, _, xp_backend) = query_context(conn_arc).await?;
-
-    let cancel = with_valid_session(conn_arc, |token| {
-        let http_client = &http_client;
-        let query_parameters = &query_parameters;
-        let request_id = &request_id;
-        let sql_text = &sql_text;
-        let xp_backend = xp_backend.clone();
-        async move {
-            snowflake_cancel_query(
-                http_client,
-                query_parameters,
-                token.reveal(),
-                request_id,
-                sql_text,
-                xp_backend.as_deref(),
-            )
-            .await
-        }
-    });
-
-    // Bound the abort POST so a slow/hung server cannot stall the caller. A
-    // cancel only requires the request to be processed, not awaited to
-    // completion.
-    tokio::time::timeout(ABORT_REQUEST_TIMEOUT, cancel)
-        .await
-        .unwrap_or_else(|_elapsed| {
-            tracing::warn!(
-                timeout_secs = ABORT_REQUEST_TIMEOUT.as_secs(),
-                "abort-request timed out"
-            );
-            Err(CancelTimeoutSnafu {
-                timeout: ABORT_REQUEST_TIMEOUT,
-                request_id,
-            }
-            .build())
-        })
-}
-
-/// Lock the connection and extract the transport parameters, HTTP client, and retry policy
-/// needed to issue a query.
-///
-/// Also rejects query execution if close() has already been called on the connection.
-pub(super) async fn query_context(
-    conn: &Arc<Mutex<Connection>>,
-) -> Result<
-    (
-        QueryParameters,
-        reqwest::Client,
-        RetryPolicy,
-        Option<std::sync::Arc<dyn crate::xp_backend::SnowflakeBackend>>,
-    ),
-    ApiError,
-> {
-    let conn = conn.lock().await;
-    // Reject query execution if close() has been called
-    // `Closing` rejects new work too: the logout is already on its way.
-    if conn.close_state.load(Ordering::SeqCst) != super::connection::CloseState::Open {
-        return ConnectionClosedSnafu {}.fail();
-    }
-    Ok((
-        conn.query_transport_parameters()?,
-        conn.http_client
-            .clone()
-            .context(ConnectionNotInitializedSnafu)?,
-        RetryPolicy::query(&conn.effective_settings()),
-        conn.xp_backend_arc().context(QuerySnafu)?,
-    ))
 }
 
 /// Return the SQL text attached to a statement, or an error if none has been set.
@@ -2363,30 +2050,6 @@ mod tests {
         let err = extract_query(&stmt).unwrap_err();
         assert!(
             err.to_string().contains("Query not found"),
-            "unexpected: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn query_context_returns_transport_fields() {
-        let mut conn = Connection::new();
-        conn.server_url = Some("https://account.snowflakecomputing.com".to_string());
-        conn.client_info = Some(crate::config::rest_parameters::test_fixtures::test_client_info());
-        conn.http_client = Some(reqwest::Client::new());
-        conn.retry_policy = RetryPolicy::default();
-        let conn = Arc::new(Mutex::new(conn));
-
-        let (params, _client, _retry, _xp) = query_context(&conn).await.unwrap();
-        assert_eq!(params.server_url, "https://account.snowflakecomputing.com");
-    }
-
-    #[tokio::test]
-    async fn query_context_errors_when_not_initialized() {
-        let conn = Arc::new(Mutex::new(Connection::new()));
-
-        let err = query_context(&conn).await.err().unwrap();
-        assert!(
-            err.to_string().contains("not initialized"),
             "unexpected: {err}"
         );
     }

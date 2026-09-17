@@ -222,7 +222,7 @@ impl RetryPolicy {
     /// Retry policy for query execution.
     ///
     /// `max_elapsed` is `None` for the same reason as [`login`](Self::login): the
-    /// query poll loop is bounded by an outer `tokio::time::timeout_at(query_deadline)`
+    /// query poll loop is bounded by an outer `tokio::time::timeout`
     /// spanning submit + status polls + token refreshes. Same knobs as
     /// [`http`](Self::http) otherwise.
     pub fn query(params: &ParamStore) -> Self {
@@ -304,7 +304,7 @@ fn parse_extra_statuses(params: &ParamStore) -> BTreeSet<u16> {
 ///
 /// Returns `None` when absent, zero, or negative — zero semantically means
 /// "no timeout" throughout the timeout configuration surface.
-fn read_optional_duration_secs(
+pub(crate) fn read_optional_duration_secs(
     params: &ParamStore,
     key: super::param_registry::ParamKey,
 ) -> Option<Duration> {
@@ -330,7 +330,7 @@ pub struct TimeoutConfig {
     /// Wall-clock budget for the whole query execution, spanning the initial
     /// submit plus the status-poll / token-refresh loop. The timer starts when
     /// execution begins and ends when the query returns or the budget elapses
-    /// (enforced by `tokio::time::timeout_at` around the poll loop). `None` means
+    /// (enforced by `tokio::time::timeout` around the poll loop). `None` means
     /// no timeout; a configured value of `0` is read as `None`. Defaults to no
     /// timeout, matching the legacy drivers — queries can legitimately run for
     /// hours, so any finite default risks breaking existing clients.

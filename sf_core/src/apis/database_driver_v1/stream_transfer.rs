@@ -56,21 +56,19 @@ use snafu::{IntoError, OptionExt, ResultExt};
 use tokio::sync::Mutex;
 use tracing::Instrument;
 
-use super::connection::{Connection, FinalSessionNames, RefreshContext};
+use super::connection::Connection;
 use super::error::*;
 use super::global_state::{DatabaseDriverV1, PutGetResultsetFlavor};
 use super::query::{
     StageInfoRefreshContext, build_and_upload_stream, remote_file_not_found,
     stream_stage_info_refresher,
 };
+use super::query_submit::{QueryTransport, query_context, submit_query, update_caches};
 use super::result_set::{ResultSetInfo, resolve_reader_ctx, response_to_descriptor};
-use super::statement::{query_context, skip_leading_whitespace_and_comments};
-use crate::config::rest_parameters::QueryParameters;
+use super::statement::skip_leading_whitespace_and_comments;
 use crate::file_manager::{self, ByteSource, SPOOL_MEM_THRESHOLD, SpooledBuffer};
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::{
-    QueryInput, QueryOptions, RestError, query_response, snowflake_query_with_client,
-};
+use crate::rest::snowflake::{QueryExecutionMode, QueryInput, RestError, query_response};
 
 /// Rejection message shared by `run_put_stream_via_gs` and
 /// `connection_upload_stream_begin`'s PUT-SQL validation, so both stay in sync.
@@ -277,39 +275,15 @@ impl DatabaseDriverV1 {
 
             let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
 
-            let (query_parameters, http_client, retry_policy, xp_backend) =
-                query_context(&conn_ptr).await?;
+            let query_transport = query_context(&conn_ptr).await?;
 
-            let response = run_sql_against_gs(
-                &conn_ptr,
-                &http_client,
-                &query_parameters,
-                &retry_policy,
-                sql.clone(),
-                xp_backend.as_deref(),
-            )
-            .await?;
-
-            // Update session parameter cache (mirrors the normal PUT path).
-            if response.success {
-                let conn = conn_ptr.lock().await;
-                conn.update_session_params_cache(
-                    &sql,
-                    response.data.parameters.as_ref(),
-                    &FinalSessionNames {
-                        database: response.data.final_database_name.clone(),
-                        schema: response.data.final_schema_name.clone(),
-                        warehouse: response.data.final_warehouse_name.clone(),
-                        role: response.data.final_role_name.clone(),
-                    },
-                )
-                .await;
-            }
+            let response = run_sql_against_gs(&conn_ptr, &query_transport, sql.clone()).await?;
+            update_caches(&conn_ptr, &sql, &response).await;
 
             let gs_data = response.data;
             let refresh_ctx = StageInfoRefreshContext {
                 sql: sql.clone(),
-                query_parameters: query_parameters.clone(),
+                query_parameters: query_transport.query_parameters.clone(),
                 conn: conn_ptr.clone(),
             };
             let use_s3_regional_url = conn_ptr
@@ -332,7 +306,7 @@ impl DatabaseDriverV1 {
                 )
             };
 
-            if xp_backend.is_some() {
+            if query_transport.xp_backend.is_some() {
                 return Err(RestError::from(
                     crate::xp_backend::BackendError::unsupported("upload_stream"),
                 ))
@@ -406,18 +380,10 @@ impl DatabaseDriverV1 {
 
             let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
 
-            let (query_parameters, http_client, retry_policy, xp_backend) =
-                query_context(&conn_ptr).await?;
+            let query_transport = query_context(&conn_ptr).await?;
 
-            let response = run_sql_against_gs(
-                &conn_ptr,
-                &http_client,
-                &query_parameters,
-                &retry_policy,
-                get_sql.clone(),
-                xp_backend.as_deref(),
-            )
-            .await?;
+            let response = run_sql_against_gs(&conn_ptr, &query_transport, get_sql.clone()).await?;
+            update_caches(&conn_ptr, &get_sql, &response).await;
 
             let (use_s3_regional_url, unsafe_file_write, transport) = {
                 let conn = conn_ptr.lock().await;
@@ -444,7 +410,7 @@ impl DatabaseDriverV1 {
 
             let refresh_ctx = StageInfoRefreshContext {
                 sql: get_sql,
-                query_parameters,
+                query_parameters: query_transport.query_parameters,
                 conn: conn_ptr.clone(),
             };
             let refresher = stream_stage_info_refresher(refresh_ctx, resolved.initial_snapshot);
@@ -457,7 +423,7 @@ impl DatabaseDriverV1 {
             // `refresher` only needs to cover opening the stream — it's
             // dropped when this block returns, before the background
             // producer (which has no refresher of its own) is spawned.
-            if xp_backend.is_some() {
+            if query_transport.xp_backend.is_some() {
                 return Err(crate::rest::snowflake::RestError::from(
                     crate::xp_backend::BackendError::unsupported("download_stream"),
                 ))
@@ -623,39 +589,23 @@ impl DatabaseDriverV1 {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// Run `sql` through the GS query path with master-token refresh on each retry,
-/// matching the loop `statement.rs` uses for blocking PUT/GET execution.
+/// Submit `sql` with no cancellation and no client-side deadline: the stream
+/// APIs reach core without an operation handle.
 async fn run_sql_against_gs(
     conn_ptr: &Arc<Mutex<Connection>>,
-    http_client: &reqwest::Client,
-    query_parameters: &QueryParameters,
-    retry_policy: &crate::config::retry::RetryPolicy,
+    transport: &QueryTransport,
     sql: String,
-    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<query_response::Response, ApiError> {
-    let query_input = QueryInput::new(sql);
-
-    let mut refresh_ctx = RefreshContext::from_arc(conn_ptr).await?;
-    let mut last_error: Option<RestError> = None;
-    loop {
-        let session_token = refresh_ctx.refresh_token(last_error).await?;
-        match snowflake_query_with_client(
-            http_client,
-            query_parameters.clone(),
-            session_token.reveal(),
-            query_input.clone(),
-            QueryOptions {
-                retry_policy: retry_policy.clone(),
-                ..Default::default()
-            },
-            xp_backend,
-        )
-        .await
-        {
-            Ok(result) => return Ok(result),
-            Err(e) => last_error = Some(e),
-        }
-    }
+    submit_query(
+        None,
+        conn_ptr,
+        transport,
+        QueryInput::new(sql),
+        QueryExecutionMode::Blocking,
+        uuid::Uuid::new_v4(),
+        None,
+    )
+    .await
 }
 
 /// Everything `download_stream_begin` needs to fetch a file, resolved once by
