@@ -348,10 +348,10 @@ fn get_retry_params(
 ///
 /// Every field defaults to the common case — default retry policy, blocking
 /// (sync) execution, and a freshly-minted `requestId` — so the overwhelming
-/// majority of callers pass `QueryOptions::default()`. Only the
-/// statement-execute path overrides these (to run async and/or pre-register a
-/// `requestId` for cross-thread cancel), which it does with struct-update
-/// syntax: `QueryOptions { request_id: Some(id), ..Default::default() }`.
+/// majority of callers pass `QueryOptions::default()`. The overrides come from
+/// the paths that submit a query they may later have to abort, which pre-register
+/// the `requestId` (and select async execution) with struct-update syntax:
+/// `QueryOptions { request_id: Some(id), ..Default::default() }`.
 #[derive(Clone, Debug, Default)]
 pub struct QueryOptions {
     /// HTTP-level retry policy. Defaults to [`RetryPolicy::default`].
@@ -361,9 +361,9 @@ pub struct QueryOptions {
     pub execution_mode: QueryExecutionMode,
     /// Caller-supplied `requestId`. `None` mints a fresh id inside the query
     /// function — the right choice for callers that don't need to know it in
-    /// advance. The statement-execute path passes `Some(id)` because it needs the
-    /// same id afterwards: the abort-request it fires on cancellation or on a
-    /// client-side timeout is keyed on the `requestId` the query was sent with.
+    /// advance. A caller passes `Some(id)` because it needs the same id
+    /// afterwards: the abort-request it fires on cancellation or on a client-side
+    /// timeout is keyed on the `requestId` the query was sent with.
     pub request_id: Option<uuid::Uuid>,
 }
 
@@ -1928,7 +1928,7 @@ async fn execute_sync_query<'a>(
     request_id: uuid::Uuid,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
-    use crate::http::retry::{HttpContext, execute_with_retry};
+    use crate::http::retry::HttpContext;
 
     // guarded with: log_query_text, log_query_parameters
     let (sql, bindings) = query_log_fields(query_parameters, query_input);

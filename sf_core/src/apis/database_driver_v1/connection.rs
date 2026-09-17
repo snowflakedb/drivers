@@ -4,25 +4,19 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use crate::apis::operation_ctx::OperationCtx;
-use crate::stage_binding::{AtomicStageState, StageState};
-use std::time::Duration;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, Notify, OwnedMutexGuard, RwLock as AsyncRwLock};
-use tracing::Instrument;
-
 use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::heartbeat::{HeartbeatHandle, compute_heartbeat_interval, spawn_heartbeat_task};
-use super::logout;
+use super::query_submit::{query_context, submit_query, update_caches};
 use super::spcs_token::read_spcs_token;
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, collect_unknown_settings,
     normalize_host_underscores, resolve_options, validate_connection_seed_write,
     validate_session_override_write,
 };
-use super::{Setting, WrapperPresets};
+use super::{Setting, WrapperPresets, logout};
+use crate::apis::operation_ctx::OperationCtx;
 use crate::config::rest_parameters::resolve_include_retry_reason;
 use crate::config::{
     ParamStore,
@@ -34,19 +28,23 @@ use crate::config::{
         ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
         resolve_log_query_parameters, resolve_log_query_text,
     },
-    retry::RetryPolicy,
+    retry::{RetryPolicy, read_optional_duration_secs},
     settings::Settings,
 };
 use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::query_context_cache::QueryContextCacheAdapter;
 use crate::rest::snowflake::{
-    self, QueryInput, QueryOptions, RestError, SessionTokens, heartbeat,
-    snowflake_query_with_client,
+    self, QueryExecutionMode, QueryInput, RestError, SessionTokens, heartbeat,
 };
 use crate::sensitive::SensitiveString;
+use crate::stage_binding::{AtomicStageState, StageState};
 use crate::tls::config::ProxyConfig;
 use crate::xp_backend::{SnowflakeBackend, XpSlot};
+use std::time::Duration;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard, RwLock as AsyncRwLock};
+use tracing::Instrument;
 
 /// Server session-parameter key for the JDBC PUT/GET disable switch. Read by
 /// [`Connection::enable_put_get`]; upstream uppercases session-parameter names.
@@ -216,67 +214,31 @@ impl DatabaseDriverV1 {
     }
 
     /// Execute a session-scoped SQL command without creating a statement.
+    ///
+    /// Not cancellable: none of the callers reach core with an operation handle.
     async fn execute_session_sql(
         &self,
         conn_ptr: &Arc<Mutex<Connection>>,
         sql: &str,
     ) -> Result<(), ApiError> {
-        let query_input = QueryInput::new(sql);
-        let (query_parameters, http_client, retry_policy, xp_backend) = {
+        let transport = query_context(conn_ptr).await?;
+        let query_timeout = {
             let conn = conn_ptr.lock().await;
-            (
-                conn.query_transport_parameters()?,
-                conn.http_client
-                    .clone()
-                    .context(ConnectionNotInitializedSnafu)?,
-                conn.retry_policy.clone(),
-                conn.xp_backend_arc().context(QuerySnafu)?,
-            )
+            conn.request_timeout_budget()
         };
 
-        let mut refresh_ctx = RefreshContext::from_arc(conn_ptr).await?;
-        let mut last_error = None;
-        let response = loop {
-            let session_token = refresh_ctx.refresh_token(last_error).await?;
-            match snowflake_query_with_client(
-                &http_client,
-                query_parameters.clone(),
-                session_token.reveal(),
-                query_input.clone(),
-                QueryOptions {
-                    retry_policy: retry_policy.clone(),
-                    ..Default::default()
-                },
-                xp_backend.as_deref(),
-            )
-            .await
-            {
-                Ok(result) => break Ok(result),
-                Err(e) => last_error = Some(e),
-            }
-        }?;
+        let response = submit_query(
+            None,
+            conn_ptr,
+            &transport,
+            QueryInput::new(sql),
+            QueryExecutionMode::Blocking,
+            uuid::Uuid::new_v4(),
+            query_timeout,
+        )
+        .await?;
 
-        let mut conn = conn_ptr.lock().await;
-        conn.query_context_cache
-            .update_query_context_cache(
-                response.data.query_context.as_ref(),
-                response.data.parameters.as_ref(),
-            )
-            .await;
-
-        if response.success {
-            conn.update_session_params_cache(
-                sql,
-                response.data.parameters.as_ref(),
-                &FinalSessionNames {
-                    database: response.data.final_database_name.clone(),
-                    schema: response.data.final_schema_name.clone(),
-                    warehouse: response.data.final_warehouse_name.clone(),
-                    role: response.data.final_role_name.clone(),
-                },
-            )
-            .await;
-        };
+        update_caches(conn_ptr, sql, &response).await;
 
         Ok(())
     }
@@ -1393,6 +1355,16 @@ impl Connection {
         settings
     }
 
+    /// Wall-clock budget for one REST operation on this connection, or `None` when
+    /// `request_timeout` is unset or configured as `0`.
+    ///
+    /// This is [`RetryPolicy::http`]'s `max_elapsed`. A path that retries under a
+    /// policy carrying no `max_elapsed` of its own — [`RetryPolicy::query`] — has
+    /// to apply the budget as an outer deadline to be bounded at all.
+    pub(crate) fn request_timeout_budget(&self) -> Option<Duration> {
+        read_optional_duration_secs(&self.effective_settings(), param_names::REQUEST_TIMEOUT)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn initialize(
         &mut self,
@@ -1515,6 +1487,33 @@ where
 {
     let mut refresh_ctx = RefreshContext::from_arc(conn).await?;
     refresh_ctx.execute_with_refresh(f).await
+}
+
+/// Run `submit` against the connection's session token, refreshing the session
+/// and retrying whenever the attempt fails with an expired token.
+///
+/// Sibling of [`with_valid_session`], which runs the same shape through
+/// `RefreshContext`'s `Refresher` impl. The two differ in what they surface for a
+/// non-renewable master token: this one reports
+/// [`ApiError::MasterTokenTerminal`] carrying the GS code, that one propagates the
+/// attempt's own [`ApiError::Query`]. The query-submitting paths use this one.
+pub(super) async fn with_session_refresh<F, Fut, T>(
+    conn: &Arc<Mutex<Connection>>,
+    submit: F,
+) -> Result<T, ApiError>
+where
+    F: Fn(SensitiveString) -> Fut,
+    Fut: Future<Output = Result<T, RestError>>,
+{
+    let mut refresh_ctx = RefreshContext::from_arc(conn).await?;
+    let mut last_error = None;
+    loop {
+        let session_token = refresh_ctx.refresh_token(last_error).await?;
+        match submit(session_token).await {
+            Ok(value) => return Ok(value),
+            Err(error) => last_error = Some(error),
+        }
+    }
 }
 
 /// Context for automatic session token refresh.
@@ -3177,6 +3176,27 @@ mod tests {
 
         assert_eq!(policy.max_attempts, 2);
         assert_eq!(policy.backoff.base, Duration::from_millis(123));
+    }
+
+    #[test]
+    fn request_timeout_budget_uses_resolved_settings_and_connection_overrides() {
+        let mut conn = make_connection_with_settings(vec![("request_timeout", Setting::Int(7))]);
+        let mut resolved = ParamStore::new();
+        resolved.insert(param_names::REQUEST_TIMEOUT.into(), Setting::Int(90));
+        conn.resolved_connect = Some(resolved);
+
+        assert_eq!(
+            conn.request_timeout_budget(),
+            Some(Duration::from_secs(7)),
+            "connection override wins over the resolved layer"
+        );
+    }
+
+    #[test]
+    fn request_timeout_budget_reads_zero_as_no_budget() {
+        let conn = make_connection_with_settings(vec![("request_timeout", Setting::Int(0))]);
+
+        assert_eq!(conn.request_timeout_budget(), None);
     }
 
     #[tokio::test]

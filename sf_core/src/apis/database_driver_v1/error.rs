@@ -284,7 +284,7 @@ pub enum ApiError {
         /// abort was issued — the operation submitted no query, or was cancelled
         /// before its query reached the server.
         ///
-        /// Attached by the operation that owns the abort (`statement::AbortReport`),
+        /// Attached by the operation that owns the abort (`query_submit::AbortReport`),
         /// not by whoever raises the error.
         abort: Option<CancellationAbortResult>,
         #[snafu(implicit)]
