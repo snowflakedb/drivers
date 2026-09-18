@@ -384,7 +384,11 @@ tests:
   - test_name: SQLGetFunctions()
     ud_tests: []
   - test_name: SQLGetTypeInfo()
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/odbc-api/driver_info/get_type_info_tests.cpp - SQLGetTypeInfo: Documents all supported types with exact column values"
+      - path: "odbc_tests/tests/e2e/query/get_type_info.cpp - should report TIMESTAMP COLUMN_SIZE 29 and vendor timestamp types 35"
+    status: mapped
+    notes: "ApiCatchTest SQLGetTypeInfo() Default standard / ODBC standard sections. Default type table is the odbc-api fixture; TIMESTAMP COLUMN_SIZE is 29 (BD#151) and vendor TIMESTAMP_* rows stay 35."
   - test_name: Test SQLColumns()
     ud_tests: []
   - test_name: Test SQLTables()

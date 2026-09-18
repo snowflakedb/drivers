@@ -3136,3 +3136,18 @@ behavior_differences:
       RetryOn403 is a boolean switch; retry_extra_status_codes is a comma-separated
       list. A 1:1 alias cannot compose when both are set. The old default already
       left 403 unretriable, so DSNs that omit the key see the same 403 behavior.
+
+  151:
+    name: "SQLGetTypeInfo TIMESTAMP COLUMN_SIZE is 29; ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE is not accepted"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      SQLGetTypeInfo reports COLUMN_SIZE 35 for SQL_TYPE_TIMESTAMP. Setting
+      ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE=true reports 29 instead.
+    new_driver_behavior: |
+      SQLGetTypeInfo always reports COLUMN_SIZE 29 for SQL_TYPE_TIMESTAMP.
+      ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE is not accepted. TIMESTAMP_LTZ,
+      TIMESTAMP_NTZ, and TIMESTAMP_TZ still report 35.

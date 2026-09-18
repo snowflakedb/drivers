@@ -1316,7 +1316,12 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     indicator = -1;
     ret = SQLGetData(stmt, 3, SQL_C_SLONG, &columnSize, sizeof(columnSize), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
-    REQUIRE(columnSize == expected.columnSize);
+    if (expected.sqlType == SQL_TYPE_TIMESTAMP) {
+      NEW_DRIVER_ONLY("BD#151") { REQUIRE(columnSize == 29); }
+      OLD_DRIVER_ONLY("BD#151") { REQUIRE(columnSize == 35); }
+    } else {
+      REQUIRE(columnSize == expected.columnSize);
+    }
 
     // LITERAL_PREFIX
     indicator = -1;
@@ -1516,7 +1521,12 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
     indicator = -1;
     ret = SQLGetData(stmt, 3, SQL_C_SLONG, &columnSize, sizeof(columnSize), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
-    REQUIRE(columnSize == expected.columnSize);
+    if (expected.sqlType == SQL_TYPE_TIMESTAMP) {
+      NEW_DRIVER_ONLY("BD#151") { REQUIRE(columnSize == 29); }
+      OLD_DRIVER_ONLY("BD#151") { REQUIRE(columnSize == 35); }
+    } else {
+      REQUIRE(columnSize == expected.columnSize);
+    }
 
     indicator = -1;
     ret = SQLGetData(stmt, 4, SQL_C_CHAR, literalPrefix, sizeof(literalPrefix), &indicator);

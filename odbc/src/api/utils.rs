@@ -1,8 +1,9 @@
 use crate::api::encoding::{OdbcEncoding, write_string_bytes, write_string_chars};
 use crate::api::error::{
     ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu, NullPointerSnafu,
-    StatementNotExecutedSnafu,
+    OdbcRuntimeSnafu, StatementNotExecutedSnafu,
 };
+use crate::api::runtime::global;
 use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{
@@ -14,7 +15,9 @@ use crate::conversion::{
 };
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
-use sf_core::protobuf::generated::database_driver_v1::{ConfigSetting, config_setting};
+use sf_core::protobuf::generated::database_driver_v1::{
+    ConfigSetting, ConnectionGetParameterRequest, ConnectionHandle, config_setting,
+};
 use snafu::ResultExt;
 use tracing;
 
@@ -31,6 +34,21 @@ pub(crate) const ESCAPE_CHAR: char = '\\';
 /// `"1"` or `"on"` and every other value type default to false. This is
 /// intentionally narrower than `Setting::coerce_bool` and the PUT/GET session
 /// parameter coercion.
+pub(crate) fn get_session_parameter(
+    conn_handle: &ConnectionHandle,
+    key: &str,
+) -> OdbcResult<Option<ConfigSetting>> {
+    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        let resp = c
+            .connection_get_parameter(ConnectionGetParameterRequest {
+                conn_handle: Some(*conn_handle),
+                key: key.to_string(),
+            })
+            .await?;
+        Ok(resp.typed_value)
+    })
+}
+
 pub(crate) fn config_setting_bool(setting: &ConfigSetting) -> bool {
     match &setting.value {
         Some(config_setting::Value::BoolValue(b)) => *b,

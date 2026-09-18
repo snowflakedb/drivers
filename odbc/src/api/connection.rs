@@ -39,7 +39,7 @@ use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
 use crate::api::odbc_installer::resolve_driver_name;
 use crate::api::runtime::global;
-use crate::api::utils::{config_setting_bool, zero_padded_driver_version};
+use crate::api::utils::{config_setting_bool, get_session_parameter, zero_padded_driver_version};
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcError, OdbcResult, conn_from_handle, env_from_handle,
     types::{AccessMode, AutocommitValue, ConnectionAttribute, Dbc, StatementState},
@@ -1223,22 +1223,6 @@ pub fn native_sql<E: OdbcEncoding>(
     );
 
     Ok(())
-}
-
-/// Query a session parameter from sf_core's cached session state.
-fn get_session_parameter(
-    conn_handle: &ConnectionHandle,
-    key: &str,
-) -> OdbcResult<Option<ConfigSetting>> {
-    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        let resp = c
-            .connection_get_parameter(ConnectionGetParameterRequest {
-                conn_handle: Some(*conn_handle),
-                key: key.to_string(),
-            })
-            .await?;
-        Ok(resp.typed_value)
-    })
 }
 
 // SQLEndTran completion-type codes (odbc_sys::CompletionType: Commit = 0, Rollback = 1).

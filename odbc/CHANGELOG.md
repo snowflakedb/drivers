@@ -25,6 +25,7 @@ New features:
 
 Changes:
 
+- Changed `SQLGetTypeInfo` `TIMESTAMP` `COLUMN_SIZE` from `35` to `29` (the ODBC-standard display length). `TIMESTAMP_LTZ`, `TIMESTAMP_NTZ`, and `TIMESTAMP_TZ` remain `35`. The 3.x `ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE` connection parameter is not accepted. (snowflakedb/drivers#2035)
 - Changed `SQLDriverConnect` to reject connection-string keywords it does not recognize with a local `01S00` warning (native error 17, "N invalid keys are found in the connection string: <KEY>"); a keyword is recognized when the `sf_core` parameter registry resolves it or it names an ODBC structural keyword (`DSN`, `DRIVER`, `FILEDSN`, `SAVEFILE`). The connection still opens and the keyword is still forwarded to the server. (snowflakedb/drivers#1926)
 - Removed `Tracing(0-6)` field from the Windows ODBC DSN setup dialog; driver logging uses `sf.odbc.ini` (`LogLevel`, `LogPath`) instead. Legacy `TRACING` values in a DSN or connection string are ignored. (snowflakedb/drivers#2022)
 - Changed ODBC driver-manager connection-string keywords such as `DSN` and `DRIVER` to be accepted and ignored instead of forwarded as unknown session parameters. (snowflakedb/drivers#2033)

@@ -16,7 +16,9 @@ use crate::api::error::{
 use crate::api::handle_registry::{HandleId, HandleKind};
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
-use crate::api::utils::{config_setting_bool, config_setting_string, config_setting_u64};
+use crate::api::utils::{
+    config_setting_bool, config_setting_string, config_setting_u64, get_session_parameter,
+};
 use crate::api::{
     ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, ExplicitDesc,
     FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK,
@@ -1631,23 +1633,6 @@ fn effective_param_count(
     } else {
         apd.desc_count().max(ipd.desc_count())
     }
-}
-
-fn get_session_parameter(
-    conn_handle: &ConnectionHandle,
-    key: &str,
-) -> OdbcResult<Option<ConfigSetting>> {
-    crate::api::runtime::global()
-        .context(OdbcRuntimeSnafu)?
-        .block_on(async |c| {
-            let resp = c
-                .connection_get_parameter(ConnectionGetParameterRequest {
-                    conn_handle: Some(*conn_handle),
-                    key: key.to_string(),
-                })
-                .await?;
-            Ok(resp.typed_value)
-        })
 }
 
 /// Default ODBC column size (precision) for fixed-size SQL parameter types,

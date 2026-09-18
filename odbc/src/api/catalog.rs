@@ -7,6 +7,11 @@
 //!
 //! `SQLColumns` likewise runs wrapper-owned `SHOW COLUMNS`, maps rows into
 //! the flat 19-column ODBC result set, and re-filters with [`like_match`].
+//!
+//! `SQLGetTypeInfo` returns a hard-coded table of Snowflake SQL types,
+//! matching the legacy driver's `InitializeData()` in
+//! `SFTypeInfoMetadataSource`. No server round-trip is needed. The
+//! `TIMESTAMP` row's `COLUMN_SIZE` is 29 (ODBC standard display length).
 
 use crate::api::encoding::OdbcEncoding;
 use crate::api::environment::{SQL_OV_ODBC2, SQL_OV_ODBC3, SQL_OV_ODBC3_80};
@@ -3982,6 +3987,7 @@ const CODE_TIMESTAMP: i16 = 3; // SQL_CODE_TIMESTAMP
 
 // ODBC ALL_TYPES sentinel — fDataType value meaning "return all types".
 const SQL_ALL_TYPES: sql::SmallInt = 0;
+const ODBC_STANDARD_TIMESTAMP_COLUMN_SIZE: i32 = 29;
 
 /// One row in the `SQLGetTypeInfo` result set.
 ///
@@ -4367,8 +4373,8 @@ static ALL_SF_TYPE_INFO: &[TypeInfoRow] = &[
     // ── TIMESTAMP (SQL_TYPE_TIMESTAMP = 93) ───────────────────────────────────
     TypeInfoRow {
         type_name: "TIMESTAMP",
-        data_type: 93,
-        column_size: 35,
+        data_type: sql::SqlDataType::TIMESTAMP.0,
+        column_size: ODBC_STANDARD_TIMESTAMP_COLUMN_SIZE,
         literal_prefix: Some("'"),
         literal_suffix: Some("'"),
         create_params: None,
@@ -4621,6 +4627,14 @@ fn type_info_rows(odbc_version: sql::Integer, data_type: sql::SmallInt) -> Vec<T
         .collect()
 }
 
+/// Implements `SQLGetTypeInfo`: returns a static result set describing
+/// Snowflake's supported SQL data types.
+///
+/// When `data_type == SQL_ALL_TYPES` (0), all 24 rows are returned in legacy
+/// insertion order. For any other value, only the row whose `DATA_TYPE` column
+/// matches is returned. An unknown type yields an empty result set (legacy
+/// behavior; the ODBC spec allows `HY004` but compatibility requires success).
+/// `TIMESTAMP` `COLUMN_SIZE` is 29.
 pub fn get_type_info(statement_handle: sql::Handle, data_type: sql::SmallInt) -> OdbcResult<()> {
     tracing::debug!("SQLGetTypeInfo called");
 
@@ -4746,6 +4760,17 @@ mod type_info_tests {
             .collect();
         let batch = build_type_info_batch(&rows).expect("batch build failed");
         assert_eq!(batch.num_rows(), 0);
+    }
+
+    #[test]
+    fn timestamp_column_size_is_29_vendor_timestamp_types_stay_35() {
+        for row in ALL_SF_TYPE_INFO {
+            if row.data_type == sql::SqlDataType::TIMESTAMP.0 {
+                assert_eq!(row.column_size, ODBC_STANDARD_TIMESTAMP_COLUMN_SIZE);
+            } else if row.type_name.starts_with("TIMESTAMP") {
+                assert_eq!(row.column_size, 35, "{}", row.type_name);
+            }
+        }
     }
 
     #[test]

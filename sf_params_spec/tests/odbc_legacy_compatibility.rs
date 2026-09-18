@@ -138,13 +138,15 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     "DEFAULT_VARCHAR_SIZE",
     "DEFAULT_BINARY_SIZE",
     "MapToLongVarchar",
-    "ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE",
     "ODBC_SCHEMA_CACHING",
     "OUT_OF_RANGE_TIMESTAMP_EXCEPTION",
     "EnableDescribeDirectExec",
     // Boolean 403-retry switch. The new driver retries extra statuses via
     // `retry_extra_status_codes` (BD#146).
     "RetryOn403",
+    // Client-only TIMESTAMP COLUMN_SIZE toggle. The new driver always
+    // reports 29 (BD#151).
+    "ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE",
     // Legacy DSN spellings that do not resolve as ODBC aliases.
     "RetryTimeout",
     // Login-only retry cap. `retry_max_attempts` is global (BD#145).

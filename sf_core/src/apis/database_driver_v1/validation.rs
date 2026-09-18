@@ -432,7 +432,8 @@ pub(crate) fn validate_statement_option_write(
 
 /// Whether `key` has no entry in the param registry, under any alias.
 pub(crate) fn is_unregistered_param(key: &str) -> bool {
-    param_registry::registry().resolve(key).is_none()
+    let registry = param_registry::registry();
+    !registry.is_known(key) && registry.resolve(key).is_none()
 }
 
 /// Collect string-typed settings whose keys are not recognized by the param
@@ -1017,5 +1018,21 @@ mod tests {
             unknown.get("GCS_USE_DOWNSCOPED_CREDENTIAL"),
             Some(&"true".to_string())
         );
+    }
+
+    #[test]
+    fn collect_unknown_settings_excludes_wrapper_restricted_canonicals() {
+        let mut store = ParamStore::new();
+        store.insert("put_fastfail".to_string(), Setting::Bool(true));
+        store.insert(
+            "some_string_key".to_string(),
+            Setting::String("my_val".to_string()),
+        );
+
+        let unknown = collect_unknown_settings(&store);
+
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(unknown.get("SOME_STRING_KEY"), Some(&"my_val".to_string()));
+        assert!(!unknown.contains_key("PUT_FASTFAIL"));
     }
 }
