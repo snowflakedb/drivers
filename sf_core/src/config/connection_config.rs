@@ -588,6 +588,7 @@ impl LoginParameters {
         client_info: ClientInfo,
         session_parameters: Option<HashMap<String, String>>,
         spcs_token: Option<SensitiveString>,
+        validate_session_token: bool,
     ) -> Self {
         Self {
             account_name: config.server.account.clone(),
@@ -602,6 +603,7 @@ impl LoginParameters {
             session_parameters,
             spcs_token,
             disable_parallel_user_prompt: config.disable_parallel_user_prompt,
+            validate_session_token,
         }
     }
 }

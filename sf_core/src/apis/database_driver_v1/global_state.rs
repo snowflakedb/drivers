@@ -76,6 +76,12 @@ pub struct WrapperPresets {
     pub optimistic_alter_session_param_cache: bool,
     /// when `true` one in-flight session operation per connection
     pub serialize_session_operations: bool,
+    /// When true, a login with pre-acquired session and master tokens proves the pair
+    /// with a token-request RENEW, which costs a round-trip, rotates the pair, and
+    /// reports the session id telemetry is keyed by. When false the pair is adopted as
+    /// handed over: no per-operation telemetry, and a gone session surfaces on the
+    /// first real request. Only Node.js sets this false, for `deserializeConnection`.
+    pub validate_session_token: bool,
 }
 
 impl Default for WrapperPresets {
@@ -100,6 +106,7 @@ impl Default for WrapperPresets {
             clear_query_context_on_null_entries: true,
             optimistic_alter_session_param_cache: false,
             serialize_session_operations: false,
+            validate_session_token: true,
         }
     }
 }
@@ -125,6 +132,7 @@ impl WrapperPresets {
             clear_query_context_on_null_entries: false,
             optimistic_alter_session_param_cache: false,
             serialize_session_operations: true,
+            validate_session_token: true,
         }
     }
 
@@ -144,6 +152,7 @@ impl WrapperPresets {
     pub fn nodejs() -> Self {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::NodeJs,
+            validate_session_token: false,
             ..Self::default()
         }
     }
@@ -445,6 +454,15 @@ mod tests {
         assert!(!WrapperPresets::python().serialize_session_operations);
         assert!(!WrapperPresets::jdbc().serialize_session_operations);
         assert!(WrapperPresets::odbc().serialize_session_operations);
+    }
+
+    #[test]
+    fn only_nodejs_adopts_session_tokens_unvalidated() {
+        assert!(!WrapperPresets::nodejs().validate_session_token);
+        assert!(WrapperPresets::python().validate_session_token);
+        assert!(WrapperPresets::odbc().validate_session_token);
+        assert!(WrapperPresets::jdbc().validate_session_token);
+        assert!(WrapperPresets::default().validate_session_token);
     }
 
     #[test]

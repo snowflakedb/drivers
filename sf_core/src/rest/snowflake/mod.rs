@@ -1106,17 +1106,15 @@ pub async fn snowflake_login_with_client(
         "Extracted connection settings"
     );
 
-    // Session token bypass: validate the pre-acquired tokens via RENEW, which
-    // also returns the server-assigned session ID needed for telemetry routing.
+    // Session token bypass: the pre-acquired pair becomes the session.
     if let LoginMethod::SessionToken {
         session_token,
         master_token,
         master_validity_in_seconds,
     } = &login_parameters.login_method
     {
-        tracing::info!("Session token authentication: validating tokens via token-request RENEW");
         let master_validity = master_validity_in_seconds.map(std::time::Duration::from_secs);
-        let temp_tokens = SessionTokens {
+        let supplied_tokens = SessionTokens {
             session_token: session_token.clone(),
             master_token: master_token.clone(),
             session_id: None,
@@ -1124,13 +1122,21 @@ pub async fn snowflake_login_with_client(
             master_expires_at: master_validity.map(|d| std::time::Instant::now() + d),
             master_validity,
         };
-        let tokens = refresh_session(
-            client,
-            &login_parameters.server_url,
-            &login_parameters.client_info,
-            &temp_tokens,
-        )
-        .await?;
+        let tokens = if login_parameters.validate_session_token {
+            tracing::info!(
+                "Session token authentication: validating tokens via token-request RENEW"
+            );
+            refresh_session(
+                client,
+                &login_parameters.server_url,
+                &login_parameters.client_info,
+                &supplied_tokens,
+            )
+            .await?
+        } else {
+            tracing::info!("Session token authentication: adopting tokens unvalidated");
+            supplied_tokens
+        };
         tracing::info!(
             session_id = tokens.session_id,
             "Session token authentication succeeded"
@@ -3067,6 +3073,7 @@ mod tests {
             session_parameters: None,
             spcs_token: None,
             disable_parallel_user_prompt: false,
+            validate_session_token: true,
         }
     }
 
@@ -3992,6 +3999,94 @@ mod tests {
                 "Expected exactly 3 attempts (2 failures + 1 success), got {}",
                 attempt.load(Ordering::SeqCst)
             );
+        }
+    }
+
+    mod session_token_login_tests {
+        use super::*;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        fn session_token_params(
+            server_url: String,
+            validate_session_token: bool,
+        ) -> LoginParameters {
+            LoginParameters {
+                login_method: LoginMethod::SessionToken {
+                    session_token: "handed-over-session".into(),
+                    master_token: "handed-over-master".into(),
+                    master_validity_in_seconds: Some(14400),
+                },
+                server_url,
+                validate_session_token,
+                ..test_login_params()
+            }
+        }
+
+        async fn login(params: &LoginParameters) -> Result<LoginResult, RestError> {
+            snowflake_login_with_client(
+                &reqwest::Client::new(),
+                params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+                None,
+            )
+            .await
+        }
+
+        /// `.expect(0)` is the load-bearing assertion: adopting a pair costs no
+        /// round-trip.
+        #[tokio::test]
+        async fn an_unvalidated_login_adopts_the_supplied_pair_without_a_request() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(0)
+                .mount(&server)
+                .await;
+
+            let result = login(&session_token_params(server.uri(), false))
+                .await
+                .expect("adopting a pair must not need the server");
+
+            assert_eq!(result.tokens.session_token.reveal(), "handed-over-session");
+            assert_eq!(result.tokens.master_token.reveal(), "handed-over-master");
+            assert_eq!(
+                result.tokens.master_validity,
+                Some(std::time::Duration::from_secs(14400))
+            );
+            // Only the server reports a session id, and nothing asked it.
+            assert_eq!(result.tokens.session_id, None);
+        }
+
+        #[tokio::test]
+        async fn a_validating_login_renews_and_reports_the_rotated_pair() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path(TOKEN_REQUEST_PATH))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "sessionToken": "renewed-session",
+                        "masterToken": "renewed-master",
+                        "sessionId": 4115554,
+                        "validityInSecondsST": 3600,
+                        "validityInSecondsMT": 14400,
+                    },
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let result = login(&session_token_params(server.uri(), true))
+                .await
+                .expect("the mocked RENEW must satisfy the login");
+
+            assert_eq!(result.tokens.session_token.reveal(), "renewed-session");
+            assert_eq!(result.tokens.master_token.reveal(), "renewed-master");
+            assert_eq!(result.tokens.session_id, Some(4115554));
         }
     }
 

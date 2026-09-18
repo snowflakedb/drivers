@@ -97,6 +97,7 @@ fn should_refresh_session_proactively() {
             session_parameters: None,
             spcs_token: None,
             disable_parallel_user_prompt: false,
+            validate_session_token: true,
         };
 
         let http_client = create_tls_client_with_config(

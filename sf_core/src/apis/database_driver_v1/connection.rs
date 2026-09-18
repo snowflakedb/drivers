@@ -394,6 +394,7 @@ impl DatabaseDriverV1 {
                     client_info,
                     None,
                     read_spcs_token(self.fs_adapter().as_ref()),
+                    self.wrapper_presets.validate_session_token,
                 );
 
                 // ---- Diagnostics: pre-connect -----------------------------------
