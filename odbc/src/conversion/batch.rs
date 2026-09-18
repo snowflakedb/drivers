@@ -99,31 +99,62 @@ pub(crate) trait CharKernel {
             .context(WriteOdbcValueSnafu)?;
         Ok(truncated)
     }
+
+    /// Convert a contiguous row range. Delegates to [`convert_char_rows_with`]
+    /// using `write_non_null` as the per-row step, so every kernel gets the
+    /// null-bitmap/striding/error/warning bookkeeping for free. Override this
+    /// (not `write_non_null`) when a kernel needs once-per-segment setup —
+    /// e.g. downcasting a struct's child columns once instead of on every row.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn convert_char_rows(
+        &self,
+        array: &Self::Array,
+        nullable: bool,
+        arrow_row_range: std::ops::Range<usize>,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) -> bool {
+        convert_char_rows_with(
+            nullable,
+            array,
+            arrow_row_range,
+            base_binding,
+            out_row_start,
+            strides,
+            outputs,
+            |batch_idx, binding, scratch| self.write_non_null(array, batch_idx, binding, scratch),
+        )
+    }
 }
 
-/// The single batched `SQL_C_CHAR` loop, shared by every [`CharKernel`]. It is
-/// the specialised counterpart to `Converter::convert_arrow_range`: it
-/// downcasts once (the caller passes the concrete `K::Array`), then reads,
-/// formats, and writes in one tight loop with no per-cell `write_odbc_type`
-/// match or trait indirection.
+/// Shared loop body behind [`CharKernel::convert_char_rows`]: owns the
+/// null-bitmap handling, the incremental striding, the error-slot skip, and
+/// the warning collection, and calls `write_non_null` only for non-null cells.
+/// Parametrized over that step (rather than a `CharKernel` directly) so a
+/// kernel's `convert_char_rows` override can close over state it hoisted once
+/// per segment (e.g. downcasted struct child columns) instead of re-deriving
+/// it on every row.
 ///
 /// Returns `false` (having written nothing) to *decline* the batch — on
 /// first-row stride overflow, or when a non-nullable column unexpectedly
-/// carries nulls — so the caller can fall back to the generic per-cell path
-/// and reproduce its exact behavior for those cold cases.
-// 8 args mirror `Converter::convert_arrow_range`'s contract (binding + strides
-// + outputs); grouping them into a struct would just move the noise.
+/// carries nulls — so the caller can fall back to the generic per-cell path.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn convert_char_range<K: CharKernel>(
-    kernel: &K,
+pub(crate) fn convert_char_rows_with<A: Array, F>(
     nullable: bool,
-    array: &K::Array,
+    array: &A,
     arrow_row_range: std::ops::Range<usize>,
     base_binding: &Binding,
     out_row_start: usize,
     strides: BindingStrides,
     outputs: &mut [Result<Warnings, ConversionError>],
-) -> bool {
+    mut write_non_null: F,
+) -> bool
+where
+    F: FnMut(usize, &Binding, &mut [u8; CHAR_SCRATCH_LEN]) -> Result<bool, ConversionError>,
+{
     // A non-nullable column should never carry nulls; if one somehow does,
     // decline so the generic path reproduces its read-error behavior exactly
     // rather than us inventing a null indicator.
@@ -165,7 +196,7 @@ pub(crate) fn convert_char_range<K: CharKernel>(
             continue;
         }
 
-        match kernel.write_non_null(array, batch_idx, &binding, &mut scratch) {
+        match write_non_null(batch_idx, &binding, &mut scratch) {
             Ok(true) => {
                 if let Ok(existing) = &mut outputs[i] {
                     existing.push(Warning::StringDataTruncated);
@@ -176,6 +207,40 @@ pub(crate) fn convert_char_range<K: CharKernel>(
         }
     }
     true
+}
+
+/// The single batched `SQL_C_CHAR` loop, shared by every [`CharKernel`]. It is
+/// the specialised counterpart to `Converter::convert_arrow_range`: it
+/// downcasts once (the caller passes the concrete `K::Array`), then reads,
+/// formats, and writes in one tight loop with no per-cell `write_odbc_type`
+/// match or trait indirection.
+///
+/// Returns `false` (having written nothing) to *decline* the batch — on
+/// first-row stride overflow, or when a non-nullable column unexpectedly
+/// carries nulls — so the caller can fall back to the generic per-cell path
+/// and reproduce its exact behavior for those cold cases.
+// 8 args mirror `Converter::convert_arrow_range`'s contract (binding + strides
+// + outputs); grouping them into a struct would just move the noise.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convert_char_range<K: CharKernel>(
+    kernel: &K,
+    nullable: bool,
+    array: &K::Array,
+    arrow_row_range: std::ops::Range<usize>,
+    base_binding: &Binding,
+    out_row_start: usize,
+    strides: BindingStrides,
+    outputs: &mut [Result<Warnings, ConversionError>],
+) -> bool {
+    kernel.convert_char_rows(
+        array,
+        nullable,
+        arrow_row_range,
+        base_binding,
+        out_row_start,
+        strides,
+        outputs,
+    )
 }
 
 /// Wraps the generic converter for a type, intercepting the hot `SQL_C_CHAR`

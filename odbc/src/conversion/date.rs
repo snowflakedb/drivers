@@ -35,11 +35,15 @@ const DATE_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD";
 /// dominant per-cell cost for temporal columns rendered as SQL_C_CHAR.
 /// `put_year` is byte-identical to the old `{:04}`.
 fn format_date_ascii<'a>(date: &NaiveDate, buf: &'a mut [u8; 32]) -> &'a str {
-    let mut p = int_fmt::put_year(buf, 0, date.year());
+    format_date_parts_ascii(date.year(), date.month(), date.day(), buf)
+}
+
+fn format_date_parts_ascii(year: i32, month: u32, day: u32, buf: &mut [u8; 32]) -> &str {
+    let mut p = int_fmt::put_year(buf, 0, year);
     buf[p] = b'-';
-    p = int_fmt::put_padded(buf, p + 1, date.month(), 2);
+    p = int_fmt::put_padded(buf, p + 1, month, 2);
     buf[p] = b'-';
-    p = int_fmt::put_padded(buf, p + 1, date.day(), 2);
+    p = int_fmt::put_padded(buf, p + 1, day, 2);
     // SAFETY: we only wrote ASCII digits and '-' above.
     unsafe { std::str::from_utf8_unchecked(&buf[..p]) }
 }
@@ -330,6 +334,41 @@ impl CharKernel for DateCharKernel {
             .try_into()
             .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 32");
         Ok(format_date_ascii(value, buf))
+    }
+
+    #[inline]
+    fn write_non_null(
+        &self,
+        array: &PrimitiveArray<Date32Type>,
+        idx: usize,
+        binding: &Binding,
+        scratch: &mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<bool, ConversionError> {
+        if binding.buffer_length > 0 && binding.buffer_length < 11 {
+            return NumericValueOutOfRangeSnafu {
+                reason: "Buffer too small for SQL_C_CHAR date (minimum 11 bytes)".to_string(),
+            }
+            .fail()
+            .context(crate::conversion::error::WriteOdbcValueSnafu);
+        }
+
+        let days = array.value(idx);
+        // Stay on the exact existing error path for values outside ODBC's
+        // representable 0001-01-01..9999-12-31 range.
+        if !(-719_162..=2_932_896).contains(&days) {
+            let value = self.read_validate(array, idx)?;
+            let rendered = self
+                .format_into(&value, binding, scratch)
+                .context(crate::conversion::error::WriteOdbcValueSnafu)?;
+            return Ok(binding.write_ascii_char_string_once(rendered));
+        }
+
+        let (year, month, day) = sf_types::civil_from_unix_days(days);
+        let date_buf: &mut [u8; 32] = (&mut scratch[..32])
+            .try_into()
+            .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 32");
+        let rendered = format_date_parts_ascii(year, month, day, date_buf);
+        Ok(binding.write_ascii_char_string_once(rendered))
     }
 }
 

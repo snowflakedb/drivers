@@ -28,17 +28,23 @@ const TIME_CHAR_EXPECTED_FORMAT: &str = "HH:MM:SS[.fffffffff]";
 /// heap allocation. 32 bytes is ample for the widest output (`HH:MM:SS.` + 9
 /// fractional digits = 18 bytes).
 fn format_time_ascii<'a>(time: &NaiveTime, buf: &'a mut [u8; 32]) -> &'a str {
+    format_time_parts_ascii(time.num_seconds_from_midnight(), time.nanosecond(), buf)
+}
+
+fn format_time_parts_ascii(seconds_from_midnight: u32, nanos: u32, buf: &mut [u8; 32]) -> &str {
     // Hand-rolled digit writes rather than `write!`/`core::fmt`, the dominant
     // per-cell cost for temporal SQL_C_CHAR rendering.
-    let mut p = int_fmt::put_padded(buf, 0, time.hour(), 2);
+    let hour = seconds_from_midnight / 3_600;
+    let minute = (seconds_from_midnight / 60) % 60;
+    let second = seconds_from_midnight % 60;
+    let mut p = int_fmt::put_padded(buf, 0, hour, 2);
     buf[p] = b':';
-    p = int_fmt::put_padded(buf, p + 1, time.minute(), 2);
+    p = int_fmt::put_padded(buf, p + 1, minute, 2);
     buf[p] = b':';
-    p = int_fmt::put_padded(buf, p + 1, time.second(), 2);
+    p = int_fmt::put_padded(buf, p + 1, second, 2);
     // Snowflake TIME fractions are < 1e9 (scale ≤ 9, no leap seconds), so the
     // fraction is exactly 9 digits — matching the old `{:09}` — before
     // trailing zeros are trimmed.
-    let nanos = time.nanosecond();
     if nanos != 0 {
         buf[p] = b'.';
         p = int_fmt::put_padded(buf, p + 1, nanos, 9);
@@ -343,6 +349,40 @@ where
             .try_into()
             .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 32");
         Ok(format_time_ascii(value, buf))
+    }
+
+    #[inline]
+    fn write_non_null(
+        &self,
+        array: &PrimitiveArray<T>,
+        idx: usize,
+        binding: &Binding,
+        scratch: &mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<bool, ConversionError> {
+        if binding.buffer_length > 0 && binding.buffer_length < 9 {
+            return NumericValueOutOfRangeSnafu {
+                reason: "Buffer too small for SQL_C_CHAR time (minimum 9 bytes)".to_string(),
+            }
+            .fail()
+            .context(crate::conversion::error::WriteOdbcValueSnafu);
+        }
+        let raw: i64 = array.value(idx).into();
+        match sf_types::split_time_raw(raw, self.scale) {
+            Some((seconds, nanos)) => {
+                let time_buf: &mut [u8; 32] = (&mut scratch[..32])
+                    .try_into()
+                    .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 32");
+                let rendered = format_time_parts_ascii(seconds, nanos, time_buf);
+                Ok(binding.write_ascii_char_string_once(rendered))
+            }
+            None => {
+                let value = self.read_validate(array, idx)?;
+                let rendered = self
+                    .format_into(&value, binding, scratch)
+                    .context(crate::conversion::error::WriteOdbcValueSnafu)?;
+                Ok(binding.write_ascii_char_string_once(rendered))
+            }
+        }
     }
 }
 

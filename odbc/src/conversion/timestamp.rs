@@ -1,13 +1,13 @@
 use crate::conversion::int_fmt;
 use arrow::array::{PrimitiveArray, StructArray};
-use arrow::datatypes::Int64Type;
+use arrow::datatypes::{Int32Type, Int64Type};
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
 use snafu::{OptionExt, ResultExt};
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
+use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel, convert_char_rows_with};
 use crate::conversion::error::{
     BindingError, BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu,
     InvalidCharacterValueForCastSnafu, InvalidDatetimeValueSnafu, NumericValueOutOfRangeSnafu,
@@ -21,7 +21,7 @@ use crate::conversion::param_binding::{
     TEMPORAL_CHAR_DIAG_MAX_CHARS, parse_temporal_char_input, read_binary_struct, read_char_str,
     read_unaligned, read_wchar_str,
 };
-use crate::conversion::traits::Binding;
+use crate::conversion::traits::{Binding, BindingStrides};
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
@@ -217,7 +217,49 @@ fn format_timestamp_string_into<'a>(
     dt: &NaiveDateTime,
     buf: &'a mut [u8; 48],
 ) -> Result<&'a str, WriteOdbcError> {
-    let nanos = dt.nanosecond();
+    format_timestamp_parts_into(
+        dt.year(),
+        dt.month(),
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second(),
+        dt.nanosecond(),
+        buf,
+    )
+}
+
+/// `TIMESTAMP_NTZ`/`TIMESTAMP_LTZ` `SQL_C_CHAR` rendering shared by the flat
+/// `Int64` and struct-encoded `CharKernel`s: the pre-write `<20` buffer guard,
+/// then [`format_timestamp_string_into`] carved out of the shared scratch.
+fn format_wallclock_timestamp_char_into<'s>(
+    value: &NaiveDateTime,
+    binding: &Binding,
+    scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+) -> Result<&'s str, WriteOdbcError> {
+    if binding.buffer_length > 0 && binding.buffer_length < 20 {
+        return NumericValueOutOfRangeSnafu {
+            reason: "Buffer too small for SQL_C_CHAR timestamp (minimum 20 bytes)".to_string(),
+        }
+        .fail();
+    }
+    let buf: &mut [u8; 48] = (&mut scratch[..48])
+        .try_into()
+        .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 48");
+    format_timestamp_string_into(value, buf)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn format_timestamp_parts_into(
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+    second: u32,
+    nanos: u32,
+    buf: &mut [u8; 48],
+) -> Result<&str, WriteOdbcError> {
     // Hand-rolled digit writes instead of `write!`/`core::fmt`, which was the
     // dominant per-cell cost of TIMESTAMP→CHAR conversion. `put_year` is
     // byte-identical to the old `{:04}`; the bounded calendar fields use
@@ -227,7 +269,7 @@ fn format_timestamp_string_into<'a>(
     // `-MM-DD HH:MM:SS` + 10 for `.` and 9 fractional digits = ≤32 ≤ 48. Guard
     // anyway so a hypothetically wider year returns a typed error rather than
     // panicking on an out-of-bounds index across the FFI boundary.
-    let needed = int_fmt::year_width(dt.year()) + 15 + if nanos != 0 { 10 } else { 0 };
+    let needed = int_fmt::year_width(year) + 15 + if nanos != 0 { 10 } else { 0 };
     if needed > buf.len() {
         return NumericValueOutOfRangeSnafu {
             reason: format!(
@@ -238,17 +280,17 @@ fn format_timestamp_string_into<'a>(
         .fail();
     }
 
-    let mut p = int_fmt::put_year(buf, 0, dt.year());
+    let mut p = int_fmt::put_year(buf, 0, year);
     buf[p] = b'-';
-    p = int_fmt::put_padded(buf, p + 1, dt.month(), 2);
+    p = int_fmt::put_padded(buf, p + 1, month, 2);
     buf[p] = b'-';
-    p = int_fmt::put_padded(buf, p + 1, dt.day(), 2);
+    p = int_fmt::put_padded(buf, p + 1, day, 2);
     buf[p] = b' ';
-    p = int_fmt::put_padded(buf, p + 1, dt.hour(), 2);
+    p = int_fmt::put_padded(buf, p + 1, hour, 2);
     buf[p] = b':';
-    p = int_fmt::put_padded(buf, p + 1, dt.minute(), 2);
+    p = int_fmt::put_padded(buf, p + 1, minute, 2);
     buf[p] = b':';
-    p = int_fmt::put_padded(buf, p + 1, dt.second(), 2);
+    p = int_fmt::put_padded(buf, p + 1, second, 2);
     if nanos != 0 {
         buf[p] = b'.';
         p = int_fmt::put_padded(buf, p + 1, nanos, 9);
@@ -260,6 +302,57 @@ fn format_timestamp_string_into<'a>(
     }
     // SAFETY: only ASCII digits, '-', ':', ' ', and '.' were written above.
     Ok(unsafe { std::str::from_utf8_unchecked(&buf[..p]) })
+}
+
+fn format_scaled_timestamp_fast<'s>(
+    raw: i64,
+    scale: u32,
+    binding: &Binding,
+    scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+) -> Result<Option<&'s str>, ConversionError> {
+    let (epoch_seconds, nanos) = sf_types::split_scaled_epoch(raw, scale)
+        .map_err(ReadArrowError::from)
+        .context(ReadArrowValueSnafu)?;
+    format_epoch_timestamp_fast(epoch_seconds, nanos, binding, scratch)
+}
+
+fn format_epoch_timestamp_fast<'s>(
+    epoch_seconds: i64,
+    nanos: u32,
+    binding: &Binding,
+    scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+) -> Result<Option<&'s str>, ConversionError> {
+    if binding.buffer_length > 0 && binding.buffer_length < 20 {
+        return NumericValueOutOfRangeSnafu {
+            reason: "Buffer too small for SQL_C_CHAR timestamp (minimum 20 bytes)".to_string(),
+        }
+        .fail()
+        .context(crate::conversion::error::WriteOdbcValueSnafu);
+    }
+    if nanos >= 1_000_000_000 {
+        return Ok(None);
+    }
+    let unix_days = epoch_seconds.div_euclid(86_400);
+    if !(-719_162..=2_932_896).contains(&unix_days) {
+        return Ok(None);
+    }
+    let seconds = epoch_seconds.rem_euclid(86_400) as u32;
+    let (year, month, day) = sf_types::civil_from_unix_days(unix_days as i32);
+    let ts_buf: &mut [u8; 48] = (&mut scratch[..48])
+        .try_into()
+        .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 48");
+    let rendered = format_timestamp_parts_into(
+        year,
+        month,
+        day,
+        seconds / 3_600,
+        (seconds / 60) % 60,
+        seconds % 60,
+        nanos,
+        ts_buf,
+    )
+    .context(crate::conversion::error::WriteOdbcValueSnafu)?;
+    Ok(Some(rendered))
 }
 
 /// Format a `TzInstant` as a wall-clock literal followed by the requested
@@ -838,20 +931,117 @@ impl CharKernel for TimestampCharKernel {
         binding: &Binding,
         scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
     ) -> Result<&'s str, WriteOdbcError> {
-        // Pre-write buffer-size guard, exactly as the per-cell arm.
-        if binding.buffer_length > 0 && binding.buffer_length < 20 {
-            return NumericValueOutOfRangeSnafu {
-                reason: "Buffer too small for SQL_C_CHAR timestamp (minimum 20 bytes)".to_string(),
-            }
-            .fail();
+        format_wallclock_timestamp_char_into(value, binding, scratch)
+    }
+
+    #[inline]
+    fn write_non_null(
+        &self,
+        array: &PrimitiveArray<Int64Type>,
+        idx: usize,
+        binding: &Binding,
+        scratch: &mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<bool, ConversionError> {
+        if let Some(rendered) =
+            format_scaled_timestamp_fast(array.value(idx), self.scale, binding, scratch)?
+        {
+            return Ok(binding.write_ascii_char_string_once(rendered));
         }
-        // `format_timestamp_string_into` wants a fixed `[u8; 48]`; carve it out
-        // of the shared scratch so its signature (and its `buf.len()`-based
-        // overflow message) stays unchanged.
-        let buf: &mut [u8; 48] = (&mut scratch[..48])
-            .try_into()
-            .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 48");
-        format_timestamp_string_into(value, buf)
+        let value = self.read_validate(array, idx)?;
+        let rendered = self
+            .format_into(&value, binding, scratch)
+            .context(crate::conversion::error::WriteOdbcValueSnafu)?;
+        Ok(binding.write_ascii_char_string_once(rendered))
+    }
+}
+
+/// Batched `SQL_C_CHAR` kernel for the 2-column `{epoch: Int64, fraction: Int32}`
+/// struct wire form of `TIMESTAMP_NTZ` / `TIMESTAMP_LTZ` — the layout Snowflake
+/// actually sends for both (see `sf_types::read_struct_timestamp`). Shares
+/// [`TimestampCharKernel`]'s CHAR rendering; only the read side differs.
+/// `convert_char_rows` downcasts the epoch/fraction columns once per segment
+/// instead of on every row.
+pub(crate) struct TimestampStructCharKernel;
+
+impl CharKernel for TimestampStructCharKernel {
+    type Array = StructArray;
+    type Value = NaiveDateTime;
+
+    fn read_validate(
+        &self,
+        array: &StructArray,
+        idx: usize,
+    ) -> Result<NaiveDateTime, ConversionError> {
+        let value = sf_types::read_struct_timestamp(array, idx)
+            .map_err(ReadArrowError::from)
+            .context(ReadArrowValueSnafu)?;
+        check_sql_year(&value)?;
+        Ok(value)
+    }
+
+    fn format_into<'s>(
+        &self,
+        value: &NaiveDateTime,
+        binding: &Binding,
+        scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<&'s str, WriteOdbcError> {
+        format_wallclock_timestamp_char_into(value, binding, scratch)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn convert_char_rows(
+        &self,
+        array: &StructArray,
+        nullable: bool,
+        arrow_row_range: std::ops::Range<usize>,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) -> bool {
+        if array.num_columns() >= 2
+            && let Some(epoch) = array
+                .column(0)
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Int64Type>>()
+            && let Some(fraction) = array
+                .column(1)
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Int32Type>>()
+        {
+            return convert_char_rows_with(
+                nullable,
+                array,
+                arrow_row_range,
+                base_binding,
+                out_row_start,
+                strides,
+                outputs,
+                |batch_idx, binding, scratch| {
+                    if fraction.value(batch_idx) >= 0
+                        && let Some(rendered) = format_epoch_timestamp_fast(
+                            epoch.value(batch_idx),
+                            fraction.value(batch_idx) as u32,
+                            binding,
+                            scratch,
+                        )?
+                    {
+                        return Ok(binding.write_ascii_char_string_once(rendered));
+                    }
+                    self.write_non_null(array, batch_idx, binding, scratch)
+                },
+            );
+        }
+        convert_char_rows_with(
+            nullable,
+            array,
+            arrow_row_range,
+            base_binding,
+            out_row_start,
+            strides,
+            outputs,
+            |batch_idx, binding, scratch| self.write_non_null(array, batch_idx, binding, scratch),
+        )
     }
 }
 
@@ -1072,6 +1262,95 @@ impl CharKernel for TimestampTzCharKernel {
                 format_timestamp_string_into(&value.utc, buf)
             }
         }
+    }
+
+    /// Without an offset suffix the output is the UTC wall clock, which can
+    /// bypass both `TzInstant` and `NaiveDateTime`. Downcasts the epoch/
+    /// fraction (or epoch-only) columns once per segment rather than on every
+    /// row, then falls back to the default `write_non_null` composition for
+    /// any row (or whole segment) the fast path can't render.
+    #[allow(clippy::too_many_arguments)]
+    fn convert_char_rows(
+        &self,
+        array: &StructArray,
+        nullable: bool,
+        arrow_row_range: std::ops::Range<usize>,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) -> bool {
+        if self.tz_offset_format.is_none() {
+            if array.num_columns() == 3
+                && let Some(epoch) = array
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<Int64Type>>()
+                && let Some(fraction) = array
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<Int32Type>>()
+            {
+                return convert_char_rows_with(
+                    nullable,
+                    array,
+                    arrow_row_range,
+                    base_binding,
+                    out_row_start,
+                    strides,
+                    outputs,
+                    |batch_idx, binding, scratch| {
+                        if fraction.value(batch_idx) >= 0
+                            && let Some(rendered) = format_epoch_timestamp_fast(
+                                epoch.value(batch_idx),
+                                fraction.value(batch_idx) as u32,
+                                binding,
+                                scratch,
+                            )?
+                        {
+                            return Ok(binding.write_ascii_char_string_once(rendered));
+                        }
+                        self.write_non_null(array, batch_idx, binding, scratch)
+                    },
+                );
+            } else if array.num_columns() == 2
+                && let Some(epoch) = array
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<Int64Type>>()
+            {
+                return convert_char_rows_with(
+                    nullable,
+                    array,
+                    arrow_row_range,
+                    base_binding,
+                    out_row_start,
+                    strides,
+                    outputs,
+                    |batch_idx, binding, scratch| {
+                        if let Some(rendered) = format_scaled_timestamp_fast(
+                            epoch.value(batch_idx),
+                            self.scale,
+                            binding,
+                            scratch,
+                        )? {
+                            return Ok(binding.write_ascii_char_string_once(rendered));
+                        }
+                        self.write_non_null(array, batch_idx, binding, scratch)
+                    },
+                );
+            }
+        }
+        convert_char_rows_with(
+            nullable,
+            array,
+            arrow_row_range,
+            base_binding,
+            out_row_start,
+            strides,
+            outputs,
+            |batch_idx, binding, scratch| self.write_non_null(array, batch_idx, binding, scratch),
+        )
     }
 }
 

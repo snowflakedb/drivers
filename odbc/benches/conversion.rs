@@ -176,7 +176,7 @@ fn bench(c: &mut Criterion) {
     group.throughput(Throughput::Elements(N as u64));
     for (name, f, arr) in &cases {
         let conv = make_converter(f);
-        let mut buf = vec![0u8; N * CELL];
+        let mut buf = vec![0u8; N * 64];
         let mut inds = vec![0 as sql::Len; N];
         group.bench_function(*name, |b| {
             b.iter(|| run(conv.as_ref(), arr.as_ref(), CELL, &mut buf, &mut inds))

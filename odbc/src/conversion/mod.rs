@@ -360,17 +360,20 @@ macro_rules! char_batch_converter {
 }
 
 /// `make_timestamp_converter!` for the two zoneless timestamp families
-/// (`TIMESTAMP_NTZ`, `TIMESTAMP_LTZ`), but wrapping the flat `Int64`-encoded
-/// form in the batched `SQL_C_CHAR` kernel. Struct-encoded timestamps keep the
-/// unchanged per-cell converter (their CHAR rendering is not the flat
-/// scaled-`i64` shape the kernel reads). `TIMESTAMP_TZ` is intentionally not
-/// routed here — see the `TimestampTz` arm.
+/// (`TIMESTAMP_NTZ`, `TIMESTAMP_LTZ`), routing both the flat `Int64`-encoded
+/// and the struct-encoded (the layout Snowflake actually sends) forms through
+/// the batched `SQL_C_CHAR` kernel — see [`timestamp::TimestampCharKernel`]
+/// and [`timestamp::TimestampStructCharKernel`]. `TIMESTAMP_TZ` is
+/// intentionally not routed here — see the `TimestampTz` arm.
 macro_rules! timestamp_char_batch_converter {
     ($snowflake_type:expr, $field:expr, $nullable:expr) => {
         match $field.data_type() {
-            DataType::Struct(_) => {
-                make_converter!(arrow::array::StructArray, $snowflake_type, $nullable)
-            }
+            DataType::Struct(_) => char_batch_converter!(
+                arrow::array::StructArray,
+                timestamp::TimestampStructCharKernel,
+                $snowflake_type,
+                $nullable
+            ),
             _ => char_batch_converter!(
                 PrimitiveArray<Int64Type>,
                 timestamp::TimestampCharKernel {
@@ -1373,6 +1376,13 @@ mod char_batch_tests {
         Field::new("c", DataType::Int64, nullable).with_metadata(md)
     }
 
+    fn timestamp_struct_field(logical_type: &str, data_type: DataType) -> Field {
+        let mut md = HashMap::new();
+        md.insert("logicalType".to_string(), logical_type.to_string());
+        md.insert("scale".to_string(), "9".to_string());
+        Field::new("c", data_type, true).with_metadata(md)
+    }
+
     fn real_field(nullable: bool) -> Field {
         let mut md = HashMap::new();
         md.insert("logicalType".to_string(), "REAL".to_string());
@@ -2101,7 +2111,7 @@ mod char_batch_tests {
         );
     }
 
-    fn timestamp_struct_field(logical: &str, nullable: bool) -> Field {
+    fn ntz_ltz_struct_field(logical: &str, nullable: bool) -> Field {
         let children = Fields::from(vec![
             Field::new("epoch", DataType::Int64, true),
             Field::new("fraction", DataType::Int32, true),
@@ -2134,7 +2144,7 @@ mod char_batch_tests {
             None,
             Some((-62_135_596_800, 0)),
         ]);
-        assert_equiv(&timestamp_struct_field("TIMESTAMP_NTZ", true), &arr, 32);
+        assert_equiv(&ntz_ltz_struct_field("TIMESTAMP_NTZ", true), &arr, 32);
     }
 
     #[test]
@@ -2145,7 +2155,7 @@ mod char_batch_tests {
             None,
             Some((-62_135_596_800, 0)),
         ]);
-        assert_equiv(&timestamp_struct_field("TIMESTAMP_LTZ", true), &arr, 32);
+        assert_equiv(&ntz_ltz_struct_field("TIMESTAMP_LTZ", true), &arr, 32);
     }
 
     // ---- REAL -----------------------------------------------------------
@@ -2305,6 +2315,53 @@ mod char_batch_tests {
                 tz_offset_format: None,
             },
             &arr,
+        );
+    }
+
+    #[test]
+    fn batched_matches_per_cell_timestamp_struct_layouts() {
+        let epoch: ArrayRef = Arc::new(Int64Array::from(vec![
+            Some(-1),
+            Some(0),
+            Some(1_700_000_000),
+            Some(253_402_300_799),
+        ]));
+        let fraction: ArrayRef = Arc::new(Int32Array::from(vec![
+            Some(999_999_999),
+            Some(0),
+            Some(123_456_789),
+            Some(0),
+        ]));
+        let epoch_field = Arc::new(Field::new("epoch", DataType::Int64, false));
+        let fraction_field = Arc::new(Field::new("fraction", DataType::Int32, false));
+        let ntz = StructArray::from(vec![
+            (Arc::clone(&epoch_field), Arc::clone(&epoch)),
+            (Arc::clone(&fraction_field), Arc::clone(&fraction)),
+        ]);
+        assert_equiv(
+            &timestamp_struct_field("TIMESTAMP_NTZ", ntz.data_type().clone()),
+            &ntz,
+            64,
+        );
+
+        let offset: ArrayRef = Arc::new(Int32Array::from(vec![
+            Some(1_440),
+            Some(1_110),
+            Some(1_770),
+            Some(1_440),
+        ]));
+        let tz = StructArray::from(vec![
+            (epoch_field, epoch),
+            (fraction_field, fraction),
+            (
+                Arc::new(Field::new("tz_offset", DataType::Int32, false)),
+                offset,
+            ),
+        ]);
+        assert_equiv(
+            &timestamp_struct_field("TIMESTAMP_TZ", tz.data_type().clone()),
+            &tz,
+            64,
         );
     }
 }
