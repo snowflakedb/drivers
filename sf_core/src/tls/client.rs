@@ -41,20 +41,23 @@ pub fn create_tls_client_with_proxy(
     proxy: Option<&ProxyConfig>,
     crl_worker: SharedCrlWorker,
 ) -> Result<Client, TlsError> {
-    build_tls_client_and_rustls_config(&tls_config, proxy, crl_worker, None).map(|(c, _)| c)
+    build_tls_client_and_rustls_config(&tls_config, proxy, crl_worker, None, false).map(|(c, _)| c)
 }
 
-/// Build a reqwest [`Client`] and the [`rustls::ClientConfig`] it was derived from.
+/// Build a reqwest [`Client`] and, only when `need_diag_config` is set, the
+/// [`rustls::ClientConfig`] it was derived from.
 ///
 /// The returned [`Arc`] is the exact config the connection uses — hand it to
 /// [`DiagnosticRunner`] so the diagnostic observes identical TLS behaviour without
-/// re-deriving the config from [`TlsConfig`].
+/// re-deriving the config from [`TlsConfig`]. It is `None` when `need_diag_config`
+/// is `false`, so callers with no diagnostic to run avoid a second trust-store load.
 pub(crate) fn build_tls_client_and_rustls_config(
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
     crl_worker: SharedCrlWorker,
     connect_timeout: Option<Duration>,
-) -> Result<(Client, Arc<rustls::ClientConfig>), TlsError> {
+    need_diag_config: bool,
+) -> Result<(Client, Option<Arc<rustls::ClientConfig>>), TlsError> {
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
         let builder = apply_reqwest_tls_versions(
@@ -68,7 +71,7 @@ pub(crate) fn build_tls_client_and_rustls_config(
             builder = builder.connect_timeout(ct);
         }
         let client = builder.build().context(ClientBuildSnafu)?;
-        return Ok((client, build_insecure_rustls_config()));
+        return Ok((client, need_diag_config.then(build_insecure_rustls_config)));
     }
 
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -94,10 +97,12 @@ pub(crate) fn build_tls_client_and_rustls_config(
                 builder = builder.connect_timeout(ct);
             }
             let client = builder.build().context(ClientBuildSnafu)?;
-            let rustls_cfg = Arc::new(build_plain_rustls_client_config(
-                &root_certificates,
-                &protocol_versions,
-            )?);
+            let rustls_cfg = need_diag_config
+                .then(|| {
+                    build_plain_rustls_client_config(&root_certificates, &protocol_versions)
+                        .map(Arc::new)
+                })
+                .transpose()?;
             Ok((client, rustls_cfg))
         }
         CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
@@ -126,10 +131,12 @@ pub(crate) fn build_tls_client_and_rustls_config(
             // verifier) so inspect_tls can complete the TLS handshake and show
             // the cert chain even when CRL endpoints are unreachable or slow —
             // which is exactly when a user reaches for the diagnostic tool.
-            let diag_rustls_cfg = Arc::new(build_plain_rustls_client_config(
-                &root_certificates,
-                &protocol_versions,
-            )?);
+            let diag_rustls_cfg = need_diag_config
+                .then(|| {
+                    build_plain_rustls_client_config(&root_certificates, &protocol_versions)
+                        .map(Arc::new)
+                })
+                .transpose()?;
             Ok((client, diag_rustls_cfg))
         }
     }
@@ -144,7 +151,7 @@ pub fn create_tls_client_with_proxy_and_timeouts(
     crl_worker: SharedCrlWorker,
     connect_timeout: Option<Duration>,
 ) -> Result<Client, TlsError> {
-    build_tls_client_and_rustls_config(&tls_config, proxy, crl_worker, connect_timeout)
+    build_tls_client_and_rustls_config(&tls_config, proxy, crl_worker, connect_timeout, false)
         .map(|(c, _)| c)
 }
 
@@ -807,5 +814,30 @@ mod tests {
             !trace.contains(PASSWORD),
             "ErrorTrace output leaked the proxy password: {trace}"
         );
+    }
+
+    #[test]
+    fn build_tls_client_returns_diag_rustls_config_only_when_requested() {
+        let config = TlsConfig::default();
+
+        let (_, without_diag) = build_tls_client_and_rustls_config(
+            &config,
+            None,
+            crate::crl::CrlWorker::shared_lazy(),
+            None,
+            false,
+        )
+        .expect("client must build without a diagnostic config");
+        assert!(without_diag.is_none());
+
+        let (_, with_diag) = build_tls_client_and_rustls_config(
+            &config,
+            None,
+            crate::crl::CrlWorker::shared_lazy(),
+            None,
+            true,
+        )
+        .expect("client must build with a diagnostic config");
+        assert!(with_diag.is_some());
     }
 }

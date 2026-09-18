@@ -381,22 +381,6 @@ impl DatabaseDriverV1 {
                 let timeout_config =
                     crate::config::retry::TimeoutConfig::from_params(&resolved_snapshot);
 
-                let (http_client, diag_rustls) =
-                    crate::tls::client::build_tls_client_and_rustls_config(
-                        &config.tls,
-                        Some(&config.proxy),
-                        self.crl_worker.clone(),
-                        timeout_config.connect_timeout,
-                    )
-                    .context(TlsClientCreationSnafu)?;
-                let login_parameters = LoginParameters::from_connection_config(
-                    &config,
-                    client_info,
-                    None,
-                    read_spcs_token(self.fs_adapter().as_ref()),
-                    self.wrapper_presets.validate_session_token,
-                );
-
                 // ---- Diagnostics: pre-connect -----------------------------------
                 // Run diagnostics when explicitly enabled OR when troubleshooting
                 // is active (SNOWFLAKE_TROUBLESHOOTING_ENABLED=true implies diagnostics).
@@ -417,27 +401,46 @@ impl DatabaseDriverV1 {
                     }
                     _ => None,
                 };
-                let mut diag_runner = if let Some(diag_cfg) = effective_diag {
-                    let account = config.server.account.clone();
-                    let host_str = host.clone().unwrap_or_default();
-                    let diag_proxy = config.proxy.clone();
-                    let diag_client_info = login_parameters.client_info.clone();
-                    tokio::task::spawn_blocking(move || {
-                        let mut runner = DiagnosticRunner::new(
-                            &account,
-                            &host_str,
-                            diag_cfg,
-                            diag_rustls,
-                            diag_proxy,
-                            &diag_client_info,
-                        );
-                        runner.run_pre_connect();
-                        runner
-                    })
-                    .await
-                    .ok()
-                } else {
-                    None
+
+                let (http_client, diag_rustls) =
+                    crate::tls::client::build_tls_client_and_rustls_config(
+                        &config.tls,
+                        Some(&config.proxy),
+                        self.crl_worker.clone(),
+                        timeout_config.connect_timeout,
+                        effective_diag.is_some(),
+                    )
+                    .context(TlsClientCreationSnafu)?;
+                let login_parameters = LoginParameters::from_connection_config(
+                    &config,
+                    client_info,
+                    None,
+                    read_spcs_token(self.fs_adapter().as_ref()),
+                    self.wrapper_presets.validate_session_token,
+                );
+
+                let mut diag_runner = match (effective_diag, diag_rustls) {
+                    (Some(diag_cfg), Some(diag_rustls)) => {
+                        let account = config.server.account.clone();
+                        let host_str = host.clone().unwrap_or_default();
+                        let diag_proxy = config.proxy.clone();
+                        let diag_client_info = login_parameters.client_info.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let mut runner = DiagnosticRunner::new(
+                                &account,
+                                &host_str,
+                                diag_cfg,
+                                diag_rustls,
+                                diag_proxy,
+                                &diag_client_info,
+                            );
+                            runner.run_pre_connect();
+                            runner
+                        })
+                        .await
+                        .ok()
+                    }
+                    _ => None,
                 };
 
                 let token_caching_requested = matches!(
