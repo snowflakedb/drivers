@@ -66,15 +66,9 @@ impl Statement {
         let result = self.result.clone();
         async_to_js(env, async move {
             let data = result.ready().await?;
-            let stream_state = Arc::clone(&data.stream_state);
-            let session_params = Arc::clone(&data.session_params);
-            // `fetch_next_batch` may block on a chunk download; run it on the
-            // blocking pool so it doesn't tie up napi's async runtime worker
-            // threads.
-            spawn_blocking(move || stream_state.fetch_next_batch(&session_params))
+            data.stream_state
+                .fetch_next_batch(&data.session_params)
                 .await
-                .map_err(|e| BridgeError::Message(e.to_string()))?
-                .map_err(|e| BridgeError::Message(e.to_string()))
         })
     }
 
@@ -201,12 +195,14 @@ async fn result_data_from(
     // Snapshotted once here (rather than per-decoder-call) so every column
     // reader in this result set shares the same session-parameter snapshot.
     let session_params = Arc::new(KnownSessionParameters::from_connection(conn_handle).await?);
-    let batch_reader = DRIVER.result_set_get_stream(result_set_handle).await?;
+    let batch_fetcher = DRIVER
+        .result_set_get_async_stream(result_set_handle)
+        .await?;
 
     Ok(ResultData {
         result_set_handle,
         result_set_descriptor,
-        stream_state: Arc::new(StreamState::new(batch_reader)),
+        stream_state: Arc::new(StreamState::new(batch_fetcher)),
         session_params,
     })
 }

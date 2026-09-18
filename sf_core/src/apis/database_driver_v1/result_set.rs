@@ -77,6 +77,12 @@ impl AsyncArrowBatchFetcher {
         Self { inner }
     }
 
+    pub fn from_batches(schema: SchemaRef, batches: Vec<RecordBatch>) -> Self {
+        Self::from_chunks(crate::chunks::AsyncArrowBatchFetcher::from_batches(
+            schema, batches,
+        ))
+    }
+
     pub fn schema(&self) -> SchemaRef {
         self.inner.schema()
     }

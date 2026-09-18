@@ -1,60 +1,54 @@
 use super::column_reader::ColumnReader;
+use crate::error::BridgeError;
 use crate::session_params::KnownSessionParameters;
-use arrow::array::{RecordBatch, RecordBatchReader};
+use arrow::array::RecordBatch;
 use arrow::error::ArrowError;
 use napi::bindgen_prelude::{Array as JsArray, Env};
+use sf_core::apis::database_driver_v1::AsyncArrowBatchFetcher;
 use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex as AsyncMutex;
 
-/// Splits a result set's iteration across two threads: batches are pulled and
-/// prepared on a worker, rows are decoded into JS values on the Node.js main
-/// thread.
-///
-/// The two locks are deliberately separate rather than one lock over the whole
-/// struct. [`fetch_next_batch`](Self::fetch_next_batch) holds `reader` across a
-/// pull that blocks on a chunk download for chunked result sets (see
-/// `sf_core`'s `result_set_get_stream` docs), so a main-thread
-/// [`next_row`](Self::next_row) sharing that lock would stall the event loop
-/// for the length of a network fetch. Holding only `batch` -- taken just long
-/// enough to install a prepared batch, or to read one row out of it -- keeps
-/// main-thread contention to microseconds.
+/// Parks one query result's current batch so `next_row` can decode JS values
+/// on the main thread while `fetch_next_batch` awaits the next batch off it.
 pub(super) struct StreamState {
-    reader: Mutex<Box<dyn RecordBatchReader + Send>>,
+    fetcher: AsyncMutex<AsyncArrowBatchFetcher>,
     batch: Mutex<Option<CurrentBatch>>,
 }
 
 impl StreamState {
-    pub(super) fn new(batch_reader: Box<dyn RecordBatchReader + Send>) -> Self {
+    pub(super) fn new(fetcher: AsyncArrowBatchFetcher) -> Self {
         Self {
-            reader: Mutex::new(batch_reader),
+            fetcher: AsyncMutex::new(fetcher),
             batch: Mutex::new(None),
         }
     }
 
     /// Pulls the next non-empty batch and installs it, returning `false` once
-    /// the stream is drained. Must be called off the main thread.
+    /// the stream is drained.
     ///
     /// Skipping zero-row batches here rather than letting them through means a
     /// `true` return always guarantees at least one row, so callers can't spin
     /// between this and [`next_row`](Self::next_row) without making progress.
-    pub(super) fn fetch_next_batch(
+    pub(super) async fn fetch_next_batch(
         &self,
         session_params: &Arc<KnownSessionParameters>,
-    ) -> Result<bool, ArrowError> {
+    ) -> Result<bool, BridgeError> {
         let prepared = {
-            let mut reader = self.reader.lock().unwrap();
+            let mut fetcher = self.fetcher.lock().await;
 
             if self.rows_remaining().is_some_and(|remaining| remaining > 0) {
                 return Ok(true);
             }
 
             loop {
-                match reader.next() {
-                    Some(batch) => {
-                        let batch = batch?;
-                        if batch.num_rows() > 0 {
-                            break Some(CurrentBatch::from_batch(&batch, session_params)?);
-                        }
+                match fetcher.next_batch().await? {
+                    Some(batch) if batch.num_rows() > 0 => {
+                        break Some(
+                            CurrentBatch::from_batch(&batch, session_params)
+                                .map_err(|e| BridgeError::Message(e.to_string()))?,
+                        );
                     }
+                    Some(_) => {}
                     None => break None,
                 }
             }
@@ -137,7 +131,6 @@ mod tests {
     use super::*;
     use arrow::array::BooleanArray;
     use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatchIterator;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -158,15 +151,18 @@ mod tests {
     }
 
     fn state_over(schema: Arc<Schema>, batches: Vec<RecordBatch>) -> StreamState {
-        let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), schema);
-        StreamState::new(Box::new(reader))
+        StreamState::new(AsyncArrowBatchFetcher::from_batches(schema, batches))
+    }
+
+    fn fetch_ok(result: Result<bool, BridgeError>) -> bool {
+        result.unwrap_or_else(|_| panic!("fetch_next_batch should succeed"))
     }
 
     /// A `true` return has to guarantee at least one decodable row, otherwise
     /// the JS loop -- which refills only when `next_row` returns null -- would
     /// spin between the two calls without ever making progress.
-    #[test]
-    fn fetch_next_batch_skips_zero_row_batches() {
+    #[tokio::test]
+    async fn fetch_next_batch_skips_zero_row_batches() {
         let schema = Arc::new(Schema::new(vec![boolean_field()]));
         let state = state_over(
             schema.clone(),
@@ -177,7 +173,7 @@ mod tests {
             ],
         );
 
-        assert!(state.fetch_next_batch(&session_params()).unwrap());
+        assert!(fetch_ok(state.fetch_next_batch(&session_params()).await));
         assert_eq!(
             state.rows_remaining(),
             Some(1),
@@ -188,8 +184,8 @@ mod tests {
     /// A duplicate fetch -- two `read()` calls racing on the JS side, say --
     /// must not pull a second batch over the top of an undrained one, which
     /// would silently drop every row still resident.
-    #[test]
-    fn fetch_next_batch_is_idempotent_while_rows_are_still_resident() {
+    #[tokio::test]
+    async fn fetch_next_batch_is_idempotent_while_rows_are_still_resident() {
         let schema = Arc::new(Schema::new(vec![boolean_field()]));
         let state = state_over(
             schema.clone(),
@@ -200,11 +196,11 @@ mod tests {
         );
         let params = session_params();
 
-        assert!(state.fetch_next_batch(&params).unwrap());
+        assert!(fetch_ok(state.fetch_next_batch(&params).await));
         assert_eq!(state.rows_remaining(), Some(2));
 
         assert!(
-            state.fetch_next_batch(&params).unwrap(),
+            fetch_ok(state.fetch_next_batch(&params).await),
             "a redundant fetch should report the resident batch, not the stream state"
         );
         assert_eq!(
@@ -214,13 +210,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fetch_next_batch_reports_exhaustion_when_every_batch_is_empty() {
+    #[tokio::test]
+    async fn fetch_next_batch_reports_exhaustion_when_every_batch_is_empty() {
         let schema = Arc::new(Schema::new(vec![boolean_field()]));
         let state = state_over(schema.clone(), vec![boolean_batch(&schema, vec![])]);
 
         assert!(
-            !state.fetch_next_batch(&session_params()).unwrap(),
+            !fetch_ok(state.fetch_next_batch(&session_params()).await),
             "a stream of only empty batches should be reported as exhausted"
         );
     }
