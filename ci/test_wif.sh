@@ -22,7 +22,7 @@ export PARAMETERS_FILE_PATH="$THIS_DIR/wif/parameters/parameters_wif.json"
 export ARTIFACT_DIR="$THIS_DIR/wif/artifacts"
 
 # Public runtime image. Shares the rockylinux:8 base used to build the binary,
-# so the vendored-openssl artifact's glibc/libstdc++ deps line up.
+# so the artifact's glibc/libstdc++/openssl-libs deps line up.
 RUNTIME_IMAGE="${WIF_RUNTIME_IMAGE:-rockylinux:8}"
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")

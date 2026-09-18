@@ -220,6 +220,12 @@ impl DatabaseDriverV1 {
     }
 
     pub fn with_providers(providers: DriverProviders) -> Self {
+        // Pin the rustls crypto backend before anything can build an HTTP
+        // client, so every connection this driver makes -- including telemetry
+        // and CRL fetches that run ahead of the first query -- shares one
+        // provider. See `tls::ensure_crypto_provider`.
+        crate::tls::ensure_crypto_provider();
+
         let xp_slot = Arc::new(match providers.running_inside_xp {
             Some(inside) => XpSlot::new(inside, providers.xp_backend),
             None => XpSlot::from_env(providers.xp_backend),
