@@ -89,22 +89,23 @@ impl ClientError {
     }
 
     fn build(&self, env: Env) -> napi::Result<napi::Error> {
-        let mut error = env.create_error(napi::Error::from_reason(self.message.clone()))?;
+        let mut error = new_js_error(&env, self.message.clone())?;
         if let Some(name) = self.name {
             error.set_named_property("name", name)?;
         }
-        match &self.code {
-            Some(ErrorCode::Server(code)) => {
-                error.set_named_property("code", format!("{code:06}"))?;
+        if let Some(code) = &self.code {
+            match code {
+                ErrorCode::Server(code) => {
+                    error.set_named_property("code", format!("{code:06}"))?;
+                }
+                ErrorCode::Driver(code) => error.set_named_property("code", code)?,
             }
-            Some(ErrorCode::Driver(code)) => error.set_named_property("code", code)?,
-            None => {}
         }
         if let Some(sql_state) = &self.sql_state {
             error.set_named_property("sqlState", sql_state.as_str())?;
         }
         if let Some(cause) = &self.cause {
-            let cause = env.create_error(napi::Error::from_reason(cause.clone()))?;
+            let cause = new_js_error(&env, cause.clone())?;
             error.set_named_property("cause", cause)?;
         }
         if self.is_fatal {
@@ -112,6 +113,16 @@ impl ClientError {
         }
         Ok(napi::Error::from(error.to_unknown()))
     }
+}
+
+// `napi_create_error` takes the napi status as the JS error's `code`, and `from_reason` fixes that
+// status at `GenericFailure`, so an error the driver has no code for would arrive carrying one.
+// Clearing it here leaves `code` present and undefined, as the old driver had it; a code the driver
+// does know is assigned by the caller.
+fn new_js_error<'env>(env: &'env Env, message: String) -> napi::Result<Object<'env>> {
+    let mut error = env.create_error(napi::Error::from_reason(message))?;
+    error.set_named_property("code", Undefined::default())?;
+    Ok(error)
 }
 
 fn error_name(kind: ErrorKind) -> Option<&'static str> {

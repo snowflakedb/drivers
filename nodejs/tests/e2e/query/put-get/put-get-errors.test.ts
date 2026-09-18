@@ -70,9 +70,9 @@ describe('tests/definitions/shared/put_get/put_get_errors.feature', () => {
             'Failed to process query response: While getting file(s) there was an error: the file does not exist',
           cause: {
             message: 'While getting file(s) there was an error: the file does not exist',
-            code: 'GenericFailure',
+            code: undefined,
           },
-          code: 'GenericFailure',
+          code: undefined,
         },
       });
     } else {
