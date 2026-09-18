@@ -62,8 +62,13 @@ public sealed class SnowflakeDbCommand : DbCommand
         }
     }
 
-    public override object? ExecuteScalar() =>
-        throw new NotImplementedException();
+    // TODO this implementation is just PoC and will undergo heavy refactoring.
+    public override object? ExecuteScalar()
+    {
+        using var reader = ExecuteReader();
+        reader.Read();
+        return reader.GetValue(0);
+    }
 
     public override void Prepare() =>
         throw new NotImplementedException();

@@ -12,20 +12,28 @@ public sealed class DefaultTestConnectionFactory : ITestConnectionFactory
     {
         ParametersReader.Init(testOutputHelper);
         RsaKeyUtils.Init(testOutputHelper);
-        IConnectionStringBuilder builder = new ConnectionStringBuilder();
+        var builder = new ConnectionStringBuilder();
         builder
             .WithAccount(ParametersReader.Get("SNOWFLAKE_TEST_ACCOUNT"))
             .WithUser(ParametersReader.Get("SNOWFLAKE_TEST_USER"))
-            .WithPassword(ParametersReader.Get("SNOWFLAKE_TEST_PASSWORD"))
             .WithWarehouse(ParametersReader.Get("SNOWFLAKE_TEST_WAREHOUSE"))
             .WithDatabase(ParametersReader.Get("SNOWFLAKE_TEST_DATABASE"))
             .WithSchema(ParametersReader.Get("SNOWFLAKE_TEST_SCHEMA"))
-            .WithRole(ParametersReader.Get("SNOWFLAKE_TEST_ROLE"))
-            .WithPat(ParametersReader.Get("SNOWFLAKE_TEST_PAT"));
+            .WithRole(ParametersReader.Get("SNOWFLAKE_TEST_ROLE"));
 
-        if (RsaKeyUtils.TryDiscoverRsaKeyFile(out var path))
-            builder.WithKeyFile(path);
+        var pat = ParametersReader.Get("SNOWFLAKE_TEST_PAT");
+        if (!string.IsNullOrEmpty(pat))
+        {
+            var authBuilder = builder.WithPat(pat);
+            return authBuilder.Build();
+        }
 
-        return builder.Build();
+        if (string.IsNullOrEmpty(pat) && RsaKeyUtils.TryDiscoverRsaKeyFile(out var path))
+        {
+            var authBuilder = builder.WithKeyFile(path);
+            return authBuilder.Build();
+        }
+
+        throw new InvalidOperationException("Neither key nor PAT is available!");
     }
 }

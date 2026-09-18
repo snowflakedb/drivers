@@ -1,6 +1,6 @@
 namespace Snowflake.Data.Tests.Config;
 
-public sealed class ConnectionStringBuilder : IConnectionStringBuilder
+public sealed class ConnectionStringBuilder : IConnectionStringBuilderNoAuth, IConnectionStringBuilderAuth
 {
     private string? _account;
     private string? _user;
@@ -10,11 +10,13 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
     private string? _schema;
     private string? _role;
     private string? _pat;
+    private string? _tokenFilePath;
     private string? _keyFile;
 
     private string _authenticator = string.Empty;
+    private string _explicitAuthenticator = string.Empty;
 
-    public IConnectionStringBuilder WithAccount(string? account)
+    public IConnectionStringBuilderNoAuth WithAccount(string? account)
     {
         if (account != null)
             _account = account;
@@ -22,21 +24,34 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
         return this;
     }
 
-    public IConnectionStringBuilder WithUser(string? user)
+    public IConnectionStringBuilderNoAuth WithUser(string? user)
     {
         if (user != null)
             _user = user;
+
         return this;
     }
 
-    public IConnectionStringBuilder WithPassword(string? password)
+    public IConnectionStringBuilderAuth WithPassword(string? password)
     {
-        if (password != null)
-            _password = password;
+        if (password == null)
+            return this;
+
+        if (!string.IsNullOrEmpty(_authenticator))
+            throw new ArgumentException($"Authenticator is already set ({_authenticator}). Pick one.");
+
+        _password = password;
+        _authenticator = "snowflake";
         return this;
     }
 
-    public IConnectionStringBuilder WithWarehouse(string? warehouse)
+    public IConnectionStringBuilderAuth WithExplicitlySetAuthenticator(string authenticator)
+    {
+        _explicitAuthenticator = authenticator;
+        return this;
+    }
+
+    public IConnectionStringBuilderNoAuth WithWarehouse(string? warehouse)
     {
         if (warehouse != null)
             _warehouse = warehouse;
@@ -44,7 +59,7 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
         return this;
     }
 
-    public IConnectionStringBuilder WithDatabase(string? database)
+    public IConnectionStringBuilderNoAuth WithDatabase(string? database)
     {
         if (database != null)
             _database = database;
@@ -52,7 +67,7 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
         return this;
     }
 
-    public IConnectionStringBuilder WithSchema(string? schema)
+    public IConnectionStringBuilderNoAuth WithSchema(string? schema)
     {
         if (schema != null)
             _schema = schema;
@@ -60,7 +75,7 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
         return this;
     }
 
-    public IConnectionStringBuilder WithRole(string? role)
+    public IConnectionStringBuilderNoAuth WithRole(string? role)
     {
         if (role != null)
             _role = role;
@@ -68,7 +83,7 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
         return this;
     }
 
-    public IConnectionStringBuilder WithPat(string? pat)
+    public IConnectionStringBuilderAuth WithPat(string? pat)
     {
         if (pat == null)
             return this;
@@ -81,7 +96,15 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
         return this;
     }
 
-    public IConnectionStringBuilder WithKeyFile(string? keyFile)
+    public IConnectionStringBuilderAuth WithTokenFilePath(string? tokenFilePath)
+    {
+        if (tokenFilePath != null)
+            _tokenFilePath = tokenFilePath;
+
+        return this;
+    }
+
+    public IConnectionStringBuilderAuth WithKeyFile(string? keyFile)
     {
         if (keyFile == null)
             return this;
@@ -124,10 +147,15 @@ public sealed class ConnectionStringBuilder : IConnectionStringBuilder
         if (_pat != null)
             keys.Add($"token={_pat}");
 
+        if (_tokenFilePath != null)
+            keys.Add($"token_file_path={_tokenFilePath}");
+
         if (_keyFile != null)
             keys.Add($"private_key_file={_keyFile}");
 
-        if ("programmatic_access_token".Equals(_authenticator, StringComparison.InvariantCultureIgnoreCase))
+        if (!string.IsNullOrEmpty(_explicitAuthenticator))
+            keys.Add($"authenticator={_explicitAuthenticator}");
+        else if ("programmatic_access_token".Equals(_authenticator, StringComparison.InvariantCultureIgnoreCase))
             keys.Add("authenticator=PROGRAMMATIC_ACCESS_TOKEN");
         else if ("snowflake".Equals(_authenticator, StringComparison.InvariantCultureIgnoreCase))
             keys.Add("authenticator=snowflake");
