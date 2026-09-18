@@ -12,6 +12,10 @@ default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
 vendored-openssl = ["sf_core/vendored-openssl"]
 native-arrow = ["dep:arrow", "dep:snafu", "dep:error_trace", "dep:sf_types", "dep:chrono", "pyo3/chrono"]
+# Links the FIPS-validated TLS backend (aws-lc-fips-sys) instead of aws-lc-sys.
+# Covers TLS only, which is what the name says -- see the `fips-tls` feature
+# comment in sf_core/Cargo.toml for why this is not a FIPS artifact on its own.
+fips-tls = ["sf_core/fips-tls"]
 
 [dependencies]
 arrow = { version = ">=54.0.0, <59", features = ["ffi"], optional = true }
