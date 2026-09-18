@@ -1755,6 +1755,20 @@ class TestCursorReset:
         assert cursor.fetchone() == (42,)
         assert cursor.sfqid != saved_sfqid
 
+    def test_reset_fetch_with_reuse_results(self, connection_factory):
+        with connection_factory(reuse_results=True) as conn:
+            assert conn._reuse_results is True
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                assert cur.rowcount == 1
+                cur.reset()
+                assert cur.rowcount is None
+                assert not cur.is_closed()
+                assert cur.fetchone() == (1,)
+
+    def test_reuse_results_defaults_to_false(self, connection):
+        assert connection._reuse_results is False
+
 
 class TestCursorContextManager:
     """Test Cursor context manager functionality."""
@@ -2719,6 +2733,15 @@ class TestInterpolateEmptySequences:
         cursor.execute("SELECT %s AS a, 100 %% 7 AS b", [42])
         row = cursor.fetchone()
         assert row == (42, 2)
+
+
+def test_connect_kwarg_enables_unescape(connection_factory):
+    with connection_factory(interpolate_empty_sequences=True, paramstyle="pyformat") as conn:
+        assert conn._interpolate_empty_sequences is True
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1600 %% 400 AS a", {})
+        row = cursor.fetchone()
+        assert row == (0,)
 
 
 def _as_request_id_str(request_id: object) -> str:

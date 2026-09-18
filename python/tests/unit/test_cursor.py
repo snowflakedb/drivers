@@ -767,6 +767,27 @@ class TestHandleLifecycle:
         released_id = mock_core_client.result_set_release.call_args.args[0].result_set_handle.id
         assert released_id == 1
 
+    def test_reset_keeps_result_set_handle_when_reuse_results(self, cursor, mock_core_client):
+        cursor._connection._reuse_results = True
+        cursor.execute("SELECT 1")
+        cursor.reset()
+
+        mock_core_client.result_set_release.assert_not_called()
+
+        cursor.close()
+        mock_core_client.result_set_release.assert_called_once()
+
+    def test_sequential_executes_release_previous_handles_when_reuse_results(self, cursor, mock_core_client):
+        cursor._connection._reuse_results = True
+        n = 5
+        for i in range(n):
+            cursor.execute(f"SELECT {i}")
+
+        release = mock_core_client.result_set_release
+        assert release.call_count == n - 1
+        released_ids = [call.args[0].result_set_handle.id for call in release.call_args_list]
+        assert released_ids == list(range(1, n))
+
     def test_close_releases_result_set_handle(self, cursor, mock_core_client):
         """close() releases the ResultSet handle held by the cursor."""
         cursor.execute("SELECT 1")

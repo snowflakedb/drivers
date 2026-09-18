@@ -1460,3 +1460,64 @@ behavior_differences:
       external-browser login, where the old driver still forced the session parameter
       on.
 
+  98:
+    name: "Unused, JSON-only, and internal connect kwargs dropped"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `dsn`, `session_id` (connect kwarg), `support_negative_year`,
+      `json_result_force_utf8_decoding`, `inject_client_pause`,
+      `probe_connection`, `debug_arrow_chunk`,
+      `log_imported_packages_in_telemetry`, `log_imported_packages`,
+      `snowflake_server_dop_cap_for_file_transfer`, and
+      `reraise_error_in_file_transfer_work_function` are accepted connect kwargs.
+    new_driver_behavior: |
+      The imported-package logging kwargs are silently ignored. The other
+      kwargs are dropped with a `DeprecationWarning` and have no effect.
+      `connection.session_id` after login still returns the server-assigned id.
+
+  99:
+    name: "disable_console_login default flipped"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `disable_console_login` defaults to `True`, so EXTERNALBROWSER asks GS for
+      the SSO URL instead of opening the console-login URL.
+    new_driver_behavior: |
+      `oauth_disable_console_login` defaults to `False`. Omitting the parameter
+      enables console login. The old name still maps to the new one.
+
+  100:
+    name: "password_callback connect parameter removed"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `password_callback` is invoked when login returns `PWD_CHANGE`, and its
+      return value is sent as `CHOSEN_NEW_PASSWORD`.
+    new_driver_behavior: |
+      Passing `password_callback` raises `ProgrammingError`. An expired
+      password must be changed outside the driver.
+
+  101:
+    name: "iobound_tpe_limit connect parameter removed"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `iobound_tpe_limit` is an accepted connect kwarg and a readable
+      `Connection.iobound_tpe_limit` property. When set, PUT and GET use at
+      most that many IO-bound worker threads.
+    new_driver_behavior: |
+      Passing `iobound_tpe_limit` to `connect()` emits a `DeprecationWarning`
+      and has no effect. `Connection.iobound_tpe_limit` does not exist.

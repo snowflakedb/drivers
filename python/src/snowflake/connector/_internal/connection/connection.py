@@ -87,6 +87,7 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
     config: ConnectionConfig
     __paramstyle: ParamStyle
     _interpolate_empty_sequences: bool
+    _reuse_results: bool
     _session_parameters: Any
     _connection_info: Any
     _client_param_telemetry_enabled: bool
@@ -126,7 +127,8 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
         if self.config.numpy:
             check_dependency(np)
 
-        self._interpolate_empty_sequences = False
+        self._interpolate_empty_sequences = bool(self.config.interpolate_empty_sequences)
+        self._reuse_results = self.config.reuse_results is True
 
     # ------------------------------------------------------------------
     # Cursors

@@ -5,6 +5,7 @@ Unit tests for ConnectionConfig.
 import pathlib
 import sys
 import types
+import warnings
 
 from unittest.mock import patch
 
@@ -89,6 +90,34 @@ class TestFromKwargs:
             config = ConnectionConfig.from_kwargs(private_key_file_pwd="secret")
         assert config.private_key_password == "secret"
 
+    def test_legacy_rewrite_private_key_passphrase(self):
+        with pytest.warns(DeprecationWarning, match="private_key_passphrase"):
+            config = ConnectionConfig.from_kwargs(private_key_passphrase="secret")
+        assert config.private_key_password == "secret"
+
+    def test_legacy_rewrite_private_key_passphrase_bytes(self):
+        with pytest.warns(DeprecationWarning, match="private_key_passphrase"):
+            config = ConnectionConfig.from_kwargs(private_key_passphrase=b"secret")
+        assert config.private_key_password == "secret"
+
+    def test_legacy_rewrite_private_key_passphrase_does_not_override_canonical(self):
+        with pytest.warns(DeprecationWarning, match="private_key_passphrase"):
+            config = ConnectionConfig.from_kwargs(
+                private_key_passphrase="ignored",
+                private_key_password="canonical",
+            )
+        assert config.private_key_password == "canonical"
+
+    def test_legacy_rewrite_external_browser_timeout(self):
+        with pytest.warns(DeprecationWarning, match="external_browser_timeout"):
+            config = ConnectionConfig.from_kwargs(external_browser_timeout=30)
+        assert config.authentication_timeout == 30
+
+    def test_legacy_rewrite_disable_console_login(self):
+        with pytest.warns(DeprecationWarning, match="disable_console_login"):
+            config = ConnectionConfig.from_kwargs(disable_console_login=True)
+        assert config.oauth_disable_console_login is True
+
     def test_legacy_rewrite_client_request_mfa_token(self):
         with pytest.warns(DeprecationWarning, match="client_request_mfa_token"):
             config = ConnectionConfig.from_kwargs(client_request_mfa_token=True)
@@ -140,6 +169,46 @@ class TestFromKwargs:
         assert config.crl_enable_disk_caching is True
         assert "enable_crl_cache" not in config._extra
 
+    @pytest.mark.parametrize(
+        "legacy_kwarg",
+        [
+            "dsn",
+            "session_id",
+            "backoff_policy",
+            "inject_client_pause",
+            "probe_connection",
+            "support_negative_year",
+            "json_result_force_utf8_decoding",
+            "debug_arrow_chunk",
+            "snowflake_server_dop_cap_for_file_transfer",
+            "reraise_error_in_file_transfer_work_function",
+            "iobound_tpe_limit",
+        ],
+    )
+    def test_dropped_legacy_kwargs_warn_and_are_not_forwarded(self, legacy_kwarg):
+        with pytest.warns(DeprecationWarning, match=legacy_kwarg):
+            config = ConnectionConfig.from_kwargs(user="u", **{legacy_kwarg: True})
+        assert config.user == "u"
+        assert legacy_kwarg not in config._extra
+
+    @pytest.mark.parametrize(
+        "legacy_kwarg",
+        [
+            "log_imported_packages_in_telemetry",
+            "log_imported_packages",
+        ],
+    )
+    def test_imported_package_logging_kwargs_are_silently_ignored(self, legacy_kwarg):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            config = ConnectionConfig.from_kwargs(user="u", **{legacy_kwarg: True})
+        assert config.user == "u"
+        assert legacy_kwarg not in config._extra
+
+    def test_password_callback_raises(self):
+        with pytest.raises(ProgrammingError, match="'password_callback' is not supported"):
+            ConnectionConfig.from_kwargs(user="u", password_callback=lambda: "changed")
+
     def test_client_session_keep_alive_kwargs(self):
         config = ConnectionConfig.from_kwargs(
             client_session_keep_alive=True,
@@ -162,8 +231,6 @@ class TestFromKwargs:
         assert config.use_s3_regional_url is True
 
     def test_use_s3_regional_url_canonical_kwarg_no_warning(self):
-        import warnings
-
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
             config = ConnectionConfig.from_kwargs(use_s3_regional_url=True)
@@ -415,6 +482,53 @@ class TestFromConnectionArgs:
         with pytest.raises(ProgrammingError, match="Invalid autocommit parameter"):
             ConnectionConfig.from_connection_args(user="u", autocommit=1)
 
+    def test_timezone_injects_session_parameter(self):
+        config = ConnectionConfig.from_connection_args(user="u", timezone="America/Los_Angeles")
+        assert config.timezone == "America/Los_Angeles"
+        assert config.session_parameters["TIMEZONE"] == "America/Los_Angeles"
+
+    def test_timezone_overwrites_session_parameters_timezone(self):
+        config = ConnectionConfig.from_connection_args(
+            user="u",
+            timezone="UTC",
+            session_parameters={"TIMEZONE": "America/New_York", "QUERY_TAG": "keep"},
+        )
+        assert config.session_parameters["TIMEZONE"] == "UTC"
+        assert config.session_parameters["QUERY_TAG"] == "keep"
+
+    def test_timezone_none_does_not_inject(self):
+        config = ConnectionConfig.from_connection_args(user="u")
+        assert config.timezone is None
+        assert config.session_parameters is None
+
+    def test_timezone_non_str_raises(self):
+        with pytest.raises(ProgrammingError, match="Invalid timezone parameter"):
+            ConnectionConfig.from_connection_args(user="u", timezone=1)
+
+    def test_interpolate_empty_sequences_true(self):
+        config = ConnectionConfig.from_connection_args(user="u", interpolate_empty_sequences=True)
+        assert config.interpolate_empty_sequences is True
+
+    def test_interpolate_empty_sequences_defaults_to_none(self):
+        config = ConnectionConfig.from_connection_args(user="u")
+        assert config.interpolate_empty_sequences is None
+
+    def test_interpolate_empty_sequences_non_bool_raises(self):
+        with pytest.raises(ProgrammingError, match="Invalid interpolate_empty_sequences parameter"):
+            ConnectionConfig.from_connection_args(user="u", interpolate_empty_sequences=1)
+
+    def test_reuse_results_true(self):
+        config = ConnectionConfig.from_connection_args(user="u", reuse_results=True)
+        assert config.reuse_results is True
+
+    def test_reuse_results_defaults_to_none(self):
+        config = ConnectionConfig.from_connection_args(user="u")
+        assert config.reuse_results is None
+
+    def test_reuse_results_non_bool_raises(self):
+        with pytest.raises(ProgrammingError, match="Invalid reuse_results parameter"):
+            ConnectionConfig.from_connection_args(user="u", reuse_results=1)
+
     def test_private_key_normalization(self):
         """Private key is normalized via normalize_private_key."""
         with patch(
@@ -448,10 +562,20 @@ class TestToOptions:
         assert opts["enable_connection_diag"] is True
 
     def test_excludes_python_only(self):
-        config = ConnectionConfig(user="u", numpy=True, arrow_number_to_decimal=True)
+        config = ConnectionConfig(
+            user="u",
+            numpy=True,
+            arrow_number_to_decimal=True,
+            timezone="UTC",
+            interpolate_empty_sequences=True,
+            reuse_results=True,
+        )
         opts = config.to_options()
         assert "numpy" not in opts
         assert "arrow_number_to_decimal" not in opts
+        assert "timezone" not in opts
+        assert "interpolate_empty_sequences" not in opts
+        assert "reuse_results" not in opts
 
     def test_maps_python_to_rust_name(self):
         config = ConnectionConfig(passcode_in_password=True)
@@ -581,9 +705,12 @@ class TestToProtoOptions:
         assert proto["passcodeInPassword"].bool_value is True
 
     def test_excludes_python_only(self):
-        config = ConnectionConfig(numpy=True)
+        config = ConnectionConfig(numpy=True, timezone="UTC", interpolate_empty_sequences=True, reuse_results=True)
         proto = config.to_proto_options()
         assert "numpy" not in proto
+        assert "timezone" not in proto
+        assert "interpolate_empty_sequences" not in proto
+        assert "reuse_results" not in proto
 
 
 class TestClassVariables:
@@ -635,6 +762,9 @@ class TestClassVariables:
         assert "arrow_number_to_decimal" in ConnectionConfig._PYTHON_ONLY
         assert "session_parameters" in ConnectionConfig._PYTHON_ONLY
         assert "autocommit" in ConnectionConfig._PYTHON_ONLY
+        assert "timezone" in ConnectionConfig._PYTHON_ONLY
+        assert "interpolate_empty_sequences" in ConnectionConfig._PYTHON_ONLY
+        assert "reuse_results" in ConnectionConfig._PYTHON_ONLY
 
     def test_all_fields_superset_of_python_only(self):
         assert ConnectionConfig._PYTHON_ONLY.issubset(ConnectionConfig._all_field_names())

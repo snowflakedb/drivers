@@ -73,6 +73,26 @@ class ConnectionConfigMixin:
     autocommit: bool | None = None
     """Enable/disable autocommit at connection time."""
 
+    timezone: str | None = None
+    """Session TIMEZONE to set at connection time.
+
+    Merged into ``session_parameters["TIMEZONE"]`` the same way the old
+    connector copies ``timezone=`` onto the login session-parameter map.
+    When both ``timezone`` and ``session_parameters["TIMEZONE"]`` are set,
+    ``timezone`` wins.
+    """
+
+    interpolate_empty_sequences: bool | None = None
+    """When True, pyformat/format binding interpolates empty param sequences so
+    doubled ``%%`` in the SQL is unescaped. Default False matches the old driver.
+    """
+
+    reuse_results: bool | None = None
+    """When True, ``Cursor.reset()`` keeps the current result set so a later
+    fetch can re-read the same rows. ``close()`` still releases the handle.
+    Default False matches the old driver.
+    """
+
     connections_file_path: str | None = None
     """Path to the TOML file profiles are resolved from.
 
@@ -123,6 +143,9 @@ class ConnectionConfigMixin:
             "arrow_number_to_decimal",
             "paramstyle",
             "autocommit",
+            "timezone",
+            "interpolate_empty_sequences",
+            "reuse_results",
             "connections_file_path",
             "auto_cleanup",
         }
@@ -182,7 +205,10 @@ class ConnectionConfigMixin:
         "client_request_mfa_token": "client_store_temporary_credential",
         "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
         "private_key_file_pwd": "private_key_password",
+        "private_key_passphrase": "private_key_password",
         "oauth_socket_uri": "oauth_redirect_uri",
+        "external_browser_timeout": "authentication_timeout",
+        "disable_console_login": "oauth_disable_console_login",
         # Old LinuxLocalFileCache internal toggle that leaked out as a
         # connection kwarg; renames to the ``unsafe_`` form so the fan-out
         # block below can handle both names uniformly.
@@ -216,8 +242,44 @@ class ConnectionConfigMixin:
             "not supported; the universal core has independent cache toggles."
             "Use enable_crl_memory_cache and enable_crl_file_cache instead"
         ),
+        "dsn": "not supported; the old driver accepted dsn but never used it.",
+        "session_id": (
+            "not supported as a connect parameter; read connection.session_id "
+            "after login for the server-assigned session id."
+        ),
+        "backoff_policy": (
+            "not supported; configure retry_backoff_base_ms, retry_backoff_cap_ms, "
+            "retry_backoff_factor, and retry_backoff_jitter instead."
+        ),
+        "inject_client_pause": "not supported; internal test pause is not implemented.",
+        "probe_connection": "not supported; connection probing is not implemented.",
+        "support_negative_year": ("not supported; the SnowSQL JSON converter this flag controlled is gone."),
+        "json_result_force_utf8_decoding": ("not supported; JSON result chunks are not used (results are Arrow)."),
+        "debug_arrow_chunk": "not supported; raw Arrow-chunk debug logging is not implemented.",
+        "snowflake_server_dop_cap_for_file_transfer": (
+            "not supported; internal PUT/GET parallelism cap is not implemented."
+        ),
+        "reraise_error_in_file_transfer_work_function": (
+            "not supported; PUT/GET worker exceptions are not swallowed by a Python thread pool."
+        ),
+        "iobound_tpe_limit": ("not supported; PUT/GET parallelism is not capped by a Python IO-bound thread pool."),
     }
     """Legacy kwargs that are accepted for source compatibility but have no effect."""
+
+    _SILENTLY_IGNORED_PARAMS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "log_imported_packages_in_telemetry",
+            "log_imported_packages",
+        }
+    )
+
+    _REJECTED_PARAMS: ClassVar[dict[str, str]] = {
+        "password_callback": (
+            "'password_callback' is not supported because the driver cannot invoke "
+            "a callback during expired-password login. Change the expired password "
+            "outside the driver and reconnect without password_callback."
+        ),
+    }
 
     _APPLICATION_NAME: ClassVar[str] = "PythonConnector"
     """Default application name."""
@@ -353,17 +415,30 @@ class ConnectionConfigMixin:
                 if target not in kwargs:
                     kwargs[target] = legacy_socket_timeout
 
-        # Drop unsupported legacy kwargs with a warning so the caller knows
-        # they had no effect instead of silently forwarding them to Rust.
         for key in list(kwargs):
-            if key.lower() in cls._UNSUPPORTED_PARAMS:
-                reason = cls._UNSUPPORTED_PARAMS[key.lower()]
+            lower_key = key.lower()
+            if lower_key in cls._SILENTLY_IGNORED_PARAMS:
+                kwargs.pop(key)
+            elif lower_key in cls._REJECTED_PARAMS:
+                raise ProgrammingError(cls._REJECTED_PARAMS[lower_key])
+            elif lower_key in cls._UNSUPPORTED_PARAMS:
+                reason = cls._UNSUPPORTED_PARAMS[lower_key]
                 warnings.warn(
                     f"{key!r} has no effect: {reason}.",
                     DeprecationWarning,
                     stacklevel=4,
                 )
                 kwargs.pop(key)
+
+        pwd_key = next((k for k in kwargs if k.lower() == "private_key_password"), None)
+        if pwd_key is not None and isinstance(kwargs[pwd_key], bytes):
+            try:
+                kwargs[pwd_key] = kwargs[pwd_key].decode()
+            except UnicodeDecodeError as err:
+                raise ProgrammingError(
+                    "private_key_password must be a str or UTF-8 bytes. "
+                    "Decode the passphrase to a string before passing it."
+                ) from err
 
         for key in kwargs:
             if key.lower() in cls._INTERNAL_PARAMS:
@@ -440,6 +515,11 @@ class ConnectionConfigMixin:
           version on the wire when the caller does not override it.
         * ``autocommit`` - type-checked (must be ``bool``), then merged into
           ``session_parameters["AUTOCOMMIT"]``.
+        * ``timezone`` - type-checked (must be ``str``), then merged into
+          ``session_parameters["TIMEZONE"]``, overwriting any TIMEZONE already
+          present in ``session_parameters``.
+        * ``interpolate_empty_sequences`` - type-checked (must be ``bool``).
+        * ``reuse_results`` - type-checked (must be ``bool``).
         """
         if config is not None and kwargs:
             raise ProgrammingError(
@@ -538,6 +618,26 @@ class ConnectionConfigMixin:
             if config.session_parameters is None:
                 config.session_parameters = {}
             config.session_parameters["AUTOCOMMIT"] = str(config.autocommit).lower()
+
+        if config.timezone is not None:
+            if not isinstance(config.timezone, str):
+                raise ProgrammingError(
+                    f"Invalid timezone parameter: {config.timezone!r}. "
+                    "Pass an IANA timezone name as a string "
+                    "(for example 'America/Los_Angeles')."
+                )
+            if config.session_parameters is None:
+                config.session_parameters = {}
+            config.session_parameters["TIMEZONE"] = config.timezone
+
+        if config.interpolate_empty_sequences is not None and not isinstance(config.interpolate_empty_sequences, bool):
+            raise ProgrammingError(
+                f"Invalid interpolate_empty_sequences parameter: "
+                f"{config.interpolate_empty_sequences!r}. Pass True or False."
+            )
+
+        if config.reuse_results is not None and not isinstance(config.reuse_results, bool):
+            raise ProgrammingError(f"Invalid reuse_results parameter: {config.reuse_results!r}. Pass True or False.")
 
         return config
 

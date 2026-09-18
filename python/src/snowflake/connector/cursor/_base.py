@@ -92,7 +92,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         super().__init__()
         self._iterator = None
 
-        # -- ResultSet guard (set by _execute, cleared on reset) --
+        # -- ResultSet guard (set by _execute; released on reset unless reuse_results) --
         self._result_set = _ResultSetWrapper()
         # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
         self._prefetch_hook: Callable[[], None] | None = None
@@ -845,6 +845,10 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Also clears the ``messages`` list so that errors from previous
         operations do not leak into the next one.
 
+        When the connection was created with ``reuse_results=True``, the result
+        handle is kept so a later fetch can re-read the same rows. ``close()``
+        always releases the handle.
+
         Args:
             closing: If True, do not reset rowcount,
                      see: SNOW-647539: Do not erase the rowcount information when closing the cursor.
@@ -852,7 +856,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """
         del self._messages[:]
         self._query_result.reset(closing=closing)
-        self._result_set.release()
+        if closing or self._connection._reuse_results is not True:
+            self._result_set.release()
         self._iterator = None
         self._binding_data = None
         self._prefetch_hook = None
