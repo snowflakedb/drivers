@@ -16,14 +16,16 @@ export interface RequestPattern {
   method: HttpMethod;
   urlPathPattern?: string;
   urlPath?: string;
+  urlPattern?: string;
   queryParameters?: Record<string, QueryParameterMatcher>;
   bodyPatterns?: BodyPattern[];
 }
 
 export interface ResponseDefinition {
-  status: number;
+  status?: number;
   headers?: Record<string, string>;
   jsonBody?: unknown;
+  proxyBaseUrl?: string;
 }
 
 export interface StubMapping {
@@ -33,6 +35,17 @@ export interface StubMapping {
   priority?: number;
   request: RequestPattern;
   response: ResponseDefinition;
+}
+
+export function proxyAllTo(proxyBaseUrl: string): StubMapping {
+  return {
+    priority: 10,
+    request: {
+      method: 'ANY',
+      urlPattern: '.*',
+    },
+    response: { proxyBaseUrl },
+  };
 }
 
 export function jsonResponse(status: number, body: unknown): ResponseDefinition {
@@ -96,6 +109,16 @@ export function logoutSuccess(): StubMapping {
       method: 'POST',
       urlPath: '/session',
       queryParameters: { delete: { equalTo: 'true' } },
+    },
+    response: jsonResponse(200, { success: true }),
+  };
+}
+
+export function telemetrySuccess(): StubMapping {
+  return {
+    request: {
+      method: 'POST',
+      urlPathPattern: '/telemetry/send.*',
     },
     response: jsonResponse(200, { success: true }),
   };

@@ -74,6 +74,13 @@ export class WiremockServer {
     return payload.requests ?? [];
   }
 
+  async clearRequests(): Promise<void> {
+    const { status, text } = await this.#admin('DELETE', '/__admin/requests');
+    if (status !== 200) {
+      throw new Error(`Failed to clear WireMock requests: ${status} ${text}`);
+    }
+  }
+
   async destroy(): Promise<void> {
     const child = this.#process;
     this.#process = undefined;

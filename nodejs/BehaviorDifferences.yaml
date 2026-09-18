@@ -809,3 +809,22 @@ behavior_differences:
     description: |
       Callers that omitted the option now cache tokens. Set
       clientStoreTemporaryCredential=false to keep the old opt-in behavior.
+
+  40:
+    name: 'fetchAsString Number does not emit a precision-loss warning or telemetry'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      A fixed numeric cell whose JS Number is an integer outside MAX_SAFE_INTEGER still logs a
+      precision-loss warning and posts selecting_with_precision_loss telemetry when the cell
+      is returned as a string via fetchAsString: ['Number'].
+    new_driver_behavior: |
+      The same cell is an exact digit string and produces neither the warning nor the
+      telemetry event.
+    description: |
+      The warning tells the caller to fetch as a string or BigInt. The old driver still
+      converts the cell to Number first, so the warning fires even when fetchAsString
+      already returned the exact digits.
