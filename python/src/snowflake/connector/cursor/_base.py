@@ -5,7 +5,7 @@ from __future__ import annotations
 import abc
 import logging
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, BinaryIO, cast, overload
 
 from .._common.extras import pandas, pyarrow, requires_dependency
@@ -52,7 +52,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from .._internal.statement_utils import statement
-from .._internal.utils import _resolve_alias
+from .._internal.utils import _coerce_executemany_params, _resolve_alias
 from ..errors import InterfaceError, OperationalError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._chunked_download_reader import _ChunkedDownloadReader
@@ -480,9 +480,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     def executemany(
         self,
         operation: str,
-        seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]] | None = None,
+        seq_of_parameters: Iterable[Sequence[Any] | dict[str, Any]] | None = None,
         *,
-        seqparams: Sequence[Sequence[Any] | dict[str, Any]] | None = None,
+        seqparams: Iterable[Sequence[Any] | dict[str, Any]] | None = None,
         _force_qmark_paramstyle: bool = False,
     ) -> SnowflakeCursorBase:
         """
@@ -503,7 +503,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
         Args:
             operation (str): SQL statement (INSERT, UPDATE, DELETE, etc.)
-            seq_of_parameters (sequence): Sequence of parameter sequences or dicts
+            seq_of_parameters: Iterable of parameter sequences or dicts. Generators
+                and other one-shot iterators are materialized so the first row can
+                be inspected and array-binding can walk the collection more than once.
             seqparams: Legacy alias for ``seq_of_parameters`` (kwarg-only).
                 Cannot be supplied together with ``seq_of_parameters``.
             _force_qmark_paramstyle: If True, treat as qmark even when the
@@ -514,10 +516,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             execution — matching the legacy connector.
 
         Raises:
-            InterfaceError: If parameter sequences have inconsistent lengths
+            InterfaceError: If parameter sequences have inconsistent lengths.
+            ProgrammingError: If both ``seq_of_parameters`` and ``seqparams`` are
+                supplied, or if ``seq_of_parameters`` is not iterable.
         """
-        seq_of_parameters = _resolve_alias(  # type: ignore[assignment]
-            seq_of_parameters, seqparams, "seq_of_parameters", "seqparams"
+        seq_of_parameters = _coerce_executemany_params(
+            _resolve_alias(seq_of_parameters, seqparams, "seq_of_parameters", "seqparams")
         )
 
         if not seq_of_parameters:

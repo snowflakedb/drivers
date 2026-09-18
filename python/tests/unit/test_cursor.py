@@ -1975,6 +1975,59 @@ class TestResetIntegration:
 
         assert cursor._query_result.rowcount == 42
 
+    def test_executemany_empty_generator_does_not_reset(self, cursor, mock_connection):
+        """Empty generators are PEP 249 no-ops, matching an empty list."""
+        cursor._query_result = QueryResult(rowcount=42)
+
+        cursor.executemany("INSERT INTO t VALUES (?)", (row for row in []))
+
+        assert cursor._query_result.rowcount == 42
+
+    def test_executemany_accepts_generator_on_per_row_path(self, cursor, mock_connection):
+        """Generators are materialized so executemany can iterate parameter rows.
+
+        Uses UPDATE so this stays on the client-side per-row path.
+        """
+        mock_connection.paramstyle = ParamStyle.PYFORMAT
+        cursor._query_result.rowcount = 1
+
+        with patch.object(cursor, "_execute", return_value=cursor) as mock_execute:
+            cursor.executemany("UPDATE t SET x = %s", ((i,) for i in (1, 2, 3)))
+
+        assert mock_execute.call_count == 3
+        assert [call.args[1] for call in mock_execute.call_args_list] == [(1,), (2,), (3,)]
+
+    def test_executemany_generator_survives_array_bind_fallback(self, cursor, mock_connection):
+        """A one-shot iterator is still available after transpose when array bind is rejected."""
+        mock_connection.paramstyle = ParamStyle.QMARK
+        prepare_result = MagicMock()
+        prepare_result.array_bind_supported = False
+
+        with (
+            patch.object(cursor, "_prepare", return_value=prepare_result),
+            patch.object(cursor, "_executemany_per_row") as mock_per_row,
+        ):
+            cursor.executemany("INSERT INTO t VALUES (?)", ((i,) for i in (1, 2)))
+
+        rows = mock_per_row.call_args.args[1]
+        assert list(rows) == [(1,), (2,)]
+
+    def test_executemany_accepts_generator_via_seqparams(self, cursor, mock_connection):
+        """seqparams= accepts the same one-shot iterators as seq_of_parameters."""
+        mock_connection.paramstyle = ParamStyle.PYFORMAT
+        cursor._query_result.rowcount = 1
+
+        with patch.object(cursor, "_execute", return_value=cursor) as mock_execute:
+            cursor.executemany("UPDATE t SET x = %s", seqparams=((i,) for i in (1, 2)))
+
+        assert mock_execute.call_count == 2
+        assert [call.args[1] for call in mock_execute.call_args_list] == [(1,), (2,)]
+
+    def test_executemany_rejects_non_iterable_seq_of_parameters(self, cursor):
+        with pytest.raises(ProgrammingError, match="seq_of_parameters must be an iterable") as exc_info:
+            cursor.executemany("INSERT INTO t VALUES (?)", 1)
+        assert exc_info.value.errno == ER_INVALID_VALUE
+
 
 class TestDescribe:
     """Unit tests for Cursor.describe method."""
@@ -3584,6 +3637,14 @@ class TestExecutemanyMultirowInsertRewrite:
         sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
         assert sql_request.query == "INSERT INTO t VALUES (1),(2),(3)"
 
+    def test_should_rewrite_simple_multirow_insert_from_tuple_generator(self, cursor, mock_core_client):
+        result = cursor.executemany("INSERT INTO t VALUES (%s)", ((i,) for i in (1, 2, 3)))
+
+        assert result is cursor
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t VALUES (1),(2),(3)"
+
     def test_should_rewrite_with_named_pyformat_dict_params(self, cursor, mock_core_client):
         """A pyformat INSERT with named (dict) params is rewritten the same way."""
         cursor.executemany(
@@ -3594,6 +3655,13 @@ class TestExecutemanyMultirowInsertRewrite:
         assert mock_core_client.statement_execute_query.call_count == 1
         sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
         assert sql_request.query == "INSERT INTO t VALUES (1, 'Alice'),(2, 'Bob')"
+
+    def test_should_rewrite_named_pyformat_from_dict_generator(self, cursor, mock_core_client):
+        cursor.executemany("INSERT INTO t VALUES (%(id)s)", ({"id": x} for x in (1, 2)))
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t VALUES (1),(2)"
 
     def test_should_rewrite_insert_with_parse_json_nested_parens(self, cursor, mock_core_client):
         """A VALUES clause containing nested function-call parens (e.g. PARSE_JSON)
@@ -4032,6 +4100,61 @@ class TestAsyncExecutemanyReturnsCursor:
         ):
             result = asyncio.run(cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)]))
         assert result is cursor
+
+
+class TestAsyncExecutemanyIterators:
+    """Async executemany() accepts generators and other one-shot iterators."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.PYFORMAT
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection, no_native_stream_ops):
+        return AsyncSnowflakeCursor(mock_connection)
+
+    def test_empty_generator_is_noop(self, cursor):
+        assert asyncio.run(cursor.executemany("INSERT INTO t VALUES (?)", (row for row in []))) is cursor
+
+    def test_per_row_path_accepts_generator(self, cursor):
+        with patch.object(cursor, "_executemany_per_row", new=AsyncMock()) as mock_per_row:
+            result = asyncio.run(
+                cursor.executemany("UPDATE t SET x = %s WHERE id = %s", ((x, y) for x, y in ((1, 10), (2, 20))))
+            )
+        assert result is cursor
+        rows = mock_per_row.call_args.args[1]
+        assert list(rows) == [(1, 10), (2, 20)]
+
+    def test_accepts_generator_via_seqparams(self, cursor):
+        with patch.object(cursor, "_executemany_per_row", new=AsyncMock()) as mock_per_row:
+            result = asyncio.run(cursor.executemany("UPDATE t SET x = %s", seqparams=((i,) for i in (1, 2))))
+        assert result is cursor
+        rows = mock_per_row.call_args.args[1]
+        assert list(rows) == [(1,), (2,)]
+
+    def test_rejects_non_iterable_seq_of_parameters(self, cursor):
+        with pytest.raises(ProgrammingError, match="seq_of_parameters must be an iterable") as exc_info:
+            asyncio.run(cursor.executemany("INSERT INTO t VALUES (?)", 1))
+        assert exc_info.value.errno == ER_INVALID_VALUE
+
+    def test_generator_survives_array_bind_fallback(self, cursor):
+        cursor._connection.paramstyle = ParamStyle.QMARK
+        with (
+            patch(
+                "snowflake.connector.aio.cursor._base.async_statement",
+                return_value=_AsyncCM(StatementHandle(id=1)),
+            ),
+            patch.object(cursor, "_prepare", new=AsyncMock(return_value=MagicMock(array_bind_supported=False))),
+            patch.object(cursor, "_executemany_per_row", new=AsyncMock()) as mock_per_row,
+        ):
+            result = asyncio.run(cursor.executemany("INSERT INTO t VALUES (?)", ((i,) for i in (1, 2))))
+        assert result is cursor
+        rows = mock_per_row.call_args.args[1]
+        assert list(rows) == [(1,), (2,)]
 
 
 class TestAsyncExecuteStatementParams:
