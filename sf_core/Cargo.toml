@@ -111,8 +111,47 @@ prost = { version = "0.14.1", optional = true }
 proto_utils = { path = "../proto_utils", optional = true }
 
 # AWS SDK dependencies
-aws-sdk-s3 = "1.106.0"
-aws-sdk-sts = "1.96.0"
+#
+# `default-features = false` is about crypto provenance, not size. The `rustls`
+# feature on these crates does *not* mean the rustls 0.23/aws-lc stack the rest
+# of the driver uses: it expands to `aws-smithy-runtime/tls-rustls` ->
+# `aws-smithy-http-client/legacy-rustls-ring`, which links hyper 0.14 and a
+# second, older rustls 0.21 built on **ring**. Nothing here ever used that
+# connector -- every `aws_config::defaults(...)` call site hands the SDK its own
+# reqwest-backed `HttpClient` (see `tls::aws_http_client`) -- so it was linked
+# but dead, and under `fips-tls` it put ring inside a FIPS artifact (F7).
+#
+# `default-https-client` is deliberately kept. It maps to
+# `aws-smithy-http-client/rustls-aws-lc`, so it is aws-lc-backed rather than
+# ring-backed, and it still supplies a default connector to the paths that build
+# an `SdkConfig` without an explicit client.
+#
+# `sigv4a` is dropped with the defaults: it pulls `aws-runtime/sigv4a` ->
+# `aws-sigv4/sigv4a` -> `dep:ring`, and it only signs S3 multi-region access
+# point ARNs. Snowflake stages are ordinary region-scoped buckets, so nothing
+# here can reach that signer.
+aws-sdk-s3 = { version = "1.106.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-sts = { version = "1.96.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+# `aws-config` deliberately KEEPS its default features, which means this build
+# still links ring (175 symbols in a `fips-tls` lib-test binary, down from 221
+# before the two lines above). Its `sso` feature hard-requires `dep:ring`, and
+# unlike `rustls` above there is no aws-lc-backed equivalent to swap in: `sso`
+# is the IAM Identity Center *credential provider*, not a transport.
+#
+# Dropping it does take ring to zero -- measured, and `aws-sdk-sso`/`ssooidc`
+# fall out with it -- but it also removes SSO credentials from the SDK's default
+# chain, and two call sites resolve through that chain on purpose:
+# `workload_identity/aws.rs` (credentials are `Option`; ambient discovery is the
+# whole point of the WIF path) and `telemetry/platform_detection/aws.rs` (passes
+# no provider at all). Only `file_manager/s3_transfer.rs` supplies explicit
+# Snowflake-issued credentials and would be unaffected.
+#
+# Decision (2026-09-18): keep SSO support; accept ring in the artifact and
+# record it as a known deviation. Cargo features are additive and cannot be
+# negated, so this cannot be split per-build without the named-profile
+# machinery the design doc rejects -- `fips-tls` cannot turn a default feature
+# off. Please do not "fix" this by disabling default features here; that is the
+# trade, not an oversight.
 aws-config = "1.8.12"
 aws-runtime = "1.5.18"
 aws-smithy-runtime = "1.9.8"
