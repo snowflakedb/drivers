@@ -830,6 +830,10 @@ pub struct TransferCtx<'a> {
     /// The batch HTTP client when this transfer joined a `BatchTransport`.
     /// `None` means a single-file caller or test; the callee builds its own.
     pub(crate) http_client: Option<&'a reqwest::Client>,
+    /// Shared `S3Client` for the command when this transfer joined a
+    /// `BatchTransport` on an S3 stage. `None` for single-file callers, tests,
+    /// and non-S3 clouds.
+    pub(crate) s3_client_cache: Option<&'a super::s3_transfer::BatchS3ClientCache>,
 }
 
 impl<'a> TransferCtx<'a> {
@@ -854,6 +858,7 @@ impl<'a> TransferCtx<'a> {
             cleanup,
             scheduler: None,
             http_client: None,
+            s3_client_cache: None,
         }
     }
 
@@ -872,6 +877,16 @@ impl<'a> TransferCtx<'a> {
     pub(crate) fn with_http_client(self, client: &'a reqwest::Client) -> Self {
         Self {
             http_client: Some(client),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_s3_client_cache(
+        self,
+        cache: &'a super::s3_transfer::BatchS3ClientCache,
+    ) -> Self {
+        Self {
+            s3_client_cache: Some(cache),
             ..self
         }
     }

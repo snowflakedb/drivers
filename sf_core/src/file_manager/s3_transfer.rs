@@ -21,6 +21,7 @@ use std::io::{Cursor, Read};
 use std::marker::PhantomData;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio_stream::wrappers::ReceiverStream;
 
 // AWS SDK imports
@@ -34,6 +35,7 @@ use aws_sdk_s3::types::BucketAccelerateStatus;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 use aws_smithy_types::body::SdkBody;
+use sha2::{Digest, Sha256};
 
 const SNOWFLAKE_UPLOAD_PROVIDER: &str = "snowflake-upload";
 const SNOWFLAKE_DOWNLOAD_PROVIDER: &str = "snowflake-download";
@@ -280,7 +282,8 @@ pub(super) async fn upload_to_s3_or_skip(
         let s3_key = s3_key.clone();
         let policy = policy.clone();
         async move {
-            let s3_client = create_s3_client(
+            let s3_client = resolve_s3_client(
+                tx.s3_client_cache,
                 &stage_info,
                 SNOWFLAKE_UPLOAD_PROVIDER,
                 &policy,
@@ -1246,7 +1249,8 @@ pub(super) async fn download_from_s3(
         let s3_key = s3_key.clone();
         let policy = policy.clone();
         async move {
-            let s3_client = create_s3_client(
+            let s3_client = resolve_s3_client(
+                tx.s3_client_cache,
                 &stage_info,
                 SNOWFLAKE_DOWNLOAD_PROVIDER,
                 &policy,
@@ -1643,9 +1647,10 @@ async fn s3_get_range(
 /// errors, 5xx server errors, and throttling (429, SlowDown). 403 is left to
 /// the SDK's defaults: unlike GCS/Azure (where 403 commonly means "token not
 /// yet propagated" / "SAS clock skew"), S3 returns 403 for genuine AccessDenied
-/// and retrying is rarely productive — `create_s3_client` is called per
-/// operation, so an expired STS token surfaces as a non-retryable 403 and the
-/// caller can re-fetch credentials via a new PUT/GET parse.
+/// and retrying is rarely productive — an expired STS token surfaces as a
+/// non-retryable 403 and the caller can re-fetch credentials via a new PUT/GET
+/// parse. Batch transfers reuse one [`BatchS3ClientCache`] client per command
+/// and rebuild it when the STS fingerprint changes after refresh.
 ///
 /// Unlike GCS/Azure, S3 has no driver-side retry loop: the AWS SDK owns retry
 /// (see `to_aws_retry_config` / `create_s3_client`), so there is no
@@ -1684,6 +1689,73 @@ fn to_aws_timeout_config(policy: &RetryPolicy) -> AwsTimeoutConfig {
         builder = builder.operation_attempt_timeout(per_attempt);
     }
     builder.build()
+}
+
+/// One `S3Client` per PUT/GET command, shared across concurrent files.
+/// Rebuilt when the STS session token (or key id) changes after refresh.
+pub(crate) struct BatchS3ClientCache {
+    inner: AsyncMutex<Option<CachedS3Client>>,
+}
+
+struct CachedS3Client {
+    creds_fingerprint: String,
+    client: S3Client,
+}
+
+impl BatchS3ClientCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: AsyncMutex::new(None),
+        }
+    }
+}
+
+/// SHA-256 fingerprint of the STS credentials wired into an `S3Client`. The
+/// session token rotates on refresh even when the access key id stays the same.
+fn s3_creds_fingerprint(creds: &CloudCredentials) -> Option<String> {
+    match creds {
+        CloudCredentials::S3 {
+            aws_key_id,
+            aws_token,
+            ..
+        } => {
+            let token = aws_token
+                .as_ref()
+                .map(|t| t.reveal().as_str())
+                .unwrap_or("");
+            let material = format!("{}:{token}", aws_key_id.reveal());
+            Some(hex::encode(Sha256::digest(material.as_bytes())))
+        }
+        _ => None,
+    }
+}
+
+/// Returns a batch-cached `S3Client` when `cache` is present, otherwise builds
+/// a fresh one (single-file callers and tests).
+async fn resolve_s3_client(
+    cache: Option<&BatchS3ClientCache>,
+    stage_info: &StageInfo,
+    provider_name: &'static str,
+    policy: &RetryPolicy,
+    shared_http: Option<&reqwest::Client>,
+) -> Result<S3Client, CreateS3ClientError> {
+    if let (Some(cache), Some(fingerprint)) = (cache, s3_creds_fingerprint(&stage_info.creds)) {
+        let mut guard = cache.inner.lock().await;
+        if let Some(cached) = guard.as_ref()
+            && cached.creds_fingerprint == fingerprint
+        {
+            return Ok(cached.client.clone());
+        }
+
+        let client = create_s3_client(stage_info, provider_name, policy, shared_http).await?;
+        *guard = Some(CachedS3Client {
+            creds_fingerprint: fingerprint,
+            client: client.clone(),
+        });
+        return Ok(client);
+    }
+
+    create_s3_client(stage_info, provider_name, policy, shared_http).await
 }
 
 async fn create_s3_client(

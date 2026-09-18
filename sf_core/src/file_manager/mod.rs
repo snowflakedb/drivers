@@ -540,6 +540,7 @@ pub async fn upload_files(
 struct BatchTransport {
     scheduler: TransferScheduler,
     http: cloud_http::StorageHttp,
+    s3_client_cache: Option<s3_transfer::BatchS3ClientCache>,
 }
 
 impl BatchTransport {
@@ -551,12 +552,19 @@ impl BatchTransport {
         Ok(Self {
             scheduler: scheduler_for(tx, multipart),
             http: cloud_http::StorageHttp::for_stage(stage_info).context(BatchHttpClientSnafu)?,
+            s3_client_cache: matches!(stage_info.location_type, LocationType::S3)
+                .then(s3_transfer::BatchS3ClientCache::new),
         })
     }
 
     fn join<'a>(&'a self, tx: TransferCtx<'a>) -> TransferCtx<'a> {
-        tx.with_scheduler(&self.scheduler)
-            .with_http_client(self.http.client())
+        let tx = tx
+            .with_scheduler(&self.scheduler)
+            .with_http_client(self.http.client());
+        self.s3_client_cache
+            .as_ref()
+            .map(|cache| tx.with_s3_client_cache(cache))
+            .unwrap_or(tx)
     }
 }
 
