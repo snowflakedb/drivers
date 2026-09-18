@@ -14,11 +14,6 @@
 
 TEST_CASE("Replay: excel msquery cancel_and_connection_reuse", "[excel][msquery]") {
   SKIP_IODBC("Excel MS Query replays use the Windows ODBC Driver Manager");
-  // SNOW-4082442: SQLFetch returns 22003 while writing SQLGetTypeInfo's 2-byte and
-  // 8-byte SQL_C_DEFAULT binds for values such as 134217728 and −5. The new driver
-  // also accepts row-bind size 65540 where the reference driver returns S1000 on
-  // macOS and aarch64 (SNOW-4082445).
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;
@@ -525,6 +520,12 @@ TEST_CASE("Replay: excel msquery cancel_and_connection_reuse", "[excel][msquery]
   // SQLFetch
   {
     SQLRETURN ret = SQLFetch(stmt0);
+    NEW_DRIVER_ONLY("BD#119") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
+    OLD_DRIVER_ONLY("BD#119") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsNoData()); }
+  }
+
+  NEW_DRIVER_ONLY("BD#119") {
+    SQLRETURN ret = SQLFetch(stmt0);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsNoData());
   }
 
@@ -972,15 +973,15 @@ TEST_CASE("Replay: excel msquery cancel_and_connection_reuse", "[excel][msquery]
   // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_TYPE
   {
     SQLRETURN ret = SQLSetStmtAttr(stmt4, SQL_ATTR_ROW_BIND_TYPE, (SQLPOINTER)65540, -6);
-    // Platform divergence: the row-wise bind struct size (65540) is not a multiple of
-    // alignof(SQLLEN)=8, which the SimbaEngine descriptor validator rejects under 64-bit
-    // unixODBC on macOS and aarch64 (S1000); Windows and Linux x86_64 accept it (SNOW-4082445).
-    if (get_platform() == PLATFORM::PLATFORM_WINDOWS ||
-        (get_platform() == PLATFORM::PLATFORM_LINUX && get_arch() == ARCH::ARCH_X86_64)) {
-      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt4), OdbcMatchers::IsSuccess());
-    } else {
-      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt4),
-                 OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1000"));
+    NEW_DRIVER_ONLY("BD#147") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt4), OdbcMatchers::IsSuccess()); }
+    OLD_DRIVER_ONLY("BD#147") {
+      if (get_platform() == PLATFORM::PLATFORM_WINDOWS ||
+          (get_platform() == PLATFORM::PLATFORM_LINUX && get_arch() == ARCH::ARCH_X86_64)) {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt4), OdbcMatchers::IsSuccess());
+      } else {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt4),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1000"));
+      }
     }
   }
 
@@ -1265,15 +1266,15 @@ TEST_CASE("Replay: excel msquery cancel_and_connection_reuse", "[excel][msquery]
   // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_TYPE
   {
     SQLRETURN ret = SQLSetStmtAttr(stmt6, SQL_ATTR_ROW_BIND_TYPE, (SQLPOINTER)65540, -6);
-    // Platform divergence: the row-wise bind struct size (65540) is not a multiple of
-    // alignof(SQLLEN)=8, which the SimbaEngine descriptor validator rejects under 64-bit
-    // unixODBC on macOS and aarch64 (S1000); Windows and Linux x86_64 accept it (SNOW-4082445).
-    if (get_platform() == PLATFORM::PLATFORM_WINDOWS ||
-        (get_platform() == PLATFORM::PLATFORM_LINUX && get_arch() == ARCH::ARCH_X86_64)) {
-      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt6), OdbcMatchers::IsSuccess());
-    } else {
-      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt6),
-                 OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1000"));
+    NEW_DRIVER_ONLY("BD#147") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt6), OdbcMatchers::IsSuccess()); }
+    OLD_DRIVER_ONLY("BD#147") {
+      if (get_platform() == PLATFORM::PLATFORM_WINDOWS ||
+          (get_platform() == PLATFORM::PLATFORM_LINUX && get_arch() == ARCH::ARCH_X86_64)) {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt6), OdbcMatchers::IsSuccess());
+      } else {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt6),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1000"));
+      }
     }
   }
 

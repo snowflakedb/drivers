@@ -15,10 +15,6 @@
 
 TEST_CASE("Replay: excel msquery parametrized_query_reuse", "[excel][msquery]") {
   SKIP_IODBC("Excel MS Query replays use the Windows ODBC Driver Manager");
-  // SNOW-4082442: SQLFetch returns 22003 while writing SQLGetTypeInfo's 2-byte and
-  // 8-byte SQL_C_DEFAULT binds for values such as 134217728 and −5. SQLColumns has
-  // the same failure on a 2-byte SQL_C_DEFAULT DATA_TYPE such as 12 or −7.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;
@@ -524,6 +520,12 @@ TEST_CASE("Replay: excel msquery parametrized_query_reuse", "[excel][msquery]") 
 
   // SQLFetch
   {
+    SQLRETURN ret = SQLFetch(stmt0);
+    NEW_DRIVER_ONLY("BD#119") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
+    OLD_DRIVER_ONLY("BD#119") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsNoData()); }
+  }
+
+  NEW_DRIVER_ONLY("BD#119") {
     SQLRETURN ret = SQLFetch(stmt0);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsNoData());
   }

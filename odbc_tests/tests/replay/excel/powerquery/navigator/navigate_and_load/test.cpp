@@ -11,8 +11,6 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[excel][powerquery][navigator]") {
-  // TODO(SNOW-4039377): The new driver's SQLPrimaryKeys/SQLForeignKeys string IRD remains SQL_VARCHAR (12).
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;
