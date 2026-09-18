@@ -1,4 +1,4 @@
-@python @core_not_needed
+@python @core_not_needed @odbc
 Feature: FILE type support
   # Snowflake FILE type represents a reference to a staged file (e.g. produced by
   # TO_FILE) as a JSON document describing it (RELATIVE_PATH, STAGE,
@@ -20,7 +20,7 @@ Feature: FILE type support
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should cast FILE values to appropriate type
     # Python: a FILE column is returned as str, the raw undecoded JSON document
     Given Snowflake client is logged in
@@ -31,7 +31,9 @@ Feature: FILE type support
   #                               Column metadata                               #
   # =========================================================================== #
 
-  @python_e2e
+  # ODBC reports FILE as SQL_VARCHAR via SQLDescribeCol. There is no dedicated
+  # ODBC SQL type or Python type_code FILE on the result descriptor.
+  @python_e2e @odbc_not_needed
   Scenario: should report a FILE column with a dedicated type code
     # cursor.description[i].type_code reports FILE, matching the code legacy
     # snowflake-connector-python assigns, instead of falling back to TEXT
@@ -43,13 +45,13 @@ Feature: FILE type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should select a FILE value built by TO_FILE without a table
     Given Snowflake client is logged in
     When Query "SELECT TO_FILE(PARSE_JSON('{"RELATIVE_PATH": "some_new_file.jpeg", ...}'))" is executed
     Then the result should contain the expected FILE JSON document
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should handle NULL FILE values from literals
     # TO_FILE(NULL) yields a NULL FILE; NULL::FILE is rejected by the server,
     # so the NULL literal is produced through TO_FILE.
@@ -61,7 +63,7 @@ Feature: FILE type support
   #                           Table operations                                  #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should select FILE values from table
     Given Snowflake client is logged in
     And A temporary table with an ID and a FILE column is created
@@ -69,7 +71,7 @@ Feature: FILE type support
     When Query "SELECT * FROM {table} ORDER BY ID" is executed
     Then the result should contain the inserted FILE JSON documents in order
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should handle NULL FILE values from table
     Given Snowflake client is logged in
     And A temporary table with an ID and a FILE column is created
@@ -81,7 +83,7 @@ Feature: FILE type support
   #                       Multiple chunks downloading                           #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should download FILE data in multiple chunks
     Given Snowflake client is logged in
     When Query generating 20000 FILE values is executed
