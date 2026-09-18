@@ -56,12 +56,14 @@ Merged by `ProxyConfig::from_settings` (`sf_core/src/tls/config.rs`):
 |---|---|
 | `proxy_host` | Hostname only — **no** scheme prefix |
 | `proxy_port` | Integer; 0 or negative → omitted |
+| `proxy_scheme` | `http` (default) or `https`. `https` uses TLS for the hop **to** the proxy. Any other spelling is HTTP. |
 | `proxy_user` | Proxy auth username |
 | `proxy_password` | Proxy auth password (redacted in logs) |
 | `no_proxy` | Comma-separated bypass patterns |
 
 **Legacy ODBC URL form:** `PROXY = [scheme://][user:pass@]host[:port]`.
-Individual fields override URL components. ODBC aliases: `NOPROXY`→`no_proxy`,
+Individual fields override URL components. An `https://` scheme is preserved as
+`proxy_scheme=https`. ODBC aliases: `NOPROXY`→`no_proxy`,
 `PROXYWITHENV`→`use_proxy_env`, `ALLOWEMPTYPROXY`→`allow_empty_proxy`.
 
 ### C3. Precedence

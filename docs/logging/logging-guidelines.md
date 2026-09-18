@@ -74,6 +74,7 @@ The following parameters are safe to be logged:
     - `proxyHost`,
     - `proxyPort`,
     - `proxyProtocol`,
+    - `proxy_scheme`,
     - `proxyUser`,
     - `useProxy`,
 - **Query/session identification**

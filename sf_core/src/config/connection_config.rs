@@ -1487,6 +1487,30 @@ mod tests {
         let config = ConnectionConfig::build(&settings).unwrap();
         assert_eq!(config.proxy.host.as_deref(), Some("proxy.example.com"));
         assert_eq!(config.proxy.port, Some(3128));
+        assert_eq!(config.proxy.scheme.as_str(), "http");
+    }
+
+    #[test]
+    fn build_proxy_config_preserves_https_scheme() {
+        let mut settings = minimal_password_settings();
+        settings.insert(
+            "proxy".into(),
+            Setting::String("https://proxy.example.com:8443".into()),
+        );
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.proxy.host.as_deref(), Some("proxy.example.com"));
+        assert_eq!(config.proxy.port, Some(8443));
+        assert_eq!(config.proxy.scheme.as_str(), "https");
+    }
+
+    #[test]
+    fn build_proxy_config_proxy_scheme_field() {
+        let mut settings = minimal_password_settings();
+        settings.insert("proxy_host".into(), Setting::String("p.example.com".into()));
+        settings.insert("proxy_port".into(), Setting::Int(8443));
+        settings.insert("proxy_scheme".into(), Setting::String("https".into()));
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.proxy.scheme.as_str(), "https");
     }
 
     #[test]

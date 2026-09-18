@@ -218,6 +218,7 @@ pub mod param_names {
     // Proxy configuration
     pub const PROXY_HOST: ParamKey = ParamKey("proxy_host");
     pub const PROXY_PORT: ParamKey = ParamKey("proxy_port");
+    pub const PROXY_SCHEME: ParamKey = ParamKey("proxy_scheme");
     pub const PROXY_USER: ParamKey = ParamKey("proxy_user");
     pub const PROXY_PASSWORD: ParamKey = ParamKey("proxy_password");
     pub const NO_PROXY: ParamKey = ParamKey("no_proxy");
@@ -2093,6 +2094,16 @@ static PARAM_DEFS: &[ParamDef] = &[
         .mutable_after_connect(false)
         .build(),
     ParamDef::builder()
+        .canonical_name(param_names::PROXY_SCHEME.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Scheme for the hop to the proxy: http (default) or https")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
         .canonical_name(param_names::PROXY_USER.as_str())
         .value_type(ValueType::String)
         .sensitive(false)
@@ -2466,6 +2477,7 @@ mod tests {
             ("TLS_SKIP_VERIFY", "tls_skip_verify"),
             ("PROXY_HOST", "proxy_host"),
             ("PROXY_PORT", "proxy_port"),
+            ("PROXY_SCHEME", "proxy_scheme"),
             ("PROXY_USER", "proxy_user"),
             ("PROXY_PASSWORD", "proxy_password"),
             ("NO_PROXY", "no_proxy"),
@@ -3254,6 +3266,7 @@ mod tests {
         for key in [
             "proxy_host",
             "proxy_port",
+            "proxy_scheme",
             "proxy_user",
             "proxy_password",
             "no_proxy",

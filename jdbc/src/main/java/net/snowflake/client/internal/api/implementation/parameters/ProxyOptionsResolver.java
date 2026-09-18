@@ -47,8 +47,7 @@ public final class ProxyOptionsResolver {
     Object proxyUser = removeIgnoreCase(resolved, "proxyUser");
     Object proxyPassword = removeIgnoreCase(resolved, "proxyPassword");
     Object nonProxyHosts = removeIgnoreCase(resolved, "nonProxyHosts");
-    // TODO(SNOW-4109352): this discards proxyProtocol. The hop to the proxy is HTTP.
-    removeIgnoreCase(resolved, "proxyProtocol");
+    Object proxyProtocol = removeIgnoreCase(resolved, "proxyProtocol");
     removeIgnoreCase(resolved, "disableSocksProxy");
 
     if (hasCanonicalProxyConfiguration(resolved)) {
@@ -62,7 +61,8 @@ public final class ProxyOptionsResolver {
           stringValue(proxyPort),
           stringValue(proxyUser),
           stringValue(proxyPassword),
-          stringValue(nonProxyHosts));
+          stringValue(nonProxyHosts),
+          stringValue(proxyProtocol));
       return resolved;
     }
 
@@ -100,7 +100,8 @@ public final class ProxyOptionsResolver {
           httpsPort,
           environment.getSystemProperty("https.proxyUser"),
           environment.getSystemProperty("https.proxyPassword"),
-          nonProxyHosts);
+          nonProxyHosts,
+          protocol);
     } else if ("http".equalsIgnoreCase(protocol) && isPresent(httpHost) && isPresent(httpPort)) {
       applyProxy(
           properties,
@@ -108,7 +109,8 @@ public final class ProxyOptionsResolver {
           httpPort,
           environment.getSystemProperty("http.proxyUser"),
           environment.getSystemProperty("http.proxyPassword"),
-          nonProxyHosts);
+          nonProxyHosts,
+          protocol);
     }
   }
 
@@ -118,7 +120,8 @@ public final class ProxyOptionsResolver {
       String portValue,
       String user,
       String password,
-      String nonProxyHosts) {
+      String nonProxyHosts,
+      String protocol) {
     if (isBlank(host) || isBlank(portValue)) {
       throw new SFSQLException(
           ErrorCode.INVALID_PROXY_PROPERTIES, "Both proxy host and port values are needed.");
@@ -134,6 +137,9 @@ public final class ProxyOptionsResolver {
 
     properties.setProperty("proxy_host", host.trim());
     properties.put("proxy_port", port);
+    if (protocol != null && protocol.trim().equalsIgnoreCase("https")) {
+      properties.setProperty("proxy_scheme", "https");
+    }
     setIfPresent(properties, "proxy_user", user);
     setIfPresent(properties, "proxy_password", password);
     setIfPresent(properties, "no_proxy", nonProxyHosts);

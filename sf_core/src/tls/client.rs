@@ -518,6 +518,7 @@ pub(crate) fn apply_proxy_to_builder(
     };
     tracing::debug!(
         host = ?proxy.host,
+        scheme = proxy.scheme.as_str(),
         use_proxy_env = proxy.use_proxy_env,
         explicitly_disabled = proxy.explicitly_disabled,
         "proxy config"
@@ -527,7 +528,7 @@ pub(crate) fn apply_proxy_to_builder(
         // Explicit proxy → applied for all schemes; reqwest's `.proxy()` call
         // disables auto env detection (matches JDBC/Go/Node precedence).
         let url = build_proxy_url(host, proxy);
-        // `url` is the fully credentialed `http://user:pass@host` form;
+        // `url` is the fully credentialed `{scheme}://user:pass@host` form;
         // `RedactedUrl::new` strips credentials before the value can reach
         // `ProxyBuild`'s `Debug`/`ErrorTrace` output.
         let reqwest_proxy = Proxy::all(&url)
@@ -549,11 +550,12 @@ pub(crate) fn apply_proxy_to_builder(
     }
 }
 
-/// Build an `http://[user:pass@]host[:port]` URL from a `ProxyConfig`.
+/// Build a `{scheme}://[user:pass@]host[:port]` URL from a `ProxyConfig`.
 /// Credentials are percent-encoded so values containing `:`, `@`, or `/`
 /// don't break URL parsing (a known footgun in the legacy Python connector).
 fn build_proxy_url(host: &str, proxy: &ProxyConfig) -> String {
-    let mut url = String::from("http://");
+    let scheme = proxy.scheme.as_str();
+    let mut url = format!("{scheme}://");
     if let Some(user) = proxy.user.as_deref().filter(|s| !s.is_empty()) {
         url.push_str(&urlencoding::encode(user));
         if let Some(pw) = proxy
@@ -644,6 +646,15 @@ mod tests {
             build_proxy_url("p.example.com", &p),
             "http://p.example.com:8080"
         );
+    }
+
+    #[test]
+    fn build_proxy_url_preserves_https_scheme() {
+        let mut p = proxy(Some("p.example.com"), Some(8443), None, None);
+        p.scheme = crate::tls::config::ProxyScheme::Https;
+        let url = build_proxy_url("p.example.com", &p);
+        assert_eq!(url, "https://p.example.com:8443");
+        Proxy::all(&url).expect("reqwest must accept an https proxy URL");
     }
 
     #[test]

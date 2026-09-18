@@ -141,17 +141,42 @@ pub struct TlsConfig {
     pub versions: TlsVersions,
 }
 
+/// Scheme for the hop to the proxy, not the origin. Only `https` uses TLS to
+/// the proxy; every other value is HTTP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProxyScheme {
+    #[default]
+    Http,
+    Https,
+}
+
+impl ProxyScheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Https => "https",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        if value.trim().eq_ignore_ascii_case("https") {
+            Self::Https
+        } else {
+            Self::Http
+        }
+    }
+}
+
 /// HTTP proxy settings, supporting two equivalent input forms:
 ///
-/// - **Individual fields** (`host`, `port`, `user`, `password`) — legacy
-///   snowflake-connector-python kwargs.
+/// - **Individual fields** (`host`, `port`, `scheme`, `user`, `password`).
 /// - **Full URL** (`url`) — legacy ODBC `PROXY` DSN entry,
 ///   `[scheme://][user:pass@]host[:port]`.
 ///
 /// Both forms are merged in `build_proxy_config`: the URL is parsed as a
 /// baseline and individual fields override the corresponding URL components
-/// when both are set.  Once construction is finished, `host`/`port`/`user`/
-/// `password` carry the effective values and `url` is informational only.
+/// when both are set.  Once construction is finished, `host`/`port`/`scheme`/
+/// `user`/`password` carry the effective values and `url` is informational only.
 ///
 /// `use_proxy_env` controls whether the HTTP client falls back to
 /// `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars when no explicit proxy is
@@ -164,6 +189,7 @@ pub struct TlsConfig {
 pub struct ProxyConfig {
     pub host: Option<String>,
     pub port: Option<i64>,
+    pub scheme: ProxyScheme,
     pub user: Option<String>,
     pub password: Option<SensitiveString>,
     pub no_proxy: Option<String>,
@@ -179,6 +205,7 @@ impl Default for ProxyConfig {
         Self {
             host: None,
             port: None,
+            scheme: ProxyScheme::Http,
             user: None,
             password: None,
             no_proxy: None,
@@ -199,8 +226,8 @@ impl ProxyConfig {
 
     /// Build a [`ProxyConfig`] from any `Settings` bag, merging the legacy
     /// ODBC `PROXY` URL form with the individual `proxy_host`/`proxy_port`/
-    /// `proxy_user`/`proxy_password` fields.  Individual fields override URL
-    /// components when both are set.
+    /// `proxy_scheme`/`proxy_user`/`proxy_password` fields.  Individual fields
+    /// override URL components when both are set.
     pub fn from_settings(settings: &dyn crate::config::settings::Settings) -> Self {
         let allow_empty_proxy = settings.get_bool_or("allow_empty_proxy", true);
         let use_proxy_env = settings.get_bool_or("use_proxy_env", false);
@@ -225,6 +252,11 @@ impl ProxyConfig {
                     .and_then(|s| s.parse::<i64>().ok())
             })
             .or_else(|| parsed.as_ref().and_then(|p| p.port));
+        let scheme = settings
+            .get_string("proxy_scheme")
+            .map(|s| ProxyScheme::parse(&s))
+            .or_else(|| parsed.as_ref().map(|p| p.scheme))
+            .unwrap_or(ProxyScheme::Http);
         let user = settings
             .get_string("proxy_user")
             .or_else(|| parsed.as_ref().and_then(|p| p.user.clone()));
@@ -236,6 +268,7 @@ impl ProxyConfig {
         Self {
             host,
             port,
+            scheme,
             user,
             password,
             no_proxy: settings.get_string("no_proxy"),
@@ -250,6 +283,7 @@ impl ProxyConfig {
 struct ParsedProxyUrl {
     host: Option<String>,
     port: Option<i64>,
+    scheme: ProxyScheme,
     user: Option<String>,
     password: Option<SensitiveString>,
 }
@@ -267,6 +301,7 @@ fn parse_legacy_proxy_url(raw: &str) -> Option<ParsedProxyUrl> {
     let host = url.host_str().map(|h| h.to_owned());
     host.as_ref()?;
     let port = url.port().map(i64::from);
+    let scheme = ProxyScheme::parse(url.scheme());
     let user = if url.username().is_empty() {
         None
     } else {
@@ -286,6 +321,7 @@ fn parse_legacy_proxy_url(raw: &str) -> Option<ParsedProxyUrl> {
     Some(ParsedProxyUrl {
         host,
         port,
+        scheme,
         user,
         password,
     })
@@ -509,6 +545,7 @@ mod proxy_config_tests {
         let cfg = ProxyConfig {
             host: Some("proxy.example.com".to_string()),
             port: Some(8080),
+            scheme: ProxyScheme::Http,
             user: Some("proxyuser".to_string()),
             password: Some(SensitiveString::from(PLAINTEXT_PROXY_PASSWORD)),
             no_proxy: None,
@@ -527,5 +564,62 @@ mod proxy_config_tests {
             debug_output.contains("****"),
             "ProxyConfig Debug output should show the redacted placeholder: {debug_output}"
         );
+    }
+}
+
+#[cfg(test)]
+mod proxy_scheme_tests {
+    use super::*;
+    use crate::config::settings::Setting;
+    use std::collections::HashMap;
+
+    fn settings(pairs: &[(&str, &str)]) -> HashMap<String, Setting> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), Setting::String(v.to_string())))
+            .collect()
+    }
+
+    #[test]
+    fn should_default_scheme_to_http() {
+        let cfg = ProxyConfig::from_settings(&settings(&[]));
+        assert_eq!(cfg.scheme, ProxyScheme::Http);
+    }
+
+    #[test]
+    fn should_preserve_https_scheme_from_proxy_url() {
+        let cfg =
+            ProxyConfig::from_settings(&settings(&[("proxy", "https://proxy.example.com:8443")]));
+        assert_eq!(cfg.host.as_deref(), Some("proxy.example.com"));
+        assert_eq!(cfg.port, Some(8443));
+        assert_eq!(cfg.scheme, ProxyScheme::Https);
+    }
+
+    #[test]
+    fn should_honour_proxy_scheme_field() {
+        let cfg = ProxyConfig::from_settings(&settings(&[
+            ("proxy_host", "proxy.example.com"),
+            ("proxy_port", "8443"),
+            ("proxy_scheme", "HTTPS"),
+        ]));
+        assert_eq!(cfg.scheme, ProxyScheme::Https);
+    }
+
+    #[test]
+    fn should_let_proxy_scheme_override_url_scheme() {
+        let cfg = ProxyConfig::from_settings(&settings(&[
+            ("proxy", "https://proxy.example.com:8443"),
+            ("proxy_scheme", "http"),
+        ]));
+        assert_eq!(cfg.scheme, ProxyScheme::Http);
+    }
+
+    #[test]
+    fn should_treat_non_https_url_scheme_as_http() {
+        let cfg =
+            ProxyConfig::from_settings(&settings(&[("proxy", "socks5://proxy.example.com:1081")]));
+        assert_eq!(cfg.host.as_deref(), Some("proxy.example.com"));
+        assert_eq!(cfg.port, Some(1081));
+        assert_eq!(cfg.scheme, ProxyScheme::Http);
     }
 }

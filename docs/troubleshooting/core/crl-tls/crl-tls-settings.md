@@ -42,6 +42,7 @@ Related: [tls-handshake.md](tls-handshake.md) · [cert-chain.md](cert-chain.md) 
 |---|---|---|---|
 | `proxy_host` | string | — | Explicit proxy hostname (**no** scheme prefix) |
 | `proxy_port` | int | — | Proxy port |
+| `proxy_scheme` | string | `http` | `http` or `https`; `https` uses TLS for the hop to the proxy |
 | `proxy_user` | string | — | Proxy auth username |
 | `proxy_password` | string | — | Proxy auth password (redacted in logs) |
 | `no_proxy` | string | — | Comma-separated bypass patterns |

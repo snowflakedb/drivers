@@ -36,6 +36,7 @@ class ProxyOptionsResolverTest {
         () -> assertEquals("proxy-user", resolved.getProperty("proxy_user")),
         () -> assertEquals("proxy-password", resolved.getProperty("proxy_password")),
         () -> assertEquals("*.example.com|localhost", resolved.getProperty("no_proxy")),
+        () -> assertEquals("https", resolved.getProperty("proxy_scheme")),
         () -> assertFalse(resolved.containsKey("useProxy")),
         () -> assertFalse(resolved.containsKey("proxyProtocol")));
   }
@@ -83,7 +84,8 @@ class ProxyOptionsResolverTest {
         () -> assertEquals("proxy-password", resolved.getProperty("proxy_password")),
         () ->
             assertEquals(
-                "localhost|*.internal|metadata.example.com", resolved.getProperty("no_proxy")));
+                "localhost|*.internal|metadata.example.com", resolved.getProperty("no_proxy")),
+        () -> assertEquals("https", resolved.getProperty("proxy_scheme")));
   }
 
   @Test
@@ -105,7 +107,8 @@ class ProxyOptionsResolverTest {
         () -> assertEquals("proxy.example.com", resolved.getProperty("proxy_host")),
         () -> assertEquals(8080, resolved.get("proxy_port")),
         () -> assertEquals("proxy-user", resolved.getProperty("proxy_user")),
-        () -> assertEquals("proxy-password", resolved.getProperty("proxy_password")));
+        () -> assertEquals("proxy-password", resolved.getProperty("proxy_password")),
+        () -> assertFalse(resolved.containsKey("proxy_scheme")));
   }
 
   @Test
@@ -123,6 +126,25 @@ class ProxyOptionsResolverTest {
         () -> assertEquals("canonical-proxy.example.com", resolved.getProperty("proxy_host")),
         () -> assertEquals("8080", resolved.getProperty("proxy_port")),
         () -> assertFalse(resolved.containsKey("useProxy")));
+  }
+
+  @Test
+  void shouldOmitProxySchemeWhenProxyProtocolIsNotHttps() {
+    Properties properties = new Properties();
+    properties.setProperty("useProxy", "true");
+    properties.setProperty("proxyHost", "proxy.example.com");
+    properties.setProperty("proxyPort", "8080");
+    properties.setProperty("proxyProtocol", "http");
+
+    Properties resolved =
+        ProxyOptionsResolver.resolve(
+            properties, new MapEnvironment(Collections.emptyMap(), Collections.emptyMap()));
+
+    assertAll(
+        () -> assertEquals("proxy.example.com", resolved.getProperty("proxy_host")),
+        () -> assertEquals(8080, resolved.get("proxy_port")),
+        () -> assertFalse(resolved.containsKey("proxy_scheme")),
+        () -> assertFalse(resolved.containsKey("proxyProtocol")));
   }
 
   @Test

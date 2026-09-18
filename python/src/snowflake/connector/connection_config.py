@@ -274,6 +274,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     proxy_port: int | None = None
     """Proxy server port"""
 
+    proxy_scheme: str | None = None
+    """Scheme for the hop to the proxy: http (default) or https"""
+
     proxy_user: str | None = None
     """Proxy server username for Basic auth"""
 
