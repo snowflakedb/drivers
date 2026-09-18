@@ -1020,7 +1020,9 @@ tests:
   - test_name: PROCEDURE CALL returns NULL
     ud_tests: []
   - test_name: PUT GET Statement
-    ud_tests: []
+    ud_tests:
+    - odbc_tests/tests/e2e/put_get/put_get_prepare.cpp - should upload file to stage via SQLPrepare + SQLExecute
+    - odbc_tests/tests/e2e/put_get/put_get_prepare.cpp - should download file from stage via SQLPrepare + SQLExecute
   - test_name: RESULT SCAN
     ud_tests: []
   - test_name: SET_TEST

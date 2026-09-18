@@ -32,6 +32,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed `SQLPrepare` + `SQLExecute` for `PUT`/`GET` file-transfer commands, which previously failed with server error `000007` (statement not preparable) because prepare issued a `describeOnly` request the server rejects; prepare now skips the describe and the transfer runs on execute. (snowflakedb/drivers#1510)
 - Fixed `SQLGetTypeInfo` to return type information matching the application's configured ODBC version. (snowflakedb/drivers#2008)
 - Fixed catalog result-set string columns to report `SQL_WVARCHAR` metadata consistently, including after `SQLPrimaryKeys` and `SQLForeignKeys` results are installed on the statement; `SQLStatistics` `ASC_OR_DESC` reports `SQL_WCHAR`. (snowflakedb/drivers#2007)
 - Fixed `SQL_C_DEFAULT` on catalog `SMALLINT` and `INTEGER` columns so `SQLGetTypeInfo` and `SQLColumns` return binary integers instead of failing with SQLSTATE 22003. (snowflakedb/drivers#1896)

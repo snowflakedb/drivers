@@ -252,6 +252,26 @@ impl DatabaseDriverV1 {
         let session_id = stmt.conn.lock().await.session_id;
         let report = AbortReport::default();
         let prepare = Box::pin(async {
+            let query = stmt.query.clone().unwrap_or_default();
+
+            // PUT/GET are client-side file transfers GS cannot describe: a
+            // `describeOnly` request is rejected with error 000007. Skip the
+            // describe and return empty prepare metadata; the transfer runs on
+            // execute when the stored SQL is submitted without `describeOnly`.
+            if is_file_transfer(&query) {
+                return Ok(PrepareResult {
+                    stream: crate::chunks::empty_reader(),
+                    query_id: String::new(),
+                    columns: Vec::new(),
+                    number_of_binds: 0,
+                    query,
+                    sql_state: None,
+                    array_bind_supported: false,
+                    binds: Vec::new(),
+                    request_id: uuid::Uuid::new_v4(),
+                });
+            }
+
             // Multi-statement query prepare is not supported. `request_id` is
             // always `Some` here — `execute_query_internal` mints one on every
             // path — so binding `Some` keeps `PrepareResult.request_id`
@@ -270,7 +290,6 @@ impl DatabaseDriverV1 {
             };
             let stream = self.result_set_get_stream(rs_info.handle).await?;
             self.result_set_release(rs_info.handle)?;
-            let query = stmt.query.clone().unwrap_or_default();
 
             Ok(PrepareResult {
                 stream,
