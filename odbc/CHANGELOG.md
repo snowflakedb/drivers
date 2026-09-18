@@ -2,6 +2,10 @@
 
 ## Upcoming Release
 
+New features:
+
+- Added the `PUT_COMPRESSLV` connection parameter so PUT AUTO_COMPRESS can select gzip compression levels 0–9. Unset and out-of-range values keep gzip level 6. (snowflakedb/drivers#2083)
+
 Changes:
 
 - Changed `CLIENT_STORE_TEMPORARY_CREDENTIAL` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)

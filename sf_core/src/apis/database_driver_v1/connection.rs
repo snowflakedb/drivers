@@ -1267,6 +1267,18 @@ impl Connection {
             .or_else(|| self.database_seed.get_bool(key))
     }
 
+    fn resolve_override_int(&self, key: ParamKey) -> Option<i64> {
+        self.session_overrides
+            .get_int(key)
+            .or_else(|| self.connection_seed.get_int(key))
+            .or_else(|| {
+                self.resolved_connect
+                    .as_ref()
+                    .and_then(|settings| settings.get_int(key))
+            })
+            .or_else(|| self.database_seed.get_int(key))
+    }
+
     /// Resolves `PUT_FASTFAIL` (see [`Self::resolve_override_bool`]).
     pub(crate) fn put_fastfail(&self) -> Option<bool> {
         self.resolve_override_bool(param_names::PUT_FASTFAIL)
@@ -1275,6 +1287,13 @@ impl Connection {
     /// Resolves `GET_FASTFAIL` (see [`Self::resolve_override_bool`]).
     pub(crate) fn get_fastfail(&self) -> Option<bool> {
         self.resolve_override_bool(param_names::GET_FASTFAIL)
+    }
+
+    pub(crate) fn put_compress_level(&self, default: u32) -> u32 {
+        crate::compression::clamp_gzip_compress_level(
+            self.resolve_override_int(param_names::PUT_COMPRESS_LEVEL),
+            default,
+        )
     }
 
     /// The resolved TLS config for this connection, read from the established
@@ -3506,6 +3525,81 @@ mod tests {
         conn.session_overrides
             .insert("get_fastfail".into(), Setting::Bool(false));
         assert_eq!(conn.get_fastfail(), Some(false));
+    }
+
+    #[test]
+    fn put_compress_level_defaults_when_unset() {
+        let conn = Connection::new();
+        assert_eq!(
+            conn.put_compress_level(WrapperPresets::default().put_compress_level_default),
+            9
+        );
+    }
+
+    #[test]
+    fn put_compress_level_odbc_defaults_when_unset() {
+        let conn = Connection::new();
+        assert_eq!(
+            conn.put_compress_level(WrapperPresets::odbc().put_compress_level_default),
+            6
+        );
+    }
+
+    #[test]
+    fn put_compress_level_jdbc_defaults_when_unset() {
+        let conn = Connection::new();
+        assert_eq!(
+            conn.put_compress_level(WrapperPresets::jdbc().put_compress_level_default),
+            6
+        );
+    }
+
+    #[test]
+    fn put_compress_level_nodejs_defaults_when_unset() {
+        let conn = Connection::new();
+        assert_eq!(
+            conn.put_compress_level(WrapperPresets::nodejs().put_compress_level_default),
+            6
+        );
+    }
+
+    #[test]
+    fn put_compress_level_returns_connection_seed_when_valid() {
+        let conn = make_connection_with_settings(vec![("put_compress_level", Setting::Int(1))]);
+        assert_eq!(
+            conn.put_compress_level(WrapperPresets::default().put_compress_level_default),
+            1
+        );
+    }
+
+    #[test]
+    fn put_compress_level_clamps_invalid_seed_to_default() {
+        let too_low = make_connection_with_settings(vec![("put_compress_level", Setting::Int(-1))]);
+        assert_eq!(
+            too_low.put_compress_level(WrapperPresets::default().put_compress_level_default),
+            9
+        );
+        let too_high =
+            make_connection_with_settings(vec![("put_compress_level", Setting::Int(10))]);
+        assert_eq!(
+            too_high.put_compress_level(WrapperPresets::default().put_compress_level_default),
+            9
+        );
+        assert_eq!(
+            too_high.put_compress_level(WrapperPresets::odbc().put_compress_level_default),
+            6
+        );
+    }
+
+    #[test]
+    fn put_compress_level_prefers_session_override_over_connection_seed() {
+        let mut conn = make_connection_with_settings(vec![("put_compress_level", Setting::Int(1))]);
+        conn.session_overrides
+            .insert("put_compress_level".into(), Setting::Int(4));
+        assert_eq!(
+            conn.put_compress_level(WrapperPresets::default().put_compress_level_default),
+            4
+        );
     }
 
     #[tokio::test]

@@ -185,6 +185,7 @@ async fn should_upload_and_download_via_azure_multipart_roundtrip() {
         legacy_odbc_compression_autodetect: false,
         skip_upload_on_content_match: false,
         multipart,
+        put_compress_level: 9,
     };
     let upload_result = upload_single_file(
         upload,

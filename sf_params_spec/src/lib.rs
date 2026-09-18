@@ -136,6 +136,7 @@ pub mod param_names {
     pub const CWD: ParamKey = ParamKey("cwd");
     pub const PUT_FASTFAIL: ParamKey = ParamKey("put_fastfail");
     pub const GET_FASTFAIL: ParamKey = ParamKey("get_fastfail");
+    pub const PUT_COMPRESS_LEVEL: ParamKey = ParamKey("put_compress_level");
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
@@ -1989,6 +1990,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         .visible_to(visible_to!(Odbc))
         .build(),
     ParamDef::builder()
+        .canonical_name(param_names::PUT_COMPRESS_LEVEL.as_str())
+        .aliases(aliases![Odbc; "PUT_COMPRESSLV"])
+        .value_type(ValueType::Int)
+        // No registry default: unset must resolve to `None` so the dispatch
+        // site can fall back to `WrapperPresets::put_compress_level_default`.
+        .sensitive(false)
+        .auth(false)
+        .description("Gzip compression level (0–9) used when PUT AUTO_COMPRESS rewrites a file. Unset and out-of-range values use gzip default preset level. Client-only, never forwarded to GS.")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .visible_to(visible_to!(Odbc))
+        .build(),
+    ParamDef::builder()
         .canonical_name(param_names::GET_FASTFAIL.as_str())
         .value_type(ValueType::Bool)
         // See PUT_FASTFAIL above: `None` is load-bearing, not an oversight.
@@ -2614,6 +2629,7 @@ mod tests {
             // onto the shared `put_get_max_attempts` setting.
             ("PUT_MAXRETRIES", "put_get_max_attempts", &[Odbc]),
             ("GET_MAXRETRIES", "put_get_max_attempts", &[Odbc]),
+            ("PUT_COMPRESSLV", "put_compress_level", &[Odbc]),
             ("MaxHttpRetries", "retry_max_attempts", &[Odbc]),
             // JDBC-only camelCase properties.
             ("oauthClientId", "oauth_client_id", &[Jdbc]),
@@ -3289,6 +3305,23 @@ mod tests {
         assert!(d.used_at_connect);
         assert!(!d.mutable_after_connect);
         assert_eq!(d.value_type, ValueType::String);
+    }
+
+    #[test]
+    fn put_compress_level_is_odbc_only_connection_int() {
+        let r = registry();
+        assert!(r.resolve("put_compress_level").is_none());
+        let d = r
+            .resolve_for(Wrapper::Odbc, "PUT_COMPRESSLV")
+            .expect("PUT_COMPRESSLV should resolve for Odbc");
+        assert_eq!(d.canonical_name, "put_compress_level");
+        assert_eq!(d.scopes, &[ParamScope::Connection]);
+        assert!(!d.used_at_connect);
+        assert!(d.mutable_after_connect);
+        assert_eq!(d.value_type, ValueType::Int);
+        assert!(d.is_visible_to(Wrapper::Odbc));
+        assert!(!d.is_visible_to(Wrapper::Python));
+        assert!(!d.is_visible_to(Wrapper::Jdbc));
     }
 
     #[test]

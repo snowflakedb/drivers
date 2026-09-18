@@ -119,6 +119,8 @@ pub struct UploadData {
     /// Resolved fail-fast (abort) vs collect-all flag; see
     /// [`WrapperPresets::put_get_fastfail_default`](crate::apis::database_driver_v1::WrapperPresets::put_get_fastfail_default).
     pub put_fastfail: bool,
+    /// Gzip compression level (0–9) used when auto-compress rewrites the file.
+    pub put_compress_level: u32,
     /// Directory used to resolve a relative `src_location_pattern`. Absolute
     /// `src_location_pattern` is left unchanged.
     pub cwd: Option<PathBuf>,
@@ -137,6 +139,7 @@ pub struct SingleUploadData {
     pub legacy_odbc_compression_autodetect: bool,
     pub skip_upload_on_content_match: bool,
     pub multipart: MultipartParams,
+    pub put_compress_level: u32,
 }
 
 #[derive(Debug)]

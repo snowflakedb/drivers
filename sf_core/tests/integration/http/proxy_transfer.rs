@@ -179,6 +179,7 @@ fn s3_single_upload(stage: StageInfo) -> SingleUploadData {
         skip_upload_on_content_match: false,
         // Defaults → below the multipart threshold → a single `PutObject`.
         multipart: MultipartParams::from_server(None, None),
+        put_compress_level: 9,
     }
 }
 

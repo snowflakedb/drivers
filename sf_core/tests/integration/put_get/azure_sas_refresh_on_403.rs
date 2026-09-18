@@ -123,6 +123,7 @@ fn upload_data_for(stage: StageInfo, src: &str) -> UploadData {
         // (e.g. AzureUpload::AzureHttp) from a single-file transfer; collect-all's
         // aggregate `UploadBatchSnafu` would stringify it away.
         put_fastfail: true,
+        put_compress_level: 9,
         cwd: None,
     }
 }

@@ -53,6 +53,9 @@ pub struct WrapperPresets {
     /// connection-string attrs). `true` = fail-fast (abort on first error);
     /// `false` = collect-all (ODBC's default; failures become ERROR rows).
     pub put_get_fastfail_default: bool,
+    /// Gzip level for PUT AUTO_COMPRESS when `put_compress_level` is unset or
+    /// outside 0–9.
+    pub put_compress_level_default: u32,
     /// When true, GET of a staged path that matches no object returns an empty
     /// result set (legacy snowflake-jdbc). When false, it errors with
     /// `RemoteFileNotFound` (Python, ODBC, and core).
@@ -88,7 +91,8 @@ pub struct WrapperPresets {
 impl Default for WrapperPresets {
     /// Hand-written rather than derived: `#[derive(Default)]` would give
     /// `put_get_fastfail_default` `bool::default() == false`, flipping every
-    /// wrapper but ODBC to collect-all by accident.
+    /// wrapper but ODBC to collect-all by accident, and
+    /// `put_compress_level_default` `u32::default() == 0` (store-only gzip).
     ///
     /// `configuration_flavor` is `Wrapper::Python`, so a wrapper resolving aliases
     /// under the Python flavor leaves its own scoped aliases in `sf_params_spec`
@@ -102,6 +106,7 @@ impl Default for WrapperPresets {
             put_get_resultset_flavor: PutGetResultsetFlavor::default(),
             legacy_odbc_compression_autodetect: false,
             put_get_fastfail_default: true,
+            put_compress_level_default: 9,
             legacy_empty_get_on_missing: false,
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: true,
@@ -128,6 +133,7 @@ impl WrapperPresets {
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
             legacy_odbc_compression_autodetect: true,
             put_get_fastfail_default: false,
+            put_compress_level_default: 6,
             legacy_empty_get_on_missing: false,
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: false,
@@ -145,6 +151,7 @@ impl WrapperPresets {
             legacy_empty_get_on_missing: true,
             honor_put_get_disable: true,
             clear_query_context_on_null_entries: false,
+            put_compress_level_default: 6,
             ..Self::default()
         }
     }
@@ -153,6 +160,7 @@ impl WrapperPresets {
     pub fn nodejs() -> Self {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::NodeJs,
+            put_compress_level_default: 6,
             validate_session_token: false,
             ..Self::default()
         }
@@ -455,6 +463,15 @@ mod tests {
         assert!(!WrapperPresets::python().serialize_session_operations);
         assert!(!WrapperPresets::jdbc().serialize_session_operations);
         assert!(WrapperPresets::odbc().serialize_session_operations);
+    }
+
+    #[test]
+    fn put_compress_level_default_follows_wrapper() {
+        assert_eq!(WrapperPresets::odbc().put_compress_level_default, 6);
+        assert_eq!(WrapperPresets::python().put_compress_level_default, 9);
+        assert_eq!(WrapperPresets::jdbc().put_compress_level_default, 6);
+        assert_eq!(WrapperPresets::nodejs().put_compress_level_default, 6);
+        assert_eq!(WrapperPresets::default().put_compress_level_default, 9);
     }
 
     #[test]

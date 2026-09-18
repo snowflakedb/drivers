@@ -237,6 +237,7 @@ async fn s3_upload_files_batch_shares_one_connection_across_files() {
         skip_upload_on_content_match: false,
         multipart: sequential_multipart(),
         put_fastfail: true,
+        put_compress_level: 9,
         cwd: None,
     };
 

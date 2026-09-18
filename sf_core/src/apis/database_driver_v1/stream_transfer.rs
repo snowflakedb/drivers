@@ -294,10 +294,11 @@ impl DatabaseDriverV1 {
 
             // The file transfer itself uses the put/get retry policy (distinct
             // from the query policy that drove the GS PUT above).
-            let (put_get_policy, transport) = {
+            let (put_get_policy, put_compress_level, transport) = {
                 let conn = conn_ptr.lock().await;
                 (
                     crate::config::retry::RetryPolicy::put_get(&conn.effective_settings()),
+                    conn.put_compress_level(self.wrapper_presets.put_compress_level_default),
                     file_manager::StageTransport {
                         tls_config: conn.tls_config(),
                         proxy_config: conn.proxy_config(),
@@ -319,6 +320,7 @@ impl DatabaseDriverV1 {
                 Some(refresh_ctx),
                 use_s3_regional_url,
                 &put_get_policy,
+                put_compress_level,
                 &transport,
                 source,
             )

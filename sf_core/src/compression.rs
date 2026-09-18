@@ -8,17 +8,31 @@ use tempfile::{NamedTempFile, TempPath};
 // 64 KiB read buffer for streaming the source into the gzip encoder.
 const GZIP_CHUNK_SIZE_IN_BYTES: usize = 64 * 1024;
 
+const MAX_GZIP_COMPRESS_LEVEL: u32 = 9;
+
+/// Maps a connection-level `put_compress_level` onto a gzip level. Unset and
+/// out-of-range values use `default`.
+pub fn clamp_gzip_compress_level(level: Option<i64>, default: u32) -> u32 {
+    match level {
+        Some(n) if (0..=i64::from(MAX_GZIP_COMPRESS_LEVEL)).contains(&n) => n as u32,
+        _ => default,
+    }
+}
+
 /// Streams the gzip-compressed form of `source` into a `NamedTempFile` and
 /// returns its path plus the `TempPath` guard. The caller owns the `TempPath`
 /// and must keep it alive while the path is in use (the file is unlinked when
-/// it drops).
+/// it drops). `gzip_level` is a gzip compression level in 0–9.
 ///
 /// Peak **heap** is `O(GZIP_CHUNK_SIZE_IN_BYTES)` regardless of input size. The
 /// tempfile lives in `std::env::temp_dir()`, so a writable temp dir is required
 /// — even for an in-memory `Bytes` source (a new failure mode for in-memory
 /// auto-compress) — and on a RAM-backed tmpfs the compressed output still
 /// occupies ~its own size in RAM (the heap bound is not a total-memory bound).
-pub fn compress_to_tempfile(source: &ByteSource) -> Result<(PathBuf, TempPath), CompressionError> {
+pub fn compress_to_tempfile(
+    source: &ByteSource,
+    gzip_level: u32,
+) -> Result<(PathBuf, TempPath), CompressionError> {
     // `Box<dyn Read + '_>` borrows from `source` for the `Bytes` arm so we
     // don't clone the buffer just to feed the encoder.
     let mut reader: Box<dyn Read + '_> = match source {
@@ -37,7 +51,9 @@ pub fn compress_to_tempfile(source: &ByteSource) -> Result<(PathBuf, TempPath), 
         let writer = BufWriter::new(temp_file.as_file());
         // `mtime=0` pins the gzip header timestamp so the output is byte-identical
         // across runs over the same input (deterministic digests).
-        let mut encoder = GzBuilder::new().mtime(0).write(writer, Compression::best());
+        let mut encoder = GzBuilder::new()
+            .mtime(0)
+            .write(writer, Compression::new(gzip_level));
 
         loop {
             let n = reader.read(&mut buf).context(IoFailedSnafu {
@@ -96,9 +112,13 @@ mod tests {
         decompressed
     }
 
+    fn compress_bytes(payload: &[u8], level: u32) -> (PathBuf, tempfile::TempPath) {
+        compress_to_tempfile(&ByteSource::Bytes(payload.to_vec().into()), level)
+            .expect("compress bytes")
+    }
+
     fn roundtrip(payload: &[u8]) {
-        let (path, _guard) = compress_to_tempfile(&ByteSource::Bytes(payload.to_vec().into()))
-            .expect("compress bytes");
+        let (path, _guard) = compress_bytes(payload, 9);
         let compressed = read_compressed(&path);
         let decompressed = gunzip(&compressed);
         assert_eq!(
@@ -141,7 +161,7 @@ mod tests {
         tf.flush().expect("flush input");
 
         let (path, _guard) =
-            compress_to_tempfile(&ByteSource::Path(tf.path().to_path_buf())).expect("compress");
+            compress_to_tempfile(&ByteSource::Path(tf.path().to_path_buf()), 9).expect("compress");
         let compressed = read_compressed(&path);
         let decompressed = gunzip(&compressed);
         assert_eq!(decompressed, payload);
@@ -153,10 +173,8 @@ mod tests {
     #[test]
     fn output_is_deterministic() {
         let payload: Vec<u8> = (0..32 * 1024).map(|i| (i % 251) as u8).collect();
-        let (path_a, _guard_a) =
-            compress_to_tempfile(&ByteSource::Bytes(payload.clone().into())).expect("compress a");
-        let (path_b, _guard_b) =
-            compress_to_tempfile(&ByteSource::Bytes(payload.clone().into())).expect("compress b");
+        let (path_a, _guard_a) = compress_bytes(&payload, 9);
+        let (path_b, _guard_b) = compress_bytes(&payload, 9);
         assert_eq!(
             read_compressed(&path_a),
             read_compressed(&path_b),
@@ -168,11 +186,42 @@ mod tests {
     /// pair pattern lets the caller own the keep-alive explicitly.
     #[test]
     fn tempfile_unlinks_when_guard_drops() {
-        let (path, guard) =
-            compress_to_tempfile(&ByteSource::Bytes(b"unlink test".to_vec().into()))
-                .expect("compress");
+        let (path, guard) = compress_bytes(b"unlink test", 9);
         assert!(path.exists(), "tempfile must exist while guard is held");
         drop(guard);
         assert!(!path.exists(), "tempfile must be unlinked once guard drops");
+    }
+
+    #[test]
+    fn clamp_gzip_compress_level_keeps_valid_range() {
+        assert_eq!(clamp_gzip_compress_level(Some(0), 9), 0);
+        assert_eq!(clamp_gzip_compress_level(Some(1), 9), 1);
+        assert_eq!(clamp_gzip_compress_level(Some(9), 9), 9);
+    }
+
+    #[test]
+    fn clamp_gzip_compress_level_defaults_unset_and_invalid() {
+        assert_eq!(clamp_gzip_compress_level(None, 9), 9);
+        assert_eq!(clamp_gzip_compress_level(Some(-1), 9), 9);
+        assert_eq!(clamp_gzip_compress_level(Some(10), 9), 9);
+        assert_eq!(clamp_gzip_compress_level(None, 6), 6);
+        assert_eq!(clamp_gzip_compress_level(Some(10), 6), 6);
+    }
+
+    #[test]
+    fn gzip_level_one_is_larger_than_level_nine_for_compressible_input() {
+        let payload: Vec<u8> = (0..32 * 1024).map(|i| (i % 13) as u8).collect();
+        let (path_one, _guard_one) = compress_bytes(&payload, 1);
+        let (path_nine, _guard_nine) = compress_bytes(&payload, 9);
+        let level_one = read_compressed(&path_one);
+        let level_nine = read_compressed(&path_nine);
+        assert!(
+            level_nine.len() < level_one.len(),
+            "gzip level 9 ({}) must compress more than level 1 ({})",
+            level_nine.len(),
+            level_one.len()
+        );
+        assert_eq!(gunzip(&level_one), payload);
+        assert_eq!(gunzip(&level_nine), payload);
     }
 }

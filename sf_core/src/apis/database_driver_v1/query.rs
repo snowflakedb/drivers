@@ -81,6 +81,7 @@ pub(super) async fn perform_put_get_transfer(
     use_s3_regional_url_session_param: bool,
     skip_upload_on_content_match: bool,
     put_fastfail: bool,
+    put_compress_level: u32,
     get_fastfail: bool,
     cwd: Option<std::path::PathBuf>,
     unsafe_file_write: bool,
@@ -122,6 +123,7 @@ pub(super) async fn perform_put_get_transfer(
                     skip_upload_on_content_match,
                     use_s3_regional_url_session_param,
                     put_fastfail,
+                    put_compress_level,
                     cwd,
                     &transport,
                 )
@@ -174,12 +176,14 @@ pub(super) async fn perform_put_get_transfer(
 /// token (echoed back by GS as `src_location_pattern`); auto-compress,
 /// overwrite, and encryption all follow the GS response, exactly as a normal
 /// file-path PUT.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn build_and_upload_stream(
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     put_get_policy: &RetryPolicy,
+    put_compress_level: u32,
     transport: &file_manager::StageTransport,
     payload: ByteSource,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
@@ -200,6 +204,7 @@ pub(super) async fn build_and_upload_stream(
             // never enters the `upload_files` batch loop, so `put_fastfail` is
             // inert here — seed it from the wrapper preset for consistency.
             wrapper_presets.put_get_fastfail_default,
+            put_compress_level,
             None,
             transport,
         )
@@ -245,6 +250,7 @@ pub(super) async fn build_and_upload_stream(
         legacy_odbc_compression_autodetect: upload_data.legacy_odbc_compression_autodetect,
         skip_upload_on_content_match: upload_data.skip_upload_on_content_match,
         multipart: upload_data.multipart,
+        put_compress_level: upload_data.put_compress_level,
     };
 
     // No cleanup scope, and no cancellation coverage on this path at all — stated

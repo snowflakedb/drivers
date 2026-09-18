@@ -252,6 +252,7 @@ async fn should_upload_and_download_via_gcs_multipart_roundtrip() {
         legacy_odbc_compression_autodetect: false,
         skip_upload_on_content_match: false,
         multipart,
+        put_compress_level: 9,
     };
     let upload_result = upload_single_file(
         upload,
@@ -385,6 +386,7 @@ async fn should_retry_gcs_resumable_initiation_on_transient_5xx() {
         legacy_odbc_compression_autodetect: false,
         skip_upload_on_content_match: false,
         multipart,
+        put_compress_level: 9,
     };
     let upload_result = upload_single_file(
         upload,
@@ -507,6 +509,7 @@ async fn assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(overwrite:
         legacy_odbc_compression_autodetect: false,
         skip_upload_on_content_match: false,
         multipart,
+        put_compress_level: 9,
     };
     let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let upload_result = upload_single_file(

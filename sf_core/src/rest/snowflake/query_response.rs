@@ -394,6 +394,7 @@ impl Data {
         skip_upload_on_content_match: bool,
         use_s3_regional_url_session_param: bool,
         put_fastfail: bool,
+        put_compress_level: u32,
         cwd: Option<std::path::PathBuf>,
         transport: &file_manager::StageTransport,
     ) -> Result<file_manager::UploadData, QueryResponseError> {
@@ -488,6 +489,7 @@ impl Data {
             skip_upload_on_content_match,
             multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
             put_fastfail,
+            put_compress_level,
             cwd,
         })
     }
@@ -556,6 +558,7 @@ impl Data {
             legacy_odbc_compression_autodetect: false,
             skip_upload_on_content_match: false,
             multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
+            put_compress_level: 9,
         })
     }
 
@@ -1684,6 +1687,7 @@ mod tests {
                 false,
                 false,
                 false,
+                9,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
@@ -1702,6 +1706,7 @@ mod tests {
                 false,
                 false,
                 false,
+                9,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
@@ -1720,6 +1725,7 @@ mod tests {
                 false,
                 false,
                 false,
+                9,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
@@ -1740,6 +1746,7 @@ mod tests {
                 false,
                 false,
                 false,
+                9,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
@@ -1760,6 +1767,7 @@ mod tests {
                 false,
                 false,
                 false,
+                9,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
@@ -1782,6 +1790,7 @@ mod tests {
             false,
             false,
             false,
+            9,
             None,
             &file_manager::StageTransport::for_test(),
         );
@@ -1804,6 +1813,7 @@ mod tests {
                 false,
                 false,
                 false,
+                9,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
@@ -1823,12 +1833,32 @@ mod tests {
                 false,
                 false,
                 false,
+                9,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Odbc);
         assert!(upload.legacy_odbc_compression_autodetect);
+    }
+
+    #[test]
+    fn upload_data_forwards_put_compress_level() {
+        let json = make_upload_json("");
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data
+            .to_file_upload_data(
+                PutGetResultsetFlavor::default(),
+                false,
+                false,
+                false,
+                false,
+                1,
+                None,
+                &file_manager::StageTransport::for_test(),
+            )
+            .unwrap();
+        assert_eq!(upload.put_compress_level, 1);
     }
 
     // Explicit `SOURCE_COMPRESSION=PARQUET` / `=ORC` parses to the matching
@@ -1862,6 +1892,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    9,
                     None,
                     &file_manager::StageTransport::for_test(),
                 )
@@ -1886,6 +1917,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    9,
                     None,
                     &file_manager::StageTransport::for_test(),
                 )
@@ -2986,6 +3018,7 @@ mod tests {
             false,
             use_s3_regional_url_session_param,
             false,
+            9,
             None,
             &file_manager::StageTransport::for_test(),
         )

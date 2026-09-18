@@ -490,6 +490,7 @@ pub async fn upload_files(
                     legacy_odbc_compression_autodetect: data.legacy_odbc_compression_autodetect,
                     skip_upload_on_content_match: data.skip_upload_on_content_match,
                     multipart: data.multipart,
+                    put_compress_level: data.put_compress_level,
                 };
                 let outcome = upload_single_file(single_upload_data, policy, tx).await;
                 if outcome.is_err() {
@@ -805,7 +806,8 @@ fn preprocess_file_before_upload(
             // Stream the gzip output to a tempfile instead of buffering it in
             // heap; that tempfile then becomes the upload source (read lazily
             // during the body stream), so it must outlive the upload.
-            let (path, temp_path) = compress_to_tempfile(&source).context(CompressionSnafu)?;
+            let (path, temp_path) =
+                compress_to_tempfile(&source, data.put_compress_level).context(CompressionSnafu)?;
             target = format!("{}.gz", data.filename);
             (
                 ByteSource::Path(path),
@@ -2948,6 +2950,7 @@ mod tests {
             skip_upload_on_content_match: false,
             multipart: MultipartParams::default(),
             put_fastfail,
+            put_compress_level: 9,
             cwd: None,
         }
     }
@@ -4521,6 +4524,7 @@ mod tests {
             legacy_odbc_compression_autodetect,
             skip_upload_on_content_match: false,
             multipart: MultipartParams::default(),
+            put_compress_level: 9,
         }
     }
 
@@ -4636,6 +4640,7 @@ mod tests {
             legacy_odbc_compression_autodetect: false,
             skip_upload_on_content_match: true,
             multipart: MultipartParams::default(),
+            put_compress_level: 9,
         };
 
         let refresher: Option<&dyn StageInfoRefresher> = None;
@@ -4738,6 +4743,7 @@ mod tests {
             legacy_odbc_compression_autodetect: false,
             skip_upload_on_content_match: true,
             multipart: MultipartParams::default(),
+            put_compress_level: 9,
         }
     }
 
