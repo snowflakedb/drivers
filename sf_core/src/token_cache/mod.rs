@@ -1,3 +1,31 @@
+//! Token cache: per-platform storage back-end and key management.
+//!
+//! # Platform storage and security notice
+//!
+//! Token caching is **enabled by default on all platforms**.  The active
+//! back-end is chosen by [`KeyringTokenCache`] at construction time based on
+//! whether the OS provides a persistent keystore:
+//!
+//! | Platform | Primary store | Runtime fallback |
+//! |---|---|---|
+//! | macOS | Keychain | — |
+//! | Windows | Credential Manager | — |
+//! | Linux | D-Bus Secret Service / kernel keyutils | `0600` JSON file (see below) |
+//!
+//! On Linux hosts where neither D-Bus Secret Service nor kernel keyutils is
+//! reachable at runtime,
+//! [`KeyringTokenCache::new`](keyring_cache::KeyringTokenCache::new) silently
+//! falls back to [`FileTokenCache`](file_cache::FileTokenCache): a JSON file
+//! (`credential_cache_v2.json`) inside an owner-only `0700` directory, with
+//! the file itself at `0600`.  That file may contain SSO ID tokens, MFA
+//! tokens, OAuth access and refresh tokens, and DPoP private keys.
+//!
+//! Customers who need to prevent tokens from being written to disk — for
+//! example in shared-UID containers or multi-tenant Linux hosts without a
+//! system keystore — should set `CLIENT_STORE_TEMPORARY_CREDENTIALS = false`
+//! to disable token caching entirely.
+//!
+//! See also: `docs/design/token-cache-platform-security.md`.
 pub(crate) mod file_cache;
 mod keyring_cache;
 
