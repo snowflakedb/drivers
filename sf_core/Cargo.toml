@@ -11,32 +11,31 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["protobuf", "sonic-json"]
 sonic-json = ["sonic-rs"]
-# Swaps the TLS backend to aws-lc-fips-sys. `aws-lc-rs/fips` is named explicitly
-# rather than left to cargo feature unification: `tls::x509_utils` calls
-# `aws_lc_rs::signature::*` directly for CRL verification, and those calls must
-# run against the FIPS module by declaration, not by accident of the resolver
-# happening to unify rustls's transitive activation into the same crate.
+# Selects `aws-lc-fips-sys` for rustls and for the application crypto that
+# already runs on AWS-LC: JWT signing, private-key loading, stage file
+# encryption, DPoP proofs, and OAuth PKCE / CSRF / `jti` randomness.
 #
-# Still named `fips-tls` rather than `fips`, but no longer for the original
-# reason. JWT signing, stage file encryption, DPoP and private-key parsing have
-# all been ported off OpenSSL to AWS-LC, so the feature's reach is no longer
-# TLS-only in practice.
+# `aws-lc-rs/fips` is named explicitly rather than left to cargo feature
+# unification: `tls::x509_utils` calls `aws_lc_rs::signature::*` directly for
+# CRL verification, and those calls must run against the FIPS module by
+# declaration, not by accident of the resolver happening to unify rustls's
+# transitive activation into the same crate.
 #
-# The name stays because the *claim* is not yet complete:
-#   - SigV4 request signing computes HMAC-SHA256 outside the module:
-#     `aws-sigv4` uses RustCrypto unconditionally. That is every stage
-#     transfer, not an edge case; see F7. `ring` itself is no longer linked --
-#     its only two sources, `sigv4a` and `sso`, are both off (see the AWS SDK
-#     block below) -- so this bullet is now about RustCrypto alone.
-#   - OAuth CSRF and PKCE randomness comes from `oauth2`, which draws on `rand`
-#     rather than the module's DRBG; see F8.
-#   - The linked module is on the certificated 3.x line (AWS-LC-FIPS 3.2.0,
-#     cert #4816), held there by the `aws-lc-rs` upper bound below. That covers
-#     the module version only -- a certificate also names the operating
-#     environments it was tested on, so shipping a `fips-tls` build on a
-#     platform outside that list still is not a validated configuration.
-# So an artifact built from this feature is still not a FIPS artifact, and
-# `fips` stays unclaimed for the complete thing.
+# The feature is `fips-tls` rather than `fips` because security-relevant crypto
+# still runs off-module:
+#   - SigV4 request signing computes HMAC-SHA256 through RustCrypto:
+#     `aws-sigv4` uses it unconditionally. That is every stage transfer, not an
+#     edge case (F7). Fixing it is AWS SDK work, not a further commit here.
+#
+# The linked module itself is on the certificated 3.x line (AWS-LC-FIPS 3.2.0,
+# cert #4816), held there by the `aws-lc-rs` upper bound below. That covers the
+# module version only -- a certificate also names the operating environments it
+# was tested on, so a `fips-tls` build on a platform outside that list is still
+# not a validated configuration.
+#
+# Rename to `fips` once the HMAC -- and any other off-module security crypto
+# found after it -- is gone. Until then an artifact built from this feature is
+# not a FIPS artifact.
 fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
 protobuf = ["prost", "proto_utils"]
 auth_mfa_e2e = []
