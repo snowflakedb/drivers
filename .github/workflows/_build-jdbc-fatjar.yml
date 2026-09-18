@@ -17,19 +17,19 @@ jobs:
   build_native:
     strategy:
       fail-fast: false
-      # cargo_extra_args mirrors the Python wheel build: vendored-openssl, opt-level=2, strip=false
+      # cargo_extra_args mirrors the Python wheel build: opt-level=2, strip=false
       # on Windows. Linux ships one native per libc (glibc via manylinux, musl via musllinux/Alpine)
       # since a .so won't load across libcs; `dir` is the staging subdir (matches
       # NativeLibraryLoader.osArchDir()), `pkg_setup` the in-container build deps (yum vs apk).
       matrix:
         include:
-          - { name: linux-x86_64-gnu,   os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-gnu,   lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_x86_64",  rust_host: x86_64-unknown-linux-gnu,   pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2" }
-          - { name: linux-aarch64-gnu,  os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-gnu,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_aarch64", rust_host: aarch64-unknown-linux-gnu,  pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2" }
-          - { name: linux-x86_64-musl,  os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-musl,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_x86_64",   rust_host: x86_64-unknown-linux-musl,  pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2" }
-          - { name: linux-aarch64-musl, os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-musl, lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_aarch64",  rust_host: aarch64-unknown-linux-musl, pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2" }
-          - { name: darwin-x86_64,      os: macos-15-intel,   os_token: darwin,  arch: x86_64,  dir: darwin-x86_64,      lib: libjdbc_bridge.dylib, container: "",                                    cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2", macos_deployment_target: "10.14" }
-          - { name: darwin-aarch64,     os: macos-latest,     os_token: darwin,  arch: aarch64, dir: darwin-aarch64,     lib: libjdbc_bridge.dylib, container: "",                                    cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2", macos_deployment_target: "11.0" }
-          - { name: windows-x86_64,     os: windows-latest,   os_token: windows, arch: x86_64,  dir: windows-x86_64,     lib: jdbc_bridge.dll,      container: "",                                    cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2 --config profile.release.strip=false" }
+          - { name: linux-x86_64-gnu,   os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-gnu,   lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_x86_64",  rust_host: x86_64-unknown-linux-gnu,   pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "--config profile.release.opt-level=2" }
+          - { name: linux-aarch64-gnu,  os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-gnu,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_aarch64", rust_host: aarch64-unknown-linux-gnu,  pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "--config profile.release.opt-level=2" }
+          - { name: linux-x86_64-musl,  os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-musl,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_x86_64",   rust_host: x86_64-unknown-linux-musl,  pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "--config profile.release.opt-level=2" }
+          - { name: linux-aarch64-musl, os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-musl, lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_aarch64",  rust_host: aarch64-unknown-linux-musl, pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "--config profile.release.opt-level=2" }
+          - { name: darwin-x86_64,      os: macos-15-intel,   os_token: darwin,  arch: x86_64,  dir: darwin-x86_64,      lib: libjdbc_bridge.dylib, container: "",                                    cargo_extra_args: "--config profile.release.opt-level=2", macos_deployment_target: "10.14" }
+          - { name: darwin-aarch64,     os: macos-latest,     os_token: darwin,  arch: aarch64, dir: darwin-aarch64,     lib: libjdbc_bridge.dylib, container: "",                                    cargo_extra_args: "--config profile.release.opt-level=2", macos_deployment_target: "11.0" }
+          - { name: windows-x86_64,     os: windows-latest,   os_token: windows, arch: x86_64,  dir: windows-x86_64,     lib: jdbc_bridge.dll,      container: "",                                    cargo_extra_args: "--config profile.release.opt-level=2 --config profile.release.strip=false" }
     runs-on: ${{ matrix.os }}
     name: build_native (${{ matrix.name }})
     timeout-minutes: 45
@@ -67,7 +67,7 @@ jobs:
         uses: ./.github/actions/jdbc-bridge-cache
         with:
           path: target/release/${{ matrix.lib }}
-          key-suffix: release-${{ matrix.name }}-vendored-openssl-opt2-v1
+          key-suffix: release-${{ matrix.name }}-opt2-v2
 
       # manylinux_2_28 pins an old glibc floor; musllinux_1_2 (Alpine) links musl. Needs a JDK
       # (jdbc_bridge's `jni` feature links libjvm at build time), installed via matrix.pkg_setup.
