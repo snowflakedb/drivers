@@ -1,7 +1,6 @@
 use std::fs;
 
 use base64::{Engine as _, engine::general_purpose};
-use openssl::pkey::PKey;
 
 use crate::config::param_names::{PRIVATE_KEY, PRIVATE_KEY_FILE};
 use crate::config::settings::{Setting, Settings};
@@ -12,8 +11,27 @@ use crate::config::{
 };
 use crate::sensitive::SensitiveString;
 
+/// Wrap raw DER private-key bytes in PEM armour.
+///
+/// This used to round-trip through OpenSSL (`private_key_from_der` then
+/// `private_key_to_pem_pkcs8`), which both validated the key and normalised
+/// PKCS#1 into PKCS#8. Neither effect is dropped here, but they are obtained
+/// differently: the key is validated by
+/// [`crypto::private_key::der_pem_label`](crate::crypto::private_key::der_pem_label),
+/// which also reports which format it actually is, and the armour is then
+/// labelled to match instead of the body being re-encoded.
+///
+/// Labelling rather than converting matters in both directions. A PKCS#1 body
+/// under a `PRIVATE KEY` label would be handed to the PKCS#8 parser and
+/// rejected; an encrypted envelope under that label would never reach the
+/// decryption path. The loader accepts all three labels, so no conversion is
+/// needed -- only honesty about what the bytes are.
+///
+/// Validation stays here, rather than deferring to first use, so that a
+/// malformed key is an immediate configuration error rather than a confusing
+/// login failure much later.
 pub(super) fn der_to_pem(der_bytes: &[u8]) -> Result<SensitiveString, ConfigError> {
-    let pkey = PKey::private_key_from_der(der_bytes).map_err(|e| {
+    let label = crate::crypto::private_key::der_pem_label(der_bytes).map_err(|e| {
         InvalidParameterValueSnafu {
             parameter: "private_key".to_string(),
             value: "(binary data)".to_string(),
@@ -22,25 +40,19 @@ pub(super) fn der_to_pem(der_bytes: &[u8]) -> Result<SensitiveString, ConfigErro
         .build()
     })?;
 
-    let pem_bytes = pkey.private_key_to_pem_pkcs8().map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: "private_key".to_string(),
-            value: "(binary data)".to_string(),
-            explanation: format!("Could not convert private key to PEM: {e}"),
-        }
-        .build()
-    })?;
-
-    String::from_utf8(pem_bytes)
-        .map(SensitiveString::from)
-        .map_err(|e| {
-            InvalidParameterValueSnafu {
-                parameter: "private_key".to_string(),
-                value: "(binary data)".to_string(),
-                explanation: format!("PEM output is not valid UTF-8: {e}"),
-            }
-            .build()
-        })
+    let b64 = general_purpose::STANDARD.encode(der_bytes);
+    let mut pem = String::with_capacity(b64.len() + 2 * label.len() + 64);
+    pem.push_str("-----BEGIN ");
+    pem.push_str(label);
+    pem.push_str("-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        pem.push_str(std::str::from_utf8(chunk).expect("base64 output is ASCII"));
+        pem.push('\n');
+    }
+    pem.push_str("-----END ");
+    pem.push_str(label);
+    pem.push_str("-----\n");
+    Ok(SensitiveString::from(pem))
 }
 
 /// Parse a private key from settings into a PEM string ready for JWT signing.
@@ -253,6 +265,7 @@ mod tests {
     #[test]
     fn read_private_key_accepts_bytes_der_round_trip() {
         // Setting::Bytes (Python DER path) with a real key should decode to valid PEM.
+        use openssl::pkey::PKey;
         use openssl::rsa::Rsa;
         let rsa = Rsa::generate(2048).expect("generate rsa key");
         let pkey = PKey::from_rsa(rsa).expect("pkey from rsa");
@@ -260,13 +273,28 @@ mod tests {
 
         let settings = settings_with(&[("private_key", Setting::Bytes(der))]);
         let pem = read_private_key(&settings).expect("should decode DER to PEM");
-        assert!(pem.reveal().starts_with("-----BEGIN PRIVATE KEY-----"));
-        assert!(PKey::private_key_from_pem(pem.reveal().as_bytes()).is_ok());
+        // The label reflects the DER's actual format rather than a fixed
+        // guess; `PKey::private_key_to_der` emits PKCS#1 for an RSA key.
+        assert!(
+            pem.reveal().starts_with("-----BEGIN RSA PRIVATE KEY-----")
+                || pem.reveal().starts_with("-----BEGIN PRIVATE KEY-----"),
+            "unexpected armour: {}",
+            pem.reveal().lines().next().unwrap_or_default()
+        );
+        // Both consumers must accept the armour we emit: OpenSSL (as a
+        // second opinion on well-formedness) and the loader it is actually
+        // handed to.
+        assert!(openssl::pkey::PKey::private_key_from_pem(pem.reveal().as_bytes()).is_ok());
+        assert!(
+            crate::crypto::private_key::load_rsa_key(pem.reveal().as_bytes(), None).is_ok(),
+            "armoured DER must load through the production key loader"
+        );
     }
 
     #[test]
     fn read_private_key_accepts_base64_der_round_trip() {
         // Setting::String base64(DER) with a real key should decode to valid PEM.
+        use openssl::pkey::PKey;
         use openssl::rsa::Rsa;
         let rsa = Rsa::generate(2048).expect("generate rsa key");
         let pkey = PKey::from_rsa(rsa).expect("pkey from rsa");
@@ -275,8 +303,42 @@ mod tests {
 
         let settings = settings_with(&[("private_key", Setting::String(b64))]);
         let pem = read_private_key(&settings).expect("should decode base64(DER) to PEM");
-        assert!(pem.reveal().starts_with("-----BEGIN PRIVATE KEY-----"));
+        assert!(
+            pem.reveal().starts_with("-----BEGIN RSA PRIVATE KEY-----")
+                || pem.reveal().starts_with("-----BEGIN PRIVATE KEY-----"),
+            "unexpected armour: {}",
+            pem.reveal().lines().next().unwrap_or_default()
+        );
         assert!(PKey::private_key_from_pem(pem.reveal().as_bytes()).is_ok());
+        assert!(
+            crate::crypto::private_key::load_rsa_key(pem.reveal().as_bytes(), None).is_ok(),
+            "armoured DER must load through the production key loader"
+        );
+    }
+
+    /// Encrypted DER must be armoured with the ENCRYPTED label, or the loader
+    /// would hand it to the unencrypted parser and reject a valid key.
+    #[test]
+    fn encrypted_der_is_armoured_with_the_encrypted_label() {
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        const PASS: &str = "correct horse battery staple";
+        let pkey = PKey::from_rsa(Rsa::generate(2048).expect("rsa")).expect("pkey");
+        let der = pkey
+            .private_key_to_pkcs8_passphrase(openssl::symm::Cipher::des_ede3_cbc(), PASS.as_bytes())
+            .expect("encrypted der");
+
+        let settings = settings_with(&[("private_key", Setting::Bytes(der))]);
+        let pem = read_private_key(&settings).expect("armour encrypted DER");
+        assert!(
+            pem.reveal()
+                .starts_with("-----BEGIN ENCRYPTED PRIVATE KEY-----"),
+            "encrypted DER must not be labelled as a plain private key"
+        );
+        assert!(
+            crate::crypto::private_key::load_rsa_key(pem.reveal().as_bytes(), Some(PASS)).is_ok(),
+            "armoured encrypted DER must load with its passphrase"
+        );
     }
 
     #[test]

@@ -1204,7 +1204,7 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertEqual(flags["windows-arm-nonfips"], "")
         self.assertEqual(
             flags["windows-x86"],
-            "--no-default-features --features protobuf,vendored-openssl",
+            "--no-default-features --features protobuf",
         )
 
     def test_cache_keys_match_legacy(self) -> None:
@@ -1672,16 +1672,14 @@ class OdbcBuildMatrixTests(unittest.TestCase):
             "macOS ARM64":   {"os": "macos-latest", "driver_lib": "libsfodbc.dylib",
                               "cache_key": "odbc"},
             "Windows x64":   {"os": "windows-latest", "driver_lib": "sfodbc.dll",
-                              "cargo_extra": "--features vendored-openssl",
                               "cache_key": "odbc-x64",
                               "vcpkg_triplet": "x64-windows"},
             "Windows x86":   {"os": "windows-latest", "driver_lib": "sfodbc32.dll",
                               "cargo_target": "i686-pc-windows-msvc",
-                              "cargo_extra": "--no-default-features --features vendored-openssl",
+                              "cargo_extra": "--no-default-features",
                               "cache_key": "odbc-x86",
                               "msvc_arch": "x86", "vcpkg_triplet": "x86-windows"},
             "Windows ARM64": {"os": "windows-11-arm", "driver_lib": "sfodbc.dll",
-                              "cargo_extra": "--features vendored-openssl",
                               "cache_key": "odbc-arm64",
                               "msvc_arch": "arm64", "vcpkg_triplet": "arm64-windows"},
         }

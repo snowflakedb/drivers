@@ -11,9 +11,30 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["protobuf", "sonic-json"]
 sonic-json = ["sonic-rs"]
-fips = ["rustls/fips"]
+# Swaps the TLS backend to aws-lc-fips-sys. `aws-lc-rs/fips` is named explicitly
+# rather than left to cargo feature unification: `tls::x509_utils` calls
+# `aws_lc_rs::signature::*` directly for CRL verification, and those calls must
+# run against the FIPS module by declaration, not by accident of the resolver
+# happening to unify rustls's transitive activation into the same crate.
+#
+# Still named `fips-tls` rather than `fips`, but no longer for the original
+# reason. JWT signing, stage file encryption, DPoP and private-key parsing have
+# all been ported off OpenSSL to AWS-LC, so the feature's reach is no longer
+# TLS-only in practice.
+#
+# The name stays because the *claim* is not yet complete:
+#   - SigV4 request signing computes HMAC-SHA256 outside the module:
+#     `aws-sigv4` uses RustCrypto unconditionally, and `aws-sdk-s3` enables
+#     `sigv4a` by default, which links ring. That is every stage transfer, not
+#     an edge case; see F7.
+#   - OAuth CSRF and PKCE randomness comes from `oauth2`, which draws on `rand`
+#     rather than the module's DRBG; see F8.
+#   - AWS-LC-FIPS 4.x is "in process" at CMVP rather than certificated; the
+#     issued certs cover the 3.x line.
+# So an artifact built from this feature is still not a FIPS artifact, and
+# `fips` stays unclaimed for the complete thing.
+fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
 protobuf = ["prost", "proto_utils"]
-vendored-openssl = ["openssl/vendored"]
 auth_mfa_e2e = []
 auth_oauth_e2e = []
 auth_spcs_e2e = []
@@ -37,11 +58,23 @@ bytes = "1"
 # rustls is the driver's only TLS backend. `default-features = false` drops
 # reqwest's `default-tls` (native-tls/OpenSSL/SChannel) so it is not compiled in
 # at all and rustls becomes the default backend uniformly (the CRL path and the
-# storage clients already use rustls). `rustls-tls-native-roots` keeps the OS
-# trust store as the default root source, matching the prior native-tls
-# behaviour. `charset`/`http2`/`macos-system-configuration` are re-added from
-# reqwest's default set (only `default-tls` is intentionally dropped).
-reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "gzip", "stream", "http2", "charset", "macos-system-configuration"] }
+# storage clients already use rustls). The root store is bundled webpki roots
+# plus the OS trust store: `rustls-tls-webpki-roots-no-provider` +
+# `rustls-tls-native-roots-no-provider` is the same composition the previous
+# `rustls-tls` (an alias for `rustls-tls-webpki-roots`) + `rustls-tls-native-roots`
+# selection produced. `charset`/`http2`/`macos-system-configuration` are
+# re-added from reqwest's default set (only `default-tls` is intentionally
+# dropped).
+#
+# The `-no-provider` variants are deliberate: plain `rustls-tls` /
+# `rustls-tls-native-roots` pull reqwest's `__rustls-ring`, which links `ring`
+# and -- more importantly -- makes reqwest silently fall back to
+# `rustls::crypto::ring::default_provider()` for any client built before a
+# process default is installed. `ring` is not a FIPS-validated module, so that
+# fallback would quietly defeat `--features fips-tls`. Without it reqwest instead
+# panics ("No provider set"), which is why every client construction path calls
+# `tls::ensure_crypto_provider()` first.
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls-no-provider", "rustls-tls-native-roots-no-provider", "rustls-tls-webpki-roots-no-provider", "gzip", "stream", "http2", "charset", "macos-system-configuration"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value"] }
 futures = "0.3"
@@ -57,9 +90,13 @@ base64 = "0.22.1"
 arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
 arrow-ipc = ">=54.0.0, <59"
 flate2 = "1.1.2"
-openssl = "0.10.73"
-jwt = { version = "0.16.0", features = ["openssl"] }
-oauth2 = { version = "5", features = ["timing-resistant-secret-traits"] }
+# `default-features = false` drops oauth2's `rustls-tls`, which is only a
+# forwarder to `reqwest/rustls-tls` -- and that pulls `__rustls-ring`, which via
+# cargo feature unification would re-arm reqwest's silent ring fallback for the
+# whole build and defeat the `-no-provider` selection above. The `reqwest`
+# feature is kept; oauth2 still gets a TLS-capable reqwest because sf_core
+# selects reqwest's rustls features directly.
+oauth2 = { version = "5", default-features = false, features = ["reqwest", "timing-resistant-secret-traits"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 webbrowser = "1"
 http = "1"
@@ -74,8 +111,47 @@ prost = { version = "0.14.1", optional = true }
 proto_utils = { path = "../proto_utils", optional = true }
 
 # AWS SDK dependencies
-aws-sdk-s3 = "1.106.0"
-aws-sdk-sts = "1.96.0"
+#
+# `default-features = false` is about crypto provenance, not size. The `rustls`
+# feature on these crates does *not* mean the rustls 0.23/aws-lc stack the rest
+# of the driver uses: it expands to `aws-smithy-runtime/tls-rustls` ->
+# `aws-smithy-http-client/legacy-rustls-ring`, which links hyper 0.14 and a
+# second, older rustls 0.21 built on **ring**. Nothing here ever used that
+# connector -- every `aws_config::defaults(...)` call site hands the SDK its own
+# reqwest-backed `HttpClient` (see `tls::aws_http_client`) -- so it was linked
+# but dead, and under `fips-tls` it put ring inside a FIPS artifact (F7).
+#
+# `default-https-client` is deliberately kept. It maps to
+# `aws-smithy-http-client/rustls-aws-lc`, so it is aws-lc-backed rather than
+# ring-backed, and it still supplies a default connector to the paths that build
+# an `SdkConfig` without an explicit client.
+#
+# `sigv4a` is dropped with the defaults: it pulls `aws-runtime/sigv4a` ->
+# `aws-sigv4/sigv4a` -> `dep:ring`, and it only signs S3 multi-region access
+# point ARNs. Snowflake stages are ordinary region-scoped buckets, so nothing
+# here can reach that signer.
+aws-sdk-s3 = { version = "1.106.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-sts = { version = "1.96.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+# `aws-config` deliberately KEEPS its default features, which means this build
+# still links ring (175 symbols in a `fips-tls` lib-test binary, down from 221
+# before the two lines above). Its `sso` feature hard-requires `dep:ring`, and
+# unlike `rustls` above there is no aws-lc-backed equivalent to swap in: `sso`
+# is the IAM Identity Center *credential provider*, not a transport.
+#
+# Dropping it does take ring to zero -- measured, and `aws-sdk-sso`/`ssooidc`
+# fall out with it -- but it also removes SSO credentials from the SDK's default
+# chain, and two call sites resolve through that chain on purpose:
+# `workload_identity/aws.rs` (credentials are `Option`; ambient discovery is the
+# whole point of the WIF path) and `telemetry/platform_detection/aws.rs` (passes
+# no provider at all). Only `file_manager/s3_transfer.rs` supplies explicit
+# Snowflake-issued credentials and would be unaffected.
+#
+# Decision (2026-09-18): keep SSO support; accept ring in the artifact and
+# record it as a known deviation. Cargo features are additive and cannot be
+# negated, so this cannot be split per-build without the named-profile
+# machinery the design doc rejects -- `fips-tls` cannot turn a default feature
+# off. Please do not "fix" this by disabling default features here; that is the
+# trade, not an oversight.
 aws-config = "1.8.12"
 aws-runtime = "1.5.18"
 aws-smithy-runtime = "1.9.8"
@@ -99,7 +175,6 @@ glob = "0.3.3"
 # CRL and TLS dependencies
 rustls = { version = "0.23.20", features = ["aws_lc_rs"] }
 rustls-pemfile = "2.2.0"
-rustls-webpki = "0.102"
 rustls-native-certs = "0.8"
 thiserror = "1.0.69"
 aws-lc-rs = "1.13.2"
@@ -108,6 +183,45 @@ der-parser = "9.0"
 x509-cert = "0.2"
 spki = "0.7"
 time = "0.3"
+
+# Encrypted private-key (PKCS#8 / PBES2) support.
+#
+# `pkcs8`/`pkcs5` are used for PARSING ONLY -- they read the envelope and the
+# PBES2 parameters (KDF, salt, iterations, PRF, cipher, IV). This crate never
+# calls their decryption API. The key derivation and AES decryption run against
+# AWS-LC, which is what keeps approved crypto inside the validated module.
+#
+# Pinned to the `der 0.7` line already in the graph via `spki 0.7` /
+# `x509-cert 0.2`, to avoid a second `der` major.
+#
+# Inventory caveat (F11): `EncryptedPrivateKeyInfo` lives behind pkcs8's
+# `encryption` feature, and the `DesEde3Cbc` variant needs `3des`; both cascade
+# to `pkcs5/pbes2`, pulling RustCrypto `aes`, `pbkdf2`, `scrypt` and `sha2`
+# into the graph. None of them is ever called -- our AES and PBKDF2 go through
+# AWS-LC -- but they do show up in an SBOM, so the dependency inventory needs a
+# note saying so. Eliminating them would mean hand-decoding the
+# EncryptedPrivateKeyInfo and PBES2 AlgorithmIdentifiers with `der` directly;
+# that is a contained follow-up which would not change this module's interface,
+# and it was weighed against the correctness risk of hand-rolled ASN.1 in a
+# private-key path.
+pkcs8 = { version = "0.10", features = ["3des"] }
+# Legacy 3DES unwrap only, deliberately outside the validated module: AWS-LC
+# has no 3DES cipher (`aws_lc_rs::cipher` is AES-only; its only 3DES is
+# `cmac::TDES_FOR_LEGACY_USE_ONLY`, a MAC), and 3DES is not an approved
+# algorithm in any module, so running it inside AWS-LC would not make it
+# approved. See `crypto::private_key` for why it must be supported.
+des = "0.8"
+cbc = "0.1"
+# Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) derives its key with
+# OpenSSL's `EVP_BytesToKey`, which is MD5-based -- MD5 is definitional to the
+# format, not a choice. AWS-LC exposes no MD5 digest, so reading those keys
+# needs this. The code that calls it is `#[cfg(not(feature = "fips-tls"))]`, so
+# a FIPS build never derives a key with MD5; see `crypto::private_key`.
+#
+# Not a new SBOM entry: `md-5` is already in the graph unconditionally via
+# `aws-smithy-checksums`, which is finding F9 in the compliance plan rather
+# than anything this adds.
+md-5 = "0.10"
 once_cell = "1.19"
 const-oid = "0.9"
 dirs = "5.0"
@@ -147,9 +261,28 @@ brotli = "8.0.2"
 zstd = "0.13.3"
 flate2 = "1.1.2"
 test-case = "3.3.1"
+# Test-only, and deliberately kept rather than ported. It generates the X.509
+# and CRL fixtures (`crl/certificate_parser.rs`, `tls/x509_utils.rs`,
+# `tls/test_helpers.rs`) and gives the AWS-LC crypto paths an independent
+# implementation to check against -- porting it would put the same library on
+# both sides of those tests and stop them proving anything.
+#
+# It is a dev-dependency rather than a normal one because `cargo build` does not
+# compile dev-dependencies: shipped artifacts now link no OpenSSL at all, which
+# is what retired the `vendored-openssl` feature (F2). Left unvendored on
+# purpose -- a cargo feature cannot reference a dev-dependency, so `vendored`
+# would have to be unconditional, and that would make every Windows test build
+# compile OpenSSL from source through Perl and nmake. The test lanes supply it
+# instead (vcpkg on Windows, distro packages elsewhere).
+openssl = "0.10.73"
 # Dev/test reqwest: also rustls-only so test builds don't re-introduce
 # native-tls (feature unification would otherwise pull `default-tls` back in).
-reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "json", "rustls-tls", "rustls-tls-native-roots", "http2", "charset"] }
+# Mirrors the `-no-provider` selection above for the same reason: feature
+# unification means a `rustls-tls` here would re-arm the silent ring fallback
+# for the lib under test too. Consequence: raw `reqwest::Client`s panic with
+# "No provider set" unless a provider is installed first, which is why the
+# test harnesses install one in a ctor (see below).
+reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "json", "rustls-tls-no-provider", "rustls-tls-native-roots-no-provider", "rustls-tls-webpki-roots-no-provider", "http2", "charset"] }
 wiremock = "0.6"
 rcgen = "0.13"
 tokio-rustls = "0.26"
@@ -157,6 +290,23 @@ tracing-test = { version = "0.2", features = ["no-env-filter"] }
 criterion = { version = "0.5", features = ["async_tokio"] }
 temp-env = { version = "0.3.6", features = ["async_closure"] }
 scopeguard = "1.2"
+# These two entries serve the test-harness provider installs: with the
+# `-no-provider` reqwest features above, any test binary that builds raw
+# `reqwest::Client`s (local plain-HTTP test servers, telemetry fakes) must
+# install a crypto provider itself before the first client is constructed.
+# `ctor` is test-only; `rustls` is also a production dependency above -- this
+# dev entry just lets test code name it directly. The initializers live in
+# src/lib.rs (`#[cfg(test)]`, for the lib unit-test binary) and
+# tests/common/crypto_provider.rs, which integration_tests picks up through
+# tests/common/mod.rs and logging_query_tests includes directly.
+#
+# Ordering note for the `fips-tls` lane: aws-lc-fips runs its power-on self-test
+# from its own library constructor, and these initializers add a second one.
+# Ordering between translation units is unspecified, so the two are only safe
+# together because `install_default` just stores an `Arc` and touches no
+# primitive. If that lane ever aborts without explanation, look here first.
+rustls = "0.23"
+ctor = "1"
 
 [target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
