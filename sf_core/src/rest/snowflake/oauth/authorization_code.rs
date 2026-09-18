@@ -28,8 +28,8 @@ use std::time::{Duration, Instant};
 use oauth2::basic::{BasicClient, BasicErrorResponse, BasicErrorResponseType};
 use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet, EndpointSet,
-    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, RequestTokenError, Scope,
-    StandardErrorResponse, TokenResponse, TokenUrl,
+    PkceCodeVerifier, RedirectUrl, RefreshToken, RequestTokenError, Scope, StandardErrorResponse,
+    TokenResponse, TokenUrl,
 };
 use snafu::{IntoError, OptionExt, ResultExt};
 use url::Url;
@@ -42,6 +42,8 @@ use super::error::{
 };
 use super::http_client::make_http_client;
 use super::loopback_server::{self, RedirectResult};
+use super::pkce;
+use super::random;
 use super::token;
 use crate::config::rest_parameters::OAuthAuthorizationCodeConfig;
 use crate::sensitive::SensitiveString;
@@ -549,18 +551,27 @@ async fn run_interactive_flow(
     // PKCE S256 is on by default across drivers; Python
     // is the only one with a `oauth_disable_pkce` escape hatch and we
     // mirror it here (drift A.2). When disabled we skip both the
-    // `set_pkce_challenge` on the authorize URL and the
+    // challenge parameters on the authorize URL and the
     // `set_pkce_verifier` on the token exchange.
     let pkce = if config.disable_pkce {
         None
     } else {
-        Some(PkceCodeChallenge::new_random_sha256())
+        Some(pkce::generate()?)
     };
 
-    // 256-bit CSRF state (drift A.4). 32 random bytes base64url-encoded.
-    let mut request = oauth_client.authorize_url(|| CsrfToken::new_random_len(32));
-    if let Some((challenge, _)) = pkce.as_ref() {
-        request = request.set_pkce_challenge(challenge.clone());
+    // 256-bit CSRF state (drift A.4). 32 random bytes base64url-encoded --
+    // the same shape `CsrfToken::new_random_len(32)` produced, now drawn from
+    // the crypto module rather than `rand` (F8).
+    let csrf_state = random::token_b64url(32, "CSRF state")?;
+    let mut request = oauth_client.authorize_url(|| CsrfToken::new(csrf_state.clone()));
+    // `set_pkce_challenge` is bypassed deliberately. It only accepts a
+    // `PkceCodeChallenge`, and `oauth2` will only build one around a digest it
+    // computed itself with RustCrypto. These are the exact two parameters it
+    // would have appended, carrying an AWS-LC digest instead -- see `pkce`.
+    if let Some(material) = pkce.as_ref() {
+        request = request
+            .add_extra_param("code_challenge", material.challenge.as_str())
+            .add_extra_param("code_challenge_method", material.method);
     }
     if let Some(scope) = config.scope.as_deref() {
         request = request.add_scope(Scope::new(scope.to_string()));
@@ -603,8 +614,10 @@ async fn run_interactive_flow(
 
     let mut exchange =
         oauth_client.exchange_code(AuthorizationCode::new(redirect.code.reveal().to_string()));
-    if let Some((_, verifier)) = pkce {
-        exchange = exchange.set_pkce_verifier(PkceCodeVerifier::new(verifier.into_secret()));
+    if let Some(material) = pkce {
+        exchange = exchange.set_pkce_verifier(PkceCodeVerifier::new(
+            material.verifier.reveal().to_string(),
+        ));
     }
     if config.enable_single_use_refresh_tokens {
         exchange = exchange.add_extra_param("enable_single_use_refresh_tokens", "true");
@@ -1139,7 +1152,8 @@ mod tests {
         )
         .expect("client builds");
 
-        let (url, _state) = client.authorize_url(|| CsrfToken::new_random_len(32)).url();
+        let state = random::token_b64url(32, "CSRF state").expect("DRBG");
+        let (url, _state) = client.authorize_url(|| CsrfToken::new(state.clone())).url();
         let redirect = url
             .query_pairs()
             .find(|(k, _)| k == "redirect_uri")
@@ -1508,6 +1522,37 @@ mod tests {
         assert!(
             params.contains_key("redirect_uri") && !params["redirect_uri"].is_empty(),
             "authorize URL must carry a non-empty redirect_uri, got params: {params:?}"
+        );
+
+        // The binding that actually matters, and the one the
+        // `set_pkce_challenge` bypass could break silently: the
+        // `code_challenge` advertised on the authorize URL must be the S256
+        // digest of the `code_verifier` later presented at the token endpoint.
+        // The assertions above would still pass if the two were unrelated, or
+        // if the digest were taken over the raw DRBG bytes instead of the
+        // encoded verifier -- both of which look right and fail at the IdP.
+        let token_body = server
+            .received_requests()
+            .await
+            .expect("mock server records requests")
+            .into_iter()
+            .find(|r| r.url.path() == "/oauth/token")
+            .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+            .expect("token endpoint must have been called");
+        let verifier = url::form_urlencoded::parse(token_body.as_bytes())
+            .find(|(k, _)| k == "code_verifier")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_else(|| {
+                panic!("token request must carry a code_verifier, got body: {token_body}")
+            });
+
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        use sha2::{Digest as _, Sha256};
+        let expected = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        assert_eq!(
+            params.get("code_challenge").map(String::as_str),
+            Some(expected.as_str()),
+            "code_challenge must be the S256 digest of the code_verifier sent at exchange"
         );
     }
 
