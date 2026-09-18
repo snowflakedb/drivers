@@ -34,7 +34,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Result set has cor
   REQUIRE(numCols == 8);
 }
 
-TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Result set names and string types match ODBC 3.x spec",
                  "[odbc-api][catalog][columnprivileges]") {
   SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, sqlchar("%"), SQL_NTS);
@@ -55,6 +55,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Result set column 
                          &colSize, &decDigits, &nullable);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(std::string(colName) == expectedColNames[col - 1]);
+    REQUIRE(dataType == SQL_WVARCHAR);
   }
 }
 

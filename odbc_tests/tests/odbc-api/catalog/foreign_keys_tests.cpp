@@ -92,6 +92,31 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: Result set column names
   }
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: string columns report SQL_WVARCHAR concise type",
+                 "[odbc-api][foreignkeys][catalog]") {
+  SQLRETURN ret = SQLForeignKeys(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, sqlchar(database_name()), SQL_NTS,
+                                 sqlchar(schema_name()), SQL_NTS, sqlchar(readonly_db::FK_CHILD), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const SQLSMALLINT expectedTypes[] = {
+      SQL_WVARCHAR, SQL_WVARCHAR, SQL_WVARCHAR, SQL_WVARCHAR, SQL_WVARCHAR, SQL_WVARCHAR, SQL_WVARCHAR,
+      SQL_WVARCHAR, SQL_SMALLINT, SQL_SMALLINT, SQL_SMALLINT, SQL_WVARCHAR, SQL_WVARCHAR, SQL_SMALLINT,
+  };
+  for (SQLSMALLINT col = 1; col <= static_cast<SQLSMALLINT>(std::size(expectedTypes)); col++) {
+    INFO("col " << col << " expected=" << expectedTypes[col - 1]);
+    SQLLEN conciseType = 0;
+    SQLSMALLINT strLen = 0;
+    ret = SQLColAttribute(stmt_handle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &conciseType);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(conciseType == expectedTypes[col - 1]);
+
+    SQLSMALLINT describedType = 0;
+    ret = SQLDescribeCol(stmt_handle(), col, nullptr, 0, nullptr, &describedType, nullptr, nullptr, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(describedType == expectedTypes[col - 1]);
+  }
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: KEY_SEQ and rule columns have ODBC 3.x types and nullability",
                  "[odbc-api][foreignkeys][catalog]") {
   SQLRETURN ret = SQLForeignKeys(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, sqlchar(database_name()), SQL_NTS,

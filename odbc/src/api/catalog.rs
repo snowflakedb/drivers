@@ -24,7 +24,7 @@ use crate::api::{
     ConnectionState, ExecutionOrigin, OdbcResult, StatementInner, StatementState, stmt_from_handle,
 };
 use crate::conversion::{
-    INTEGER_CONCISE_SQL_TYPE, NumericSettings, SMALLINT_CONCISE_SQL_TYPE,
+    INTEGER_CONCISE_SQL_TYPE, NumericSettings, SMALLINT_CONCISE_SQL_TYPE, WCHAR_CONCISE_SQL_TYPE,
     WVARCHAR_CONCISE_SQL_TYPE, column_size_from_field, decimal_digits_from_field,
     num_prec_radix_from_field, octet_length_from_field, sql_type_from_field,
     verbose_sql_type_from_field,
@@ -71,19 +71,22 @@ fn catalog_text_field(name: &str, char_length: u32) -> Field {
     Field::new(name, DataType::Utf8, true).with_metadata(metadata)
 }
 
-/// Catalog string column labeled `SQL_WVARCHAR` (−9) to match the reference
-/// driver catalog IRD. Physical storage stays Utf8; only the concise type is overridden.
-fn catalog_wvarchar_field(name: &str, char_length: u32) -> Field {
+fn catalog_text_field_with_concise(name: &str, char_length: u32, concise: i16) -> Field {
     let metadata: HashMap<String, String> = [
         ("logicalType".to_string(), "TEXT".to_string()),
         ("charLength".to_string(), char_length.to_string()),
-        (
-            "conciseSqlType".to_string(),
-            WVARCHAR_CONCISE_SQL_TYPE.to_string(),
-        ),
+        ("conciseSqlType".to_string(), concise.to_string()),
     ]
     .into();
     Field::new(name, DataType::Utf8, true).with_metadata(metadata)
+}
+
+fn catalog_wvarchar_field(name: &str, char_length: u32) -> Field {
+    catalog_text_field_with_concise(name, char_length, WVARCHAR_CONCISE_SQL_TYPE)
+}
+
+fn catalog_wchar_field(name: &str, char_length: u32) -> Field {
+    catalog_text_field_with_concise(name, char_length, WCHAR_CONCISE_SQL_TYPE)
 }
 
 fn flat_tables_schema() -> SchemaRef {
@@ -352,12 +355,12 @@ pub fn columns<E: OdbcEncoding>(
 
 fn primary_keys_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("TABLE_CAT", 255),
-        catalog_text_field("TABLE_SCHEM", 255),
-        catalog_text_field("TABLE_NAME", 255),
-        catalog_text_field("COLUMN_NAME", 255),
+        catalog_wvarchar_field("TABLE_CAT", 255),
+        catalog_wvarchar_field("TABLE_SCHEM", 255),
+        catalog_wvarchar_field("TABLE_NAME", 255),
+        catalog_wvarchar_field("COLUMN_NAME", 255),
         catalog_key_seq_field("KEY_SEQ"),
-        catalog_text_field("PK_NAME", 255),
+        catalog_wvarchar_field("PK_NAME", 255),
     ]))
 }
 
@@ -861,8 +864,8 @@ pub fn primary_keys<E: OdbcEncoding>(
         schema: schema_raw.as_deref(),
         table: table_raw.as_deref(),
     };
+    let schema = primary_keys_schema();
     let flat_batch = map_show_primary_keys_to_odbc(show_batch, &filter)?;
-    let schema = flat_batch.schema();
     let reader = reader_from_record_batch(flat_batch, schema)?;
     set_state_for_catalog(
         &mut inner,
@@ -891,19 +894,19 @@ const SQL_NOT_DEFERRABLE: i16 = 7;
 
 fn foreign_keys_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("PKTABLE_CAT", 255),
-        catalog_text_field("PKTABLE_SCHEM", 255),
-        catalog_text_field("PKTABLE_NAME", 255),
-        catalog_text_field("PKCOLUMN_NAME", 255),
-        catalog_text_field("FKTABLE_CAT", 255),
-        catalog_text_field("FKTABLE_SCHEM", 255),
-        catalog_text_field("FKTABLE_NAME", 255),
-        catalog_text_field("FKCOLUMN_NAME", 255),
+        catalog_wvarchar_field("PKTABLE_CAT", 255),
+        catalog_wvarchar_field("PKTABLE_SCHEM", 255),
+        catalog_wvarchar_field("PKTABLE_NAME", 255),
+        catalog_wvarchar_field("PKCOLUMN_NAME", 255),
+        catalog_wvarchar_field("FKTABLE_CAT", 255),
+        catalog_wvarchar_field("FKTABLE_SCHEM", 255),
+        catalog_wvarchar_field("FKTABLE_NAME", 255),
+        catalog_wvarchar_field("FKCOLUMN_NAME", 255),
         catalog_key_seq_field("KEY_SEQ"),
         catalog_nullable_smallint_field("UPDATE_RULE"),
         catalog_nullable_smallint_field("DELETE_RULE"),
-        catalog_text_field("FK_NAME", 255),
-        catalog_text_field("PK_NAME", 255),
+        catalog_wvarchar_field("FK_NAME", 255),
+        catalog_wvarchar_field("PK_NAME", 255),
         catalog_nullable_smallint_field("DEFERRABILITY"),
     ]))
 }
@@ -1339,8 +1342,8 @@ pub fn foreign_keys<E: OdbcEncoding>(
         fk_schema: fk_schema_raw.as_deref(),
         fk_table: fk_table_raw.as_deref(),
     };
+    let schema = foreign_keys_schema();
     let flat_batch = map_show_foreign_keys_to_odbc(show_batch, &filter)?;
-    let schema = flat_batch.schema();
     let reader = reader_from_record_batch(flat_batch, schema)?;
     set_state_for_catalog(
         &mut inner,
@@ -1363,14 +1366,14 @@ const SQL_PT_FUNCTION: i16 = 2;
 
 fn procedures_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("PROCEDURE_CAT", 255),   // 1
-        catalog_text_field("PROCEDURE_SCHEM", 255), // 2
-        catalog_text_field("PROCEDURE_NAME", 255),  // 3
-        catalog_int_field("NUM_INPUT_PARAMS"),      // 4 (reference: INTEGER, arg count)
-        catalog_int_field("NUM_OUTPUT_PARAMS"),     // 5 (reserved; always NULL)
-        catalog_int_field("NUM_RESULT_SETS"),       // 6 (0/1, 1 iff table-valued)
-        catalog_text_field("REMARKS", 65535),       // 7
-        catalog_smallint_field("PROCEDURE_TYPE"),   // 8 (reference: SMALLINT)
+        catalog_wvarchar_field("PROCEDURE_CAT", 255),   // 1
+        catalog_wvarchar_field("PROCEDURE_SCHEM", 255), // 2
+        catalog_wvarchar_field("PROCEDURE_NAME", 255),  // 3
+        catalog_int_field("NUM_INPUT_PARAMS"),          // 4 (reference: INTEGER, arg count)
+        catalog_int_field("NUM_OUTPUT_PARAMS"),         // 5 (reserved; always NULL)
+        catalog_int_field("NUM_RESULT_SETS"),           // 6 (0/1, 1 iff table-valued)
+        catalog_wvarchar_field("REMARKS", 65535),       // 7
+        catalog_smallint_field("PROCEDURE_TYPE"),       // 8 (reference: SMALLINT)
     ]))
 }
 
@@ -1729,25 +1732,25 @@ const SNOWFLAKE_DEFAULT_NUMBER_PRECISION: i32 = 38;
 /// text and converted at `SQLGetData` time, matching the `SQLColumns` schema.
 fn procedure_columns_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("PROCEDURE_CAT", 255),       // 1
-        catalog_text_field("PROCEDURE_SCHEM", 255),     // 2
-        catalog_text_field("PROCEDURE_NAME", 255),      // 3
-        catalog_text_field("COLUMN_NAME", 255),         // 4 (NOT NULL; "" for return value)
+        catalog_wvarchar_field("PROCEDURE_CAT", 255),   // 1
+        catalog_wvarchar_field("PROCEDURE_SCHEM", 255), // 2
+        catalog_wvarchar_field("PROCEDURE_NAME", 255),  // 3
+        catalog_wvarchar_field("COLUMN_NAME", 255),     // 4 (NOT NULL; "" for return value)
         catalog_text_field("COLUMN_TYPE", 20),          // 5 SMALLINT
         catalog_text_field("DATA_TYPE", 20),            // 6 SMALLINT
-        catalog_text_field("TYPE_NAME", 255),           // 7
+        catalog_wvarchar_field("TYPE_NAME", 255),       // 7
         catalog_text_field("COLUMN_SIZE", 20),          // 8 INTEGER nullable
         catalog_text_field("BUFFER_LENGTH", 20),        // 9 INTEGER nullable
         catalog_text_field("DECIMAL_DIGITS", 20),       // 10 SMALLINT nullable
         catalog_text_field("NUM_PREC_RADIX", 20),       // 11 SMALLINT nullable
         catalog_text_field("NULLABLE", 20),             // 12 SMALLINT
-        catalog_text_field("REMARKS", 65535),           // 13 nullable
-        catalog_text_field("COLUMN_DEF", 65535),        // 14 nullable
+        catalog_wvarchar_field("REMARKS", 65535),       // 13 nullable
+        catalog_wvarchar_field("COLUMN_DEF", 65535),    // 14 nullable
         catalog_text_field("SQL_DATA_TYPE", 20),        // 15 SMALLINT
         catalog_text_field("SQL_DATETIME_SUB", 20),     // 16 SMALLINT nullable
         catalog_text_field("CHAR_OCTET_LENGTH", 20),    // 17 INTEGER nullable
         catalog_text_field("ORDINAL_POSITION", 20),     // 18 INTEGER
-        catalog_text_field("IS_NULLABLE", 20),          // 19
+        catalog_wvarchar_field("IS_NULLABLE", 20),      // 19
         catalog_text_field("IS RESULT SET COLUMN", 20), // 20 driver-specific SMALLINT
         catalog_text_field("USER_DATA_TYPE", 20),       // 21 driver-specific SMALLINT
     ]))
@@ -3690,9 +3693,9 @@ fn set_static_empty_catalog_result(
 fn special_columns_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         catalog_smallint_field("SCOPE"),
-        catalog_text_field("COLUMN_NAME", 128),
+        catalog_wvarchar_field("COLUMN_NAME", 128),
         catalog_smallint_field("DATA_TYPE"),
-        catalog_text_field("TYPE_NAME", 128),
+        catalog_wvarchar_field("TYPE_NAME", 128),
         catalog_int_field("COLUMN_SIZE"),
         catalog_int_field("BUFFER_LENGTH"),
         catalog_smallint_field("DECIMAL_DIGITS"),
@@ -3745,14 +3748,14 @@ pub fn special_columns<E: OdbcEncoding>(
 
 fn column_privileges_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("TABLE_CAT", 255),
-        catalog_text_field("TABLE_SCHEM", 255),
-        catalog_text_field("TABLE_NAME", 255),
-        catalog_text_field("COLUMN_NAME", 255),
-        catalog_text_field("GRANTOR", 255),
-        catalog_text_field("GRANTEE", 255),
-        catalog_text_field("PRIVILEGE", 255),
-        catalog_text_field("IS_GRANTABLE", 3),
+        catalog_wvarchar_field("TABLE_CAT", 255),
+        catalog_wvarchar_field("TABLE_SCHEM", 255),
+        catalog_wvarchar_field("TABLE_NAME", 255),
+        catalog_wvarchar_field("COLUMN_NAME", 255),
+        catalog_wvarchar_field("GRANTOR", 255),
+        catalog_wvarchar_field("GRANTEE", 255),
+        catalog_wvarchar_field("PRIVILEGE", 255),
+        catalog_wvarchar_field("IS_GRANTABLE", 3),
     ]))
 }
 
@@ -3801,13 +3804,13 @@ pub fn column_privileges<E: OdbcEncoding>(
 
 fn table_privileges_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("TABLE_CAT", 255),
-        catalog_text_field("TABLE_SCHEM", 255),
-        catalog_text_field("TABLE_NAME", 255),
-        catalog_text_field("GRANTOR", 255),
-        catalog_text_field("GRANTEE", 255),
-        catalog_text_field("PRIVILEGE", 255),
-        catalog_text_field("IS_GRANTABLE", 3),
+        catalog_wvarchar_field("TABLE_CAT", 255),
+        catalog_wvarchar_field("TABLE_SCHEM", 255),
+        catalog_wvarchar_field("TABLE_NAME", 255),
+        catalog_wvarchar_field("GRANTOR", 255),
+        catalog_wvarchar_field("GRANTEE", 255),
+        catalog_wvarchar_field("PRIVILEGE", 255),
+        catalog_wvarchar_field("IS_GRANTABLE", 3),
     ]))
 }
 
@@ -3849,19 +3852,19 @@ pub fn table_privileges<E: OdbcEncoding>(
 
 fn statistics_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_text_field("TABLE_CAT", 255),
-        catalog_text_field("TABLE_SCHEM", 255),
-        catalog_text_field("TABLE_NAME", 255),
+        catalog_wvarchar_field("TABLE_CAT", 255),
+        catalog_wvarchar_field("TABLE_SCHEM", 255),
+        catalog_wvarchar_field("TABLE_NAME", 255),
         catalog_smallint_field("NON_UNIQUE"),
-        catalog_text_field("INDEX_QUALIFIER", 255),
-        catalog_text_field("INDEX_NAME", 255),
+        catalog_wvarchar_field("INDEX_QUALIFIER", 255),
+        catalog_wvarchar_field("INDEX_NAME", 255),
         catalog_smallint_field("TYPE"),
         catalog_smallint_field("ORDINAL_POSITION"),
-        catalog_text_field("COLUMN_NAME", 255),
-        catalog_text_field("ASC_OR_DESC", 1),
+        catalog_wvarchar_field("COLUMN_NAME", 255),
+        catalog_wchar_field("ASC_OR_DESC", 1),
         catalog_int_field("CARDINALITY"),
         catalog_int_field("PAGES"),
-        catalog_text_field("FILTER_CONDITION", 255),
+        catalog_wvarchar_field("FILTER_CONDITION", 255),
     ]))
 }
 
@@ -4667,6 +4670,17 @@ mod type_info_tests {
         assert_eq!(batch.num_rows(), 24);
         assert_eq!(batch.num_columns(), 20);
         assert_eq!(type_info_schema().fields().len(), 20);
+    }
+
+    #[test]
+    fn statistics_asc_or_desc_is_tagged_wchar() {
+        let schema = statistics_schema();
+        let field = &schema.fields()[9];
+        assert_eq!(field.name(), "ASC_OR_DESC");
+        assert_eq!(
+            field.metadata().get("conciseSqlType"),
+            Some(&WCHAR_CONCISE_SQL_TYPE.to_string())
+        );
     }
 
     #[test]

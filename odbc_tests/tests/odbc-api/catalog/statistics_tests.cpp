@@ -33,7 +33,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set has correct n
   REQUIRE(numCols == 13);
 }
 
-TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set names and string types match ODBC 3.x spec",
                  "[odbc-api][catalog][statistics]") {
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
@@ -42,6 +42,10 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set column names 
   const char* expectedColNames[] = {"TABLE_CAT",   "TABLE_SCHEM", "TABLE_NAME",       "NON_UNIQUE",  "INDEX_QUALIFIER",
                                     "INDEX_NAME",  "TYPE",        "ORDINAL_POSITION", "COLUMN_NAME", "ASC_OR_DESC",
                                     "CARDINALITY", "PAGES",       "FILTER_CONDITION"};
+  const std::pair<SQLSMALLINT, SQLSMALLINT> expectedStringTypes[] = {
+      {1, SQL_WVARCHAR}, {2, SQL_WVARCHAR}, {3, SQL_WVARCHAR}, {5, SQL_WVARCHAR},
+      {6, SQL_WVARCHAR}, {9, SQL_WVARCHAR}, {10, SQL_WCHAR},   {13, SQL_WVARCHAR},
+  };
 
   for (SQLSMALLINT col = 1; col <= static_cast<SQLSMALLINT>(std::size(expectedColNames)); col++) {
     char colName[256] = {};
@@ -55,6 +59,14 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set column names 
                          &colSize, &decDigits, &nullable);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(std::string(colName) == expectedColNames[col - 1]);
+  }
+
+  for (const auto& [col, expected] : expectedStringTypes) {
+    INFO("col " << col << " expected=" << expected);
+    SQLLEN conciseType = 0;
+    ret = SQLColAttribute(stmt_handle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, nullptr, &conciseType);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(conciseType == expected);
   }
 }
 

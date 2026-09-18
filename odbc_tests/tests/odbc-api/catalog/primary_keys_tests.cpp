@@ -69,6 +69,29 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLPrimaryKeys: Result set column names
   }
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLPrimaryKeys: string columns report SQL_WVARCHAR concise type",
+                 "[odbc-api][primarykeys][catalog]") {
+  SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const SQLSMALLINT expectedTypes[] = {SQL_WVARCHAR, SQL_WVARCHAR, SQL_WVARCHAR,
+                                       SQL_WVARCHAR, SQL_SMALLINT, SQL_WVARCHAR};
+  for (SQLSMALLINT col = 1; col <= static_cast<SQLSMALLINT>(std::size(expectedTypes)); col++) {
+    INFO("col " << col << " expected=" << expectedTypes[col - 1]);
+    SQLLEN conciseType = 0;
+    SQLSMALLINT strLen = 0;
+    ret = SQLColAttribute(stmt_handle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &conciseType);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(conciseType == expectedTypes[col - 1]);
+
+    SQLSMALLINT describedType = 0;
+    ret = SQLDescribeCol(stmt_handle(), col, nullptr, 0, nullptr, &describedType, nullptr, nullptr, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(describedType == expectedTypes[col - 1]);
+  }
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
                  "SQLPrimaryKeys: KEY_SEQ and PK_NAME columns have ODBC 3.x types and nullability",
                  "[odbc-api][primarykeys][catalog]") {

@@ -42,7 +42,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedures: Result set has correct n
   REQUIRE(numCols == 8);
 }
 
-TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedures: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedures: Result set names and string types match ODBC 3.x spec",
                  "[odbc-api][procedures][catalog]") {
   SQLRETURN ret = SQLProcedures(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::BASIC_PROC), SQL_NTS);
@@ -50,6 +50,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedures: Result set column names 
 
   const char* expectedColNames[] = {"PROCEDURE_CAT",     "PROCEDURE_SCHEM", "PROCEDURE_NAME", "NUM_INPUT_PARAMS",
                                     "NUM_OUTPUT_PARAMS", "NUM_RESULT_SETS", "REMARKS",        "PROCEDURE_TYPE"};
+  const SQLSMALLINT stringColumns[] = {1, 2, 3, 7};
 
   SQLSMALLINT numCols = 0;
   ret = SQLNumResultCols(stmt_handle(), &numCols);
@@ -67,6 +68,13 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedures: Result set column names 
                          &colSize, &decDigits, &nullable);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(std::string(colName) == expectedColNames[col - 1]);
+  }
+
+  for (const SQLSMALLINT col : stringColumns) {
+    SQLLEN conciseType = 0;
+    ret = SQLColAttribute(stmt_handle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, nullptr, &conciseType);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(conciseType == SQL_WVARCHAR);
   }
 }
 

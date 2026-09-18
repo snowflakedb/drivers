@@ -34,7 +34,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set has corre
   REQUIRE(numCols == 8);
 }
 
-TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set names and string types match ODBC 3.x spec",
                  "[odbc-api][catalog][specialcolumns]") {
   SQLRETURN ret =
       SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
@@ -43,6 +43,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set column na
 
   const char* expectedColNames[] = {"SCOPE",       "COLUMN_NAME",   "DATA_TYPE",      "TYPE_NAME",
                                     "COLUMN_SIZE", "BUFFER_LENGTH", "DECIMAL_DIGITS", "PSEUDO_COLUMN"};
+  const SQLSMALLINT stringColumns[] = {2, 4};
 
   for (SQLSMALLINT col = 1; col <= static_cast<SQLSMALLINT>(std::size(expectedColNames)); col++) {
     char colName[256] = {};
@@ -56,6 +57,13 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set column na
                          &colSize, &decDigits, &nullable);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(std::string(colName) == expectedColNames[col - 1]);
+  }
+
+  for (const SQLSMALLINT col : stringColumns) {
+    SQLLEN conciseType = 0;
+    ret = SQLColAttribute(stmt_handle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, nullptr, &conciseType);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(conciseType == SQL_WVARCHAR);
   }
 }
 

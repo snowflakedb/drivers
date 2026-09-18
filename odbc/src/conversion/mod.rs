@@ -1001,6 +1001,11 @@ pub(crate) const SMALLINT_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::SMALLIN
 /// as ODBC `SQL_WVARCHAR` (−9), matching the reference driver catalog IRD.
 pub(crate) const WVARCHAR_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::EXT_W_VARCHAR.0;
 
+/// The `conciseSqlType` Arrow-metadata value that tags catalog `char(1)` columns
+/// as ODBC `SQL_WCHAR` (−8), matching the reference driver `SQLStatistics`
+/// `ASC_OR_DESC` IRD.
+pub(crate) const WCHAR_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::EXT_W_CHAR.0;
+
 /// The `conciseSqlType` Arrow-metadata value that tags catalog INTEGER columns
 /// as ODBC `SQL_INTEGER`.
 pub(crate) const INTEGER_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::INTEGER.0;
@@ -1048,7 +1053,7 @@ pub fn verbose_sql_type_from_field(
 mod concise_sql_type_override_tests {
     use super::{
         INTEGER_CONCISE_SQL_TYPE, NumericSettings, SMALLINT_CONCISE_SQL_TYPE,
-        WVARCHAR_CONCISE_SQL_TYPE, make_converter, sql_type_from_field,
+        WCHAR_CONCISE_SQL_TYPE, WVARCHAR_CONCISE_SQL_TYPE, make_converter, sql_type_from_field,
     };
     use crate::api::CDataType;
     use crate::conversion::test_utils::helpers::binding_for_value;
@@ -1083,6 +1088,15 @@ mod concise_sql_type_override_tests {
         assert_eq!(
             sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
             sql::SqlDataType::EXT_W_VARCHAR
+        );
+    }
+
+    #[test]
+    fn concise_sql_type_wchar_override() {
+        let field = text_field_with_concise(WCHAR_CONCISE_SQL_TYPE);
+        assert_eq!(
+            sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
+            sql::SqlDataType::EXT_W_CHAR
         );
     }
 
