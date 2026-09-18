@@ -17,10 +17,12 @@ set -o pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-# The runtime image is minimal; the vendored-openssl binary only needs glibc +
-# libstdc++, and rustls-native-certs needs the system CA bundle. Install the
-# few runtime bits defensively (no-op if already present).
-dnf install -y --setopt=install_weak_deps=False libstdc++ ca-certificates >/dev/null 2>&1 || true
+# The runtime image is minimal. The e2e binary needs glibc + libstdc++, plus
+# openssl-libs: sf_core keeps `openssl` as a dev-dependency for test fixtures
+# and links it dynamically, even though the driver itself no longer uses
+# OpenSSL. rustls-native-certs needs the system CA bundle. Install the few
+# runtime bits defensively (no-op if already present).
+dnf install -y --setopt=install_weak_deps=False libstdc++ ca-certificates openssl-libs >/dev/null 2>&1 || true
 
 export PARAMETER_PATH="$(pwd)/parameters.json"
 
