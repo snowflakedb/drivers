@@ -11,16 +11,15 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["protobuf", "sonic-json"]
 sonic-json = ["sonic-rs"]
-# Swaps the TLS backend to aws-lc-fips-sys. `aws-lc-rs/fips` is named explicitly
-# rather than left to cargo feature unification: `tls::x509_utils` calls
-# `aws_lc_rs::signature::*` directly for CRL verification, and those calls must
-# run against the FIPS module by declaration, not by accident of the resolver
-# happening to unify rustls's transitive activation into the same crate.
+# Selects `aws-lc-fips-sys` for rustls and for the application crypto that
+# already runs on AWS-LC: JWT signing, private-key loading, stage file
+# encryption, DPoP proofs, and OAuth PKCE / CSRF / `jti` randomness.
 #
-# Still named `fips-tls` rather than `fips`, but no longer for the original
-# reason. JWT signing, stage file encryption, DPoP and private-key parsing have
-# all been ported off OpenSSL to AWS-LC, so the feature's reach is no longer
-# TLS-only in practice.
+# `aws-lc-rs/fips` is named explicitly rather than left to cargo feature
+# unification: `tls::x509_utils` calls `aws_lc_rs::signature::*` directly for
+# CRL verification, and those calls must run against the FIPS module by
+# declaration, not by accident of the resolver happening to unify rustls's
+# transitive activation into the same crate.
 #
 # The name stays because the *claim* is not yet complete:
 #   - SigV4 request signing computes HMAC-SHA256 outside the module:
@@ -28,13 +27,14 @@ sonic-json = ["sonic-rs"]
 #     transfer, not an edge case; see F7. `ring` itself is no longer linked --
 #     its only two sources, `sigv4a` and `sso`, are both off (see the AWS SDK
 #     block below) -- so this bullet is now about RustCrypto alone.
-#   - OAuth CSRF and PKCE randomness comes from `oauth2`, which draws on `rand`
-#     rather than the module's DRBG; see F8.
 #   - The `aws-lc-rs` bound below keeps `aws-lc-fips-sys` on 0.13.x; it
 #     does not establish CMVP validation. Certificate #5314 identifies
 #     the static AWS-LC FIPS 3.1.0 module; later 3.x point releases need
 #     their own validation basis. The built and deployed module must meet
 #     the policy's version, tested environment, and installation requirements.
+#
+# Azure Content-MD5 uses RustCrypto `md-5` as a non-security upload integrity
+# checksum; it is not part of the FIPS security claim.
 # So an artifact built with this feature is not yet a validated FIPS artifact,
 # and `fips` stays unclaimed for the complete thing.
 fips-tls = ["rustls/fips", "aws-lc-rs/fips"]

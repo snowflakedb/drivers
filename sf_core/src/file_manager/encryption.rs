@@ -136,22 +136,10 @@ pub fn build_encryptor(
     let file_key = generate_random_bytes(cipher_suite.key_len)?;
     let iv = generate_random_bytes(AES_BLOCK_SIZE_IN_BYTES)?;
 
-    // The per-file key is wrapped with AES-ECB under the stage master key.
-    // PKCS#7 padding is not optional here: it is what the stage wire format
-    // carries, so the wrapped key is one full block longer than the key
-    // itself, exactly as OpenSSL's padded one-shot produced.
-    let mut encrypted_file_key = file_key.clone();
-    PaddedBlockEncryptingKey::ecb_pkcs7(cipher_suite.unbound_key(&master_key)?)
-        .context(CryptoSnafu {
-            operation: "initializing AES-ECB key wrap",
-        })?
-        .encrypt(&mut encrypted_file_key)
-        .context(CryptoSnafu {
-            operation: "encrypting file key with AES-ECB",
-        })?;
+    let encoded_file_key = wrap_file_key(&cipher_suite, &master_key, &file_key)?;
 
     let metadata = EncryptedFileMetadata {
-        encrypted_key: BASE64_ENGINE.encode(&encrypted_file_key),
+        encrypted_key: encoded_file_key,
         iv: BASE64_ENGINE.encode(&iv),
         material_desc: MaterialDescription {
             query_id: encryption_material.query_id.clone(),
@@ -166,6 +154,24 @@ pub fn build_encryptor(
         cipher_len: cbc_ciphertext_len(source_len),
     };
     Ok((encryptor, metadata))
+}
+
+fn wrap_file_key(
+    cipher_suite: &CipherSuite,
+    master_key: &[u8],
+    file_key: &[u8],
+) -> Result<String, EncryptionError> {
+    // The stage metadata requires a full PKCS#7 block even for aligned keys.
+    let mut wrapped = file_key.to_vec();
+    PaddedBlockEncryptingKey::ecb_pkcs7(cipher_suite.unbound_key(master_key)?)
+        .context(CryptoSnafu {
+            operation: "initializing AES-ECB key wrap",
+        })?
+        .encrypt(&mut wrapped)
+        .context(CryptoSnafu {
+            operation: "encrypting file key with AES-ECB",
+        })?;
+    Ok(BASE64_ENGINE.encode(wrapped))
 }
 
 /// Streaming AES-CBC/PKCS#7 encryptor over an arbitrary `Read` source. Each
@@ -566,32 +572,12 @@ mod tests {
         out
     }
 
-    /// One-shot AES-CBC/PKCS#7 via OpenSSL, as an independent reference for
-    /// the AWS-LC streaming output.
-    ///
-    /// Deliberately a second implementation rather than an AWS-LC one-shot:
-    /// the stage format is fixed and shared with the other Snowflake drivers,
-    /// so what needs proving is that the ciphertext is unchanged by the port,
-    /// not that AWS-LC agrees with itself. OpenSSL stays a dev-dependency for
-    /// exactly this.
-    fn openssl_reference_cbc(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Vec<u8> {
-        let cipher = match key.len() {
-            AES_128_KEY_SIZE_IN_BYTES => openssl::symm::Cipher::aes_128_cbc(),
-            AES_256_KEY_SIZE_IN_BYTES => openssl::symm::Cipher::aes_256_cbc(),
-            other => panic!("unexpected key length {other}"),
-        };
-        openssl::symm::encrypt(cipher, key, Some(iv), plaintext).expect("openssl reference encrypt")
-    }
-
-    /// One-shot AES-ECB/PKCS#7 via OpenSSL, the reference for the wrapped
-    /// per-file key that travels in the stage metadata.
-    fn openssl_reference_ecb(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
-        let cipher = match key.len() {
-            AES_128_KEY_SIZE_IN_BYTES => openssl::symm::Cipher::aes_128_ecb(),
-            AES_256_KEY_SIZE_IN_BYTES => openssl::symm::Cipher::aes_256_ecb(),
-            other => panic!("unexpected key length {other}"),
-        };
-        openssl::symm::encrypt(cipher, key, None, plaintext).expect("openssl reference encrypt")
+    fn vector_encryptor(len: usize) -> Encryptor {
+        Encryptor {
+            file_key: Sensitive::from((0u8..32).collect::<Vec<u8>>()),
+            iv: (0u8..16).collect(),
+            cipher_len: cbc_ciphertext_len(len as i64),
+        }
     }
 
     fn digest_of(bytes: &[u8]) -> String {
@@ -688,60 +674,74 @@ mod tests {
         assert_ne!(digest_of(plaintext), digest_of(&ciphertext));
     }
 
-    /// The lazy `EncryptingReader` must produce exactly the same ciphertext as a
-    /// one-shot `openssl::symm::encrypt` with the same key+IV, at and around the
-    /// chunk/block boundaries — and must be deterministic across rebuilds, which
-    /// is what makes upload retries (re-encryption) safe.
+    /// Fixed AES-256-CBC/PKCS#7 stage ciphertext vectors generated with
+    /// OpenSSL 3.5.3 (`enc -aes-256-cbc -K 000102...1f -iv 000102...0f -nosalt`).
+    /// The key, IV, and plaintext are the sequential bytes in the test.
     #[test]
-    fn encrypting_reader_matches_one_shot_and_is_deterministic() {
-        let material = test_material();
-        for len in [
-            0usize,
-            1,
-            15,
-            16,
-            17,
-            CRYPT_CHUNK_SIZE - 1,
-            CRYPT_CHUNK_SIZE + 5,
+    fn stage_ciphertext_matches_reference_vectors() {
+        for (len, expected) in [
+            (0, "e9c3ef8ab23453e6f0749cd636e7a88e"),
+            (1, "cab6bf3990d9768d8e1262e8adcda55f"),
+            (15, "62b5e1438a1f9d3523ac06b82b425cab"),
+            (
+                16,
+                "f29000b62a499fd0a9f39a6add2e778053c8742d0ea29b2712f6c7af4048f4b4",
+            ),
+            (
+                17,
+                "f29000b62a499fd0a9f39a6add2e7780ae2c7b7cc6473eb497cabbd193c6174e",
+            ),
         ] {
-            let plaintext = vec![0xABu8; len];
-            let (enc, _meta) = build_encryptor(&material, len as i64).unwrap();
-
-            let lazy = encrypt_to_vec(&enc, &plaintext);
-
-            let one_shot = openssl_reference_cbc(enc.file_key.reveal(), &enc.iv, &plaintext);
-            assert_eq!(
-                lazy, one_shot,
-                "lazy ciphertext must match one-shot (len {len})"
-            );
-            assert_eq!(
-                enc.cipher_len(),
-                lazy.len() as i64,
-                "analytic cipher_len must match actual (len {len})",
-            );
-
-            let again = encrypt_to_vec(&enc, &plaintext);
-            assert_eq!(
-                lazy, again,
-                "re-encryption must be byte-identical (len {len})"
-            );
+            let plaintext: Vec<u8> = (0..len).map(|n| n as u8).collect();
+            let encryptor = vector_encryptor(len);
+            let ciphertext = encrypt_to_vec(&encryptor, &plaintext);
+            assert_eq!(hex::encode(&ciphertext), expected, "length {len}");
+            assert_eq!(encryptor.cipher_len(), ciphertext.len() as i64);
         }
     }
 
-    /// Reading the `EncryptingReader` through a buffer smaller than a staged
-    /// ciphertext block exercises the partial-drain branch (`staged_pos`) that
-    /// the bulk `read_to_end` path never hits. Output must still equal one-shot.
+    /// The fixed ciphertext SHA-256s were computed over OpenSSL 3.5.3's
+    /// AES-256-CBC/PKCS#7 output for the same sequential key, IV, and plaintext.
+    /// These lengths cross the reader's chunk and final-padding boundaries.
+    #[test]
+    fn encrypting_reader_preserves_stage_ciphertext_across_chunk_boundaries() {
+        for (len, expected_sha256) in [
+            (
+                CRYPT_CHUNK_SIZE - 1,
+                "b6e414dc3eb59038b86ae65a7405e7ccf237e3881c7c0f50c09f009c4eaaa406",
+            ),
+            (
+                CRYPT_CHUNK_SIZE,
+                "fc615aa8caf22bf00c92bd6a8bae347619412c1297663832b4f4604e7b5591d2",
+            ),
+            (
+                CRYPT_CHUNK_SIZE + 1,
+                "5207e5464f3e27916e5afed98544a2ee73f18e40ce32c95862cd41be09cf4cd1",
+            ),
+        ] {
+            let plaintext: Vec<u8> = (0..len).map(|n| n as u8).collect();
+            let encryptor = vector_encryptor(len);
+            let ciphertext = encrypt_to_vec(&encryptor, &plaintext);
+            assert_eq!(
+                hex::encode(digest::digest(&digest::SHA256, &ciphertext).as_ref()),
+                expected_sha256,
+                "length {len}"
+            );
+            assert_eq!(encryptor.cipher_len(), ciphertext.len() as i64);
+            assert_eq!(encrypt_to_vec(&encryptor, &plaintext), ciphertext);
+        }
+    }
+
+    /// Small reads exercise the staged ciphertext's partial-drain branch.
     #[test]
     fn encrypting_reader_partial_reads_into_small_buffer() {
-        let material = test_material();
-        let plaintext = vec![0x42u8; CRYPT_CHUNK_SIZE + 100];
-        let (enc, _meta) = build_encryptor(&material, plaintext.len() as i64).unwrap();
-
-        let mut reader = enc
+        let plaintext: Vec<u8> = (0..CRYPT_CHUNK_SIZE + 100).map(|n| n as u8).collect();
+        let encryptor = vector_encryptor(plaintext.len());
+        let mut reader = encryptor
             .encrypting_reader(std::io::Cursor::new(plaintext.clone()))
             .unwrap();
         let mut out = Vec::new();
-        let mut buf = [0u8; 7]; // deliberately tiny, not a block multiple
+        let mut buf = [0u8; 7];
         loop {
             let n = reader.read(&mut buf).unwrap();
             if n == 0 {
@@ -750,8 +750,11 @@ mod tests {
             out.extend_from_slice(&buf[..n]);
         }
 
-        let one_shot = openssl_reference_cbc(enc.file_key.reveal(), &enc.iv, &plaintext);
-        assert_eq!(out, one_shot);
+        assert_eq!(
+            hex::encode(digest::digest(&digest::SHA256, &out).as_ref()),
+            "8faf1df050a6d959f7b87682fe12c825d114eab613a1de2b91e94ca0523a9351"
+        );
+        assert_eq!(out, encrypt_to_vec(&encryptor, &plaintext));
     }
 
     #[test]
@@ -840,11 +843,10 @@ mod tests {
     #[test]
     fn wrapped_key_matches_material_rejects_mismatched_key_length() {
         let material = test_material();
-        let master_key = BASE64_ENGINE
-            .decode(material.query_stage_master_key.reveal())
-            .unwrap();
-        let short_key = [9u8; AES_128_KEY_SIZE_IN_BYTES];
-        let wrapped = openssl_reference_ecb(&master_key, &short_key);
+        // AES-256-ECB/PKCS#7 wrap of `[9; 16]` under the `[7; 32]` master key.
+        let wrapped =
+            hex::decode("07b9f822f532dc5fde60cff773c193d094f551ac1fc273d74d84fc638b2a9ef8")
+                .unwrap();
         let metadata = EncryptedFileMetadata {
             encrypted_key: BASE64_ENGINE.encode(wrapped),
             iv: BASE64_ENGINE.encode([0u8; AES_BLOCK_SIZE_IN_BYTES]),
@@ -868,34 +870,32 @@ mod tests {
         assert!(wrapped_key_matches_material(&metadata, &material).is_err());
     }
 
-    /// The wrapped per-file key must be byte-identical to OpenSSL's padded
-    /// one-shot ECB, because it travels in the stage metadata and is unwrapped
-    /// by whichever driver downloads the file next.
-    ///
-    /// The length assertion is the load-bearing one. OpenSSL's one-shot
-    /// applies PKCS#7 unconditionally, so a key that is already a block
-    /// multiple still gains a whole padding block. AWS-LC offers both a padded
-    /// and an unpadded ECB API, and the unpadded one accepts this input
-    /// happily -- it would produce a 32-byte wrap where the format expects 48,
-    /// which no driver would be able to unwrap.
+    /// A block-aligned file key gains a whole PKCS#7 padding block in this
+    /// AES-256-ECB wrap. OpenSSL 3.5.3 reference: key `[7; 32]`, input `[9; 32]`.
     #[test]
-    fn wrapped_file_key_matches_openssl_padded_ecb() {
-        let material = test_material();
-        let (enc, metadata) = build_encryptor(&material, 0).unwrap();
+    fn wrapped_file_key_matches_reference_vector() {
+        let master_key = [7u8; AES_256_KEY_SIZE_IN_BYTES];
+        let file_key = [9u8; AES_256_KEY_SIZE_IN_BYTES];
+        let cipher_suite = CipherSuite::from_key_len(master_key.len()).unwrap();
+        let encoded = wrap_file_key(&cipher_suite, &master_key, &file_key).unwrap();
 
-        let master_key = BASE64_ENGINE
-            .decode(material.query_stage_master_key.reveal())
-            .unwrap();
+        assert_eq!(
+            encoded,
+            "B7n4IvUy3F/eYM/3c8GT0Ae5+CL1Mtxf3mDP93PBk9CU9VGsH8Jz102E/GOLKp74"
+        );
+    }
+
+    /// The randomly generated stage file key is block-aligned, but its
+    /// metadata wrap must include a full PKCS#7 block for other drivers.
+    #[test]
+    fn wrapped_file_key_in_metadata_has_full_padding_block() {
+        let material = test_material();
+        let (encryptor, metadata) = build_encryptor(&material, 0).unwrap();
         let wrapped = BASE64_ENGINE.decode(&metadata.encrypted_key).unwrap();
 
         assert_eq!(
-            wrapped,
-            openssl_reference_ecb(&master_key, enc.file_key.reveal()),
-            "wrapped file key must match OpenSSL's padded ECB output"
-        );
-        assert_eq!(
             wrapped.len(),
-            enc.file_key.reveal().len() + AES_BLOCK_SIZE_IN_BYTES,
+            encryptor.file_key.reveal().len() + AES_BLOCK_SIZE_IN_BYTES,
             "PKCS#7 must add a full padding block to a block-multiple key"
         );
     }

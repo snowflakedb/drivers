@@ -18,10 +18,8 @@ pub(crate) mod dpop;
 mod error;
 mod http_client;
 mod loopback_server;
-// Standalone PKCE helper kept as scaffolding; the active flow uses
-// `oauth2::PkceCodeChallenge` directly (PKCE always-on).
-#[allow(dead_code)]
 mod pkce;
+mod random;
 mod token;
 
 /// Browser-launcher closure type used by [`OAuthAuthorizationCodeConfig`]
