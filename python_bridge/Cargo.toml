@@ -10,7 +10,6 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
-vendored-openssl = ["sf_core/vendored-openssl"]
 native-arrow = ["dep:arrow", "dep:snafu", "dep:error_trace", "dep:sf_types", "dep:chrono", "pyo3/chrono"]
 # Links the FIPS-validated crypto module (aws-lc-fips-sys) instead of
 # aws-lc-sys. Despite the name it is no longer TLS-only: JWT signing, DPoP,

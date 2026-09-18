@@ -23,16 +23,18 @@ sonic-json = ["sonic-rs"]
 # TLS-only in practice.
 #
 # The name stays because the *claim* is not yet complete:
-#   - `openssl` is still in `[dependencies]` (dev-only in practice, but
-#     `vendored-openssl` below still statically links an unvalidated copy where
-#     a customer cannot replace it). Removing it is the next step; see F2.
+#   - SigV4 request signing computes HMAC-SHA256 outside the module:
+#     `aws-sigv4` uses RustCrypto unconditionally, and `aws-sdk-s3` enables
+#     `sigv4a` by default, which links ring. That is every stage transfer, not
+#     an edge case; see F7.
+#   - OAuth CSRF and PKCE randomness comes from `oauth2`, which draws on `rand`
+#     rather than the module's DRBG; see F8.
 #   - AWS-LC-FIPS 4.x is "in process" at CMVP rather than certificated; the
 #     issued certs cover the 3.x line.
 # So an artifact built from this feature is still not a FIPS artifact, and
 # `fips` stays unclaimed for the complete thing.
 fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
 protobuf = ["prost", "proto_utils"]
-vendored-openssl = ["openssl/vendored"]
 auth_mfa_e2e = []
 auth_oauth_e2e = []
 auth_spcs_e2e = []
@@ -88,7 +90,6 @@ base64 = "0.22.1"
 arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
 arrow-ipc = ">=54.0.0, <59"
 flate2 = "1.1.2"
-openssl = "0.10.73"
 # `default-features = false` drops oauth2's `rustls-tls`, which is only a
 # forwarder to `reqwest/rustls-tls` -- and that pulls `__rustls-ring`, which via
 # cargo feature unification would re-arm reqwest's silent ring fallback for the
@@ -221,6 +222,20 @@ brotli = "8.0.2"
 zstd = "0.13.3"
 flate2 = "1.1.2"
 test-case = "3.3.1"
+# Test-only, and deliberately kept rather than ported. It generates the X.509
+# and CRL fixtures (`crl/certificate_parser.rs`, `tls/x509_utils.rs`,
+# `tls/test_helpers.rs`) and gives the AWS-LC crypto paths an independent
+# implementation to check against -- porting it would put the same library on
+# both sides of those tests and stop them proving anything.
+#
+# It is a dev-dependency rather than a normal one because `cargo build` does not
+# compile dev-dependencies: shipped artifacts now link no OpenSSL at all, which
+# is what retired the `vendored-openssl` feature (F2). Left unvendored on
+# purpose -- a cargo feature cannot reference a dev-dependency, so `vendored`
+# would have to be unconditional, and that would make every Windows test build
+# compile OpenSSL from source through Perl and nmake. The test lanes supply it
+# instead (vcpkg on Windows, distro packages elsewhere).
+openssl = "0.10.73"
 # Dev/test reqwest: also rustls-only so test builds don't re-introduce
 # native-tls (feature unification would otherwise pull `default-tls` back in).
 # Mirrors the `-no-provider` selection above for the same reason: feature
