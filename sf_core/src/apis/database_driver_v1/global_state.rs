@@ -74,7 +74,8 @@ pub struct WrapperPresets {
     /// proxy in sync for parameters the response omits. When false, the cache
     /// only ever reflects parameters a response carries.
     pub optimistic_alter_session_param_cache: bool,
-    /// when `true` one in-flight session operation per connection
+    /// Default when the `serialize_session_operations` connection parameter is unset.
+    /// When true, one in-flight session operation per connection.
     pub serialize_session_operations: bool,
     /// When true, a login with pre-acquired session and master tokens proves the pair
     /// with a token-request RENEW, which costs a round-trip, rotates the pair, and

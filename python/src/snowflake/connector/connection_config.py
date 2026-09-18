@@ -321,6 +321,11 @@ class ConnectionConfig(ConnectionConfigMixin):
     secondary_roles: str | None = None
     """Secondary-roles activation mode sent at login (e.g. ALL or NONE)"""
 
+    serialize_session_operations: bool | None = None
+    """When true, core holds a per-connection gate across every backend session operation so only one is in flight at a
+    time. When unset, defaults to the wrapper's preset, client-only. Set at connect, cannot be changed after.
+    """
+
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 

@@ -142,6 +142,7 @@ pub mod param_names {
     pub const DISABLE_PARALLEL_USER_PROMPT: ParamKey = ParamKey("disable_parallel_user_prompt");
     pub const DISABLE_QUERY_CONTEXT_CACHE: ParamKey = ParamKey("disable_query_context_cache");
     pub const INCLUDE_RETRY_REASON: ParamKey = ParamKey("include_retry_reason");
+    pub const SERIALIZE_SESSION_OPERATIONS: ParamKey = ParamKey("serialize_session_operations");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
     pub const LOG_QUERY_TEXT: ParamKey = ParamKey("log_query_text");
     pub const LOG_QUERY_PARAMETERS: ParamKey = ParamKey("log_query_parameters");
@@ -1099,6 +1100,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         .auth(false)
         .description("When true, disables the client-side query context cache. \
                       No context is sent in requests and server-returned context is ignored.")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::SERIALIZE_SESSION_OPERATIONS.as_str())
+        .value_type(ValueType::Bool)
+        .sensitive(false)
+        .auth(false)
+        .description(
+            "When true, core holds a per-connection gate across every backend session \
+             operation so only one is in flight at a time. When unset, defaults to the \
+             wrapper's preset, client-only. Set at connect, cannot be changed after.",
+        )
         .scopes(&[ParamScope::Connection])
         .used_at_connect(false)
         .mutable_after_connect(false)
@@ -2964,6 +2979,20 @@ mod tests {
             .resolve("client_store_temporary_credential")
             .expect("client_store_temporary_credential should resolve");
         assert_eq!(def.default, Some(DefaultValue::Bool(true)));
+    }
+
+    #[test]
+    fn serialize_session_operations_has_no_registry_default() {
+        let r = registry();
+        let def = r
+            .resolve("serialize_session_operations")
+            .expect("serialize_session_operations should resolve");
+        assert_eq!(def.value_type, ValueType::Bool);
+        assert!(def.default.is_none());
+        assert_eq!(def.scopes, &[ParamScope::Connection]);
+        assert!(!def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert!(r.resolve("SERIALIZE_SESSION_OPERATIONS").is_some());
     }
 
     #[test]

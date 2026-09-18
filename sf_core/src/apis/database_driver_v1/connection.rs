@@ -1127,7 +1127,8 @@ pub struct Connection {
     /// [`Self::update_session_params_cache`]. `false` until login completes, so
     /// a pre-login cache write never parses SQL.
     pub(crate) optimistic_alter_session_param_cache: bool,
-    /// gate when [`WrapperPresets::serialize_session_operations`] is true
+    /// Per-connection gate when session operations are serialized.
+    /// Acquire this before [`Mutex<Connection>`].
     session_mutex: Arc<Mutex<()>>,
 }
 
@@ -2904,11 +2905,17 @@ impl DatabaseDriverV1 {
         &self,
         conn: &Arc<Mutex<Connection>>,
     ) -> Option<OwnedMutexGuard<()>> {
-        if !self.wrapper_presets.serialize_session_operations {
-            return None;
-        }
-
-        let mutex = conn.lock().await.session_mutex.clone();
+        let mutex = {
+            let conn = conn.lock().await;
+            let serialize = conn
+                .connection_seed
+                .get_bool(param_names::SERIALIZE_SESSION_OPERATIONS)
+                .unwrap_or(self.wrapper_presets.serialize_session_operations);
+            if !serialize {
+                return None;
+            }
+            conn.session_mutex.clone()
+        };
         Some(mutex.lock_owned().await)
     }
 }
@@ -4535,5 +4542,37 @@ mod tests {
             let conn = Arc::new(Mutex::new(Connection::new()));
             assert!(ds.lock_session_if_needed(&conn).await.is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn session_guard_excludes_a_second_holder_when_python_overrides_true() {
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            wrapper_presets: WrapperPresets::python(),
+            ..Default::default()
+        });
+        let conn = Arc::new(Mutex::new(make_connection_with_settings(vec![(
+            "serialize_session_operations",
+            Setting::Bool(true),
+        )])));
+        let session_guard = ds.lock_session_if_needed(&conn).await;
+        assert!(session_guard.is_some());
+        let raced_guard =
+            tokio::time::timeout(Duration::from_millis(20), ds.lock_session_if_needed(&conn)).await;
+        assert!(raced_guard.is_err(), "second holder must wait on the gate");
+        drop(session_guard);
+        assert!(ds.lock_session_if_needed(&conn).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn session_guard_is_absent_when_odbc_overrides_false() {
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            wrapper_presets: WrapperPresets::odbc(),
+            ..Default::default()
+        });
+        let conn = Arc::new(Mutex::new(make_connection_with_settings(vec![(
+            "serialize_session_operations",
+            Setting::Bool(false),
+        )])));
+        assert!(ds.lock_session_if_needed(&conn).await.is_none());
     }
 }
