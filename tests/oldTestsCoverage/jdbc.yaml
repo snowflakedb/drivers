@@ -2951,7 +2951,8 @@ tests:
   - test_name: shouldFindLowercasedStageFileWhenQuotedIdentifiersIgnoreCaseIsEnabled
     ud_tests: []
   - test_name: testDownloadToStreamBlobNotFoundGCS
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/put_get/UploadDownloadStreamIT.java#shouldThrowWhenDownloadingMissingStageFile
   - test_name: testDownloadToStreamGCS
     ud_tests: []
   - test_name: testDownloadToStreamGCSPresignedUrl

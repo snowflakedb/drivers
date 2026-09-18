@@ -2549,6 +2549,19 @@ impl FileManagerError {
             }
         )
     }
+
+    pub(crate) fn is_remote_object_not_found(&self) -> bool {
+        matches!(
+            self,
+            FileManagerError::GcsDownload {
+                source: GcsDownloadError::GcsHttp {
+                    status_code: 404,
+                    ..
+                },
+                ..
+            }
+        )
+    }
 }
 
 #[cfg(test)]
@@ -2838,6 +2851,45 @@ mod tests {
             location: Location::new(file!(), line!(), 0),
         };
         assert!(!not_found.is_file_too_large());
+    }
+
+    fn gcs_http_download(status_code: u16) -> FileManagerError {
+        FileManagerError::GcsDownload {
+            source: GcsDownloadError::GcsHttp {
+                status_code,
+                body: "Not Found".to_string(),
+                location: Location::new(file!(), line!(), 0),
+            },
+            location: Location::new(file!(), line!(), 0),
+        }
+    }
+
+    #[test]
+    fn is_remote_object_not_found_true_for_gcs_download_404() {
+        assert!(gcs_http_download(404).is_remote_object_not_found());
+    }
+
+    #[test]
+    fn is_remote_object_not_found_false_for_other_gcs_http_and_local_miss() {
+        assert!(!gcs_http_download(403).is_remote_object_not_found());
+        assert!(
+            !FileManagerError::NoFilesMatched {
+                pattern: "no-such-file".to_string(),
+                location: Location::new(file!(), line!(), 0),
+            }
+            .is_remote_object_not_found()
+        );
+        assert!(
+            !FileManagerError::GcsUpload {
+                source: GcsUploadError::GcsHttp {
+                    status_code: 404,
+                    body: "Not Found".to_string(),
+                    location: Location::new(file!(), line!(), 0),
+                },
+                location: Location::new(file!(), line!(), 0),
+            }
+            .is_remote_object_not_found()
+        );
     }
 
     fn sample_transfer_error() -> FileManagerError {

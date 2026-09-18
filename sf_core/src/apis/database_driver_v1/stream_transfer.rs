@@ -440,12 +440,7 @@ impl DatabaseDriverV1 {
                 resolved.multipart,
             )
             .await
-            .map_err(|e| {
-                InvalidArgumentSnafu {
-                    argument: format!("Failed to open download stream: {e}"),
-                }
-                .build()
-            })?;
+            .map_err(map_open_download_stream_error)?;
 
             let total_len = (opened.cloud_byte_count > 0).then_some(opened.cloud_byte_count);
             let stream = DownloadStream {
@@ -618,6 +613,17 @@ struct ResolvedDownload {
     presigned_url: Option<String>,
     initial_snapshot: file_manager::StageInfoSnapshot,
     multipart: file_manager::MultipartParams,
+}
+
+fn map_open_download_stream_error(error: file_manager::FileManagerError) -> ApiError {
+    if error.is_remote_object_not_found() {
+        QueryResponseProcessSnafu.into_error(remote_file_not_found())
+    } else {
+        InvalidArgumentSnafu {
+            argument: format!("Failed to open download stream: {error}"),
+        }
+        .build()
+    }
 }
 
 /// Parses a GET's GS `response` into a [`ResolvedDownload`]: rejects a
@@ -1416,6 +1422,46 @@ mod tests {
                 );
             }
             other => panic!("expected QueryResponseProcess(RemoteFileNotFound), got {other:?}"),
+        }
+    }
+
+    fn gcs_http_download(status_code: u16) -> file_manager::FileManagerError {
+        file_manager::FileManagerError::GcsDownload {
+            source: file_manager::GcsDownloadError::GcsHttp {
+                status_code,
+                body: "Not Found".to_owned(),
+                location: snafu::Location::new(file!(), line!(), 0),
+            },
+            location: snafu::Location::new(file!(), line!(), 0),
+        }
+    }
+
+    #[test]
+    fn open_download_stream_maps_gcs_404_to_remote_file_not_found() {
+        match map_open_download_stream_error(gcs_http_download(404)) {
+            ApiError::QueryResponseProcess { source, .. } => {
+                assert!(
+                    matches!(
+                        source.as_ref(),
+                        QueryResponseProcessingError::RemoteFileNotFound { .. }
+                    ),
+                    "GCS download HTTP 404 must map to RemoteFileNotFound, got {source:?}"
+                );
+            }
+            other => panic!("expected QueryResponseProcess(RemoteFileNotFound), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn open_download_stream_maps_gcs_403_to_invalid_argument() {
+        match map_open_download_stream_error(gcs_http_download(403)) {
+            ApiError::InvalidArgument { argument, .. } => {
+                assert!(
+                    argument.starts_with("Failed to open download stream:"),
+                    "GCS download HTTP 403 must stay InvalidArgument, got {argument}"
+                );
+            }
+            other => panic!("expected InvalidArgument for GCS 403, got {other:?}"),
         }
     }
 }

@@ -77,6 +77,18 @@ public class GcsDownscopedCredentialTest extends SnowflakeIntegrationTestBase
 
   @EnabledOnGCP
   @Test
+  public void shouldSkipWhenOverwriteIsFalseOnDefaultGcs(@TempDir Path uploadDir) throws Exception {
+    try (Connection connection = openConnection()) {
+      ensureDatabaseAndSchema(connection);
+      // Given a file is already on a GCS stage opened with the default connection
+      // When the same file is PUT again with OVERWRITE=FALSE
+      // Then STATUS is SKIPPED
+      assertOverwriteFalseStatus(connection, uploadDir, "gcs_overwrite_default.txt", "SKIPPED");
+    }
+  }
+
+  @EnabledOnGCP
+  @Test
   public void shouldSkipWhenOverwriteIsFalseOnDownscopedGcs(@TempDir Path uploadDir)
       throws Exception {
     try (Connection connection = openConnection(GCS_USE_DOWNSCOPED_CREDENTIAL, "true")) {
