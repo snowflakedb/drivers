@@ -662,7 +662,7 @@ fn write_timestamp_wire_wallclock(value: NaiveDateTime) -> Result<String, Bindin
 /// Static template used in both diagnostics and unit tests, so a future
 /// change to the accepted grammar updates the user-facing message and the
 /// pinning test in lockstep.
-const TZ_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM";
+const TZ_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD{T|space}HH:MM:SS[.fff][{space|}+/-HH:MM]";
 
 /// Expected literal shape for a `SQL_C_CHAR` / `SQL_C_WCHAR` source bound to an
 /// offset-less TIMESTAMP (NTZ / LTZ) target, surfaced in the 22018 diagnostic
@@ -678,7 +678,9 @@ const TS_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD HH:MM:SS[.fffffffff]";
 /// - `SQL_C_TYPE_TIMESTAMP` / `SQL_C_BINARY`: the struct has no offset field,
 ///   so we treat the wall-clock as UTC (offset = 0). Matches the legacy
 ///   Python connector's treatment of a naive `datetime` bound to TIMESTAMP_TZ.
-/// - `SQL_C_CHAR` / `SQL_C_WCHAR`: parse `YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM`;
+/// - `SQL_C_CHAR` / `SQL_C_WCHAR`: parse `YYYY-MM-DD{T|space}HH:MM:SS[.fff][{space|}+/-HH:MM]`
+///   (both a space and the ISO8601 `T` date-time separator are accepted;
+///   the space before the offset is also optional);
 ///   if no offset suffix is present, fall back to the offset-less parser and
 ///   treat as UTC (offset = 0). A genuinely unparseable string surfaces as
 ///   `InvalidCharacterValueForCast` (mapped to SQLSTATE 22018), carrying a
@@ -711,12 +713,21 @@ fn read_timestamp_tz_odbc(binding: &ParameterBinding) -> Result<TzInstant, Bindi
     }
 }
 
-/// Try `YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM` first, then fall back to the
-/// offset-less formats (treated as UTC). Returns
-/// `InvalidCharacterValueForCast` (SQLSTATE 22018) if neither shape parses,
-/// carrying a truncated copy of the input and the expected format template.
+/// Try `YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM` first (space or `T` date-time
+/// separator, offset with or without a separating space), then fall back to
+/// the offset-less formats (treated as UTC). Returns
+/// `InvalidCharacterValueForCast` (SQLSTATE 22018) if none of the shapes
+/// parse, carrying a truncated copy of the input and the expected format
+/// template.
 fn parse_tz_string_with_fallback(s: &str, c_type: CDataType) -> Result<TzInstant, BindingError> {
-    for fmt in &["%Y-%m-%d %H:%M:%S%.f %:z", "%Y-%m-%d %H:%M:%S%.f%:z"] {
+    for fmt in &[
+        "%Y-%m-%d %H:%M:%S%.f %:z",
+        "%Y-%m-%d %H:%M:%S%.f%:z",
+        "%Y-%m-%dT%H:%M:%S%.f %:z",
+        "%Y-%m-%dT%H:%M:%S%.f%:z",
+        "%Y-%m-%dT%H:%M:%S %:z",
+        "%Y-%m-%dT%H:%M:%S%:z",
+    ] {
         if let Ok(dt) = DateTime::<FixedOffset>::parse_from_str(s, fmt) {
             return Ok(TzInstant {
                 utc: dt.naive_utc(),
@@ -726,6 +737,8 @@ fn parse_tz_string_with_fallback(s: &str, c_type: CDataType) -> Result<TzInstant
     }
     NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
         .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f"))
         .map(|utc| TzInstant {
             utc,
             offset_minutes: 0,
@@ -1476,16 +1489,81 @@ mod parse_tz_string_with_fallback_tests {
 
     #[test]
     fn offsetless_input_falls_back_to_utc() {
-        // Backward-compat path: a string with no offset suffix is treated
-        // as UTC. A regression that flipped this to a parse failure would
-        // break every legacy app that binds a naive timestamp string to a
-        // TZ column.
         let ti = parse_tz_string_with_fallback("2024-03-15 14:30:45", CDataType::Char)
             .expect("offset-less input must parse as UTC");
         assert_eq!(ti.offset_minutes, 0);
         assert_eq!(
             ti.utc.format("%Y-%m-%d %H:%M:%S").to_string(),
             "2024-03-15 14:30:45"
+        );
+    }
+
+    #[test]
+    fn iso8601_t_separator_with_offset_and_fractional_seconds() {
+        let ti =
+            parse_tz_string_with_fallback("2017-11-30T18:17:05.123456789+08:00", CDataType::Char)
+                .expect("ISO8601 T-separator with fractional seconds and offset must parse");
+        assert_eq!(ti.offset_minutes, 8 * 60);
+        assert_eq!(
+            ti.utc.format("%Y-%m-%d %H:%M:%S%.9f").to_string(),
+            "2017-11-30 10:17:05.123456789"
+        );
+    }
+
+    #[test]
+    fn iso8601_t_separator_with_offset_no_fractional_seconds() {
+        let ti = parse_tz_string_with_fallback("2017-11-30T18:17:05+08:00", CDataType::Char)
+            .expect("ISO8601 T-separator without fractional seconds and with offset must parse");
+        assert_eq!(ti.offset_minutes, 8 * 60);
+        assert_eq!(
+            ti.utc.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2017-11-30 10:17:05"
+        );
+    }
+
+    #[test]
+    fn iso8601_t_separator_with_space_before_offset() {
+        let ti = parse_tz_string_with_fallback("2017-11-30T18:17:05.123 +08:00", CDataType::Char)
+            .expect("ISO8601 T-separator with space before offset must parse");
+        assert_eq!(ti.offset_minutes, 8 * 60);
+        assert_eq!(
+            ti.utc.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2017-11-30 10:17:05"
+        );
+        assert_eq!(ti.utc.nanosecond(), 123_000_000);
+    }
+
+    #[test]
+    fn iso8601_t_separator_negative_offset() {
+        let ti =
+            parse_tz_string_with_fallback("2017-11-30T18:17:05.000000000-05:30", CDataType::WChar)
+                .expect("ISO8601 T-separator with negative offset must parse");
+        assert_eq!(ti.offset_minutes, -(5 * 60 + 30));
+        assert_eq!(
+            ti.utc.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2017-11-30 23:47:05"
+        );
+    }
+
+    #[test]
+    fn iso8601_t_separator_offsetless_falls_back_to_utc() {
+        let ti = parse_tz_string_with_fallback("2017-11-30T18:17:05", CDataType::Char)
+            .expect("ISO8601 T-separator without offset must parse as UTC");
+        assert_eq!(ti.offset_minutes, 0);
+        assert_eq!(
+            ti.utc.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2017-11-30 18:17:05"
+        );
+    }
+
+    #[test]
+    fn iso8601_t_separator_offsetless_with_fractional_falls_back_to_utc() {
+        let ti = parse_tz_string_with_fallback("2017-11-30T18:17:05.123456789", CDataType::Char)
+            .expect("ISO8601 T-separator with fractional seconds but no offset must parse as UTC");
+        assert_eq!(ti.offset_minutes, 0);
+        assert_eq!(
+            ti.utc.format("%Y-%m-%d %H:%M:%S%.9f").to_string(),
+            "2017-11-30 18:17:05.123456789"
         );
     }
 }

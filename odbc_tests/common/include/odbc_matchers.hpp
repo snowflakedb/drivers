@@ -267,6 +267,22 @@ class HasSqlState : public Catch::Matchers::MatcherBase<OdbcResult> {
   }
 };
 
+// Matches when any diagnostic record carries the given native error code.
+class HasNativeError : public Catch::Matchers::MatcherBase<OdbcResult> {
+  SQLINTEGER expectedCode_;
+
+ public:
+  explicit HasNativeError(SQLINTEGER code) : expectedCode_(code) {}
+
+  bool match(const OdbcResult& result) const override {
+    for (const auto& rec : result.diagRecords) {
+      if (rec.nativeError == expectedCode_) return true;
+    }
+    return false;
+  }
+  std::string describe() const override { return "has native error " + std::to_string(expectedCode_); }
+};
+
 // Matches when any diagnostic message contains the given substring.
 class HasDiagMessage : public Catch::Matchers::MatcherBase<OdbcResult> {
   std::string substring_;

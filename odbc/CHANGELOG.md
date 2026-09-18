@@ -50,6 +50,9 @@ Breaking changes:
 
 - Changed `SQLColumns` `BUFFER_LENGTH` for `DATE`/`TIME` from `COLUMN_SIZE` (`10` / `18` for `TIME(9)`) to `6` (`sizeof(SQL_DATE_STRUCT)` / `sizeof(SQL_TIME_STRUCT)`); query-result `SQLColAttribute` octet length for DATE/TIME remains 6. (snowflakedb/drivers#1485)
 
+Bug fixes:
+- Fixed `SQL_C_CHAR`/`SQL_C_WCHAR` binds to `TIMESTAMP_TZ` columns rejecting ISO8601 strings with a `T` date-time separator (e.g. `"2017-11-30T18:17:05.123456789+08:00"`); the parser now accepts both the space and `T` separator variants. (snowflakedb/drivers#1832)
+
 New features:
 - Added `INTERVAL YEAR TO MONTH` and `INTERVAL DAY TO SECOND` result support: `SQL_C_CHAR`/`SQL_C_WCHAR` fetch returns the canonical ANSI literal (`[-]Y-MM`, `[-]D HH:MM:SS[.f]`), same-family `SQL_C_INTERVAL_*` targets receive the parsed interval struct, and scalar numeric targets receive total months or total whole seconds (reporting `01S07` when sub-second precision is dropped). (snowflakedb/drivers#1732)
 - Added native AKS Workload Identity support for Azure: when the Azure Workload Identity webhook injects `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE` into a pod and the projected token file exists on disk, `WORKLOAD_IDENTITY_PROVIDER=AZURE` exchanges that federated token for an Entra ID access token directly. `WORKLOAD_IDENTITY_IMPERSONATION_PATH` is not supported in this environment. (snowflakedb/drivers#1367)
