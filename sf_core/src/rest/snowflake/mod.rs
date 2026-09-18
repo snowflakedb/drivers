@@ -932,14 +932,17 @@ pub async fn auth_request_data(
                 } else {
                     set_duo_authn_fields(&mut data, passcode_in_password, passcode.clone());
                     if store_temp_cred {
-                        // Reference connector sends this inside SESSION_PARAMETERS, not as a
-                        // top-level login field — the server ignores the top-level form.
-                        data.session_parameters
-                            .get_or_insert_with(HashMap::new)
-                            .insert(
-                                "CLIENT_REQUEST_MFA_TOKEN".to_string(),
-                                serde_json::Value::Bool(true),
-                            );
+                        // Both session params are sent to enable backend switch in the future
+                        let session_params =
+                            data.session_parameters.get_or_insert_with(HashMap::new);
+                        session_params.insert(
+                            "CLIENT_REQUEST_MFA_TOKEN".to_string(),
+                            serde_json::Value::Bool(true),
+                        );
+                        session_params.insert(
+                            "CLIENT_STORE_TEMPORARY_CREDENTIAL".to_string(),
+                            serde_json::Value::Bool(true),
+                        );
                     }
                 }
             }
@@ -3682,6 +3685,44 @@ mod tests {
         assert!(
             data.authenticator.is_none(),
             "Password auth should NOT include AUTHENTICATOR field (matching old driver behavior)"
+        );
+    }
+
+    #[test]
+    fn mfa_auth_request_sends_credential_session_parameters_when_storing() {
+        let login_params = LoginParameters {
+            login_method: LoginMethod::UserPasswordMfa {
+                username: "testuser".to_string(),
+                password: "testpass".into(),
+                passcode_in_password: false,
+                passcode: None,
+                client_store_temporary_credential: true,
+            },
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
+            .unwrap();
+
+        let session_params = data
+            .session_parameters
+            .expect("SESSION_PARAMETERS should be set when storing MFA credentials");
+        assert_eq!(
+            session_params.get("CLIENT_REQUEST_MFA_TOKEN"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            session_params.get("CLIENT_STORE_TEMPORARY_CREDENTIAL"),
+            Some(&serde_json::Value::Bool(true))
         );
     }
 
