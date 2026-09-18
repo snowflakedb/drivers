@@ -10,8 +10,13 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
-vendored-openssl = ["sf_core/vendored-openssl"]
 native-arrow = ["dep:arrow", "dep:snafu", "dep:error_trace", "dep:sf_types", "dep:chrono", "pyo3/chrono"]
+# Links the FIPS-validated crypto module (aws-lc-fips-sys) instead of
+# aws-lc-sys. Despite the name it is no longer TLS-only: JWT signing, DPoP,
+# stage file encryption and private-key parsing now run on the same module. The
+# name and the caveat both stand -- see the `fips-tls` feature comment in
+# sf_core/Cargo.toml for why this is still not a FIPS artifact on its own.
+fips-tls = ["sf_core/fips-tls"]
 
 [dependencies]
 arrow = { version = ">=54.0.0, <59", features = ["ffi"], optional = true }
