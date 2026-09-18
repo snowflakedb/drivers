@@ -61,6 +61,31 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
         return vec!["disabled".to_string()];
     }
 
+    // Platform probes can run before any connection is opened, so this may be
+    // the first HTTP client in the process. reqwest picks its crypto backend at
+    // build time, so pin the provider first.
+    crate::tls::ensure_crypto_provider();
+
+    // Detection reaches cloud metadata and IdP endpoints over a plain reqwest
+    // client, which resolves the process-global provider rather than a config
+    // built from the linked module. `detect_platforms` returns `Vec<String>`
+    // and so has no error channel, which is why the TLS factories' fail-closed
+    // gate could not simply be called here -- but "no error channel" is not a
+    // reason to emit non-approved traffic from a `fips-tls` build, so the gate
+    // runs and its failure is folded into the existing `disabled` result.
+    //
+    // Nothing is lost by that: every connection this driver would go on to make
+    // fails the same gate, so the probes could only have contributed telemetry
+    // to a session that cannot be established.
+    #[cfg(feature = "fips-tls")]
+    if let Err(e) = crate::tls::require_fips_provider() {
+        tracing::error!(
+            error = %e,
+            "skipping platform detection: crypto provider is not FIPS in a `fips-tls` build"
+        );
+        return vec!["disabled".to_string()];
+    }
+
     let http = reqwest::Client::new();
 
     let detectors: Vec<(&'static str, BoxFuture<'_, bool>)> = vec![

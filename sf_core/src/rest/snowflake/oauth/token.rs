@@ -276,7 +276,7 @@ pub(crate) async fn try_get_cached_oauth_dpop_bundled(
     username: &str,
     role: &str,
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
-) -> Option<(SensitiveString, String)> {
+) -> Option<(SensitiveString, SensitiveString)> {
     let cache = token_cache?;
     let key = CacheKey {
         token_type: TokenType::DpopBundledAccessToken,
@@ -293,7 +293,10 @@ pub(crate) async fn try_get_cached_oauth_dpop_bundled(
         Ok(Ok(Some(packed))) if !packed.is_empty() => match unpack_dpop_bundle(&packed) {
             Some((access_token, jwk_json)) => {
                 tracing::info!("Found cached DPoP-bundled OAuth access token");
-                Some((SensitiveString::from(access_token), jwk_json))
+                Some((
+                    SensitiveString::from(access_token),
+                    SensitiveString::from(jwk_json),
+                ))
             }
             None => {
                 tracing::warn!("Cached DPoP-bundled access token has unexpected format; evicting");
@@ -545,7 +548,7 @@ mod tests {
                 .await
                 .expect("hit");
         assert_eq!(got.0.reveal().as_str(), "ACCESS-TOK");
-        assert_eq!(got.1, r#"{"crv":"P-256","kty":"EC"}"#);
+        assert_eq!(got.1.reveal().as_str(), r#"{"crv":"P-256","kty":"EC"}"#);
     }
 
     #[tokio::test]

@@ -811,6 +811,9 @@ impl CrlCache {
     }
 
     pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
+        // CRL fetching can be the first HTTP the process does; pin the crypto
+        // provider before reqwest resolves one at build time.
+        crate::tls::ensure_crypto_provider();
         let memory_cache = if config.enable_memory_caching {
             Some(Arc::new(Mutex::new(HashMap::new())))
         } else {
@@ -860,6 +863,9 @@ impl CrlCache {
                                 outcome_cache: None,
                                 url_locks: Arc::new(Mutex::new(HashMap::new())),
                                 backoff: Arc::new(Mutex::new(HashMap::new())),
+                                // `CrlCache::new` installs the crypto provider
+                                // as its first statement, so both attempts
+                                // above ran it before they could fail.
                                 http_client: reqwest::Client::new(),
                                 scheduler_tx: OnceCell::new(),
                                 metrics: CrlMetrics::init(&global::meter("sf_core.crl")),
