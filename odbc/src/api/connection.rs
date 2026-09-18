@@ -3112,6 +3112,30 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_maps_max_http_retries() {
+        for spelling in ["MaxHttpRetries", "MAXHTTPRETRIES", "maxHttpRetries"] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                spelling.to_owned(),
+                "10".to_owned(),
+            )]));
+
+            assert_eq!(
+                config_string(&options, "retry_max_attempts"),
+                Some("10"),
+                "{spelling} should normalize to retry_max_attempts"
+            );
+            assert!(
+                !options.contains_key(spelling),
+                "{spelling} must not be forwarded as a passthrough key"
+            );
+            assert!(
+                !options.contains_key(&spelling.to_ascii_uppercase()),
+                "{spelling} must not be forwarded uppercased as a session parameter"
+            );
+        }
+    }
+
+    #[test]
     fn normalize_connection_string_options_put_get_max_attempts_precedence() {
         let options = normalize_connection_string_options(HashMap::from([
             ("PUT_GET_MAX_ATTEMPTS".to_owned(), "5".to_owned()),

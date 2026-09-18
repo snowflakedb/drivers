@@ -1707,6 +1707,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::RETRY_MAX_ATTEMPTS.as_str())
+        .aliases(aliases![Odbc; "MaxHttpRetries"])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_RETRY_MAX_ATTEMPTS as i64))
         .sensitive(false)
@@ -2598,6 +2599,7 @@ mod tests {
             // onto the shared `put_get_max_attempts` setting.
             ("PUT_MAXRETRIES", "put_get_max_attempts", &[Odbc]),
             ("GET_MAXRETRIES", "put_get_max_attempts", &[Odbc]),
+            ("MaxHttpRetries", "retry_max_attempts", &[Odbc]),
             // JDBC-only camelCase properties.
             ("oauthClientId", "oauth_client_id", &[Jdbc]),
             ("oauthClientSecret", "oauth_client_secret", &[Jdbc]),

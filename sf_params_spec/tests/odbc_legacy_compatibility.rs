@@ -42,6 +42,7 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("ProxyWithEnv", "use_proxy_env"),
     ("disableQueryContextCache", "disable_query_context_cache"),
     ("includeRetryReason", "include_retry_reason"),
+    ("MaxHttpRetries", "retry_max_attempts"),
     ("AllowEmptyProxy", "allow_empty_proxy"),
     ("UseCurrentCatalog", "use_current_catalog"),
     ("enable_connection_diag", "enable_connection_diag"),
@@ -141,10 +142,12 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     "ODBC_SCHEMA_CACHING",
     "OUT_OF_RANGE_TIMESTAMP_EXCEPTION",
     "EnableDescribeDirectExec",
+    // Boolean 403-retry switch. The new driver retries extra statuses via
+    // `retry_extra_status_codes` (BD#146).
     "RetryOn403",
     // Legacy DSN spellings that do not resolve as ODBC aliases.
     "RetryTimeout",
-    "MaxHttpRetries",
+    // Login-only retry cap. `retry_max_attempts` is global (BD#145).
     "MAX_CON_RETRY_ATTEMPTS",
     "BROWSER_RESPONSE_TIMEOUT",
     "disableSamlUrlCheck",

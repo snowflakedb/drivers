@@ -3107,3 +3107,58 @@ behavior_differences:
       non-x86_64 Unix with the new driver. The driver uses unaligned writes for the row-wise
       length and indicator pointers, for character and wide-character bind buffers, and for
       fixed-width bound values produced by such a stride.
+
+  148:
+    name: "MaxHttpRetries maps to retry_max_attempts with different default, floor, and zero semantics"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      MaxHttpRetries (default 7) caps HTTP retries for all requests, including login.
+      Values 1–6 are raised to 7. 0 retries indefinitely.
+    new_driver_behavior: |
+      MaxHttpRetries is accepted and sets retry_max_attempts (default 6). Values 1–6
+      are honored (1 means no retry). 0 is treated as unset and falls back to 6.
+    description: |
+      The 3.x spelling is accepted so existing DSNs keep applying a retry cap instead
+      of posting 01S00 and ignoring the value. The shared retry_max_attempts contract
+      does not reproduce the 3.x floor-at-7 or 0-means-infinite rules.
+
+  149:
+    name: "MAX_CON_RETRY_ATTEMPTS login-only retry cap is not recognized"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      MAX_CON_RETRY_ATTEMPTS caps login retries only. When both it and MaxHttpRetries
+      are set, login uses the smaller of the two; query retries stay on MaxHttpRetries.
+    new_driver_behavior: |
+      MAX_CON_RETRY_ATTEMPTS is not recognized. SQLDriverConnect posts SQLSTATE 01S00
+      and the value does not cap login retries. Login, query, and logout share
+      retry_max_attempts.
+    description: |
+      The old key exists because MaxHttpRetries cannot go below 7. retry_max_attempts
+      already accepts values below 7, but applying it also caps query and logout
+      retries. There is no login-only equivalent.
+
+  150:
+    name: "RetryOn403 is not recognized; 403 retry is opt-in via retry_extra_status_codes"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      RetryOn403=true retries HTTP 403 responses. The default is not to retry 403.
+    new_driver_behavior: |
+      RetryOn403 is not recognized. SQLDriverConnect posts SQLSTATE 01S00 and 403 is
+      not retried. The default retry set is 408, 429, 307, 308, and 5xx. Setting
+      retry_extra_status_codes=403 retries 403.
+    description: |
+      RetryOn403 is a boolean switch; retry_extra_status_codes is a comma-separated
+      list. A 1:1 alias cannot compose when both are set. The old default already
+      left 403 unretriable, so DSNs that omit the key see the same 403 behavior.

@@ -14,6 +14,7 @@ Breaking changes:
 
 New features:
 
+- Added recognition of the 3.x `MaxHttpRetries` connection-string key as an alias of `retry_max_attempts`.
 - Added a `PUT_GET_MAX_ATTEMPTS` connection parameter for the shared PUT/GET attempt limit, and accepted the 3.x `PUT_MAXRETRIES` / `GET_MAXRETRIES` spellings as aliases that warn (`01000`) on use. (snowflakedb/drivers#1884)
 - Added the ODBC `UseCurrentCatalog` connection parameter (default false), matching the 3.x DSN key. When true, a NULL `CatalogName` on `SQLTables`, `SQLColumns`, `SQLPrimaryKeys`, `SQLForeignKeys`, `SQLProcedures`, and `SQLProcedureColumns` is the current database. (snowflakedb/drivers#2005)
 - Added TRACE-level entry and exit logs for all public ODBC functions. (snowflakedb/drivers#2018)
