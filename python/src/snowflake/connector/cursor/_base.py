@@ -6,7 +6,7 @@ import abc
 import logging
 
 from collections.abc import Callable, Iterator, Sequence
-from typing import TYPE_CHECKING, Any, BinaryIO, overload
+from typing import TYPE_CHECKING, Any, BinaryIO, cast, overload
 
 from .._common.extras import pandas, pyarrow, requires_dependency
 from .._internal.api_client.client_api import CHUNK_SIZE, core_driver
@@ -53,7 +53,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from .._internal.statement_utils import statement
 from .._internal.utils import _resolve_alias
-from ..errors import InterfaceError, ProgrammingError
+from ..errors import InterfaceError, OperationalError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._chunked_download_reader import _ChunkedDownloadReader
 from ._result_set_wrapper import _ResultSetWrapper
@@ -258,7 +258,13 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             self._apply_statement_parameters(stmt_handle, statement_parameters)
 
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
-            response = self._execute_query(stmt_handle, bindings)
+            try:
+                response = self._execute_query(stmt_handle, bindings)
+            except OperationalError as exc:
+                if not self._should_retry_with_inline_json(bindings, exc):
+                    raise
+                bindings = self._build_query_bindings(cast(Sequence[Any], binding_params), query, force_json=True)
+                response = self._execute_query(stmt_handle, bindings)
             request_id = response.request_id or None
 
             if response.HasField("multi"):

@@ -89,6 +89,17 @@ VENDOR_CODE_TO_EXCEPTION: dict[int, type[Error]] = {
     100072: IntegrityError,  # NULL result in a non-nullable column
 }
 
+
+def is_stage_binding_disabled(exc: Exception) -> bool:
+    """Whether *exc* came from a disabled ``SYSTEM$BIND`` stage.
+
+    ``errno`` falls back to the raw ``kind`` when no vendor_code or
+    KIND_TO_ERRNO entry applies (see ``_convert_application_error``), so
+    ``ERROR_KIND_STAGE_BINDING`` survives unchanged onto the exception.
+    """
+    return isinstance(exc, OperationalError) and getattr(exc, "errno", None) == ERROR_KIND_STAGE_BINDING
+
+
 # Prefer the Snowflake server vendor_code when the core driver provides it, fallback to this mapping if not present.
 KIND_TO_ERRNO: dict[int, int] = {
     ERROR_KIND_AUTHENTICATION_ERROR: ER_FAILED_TO_CONNECT_TO_DB,

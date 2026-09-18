@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ..._common.extras import check_dependency, pandas, pyarrow
 from ...constants import SessionParameterName, StatementParameterName
-from ...errors import Error, ErrorValue, InterfaceError, NotSupportedError, ProgrammingError
+from ...errors import Error, ErrorValue, InterfaceError, NotSupportedError, OperationalError, ProgrammingError
 from ..api_client.client_api import core_driver
 from ..binding_converters import (
     BindingConverterBase,
@@ -24,6 +24,7 @@ from ..binding_converters import (
 )
 from ..config_utils import create_config_setting
 from ..decorators import api_telemetry, backward_compatibility, pep249, snowpark_compat
+from ..error_kinds import is_stage_binding_disabled
 from ..errorcode import ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT, ER_INVALID_VALUE
 from ..errorhandler import ErrorHandlerMixin
 from ..protobuf_gen.database_driver_v1_pb2 import BinaryDataPtr, ConfigSetting, QueryBindings, StatementHandle
@@ -278,7 +279,9 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
             return False
         return effective_cells >= threshold
 
-    def _build_query_bindings(self, parameters: Sequence[Any], query: str = "") -> QueryBindings | None:
+    def _build_query_bindings(
+        self, parameters: Sequence[Any], query: str = "", *, force_json: bool = False
+    ) -> QueryBindings | None:
         """Serialize parameters and build a QueryBindings protobuf message.
 
         Converts Python parameter values to JSON or CSV, then wraps the result
@@ -288,12 +291,15 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         The encoded bytes are stored on ``self._binding_data`` to prevent
         garbage collection while Rust holds the pointer.
 
+        ``force_json`` bypasses stage-binding selection to rebuild inline JSON
+        bindings for a retry after the ``SYSTEM$BIND`` stage was rejected.
+
         Returns:
             QueryBindings with the serialized JSON or CSV, or None if parameters
             serialize to nothing (e.g. empty list).
         """
         threshold = self._stage_binding_threshold()
-        use_csv = self._should_use_csv_binding(parameters, threshold, query)
+        use_csv = False if force_json else self._should_use_csv_binding(parameters, threshold, query)
 
         if use_csv:
             binding_bytes = CsvBindingConverter.serialize_parameters_to_csv(parameters)
@@ -317,6 +323,16 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         if use_csv:
             return QueryBindings(csv=binary_data_ptr)
         return QueryBindings(json=binary_data_ptr)
+
+    def _should_retry_with_inline_json(self, bindings: QueryBindings | None, exc: OperationalError) -> bool:
+        """Return whether *exc* should trigger a retry with inline JSON bindings.
+
+        Only a CSV (stage) attempt can hit a stage-binding-disabled error --
+        that upload only happens when ``bindings`` selected CSV, so a JSON
+        attempt is excluded even though ``is_stage_binding_disabled`` would
+        report True for it.
+        """
+        return bindings is not None and bindings.HasField("csv") and is_stage_binding_disabled(exc)
 
     def _prepare_query(
         self,

@@ -25,7 +25,8 @@
         },
         "parameters": [
           {"name": "CLIENT_TELEMETRY_ENABLED", "value": false},
-          {"name": "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD", "value": 1}
+          {"name": "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD", "value": 1},
+          {"name": "AUTOCOMMIT", "value": true}
         ]
       }
     }
