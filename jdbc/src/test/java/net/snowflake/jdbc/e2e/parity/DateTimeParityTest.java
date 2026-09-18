@@ -29,8 +29,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Single-pass parity oracle: runs each (type, timezone, output-format, profile) cell against
- * universal-driver and snowflake-jdbc 4.3.1 in the same JVM via isolated classloaders, and asserts
- * byte-identical output cell-by-cell.
+ * universal-driver and the pinned snowflake-jdbc in the same JVM via isolated classloaders, and
+ * asserts byte-identical output cell-by-cell.
  *
  * <p>Two families of test methods, split per Snowflake type so each type can be enabled or disabled
  * independently (e.g. {@code readDateParity}/{@code writeDateParity}, {@code readTimeParity}, the

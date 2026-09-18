@@ -25,7 +25,7 @@ import net.snowflake.jdbc.utils.TestParameters;
  *
  * <ul>
  *   <li>{@code parity.newClasspath} - universal-driver runtime classpath
- *   <li>{@code parity.oldClasspath} - legacy snowflake-jdbc 4.3.1 runtime classpath
+ *   <li>{@code parity.oldClasspath} - pinned snowflake-jdbc runtime classpath
  * </ul>
  *
  * <p>On open, both connections are forced onto the Arrow result format via {@code ALTER SESSION SET

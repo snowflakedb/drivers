@@ -13,7 +13,7 @@ import net.snowflake.client.api.datasource.SnowflakeDataSource;
 import org.junit.jupiter.api.Test;
 
 /**
- * Guards {@link SnowflakeDataSource} against drift from the reference 4.3.1 driver setter surface
+ * Guards {@link SnowflakeDataSource} against drift from the pinned snowflake-jdbc setter surface
  * (see BehaviorDifferences.yaml BD#31).
  */
 class SnowflakeDataSourceReferenceParityTest {
