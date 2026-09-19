@@ -1,6 +1,6 @@
-import BigInteger from 'big-integer';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Connection } from '../types/sdk-types.js';
+import { isBigIntValue } from './query/utils.js';
 import {
   createTestConnection,
   destroyConnectionAsync,
@@ -15,14 +15,6 @@ import {
  */
 function selectAll(cases: { expression: string }[]): string {
   return `SELECT ${cases.map(({ expression }, index) => `${expression} AS V${index}`).join(', ')}`;
-}
-
-// Old driver wraps BigInt-mode values in a `big-integer` instance; the new driver returns a
-// native `bigint` (BD#8).
-function isBigIntValue(value: unknown): boolean {
-  return isRunningNewDriverWithBD('BD#8')
-    ? typeof value === 'bigint'
-    : BigInteger.isInstance(value);
 }
 
 describe('Query returning number data types', () => {
@@ -43,13 +35,7 @@ describe('Query returning number data types', () => {
       `SELECT
         1::NUMBER,
         1::DECIMAL,
-        1::NUMERIC,
-        1::INT,
-        1::INTEGER,
-        1::BIGINT,
-        1::SMALLINT,
-        1::TINYINT,
-        1::BYTEINT
+        1::NUMERIC
       `,
     );
     const resultValues = Object.values(rows![0]);
@@ -89,44 +75,21 @@ describe('Query returning number data types', () => {
     expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
   });
 
-  it('returns fixed-point values across integer widths as Number', async () => {
-    const cases = [
-      { expression: '7::NUMBER(2,0)', expected: 7 },
-      { expression: '1234::NUMBER(4,0)', expected: 1234 },
-      { expression: '123456789::NUMBER(9,0)', expected: 123456789 },
-      { expression: '123456789012345678::NUMBER(18,0)', expected: 123456789012345680 },
-    ];
-    const { rows } = await executeAsync(connection, selectAll(cases));
-    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
-  });
-
-  // Past these magnitudes a Number is no longer exact, and core switches its
+  // Past this magnitude a Number is no longer exact, and core switches its
   // storage from i64 to Decimal128.
-  it('returns values at the i64 storage boundary as Number', async () => {
-    const cases = [
-      { expression: '9223372036854775807', expected: 9223372036854776000 },
-      { expression: '9223372036854775808', expected: 9223372036854776000 },
-      { expression: '99999999999999999999999999999999999999', expected: 1e38 },
-      { expression: '-99999999999999999999999999999999999999', expected: -1e38 },
-      {
-        expression: '123456789012345678901234567890.12::NUMBER(38,2)',
-        expected: 1.2345678901234568e29,
-      },
-    ];
-    const { rows } = await executeAsync(connection, selectAll(cases));
-    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
+  it('returns a scaled fixed-point value beyond the i64 boundary as Number', async () => {
+    const { rows } = await executeAsync(
+      connection,
+      'SELECT 123456789012345678901234567890.12::NUMBER(38,2)',
+    );
+    expect(Object.values(rows![0])).toEqual([1.2345678901234568e29]);
   });
 
   it('returns fixed-point values as text when fetchAsString is set', async () => {
-    const beyondSafeInteger = BigInt(Number.MAX_SAFE_INTEGER) + 4n;
     const cases = [
       { expression: '1.25::NUMBER(10,2)', expected: '1.25' },
       { expression: '1.50::NUMBER(10,2)', expected: '1.50' },
-      { expression: '123::INT', expected: '123' },
       { expression: '-7::NUMBER(2,0)', expected: '-7' },
-      { expression: `${beyondSafeInteger}::INT`, expected: String(beyondSafeInteger) },
-      { expression: '1e1::INT', expected: '10' },
-      { expression: 'NULL::INT', expected: 'NULL' },
     ];
     const { statement, rows } = await executeAsync(connection, selectAll(cases), {
       fetchAsString: ['Number'],
@@ -227,17 +190,12 @@ describe('Query returning number data types', () => {
     }
   });
 
-  // TODO: this test must have warning and telemetry event check
-  it('returns large numbers (> Number.MAX_SAFE_INTEGER) with precision loss', async () => {
+  it('returns large float values (> Number.MAX_SAFE_INTEGER) with precision loss', async () => {
     const { rows } = await executeAsync(
       connection,
-      `SELECT
-        9007199254740995 as LARGE_FIXED_COLUMN,
-        9007199254740930.13231312::FLOAT as LARGE_FLOAT_COLUMN`,
+      'SELECT 9007199254740930.13231312::FLOAT as LARGE_FLOAT_COLUMN',
     );
-    const selectedFixedValue = rows![0].LARGE_FIXED_COLUMN as number;
     const selectedFloatValue = rows![0].LARGE_FLOAT_COLUMN as number;
-    expect(selectedFixedValue.toString()).toBe('9007199254740996');
     expect(selectedFloatValue.toString()).toBe('9007199254740930');
   });
 
@@ -308,30 +266,6 @@ describe('Query returning BigInt data types', () => {
     await destroyConnectionAsync(connection);
   });
 
-  it('returns integers as exact BigInt instances', async () => {
-    const cases = [
-      { expression: '7::NUMBER(2,0)', expected: '7' },
-      { expression: '9223372036854775807', expected: '9223372036854775807' },
-      { expression: '9223372036854775808', expected: '9223372036854775808' },
-      {
-        expression: '99999999999999999999999999999999999999',
-        expected: '99999999999999999999999999999999999999',
-      },
-      {
-        expression: '-99999999999999999999999999999999999999',
-        expected: '-99999999999999999999999999999999999999',
-      },
-    ];
-    const { statement, rows } = await executeAsync(connection!, selectAll(cases));
-    const values = Object.values(rows![0]);
-
-    expect(statement.getColumns()!.map((column) => column.getType())).toEqual(
-      cases.map(() => 'fixed'),
-    );
-    expect(values.map((value) => isBigIntValue(value))).toEqual(cases.map(() => true));
-    expect(values.map(String)).toEqual(cases.map(({ expected }) => expected));
-  });
-
   it('leaves scaled NUMBER(38,2) as a Number', async () => {
     const { rows } = await executeAsync(
       connection!,
@@ -340,19 +274,5 @@ describe('Query returning BigInt data types', () => {
     const value = Object.values(rows![0])[0];
     expect(isBigIntValue(value)).toBe(false);
     expect(value).toBe(1.2345678901234568e29);
-  });
-
-  it('returns NULL as null, not a BigInt', async () => {
-    const { rows } = await executeAsync(connection!, 'SELECT NULL::INT');
-    expect(Object.values(rows![0])[0]).toBeNull();
-  });
-
-  describe('fetchAsString', () => {
-    it('returns text rather than a BigInt', async () => {
-      const { rows } = await executeAsync(connection!, 'SELECT 90071992547409954434323', {
-        fetchAsString: ['Number'],
-      });
-      expect(Object.values(rows![0])).toEqual(['90071992547409954434323']);
-    });
   });
 });
