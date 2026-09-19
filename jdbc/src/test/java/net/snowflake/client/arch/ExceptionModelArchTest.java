@@ -18,6 +18,7 @@ import java.sql.SQLException;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.decorator.AbstractDecorator;
+import net.snowflake.client.internal.api.implementation.exception.AutoConnectionExceptionMapper;
 import net.snowflake.client.internal.api.implementation.exception.DriverRuntimeException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.exception.SqlExceptionMapper;
@@ -33,9 +34,10 @@ import org.junit.jupiter.api.condition.DisabledForJreRange;
  * <p>Allowlists pin constructor sites to concrete owners: {@code SnowflakeSQLException}
  * constructors, {@code SqlExceptionMapper.translate}, {@code DriverRuntimeException.toSQLException}
  * (including overrides on subtypes), {@code SFSQLException.remoteFileNotFound}, {@code
- * LogicalConnection.abort}, and {@code SnowflakeDriver.connect}. Constructor chaining on {@code
- * SnowflakeSQLException} itself is allowed; a static factory in {@code api.exception} or a new
- * method on {@code SnowflakeDriver} / {@code SqlExceptionMapper} is still in scope.
+ * AutoConnectionExceptionMapper.remapMissingProfile}, {@code LogicalConnection.abort}, and {@code
+ * SnowflakeDriver.connect}. Constructor chaining on {@code SnowflakeSQLException} itself is
+ * allowed; a static factory in {@code api.exception} or a new Driver / mapper method is still in
+ * scope.
  *
  * <p>The impl-tier {@code throws SQLException} rule is a presence check on {@code
  * SqlExceptionMapper.call} / {@code run}, not a path-sensitive wrap: any impl method that mentions
@@ -139,8 +141,9 @@ class ExceptionModelArchTest {
                           + " constructs SnowflakeSQLException; only SnowflakeSQLException"
                           + " constructors, SqlExceptionMapper.translate,"
                           + " DriverRuntimeException.toSQLException,"
-                          + " SFSQLException.remoteFileNotFound, LogicalConnection.abort, or"
-                          + " SnowflakeDriver.connect may"));
+                          + " SFSQLException.remoteFileNotFound,"
+                          + " AutoConnectionExceptionMapper.remapMissingProfile,"
+                          + " LogicalConnection.abort, or SnowflakeDriver.connect may"));
             }
           }
         };
@@ -206,6 +209,10 @@ class ExceptionModelArchTest {
       return true;
     }
     if (owner.isEquivalentTo(SFSQLException.class) && "remoteFileNotFound".equals(name)) {
+      return true;
+    }
+    if (owner.isEquivalentTo(AutoConnectionExceptionMapper.class)
+        && "remapMissingProfile".equals(name)) {
       return true;
     }
     if (owner.isEquivalentTo(LOGICAL_CONNECTION) && "abort".equals(name)) {
