@@ -15758,7 +15758,8 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[excel][powerquer
     SQLRETURN ret = SQLGetData(stmt3, 3, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(35));
+    OLD_DRIVER_ONLY("BD#151") { CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(35)); }
+    NEW_DRIVER_ONLY("BD#151") { CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(29)); }
   }
 
   // SQLGetData col 4

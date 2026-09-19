@@ -50986,7 +50986,8 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[excel][po
     SQLRETURN ret = SQLGetData(stmt9, 3, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt9), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(35));
+    OLD_DRIVER_ONLY("BD#151") { CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(35)); }
+    NEW_DRIVER_ONLY("BD#151") { CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(29)); }
   }
 
   // SQLGetData col 4
@@ -92973,7 +92974,8 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[excel][po
     SQLRETURN ret = SQLGetData(stmt20, 3, SQL_C_SLONG, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt20), OdbcMatchers::IsSuccess());
     CHECK(ind == 4);
-    CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(35));
+    OLD_DRIVER_ONLY("BD#151") { CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(35)); }
+    NEW_DRIVER_ONLY("BD#151") { CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(29)); }
   }
 
   // SQLGetData col 4
