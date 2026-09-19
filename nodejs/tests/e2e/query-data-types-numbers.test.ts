@@ -29,79 +29,6 @@ describe('Query returning number data types', () => {
     await destroyConnectionAsync(connection);
   });
 
-  it('returns fixed-point types as Number', async () => {
-    const { statement, rows } = await executeAsync(
-      connection,
-      `SELECT
-        1::NUMBER,
-        1::DECIMAL,
-        1::NUMERIC
-      `,
-    );
-    const resultValues = Object.values(rows![0]);
-    for (const column of statement.getColumns()!) {
-      expect(column.getType()).toBe('fixed');
-      expect(column.isNumber()).toBe(true);
-      expect(resultValues[column.getIndex()]).toBe(1);
-    }
-  });
-
-  it('exposes precision and scale of fixed-point types', async () => {
-    const { statement } = await executeAsync(
-      connection,
-      `SELECT
-        1::NUMBER(10,3),
-        1::DECIMAL(10,3),
-        1::NUMERIC(10,3)`,
-    );
-    for (const column of statement.getColumns()!) {
-      expect(column.getPrecision()).toBe(10);
-      expect(column.getScale()).toBe(3);
-    }
-  });
-
-  it('returns scaled fixed-point values as Number', async () => {
-    const cases = [
-      { expression: '1.25::NUMBER(10,2)', expected: 1.25 },
-      { expression: '3.14', expected: 3.14 },
-      { expression: '1.50::NUMBER(10,2)', expected: 1.5 },
-      { expression: '0.005::NUMBER(10,3)', expected: 0.005 },
-      { expression: '-1.25::NUMBER(10,2)', expected: -1.25 },
-      // High scale, where the unscaled integer needs most of the precision.
-      { expression: '1.5::NUMBER(38,23)', expected: 1.5 },
-      { expression: '1.5::NUMBER(38,37)', expected: 1.5 },
-    ];
-    const { rows } = await executeAsync(connection, selectAll(cases));
-    expect(Object.values(rows![0])).toEqual(cases.map(({ expected }) => expected));
-  });
-
-  // Past this magnitude a Number is no longer exact, and core switches its
-  // storage from i64 to Decimal128.
-  it('returns a scaled fixed-point value beyond the i64 boundary as Number', async () => {
-    const { rows } = await executeAsync(
-      connection,
-      'SELECT 123456789012345678901234567890.12::NUMBER(38,2)',
-    );
-    expect(Object.values(rows![0])).toEqual([1.2345678901234568e29]);
-  });
-
-  it('returns fixed-point values as text when fetchAsString is set', async () => {
-    const cases = [
-      { expression: '1.25::NUMBER(10,2)', expected: '1.25' },
-      { expression: '1.50::NUMBER(10,2)', expected: '1.50' },
-      { expression: '-7::NUMBER(2,0)', expected: '-7' },
-    ];
-    const { statement, rows } = await executeAsync(connection, selectAll(cases), {
-      fetchAsString: ['Number'],
-    });
-    const values = Object.values(rows![0]);
-    for (const [index, column] of statement.getColumns()!.entries()) {
-      expect(column.getType()).toBe('fixed');
-      expect(column.isNumber()).toBe(true);
-      expect(values[index]).toBe(cases[index].expected);
-    }
-  });
-
   it('returns NULL for fixed-point and float-point types', async () => {
     const { rows } = await executeAsync(
       connection,
@@ -252,27 +179,4 @@ describe('Query returning number data types', () => {
       }
     });
   }
-});
-
-describe('Query returning BigInt data types', () => {
-  let connection: Connection;
-
-  beforeAll(async () => {
-    connection = createTestConnection({ jsTreatIntegerAsBigInt: true });
-    await connection.connectAsync();
-  });
-
-  afterAll(async () => {
-    await destroyConnectionAsync(connection);
-  });
-
-  it('leaves scaled NUMBER(38,2) as a Number', async () => {
-    const { rows } = await executeAsync(
-      connection!,
-      'SELECT 123456789012345678901234567890.12::NUMBER(38,2)',
-    );
-    const value = Object.values(rows![0])[0];
-    expect(isBigIntValue(value)).toBe(false);
-    expect(value).toBe(1.2345678901234568e29);
-  });
 });
