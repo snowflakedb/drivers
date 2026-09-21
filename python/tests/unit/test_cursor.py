@@ -3,7 +3,9 @@ Unit tests for PEP 249 Cursor class.
 """
 
 import asyncio
+import ctypes
 import io
+import json
 
 from decimal import Decimal
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -38,6 +40,24 @@ from snowflake.connector.aio.cursor import SnowflakeCursor as AsyncSnowflakeCurs
 from snowflake.connector.constants import QueryStatus, StatementParameterName
 from snowflake.connector.cursor import QueryResultStats, ResultMetadataV2, SnowflakeCursor
 from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
+
+
+_CALL_IDENTIFIER_SQL = "CALL IDENTIFIER(?)(?, ?)"
+_CALL_IDENTIFIER_PARAMS = ("my_proc", "tmpl", "args")
+_CALL_IDENTIFIER_BINDINGS = {
+    "1": {"type": "TEXT", "value": "my_proc"},
+    "2": {"type": "TEXT", "value": "tmpl"},
+    "3": {"type": "TEXT", "value": "args"},
+}
+
+
+def _json_bindings_from_prepare_request(request):
+    assert request.HasField("bindings")
+    assert request.bindings.WhichOneof("binding_type") == "json"
+    ptr = request.bindings.json
+    assert ptr.length > 0
+    payload = ctypes.string_at(int.from_bytes(ptr.value, "little"), ptr.length)
+    return json.loads(payload)
 
 
 @pytest.fixture
@@ -2165,6 +2185,29 @@ class TestDescribe:
 
         assert cursor._request_id == "550e8400-e29b-41d4-a716-446655440000"
 
+    def test_describe_forwards_parameters_as_bindings(self, cursor, mock_connection, mock_core_client):
+        """describe() forwards bind parameters to statement_prepare instead of dropping them.
+
+        Snowpark's schema-resolution path describes a parameterized CALL statement with
+        its real bind values; a bind-less describe of such a statement fails server-side.
+        """
+        mock_connection.paramstyle = ParamStyle.QMARK
+        self._setup_prepare(mock_core_client, columns=[])
+
+        cursor.describe(_CALL_IDENTIFIER_SQL, _CALL_IDENTIFIER_PARAMS)
+
+        request = mock_core_client.statement_prepare.call_args.args[0]
+        assert _json_bindings_from_prepare_request(request) == _CALL_IDENTIFIER_BINDINGS
+
+    def test_describe_without_parameters_sends_no_bindings(self, cursor, mock_core_client):
+        """describe() of a statement with no bind params sends bindings=None, unchanged."""
+        self._setup_prepare(mock_core_client, columns=[])
+
+        cursor.describe("SELECT 1")
+
+        request = mock_core_client.statement_prepare.call_args.args[0]
+        assert not request.HasField("bindings")
+
 
 def _child_result_descriptor(query_id, rows_affected):
     descriptor = MagicMock()
@@ -3598,6 +3641,92 @@ class TestDescribeInternal:
             cursor._describe_internal("SELECT 1", params=[42])
 
         assert spy.call_args.args[1] == [42]
+
+    def test_forwards_parameters_as_bindings(self, cursor, mock_connection, mock_core_client):
+        """_describe_internal forwards bind parameters to statement_prepare instead of dropping them.
+
+        This is the contract Snowpark's `run_new_describe` relies on to resolve the schema
+        of a parameterized CALL statement; a bind-less describe of such a statement fails
+        server-side.
+        """
+        mock_connection.paramstyle = ParamStyle.QMARK
+        self._setup_prepare(mock_core_client, columns=[])
+
+        cursor._describe_internal(_CALL_IDENTIFIER_SQL, _CALL_IDENTIFIER_PARAMS)
+
+        request = mock_core_client.statement_prepare.call_args.args[0]
+        assert _json_bindings_from_prepare_request(request) == _CALL_IDENTIFIER_BINDINGS
+
+    def test_without_parameters_sends_no_bindings(self, cursor, mock_core_client):
+        """_describe_internal of a statement with no bind params sends bindings=None, unchanged."""
+        self._setup_prepare(mock_core_client, columns=[])
+
+        cursor._describe_internal("SELECT 1")
+
+        request = mock_core_client.statement_prepare.call_args.args[0]
+        assert not request.HasField("bindings")
+
+
+class TestDescribeAsync:
+    """Async-cursor counterpart of TestDescribe, covering bind-parameter forwarding for `describe()`."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return AsyncSnowflakeCursor(mock_connection)
+
+    @pytest.fixture
+    def async_mock_core_client(self):
+        """Mock (statement RPCs as AsyncMock) patched into async_core_driver.client."""
+        mock = MagicMock()
+        mock.statement_new = AsyncMock(return_value=MagicMock(stmt_handle=StatementHandle(id=1)))
+        mock.statement_set_sql_query = AsyncMock()
+        mock.statement_release = AsyncMock()
+        mock.statement_prepare = AsyncMock()
+        old = async_core_driver._client
+        async_core_driver.client = mock
+        yield mock
+        async_core_driver.client = old
+
+    @staticmethod
+    def _setup_prepare(async_mock_core_client, columns=None):
+        result = MagicMock()
+        result.columns = columns or []
+        result.stream.value = (42).to_bytes(8, byteorder="little", signed=False)
+        result.query_id = ""
+        result.query = ""
+        result.sql_state = None
+        result.request_id = ""
+        async_mock_core_client.statement_prepare.return_value = MagicMock(result=result)
+        return result
+
+    def test_describe_forwards_parameters_as_bindings(self, cursor, mock_connection, async_mock_core_client):
+        """describe() on the async cursor forwards bind parameters to statement_prepare,
+        mirroring the sync-cursor behavior."""
+        mock_connection.paramstyle = ParamStyle.QMARK
+        self._setup_prepare(async_mock_core_client, columns=[])
+
+        with patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"):
+            asyncio.run(cursor.describe(_CALL_IDENTIFIER_SQL, _CALL_IDENTIFIER_PARAMS))
+
+        request = async_mock_core_client.statement_prepare.call_args.args[0]
+        assert _json_bindings_from_prepare_request(request) == _CALL_IDENTIFIER_BINDINGS
+
+    def test_describe_without_parameters_sends_no_bindings(self, cursor, async_mock_core_client):
+        """describe() on the async cursor with no bind params sends bindings=None, unchanged."""
+        self._setup_prepare(async_mock_core_client, columns=[])
+
+        with patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"):
+            asyncio.run(cursor.describe("SELECT 1"))
+
+        request = async_mock_core_client.statement_prepare.call_args.args[0]
+        assert not request.HasField("bindings")
 
 
 class TestExecutemanyMultirowInsertRewrite:

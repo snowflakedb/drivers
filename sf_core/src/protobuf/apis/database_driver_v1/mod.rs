@@ -36,6 +36,21 @@ fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
     })
 }
 
+#[allow(clippy::result_large_err)]
+fn binding_type_from_proto(
+    bindings: Option<QueryBindings>,
+) -> Result<Option<BindingType<'static>>, DriverException> {
+    bindings
+        .and_then(|b| b.binding_type)
+        .map(BindingType::try_from)
+        .transpose()
+        .map_err(|e| DriverException {
+            message: e,
+            kind: ErrorKind::InvalidArgument as i32,
+            ..Default::default()
+        })
+}
+
 fn not_implemented(message: &str) -> DriverException {
     DriverException {
         message: message.to_string(),
@@ -964,9 +979,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: StatementPrepareRequest,
     ) -> Result<StatementPrepareResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+        let bindings_opt = binding_type_from_proto(input.bindings)?;
+
         let result = self
             .driver
-            .statement_prepare(operation_ctx, stmt_handle.into())
+            .statement_prepare(operation_ctx, stmt_handle.into(), bindings_opt)
             .await
             .to_protobuf()?;
         let result_ptr = reader_to_arrow_stream_ptr(result.stream);
@@ -1030,17 +1047,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: StatementExecuteQueryRequest,
     ) -> Result<ExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-
-        let bindings_opt = input
-            .bindings
-            .and_then(|b| b.binding_type)
-            .map(BindingType::try_from)
-            .transpose()
-            .map_err(|e| DriverException {
-                message: e,
-                kind: ErrorKind::InvalidArgument as i32,
-                ..Default::default()
-            })?;
+        let bindings_opt = binding_type_from_proto(input.bindings)?;
 
         let timeout_seconds = input.timeout_seconds;
 
@@ -1068,17 +1075,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: StatementExecuteAsyncRequest,
     ) -> Result<StatementExecuteAsyncResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-
-        let bindings_opt = input
-            .bindings
-            .and_then(|b| b.binding_type)
-            .map(BindingType::try_from)
-            .transpose()
-            .map_err(|e| DriverException {
-                message: e,
-                kind: ErrorKind::InvalidArgument as i32,
-                ..Default::default()
-            })?;
+        let bindings_opt = binding_type_from_proto(input.bindings)?;
 
         let result = self
             .driver
