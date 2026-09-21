@@ -2706,6 +2706,13 @@ impl DatabaseDriverV1 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionUsability {
+    Usable,
+    NeverEstablished,
+    Terminated,
+}
+
 impl DatabaseDriverV1 {
     /// Check if a connection has been closed.
     ///
@@ -2759,6 +2766,38 @@ impl DatabaseDriverV1 {
 
         let conn = conn_ptr.lock().await;
         Ok(conn.is_master_token_expired.load(Ordering::SeqCst))
+    }
+
+    /// Answers under one lock what [`Self::connection_is_closed`],
+    /// [`Self::connection_is_expired`] and [`Self::connection_is_initialized`] answer
+    /// under three, so a close landing between those reads cannot make a terminated
+    /// session look like one that was never established.
+    ///
+    /// An expired master token counts as terminated: that session can never be renewed.
+    /// The answer is the client's own view of the connection and contacts no server, so a
+    /// session the server has already discarded still reads as usable.
+    pub async fn connection_is_usable(
+        &self,
+        conn_handle: Handle,
+    ) -> Result<ConnectionUsability, ApiError> {
+        let conn_ptr = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+
+        let conn = conn_ptr.lock().await;
+        if conn.close_state.load(Ordering::SeqCst) == CloseState::Closed
+            || conn.is_master_token_expired.load(Ordering::SeqCst)
+        {
+            return Ok(ConnectionUsability::Terminated);
+        }
+        if conn.is_post_connect() {
+            Ok(ConnectionUsability::Usable)
+        } else {
+            Ok(ConnectionUsability::NeverEstablished)
+        }
     }
 
     /// Close a connection and optionally send logout request.
@@ -3301,6 +3340,89 @@ mod tests {
         };
 
         let error = driver.connection_is_initialized(missing).await.unwrap_err();
+
+        assert!(
+            error.to_string().contains("Connection handle not found"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_report_a_connection_without_a_login_as_never_established() {
+        let driver = DatabaseDriverV1::new();
+        let handle = driver.connection_new();
+
+        assert_eq!(
+            driver.connection_is_usable(handle).await.unwrap(),
+            ConnectionUsability::NeverEstablished
+        );
+
+        driver.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_report_a_logged_in_connection_as_usable() {
+        let driver = DatabaseDriverV1::new();
+        let handle = driver.connection_new();
+        if let Some(c) = driver.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+        }
+
+        assert_eq!(
+            driver.connection_is_usable(handle).await.unwrap(),
+            ConnectionUsability::Usable
+        );
+
+        driver.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_report_a_closed_connection_as_terminated() {
+        let driver = DatabaseDriverV1::new();
+        let handle = driver.connection_new();
+        if let Some(c) = driver.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+        }
+
+        driver.connection_close(handle).await.unwrap();
+
+        assert_eq!(
+            driver.connection_is_usable(handle).await.unwrap(),
+            ConnectionUsability::Terminated
+        );
+
+        driver.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_report_a_connection_with_an_expired_master_token_as_terminated() {
+        let driver = DatabaseDriverV1::new();
+        let handle = driver.connection_new();
+        if let Some(c) = driver.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+            conn.is_master_token_expired.store(true, Ordering::SeqCst);
+        }
+
+        assert_eq!(
+            driver.connection_is_usable(handle).await.unwrap(),
+            ConnectionUsability::Terminated
+        );
+
+        driver.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_reject_a_usability_read_for_an_unknown_handle() {
+        let driver = DatabaseDriverV1::new();
+        let missing = Handle {
+            id: u64::MAX,
+            magic: 0,
+        };
+
+        let error = driver.connection_is_usable(missing).await.unwrap_err();
 
         assert!(
             error.to_string().contains("Connection handle not found"),

@@ -6,6 +6,7 @@ New features:
 
 - Added a `put_compress_level` connection setting that selects the gzip level (0–9) used when PUT AUTO_COMPRESS rewrites a file. (snowflakedb/drivers#2083)
 - Added a `proxy_scheme` connection parameter so the hop to the proxy can use HTTPS. An `https://` proxy URL and JDBC `proxyProtocol=https` now open TLS to the proxy instead of HTTP. (snowflakedb/drivers#2013)
+- Added a `connection_is_usable` driver API that reports whether a connection can take a request, and distinguishes a connection that has yet to log in from one whose session is gone. It answers under a single lock what `connection_is_closed`, `connection_is_expired` and `connection_is_initialized` answer under three. (snowflakedb/drivers#2096)
 - Added a `cwd` statement option that resolves relative local paths in PUT and GET against a caller-supplied directory. (snowflakedb/drivers#1932)
 - Added `session_token_expires_at_ms` and `master_token_expires_at_ms` to `ConnectionGetInfo`, reporting token expiry as milliseconds since the Unix epoch. Both are reported regardless of `include_master_token`, so a wrapper can answer a client-side token-validity check without handling the master token itself. (snowflakedb/drivers#1941)
 - Added an `extra_root_store_path` connection parameter that extends the default TLS root store with certificates from a PEM bundle while preserving `custom_root_store_path` replacement behavior. (snowflakedb/drivers#1827)

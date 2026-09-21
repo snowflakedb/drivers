@@ -35,7 +35,9 @@ pub use crate::chunks::FetchChunkInput;
 pub use crate::config::settings::Setting;
 pub use crate::handle_manager::Handle;
 pub use async_query_registry::AsyncQueryRegistry;
-pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
+pub use connection::{
+    Connection, ConnectionInfo, ConnectionUsability, RefreshContext, with_valid_session,
+};
 pub use error::{ApiError, CancellationAbortResult};
 pub use error_kind::ErrorKind;
 pub use get_objects::{
