@@ -21,7 +21,8 @@
 # BD#31 (DataSource setters wired to sf_core only).
 # ============================================================================
 
-@jdbc
+# JDBC DataSource setter/getter storage. ODBC has no pooled DataSource object.
+@jdbc @odbc_not_needed
 Feature: Connection pool data source configuration
 
   # ==========================================================================

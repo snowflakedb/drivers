@@ -1,4 +1,7 @@
-@python
+# Python get_query_status(query_id) is not an ODBC API. ODBC observes statement
+# execution through SQLExecDirect / SQLFetch return codes, not Snowflake query
+# status by ID.
+@python @odbc_not_needed
 Feature: Query status
 
   @python_e2e

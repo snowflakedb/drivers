@@ -1,4 +1,6 @@
-@python @jdbc
+# This feature asserts Python and JDBC wrapper loggers versus the core logger.
+# ODBC has no equivalent two-logger Gherkin surface.
+@python @jdbc @odbc_not_needed
 Feature: Driver logging through core
 
   Verifies that logging is set up correctly and wrapper/core log levels are applied independently.

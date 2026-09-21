@@ -1,4 +1,6 @@
-@core
+# This feature asserts Azure 403 SAS refresh at the HTTP layer via WireMock.
+# ODBC PUT/GET does not intercept Azure responses in this suite.
+@core @odbc_not_needed
 Feature: Azure SAS refresh on 403
 
   An expired Azure SAS in a stage URL surfaces as HTTP 403. On ANY 403

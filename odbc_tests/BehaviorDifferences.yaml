@@ -3237,3 +3237,22 @@ behavior_differences:
       iODBC's driver manager drops the SQLDriverConnect SUCCESS_WITH_INFO
       diagnostic (BD#61); that suite still asserts the return code and checks the
       diagnostic text on unixODBC / Windows.
+
+  155:
+    name: "SQLDriverConnect fails with SQLSTATE 28000 and native error 0 for an invalid WIF provider, missing OIDC token, or malformed JWT"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      SQLDriverConnect with AUTHENTICATOR=workload_identity returns SQL_ERROR when
+      WORKLOAD_IDENTITY_PROVIDER is an invalid value, when WORKLOAD_IDENTITY_PROVIDER
+      is OIDC and TOKEN is absent, or when TOKEN is not a valid JWT. The SQLSTATE is
+      08001, HY000, or 28000 depending on the connect path and the driver manager.
+    new_driver_behavior: |
+      SQLDriverConnect with AUTHENTICATOR=workload_identity returns SQL_ERROR, SQLSTATE
+      28000, and native error 0 when WORKLOAD_IDENTITY_PROVIDER is an invalid value,
+      when WORKLOAD_IDENTITY_PROVIDER is OIDC and TOKEN is absent, or when TOKEN is
+      not a valid JWT. The diagnostic names workload_identity_provider, token, or a
+      malformed JWT or attestation, respectively.

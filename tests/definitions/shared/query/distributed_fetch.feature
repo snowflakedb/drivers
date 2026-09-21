@@ -1,4 +1,6 @@
-@core @python @jdbc
+# ODBC fetches through SQLFetch on the live statement. There is no API to
+# serialize result partitions and consume them on another worker.
+@core @python @jdbc @odbc_not_needed
 Feature: Distributed fetch
 
   # A large result set is split into independently serializable partitions. Each partition can be

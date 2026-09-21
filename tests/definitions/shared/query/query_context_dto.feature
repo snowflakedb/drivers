@@ -1,4 +1,6 @@
-@core @python
+# This feature asserts the HTTP queryContextDTO cache on subsequent requests.
+# ODBC does not expose request bodies; the cache lives in core.
+@core @python @odbc_not_needed
 Feature: Query context DTO cache
 
   @core_int @python_int

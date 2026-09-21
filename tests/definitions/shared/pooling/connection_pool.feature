@@ -1,4 +1,6 @@
-@jdbc
+# JDBC javax.sql pooling (SnowflakeConnectionPoolDataSource). ODBC pooling is
+# the Driver Manager's SQL_ATTR_CONNECTION_POOLING, not this DataSource API.
+@jdbc @odbc_not_needed
 Feature: Connection pooling
 
   # ============================================================================

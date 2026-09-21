@@ -1,4 +1,6 @@
-@core
+# retryCount and retryReason are HTTP query-URL parameters asserted at the
+# core retry layer. ODBC does not expose the retried request URL.
+@core @odbc_not_needed
 Feature: Retry reason context on retried query requests
 
   When the HTTP retry layer retries a query request, the retried URL includes
