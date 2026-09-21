@@ -36,7 +36,9 @@ Deferred work — covered **last**, only once the corresponding feature support 
 
 Ensure the public API of the statement returned by `connection.execute` is fully covered:
 
-- `integration/testStatement.js`
+- `integration/testStatement.js` — partially migrated. Immediate and post-completion
+  `getSqlText()` behavior for successful and failed execution now lives in
+  `nodejs/tests/e2e/statement.test.ts`. The remaining statement API is still pending.
 - `integration/testStreamRows.js`
 - `integration/testUpdatedRows.js`
 
@@ -241,6 +243,8 @@ called out explicitly.
 
 - [`unit/snowflake_test.js`](./unit/snowflake_test.js) — useful scenarios that belong as e2e
   tests in the new driver. After beta, map each case to existing e2e tests and fill the gaps.
+  The `getSqlText()` cases for execute success, execute failure, and `fetchResult()` now live
+  in `nodejs/tests/e2e/statement.test.ts`; request-ID resubmission is still pending.
   Partially migrated: the `connection.destroy()` refusals in the pristine and disconnected
   states now live in `nodejs/tests/e2e/connection-state-errors.test.ts`. The remaining case in
   that block, destroy while a login is in flight, is BD#27.

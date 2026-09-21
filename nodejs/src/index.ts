@@ -243,6 +243,7 @@ export class Connection {
     return this.#runStatement(this.#core.execute(options.sqlText, bindings, parameters), {
       complete: options.complete,
       streamResult: options.streamResult,
+      sqlText: options.sqlText,
       rowOptions: {
         ...this.#defaultRowOptions,
         ...(options.rowMode && { rowMode: options.rowMode }),
@@ -286,11 +287,12 @@ export class Connection {
     options: {
       complete?: StatementCallback;
       streamResult?: boolean;
+      sqlText?: string;
       rowOptions: RowOptions;
     },
   ): RowStatement | FileAndStageBindStatement {
-    const { complete, streamResult, rowOptions } = options;
-    const statement = new RowStatement(coreStatement, rowOptions);
+    const { complete, streamResult, sqlText, rowOptions } = options;
+    const statement = new RowStatement(coreStatement, rowOptions, sqlText);
     (async () => {
       try {
         if (streamResult === true) {

@@ -56,7 +56,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Multi Statement', () => {
         sqlText,
         complete: (err, stmt) => {
           if (err) return reject(err);
-          seenSqlTexts.push(stmt.getSqlText());
+          seenSqlTexts.push(stmt.getSqlText()!);
           if ('hasNext' in stmt && stmt.hasNext()) {
             stmt.NextResult();
           } else {

@@ -292,31 +292,34 @@ behavior_differences:
       or base64, so there is no real use case for them. The new driver does not carry them over.
 
   13:
-    name: 'RowStatement getColumn/getNumRows/getQueryId are typed as possibly undefined'
+    name: 'RowStatement getColumn/getNumRows/getQueryId/getSqlText are typed as possibly undefined'
     status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      The old driver's TypeScript types declare getColumn(): Column, getNumRows(): number, and
-      getQueryId(): string — none include undefined. At runtime all three can still return
-      undefined: getColumn and getNumRows when no result is available yet, getQueryId when the
-      query id is not yet known (its JSDoc even says so). Callers who type-check against the old
-      .d.ts never see undefined, even though calling the functions can return it.
+      The old driver's TypeScript types declare getColumn(): Column, getNumRows(): number,
+      getQueryId(): string, and getSqlText(): string — none include undefined. At runtime all
+      four can still return undefined: getColumn and getNumRows when no result is available yet,
+      getQueryId when the query id is not yet known (its JSDoc even says so), and getSqlText
+      when the statement was created by fetchResult without sqlText. Callers who type-check
+      against the old .d.ts never see undefined, even though calling the functions can return it.
     new_driver_behavior: |
-      The new driver types getColumn, getNumRows, and getQueryId as T | undefined. After a
-      successful query they still return defined values, same as the old driver; TypeScript now
-      requires handling undefined.
+      The new driver types getColumn, getNumRows, getQueryId, and getSqlText as T | undefined.
+      After a successful execute they still return defined values, same as the old driver;
+      TypeScript now requires handling undefined. fetchResult still returns undefined from
+      getSqlText at runtime on both drivers.
     description: |
       Status is unknown: investigate and decide among (1) keeping the honest T | undefined
       signatures (a TypeScript-visible API change), (2) matching the old driver's types, which
       hide a real undefined return, or (3) throwing when no result is available instead of
       returning undefined, so the signatures can honestly be T. Runtime after a completed query
       is the same on both drivers for (1) and (2); (3) would change pre-result calls from
-      undefined to an error (a runtime break for callers who currently check for undefined). The
-      new types come from mapping core FFI null to undefined. Tests that call getColumn() after
-      execute use getRowStatementColumn (BD#13).
+      undefined to an error (a runtime break for callers who currently check for undefined).
+      getColumn/getNumRows/getQueryId map core FFI null to undefined; getSqlText is stored in
+      the TypeScript wrapper and is unset when fetchResult does not receive sqlText. Tests that
+      call getColumn() after execute use getRowStatementColumn (BD#13).
 
   14:
     name: "TIME column NULL returns real null, not the old driver's 'NULL' string"

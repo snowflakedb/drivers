@@ -18,14 +18,21 @@ import { createRowStream } from './rows.js';
 export class RowStatement {
   #core: CoreStatementInstance;
   #rowOptions: RowOptions;
+  #sqlText?: string;
 
-  constructor(core: CoreStatementInstance, rowOptions: RowOptions) {
+  constructor(core: CoreStatementInstance, rowOptions: RowOptions, sqlText?: string) {
     this.#core = core;
     this.#rowOptions = rowOptions;
+    this.#sqlText = sqlText;
   }
 
-  getSqlText(): string {
-    throw new Error('Not implemented');
+  /**
+   * Returns the SQL string passed to `execute()`, with bind placeholders left
+   * as written rather than bound values inlined. A statement obtained by query
+   * id through `fetchResult()` carries no SQL, so this returns undefined.
+   */
+  getSqlText(): string | undefined {
+    return this.#sqlText;
   }
 
   getNumRows(): number | undefined {

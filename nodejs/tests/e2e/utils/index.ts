@@ -97,6 +97,37 @@ export async function destroyConnectionAsync(connection: Connection): Promise<vo
   });
 }
 
+export function sendExecute(
+  connection: Connection,
+  sqlText: string,
+  additionalParameters: Partial<Omit<StatementOption, 'sqlText' | 'complete'>> = {},
+): {
+  statement: RowStatement | FileAndStageBindStatement;
+  completion: Promise<{
+    statement: RowStatement | FileAndStageBindStatement;
+    rows: Record<string, unknown>[];
+  }>;
+} {
+  let statement!: RowStatement | FileAndStageBindStatement;
+  const completion = new Promise<{
+    statement: RowStatement | FileAndStageBindStatement;
+    rows: Record<string, unknown>[];
+  }>((resolve, reject) => {
+    statement = connection.execute({
+      sqlText,
+      ...additionalParameters,
+      complete: (error, completedStatement, rows) => {
+        if (error) {
+          reject({ error, statement: completedStatement });
+        } else {
+          resolve({ statement: completedStatement, rows: rows as Record<string, unknown>[] });
+        }
+      },
+    });
+  });
+  return { statement, completion };
+}
+
 export function executeAsync(
   connection: Connection,
   sqlText: string,
@@ -105,19 +136,7 @@ export function executeAsync(
   statement: RowStatement | FileAndStageBindStatement;
   rows: Record<string, unknown>[];
 }> {
-  return new Promise((resolve, reject) => {
-    connection.execute({
-      sqlText,
-      ...additionalParameters,
-      complete: (error, statement, rows) => {
-        if (error) {
-          reject({ error, statement });
-        } else {
-          resolve({ statement, rows: rows as Record<string, unknown>[] });
-        }
-      },
-    });
-  });
+  return sendExecute(connection, sqlText, additionalParameters).completion;
 }
 
 export function collectStreamedRows(statement: RowStatement): Promise<Record<string, unknown>[]> {
