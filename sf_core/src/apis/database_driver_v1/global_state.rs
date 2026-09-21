@@ -57,8 +57,8 @@ pub struct WrapperPresets {
     /// outside 0–9.
     pub put_compress_level_default: u32,
     /// When true, GET of a staged path that matches no object returns an empty
-    /// result set (legacy snowflake-jdbc). When false, it errors with
-    /// `RemoteFileNotFound` (Python, ODBC, and core).
+    /// result set (legacy snowflake-jdbc and ODBC). When false, it errors with
+    /// `RemoteFileNotFound` (Python and core).
     pub legacy_empty_get_on_missing: bool,
     /// When true, the client `enablePutGet` property and the server
     /// `JDBC_ENABLE_PUT_GET` session parameter can disable PUT/GET (rejected
@@ -134,7 +134,7 @@ impl WrapperPresets {
             legacy_odbc_compression_autodetect: true,
             put_get_fastfail_default: false,
             put_compress_level_default: 6,
-            legacy_empty_get_on_missing: false,
+            legacy_empty_get_on_missing: true,
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: false,
             optimistic_alter_session_param_cache: false,
@@ -481,6 +481,14 @@ mod tests {
         assert!(WrapperPresets::odbc().validate_session_token);
         assert!(WrapperPresets::jdbc().validate_session_token);
         assert!(WrapperPresets::default().validate_session_token);
+    }
+
+    #[test]
+    fn odbc_and_jdbc_return_empty_get_on_missing() {
+        assert!(WrapperPresets::jdbc().legacy_empty_get_on_missing);
+        assert!(WrapperPresets::odbc().legacy_empty_get_on_missing);
+        assert!(!WrapperPresets::python().legacy_empty_get_on_missing);
+        assert!(!WrapperPresets::default().legacy_empty_get_on_missing);
     }
 
     #[test]

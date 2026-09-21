@@ -36,6 +36,8 @@ add_odbc_test(e2e_put_get_put_get_overwrite put_get/put_get_overwrite.cpp)
 add_odbc_test(e2e_put_get_put_get_source_compression put_get/put_get_source_compression.cpp)
 add_odbc_test(e2e_put_get_put_get_sse_stage put_get/put_get_sse_stage.cpp)
 add_odbc_test(e2e_put_get_put_get_wildcards put_get/put_get_wildcards.cpp)
+add_odbc_test(e2e_put_get_put_get_errors put_get/put_get_errors.cpp)
+add_odbc_test(e2e_put_get_put_get_gcs_multi_file put_get/put_get_gcs_multi_file.cpp)
 
 # query
 add_odbc_test(e2e_query_basic_execute_query query/basic_execute_query.cpp)
