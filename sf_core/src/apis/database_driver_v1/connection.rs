@@ -381,6 +381,18 @@ impl DatabaseDriverV1 {
                 let timeout_config =
                     crate::config::retry::TimeoutConfig::from_params(&resolved_snapshot);
 
+                let login_parameters = LoginParameters::from_connection_config(
+                    &config,
+                    client_info,
+                    None,
+                    read_spcs_token(self.fs_adapter().as_ref()),
+                    self.wrapper_presets.validate_session_token,
+                );
+
+                let prebuilt_credentials =
+                    snowflake::prebuild_keypair_credentials(&login_parameters)
+                        .context(LoginSnafu)?;
+
                 // ---- Diagnostics: pre-connect -----------------------------------
                 // Run diagnostics when explicitly enabled OR when troubleshooting
                 // is active (SNOWFLAKE_TROUBLESHOOTING_ENABLED=true implies diagnostics).
@@ -411,13 +423,6 @@ impl DatabaseDriverV1 {
                         effective_diag.is_some(),
                     )
                     .context(TlsClientCreationSnafu)?;
-                let login_parameters = LoginParameters::from_connection_config(
-                    &config,
-                    client_info,
-                    None,
-                    read_spcs_token(self.fs_adapter().as_ref()),
-                    self.wrapper_presets.validate_session_token,
-                );
 
                 let mut diag_runner = match (effective_diag, diag_rustls) {
                     (Some(diag_cfg), Some(diag_rustls)) => {
@@ -488,6 +493,7 @@ impl DatabaseDriverV1 {
                     token_cache,
                     Some(&self.prompt_locks),
                     &retry_policy,
+                    prebuilt_credentials,
                     xp_backend.as_deref(),
                 );
 

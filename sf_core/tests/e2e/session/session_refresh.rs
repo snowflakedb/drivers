@@ -116,6 +116,7 @@ fn should_refresh_session_proactively() {
             None,
             &policy,
             None,
+            None,
         )
         .await
         .expect("Login should succeed");

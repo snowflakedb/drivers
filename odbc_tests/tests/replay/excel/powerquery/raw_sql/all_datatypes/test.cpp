@@ -11,11 +11,6 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("Replay: excel powerquery raw_sql all_datatypes", "[excel][powerquery][raw_sql]") {
-  // TODO(SNOW-4108925): On the windows-x64-azure lane the new driver's key-pair
-  // SQLDriverConnect returns SQL_ERROR. The replay passes on every other lane; this skip
-  // covers all of them because the harness has no cloud-provider guard.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;

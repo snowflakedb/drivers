@@ -706,6 +706,24 @@ async fn evict_oauth_access_token_for_authorization_code(
     oauth::remove_oauth_dpop_bundled(&idp_url, server_url, &cfg.username, role, token_cache).await;
 }
 
+pub(crate) fn prebuild_keypair_credentials(
+    login_parameters: &LoginParameters,
+) -> Result<Option<Credentials>, RestError> {
+    crate::auth::prebuild_private_key_credentials(login_parameters).context(AuthenticationSnafu)
+}
+
+async fn credentials_for_login(
+    login_parameters: &LoginParameters,
+    prebuilt_credentials: Option<Credentials>,
+) -> Result<Credentials, AuthError> {
+    if let (Some(creds @ Credentials::Jwt { .. }), LoginMethod::PrivateKey { .. }) =
+        (prebuilt_credentials, &login_parameters.login_method)
+    {
+        return Ok(creds);
+    }
+    create_credentials(login_parameters).await
+}
+
 pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -713,6 +731,7 @@ pub async fn auth_request_data(
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
+    prebuilt_credentials: Option<Credentials>,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
     data.spcs_token = login_parameters.spcs_token.clone();
@@ -855,7 +874,7 @@ pub async fn auth_request_data(
             data.provider = Some(attestation.provider.to_string());
             data.token = Some(attestation.token);
         }
-        _ => match create_credentials(login_parameters)
+        _ => match credentials_for_login(login_parameters, prebuilt_credentials)
             .await
             .context(AuthenticationSnafu)?
         {
@@ -1063,6 +1082,7 @@ pub async fn snowflake_login(
         None,
         &policy,
         None,
+        None,
     )
     .await
 }
@@ -1074,10 +1094,12 @@ pub async fn snowflake_login(
         session_parameters,
         token_cache,
         retry_policy,
+        prebuilt_credentials,
         xp_backend
     ),
     fields(account_name, login_name)
 )]
+#[allow(clippy::too_many_arguments)]
 pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -1085,6 +1107,7 @@ pub async fn snowflake_login_with_client(
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
+    prebuilt_credentials: Option<Credentials>,
     xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
@@ -1223,6 +1246,7 @@ pub async fn snowflake_login_with_client(
         token_cache.clone(),
         prompt_locks,
         retry_policy,
+        prebuilt_credentials,
     )
     .await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
@@ -1282,6 +1306,7 @@ pub async fn snowflake_login_with_client(
                     token_cache.clone(),
                     prompt_locks,
                     retry_policy,
+                    None,
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
@@ -1338,6 +1363,7 @@ pub async fn snowflake_login_with_client(
                     token_cache.clone(),
                     prompt_locks,
                     retry_policy,
+                    None,
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
@@ -3168,6 +3194,7 @@ mod tests {
             None,
             None,
             &RetryPolicy::default(),
+            None,
             Some(&backend),
         )
         .await;
@@ -3677,6 +3704,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             ))
             .unwrap();
 
@@ -3710,6 +3738,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             ))
             .unwrap();
 
@@ -3809,6 +3838,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             ))
             .unwrap();
 
@@ -3836,6 +3866,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             ))
             .unwrap();
 
@@ -3861,6 +3892,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             ))
             .unwrap();
 
@@ -3891,6 +3923,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             ))
             .unwrap();
 
@@ -3931,6 +3964,7 @@ mod tests {
                     None,
                     None,
                     &RetryPolicy::default(),
+                    None,
                 ))
                 .unwrap();
             assert_eq!(
@@ -3954,6 +3988,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             ))
             .unwrap();
 
@@ -3976,6 +4011,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             ))
             .unwrap();
 
@@ -4072,6 +4108,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
                 None,
             )
             .await
@@ -4911,6 +4948,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             )
             .await
             .expect_err("disallowed WIF host must fail closed");
@@ -4944,6 +4982,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                None,
             )
             .await
             .expect_err("missing OIDC token must fail");

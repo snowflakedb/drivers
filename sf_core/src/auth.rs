@@ -134,6 +134,33 @@ fn generate_jwt_token(
     Ok(token.as_str().to_string())
 }
 
+// Runs synchronously on the connect path so JWT signing completes before the
+// rustls/aws-lc TLS client is built. The `create_credentials` PrivateKey arm
+// still uses `spawn_blocking`; moving pre-build signing to the blocking pool
+// initializes OpenSSL after TLS on Windows and breaks key-pair connect there.
+pub fn prebuild_private_key_credentials(
+    login_parameters: &LoginParameters,
+) -> Result<Option<Credentials>, AuthError> {
+    let LoginMethod::PrivateKey {
+        username,
+        private_key,
+        passphrase,
+    } = &login_parameters.login_method
+    else {
+        return Ok(None);
+    };
+    let token = generate_jwt_token(
+        &login_parameters.account_name,
+        username,
+        private_key.reveal(),
+        passphrase.as_ref().map(|p| p.reveal().as_str()),
+    )?;
+    Ok(Some(Credentials::Jwt {
+        username: username.clone(),
+        token: token.into(),
+    }))
+}
+
 pub async fn create_credentials(
     login_parameters: &LoginParameters,
 ) -> Result<Credentials, AuthError> {
