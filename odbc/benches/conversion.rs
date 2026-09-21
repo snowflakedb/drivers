@@ -21,7 +21,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BooleanArray, Date32Array, Float64Array, Int32Array, Int64Array, StructArray,
+    Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Float64Array, Int32Array, Int64Array,
+    StructArray,
 };
 use arrow::datatypes::{DataType, Field, Fields};
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
@@ -182,15 +183,104 @@ fn bench(c: &mut Criterion) {
             b.iter(|| run(conv.as_ref(), arr.as_ref(), CELL, &mut buf, &mut inds))
         });
     }
+    let epoch_seconds: ArrayRef = Arc::new(Int64Array::from_iter_values(
+        (0..N as i64).map(|i| 1_700_000_000 + i),
+    ));
+    let fractions: ArrayRef = Arc::new(Int32Array::from_iter_values(
+        (0..N as i32).map(|i| (i * 97_531) % 1_000_000_000),
+    ));
+    let epoch_field = Arc::new(Field::new("epoch", DataType::Int64, false));
+    let fraction_field = Arc::new(Field::new("fraction", DataType::Int32, false));
+    let timestamp_struct = StructArray::from(vec![
+        (Arc::clone(&epoch_field), Arc::clone(&epoch_seconds)),
+        (Arc::clone(&fraction_field), Arc::clone(&fractions)),
+    ]);
+    let timestamp_struct_type = timestamp_struct.data_type().clone();
+
+    let timestamp_ntz_struct_field = field(
+        timestamp_struct_type.clone(),
+        "TIMESTAMP_NTZ",
+        &[("scale", "9")],
+    );
+    let timestamp_ntz_struct_converter = make_converter(&timestamp_ntz_struct_field);
+    let mut timestamp_ntz_struct_buf = vec![0u8; N * 64];
+    let mut timestamp_ntz_struct_inds = vec![0 as sql::Len; N];
+    group.bench_function("timestamp_ntz_struct", |b| {
+        b.iter(|| {
+            run(
+                timestamp_ntz_struct_converter.as_ref(),
+                &timestamp_struct,
+                64,
+                &mut timestamp_ntz_struct_buf,
+                &mut timestamp_ntz_struct_inds,
+            )
+        })
+    });
+
+    let offsets: ArrayRef = Arc::new(Int32Array::from_iter_values(
+        (0..N as i32).map(|i| 1_440 + (i % 29 - 14) * 30),
+    ));
+    let offset_field = Arc::new(Field::new("tz_offset", DataType::Int32, false));
+    let timestamp_tz_struct = StructArray::from(vec![
+        (epoch_field, epoch_seconds),
+        (fraction_field, fractions),
+        (offset_field, offsets),
+    ]);
+    let timestamp_tz_struct_field = field(
+        timestamp_tz_struct.data_type().clone(),
+        "TIMESTAMP_TZ",
+        &[("scale", "9")],
+    );
+    let timestamp_tz_struct_converter = make_converter(&timestamp_tz_struct_field);
+    let mut timestamp_tz_struct_buf = vec![0u8; N * 64];
+    let mut timestamp_tz_struct_inds = vec![0 as sql::Len; N];
+    group.bench_function("timestamp_tz_struct", |b| {
+        b.iter(|| {
+            run(
+                timestamp_tz_struct_converter.as_ref(),
+                &timestamp_tz_struct,
+                64,
+                &mut timestamp_tz_struct_buf,
+                &mut timestamp_tz_struct_inds,
+            )
+        })
+    });
+
+    let binary_field = field(DataType::Binary, "BINARY", &[("byteLength", "64")]);
+    let binary_values: Vec<Vec<u8>> = (0..N)
+        .map(|row| {
+            (0..64)
+                .map(|column| row.wrapping_mul(31).wrapping_add(column) as u8)
+                .collect()
+        })
+        .collect();
+    let binary_array = BinaryArray::from_iter_values(binary_values.iter().map(Vec::as_slice));
+    let binary_converter = make_converter(&binary_field);
+    let mut binary_buf = vec![0u8; N * 1024];
+    let mut binary_inds = vec![0 as sql::Len; N];
+    group.bench_function("binary_64_bytes", |b| {
+        b.iter(|| {
+            run(
+                binary_converter.as_ref(),
+                &binary_array,
+                1024,
+                &mut binary_buf,
+                &mut binary_inds,
+            )
+        })
+    });
 
     let boolean_field = field(DataType::Boolean, "BOOLEAN", &[]);
+    let boolean_array = BooleanArray::from(
+        (0..N)
+            .map(|i| i.wrapping_mul(17) % 5 < 2)
+            .collect::<Vec<_>>(),
+    );
     let boolean_converter = make_converter(&boolean_field);
-    let boolean_array =
-        BooleanArray::from_iter((0..N).map(|i| Some((i.wrapping_mul(7919) & 1) != 0)));
     for cell in [2, 64, 1024] {
         let mut buf = vec![0u8; N * cell];
         let mut inds = vec![0 as sql::Len; N];
-        group.bench_function(format!("boolean_{cell}"), |b| {
+        group.bench_function(format!("boolean_cell_{cell}"), |b| {
             b.iter(|| {
                 run(
                     boolean_converter.as_ref(),

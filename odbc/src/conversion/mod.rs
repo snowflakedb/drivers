@@ -930,13 +930,12 @@ pub fn make_converter(
             Ok(Box::new(boolean::BooleanCharConverter { inner, nullable })
                 as Box<dyn ColumnConverter>)
         }
-        SnowflakeFieldType::Binary(snowflake_type) => {
-            make_converter!(
-                arrow::array::GenericByteArray<arrow::datatypes::GenericBinaryType<i32>>,
-                snowflake_type,
-                nullable
-            )
-        }
+        SnowflakeFieldType::Binary(snowflake_type) => char_batch_converter!(
+            arrow::array::GenericByteArray<arrow::datatypes::GenericBinaryType<i32>>,
+            binary::BinaryCharKernel,
+            snowflake_type,
+            nullable
+        ),
         SnowflakeFieldType::Real(snowflake_type) => char_batch_converter!(
             PrimitiveArray<Float64Type>,
             real::RealCharKernel,
@@ -1325,8 +1324,8 @@ mod char_batch_tests {
     use crate::conversion::traits::{Binding, BindingStrides};
     use crate::conversion::warning::Warnings;
     use arrow::array::{
-        Array, ArrayRef, BooleanArray, Date32Array, Decimal128Array, Float64Array, Int32Array,
-        Int64Array, StructArray,
+        Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Float64Array,
+        Int32Array, Int64Array, StructArray,
     };
     use arrow::datatypes::{DataType, Field, Fields};
     use odbc_sys as sql;
@@ -1353,6 +1352,13 @@ mod char_batch_tests {
         let mut md = HashMap::new();
         md.insert("logicalType".to_string(), "BOOLEAN".to_string());
         Field::new("c", DataType::Boolean, nullable).with_metadata(md)
+    }
+
+    fn binary_field(nullable: bool) -> Field {
+        let mut md = HashMap::new();
+        md.insert("logicalType".to_string(), "BINARY".to_string());
+        md.insert("byteLength".to_string(), "64".to_string());
+        Field::new("c", DataType::Binary, nullable).with_metadata(md)
     }
 
     fn date_field(nullable: bool) -> Field {
@@ -1578,6 +1584,21 @@ mod char_batch_tests {
         assert_equiv(&decimal_field(38, 2, true), &arr, 64);
         // small cell -> exercises truncation + whole-digits 22003 error path
         assert_equiv(&decimal_field(38, 2, true), &arr, 8);
+    }
+
+    #[test]
+    fn batched_matches_per_cell_binary_with_nulls_and_truncation() {
+        let arr = BinaryArray::from(vec![
+            Some(&b""[..]),
+            Some(&b"\x00\x01\xAB\xFF"[..]),
+            None,
+            Some(&b"Snowflake"[..]),
+        ]);
+        assert_equiv(&binary_field(true), &arr, 64);
+        // Odd payload capacity exercises truncation midway through a byte.
+        assert_equiv(&binary_field(true), &arr, 6);
+        // A one-byte cell can only hold the NUL terminator.
+        assert_equiv(&binary_field(true), &arr, 1);
     }
 
     /// Independent oracle: assert the batched path writes the exact bytes,

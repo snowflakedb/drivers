@@ -6,17 +6,19 @@ use arrow::datatypes::GenericBinaryType;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
 use crate::conversion::error::BindingError;
 use crate::conversion::error::{
-    InvalidHexLiteralSnafu, ReadArrowError, UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu,
-    WriteOdbcError,
+    ConversionError, InvalidHexLiteralSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError, WriteOdbcValueSnafu,
 };
 use crate::conversion::param_binding::{buffer_data_len, read_char_str, read_wchar_str};
-use crate::conversion::traits::Binding;
+use crate::conversion::traits::{Binding, LengthOrNull};
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 use odbc_sys as sql;
+use snafu::ResultExt;
 
 pub(crate) struct SnowflakeBinary {
     pub len: u32,
@@ -154,6 +156,98 @@ impl WriteODBCType for SnowflakeBinary {
             }
             .fail(),
         }
+    }
+}
+
+/// Batched `SQL_C_CHAR` kernel for BINARY, reused by the generic
+/// [`convert_char_range`](crate::conversion::batch::convert_char_range) loop.
+/// Hex output has no fixed bound, so `write_non_null` writes hex nibbles
+/// directly into the bind buffer instead of going through `format_into` +
+/// the fixed-size shared scratch.
+pub(crate) struct BinaryCharKernel;
+
+impl CharKernel for BinaryCharKernel {
+    type Array = GenericByteArray<GenericBinaryType<i32>>;
+    type Value = Vec<u8>;
+
+    fn read_validate(
+        &self,
+        array: &GenericByteArray<GenericBinaryType<i32>>,
+        idx: usize,
+    ) -> Result<Vec<u8>, ConversionError> {
+        Ok(array.value(idx).to_vec())
+    }
+
+    fn format_into<'s>(
+        &self,
+        value: &Vec<u8>,
+        _binding: &Binding,
+        scratch: &'s mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<&'s str, WriteOdbcError> {
+        let copy_len = value.len() * 2;
+        if copy_len > CHAR_SCRATCH_LEN {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "BINARY value needs {copy_len} hex chars, exceeds {CHAR_SCRATCH_LEN}-byte scratch buffer"
+                ),
+            }
+            .fail();
+        }
+        let complete_bytes = copy_len / 2;
+        for (src, dst) in value[..complete_bytes]
+            .iter()
+            .zip(scratch[..copy_len].chunks_exact_mut(2))
+        {
+            dst[0] = hex_digit_to_ascii(src >> 4);
+            dst[1] = hex_digit_to_ascii(*src);
+        }
+        if !copy_len.is_multiple_of(2) {
+            scratch[copy_len - 1] = hex_digit_to_ascii(value[complete_bytes] >> 4);
+        }
+        // SAFETY: only ASCII hex digits were written into `scratch[..copy_len]` above.
+        Ok(unsafe { std::str::from_utf8_unchecked(&scratch[..copy_len]) })
+    }
+
+    fn write_non_null(
+        &self,
+        array: &GenericByteArray<GenericBinaryType<i32>>,
+        idx: usize,
+        binding: &Binding,
+        _scratch: &mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<bool, ConversionError> {
+        let value = array.value(idx);
+        let total_len = value.len() * 2;
+
+        if binding.target_value_ptr.is_null() || binding.buffer_length <= 0 {
+            binding
+                .write_length_or_null(LengthOrNull::Length(total_len as sql::Len))
+                .context(WriteOdbcValueSnafu)?;
+            return Ok(total_len > 0);
+        }
+
+        let max_payload = binding.buffer_length as usize - 1;
+        let copy_len = total_len.min(max_payload);
+        unsafe {
+            let target =
+                std::slice::from_raw_parts_mut(binding.target_value_ptr as *mut u8, copy_len + 1);
+            let complete_bytes = copy_len / 2;
+            for (src, dst) in value[..complete_bytes]
+                .iter()
+                .zip(target[..complete_bytes * 2].chunks_exact_mut(2))
+            {
+                dst[0] = hex_digit_to_ascii(src >> 4);
+                dst[1] = hex_digit_to_ascii(*src);
+            }
+            if !copy_len.is_multiple_of(2) {
+                target[copy_len - 1] = hex_digit_to_ascii(value[complete_bytes] >> 4);
+            }
+            target[copy_len] = 0;
+        }
+
+        binding
+            .write_length_or_null(LengthOrNull::Length(total_len as sql::Len))
+            .context(WriteOdbcValueSnafu)?;
+        Ok(copy_len < total_len)
     }
 }
 
