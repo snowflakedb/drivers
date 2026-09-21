@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.Properties;
+import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,8 @@ class Jdk14LoggerBootstrapTest {
   @Test
   void shouldDoNothingWhenTracingIsAbsent() throws IOException {
     Jdk14LoggerBootstrap.initFromConnectionIfConfigured(
-        "jdbc:snowflake://account.snowflakecomputing.com/?user=u", new Properties());
+        ConnectionOptionsResolver.resolve(
+            "jdbc:snowflake://account.snowflakecomputing.com/?user=u", new Properties()));
 
     JDK14Logger logger = new JDK14Logger(Jdk14LoggerBootstrapTest.class.getName());
     assertFalse(logger.isDebugEnabled());
@@ -34,13 +36,38 @@ class Jdk14LoggerBootstrapTest {
 
   @Test
   void shouldInstantiateLoggerWhenTracingIsSet() throws IOException {
-    System.setProperty("net.snowflake.jdbc.loggerImpl", "net.snowflake.client.log.JDK14Logger");
-    SFLoggerFactory.resetLoggerImplementationForTests();
+    configureJulLogger();
 
     Properties info = new Properties();
     info.setProperty("tracing", "ALL");
 
-    Jdk14LoggerBootstrap.initFromConnectionIfConfigured(URL, info);
+    Jdk14LoggerBootstrap.initFromConnectionIfConfigured(
+        ConnectionOptionsResolver.resolve(URL, info));
+
+    JDK14Logger logger = new JDK14Logger(Jdk14LoggerBootstrapTest.class.getName());
+    assertTrue(logger.isDebugEnabled());
+  }
+
+  @Test
+  void shouldInstantiateLoggerFromAutoUrlTracing() throws IOException {
+    configureJulLogger();
+
+    Jdk14LoggerBootstrap.initFromConnectionIfConfigured(
+        ConnectionOptionsResolver.resolve(
+            "jdbc:snowflake:auto?connectionName=readOnly&tracing=ALL", new Properties()));
+
+    JDK14Logger logger = new JDK14Logger(Jdk14LoggerBootstrapTest.class.getName());
+    assertTrue(logger.isDebugEnabled());
+  }
+
+  @Test
+  void shouldPreferAutoUrlTracingFromProperties() throws IOException {
+    configureJulLogger();
+    Properties info = new Properties();
+    info.setProperty("TRACING", "ALL");
+
+    Jdk14LoggerBootstrap.initFromConnectionIfConfigured(
+        ConnectionOptionsResolver.resolve("jdbc:snowflake:auto?tracing=OFF", info));
 
     JDK14Logger logger = new JDK14Logger(Jdk14LoggerBootstrapTest.class.getName());
     assertTrue(logger.isDebugEnabled());
@@ -50,7 +77,8 @@ class Jdk14LoggerBootstrapTest {
   void shouldSkipWhenExternalJulConfigFileIsSet() throws IOException {
     System.setProperty("java.util.logging.config.file", "/tmp/logging.properties");
 
-    Jdk14LoggerBootstrap.initFromConnectionIfConfigured(URL, new Properties());
+    Jdk14LoggerBootstrap.initFromConnectionIfConfigured(
+        ConnectionOptionsResolver.resolve(URL, new Properties()));
 
     JDK14Logger logger = new JDK14Logger(Jdk14LoggerBootstrapTest.class.getName());
     assertFalse(logger.isDebugEnabled());
@@ -61,9 +89,15 @@ class Jdk14LoggerBootstrapTest {
     System.setProperty("net.snowflake.jdbc.loggerImpl", "net.snowflake.client.log.SLF4JLogger");
     SFLoggerFactory.resetLoggerImplementationForTests();
 
-    Jdk14LoggerBootstrap.initFromConnectionIfConfigured(URL, new Properties());
+    Jdk14LoggerBootstrap.initFromConnectionIfConfigured(
+        ConnectionOptionsResolver.resolve(URL, new Properties()));
 
     JDK14Logger logger = new JDK14Logger(Jdk14LoggerBootstrapTest.class.getName());
     assertFalse(logger.isDebugEnabled());
+  }
+
+  private static void configureJulLogger() {
+    System.setProperty("net.snowflake.jdbc.loggerImpl", "net.snowflake.client.log.JDK14Logger");
+    SFLoggerFactory.resetLoggerImplementationForTests();
   }
 }

@@ -130,8 +130,10 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi) {
+    Properties resolvedProperties =
+        ProxyOptionsResolver.resolve(ConnectionOptionsResolver.resolve(url, properties));
     try {
-      Jdk14LoggerBootstrap.initFromConnectionIfConfigured(url, properties);
+      Jdk14LoggerBootstrap.initFromConnectionIfConfigured(resolvedProperties);
     } catch (IOException e) {
       throw new SFSQLException("Failed to initialize JDBC logging", e);
     }
@@ -145,7 +147,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       coreDriverApi.databaseInit(dbHandle);
       connHandle = coreDriverApi.connectionNew().getConnHandle();
 
-      SQLWarning sqlWarnings = setOptions(connHandle, url, properties);
+      SQLWarning sqlWarnings = setOptions(connHandle, resolvedProperties);
 
       WrapperIdentity identity = wrapperIdentity();
       coreDriverApi.connectionInit(connHandle, dbHandle, identity);
@@ -178,9 +180,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     return identityBuilder.build();
   }
 
-  private SQLWarning setOptions(ConnectionHandle connHandle, String url, Properties properties) {
-    Properties resolvedProperties =
-        ProxyOptionsResolver.resolve(ConnectionOptionsResolver.resolve(url, properties));
+  private SQLWarning setOptions(ConnectionHandle connHandle, Properties resolvedProperties) {
     Map<String, ConfigSetting> options = new HashMap<>();
 
     // JDBC convention: Connection.close() must not throw on logout failure.

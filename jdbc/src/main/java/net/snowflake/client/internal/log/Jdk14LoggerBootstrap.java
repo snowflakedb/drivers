@@ -7,7 +7,6 @@ import java.util.Properties;
 import java.util.logging.Level;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
-import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 
 /**
  * Wires {@link JDK14Logger#instantiateLogger} from connection properties (legacy driver parity).
@@ -15,16 +14,15 @@ import net.snowflake.client.internal.api.implementation.connection.ConnectionStr
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class Jdk14LoggerBootstrap {
 
-  private static final String TRACING_PROPERTY = "TRACING";
+  private static final String TRACING_PROPERTY = "tracing";
   private static final String DEFAULT_LOG_PATTERN = "%h/snowflake_jdbc%u.log";
 
   /**
-   * Activates JUL file logging when {@code TRACING} is set and no external {@code
+   * Activates JUL file logging when {@code tracing} is set and no external {@code
    * java.util.logging.config.file} is in use. Client-config log path/level is applied when that
    * support is ported.
    */
-  public static void initFromConnectionIfConfigured(String url, Properties info)
-      throws IOException {
+  public static void initFromConnectionIfConfigured(Properties info) throws IOException {
     if (!"JUL".equals(SFLoggerFactory.getLoggerImplementationName())) {
       return;
     }
@@ -32,13 +30,25 @@ public final class Jdk14LoggerBootstrap {
       return;
     }
 
-    Map<String, Object> parameters = ConnectionString.parse(url, info).getParameters();
-    Object tracing = parameters.get(TRACING_PROPERTY);
+    Object tracing = tracingValue(info);
     if (tracing == null) {
       return;
     }
 
     Level logLevel = Level.parse(tracing.toString().toUpperCase(Locale.US));
     JDK14Logger.instantiateLogger(logLevel, DEFAULT_LOG_PATTERN);
+  }
+
+  private static Object tracingValue(Properties info) {
+    if (info == null) {
+      return null;
+    }
+    for (Map.Entry<Object, Object> entry : info.entrySet()) {
+      if (entry.getKey() instanceof String
+          && TRACING_PROPERTY.equalsIgnoreCase((String) entry.getKey())) {
+        return entry.getValue();
+      }
+    }
+    return null;
   }
 }
