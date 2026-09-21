@@ -585,6 +585,7 @@ impl DatabaseDriverV1 {
                     proxy_config,
                     put_fastfail,
                     put_compress_level,
+                    put_tempdir,
                     get_fastfail,
                 ) = {
                     let conn = conn.lock().await;
@@ -600,6 +601,7 @@ impl DatabaseDriverV1 {
                             .or_else(|| conn.put_fastfail())
                             .unwrap_or(self.wrapper_presets.put_get_fastfail_default),
                         conn.put_compress_level(self.wrapper_presets.put_compress_level_default),
+                        conn.put_tempdir(),
                         get_fastfail_override
                             .or_else(|| conn.get_fastfail())
                             .unwrap_or(self.wrapper_presets.put_get_fastfail_default),
@@ -616,6 +618,7 @@ impl DatabaseDriverV1 {
                     skip_upload_on_content_match,
                     put_fastfail,
                     put_compress_level,
+                    put_tempdir,
                     get_fastfail,
                     cwd,
                     unsafe_file_write,

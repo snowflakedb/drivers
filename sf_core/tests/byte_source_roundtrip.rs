@@ -715,6 +715,7 @@ fn auto_compress_then_encrypt_decrypt_decompress_roundtrip() {
     let (gzip_path, gzip_guard) = sf_core::file_manager::internal::compress_to_tempfile(
         &ByteSource::Bytes(plaintext.clone().into()),
         9,
+        None,
     )
     .expect("compress to tempfile");
     assert!(

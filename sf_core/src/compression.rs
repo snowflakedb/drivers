@@ -2,7 +2,7 @@ use crate::file_manager::types::ByteSource;
 use flate2::{Compression, GzBuilder};
 use snafu::{Location, ResultExt, Snafu};
 use std::io::{BufWriter, Cursor, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::{NamedTempFile, TempPath};
 
 // 64 KiB read buffer for streaming the source into the gzip encoder.
@@ -25,13 +25,16 @@ pub fn clamp_gzip_compress_level(level: Option<i64>, default: u32) -> u32 {
 /// it drops). `gzip_level` is a gzip compression level in 0–9.
 ///
 /// Peak **heap** is `O(GZIP_CHUNK_SIZE_IN_BYTES)` regardless of input size. The
-/// tempfile lives in `std::env::temp_dir()`, so a writable temp dir is required
-/// — even for an in-memory `Bytes` source (a new failure mode for in-memory
-/// auto-compress) — and on a RAM-backed tmpfs the compressed output still
-/// occupies ~its own size in RAM (the heap bound is not a total-memory bound).
+/// tempfile lives in `temp_dir` when that is `Some`, otherwise
+/// `std::env::temp_dir()`. Nested directories in `temp_dir` are created. A
+/// writable temp dir is required — even for an in-memory `Bytes` source (a new
+/// failure mode for in-memory auto-compress) — and on a RAM-backed tmpfs the
+/// compressed output still occupies ~its own size in RAM (the heap bound is
+/// not a total-memory bound).
 pub fn compress_to_tempfile(
     source: &ByteSource,
     gzip_level: u32,
+    temp_dir: Option<&Path>,
 ) -> Result<(PathBuf, TempPath), CompressionError> {
     // `Box<dyn Read + '_>` borrows from `source` for the `Bytes` arm so we
     // don't clone the buffer just to feed the encoder.
@@ -42,9 +45,19 @@ pub fn compress_to_tempfile(
         ByteSource::Bytes(b) => Box::new(Cursor::new(b.as_ref())),
     };
 
-    let temp_file = NamedTempFile::new().context(IoFailedSnafu {
-        operation: "creating gzip tempfile",
-    })?;
+    let temp_file = match temp_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir).context(IoFailedSnafu {
+                operation: "creating PUT compression temp directory",
+            })?;
+            NamedTempFile::new_in(dir).context(IoFailedSnafu {
+                operation: "creating gzip tempfile",
+            })?
+        }
+        None => NamedTempFile::new().context(IoFailedSnafu {
+            operation: "creating gzip tempfile",
+        })?,
+    };
 
     let mut buf = vec![0u8; GZIP_CHUNK_SIZE_IN_BYTES];
     {
@@ -113,7 +126,7 @@ mod tests {
     }
 
     fn compress_bytes(payload: &[u8], level: u32) -> (PathBuf, tempfile::TempPath) {
-        compress_to_tempfile(&ByteSource::Bytes(payload.to_vec().into()), level)
+        compress_to_tempfile(&ByteSource::Bytes(payload.to_vec().into()), level, None)
             .expect("compress bytes")
     }
 
@@ -161,7 +174,8 @@ mod tests {
         tf.flush().expect("flush input");
 
         let (path, _guard) =
-            compress_to_tempfile(&ByteSource::Path(tf.path().to_path_buf()), 9).expect("compress");
+            compress_to_tempfile(&ByteSource::Path(tf.path().to_path_buf()), 9, None)
+                .expect("compress");
         let compressed = read_compressed(&path);
         let decompressed = gunzip(&compressed);
         assert_eq!(decompressed, payload);
@@ -223,5 +237,79 @@ mod tests {
         );
         assert_eq!(gunzip(&level_one), payload);
         assert_eq!(gunzip(&level_nine), payload);
+    }
+
+    #[test]
+    fn tempfile_is_created_in_nested_configured_directory() {
+        let root = tempfile::tempdir().expect("root tempdir");
+        let nested = root.path().join("a").join("b").join("c");
+        let (path, _guard) = compress_to_tempfile(
+            &ByteSource::Bytes(b"nested".to_vec().into()),
+            9,
+            Some(&nested),
+        )
+        .expect("compress into nested dir");
+        assert!(
+            path.starts_with(&nested),
+            "gzip tempfile {} must live under {}",
+            path.display(),
+            nested.display()
+        );
+        assert!(nested.is_dir());
+    }
+
+    #[test]
+    fn configured_temp_dir_that_is_a_file_returns_io_error() {
+        let root = tempfile::tempdir().expect("root tempdir");
+        let not_a_dir = root.path().join("not-a-dir");
+        std::fs::write(&not_a_dir, b"x").expect("write file");
+        let err = compress_to_tempfile(
+            &ByteSource::Bytes(b"payload".to_vec().into()),
+            9,
+            Some(&not_a_dir),
+        )
+        .expect_err("file path cannot be a temp dir");
+        assert!(matches!(err, CompressionError::IoFailed { .. }));
+    }
+
+    #[test]
+    fn tempfile_in_configured_dir_unlinks_when_guard_drops() {
+        let root = tempfile::tempdir().expect("root tempdir");
+        let (path, guard) = compress_to_tempfile(
+            &ByteSource::Bytes(b"unlink configured".to_vec().into()),
+            9,
+            Some(root.path()),
+        )
+        .expect("compress");
+        assert!(path.exists(), "tempfile must exist while guard is held");
+        drop(guard);
+        assert!(!path.exists(), "tempfile must be unlinked once guard drops");
+    }
+
+    #[test]
+    fn shell_metacharacters_in_temp_dir_are_treated_as_path_components() {
+        let root = tempfile::tempdir().expect("root tempdir");
+        let sentinel = root.path().join("pwned");
+        let injection_dir = root.path().join("dir;touch pwned");
+        let (path, _guard) = compress_to_tempfile(
+            &ByteSource::Bytes(b"payload".to_vec().into()),
+            9,
+            Some(&injection_dir),
+        )
+        .expect("compress into metacharacter path");
+        assert!(
+            injection_dir.is_dir(),
+            "metacharacters must be part of the directory name"
+        );
+        assert!(
+            path.starts_with(&injection_dir),
+            "gzip tempfile {} must live under {}",
+            path.display(),
+            injection_dir.display()
+        );
+        assert!(
+            !sentinel.exists(),
+            "shell metacharacters must not be executed"
+        );
     }
 }

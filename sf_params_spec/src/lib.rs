@@ -137,6 +137,7 @@ pub mod param_names {
     pub const PUT_FASTFAIL: ParamKey = ParamKey("put_fastfail");
     pub const GET_FASTFAIL: ParamKey = ParamKey("get_fastfail");
     pub const PUT_COMPRESS_LEVEL: ParamKey = ParamKey("put_compress_level");
+    pub const PUT_TEMPDIR: ParamKey = ParamKey("put_tempdir");
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
@@ -2004,6 +2005,18 @@ static PARAM_DEFS: &[ParamDef] = &[
         .visible_to(visible_to!(Odbc))
         .build(),
     ParamDef::builder()
+        .canonical_name(param_names::PUT_TEMPDIR.as_str())
+        .aliases(aliases![Odbc; "PUT_TEMPDIR"])
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description("Directory used for gzip tempfiles created by PUT AUTO_COMPRESS. Unset uses the process temp directory. Nested directories are created. Mirrors old ODBC's PUT_TEMPDIR connection attribute. Client-only, never forwarded to GS.")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(true)
+        .visible_to(visible_to!(Odbc))
+        .build(),
+    ParamDef::builder()
         .canonical_name(param_names::GET_FASTFAIL.as_str())
         .value_type(ValueType::Bool)
         // See PUT_FASTFAIL above: `None` is load-bearing, not an oversight.
@@ -2630,6 +2643,7 @@ mod tests {
             ("PUT_MAXRETRIES", "put_get_max_attempts", &[Odbc]),
             ("GET_MAXRETRIES", "put_get_max_attempts", &[Odbc]),
             ("PUT_COMPRESSLV", "put_compress_level", &[Odbc]),
+            ("PUT_TEMPDIR", "put_tempdir", &[Odbc]),
             ("MaxHttpRetries", "retry_max_attempts", &[Odbc]),
             // JDBC-only camelCase properties.
             ("oauthClientId", "oauth_client_id", &[Jdbc]),
@@ -3319,6 +3333,23 @@ mod tests {
         assert!(!d.used_at_connect);
         assert!(d.mutable_after_connect);
         assert_eq!(d.value_type, ValueType::Int);
+        assert!(d.is_visible_to(Wrapper::Odbc));
+        assert!(!d.is_visible_to(Wrapper::Python));
+        assert!(!d.is_visible_to(Wrapper::Jdbc));
+    }
+
+    #[test]
+    fn put_tempdir_is_odbc_only_connection_string() {
+        let r = registry();
+        assert!(r.resolve("put_tempdir").is_none());
+        let d = r
+            .resolve_for(Wrapper::Odbc, "PUT_TEMPDIR")
+            .expect("PUT_TEMPDIR should resolve for Odbc");
+        assert_eq!(d.canonical_name, "put_tempdir");
+        assert_eq!(d.scopes, &[ParamScope::Connection]);
+        assert!(!d.used_at_connect);
+        assert!(d.mutable_after_connect);
+        assert_eq!(d.value_type, ValueType::String);
         assert!(d.is_visible_to(Wrapper::Odbc));
         assert!(!d.is_visible_to(Wrapper::Python));
         assert!(!d.is_visible_to(Wrapper::Jdbc));

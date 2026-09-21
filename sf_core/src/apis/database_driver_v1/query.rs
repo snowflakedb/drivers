@@ -82,6 +82,7 @@ pub(super) async fn perform_put_get_transfer(
     skip_upload_on_content_match: bool,
     put_fastfail: bool,
     put_compress_level: u32,
+    put_tempdir: Option<std::path::PathBuf>,
     get_fastfail: bool,
     cwd: Option<std::path::PathBuf>,
     unsafe_file_write: bool,
@@ -124,6 +125,7 @@ pub(super) async fn perform_put_get_transfer(
                     use_s3_regional_url_session_param,
                     put_fastfail,
                     put_compress_level,
+                    put_tempdir,
                     cwd,
                     &transport,
                 )
@@ -184,6 +186,7 @@ pub(super) async fn build_and_upload_stream(
     use_s3_regional_url_session_param: bool,
     put_get_policy: &RetryPolicy,
     put_compress_level: u32,
+    put_tempdir: Option<std::path::PathBuf>,
     transport: &file_manager::StageTransport,
     payload: ByteSource,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
@@ -205,6 +208,7 @@ pub(super) async fn build_and_upload_stream(
             // inert here — seed it from the wrapper preset for consistency.
             wrapper_presets.put_get_fastfail_default,
             put_compress_level,
+            put_tempdir,
             None,
             transport,
         )
@@ -251,6 +255,7 @@ pub(super) async fn build_and_upload_stream(
         skip_upload_on_content_match: upload_data.skip_upload_on_content_match,
         multipart: upload_data.multipart,
         put_compress_level: upload_data.put_compress_level,
+        put_tempdir: upload_data.put_tempdir,
     };
 
     // No cleanup scope, and no cancellation coverage on this path at all — stated

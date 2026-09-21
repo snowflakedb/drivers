@@ -121,6 +121,9 @@ pub struct UploadData {
     pub put_fastfail: bool,
     /// Gzip compression level (0–9) used when auto-compress rewrites the file.
     pub put_compress_level: u32,
+    /// Directory for gzip tempfiles created by auto-compress. `None` uses
+    /// `std::env::temp_dir()`.
+    pub put_tempdir: Option<PathBuf>,
     /// Directory used to resolve a relative `src_location_pattern`. Absolute
     /// `src_location_pattern` is left unchanged.
     pub cwd: Option<PathBuf>,
@@ -140,6 +143,7 @@ pub struct SingleUploadData {
     pub skip_upload_on_content_match: bool,
     pub multipart: MultipartParams,
     pub put_compress_level: u32,
+    pub put_tempdir: Option<PathBuf>,
 }
 
 #[derive(Debug)]

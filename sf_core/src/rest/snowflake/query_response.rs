@@ -395,6 +395,7 @@ impl Data {
         use_s3_regional_url_session_param: bool,
         put_fastfail: bool,
         put_compress_level: u32,
+        put_tempdir: Option<std::path::PathBuf>,
         cwd: Option<std::path::PathBuf>,
         transport: &file_manager::StageTransport,
     ) -> Result<file_manager::UploadData, QueryResponseError> {
@@ -490,6 +491,7 @@ impl Data {
             multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
             put_fastfail,
             put_compress_level,
+            put_tempdir,
             cwd,
         })
     }
@@ -559,6 +561,7 @@ impl Data {
             skip_upload_on_content_match: false,
             multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
             put_compress_level: 9,
+            put_tempdir: None,
         })
     }
 
@@ -1689,6 +1692,7 @@ mod tests {
                 false,
                 9,
                 None,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1708,6 +1712,7 @@ mod tests {
                 false,
                 9,
                 None,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1726,6 +1731,7 @@ mod tests {
                 false,
                 false,
                 9,
+                None,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
@@ -1748,6 +1754,7 @@ mod tests {
                 false,
                 9,
                 None,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1768,6 +1775,7 @@ mod tests {
                 false,
                 false,
                 9,
+                None,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
@@ -1792,6 +1800,7 @@ mod tests {
             false,
             9,
             None,
+            None,
             &file_manager::StageTransport::for_test(),
         );
         assert!(result.is_err());
@@ -1815,6 +1824,7 @@ mod tests {
                 false,
                 9,
                 None,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
@@ -1834,6 +1844,7 @@ mod tests {
                 false,
                 false,
                 9,
+                None,
                 None,
                 &file_manager::StageTransport::for_test(),
             )
@@ -1855,10 +1866,35 @@ mod tests {
                 false,
                 1,
                 None,
+                None,
                 &file_manager::StageTransport::for_test(),
             )
             .unwrap();
         assert_eq!(upload.put_compress_level, 1);
+        assert_eq!(upload.put_tempdir, None);
+    }
+
+    #[test]
+    fn upload_data_forwards_put_tempdir() {
+        let json = make_upload_json("");
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data
+            .to_file_upload_data(
+                PutGetResultsetFlavor::default(),
+                false,
+                false,
+                false,
+                false,
+                9,
+                Some(std::path::PathBuf::from("/tmp/put-gzip")),
+                None,
+                &file_manager::StageTransport::for_test(),
+            )
+            .unwrap();
+        assert_eq!(
+            upload.put_tempdir,
+            Some(std::path::PathBuf::from("/tmp/put-gzip"))
+        );
     }
 
     // Explicit `SOURCE_COMPRESSION=PARQUET` / `=ORC` parses to the matching
@@ -1894,6 +1930,7 @@ mod tests {
                     false,
                     9,
                     None,
+                    None,
                     &file_manager::StageTransport::for_test(),
                 )
                 .unwrap();
@@ -1918,6 +1955,7 @@ mod tests {
                     false,
                     false,
                     9,
+                    None,
                     None,
                     &file_manager::StageTransport::for_test(),
                 )
@@ -3019,6 +3057,7 @@ mod tests {
             use_s3_regional_url_session_param,
             false,
             9,
+            None,
             None,
             &file_manager::StageTransport::for_test(),
         )

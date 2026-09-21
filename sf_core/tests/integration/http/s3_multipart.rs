@@ -181,6 +181,7 @@ async fn should_upload_and_download_via_s3_multipart_roundtrip() {
         skip_upload_on_content_match: false,
         multipart,
         put_compress_level: 9,
+        put_tempdir: None,
     };
     let upload_result = upload_single_file(
         upload,

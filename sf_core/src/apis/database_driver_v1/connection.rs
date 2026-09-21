@@ -1285,6 +1285,18 @@ impl Connection {
             .or_else(|| self.database_seed.get_int(key))
     }
 
+    fn resolve_override_string(&self, key: ParamKey) -> Option<String> {
+        self.session_overrides
+            .get_string(key)
+            .or_else(|| self.connection_seed.get_string(key))
+            .or_else(|| {
+                self.resolved_connect
+                    .as_ref()
+                    .and_then(|settings| settings.get_string(key))
+            })
+            .or_else(|| self.database_seed.get_string(key))
+    }
+
     /// Resolves `PUT_FASTFAIL` (see [`Self::resolve_override_bool`]).
     pub(crate) fn put_fastfail(&self) -> Option<bool> {
         self.resolve_override_bool(param_names::PUT_FASTFAIL)
@@ -1300,6 +1312,12 @@ impl Connection {
             self.resolve_override_int(param_names::PUT_COMPRESS_LEVEL),
             default,
         )
+    }
+
+    pub(crate) fn put_tempdir(&self) -> Option<PathBuf> {
+        self.resolve_override_string(param_names::PUT_TEMPDIR)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
     }
 
     /// The resolved TLS config for this connection, read from the established
@@ -3728,6 +3746,57 @@ mod tests {
             conn.put_compress_level(WrapperPresets::default().put_compress_level_default),
             4
         );
+    }
+
+    #[test]
+    fn put_tempdir_returns_none_when_unset() {
+        let conn = Connection::new();
+        assert_eq!(conn.put_tempdir(), None);
+    }
+
+    #[test]
+    fn put_tempdir_returns_connection_seed_path() {
+        let conn = make_connection_with_settings(vec![(
+            "put_tempdir",
+            Setting::String("/tmp/put-gzip".into()),
+        )]);
+        assert_eq!(
+            conn.put_tempdir(),
+            Some(std::path::PathBuf::from("/tmp/put-gzip"))
+        );
+    }
+
+    #[test]
+    fn put_tempdir_treats_empty_seed_as_unset() {
+        let conn =
+            make_connection_with_settings(vec![("put_tempdir", Setting::String(String::new()))]);
+        assert_eq!(conn.put_tempdir(), None);
+    }
+
+    #[tokio::test]
+    async fn connection_set_option_put_tempdir_after_connect() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        if let Some(c) = ds.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+        }
+        ds.connection_set_option(
+            handle,
+            param_names::PUT_TEMPDIR.as_str().into(),
+            Setting::String("/tmp/put-gzip-after-connect".into()),
+        )
+        .await
+        .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert_eq!(
+            conn.put_tempdir(),
+            Some(std::path::PathBuf::from("/tmp/put-gzip-after-connect"))
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
     }
 
     #[tokio::test]

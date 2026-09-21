@@ -124,6 +124,7 @@ fn upload_data_for(stage: StageInfo, src: &str) -> UploadData {
         // aggregate `UploadBatchSnafu` would stringify it away.
         put_fastfail: true,
         put_compress_level: 9,
+        put_tempdir: None,
         cwd: None,
     }
 }

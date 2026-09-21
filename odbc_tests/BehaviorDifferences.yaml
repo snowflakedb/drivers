@@ -3151,3 +3151,21 @@ behavior_differences:
       SQLGetTypeInfo always reports COLUMN_SIZE 29 for SQL_TYPE_TIMESTAMP.
       ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE is not accepted. TIMESTAMP_LTZ,
       TIMESTAMP_NTZ, and TIMESTAMP_TZ still report 35.
+
+  152:
+    name: "PUT AUTO_COMPRESS gzip tempfiles use the process temp directory when PUT_TEMPDIR is unset"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When `PUT_TEMPDIR` is unset, PUT AUTO_COMPRESS writes gzip tempfiles under
+      `/tmp/snowflakeTmp_<user>`. During compression the old driver stages in an
+      ephemeral UUID subdirectory of that base path and removes the subdirectory
+      after PUT succeeds.
+    new_driver_behavior: |
+      When `PUT_TEMPDIR` is unset, PUT AUTO_COMPRESS writes gzip tempfiles under
+      the process temp directory. Nested directories in a configured
+      `PUT_TEMPDIR` are created; empty `PUT_TEMPDIR` uses the same process temp
+      directory as unset.

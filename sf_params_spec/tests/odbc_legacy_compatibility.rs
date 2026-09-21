@@ -37,6 +37,7 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("PUT_FASTFAIL", "put_fastfail"),
     ("GET_FASTFAIL", "get_fastfail"),
     ("PUT_COMPRESSLV", "put_compress_level"),
+    ("PUT_TEMPDIR", "put_tempdir"),
     ("PUT_MAXRETRIES", "put_get_max_attempts"),
     ("GET_MAXRETRIES", "put_get_max_attempts"),
     ("SecondaryRoles", "secondary_roles"),
@@ -133,7 +134,6 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     // param and has no ODBC alias for this spelling.
     "CRL_DOWNLOAD_TIMEOUT",
     "ValidateSessionParam",
-    "PUT_TEMPDIR",
     "GET_SIZE_THRESHOLD",
     "DEFAULT_VARCHAR_SIZE",
     "DEFAULT_BINARY_SIZE",

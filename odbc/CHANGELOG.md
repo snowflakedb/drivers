@@ -5,6 +5,7 @@
 New features:
 
 - Added the `PUT_COMPRESSLV` connection parameter so PUT AUTO_COMPRESS can select gzip compression levels 0–9. Unset and out-of-range values keep gzip level 6. (snowflakedb/drivers#2083)
+- Added the `PUT_TEMPDIR` connection parameter so PUT AUTO_COMPRESS can write gzip tempfiles to a caller-supplied directory. Unset and empty values keep the process temp directory. Nested directories are created. (snowflakedb/drivers#2084)
 
 Changes:
 

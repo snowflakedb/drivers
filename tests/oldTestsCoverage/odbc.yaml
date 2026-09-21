@@ -1001,7 +1001,12 @@ tests:
   - test_name: Use urandom device
     ud_tests: []
   - test_name: command injection with PUT_TEMPDIR
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/put_get/put_get_tempdir.cpp - should treat PUT_TEMPDIR shell metacharacters as a directory name"
+      - path: "sf_core/src/compression.rs - shell_metacharacters_in_temp_dir_are_treated_as_path_components"
+    status: mapped
+    notes: "SNOW-3704976. PUT_TEMPDIR is a filesystem path, not a shell command. Nested-directory creation, invalid-file paths, and tempfile cleanup are covered by companion cases in the same ODBC e2e file and by sf_core compression unit tests."
+    jira: "SNOW-3704976"
   - test_name: putget settings
     ud_tests: []
   EndToEndTests/StatementCatchLatestTest/StatementCatchLatestTest.cpp:
